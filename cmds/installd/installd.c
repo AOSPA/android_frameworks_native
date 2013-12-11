@@ -123,7 +123,22 @@ static int do_linklib(char **arg, char reply[REPLY_MAX])
 
 static int do_idmap(char **arg, char reply[REPLY_MAX])
 {
-    return idmap(arg[0], arg[1], atoi(arg[2]));
+    return idmap(arg[0], arg[1], atoi(arg[2]), atoi(arg[3]), atoi(arg[4]), "");
+}
+
+static int do_idmap_with_redirs(char **arg, char reply[REPLY_MAX])
+{
+    return idmap(arg[0], arg[1], atoi(arg[2]), atoi(arg[3]), atoi(arg[4]), arg[5]);
+}
+
+static int do_aapt(char **arg, char reply[REPLY_MAX])
+{
+    return aapt(arg[0], arg[1], arg[2], atoi(arg[3]), atoi(arg[4]), "");
+}
+
+static int do_aapt_with_common(char **arg, char reply[REPLY_MAX])
+{
+    return aapt(arg[0], arg[1], arg[2], atoi(arg[3]), atoi(arg[4]), arg[5]);
 }
 
 struct cmdinfo {
@@ -149,7 +164,10 @@ struct cmdinfo cmds[] = {
     { "linklib",              3, do_linklib },
     { "mkuserdata",           3, do_mk_user_data },
     { "rmuser",               1, do_rm_user },
-    { "idmap",                3, do_idmap },
+    { "idmap",                5, do_idmap },
+    { "idmap_with_redirs",    6, do_idmap_with_redirs },
+    { "aapt",                 5, do_aapt },
+    { "aapt_with_common",     6, do_aapt_with_common },
 };
 
 char write_error = 0;
