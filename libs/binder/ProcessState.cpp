@@ -45,7 +45,7 @@
 // Linux kernel will add one guard page after each vm area(if VM_NO_GUARD is not
 // defined), so substract one page to make sure kernel binder vm size is is 1MB aligned.
 // This will benifit the next binder mmap which may be the next vm alloc in kernel.
-#define BINDER_VM_SIZE ((1*1024*1024) - sysconf(_SC_PAGE_SIZE))
+#define BINDER_VM_SIZE ((SCALE_VM_BINDER_MB*1024*1024) - sysconf(_SC_PAGE_SIZE))
 #define DEFAULT_MAX_BINDER_THREADS 15
 
 // -------------------------------------------------------------------------
@@ -59,14 +59,14 @@ public:
         : mIsMain(isMain)
     {
     }
-    
+
 protected:
     virtual bool threadLoop()
     {
         IPCThreadState::self()->joinThreadPool(mIsMain);
         return false;
     }
-    
+
     const bool mIsMain;
 };
 
@@ -102,9 +102,9 @@ sp<IBinder> ProcessState::getContextObject(const String16& name, const sp<IBinde
     sp<IBinder> object(
         mContexts.indexOfKey(name) >= 0 ? mContexts.valueFor(name) : NULL);
     mLock.unlock();
-    
+
     //printf("Getting context object %s for %p\n", String8(name).string(), caller.get());
-    
+
     if (object != NULL) return object;
 
     // Don't attempt to retrieve contexts if we manage them
@@ -113,7 +113,7 @@ sp<IBinder> ProcessState::getContextObject(const String16& name, const sp<IBinde
             String8(name).string());
         return NULL;
     }
-    
+
     IPCThreadState* ipc = IPCThreadState::self();
     {
         Parcel data, reply;
@@ -125,9 +125,9 @@ sp<IBinder> ProcessState::getContextObject(const String16& name, const sp<IBinde
             object = reply.readStrongBinder();
         }
     }
-    
+
     ipc->flushCommands();
-    
+
     if (object != NULL) setContextObject(object, name);
     return object;
 }
@@ -220,7 +220,7 @@ sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
                    return NULL;
             }
 
-            b = new BpBinder(handle); 
+            b = new BpBinder(handle);
             e->binder = b;
             if (b) e->refs = b->getWeakRefs();
             result = b;
@@ -244,7 +244,7 @@ wp<IBinder> ProcessState::getWeakProxyForHandle(int32_t handle)
 
     handle_entry* e = lookupHandleLocked(handle);
 
-    if (e != NULL) {        
+    if (e != NULL) {
         // We need to create a new BpBinder if there isn't currently one, OR we
         // are unable to acquire a weak reference on this current one.  The
         // attemptIncWeak() is safe because we know the BpBinder destructor will always
@@ -270,7 +270,7 @@ wp<IBinder> ProcessState::getWeakProxyForHandle(int32_t handle)
 void ProcessState::expungeHandle(int32_t handle, IBinder* binder)
 {
     AutoMutex _l(mLock);
-    
+
     handle_entry* e = lookupHandleLocked(handle);
 
     // This handle may have already been replaced with a new BpBinder
@@ -370,5 +370,5 @@ ProcessState::ProcessState()
 ProcessState::~ProcessState()
 {
 }
-        
+
 }; // namespace android
