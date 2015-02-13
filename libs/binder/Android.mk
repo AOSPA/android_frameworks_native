@@ -44,13 +44,22 @@ sources := \
 
 LOCAL_PATH:= $(call my-dir)
 
+# Scale the VM Binder size limit.
+ifeq ($(strip $(SCALE_VM_BINDER_MB)),)
+  SCALE_VM_BINDER_MB := 1
+endif
+
+local_vm_binder_flags := -DSCALE_VM_BINDER_MB=$(SCALE_VM_BINDER_MB)
+
 include $(CLEAR_VARS)
+
 LOCAL_MODULE := libbinder
 LOCAL_SHARED_LIBRARIES := liblog libcutils libutils
 
 LOCAL_CLANG := true
 LOCAL_SANITIZE := integer
 LOCAL_SRC_FILES := $(sources)
+LOCAL_CFLAGS += $(local_vm_binder_flags)
 ifneq ($(TARGET_USES_64_BIT_BINDER),true)
 ifneq ($(TARGET_IS_64_BIT),true)
 LOCAL_CFLAGS += -DBINDER_IPC_32BIT=1
@@ -62,6 +71,7 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbinder
 LOCAL_STATIC_LIBRARIES += libutils
+LOCAL_CFLAGS += $(local_vm_binder_flags)
 LOCAL_SRC_FILES := $(sources)
 ifneq ($(TARGET_USES_64_BIT_BINDER),true)
 ifneq ($(TARGET_IS_64_BIT),true)
@@ -69,4 +79,9 @@ LOCAL_CFLAGS += -DBINDER_IPC_32BIT=1
 endif
 endif
 LOCAL_CFLAGS += -Werror
+
+# Unset local variables
+local_vm_binder_flags :=
+SCALE_VM_BINDER_MB :=
+
 include $(BUILD_STATIC_LIBRARY)
