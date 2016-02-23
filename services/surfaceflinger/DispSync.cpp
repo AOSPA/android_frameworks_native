@@ -187,7 +187,7 @@ public:
         return BAD_VALUE;
     }
 
-    // This method is only here to handle the kIgnorePresentFences case.
+    // This method is only here to handle the mIgnorePresentFences case.
     bool hasAnyEventListeners() {
         Mutex::Autolock lock(mMutex);
         return !mEventListeners.empty();
@@ -292,7 +292,12 @@ private:
 
 DispSync::DispSync() :
         mRefreshSkipCount(0),
-        mThread(new DispSyncThread()) {
+        mThread(new DispSyncThread()),
+        mIgnorePresentFences(false) {
+
+#if defined(RUNNING_WITHOUT_SYNC_FRAMEWORK)
+    mIgnorePresentFences = true;
+#endif
 
     mThread->run("DispSync", PRIORITY_URGENT_DISPLAY + PRIORITY_MORE_FAVORABLE);
 
@@ -305,7 +310,7 @@ DispSync::DispSync() :
         // Even if we're just ignoring the fences, the zero-phase tracing is
         // not needed because any time there is an event registered we will
         // turn on the HW vsync events.
-        if (!kIgnorePresentFences) {
+        if (!mIgnorePresentFences) {
             addEventListener(0, new ZeroPhaseTracer());
         }
     }
@@ -378,7 +383,7 @@ bool DispSync::addResyncSample(nsecs_t timestamp) {
         resetErrorLocked();
     }
 
-    if (kIgnorePresentFences) {
+    if (mIgnorePresentFences) {
         // If we don't have the sync framework we will never have
         // addPresentFence called.  This means we have no way to know whether
         // or not we're synchronized with the HW vsyncs, so we just request
@@ -524,7 +529,7 @@ nsecs_t DispSync::computeNextRefresh(int periodOffset) const {
 void DispSync::dump(String8& result) const {
     Mutex::Autolock lock(mMutex);
     result.appendFormat("present fences are %s\n",
-            kIgnorePresentFences ? "ignored" : "used");
+            mIgnorePresentFences ? "ignored" : "used");
     result.appendFormat("mPeriod: %" PRId64 " ns (%.3f fps; skipCount=%d)\n",
             mPeriod, 1000000000.0 / mPeriod, mRefreshSkipCount);
     result.appendFormat("mPhase: %" PRId64 " ns\n", mPhase);
@@ -574,6 +579,16 @@ void DispSync::dump(String8& result) const {
     }
 
     result.appendFormat("current monotonic time: %" PRId64 "\n", now);
+}
+
+void DispSync::setIgnorePresentFences(bool enable) {
+#ifndef RUNNING_WITHOUT_SYNC_FRAMEWORK
+    if (mIgnorePresentFences != enable) {
+        reset();
+        mIgnorePresentFences = enable;
+        ALOGD("%s(%d)", __FUNCTION__, enable);
+    }
+#endif
 }
 
 } // namespace android

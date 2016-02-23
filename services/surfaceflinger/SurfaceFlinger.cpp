@@ -1043,7 +1043,7 @@ void SurfaceFlinger::postComposition()
     }
 
     const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
-    if (kIgnorePresentFences) {
+    if (mPrimaryDispSync.ignorePresentFences()) {
         if (hw->isDisplayOn()) {
             enableHardwareVsync();
         }
@@ -3076,6 +3076,11 @@ status_t SurfaceFlinger::onTransact(
                 n = data.readInt32();
                 if (mSFEventThread != NULL)
                     mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                return NO_ERROR;
+            }
+            case 9999: { // Toggle DispSync model
+                n = data.readInt32();
+                mPrimaryDispSync.setIgnorePresentFences(n);
                 return NO_ERROR;
             }
         }

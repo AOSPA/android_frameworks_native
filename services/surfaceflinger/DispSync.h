@@ -25,15 +25,6 @@
 
 namespace android {
 
-// Ignore present (retire) fences if the device doesn't have support for the
-// sync framework.
-#if defined(RUNNING_WITHOUT_SYNC_FRAMEWORK)
-static const bool kIgnorePresentFences = true;
-#else
-static const bool kIgnorePresentFences = false;
-#endif
-
-
 class String8;
 class Fence;
 class DispSyncThread;
@@ -127,6 +118,10 @@ public:
     // dump appends human-readable debug info to the result string.
     void dump(String8& result) const;
 
+    bool ignorePresentFences() const { return mIgnorePresentFences; }
+
+    void setIgnorePresentFences(bool enable);
+
 private:
 
     void updateModelLocked();
@@ -179,6 +174,10 @@ private:
 
     // mMutex is used to protect access to all member variables.
     mutable Mutex mMutex;
+
+    // Ignore present (retire) fences if the device doesn't have support for the
+    // sync framework.
+    bool mIgnorePresentFences;
 };
 
 }
