@@ -90,7 +90,7 @@ void EventThread::sendVsyncHintOnLocked() {
 }
 
 void EventThread::onFirstRef() {
-    run("EventThread", PRIORITY_URGENT_DISPLAY + PRIORITY_MORE_FAVORABLE);
+    run("EventThread", PRIORITY_URGENT_DISPLAY + PRIORITY_REALTIME);
 }
 
 sp<EventThread::Connection> EventThread::createEventConnection() const {
