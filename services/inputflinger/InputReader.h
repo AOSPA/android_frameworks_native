@@ -89,6 +89,9 @@ struct InputReaderConfiguration {
         // The set of disabled input devices (disabledDevices) has changed.
         CHANGE_ENABLED_STATE = 1 << 9,
 
+        // Swap keys changed.
+        CHANGE_SWAP_KEYS = 1 << 20,
+
         // All devices must be reopened.
         CHANGE_MUST_REOPEN = 1 << 31,
     };
@@ -182,6 +185,9 @@ struct InputReaderConfiguration {
     // The set of currently disabled input devices.
     SortedVector<int32_t> disabledDevices;
 
+    // Swap back with recents button
+    bool swapKeys;
+
     InputReaderConfiguration() :
             virtualKeyQuietTime(0),
             pointerVelocityControlParameters(1.0f, 500.0f, 3000.0f, 3.0f),
@@ -198,7 +204,8 @@ struct InputReaderConfiguration {
             pointerGestureSwipeMaxWidthRatio(0.25f),
             pointerGestureMovementSpeedRatio(0.8f),
             pointerGestureZoomSpeedRatio(0.3f),
-            showTouches(false) { }
+            showTouches(false),
+            swapKeys(false) { }
 
     bool getDisplayViewport(ViewportType viewportType, const String8* displayId,
             DisplayViewport* outViewport) const;
@@ -1104,6 +1111,8 @@ private:
 
     int32_t mOrientation; // orientation for dpad keys
 
+    bool mSwapKeys; // swap back with recents button
+
     Vector<KeyDown> mKeyDowns; // keys that are down
     int32_t mMetaState;
     nsecs_t mDownTime; // time of most recent key down
@@ -1134,6 +1143,8 @@ private:
     void processKey(nsecs_t when, bool down, int32_t scanCode, int32_t usageCode);
 
     bool updateMetaStateIfNeeded(int32_t keyCode, bool down);
+
+    int getAdjustedKeyCode(int keyCode);
 
     ssize_t findKeyDown(int32_t scanCode);
 
