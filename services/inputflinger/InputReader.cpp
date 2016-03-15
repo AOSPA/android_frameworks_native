@@ -2242,6 +2242,10 @@ void KeyboardInputMapper::configure(nsecs_t when,
             mViewport = config->getDisplayViewportByType(ViewportType::VIEWPORT_INTERNAL);
         }
     }
+
+    if (!changes || (changes & InputReaderConfiguration::CHANGE_SWAP_KEYS)) {
+        mSwapKeys = config->swapKeys;
+    }
 }
 
 static void mapStemKey(int32_t keyCode, const PropertyMap& config, char const *property) {
@@ -2438,8 +2442,25 @@ void KeyboardInputMapper::processKey(nsecs_t when, bool down, int32_t scanCode,
 
     NotifyKeyArgs args(mContext->getNextSequenceNum(), when, getDeviceId(), mSource,
             getDisplayId(), policyFlags, down ? AKEY_EVENT_ACTION_DOWN : AKEY_EVENT_ACTION_UP,
-            AKEY_EVENT_FLAG_FROM_SYSTEM, keyCode, scanCode, keyMetaState, downTime);
+            AKEY_EVENT_FLAG_FROM_SYSTEM, getAdjustedKeyCode(keyCode),
+            scanCode, keyMetaState, downTime);
     getListener()->notifyKey(&args);
+}
+
+int KeyboardInputMapper::getAdjustedKeyCode(int keyCode) {
+    switch (keyCode) {
+        case AKEYCODE_BACK:
+            if (mSwapKeys) {
+                return AKEYCODE_APP_SWITCH;
+            }
+            break;
+        case AKEYCODE_APP_SWITCH:
+            if (mSwapKeys) {
+                return AKEYCODE_BACK;
+            }
+            break;
+    }
+    return keyCode;
 }
 
 ssize_t KeyboardInputMapper::findKeyDown(int32_t scanCode) {
