@@ -52,7 +52,6 @@
 #include <utils/String8.h>
 #include <utils/String16.h>
 #include <utils/StopWatch.h>
-#include <utils/Trace.h>
 
 #include <private/android_filesystem_config.h>
 #include <private/gui/SyncFeatures.h>
@@ -349,7 +348,6 @@ public:
                 ALOGE("error registering vsync callback: %s (%d)",
                         strerror(-err), err);
             }
-            //ATRACE_INT(mVsyncOnLabel.string(), 1);
         } else {
             status_t err = mDispSync->removeEventListener(
                     static_cast<DispSync::Callback*>(this));
@@ -357,7 +355,6 @@ public:
                 ALOGE("error unregistering vsync callback: %s (%d)",
                         strerror(-err), err);
             }
-            //ATRACE_INT(mVsyncOnLabel.string(), 0);
         }
         mEnabled = enable;
     }
@@ -408,11 +405,6 @@ private:
         {
             Mutex::Autolock lock(mCallbackMutex);
             callback = mCallback;
-
-            if (mTraceVsync) {
-                mValue = (mValue + 1) % 2;
-                ATRACE_INT(mVsyncEventLabel.string(), mValue);
-            }
         }
 
         if (callback != NULL) {
@@ -895,12 +887,10 @@ void SurfaceFlinger::onHotplugReceived(int type, bool connected) {
 }
 
 void SurfaceFlinger::eventControl(int disp, int event, int enabled) {
-    ATRACE_CALL();
     getHwComposer().eventControl(disp, event, enabled);
 }
 
 void SurfaceFlinger::onMessageReceived(int32_t what) {
-    ATRACE_CALL();
     switch (what) {
         case MessageQueue::TRANSACTION: {
             handleMessageTransaction();
@@ -935,20 +925,15 @@ bool SurfaceFlinger::handleMessageTransaction() {
 }
 
 bool SurfaceFlinger::handleMessageInvalidate() {
-    ATRACE_CALL();
     return handlePageFlip();
 }
 
 void SurfaceFlinger::handleMessageRefresh() {
-    ATRACE_CALL();
 
     static nsecs_t previousExpectedPresent = 0;
     nsecs_t expectedPresent = mPrimaryDispSync.computeNextRefresh(0);
     static bool previousFrameMissed = false;
     bool frameMissed = (expectedPresent == previousExpectedPresent);
-    if (frameMissed != previousFrameMissed) {
-        ATRACE_INT("FrameMissed", static_cast<int>(frameMissed));
-    }
     previousFrameMissed = frameMissed;
 
     if (CC_UNLIKELY(mDropMissedFrames && frameMissed)) {
@@ -1088,7 +1073,6 @@ void SurfaceFlinger::rebuildLayerStacks() {
     updateExtendedMode();
     // rebuild the visible layer list per screen
     if (CC_UNLIKELY(mVisibleRegionsDirty)) {
-        ATRACE_CALL();
         mVisibleRegionsDirty = false;
         invalidateHwcGeometry();
 
@@ -1237,7 +1221,6 @@ void SurfaceFlinger::setUpHWComposer() {
 }
 
 void SurfaceFlinger::doComposition() {
-    ATRACE_CALL();
     const bool repaintEverything = android_atomic_and(0, &mRepaintEverything);
     for (size_t dpy=0 ; dpy<mDisplays.size() ; dpy++) {
         const sp<DisplayDevice>& hw(mDisplays[dpy]);
@@ -1260,7 +1243,6 @@ void SurfaceFlinger::doComposition() {
 
 void SurfaceFlinger::postFramebuffer()
 {
-    ATRACE_CALL();
 
     const nsecs_t now = systemTime();
     mDebugInSwapBuffers = now;
@@ -1312,7 +1294,6 @@ void SurfaceFlinger::postFramebuffer()
 
 void SurfaceFlinger::handleTransaction(uint32_t transactionFlags)
 {
-    ATRACE_CALL();
 
     // here we keep a copy of the drawing state (that is the state that's
     // going to be overwritten by handleTransactionLocked()) outside of
@@ -1685,7 +1666,6 @@ void SurfaceFlinger::computeVisibleRegions(size_t dpy,
         const LayerVector& currentLayers, uint32_t layerStack,
         Region& outDirtyRegion, Region& outOpaqueRegion)
 {
-    ATRACE_CALL();
 
     Region aboveOpaqueLayers;
     Region aboveCoveredLayers;
@@ -2137,7 +2117,6 @@ void SurfaceFlinger::setTransactionState(
         const Vector<DisplayState>& displays,
         uint32_t flags)
 {
-    ATRACE_CALL();
 
     delayDPTransactionIfNeeded(displays);
     Mutex::Autolock _l(mStateLock);
@@ -3314,7 +3293,6 @@ void SurfaceFlinger::renderScreenImplLocked(
         uint32_t minLayerZ, uint32_t maxLayerZ,
         bool yswap, bool useIdentityTransform, Transform::orientation_flags rotation)
 {
-    ATRACE_CALL();
     RenderEngine& engine(getRenderEngine());
 
     // get screen geometry
@@ -3390,7 +3368,6 @@ status_t SurfaceFlinger::captureScreenImplLocked(
         uint32_t minLayerZ, uint32_t maxLayerZ,
         bool useIdentityTransform, Transform::orientation_flags rotation)
 {
-    ATRACE_CALL();
 
     // get screen geometry
     uint32_t hw_w = hw->getWidth();
