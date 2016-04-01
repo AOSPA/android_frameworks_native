@@ -16,7 +16,6 @@
 
 //#define LOG_NDEBUG 0
 #define LOG_TAG "CpuConsumer"
-//#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <cutils/compiler.h>
 #include <utils/Log.h>

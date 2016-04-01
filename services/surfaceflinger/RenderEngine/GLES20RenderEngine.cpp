@@ -14,15 +14,12 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
 #include <ui/Rect.h>
 
 #include <utils/String8.h>
-#include <utils/Trace.h>
 
 #include <cutils/compiler.h>
 #include <gui/ISurfaceComposer.h>

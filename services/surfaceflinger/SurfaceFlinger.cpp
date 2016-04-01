@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 #include <stdint.h>
 #include <sys/types.h>
 #include <errno.h>

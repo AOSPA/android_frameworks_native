@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "BufferQueue"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #include <gui/BufferQueue.h>

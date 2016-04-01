@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 // This is needed for stdint.h to define INT64_MAX in C++
 #define __STDC_LIMIT_MACROS
 
@@ -27,17 +25,12 @@
 
 #include <utils/String8.h>
 #include <utils/Thread.h>
-#include <utils/Trace.h>
 #include <utils/Vector.h>
 
 #include "DispSync.h"
 #include "EventLog/EventLog.h"
 
 namespace android {
-
-// Setting this to true enables verbose tracing that can be used to debug
-// vsync event model or phase issues.
-static const bool kTraceDetailedInfo = false;
 
 // This is the threshold used to determine when hardware vsync events are
 // needed to re-synchronize the software vsync model with the hardware.  The
@@ -126,10 +119,6 @@ public:
                     if (mWakeupLatency > 500000) {
                         // Don't correct by more than 500 us
                         mWakeupLatency = 500000;
-                    }
-                    if (kTraceDetailedInfo) {
-                        ATRACE_INT64("DispSync:WakeupLat", now - nextEventTime);
-                        ATRACE_INT64("DispSync:AvgWakeupLat", mWakeupLatency);
                     }
                 }
 
@@ -274,19 +263,6 @@ private:
     Condition mCond;
 };
 
-class ZeroPhaseTracer : public DispSync::Callback {
-public:
-    ZeroPhaseTracer() : mParity(false) {}
-
-    virtual void onDispSyncEvent(nsecs_t /*when*/) {
-        mParity = !mParity;
-        ATRACE_INT("ZERO_PHASE_VSYNC", mParity ? 1 : 0);
-    }
-
-private:
-    bool mParity;
-};
-
 DispSync::DispSync() :
         mRefreshSkipCount(0),
         mThread(new DispSyncThread()) {
@@ -295,17 +271,6 @@ DispSync::DispSync() :
 
     reset();
     beginResync();
-
-    if (kTraceDetailedInfo) {
-        // If we're not getting present fences then the ZeroPhaseTracer
-        // would prevent HW vsync event from ever being turned off.
-        // Even if we're just ignoring the fences, the zero-phase tracing is
-        // not needed because any time there is an event registered we will
-        // turn on the HW vsync events.
-        if (!kIgnorePresentFences) {
-            addEventListener(0, new ZeroPhaseTracer());
-        }
-    }
 }
 
 DispSync::~DispSync() {}
@@ -445,11 +410,6 @@ void DispSync::updateModelLocked() {
             mPhase += mPeriod;
         }
 
-        if (kTraceDetailedInfo) {
-            ATRACE_INT64("DispSync:Period", mPeriod);
-            ATRACE_INT64("DispSync:Phase", mPhase);
-        }
-
         // Artificially inflate the period if requested.
         mPeriod += mPeriod * mRefreshSkipCount;
 
@@ -486,10 +446,6 @@ void DispSync::updateErrorLocked() {
     } else {
         mError = 0;
     }
-
-    if (kTraceDetailedInfo) {
-        ATRACE_INT64("DispSync:Error", mError);
-    }
 }
 
 void DispSync::resetErrorLocked() {
@@ -511,11 +467,6 @@ void DispSync::dump(String8& result) const {
     Mutex::Autolock lock(mMutex);
     result.appendFormat("present fences are %s\n",
             kIgnorePresentFences ? "ignored" : "used");
-    result.appendFormat("mPeriod: %" PRId64 " ns (%.3f fps; skipCount=%d)\n",
-            mPeriod, 1000000000.0 / mPeriod, mRefreshSkipCount);
-    result.appendFormat("mPhase: %" PRId64 " ns\n", mPhase);
-    result.appendFormat("mError: %" PRId64 " ns (sqrt=%.1f)\n",
-            mError, sqrt(mError));
     result.appendFormat("mNumResyncSamplesSincePresent: %d (limit %d)\n",
             mNumResyncSamplesSincePresent, MAX_RESYNC_SAMPLES_WITHOUT_PRESENT);
     result.appendFormat("mNumResyncSamples: %zd (max %d)\n",
@@ -526,18 +477,11 @@ void DispSync::dump(String8& result) const {
     for (size_t i = 0; i < mNumResyncSamples; i++) {
         size_t idx = (mFirstResyncSample + i) % MAX_RESYNC_SAMPLES;
         nsecs_t sampleTime = mResyncSamples[idx];
-        if (i == 0) {
-            result.appendFormat("  %" PRId64 "\n", sampleTime);
-        } else {
-            result.appendFormat("  %" PRId64 " (+%" PRId64 ")\n",
-                    sampleTime, sampleTime - previous);
-        }
         previous = sampleTime;
     }
 
     result.appendFormat("mPresentFences / mPresentTimes [%d]:\n",
             NUM_PRESENT_SAMPLES);
-    nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
     previous = 0;
     for (size_t i = 0; i < NUM_PRESENT_SAMPLES; i++) {
         size_t idx = (i + mPresentSampleOffset) % NUM_PRESENT_SAMPLES;
@@ -547,19 +491,9 @@ void DispSync::dump(String8& result) const {
             result.appendFormat("  [unsignaled fence]\n");
         } else if (presentTime == 0) {
             result.appendFormat("  0\n");
-        } else if (previous == 0) {
-            result.appendFormat("  %" PRId64 "  (%.3f ms ago)\n", presentTime,
-                    (now - presentTime) / 1000000.0);
-        } else {
-            result.appendFormat("  %" PRId64 " (+%" PRId64 " / %.3f)  (%.3f ms ago)\n",
-                    presentTime, presentTime - previous,
-                    (presentTime - previous) / (double) mPeriod,
-                    (now - presentTime) / 1000000.0);
         }
         previous = presentTime;
     }
-
-    result.appendFormat("current monotonic time: %" PRId64 "\n", now);
 }
 
 } // namespace android

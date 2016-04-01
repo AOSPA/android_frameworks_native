@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "GraphicBufferMapper"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <stdint.h>
 #include <errno.h>
@@ -29,7 +28,6 @@
 
 #include <utils/Errors.h>
 #include <utils/Log.h>
-#include <utils/Trace.h>
 
 #include <ui/GraphicBufferMapper.h>
 #include <ui/Rect.h>
@@ -55,7 +53,6 @@ GraphicBufferMapper::GraphicBufferMapper()
 
 status_t GraphicBufferMapper::registerBuffer(buffer_handle_t handle)
 {
-    ATRACE_CALL();
     status_t err;
 
     err = mAllocMod->registerBuffer(mAllocMod, handle);
@@ -67,7 +64,6 @@ status_t GraphicBufferMapper::registerBuffer(buffer_handle_t handle)
 
 status_t GraphicBufferMapper::unregisterBuffer(buffer_handle_t handle)
 {
-    ATRACE_CALL();
     status_t err;
 
     err = mAllocMod->unregisterBuffer(mAllocMod, handle);
@@ -80,7 +76,6 @@ status_t GraphicBufferMapper::unregisterBuffer(buffer_handle_t handle)
 status_t GraphicBufferMapper::lock(buffer_handle_t handle,
         uint32_t usage, const Rect& bounds, void** vaddr)
 {
-    ATRACE_CALL();
     status_t err;
 
     err = mAllocMod->lock(mAllocMod, handle, static_cast<int>(usage),
@@ -94,7 +89,6 @@ status_t GraphicBufferMapper::lock(buffer_handle_t handle,
 status_t GraphicBufferMapper::lockYCbCr(buffer_handle_t handle,
         uint32_t usage, const Rect& bounds, android_ycbcr *ycbcr)
 {
-    ATRACE_CALL();
     status_t err;
 
     if (mAllocMod->lock_ycbcr == NULL) {
@@ -111,7 +105,6 @@ status_t GraphicBufferMapper::lockYCbCr(buffer_handle_t handle,
 
 status_t GraphicBufferMapper::unlock(buffer_handle_t handle)
 {
-    ATRACE_CALL();
     status_t err;
 
     err = mAllocMod->unlock(mAllocMod, handle);
@@ -123,7 +116,6 @@ status_t GraphicBufferMapper::unlock(buffer_handle_t handle)
 status_t GraphicBufferMapper::lockAsync(buffer_handle_t handle,
         uint32_t usage, const Rect& bounds, void** vaddr, int fenceFd)
 {
-    ATRACE_CALL();
     status_t err;
 
     if (mAllocMod->common.module_api_version >= GRALLOC_MODULE_API_VERSION_0_3) {
@@ -147,7 +139,6 @@ status_t GraphicBufferMapper::lockAsync(buffer_handle_t handle,
 status_t GraphicBufferMapper::lockAsyncYCbCr(buffer_handle_t handle,
         uint32_t usage, const Rect& bounds, android_ycbcr *ycbcr, int fenceFd)
 {
-    ATRACE_CALL();
     status_t err;
 
     if (mAllocMod->common.module_api_version >= GRALLOC_MODULE_API_VERSION_0_3
@@ -176,7 +167,6 @@ status_t GraphicBufferMapper::lockAsyncYCbCr(buffer_handle_t handle,
 
 status_t GraphicBufferMapper::unlockAsync(buffer_handle_t handle, int *fenceFd)
 {
-    ATRACE_CALL();
     status_t err;
 
     if (mAllocMod->common.module_api_version >= GRALLOC_MODULE_API_VERSION_0_3) {

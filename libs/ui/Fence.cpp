@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "Fence"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 // We would eliminate the non-conforming zero-length array, but we can't since
@@ -28,7 +27,6 @@
 #include <ui/Fence.h>
 #include <unistd.h>
 #include <utils/Log.h>
-#include <utils/Trace.h>
 
 namespace android {
 
@@ -49,7 +47,6 @@ Fence::~Fence() {
 }
 
 status_t Fence::wait(int timeout) {
-    ATRACE_CALL();
     if (mFenceFd == -1) {
         return NO_ERROR;
     }
@@ -58,7 +55,6 @@ status_t Fence::wait(int timeout) {
 }
 
 status_t Fence::waitForever(const char* logname) {
-    ATRACE_CALL();
     if (mFenceFd == -1) {
         return NO_ERROR;
     }
@@ -74,7 +70,6 @@ status_t Fence::waitForever(const char* logname) {
 
 sp<Fence> Fence::merge(const String8& name, const sp<Fence>& f1,
         const sp<Fence>& f2) {
-    ATRACE_CALL();
     int result;
     // Merge the two fences.  In the case where one of the fences is not a
     // valid fence (e.g. NO_FENCE) we merge the one valid fence with itself so

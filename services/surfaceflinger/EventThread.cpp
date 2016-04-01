@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -27,7 +25,6 @@
 
 #include <utils/Errors.h>
 #include <utils/String8.h>
-#include <utils/Trace.h>
 
 #include "EventThread.h"
 #include "SurfaceFlinger.h"

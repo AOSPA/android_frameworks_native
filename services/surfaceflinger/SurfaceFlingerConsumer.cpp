@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #include "SurfaceFlingerConsumer.h"
@@ -25,7 +24,6 @@
 
 #include <utils/Errors.h>
 #include <utils/NativeHandle.h>
-#include <utils/Trace.h>
 
 namespace android {
 
@@ -34,7 +32,6 @@ namespace android {
 status_t SurfaceFlingerConsumer::updateTexImage(BufferRejecter* rejecter,
         const DispSync& dispSync, uint64_t maxFrameNumber)
 {
-    ATRACE_CALL();
     ALOGV("updateTexImage");
     Mutex::Autolock lock(mMutex);
 

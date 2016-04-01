@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "BufferQueueCore"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #define EGL_EGLEXT_PROTOTYPES
@@ -248,7 +247,6 @@ bool BufferQueueCore::stillTracking(const BufferItem* item) const {
 }
 
 void BufferQueueCore::waitWhileAllocatingLocked() const {
-    ATRACE_CALL();
     while (mIsAllocating) {
         mIsAllocatingCondition.wait(mMutex);
     }

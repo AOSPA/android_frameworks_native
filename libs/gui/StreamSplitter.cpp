@@ -17,7 +17,6 @@
 #include <inttypes.h>
 
 #define LOG_TAG "StreamSplitter"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #include <gui/BufferItem.h>
@@ -28,8 +27,6 @@
 #include <ui/GraphicBuffer.h>
 
 #include <binder/ProcessState.h>
-
-#include <utils/Trace.h>
 
 namespace android {
 
@@ -100,7 +97,6 @@ void StreamSplitter::setName(const String8 &name) {
 }
 
 void StreamSplitter::onFrameAvailable(const BufferItem& /* item */) {
-    ATRACE_CALL();
     Mutex::Autolock lock(mMutex);
 
     // The current policy is that if any one consumer is consuming buffers too
@@ -187,7 +183,6 @@ void StreamSplitter::onFrameAvailable(const BufferItem& /* item */) {
 
 void StreamSplitter::onBufferReleasedByOutput(
         const sp<IGraphicBufferProducer>& from) {
-    ATRACE_CALL();
     Mutex::Autolock lock(mMutex);
 
     sp<GraphicBuffer> buffer;

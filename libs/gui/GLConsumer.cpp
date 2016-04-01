@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "GLConsumer"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #define GL_GLEXT_PROTOTYPES
@@ -40,7 +39,6 @@
 
 #include <utils/Log.h>
 #include <utils/String8.h>
-#include <utils/Trace.h>
 
 EGLAPI const char* eglQueryStringImplementationANDROID(EGLDisplay dpy, EGLint name);
 #define CROP_EXT_STR "EGL_ANDROID_image_crop"
@@ -196,7 +194,6 @@ status_t GLConsumer::setDefaultBufferSize(uint32_t w, uint32_t h)
 }
 
 status_t GLConsumer::updateTexImage() {
-    ATRACE_CALL();
     GLC_LOGV("updateTexImage");
     Mutex::Autolock lock(mMutex);
 
@@ -244,7 +241,6 @@ status_t GLConsumer::updateTexImage() {
 
 
 status_t GLConsumer::releaseTexImage() {
-    ATRACE_CALL();
     GLC_LOGV("releaseTexImage");
     Mutex::Autolock lock(mMutex);
 
@@ -551,7 +547,6 @@ void GLConsumer::setReleaseFence(const sp<Fence>& fence) {
 }
 
 status_t GLConsumer::detachFromContext() {
-    ATRACE_CALL();
     GLC_LOGV("detachFromContext");
     Mutex::Autolock lock(mMutex);
 
@@ -596,7 +591,6 @@ status_t GLConsumer::detachFromContext() {
 }
 
 status_t GLConsumer::attachToContext(uint32_t tex) {
-    ATRACE_CALL();
     GLC_LOGV("attachToContext");
     Mutex::Autolock lock(mMutex);
 

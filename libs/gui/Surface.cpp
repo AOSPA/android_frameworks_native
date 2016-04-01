@@ -15,7 +15,6 @@
  */
 
 #define LOG_TAG "Surface"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #include <android/native_window.h>
@@ -23,7 +22,6 @@
 #include <binder/Parcel.h>
 
 #include <utils/Log.h>
-#include <utils/Trace.h>
 #include <utils/NativeHandle.h>
 
 #include <ui/Fence.h>
@@ -188,7 +186,6 @@ int Surface::hook_perform(ANativeWindow* window, int operation, ...) {
 }
 
 int Surface::setSwapInterval(int interval) {
-    ATRACE_CALL();
     // EGL specification states:
     //  interval is silently clamped to minimum and maximum implementation
     //  dependent values before being stored.
@@ -205,7 +202,6 @@ int Surface::setSwapInterval(int interval) {
 }
 
 int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
-    ATRACE_CALL();
     ALOGV("Surface::dequeueBuffer");
 
     uint32_t reqWidth;
@@ -275,7 +271,6 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
 
 int Surface::cancelBuffer(android_native_buffer_t* buffer,
         int fenceFd) {
-    ATRACE_CALL();
     ALOGV("Surface::cancelBuffer");
     Mutex::Autolock lock(mMutex);
     int i = getSlotFromBufferLocked(buffer);
@@ -309,7 +304,6 @@ int Surface::lockBuffer_DEPRECATED(android_native_buffer_t* buffer __attribute__
 }
 
 int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
-    ATRACE_CALL();
     ALOGV("Surface::queueBuffer");
     Mutex::Autolock lock(mMutex);
     int64_t timestamp;
@@ -429,7 +423,6 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
 }
 
 int Surface::query(int what, int* value) const {
-    ATRACE_CALL();
     ALOGV("Surface::query");
     { // scope for the lock
         Mutex::Autolock lock(mMutex);
@@ -661,7 +654,6 @@ int Surface::connect(int api) {
 }
 
 int Surface::connect(int api, const sp<IProducerListener>& listener) {
-    ATRACE_CALL();
     ALOGV("Surface::connect");
     Mutex::Autolock lock(mMutex);
     IGraphicBufferProducer::QueueBufferOutput output;
@@ -693,7 +685,6 @@ int Surface::connect(int api, const sp<IProducerListener>& listener) {
 
 
 int Surface::disconnect(int api) {
-    ATRACE_CALL();
     ALOGV("Surface::disconnect");
     Mutex::Autolock lock(mMutex);
     freeAllBuffers();
@@ -717,7 +708,6 @@ int Surface::disconnect(int api) {
 
 int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
         sp<Fence>* outFence) {
-    ATRACE_CALL();
     ALOGV("Surface::detachNextBuffer");
 
     if (outBuffer == NULL || outFence == NULL) {
@@ -746,7 +736,6 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
 
 int Surface::attachBuffer(ANativeWindowBuffer* buffer)
 {
-    ATRACE_CALL();
     ALOGV("Surface::attachBuffer");
 
     Mutex::Autolock lock(mMutex);
@@ -777,7 +766,6 @@ int Surface::setUsage(uint32_t reqUsage)
 
 int Surface::setCrop(Rect const* rect)
 {
-    ATRACE_CALL();
 
     Rect realRect;
     if (rect == NULL || rect->isEmpty()) {
@@ -796,7 +784,6 @@ int Surface::setCrop(Rect const* rect)
 
 int Surface::setBufferCount(int bufferCount)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setBufferCount");
     Mutex::Autolock lock(mMutex);
 
@@ -813,7 +800,6 @@ int Surface::setBufferCount(int bufferCount)
 
 int Surface::setBuffersDimensions(uint32_t width, uint32_t height)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setBuffersDimensions");
 
     if ((width && !height) || (!width && height))
@@ -827,7 +813,6 @@ int Surface::setBuffersDimensions(uint32_t width, uint32_t height)
 
 int Surface::setBuffersUserDimensions(uint32_t width, uint32_t height)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setBuffersUserDimensions");
 
     if ((width && !height) || (!width && height))
@@ -850,7 +835,6 @@ int Surface::setBuffersFormat(PixelFormat format)
 
 int Surface::setScalingMode(int mode)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setScalingMode(%d)", mode);
 
     switch (mode) {
@@ -870,7 +854,6 @@ int Surface::setScalingMode(int mode)
 
 int Surface::setBuffersTransform(uint32_t transform)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setBuffersTransform");
     Mutex::Autolock lock(mMutex);
     mTransform = transform;
@@ -879,7 +862,6 @@ int Surface::setBuffersTransform(uint32_t transform)
 
 int Surface::setBuffersStickyTransform(uint32_t transform)
 {
-    ATRACE_CALL();
     ALOGV("Surface::setBuffersStickyTransform");
     Mutex::Autolock lock(mMutex);
     mStickyTransform = transform;
@@ -909,7 +891,6 @@ void Surface::freeAllBuffers() {
 }
 
 void Surface::setSurfaceDamage(android_native_rect_t* rects, size_t numRects) {
-    ATRACE_CALL();
     ALOGV("Surface::setSurfaceDamage");
     Mutex::Autolock lock(mMutex);
 

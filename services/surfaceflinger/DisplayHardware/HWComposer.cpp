@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 #include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
@@ -29,7 +27,6 @@
 #include <utils/NativeHandle.h>
 #include <utils/String8.h>
 #include <utils/Thread.h>
-#include <utils/Trace.h>
 #include <utils/Vector.h>
 
 #include <ui/GraphicBuffer.h>
@@ -306,7 +303,6 @@ void HWComposer::vsync(int disp, int64_t timestamp) {
 
         char tag[16];
         snprintf(tag, sizeof(tag), "HW_VSYNC_%1u", disp);
-        ATRACE_INT(tag, ++mVSyncCounts[disp] & 1);
 
         mEventHandler.onVSyncReceived(disp, timestamp);
     }
@@ -562,7 +558,6 @@ void HWComposer::eventControl(int disp, int event, int enabled) {
         const int32_t newValue = enabled ? eventBit : 0;
         const int32_t oldValue = mDisplayData[disp].events & eventBit;
         if (newValue != oldValue) {
-            ATRACE_CALL();
             err = mHwc->eventControl(mHwc, disp, event, enabled);
             if (!err) {
                 int32_t& events(mDisplayData[disp].events);
@@ -570,7 +565,6 @@ void HWComposer::eventControl(int disp, int event, int enabled) {
 
                 char tag[16];
                 snprintf(tag, sizeof(tag), "HW_VSYNC_ON_%1u", disp);
-                ATRACE_INT(tag, enabled);
             }
         }
         // error here should not happen -- not sure what we should

@@ -14,8 +14,6 @@
  ** limitations under the License.
  */
 
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
-
 #include <dlfcn.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -36,7 +34,6 @@
 #include <utils/KeyedVector.h>
 #include <utils/SortedVector.h>
 #include <utils/String8.h>
-#include <utils/Trace.h>
 
 #include "../egl_impl.h"
 #include "../glestrace.h"
@@ -620,7 +617,6 @@ EGLBoolean eglQuerySurface( EGLDisplay dpy, EGLSurface surface,
 }
 
 void EGLAPI eglBeginFrame(EGLDisplay dpy, EGLSurface surface) {
-    ATRACE_CALL();
     clearError();
 
     const egl_display_ptr dp = validate_display(dpy);
@@ -1015,12 +1011,9 @@ public:
         }
         {
             Mutex::Autolock lock(thread->mMutex);
-            ScopedTrace st(ATRACE_TAG, String8::format("kicked off frame %d",
-                    thread->mFramesQueued).string());
             thread->mQueue.push_back(sync);
             thread->mCondition.signal();
             thread->mFramesQueued++;
-            ATRACE_INT("GPU Frames Outstanding", thread->mQueue.size());
         }
     }
 
@@ -1040,8 +1033,6 @@ private:
         }
         EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         {
-            ScopedTrace st(ATRACE_TAG, String8::format("waiting for frame %d",
-                    frameNum).string());
             EGLint result = eglClientWaitSyncKHR(dpy, sync, 0, EGL_FOREVER_KHR);
             if (result == EGL_FALSE) {
                 ALOGE("FrameCompletion: error waiting for fence: %#x", eglGetError());
@@ -1054,7 +1045,6 @@ private:
             Mutex::Autolock lock(mMutex);
             mQueue.removeAt(0);
             mFramesCompleted++;
-            ATRACE_INT("GPU Frames Outstanding", mQueue.size());
         }
         return true;
     }
@@ -1069,7 +1059,6 @@ private:
 EGLBoolean eglSwapBuffersWithDamageKHR(EGLDisplay dpy, EGLSurface draw,
         EGLint *rects, EGLint n_rects)
 {
-    ATRACE_CALL();
     clearError();
 
     const egl_display_ptr dp = validate_display(dpy);

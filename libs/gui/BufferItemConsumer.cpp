@@ -16,7 +16,6 @@
 
 //#define LOG_NDEBUG 0
 #define LOG_TAG "BufferItemConsumer"
-//#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 #include <utils/Log.h>
 
 #include <gui/BufferItem.h>

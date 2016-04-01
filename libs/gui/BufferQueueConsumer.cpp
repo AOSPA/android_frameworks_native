@@ -17,7 +17,6 @@
 #include <inttypes.h>
 
 #define LOG_TAG "BufferQueueConsumer"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #include <gui/BufferItem.h>
@@ -37,7 +36,6 @@ BufferQueueConsumer::~BufferQueueConsumer() {}
 
 status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
         nsecs_t expectedPresent, uint64_t maxFrameNumber) {
-    ATRACE_CALL();
 
     int numDroppedBuffers = 0;
     sp<IProducerListener> listener;
@@ -164,7 +162,6 @@ status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
 
         int slot = front->mSlot;
         *outBuffer = *front;
-        ATRACE_BUFFER_INDEX(slot);
 
         BQ_LOGV("acquireBuffer: acquiring { slot=%d/%" PRIu64 " buffer=%p }",
                 slot, front->mFrameNumber, front->mGraphicBuffer->handle);
@@ -190,8 +187,6 @@ status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
         // decrease.
         mCore->mDequeueCondition.broadcast();
 
-        ATRACE_INT(mCore->mConsumerName.string(), mCore->mQueue.size());
-
         mCore->validateConsistencyLocked();
     }
 
@@ -205,8 +200,6 @@ status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
 }
 
 status_t BufferQueueConsumer::detachBuffer(int slot) {
-    ATRACE_CALL();
-    ATRACE_BUFFER_INDEX(slot);
     BQ_LOGV("detachBuffer(C): slot %d", slot);
     Mutex::Autolock lock(mCore->mMutex);
 
@@ -234,7 +227,6 @@ status_t BufferQueueConsumer::detachBuffer(int slot) {
 
 status_t BufferQueueConsumer::attachBuffer(int* outSlot,
         const sp<android::GraphicBuffer>& buffer) {
-    ATRACE_CALL();
 
     if (outSlot == NULL) {
         BQ_LOGE("attachBuffer(P): outSlot must not be NULL");
@@ -284,7 +276,6 @@ status_t BufferQueueConsumer::attachBuffer(int* outSlot,
     }
 
     *outSlot = found;
-    ATRACE_BUFFER_INDEX(*outSlot);
     BQ_LOGV("attachBuffer(C): returning slot %d", *outSlot);
 
     mSlots[*outSlot].mGraphicBuffer = buffer;
@@ -319,8 +310,6 @@ status_t BufferQueueConsumer::attachBuffer(int* outSlot,
 status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
         const sp<Fence>& releaseFence, EGLDisplay eglDisplay,
         EGLSyncKHR eglFence) {
-    ATRACE_CALL();
-    ATRACE_BUFFER_INDEX(slot);
 
     if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS ||
             releaseFence == NULL) {
@@ -383,7 +372,6 @@ status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
 
 status_t BufferQueueConsumer::connect(
         const sp<IConsumerListener>& consumerListener, bool controlledByApp) {
-    ATRACE_CALL();
 
     if (consumerListener == NULL) {
         BQ_LOGE("connect(C): consumerListener may not be NULL");
@@ -407,7 +395,6 @@ status_t BufferQueueConsumer::connect(
 }
 
 status_t BufferQueueConsumer::disconnect() {
-    ATRACE_CALL();
 
     BQ_LOGV("disconnect(C)");
 
@@ -427,7 +414,6 @@ status_t BufferQueueConsumer::disconnect() {
 }
 
 status_t BufferQueueConsumer::getReleasedBuffers(uint64_t *outSlotMask) {
-    ATRACE_CALL();
 
     if (outSlotMask == NULL) {
         BQ_LOGE("getReleasedBuffers: outSlotMask may not be NULL");
@@ -466,7 +452,6 @@ status_t BufferQueueConsumer::getReleasedBuffers(uint64_t *outSlotMask) {
 
 status_t BufferQueueConsumer::setDefaultBufferSize(uint32_t width,
         uint32_t height) {
-    ATRACE_CALL();
 
     if (width == 0 || height == 0) {
         BQ_LOGV("setDefaultBufferSize: dimensions cannot be 0 (width=%u "
@@ -483,13 +468,11 @@ status_t BufferQueueConsumer::setDefaultBufferSize(uint32_t width,
 }
 
 status_t BufferQueueConsumer::setDefaultMaxBufferCount(int bufferCount) {
-    ATRACE_CALL();
     Mutex::Autolock lock(mCore->mMutex);
     return mCore->setDefaultMaxBufferCountLocked(bufferCount);
 }
 
 status_t BufferQueueConsumer::disableAsyncBuffer() {
-    ATRACE_CALL();
 
     Mutex::Autolock lock(mCore->mMutex);
 
@@ -505,7 +488,6 @@ status_t BufferQueueConsumer::disableAsyncBuffer() {
 
 status_t BufferQueueConsumer::setMaxAcquiredBufferCount(
         int maxAcquiredBuffers) {
-    ATRACE_CALL();
 
     if (maxAcquiredBuffers < 1 ||
             maxAcquiredBuffers > BufferQueueCore::MAX_MAX_ACQUIRED_BUFFERS) {
@@ -527,7 +509,6 @@ status_t BufferQueueConsumer::setMaxAcquiredBufferCount(
 }
 
 void BufferQueueConsumer::setConsumerName(const String8& name) {
-    ATRACE_CALL();
     BQ_LOGV("setConsumerName: '%s'", name.string());
     Mutex::Autolock lock(mCore->mMutex);
     mCore->mConsumerName = name;
@@ -535,7 +516,6 @@ void BufferQueueConsumer::setConsumerName(const String8& name) {
 }
 
 status_t BufferQueueConsumer::setDefaultBufferFormat(PixelFormat defaultFormat) {
-    ATRACE_CALL();
     BQ_LOGV("setDefaultBufferFormat: %u", defaultFormat);
     Mutex::Autolock lock(mCore->mMutex);
     mCore->mDefaultBufferFormat = defaultFormat;
@@ -544,7 +524,6 @@ status_t BufferQueueConsumer::setDefaultBufferFormat(PixelFormat defaultFormat) 
 
 status_t BufferQueueConsumer::setDefaultBufferDataSpace(
         android_dataspace defaultDataSpace) {
-    ATRACE_CALL();
     BQ_LOGV("setDefaultBufferDataSpace: %u", defaultDataSpace);
     Mutex::Autolock lock(mCore->mMutex);
     mCore->mDefaultBufferDataSpace = defaultDataSpace;
@@ -552,7 +531,6 @@ status_t BufferQueueConsumer::setDefaultBufferDataSpace(
 }
 
 status_t BufferQueueConsumer::setConsumerUsageBits(uint32_t usage) {
-    ATRACE_CALL();
     BQ_LOGV("setConsumerUsageBits: %#x", usage);
     Mutex::Autolock lock(mCore->mMutex);
     mCore->mConsumerUsageBits = usage;
@@ -560,7 +538,6 @@ status_t BufferQueueConsumer::setConsumerUsageBits(uint32_t usage) {
 }
 
 status_t BufferQueueConsumer::setTransformHint(uint32_t hint) {
-    ATRACE_CALL();
     BQ_LOGV("setTransformHint: %#x", hint);
     Mutex::Autolock lock(mCore->mMutex);
     mCore->mTransformHint = hint;

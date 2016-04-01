@@ -17,7 +17,6 @@
 #include <inttypes.h>
 
 #define LOG_TAG "BufferQueueProducer"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #define EGL_EGLEXT_PROTOTYPES
@@ -30,7 +29,6 @@
 #include <gui/IProducerListener.h>
 
 #include <utils/Log.h>
-#include <utils/Trace.h>
 
 namespace android {
 
@@ -48,7 +46,6 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core) :
 BufferQueueProducer::~BufferQueueProducer() {}
 
 status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
-    ATRACE_CALL();
     BQ_LOGV("requestBuffer: slot %d", slot);
     Mutex::Autolock lock(mCore->mMutex);
 
@@ -73,7 +70,6 @@ status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
 }
 
 status_t BufferQueueProducer::setBufferCount(int bufferCount) {
-    ATRACE_CALL();
     BQ_LOGV("setBufferCount: count = %d", bufferCount);
 
     sp<IConsumerListener> listener;
@@ -255,7 +251,6 @@ status_t BufferQueueProducer::waitForFreeSlotThenRelock(const char* caller,
 status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
         sp<android::Fence> *outFence, bool async,
         uint32_t width, uint32_t height, PixelFormat format, uint32_t usage) {
-    ATRACE_CALL();
     { // Autolock scope
         Mutex::Autolock lock(mCore->mMutex);
         mConsumerName = mCore->mConsumerName;
@@ -321,7 +316,6 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
         }
 
         *outSlot = found;
-        ATRACE_BUFFER_INDEX(found);
 
         attachedByConsumer = mSlots[found].mAttachedByConsumer;
 
@@ -349,12 +343,6 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
 
         BQ_LOGV("dequeueBuffer: setting buffer age to %" PRIu64,
                 mCore->mBufferAge);
-
-        if (CC_UNLIKELY(mSlots[found].mFence == NULL)) {
-            BQ_LOGE("dequeueBuffer: about to return a NULL fence - "
-                    "slot=%d w=%d h=%d format=%u",
-                    found, buffer->width, buffer->height, buffer->format);
-        }
 
         eglDisplay = mSlots[found].mEglDisplay;
         eglFence = mSlots[found].mEglFence;
@@ -416,8 +404,6 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
 }
 
 status_t BufferQueueProducer::detachBuffer(int slot) {
-    ATRACE_CALL();
-    ATRACE_BUFFER_INDEX(slot);
     BQ_LOGV("detachBuffer(P): slot %d", slot);
     Mutex::Autolock lock(mCore->mMutex);
 
@@ -449,7 +435,6 @@ status_t BufferQueueProducer::detachBuffer(int slot) {
 
 status_t BufferQueueProducer::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
         sp<Fence>* outFence) {
-    ATRACE_CALL();
 
     if (outBuffer == NULL) {
         BQ_LOGE("detachNextBuffer: outBuffer must not be NULL");
@@ -486,7 +471,6 @@ status_t BufferQueueProducer::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
 
 status_t BufferQueueProducer::attachBuffer(int* outSlot,
         const sp<android::GraphicBuffer>& buffer) {
-    ATRACE_CALL();
 
     if (outSlot == NULL) {
         BQ_LOGE("attachBuffer(P): outSlot must not be NULL");
@@ -524,7 +508,6 @@ status_t BufferQueueProducer::attachBuffer(int* outSlot,
     }
 
     *outSlot = found;
-    ATRACE_BUFFER_INDEX(*outSlot);
     BQ_LOGV("attachBuffer(P): returning slot %d flags=%#x",
             *outSlot, returnFlags);
 
@@ -541,8 +524,6 @@ status_t BufferQueueProducer::attachBuffer(int* outSlot,
 
 status_t BufferQueueProducer::queueBuffer(int slot,
         const QueueBufferInput &input, QueueBufferOutput *output) {
-    ATRACE_CALL();
-    ATRACE_BUFFER_INDEX(slot);
 
     int64_t timestamp;
     bool isAutoTimestamp;
@@ -688,8 +669,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
                 mCore->mTransformHint,
                 static_cast<uint32_t>(mCore->mQueue.size()));
 
-        ATRACE_INT(mCore->mConsumerName.string(), mCore->mQueue.size());
-
         // Take a ticket for the callback functions
         callbackTicket = mNextCallbackTicket++;
 
@@ -732,7 +711,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
 }
 
 void BufferQueueProducer::cancelBuffer(int slot, const sp<Fence>& fence) {
-    ATRACE_CALL();
     BQ_LOGV("cancelBuffer: slot %d", slot);
     Mutex::Autolock lock(mCore->mMutex);
 
@@ -762,7 +740,6 @@ void BufferQueueProducer::cancelBuffer(int slot, const sp<Fence>& fence) {
 }
 
 int BufferQueueProducer::query(int what, int *outValue) {
-    ATRACE_CALL();
     Mutex::Autolock lock(mCore->mMutex);
 
     if (outValue == NULL) {
@@ -819,7 +796,6 @@ int BufferQueueProducer::query(int what, int *outValue) {
 
 status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
         int api, bool producerControlledByApp, QueueBufferOutput *output) {
-    ATRACE_CALL();
     Mutex::Autolock lock(mCore->mMutex);
     mConsumerName = mCore->mConsumerName;
     BQ_LOGV("connect(P): api=%d producerControlledByApp=%s", api,
@@ -885,7 +861,6 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
 }
 
 status_t BufferQueueProducer::disconnect(int api) {
-    ATRACE_CALL();
     BQ_LOGV("disconnect(P): api %d", api);
 
     int status = NO_ERROR;
@@ -959,7 +934,6 @@ status_t BufferQueueProducer::setSidebandStream(const sp<NativeHandle>& stream) 
 
 void BufferQueueProducer::allocateBuffers(bool async, uint32_t width,
         uint32_t height, PixelFormat format, uint32_t usage) {
-    ATRACE_CALL();
     while (true) {
         Vector<int> freeSlots;
         size_t newBufferCount = 0;
@@ -1072,7 +1046,6 @@ void BufferQueueProducer::allocateBuffers(bool async, uint32_t width,
 }
 
 status_t BufferQueueProducer::allowAllocation(bool allow) {
-    ATRACE_CALL();
     BQ_LOGV("allowAllocation: %s", allow ? "true" : "false");
 
     Mutex::Autolock lock(mCore->mMutex);
@@ -1081,7 +1054,6 @@ status_t BufferQueueProducer::allowAllocation(bool allow) {
 }
 
 status_t BufferQueueProducer::setGenerationNumber(uint32_t generationNumber) {
-    ATRACE_CALL();
     BQ_LOGV("setGenerationNumber: %u", generationNumber);
 
     Mutex::Autolock lock(mCore->mMutex);
@@ -1090,7 +1062,6 @@ status_t BufferQueueProducer::setGenerationNumber(uint32_t generationNumber) {
 }
 
 String8 BufferQueueProducer::getConsumerName() const {
-    ATRACE_CALL();
     BQ_LOGV("getConsumerName: %s", mConsumerName.string());
     return mConsumerName;
 }

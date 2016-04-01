@@ -17,7 +17,6 @@
 #include <inttypes.h>
 
 #define LOG_TAG "ConsumerBase"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
 
 #define EGL_EGLEXT_PROTOTYPES
@@ -37,7 +36,6 @@
 
 #include <utils/Log.h>
 #include <utils/String8.h>
-#include <utils/Trace.h>
 
 // Macros for including the ConsumerBase name in log messages
 #define CB_LOGV(x, ...) ALOGV("[%s] " x, mName.string(), ##__VA_ARGS__)
