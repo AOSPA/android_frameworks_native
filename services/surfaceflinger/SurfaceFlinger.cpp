@@ -71,6 +71,7 @@
 
 #include "DisplayHardware/FramebufferSurface.h"
 #include "DisplayHardware/HWComposer.h"
+#include "ExSurfaceFlinger/ExHWComposer.h"
 #include "DisplayHardware/VirtualDisplaySurface.h"
 
 #include "Effects/Daltonizer.h"
@@ -1974,7 +1975,12 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const 
         }
 
         // Never touch the framebuffer if we don't have any framebuffer layers
+#ifdef QTI_BSP
+        const bool hasHwcComposition = hwc.hasHwcComposition(id) |
+            (reinterpret_cast<ExHWComposer*>(&hwc))->getS3DFlag(id);
+#else
         const bool hasHwcComposition = hwc.hasHwcComposition(id);
+#endif
         if (hasHwcComposition) {
             // when using overlays, we assume a fully transparent framebuffer
             // NOTE: we could reduce how much we need to clear, for instance
