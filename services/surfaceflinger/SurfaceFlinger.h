@@ -42,6 +42,7 @@
 
 #include <gui/ISurfaceComposer.h>
 #include <gui/ISurfaceComposerClient.h>
+#include <gui/OccupancyTracker.h>
 
 #include <hardware/hwcomposer_defs.h>
 
@@ -58,6 +59,9 @@
 
 #include "DisplayHardware/HWComposer.h"
 #include "Effects/Daltonizer.h"
+
+#include <map>
+#include <string>
 
 namespace android {
 
@@ -496,6 +500,10 @@ private:
     void dumpStaticScreenStats(String8& result) const;
     virtual void dumpDrawCycle(bool /* prePrepare */ ) { }
 
+    void recordBufferingStats(const char* layerName,
+            std::vector<OccupancyTracker::Segment>&& history);
+    void dumpBufferingStats(String8& result) const;
+
     /* ------------------------------------------------------------------------
      * Attributes
      */
@@ -597,6 +605,29 @@ private:
     nsecs_t mFrameBuckets[NUM_BUCKETS];
     nsecs_t mTotalTime;
     std::atomic<nsecs_t> mLastSwapTime;
+
+    // Double- vs. triple-buffering stats
+    struct BufferingStats {
+        BufferingStats()
+          : numSegments(0),
+            totalTime(0),
+            twoBufferTime(0),
+            doubleBufferedTime(0),
+            tripleBufferedTime(0) {}
+
+        size_t numSegments;
+        nsecs_t totalTime;
+
+        // "Two buffer" means that a third buffer was never used, whereas
+        // "double-buffered" means that on average the segment only used two
+        // buffers (though it may have used a third for some part of the
+        // segment)
+        nsecs_t twoBufferTime;
+        nsecs_t doubleBufferedTime;
+        nsecs_t tripleBufferedTime;
+    };
+    mutable Mutex mBufferingStatsMutex;
+    std::unordered_map<std::string, BufferingStats> mBufferingStats;
 };
 
 }; // namespace android

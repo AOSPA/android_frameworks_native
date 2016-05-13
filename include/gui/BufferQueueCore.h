@@ -20,6 +20,7 @@
 #include <gui/BufferItem.h>
 #include <gui/BufferQueueDefs.h>
 #include <gui/BufferSlot.h>
+#include <gui/OccupancyTracker.h>
 
 #include <utils/Condition.h>
 #include <utils/Mutex.h>
@@ -323,6 +324,8 @@ private:
     int mLastQueuedSlot;
 
     const uint64_t mUniqueId;
+
+    OccupancyTracker mOccupancyTracker;
 
 }; // class BufferQueueCore
 
