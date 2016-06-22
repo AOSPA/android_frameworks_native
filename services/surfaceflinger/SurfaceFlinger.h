@@ -561,8 +561,11 @@ private:
      */
 
     Daltonizer mDaltonizer;
+#ifndef USE_HWC2
     bool mDaltonize;
+#endif
 
+    mat4 mPreviousColorMatrix;
     mat4 mColorMatrix;
     bool mHasColorMatrix;
 
