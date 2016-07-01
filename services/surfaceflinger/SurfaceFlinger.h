@@ -502,7 +502,6 @@ private:
     RenderEngine* mRenderEngine;
     nsecs_t mBootTime;
     bool mGpuToCpuSupported;
-    bool mDropMissedFrames;
     sp<EventThread> mEventThread;
     sp<EventThread> mSFEventThread;
     sp<EventControlThread> mEventControlThread;
@@ -522,6 +521,8 @@ private:
     bool mAnimCompositionPending;
 #ifdef USE_HWC2
     std::vector<sp<Layer>> mLayersWithQueuedFrames;
+    sp<Fence> mPreviousPresentFence = Fence::NO_FENCE;
+    bool mHadClientComposition = false;
 #endif
 
     // this may only be written from the main thread with mStateLock held
