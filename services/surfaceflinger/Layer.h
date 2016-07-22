@@ -148,7 +148,7 @@ public:
     uint32_t getTransactionFlags(uint32_t flags);
     uint32_t setTransactionFlags(uint32_t flags);
 
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     virtual void computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
             bool useIdentityTransform) const;
 #else
@@ -378,7 +378,7 @@ private:
     // drawing
     void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
             float r, float g, float b, float alpha) const;
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     virtual void drawWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
             bool useIdentityTransform) const;
 #else

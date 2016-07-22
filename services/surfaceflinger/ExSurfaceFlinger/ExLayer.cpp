@@ -72,7 +72,7 @@ static Rect getAspectRatio(const sp<const DisplayDevice>& hw,
 
 ExLayer::ExLayer(SurfaceFlinger* flinger, const sp<Client>& client,
                  const String8& name, uint32_t w, uint32_t h, uint32_t flags)
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     : Layer(flinger, client, name, w, h, flags),
       mMeshLeftTop(Mesh::TRIANGLE_FAN, 4, 2, 2),
       mMeshRightBottom(Mesh::TRIANGLE_FAN, 4, 2, 2) {
@@ -221,7 +221,7 @@ bool ExLayer::canAllowGPUForProtected() const {
 void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
         const Region& /* clip */, bool useIdentityTransform) const {
     const State& s(getDrawingState());
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     uint32_t s3d_fmt = 0;
     private_handle_t *pvt_handle = static_cast<private_handle_t *>
                                     (const_cast<native_handle_t*>(mActiveBuffer->handle));
@@ -256,7 +256,7 @@ void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
     if(!s.active.crop.isEmpty()) {
         win = s.active.crop;
     }
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     win = s.transform.transform(win);
     win.intersect(hw->getViewport(), &win);
     win = s.transform.inverse().transform(win);
@@ -278,14 +278,14 @@ void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
     texCoords[2] = vec2(right, 1.0f - bottom);
     texCoords[3] = vec2(right, 1.0f - top);
 
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     computeGeometryS3D(hw, mMesh, mMeshLeftTop, mMeshRightBottom, s3d_fmt);
 #endif
 
     RenderEngine& engine(mFlinger->getRenderEngine());
     engine.setupLayerBlending(mPremultipliedAlpha, isOpaque(s), s.alpha);
 
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     if (s3d_fmt != HWC_S3DMODE_NONE) {
         engine.setScissor(0, 0, hw->getWidth(), hw->getHeight());
         engine.drawMesh(mMeshLeftTop);
@@ -293,14 +293,14 @@ void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
     } else {
 #endif
         engine.drawMesh(mMesh);
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     }
 #endif
 
     engine.disableBlending();
 }
 
-#ifdef QTI_BSP
+#ifdef HAS_S3D_SUPPORT
 void ExLayer::computeGeometryS3D(const sp<const DisplayDevice>& hw, Mesh& mesh,
         Mesh& meshLeftTop, Mesh &meshRightBottom, uint32_t s3d_fmt) const
 {
