@@ -510,6 +510,8 @@ void SurfaceFlinger::init() {
 
     mRenderEngine->primeCache();
 
+    mRenderEngine->primeCache();
+
     // start boot animation
     startBootAnim();
 
