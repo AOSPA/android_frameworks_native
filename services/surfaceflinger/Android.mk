@@ -35,11 +35,7 @@ LOCAL_SRC_FILES := \
     RenderEngine/GLES10RenderEngine.cpp \
     RenderEngine/GLES11RenderEngine.cpp \
     RenderEngine/GLES20RenderEngine.cpp \
-    DisplayUtils.cpp \
-    ExSurfaceFlinger/ExLayer.cpp \
-    ExSurfaceFlinger/ExSurfaceFlinger.cpp \
-    ExSurfaceFlinger/ExVirtualDisplaySurface.cpp \
-    ExSurfaceFlinger/ExHWComposer.cpp
+    DisplayUtils.cpp
 
 LOCAL_CFLAGS := -DLOG_TAG=\"SurfaceFlinger\"
 
@@ -125,6 +121,14 @@ ifeq ($(TARGET_USES_QCOM_BSP), true)
     LOCAL_SHARED_LIBRARIES += libqdutils
     LOCAL_SHARED_LIBRARIES += libqdMetaData
     LOCAL_CFLAGS += -DQTI_BSP
+    LOCAL_SRC_FILES += \
+        ExSurfaceFlinger/ExLayer.cpp \
+        ExSurfaceFlinger/ExSurfaceFlinger.cpp \
+        ExSurfaceFlinger/ExVirtualDisplaySurface.cpp \
+        ExSurfaceFlinger/ExHWComposer.cpp
+    ifeq ($(call is-board-platform-in-list,msm8996),true)
+        LOCAL_CFLAGS += -DSDM_TARGET
+    endif
 endif
 
 LOCAL_MODULE := libsurfaceflinger
