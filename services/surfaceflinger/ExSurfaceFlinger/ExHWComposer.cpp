@@ -76,7 +76,7 @@ bool ExHWComposer::isCompositionTypeBlit(const int32_t compType) const {
     return false;
 }
 
-#ifdef HAS_S3D_SUPPORT
+#if defined(QTI_BSP) && defined(HAS_S3D_SUPPORT)
 uint32_t ExHWComposer::getS3DFlag(int disp) const {
     if (!mHwc || uint32_t(disp) >= MAX_HWC_DISPLAYS || !mAllocatedDisplayIDs.hasBit(disp))
         return 0;
