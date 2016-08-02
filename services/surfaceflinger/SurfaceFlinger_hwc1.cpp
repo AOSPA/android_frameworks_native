@@ -190,6 +190,10 @@ SurfaceFlinger::SurfaceFlinger()
     }
     ALOGI_IF(mDebugRegion, "showupdates enabled");
     ALOGI_IF(mDebugDDMS, "DDMS debugging enabled");
+
+    property_get("debug.sf.disable_hwc_vds", value, "0");
+    mUseHwcVirtualDisplays = !atoi(value);
+    ALOGI_IF(!mUseHwcVirtualDisplays, "Disabling HWC virtual displays");
 }
 
 void SurfaceFlinger::onFirstRef()
@@ -1558,9 +1562,10 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                                 NATIVE_WINDOW_HEIGHT, &height);
                             ALOGE_IF(status != NO_ERROR,
                                 "Unable to query height (%d)", status);
-                            if (MAX_VIRTUAL_DISPLAY_DIMENSION == 0 ||
+                            if (mUseHwcVirtualDisplays &&
+                                    (MAX_VIRTUAL_DISPLAY_DIMENSION == 0 ||
                                 (width <= MAX_VIRTUAL_DISPLAY_DIMENSION &&
-                                 height <= MAX_VIRTUAL_DISPLAY_DIMENSION)) {
+                                 height <= MAX_VIRTUAL_DISPLAY_DIMENSION))) {
                                 int usage = 0;
                                 status = state.surface->query(
                                     NATIVE_WINDOW_CONSUMER_USAGE_BITS, &usage);
@@ -3266,6 +3271,11 @@ status_t SurfaceFlinger::onTransact(
                 n = data.readInt32();
                 if (mSFEventThread != NULL)
                     mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                return NO_ERROR;
+            }
+            case 1021: { // Disable HWC virtual displays
+                n = data.readInt32();
+                mUseHwcVirtualDisplays = !n;
                 return NO_ERROR;
             }
         }
