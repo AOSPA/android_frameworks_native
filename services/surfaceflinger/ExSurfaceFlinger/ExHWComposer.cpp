@@ -81,6 +81,10 @@ uint32_t ExHWComposer::getS3DFlag(int disp) const {
     if (!mHwc || uint32_t(disp) >= MAX_HWC_DISPLAYS || !mAllocatedDisplayIDs.hasBit(disp))
         return 0;
 
+    if (disp < 0) {
+        return 0;
+    }
+
     const DisplayData& disp_data(mDisplayData[disp]);
 
     for (size_t i=0 ; i<disp_data.list->numHwLayers-1; i++) {
