@@ -110,9 +110,13 @@ void SensorService::onFirstRef()
                     case SENSOR_TYPE_GYROSCOPE_UNCALIBRATED:
                         hasGyro = true;
                         break;
+                    case SENSOR_TYPE_ROTATION_VECTOR:
+#ifdef PREFER_AOSP_ROTATION_SENSOR
+			useThisSensor = false;
+			break;
+#endif
                     case SENSOR_TYPE_GRAVITY:
                     case SENSOR_TYPE_LINEAR_ACCELERATION:
-                    case SENSOR_TYPE_ROTATION_VECTOR:
                     case SENSOR_TYPE_GEOMAGNETIC_ROTATION_VECTOR:
                     case SENSOR_TYPE_GAME_ROTATION_VECTOR:
                         if (IGNORE_HARDWARE_FUSION) {
