@@ -1931,6 +1931,9 @@ wp<IBinder> Parcel::readWeakBinder() const
 }
 
 status_t Parcel::readParcelable(Parcelable* parcelable) const {
+    if (parcelable == nullptr) {
+        return BAD_VALUE;
+    }
     int32_t have_parcelable = 0;
     status_t status = readInt32(&have_parcelable);
     if (status != OK) {
