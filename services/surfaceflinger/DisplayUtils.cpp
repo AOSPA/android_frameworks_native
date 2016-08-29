@@ -45,8 +45,10 @@
 #include <ExSurfaceFlinger/ExVirtualDisplaySurface.h>
 #if QTI_BSP
 #include <gralloc_priv.h>
+#ifdef HAS_S3D_SUPPORT
 #include <qd_utils.h>
 #include <display_config.h>
+#endif
 #endif
 
 namespace android {
@@ -166,6 +168,7 @@ bool DisplayUtils::canAllocateHwcDisplayIdForVDS(int usage) {
     int flag_mask = 0xffffffff;
 
 #if QTI_BSP
+#ifdef HAS_S3D_SUPPORT
     int hdmi_node = qdutils::getHDMINode();
     if(hdmi_node == HWC_DISPLAY_PRIMARY) {
         int active_config = qdutils::getActiveConfig(HWC_DISPLAY_PRIMARY);
@@ -177,7 +180,12 @@ bool DisplayUtils::canAllocateHwcDisplayIdForVDS(int usage) {
                 flag_mask = GRALLOC_USAGE_PRIVATE_WFD;
             }
         }
-    } else {
+
+    }
+
+else {
+
+#endif
         // Reserve hardware acceleration for WFD use-case
         flag_mask = GRALLOC_USAGE_PRIVATE_WFD;
     }
