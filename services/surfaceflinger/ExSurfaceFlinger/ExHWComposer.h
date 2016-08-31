@@ -43,7 +43,7 @@ public:
 
     virtual ~ExHWComposer();
 
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     uint32_t getS3DFlag(int disp) const;
 #endif
 
