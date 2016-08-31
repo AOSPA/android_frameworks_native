@@ -188,7 +188,9 @@ else {
 #endif
         // Reserve hardware acceleration for WFD use-case
         flag_mask = GRALLOC_USAGE_PRIVATE_WFD;
+#ifdef HAS_S3D_SUPPORT
     }
+#endif
 #endif
 
     return (usage & flag_mask);

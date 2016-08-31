@@ -72,7 +72,7 @@ static Rect getAspectRatio(const sp<const DisplayDevice>& hw,
 
 ExLayer::ExLayer(SurfaceFlinger* flinger, const sp<Client>& client,
                  const String8& name, uint32_t w, uint32_t h, uint32_t flags)
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     : Layer(flinger, client, name, w, h, flags),
       mMeshLeftTop(Mesh::TRIANGLE_FAN, 4, 2, 2),
       mMeshRightBottom(Mesh::TRIANGLE_FAN, 4, 2, 2) {
@@ -256,7 +256,7 @@ void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
     if(!s.active.crop.isEmpty()) {
         win = s.active.crop;
     }
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     win = s.transform.transform(win);
     win.intersect(hw->getViewport(), &win);
     win = s.transform.inverse().transform(win);
@@ -300,7 +300,7 @@ void ExLayer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
     engine.disableBlending();
 }
 
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
 void ExLayer::computeGeometryS3D(const sp<const DisplayDevice>& hw, Mesh& mesh,
         Mesh& meshLeftTop, Mesh &meshRightBottom, uint32_t s3d_fmt) const
 {
