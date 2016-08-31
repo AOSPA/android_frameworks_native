@@ -43,7 +43,7 @@ class ExSurfaceFlinger;
 class ExLayer : public Layer
 {
 public:
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     enum {
         /*
          * HWC S3D_MODE is set by HWC driver to indicate that HWC driver can not support
@@ -73,7 +73,7 @@ public:
                              HWComposer::HWCLayerInterface& layer);
     virtual bool canAllowGPUForProtected() const;
 
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     virtual void computeGeometryS3D(const sp<const DisplayDevice>& hw, Mesh& mesh,
         Mesh& meshLeftTop, Mesh &meshRightBottom, uint32_t s3d_fmt) const;
 #endif
@@ -84,7 +84,7 @@ protected:
     bool mIsHDMIPrimary;
 
 private:
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     // The mesh used to draw the layer in GLES composition mode for s3d left/top
     mutable Mesh mMeshLeftTop;
     // The mesh used to draw the layer in GLES composition mode for s3d right/bottom

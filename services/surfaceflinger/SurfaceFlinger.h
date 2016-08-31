@@ -141,7 +141,7 @@ private:
     friend class DisplayEventConnection;
     friend class Layer;
     friend class LayerDim;
-#ifdef HAS_S3D_SUPPORT
+#ifdef QTI_BSP
     friend class ExLayer;
 #endif
     friend class MonitoredProducer;
