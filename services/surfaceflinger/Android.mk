@@ -117,16 +117,6 @@ else
     LOCAL_CFLAGS += -DMAX_VIRTUAL_DISPLAY_DIMENSION=0
 endif
 
-ifeq ($(TARGET_SUPPORTS_S3D),)
-    ifeq ($(call is-board-platform-in-list,msm8996),true)
-        TARGET_SUPPORTS_S3D := true
-    endif
-endif
-
-ifeq ($(TARGET_SUPPORTS_S3D),true)
-    LOCAL_CFLAGS += -DQTI_S3D
-endif
-
 LOCAL_CFLAGS += -fvisibility=hidden -Werror=format
 LOCAL_CFLAGS += -std=c++14
 
