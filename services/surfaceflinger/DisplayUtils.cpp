@@ -100,9 +100,11 @@ HWComposer* DisplayUtils::getHWCInstance(
     if(sUseExtendedImpls) {
         return new ExHWComposer(flinger, handler);
     }
-#endif
+    return new HWComposer(flinger, handler);
+#else
     (void)handler;
     return new HWComposer(flinger);
+#endif
 }
 
 void DisplayUtils::initVDSInstance(HWComposer* hwc, int32_t hwcDisplayId,
