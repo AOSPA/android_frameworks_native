@@ -15,13 +15,13 @@
  */
 
 //#define LOG_NDEBUG 0
+#define LOG_TAG GRALLOC1_LOG_TAG
 
 #include <ui/Gralloc1.h>
 
 #include <vector>
 
-#undef LOG_TAG
-#define LOG_TAG GRALLOC1_LOG_TAG
+#include <android/log.h>
 
 namespace android {
 
