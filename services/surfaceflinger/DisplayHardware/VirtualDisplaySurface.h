@@ -72,8 +72,9 @@ class VirtualDisplaySurface : public DisplaySurface,
                               public BnGraphicBufferProducer,
                               private ConsumerBase {
 public:
+#ifdef QTI_BSP
     friend class ExVirtualDisplaySurface;
-
+#endif
     VirtualDisplaySurface(HWComposer& hwc, int32_t dispId,
             const sp<IGraphicBufferProducer>& sink,
             const sp<IGraphicBufferProducer>& bqProducer,
