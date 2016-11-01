@@ -1339,7 +1339,7 @@ void HWComposer::VSyncThread::setEnabled(bool enabled) {
 }
 
 void HWComposer::VSyncThread::onFirstRef() {
-    run("VSyncThread", PRIORITY_URGENT_DISPLAY + PRIORITY_REALTIME);
+    run("VSyncThread", PRIORITY_REALTIME);
 }
 
 bool HWComposer::VSyncThread::threadLoop() {

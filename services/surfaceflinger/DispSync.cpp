@@ -382,7 +382,7 @@ DispSync::DispSync(const char* name) :
         mRefreshSkipCount(0),
         mThread(new DispSyncThread(name)) {
 
-    mThread->run("DispSync", PRIORITY_URGENT_DISPLAY + PRIORITY_REALTIME);
+    mThread->run("DispSync", PRIORITY_REALTIME);
 
     reset();
     beginResync();
