@@ -537,7 +537,7 @@ void SurfaceFlinger::init() {
     getDefaultDisplayDevice()->makeCurrent(mEGLDisplay, mEGLContext);
 
     mEventControlThread = new EventControlThread(this);
-    mEventControlThread->run("EventControl", PRIORITY_URGENT_DISPLAY);
+    mEventControlThread->run("EventControl", PRIORITY_REALTIME);
 
     // set a fake vsync period if there is no HWComposer
     if (mHwc->initCheck() != NO_ERROR) {

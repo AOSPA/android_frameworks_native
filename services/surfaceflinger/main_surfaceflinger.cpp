@@ -40,9 +40,7 @@ int main(int, char**) {
     // instantiate surfaceflinger
     sp<SurfaceFlinger> flinger = DisplayUtils::getInstance()->getSFInstance();
 
-    setpriority(PRIO_PROCESS, 0, PRIORITY_URGENT_DISPLAY);
-
-    set_sched_policy(0, SP_FOREGROUND);
+    setpriority(PRIO_PROCESS, 0, PRIORITY_REALTIME);
 
 #ifdef ENABLE_CPUSETS
     // Put most SurfaceFlinger threads in the system-background cpuset
