@@ -489,7 +489,7 @@ void SurfaceFlinger::init() {
     getDefaultDisplayDevice()->makeCurrent(mEGLDisplay, mEGLContext);
 
     mEventControlThread = new EventControlThread(this);
-    mEventControlThread->run("EventControl", PRIORITY_URGENT_DISPLAY);
+    mEventControlThread->run("EventControl", PRIORITY_REALTIME);
 
     // initialize our drawing state
     mDrawingState = mCurrentState;
