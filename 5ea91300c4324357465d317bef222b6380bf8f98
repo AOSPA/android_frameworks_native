@@ -1,0 +1,27 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "da7095c5_d61c356d",
+        "filename": "services/surfaceflinger/main_surfaceflinger.cpp",
+        "patchSetId": 1
+      },
+      "lineNbr": 45,
+      "author": {
+        "id": 1000007
+      },
+      "writtenOn": "2016-11-04T18:26:59Z",
+      "side": 0,
+      "message": "This shouldn\u0027t be deleted",
+      "range": {
+        "startLine": 45,
+        "startChar": 4,
+        "endLine": 45,
+        "endChar": 39
+      },
+      "revId": "5ea91300c4324357465d317bef222b6380bf8f98",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": false
+    }
+  ]
+}
