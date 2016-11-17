@@ -360,7 +360,13 @@ public:
     Layer(const std::shared_ptr<Display>& display, hwc2_layer_t id);
     ~Layer();
 
-    bool isAbandoned() const { return mDisplay.expired(); }
+    bool isAbandoned() const {
+      if(magicNumber != 0xdeadbeef){
+        ALOGE("HWC2::Layer object is corrupted[0x%x]!",magicNumber);
+        return true;
+      }
+      return mDisplay.expired();
+    }
     hwc2_layer_t getId() const { return mId; }
 
     [[clang::warn_unused_result]] Error setCursorPosition(int32_t x, int32_t y);
@@ -387,6 +393,7 @@ public:
     [[clang::warn_unused_result]] Error setZOrder(uint32_t z);
 
 private:
+    unsigned int magicNumber;
     std::weak_ptr<Display> mDisplay;
     hwc2_display_t mDisplayId;
     Device& mDevice;
