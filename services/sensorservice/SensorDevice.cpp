@@ -64,6 +64,7 @@ SensorDevice::SensorDevice()
             Info model;
             for (size_t i=0 ; i<size_t(count) ; i++) {
                 mActivationCount.add(list[i].handle, model);
+                minDelayMap[list[i].handle] = list[i].minDelay * 1000;
                 mSensorDevice->activate(
                         reinterpret_cast<struct sensors_poll_device_t *>(mSensorDevice),
                         list[i].handle, 0);
@@ -236,6 +237,12 @@ status_t SensorDevice::batch(void* ident, int handle, int flags, int64_t samplin
                              int64_t maxBatchReportLatencyNs) {
     if (!mSensorDevice) return NO_INIT;
 
+    if (minDelayMap.find(handle) != minDelayMap.end()) {
+        if (samplingPeriodNs < minDelayMap[handle]) {
+            samplingPeriodNs = minDelayMap[handle];
+        }
+    }
+
     if (samplingPeriodNs < MINIMUM_EVENTS_PERIOD) {
         samplingPeriodNs = MINIMUM_EVENTS_PERIOD;
     }
@@ -299,6 +306,13 @@ status_t SensorDevice::batch(void* ident, int handle, int flags, int64_t samplin
 
 status_t SensorDevice::setDelay(void* ident, int handle, int64_t samplingPeriodNs) {
     if (!mSensorDevice) return NO_INIT;
+
+    if (minDelayMap.find(handle) != minDelayMap.end()) {
+        if (samplingPeriodNs < minDelayMap[handle]) {
+            samplingPeriodNs = minDelayMap[handle];
+        }
+    }
+
     if (samplingPeriodNs < MINIMUM_EVENTS_PERIOD) {
         samplingPeriodNs = MINIMUM_EVENTS_PERIOD;
     }
