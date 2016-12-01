@@ -49,6 +49,7 @@ LOCAL_MODULE := libbinder
 LOCAL_SHARED_LIBRARIES := liblog libcutils libutils
 
 LOCAL_CLANG := true
+LOCAL_SDCLANG_LTO := true
 LOCAL_SANITIZE := integer
 LOCAL_SRC_FILES := $(sources)
 ifneq ($(TARGET_USES_64_BIT_BINDER),true)
@@ -62,6 +63,7 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libbinder
 LOCAL_STATIC_LIBRARIES += libutils
+LOCAL_SDCLANG_LTO := true
 LOCAL_SRC_FILES := $(sources)
 ifneq ($(TARGET_USES_64_BIT_BINDER),true)
 ifneq ($(TARGET_IS_64_BIT),true)
