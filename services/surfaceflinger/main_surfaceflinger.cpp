@@ -66,8 +66,8 @@ int main(int, char**) {
 
     struct sched_param param = {0};
     param.sched_priority = 4;
-    if (sched_setscheduler(0, SCHED_RR, &param) != 0) {
-        ALOGE("Couldn't set SCHED_RR");
+    if (sched_setscheduler(0, SCHED_FIFO, &param) != 0) {
+        ALOGE("Couldn't set SCHED_FIFO");
     }
 
     // run surface flinger in this thread
