@@ -59,6 +59,8 @@ LOCAL_SRC_FILES:= $(deviceSources)
 LOCAL_CLANG := true
 LOCAL_SANITIZE := integer
 
+LOCAL_SDCLANG_LTO := true
+
 LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libcutils \
