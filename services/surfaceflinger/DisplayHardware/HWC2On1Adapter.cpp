@@ -22,14 +22,15 @@
 
 #include "HWC2On1Adapter.h"
 
-#include <hardware/hwcomposer.h>
-#include <log/log.h>
-#include <utils/Trace.h>
-
-#include <cstdlib>
-#include <chrono>
 #include <inttypes.h>
+
+#include <chrono>
+#include <cstdlib>
 #include <sstream>
+
+#include <android/log.h>
+#include <hardware/hwcomposer.h>
+#include <utils/Trace.h>
 
 using namespace std::chrono_literals;
 
@@ -86,6 +87,7 @@ void HWC2On1Adapter::DisplayContentsDeleter::operator()(
         for (size_t l = 0; l < contents->numHwLayers; ++l) {
             auto& layer = contents->hwLayers[l];
             std::free(const_cast<hwc_rect_t*>(layer.visibleRegionScreen.rects));
+            std::free(const_cast<hwc_rect_t*>(layer.surfaceDamage.rects));
         }
     }
     std::free(contents);
@@ -808,7 +810,10 @@ Error HWC2On1Adapter::Display::getRequests(int32_t* outDisplayRequests,
         return Error::None;
     }
 
-    *outDisplayRequests = mChanges->getDisplayRequests();
+    // Display requests (HWC2::DisplayRequest) are not supported by hwc1:
+    // A hwc1 has always zero requests for the client.
+    *outDisplayRequests = 0;
+
     uint32_t numWritten = 0;
     for (const auto& request : mChanges->getLayerRequests()) {
         if (numWritten == *outNumElements) {

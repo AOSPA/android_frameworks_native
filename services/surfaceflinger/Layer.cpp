@@ -80,7 +80,9 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
         mCurrentScalingMode(NATIVE_WINDOW_SCALING_MODE_FREEZE),
         mOverrideScalingMode(-1),
         mCurrentOpacity(true),
+        mBufferLatched(false),
         mCurrentFrameNumber(0),
+        mPreviousFrameNumber(-1U),
         mRefreshPending(false),
         mFrameLatencyNeeded(false),
         mFiltering(false),
@@ -163,9 +165,9 @@ void Layer::onFirstRef() {
     mSurfaceFlingerConsumer->setContentsChangedListener(this);
     mSurfaceFlingerConsumer->setName(mName);
 
-#ifndef TARGET_DISABLE_TRIPLE_BUFFERING
-    mProducer->setMaxDequeuedBufferCount(2);
-#endif
+    if (mFlinger->isLayerTripleBufferingDisabled()) {
+        mProducer->setMaxDequeuedBufferCount(2);
+    }
 
     const sp<const DisplayDevice> hw(mFlinger->getDefaultDisplayDevice());
     updateTransformHint(hw);
@@ -375,10 +377,10 @@ Rect Layer::computeBounds(const Region& activeTransparentRegion) const {
     return reduce(win, activeTransparentRegion);
 }
 
-FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
+gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
     // the content crop is the area of the content that gets scaled to the
     // layer's size.
-    FloatRect crop(getContentCrop());
+    gfx::FloatRect crop = getContentCrop().toFloatRect();
 
     // the crop is the area of the window that gets cropped, but not
     // scaled in any ways.
@@ -583,7 +585,7 @@ void Layer::setGeometry(
         hwcInfo.displayFrame = transformedFrame;
     }
 
-    FloatRect sourceCrop = computeCrop(displayDevice);
+    gfx::FloatRect sourceCrop = computeCrop(displayDevice);
     error = hwcLayer->setSourceCrop(sourceCrop);
     if (error != HWC2::Error::None) {
         ALOGE("[%s] Failed to set source crop [%.3f, %.3f, %.3f, %.3f]: "
@@ -904,7 +906,7 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
         // if not everything below us is covered, we plug the holes!
         Region holes(clip.subtract(under));
         if (!holes.isEmpty()) {
-            clearWithOpenGL(hw, holes, 0, 0, 0, 1);
+            clearWithOpenGL(hw, 0, 0, 0, 1);
         }
         return;
     }
@@ -970,13 +972,13 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
     } else {
         engine.setupLayerBlackedOut();
     }
-    drawWithOpenGL(hw, clip, useIdentityTransform);
+    drawWithOpenGL(hw, useIdentityTransform);
     engine.disableTexturing();
 }
 
 
 void Layer::clearWithOpenGL(const sp<const DisplayDevice>& hw,
-        const Region& /* clip */, float red, float green, float blue,
+        float red, float green, float blue,
         float alpha) const
 {
     RenderEngine& engine(mFlinger->getRenderEngine());
@@ -986,12 +988,12 @@ void Layer::clearWithOpenGL(const sp<const DisplayDevice>& hw,
 }
 
 void Layer::clearWithOpenGL(
-        const sp<const DisplayDevice>& hw, const Region& clip) const {
-    clearWithOpenGL(hw, clip, 0,0,0,0);
+        const sp<const DisplayDevice>& hw) const {
+    clearWithOpenGL(hw, 0,0,0,0);
 }
 
 void Layer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
-        const Region& /* clip */, bool useIdentityTransform) const {
+        bool useIdentityTransform) const {
     const State& s(getDrawingState());
 
     computeGeometry(hw, mMesh, useIdentityTransform);
@@ -1187,6 +1189,7 @@ bool Layer::getOpacityForFormat(uint32_t format) {
     switch (format) {
         case HAL_PIXEL_FORMAT_RGBA_8888:
         case HAL_PIXEL_FORMAT_BGRA_8888:
+        case HAL_PIXEL_FORMAT_RGBA_FP16:
             return false;
     }
     // in all other case, we have no blending (also for unknown formats)
@@ -1729,50 +1732,79 @@ bool Layer::shouldPresentNow(const DispSync& dispSync) const {
     return isDue || !isPlausible;
 }
 
-bool Layer::onPreComposition() {
+bool Layer::onPreComposition(nsecs_t refreshStartTime) {
+    if (mBufferLatched) {
+        Mutex::Autolock lock(mFrameEventHistoryMutex);
+        mFrameEventHistory.addPreComposition(mCurrentFrameNumber, refreshStartTime);
+    }
     mRefreshPending = false;
     return mQueuedFrames > 0 || mSidebandStreamChanged || mAutoRefresh;
 }
 
-bool Layer::onPostComposition() {
-    bool frameLatencyNeeded = mFrameLatencyNeeded;
-    if (mFrameLatencyNeeded) {
-        nsecs_t desiredPresentTime = mSurfaceFlingerConsumer->getTimestamp();
-        mFrameTracker.setDesiredPresentTime(desiredPresentTime);
+bool Layer::onPostComposition(
+        const std::shared_ptr<FenceTime>& glDoneFence,
+        const std::shared_ptr<FenceTime>& presentFence,
+        const std::shared_ptr<FenceTime>& retireFence) {
+    mAcquireTimeline.updateSignalTimes();
+    mReleaseTimeline.updateSignalTimes();
 
-        sp<Fence> frameReadyFence = mSurfaceFlingerConsumer->getCurrentFence();
-        if (frameReadyFence->isValid()) {
-            mFrameTracker.setFrameReadyFence(frameReadyFence);
-        } else {
-            // There was no fence for this frame, so assume that it was ready
-            // to be presented at the desired present time.
-            mFrameTracker.setFrameReadyTime(desiredPresentTime);
-        }
+    // mFrameLatencyNeeded is true when a new frame was latched for the
+    // composition.
+    if (!mFrameLatencyNeeded)
+        return false;
 
-        const HWComposer& hwc = mFlinger->getHwComposer();
-#ifdef USE_HWC2
-        sp<Fence> presentFence = hwc.getRetireFence(HWC_DISPLAY_PRIMARY);
-#else
-        sp<Fence> presentFence = hwc.getDisplayFence(HWC_DISPLAY_PRIMARY);
-#endif
-        if (presentFence->isValid()) {
-            mFrameTracker.setActualPresentFence(presentFence);
-        } else {
-            // The HWC doesn't support present fences, so use the refresh
-            // timestamp instead.
-            nsecs_t presentTime = hwc.getRefreshTimestamp(HWC_DISPLAY_PRIMARY);
-            mFrameTracker.setActualPresentTime(presentTime);
-        }
-
-        mFrameTracker.advanceFrame();
-        mFrameLatencyNeeded = false;
+    // Update mFrameEventHistory.
+    {
+        Mutex::Autolock lock(mFrameEventHistoryMutex);
+        mFrameEventHistory.addPostComposition(mCurrentFrameNumber,
+                glDoneFence, presentFence);
+        mFrameEventHistory.addRetire(mPreviousFrameNumber,
+                retireFence);
     }
-    return frameLatencyNeeded;
+
+    // Update mFrameTracker.
+    nsecs_t desiredPresentTime = mSurfaceFlingerConsumer->getTimestamp();
+    mFrameTracker.setDesiredPresentTime(desiredPresentTime);
+
+    std::shared_ptr<FenceTime> frameReadyFence =
+            mSurfaceFlingerConsumer->getCurrentFenceTime();
+    if (frameReadyFence->isValid()) {
+        mFrameTracker.setFrameReadyFence(std::move(frameReadyFence));
+    } else {
+        // There was no fence for this frame, so assume that it was ready
+        // to be presented at the desired present time.
+        mFrameTracker.setFrameReadyTime(desiredPresentTime);
+    }
+
+    if (presentFence->isValid()) {
+        mFrameTracker.setActualPresentFence(
+                std::shared_ptr<FenceTime>(presentFence));
+    } else if (retireFence->isValid()) {
+        mFrameTracker.setActualPresentFence(
+                std::shared_ptr<FenceTime>(retireFence));
+    } else {
+        // The HWC doesn't support present fences, so use the refresh
+        // timestamp instead.
+        mFrameTracker.setActualPresentTime(
+            mFlinger->getHwComposer().getRefreshTimestamp(
+                HWC_DISPLAY_PRIMARY));
+    }
+
+    mFrameTracker.advanceFrame();
+    mFrameLatencyNeeded = false;
+    return true;
 }
 
 #ifdef USE_HWC2
 void Layer::releasePendingBuffer() {
     mSurfaceFlingerConsumer->releasePendingBuffer();
+    auto releaseFenceTime = std::make_shared<FenceTime>(
+            mSurfaceFlingerConsumer->getPrevFinalReleaseFence());
+    mReleaseTimeline.push(releaseFenceTime);
+
+    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    mFrameEventHistory.addRelease(
+            mPreviousFrameNumber, std::move(releaseFenceTime));
 }
 #endif
 
@@ -1813,7 +1845,7 @@ bool Layer::allTransactionsSignaled() {
     return !matchingFramesFound || allTransactionsApplied;
 }
 
-Region Layer::latchBuffer(bool& recomputeVisibleRegions)
+Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
 {
     ATRACE_CALL();
 
@@ -1937,6 +1969,22 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions)
         return outDirtyRegion;
     }
 
+    mBufferLatched = true;
+    mPreviousFrameNumber = mCurrentFrameNumber;
+    mCurrentFrameNumber = mSurfaceFlingerConsumer->getFrameNumber();
+
+    {
+        Mutex::Autolock lock(mFrameEventHistoryMutex);
+        mFrameEventHistory.addLatch(mCurrentFrameNumber, latchTime);
+#ifndef USE_HWC2
+        auto releaseFenceTime = std::make_shared<FenceTime>(
+                mSurfaceFlingerConsumer->getPrevFinalReleaseFence());
+        mReleaseTimeline.push(releaseFenceTime);
+        mFrameEventHistory.addRelease(
+                mPreviousFrameNumber, std::move(releaseFenceTime));
+#endif
+    }
+
     mRefreshPending = true;
     mFrameLatencyNeeded = true;
     if (oldActiveBuffer == NULL) {
@@ -1971,8 +2019,6 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions)
     if (oldOpacity != isOpaque(s)) {
         recomputeVisibleRegions = true;
     }
-
-    mCurrentFrameNumber = mSurfaceFlingerConsumer->getFrameNumber();
 
     // Remove any sync points corresponding to the buffer which was just
     // latched
@@ -2133,7 +2179,7 @@ void Layer::miniDump(String8& result, int32_t hwcId) const {
     const Rect& frame = hwcInfo.displayFrame;
     result.appendFormat("%4d %4d %4d %4d | ", frame.left, frame.top,
             frame.right, frame.bottom);
-    const FloatRect& crop = hwcInfo.sourceCrop;
+    const gfx::FloatRect& crop = hwcInfo.sourceCrop;
     result.appendFormat("%6.1f %6.1f %6.1f %6.1f\n", crop.left, crop.top,
             crop.right, crop.bottom);
 
@@ -2158,22 +2204,25 @@ void Layer::getFrameStats(FrameStats* outStats) const {
     mFrameTracker.getStats(outStats);
 }
 
-void Layer::getFenceData(String8* outName, uint64_t* outFrameNumber,
-        bool* outIsGlesComposition, nsecs_t* outPostedTime,
-        sp<Fence>* outAcquireFence, sp<Fence>* outPrevReleaseFence) const {
-    *outName = mName;
-    *outFrameNumber = mSurfaceFlingerConsumer->getFrameNumber();
+void Layer::dumpFrameEvents(String8& result) {
+    result.appendFormat("- Layer %s (%s, %p)\n",
+            getName().string(), getTypeId(), this);
+    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    mFrameEventHistory.checkFencesForCompletion();
+    mFrameEventHistory.dump(result);
+}
 
-#ifdef USE_HWC2
-    *outIsGlesComposition = mHwcLayers.count(HWC_DISPLAY_PRIMARY) ?
-            mHwcLayers.at(HWC_DISPLAY_PRIMARY).compositionType ==
-            HWC2::Composition::Client : true;
-#else
-    *outIsGlesComposition = mIsGlesComposition;
-#endif
-    *outPostedTime = mSurfaceFlingerConsumer->getTimestamp();
-    *outAcquireFence = mSurfaceFlingerConsumer->getCurrentFence();
-    *outPrevReleaseFence = mSurfaceFlingerConsumer->getPrevReleaseFence();
+void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
+        FrameEventHistoryDelta *outDelta) {
+    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    if (newTimestamps) {
+        mAcquireTimeline.push(newTimestamps->acquireFence);
+        mFrameEventHistory.addQueue(*newTimestamps);
+    }
+
+    if (outDelta) {
+        mFrameEventHistory.getAndResetDelta(outDelta);
+    }
 }
 
 std::vector<OccupancyTracker::Segment> Layer::getOccupancyHistory(

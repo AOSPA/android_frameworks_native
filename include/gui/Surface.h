@@ -134,10 +134,17 @@ public:
     status_t getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
             sp<Fence>* outFence, float outTransformMatrix[16]);
 
+    /* Enables or disables frame timestamp tracking. It is disabled by default
+     * to avoid overhead during queue and dequeue for applications that don't
+     * need the feature. If disabled, calls to getFrameTimestamps will fail.
+     */
+    void enableFrameTimestamps(bool enable);
+
     // See IGraphicBufferProducer::getFrameTimestamps
-    bool getFrameTimestamps(uint64_t frameNumber, nsecs_t* outPostedTime,
-            nsecs_t* outAcquireTime, nsecs_t* outRefreshStartTime,
-            nsecs_t* outGlCompositionDoneTime, nsecs_t* outDisplayRetireTime,
+    status_t getFrameTimestamps(uint64_t frameNumber,
+            nsecs_t* outRequestedPresentTime, nsecs_t* outAcquireTime,
+            nsecs_t* outRefreshStartTime, nsecs_t* outGlCompositionDoneTime,
+            nsecs_t* outDisplayPresentTime, nsecs_t* outDisplayRetireTime,
             nsecs_t* outReleaseTime);
 
     status_t getUniqueId(uint64_t* outId) const;
@@ -191,6 +198,7 @@ private:
     int dispatchSetSurfaceDamage(va_list args);
     int dispatchSetSharedBufferMode(va_list args);
     int dispatchSetAutoRefresh(va_list args);
+    int dispatchEnableFrameTimestamps(va_list args);
     int dispatchGetFrameTimestamps(va_list args);
 
 protected:
@@ -238,6 +246,8 @@ protected:
     enum { DEFAULT_FORMAT = PIXEL_FORMAT_RGBA_8888 };
 
 private:
+    void querySupportedTimestampsLocked() const;
+
     void freeAllBuffers();
     int getSlotFromBufferLocked(android_native_buffer_t* buffer) const;
 
@@ -380,6 +390,15 @@ private:
     Condition mQueueBufferCondition;
 
     uint64_t mNextFrameNumber;
+
+    // Mutable because ANativeWindow::query needs this class const.
+    mutable bool mQueriedSupportedTimestamps;
+    mutable bool mFrameTimestampsSupportsPresent;
+    mutable bool mFrameTimestampsSupportsRetire;
+
+    // A cached copy of the FrameEventHistory maintained by the consumer.
+    bool mEnableFrameTimestamps = false;
+    ProducerFrameEventHistory mFrameEventHistory;
 };
 
 namespace view {

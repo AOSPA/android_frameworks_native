@@ -42,6 +42,9 @@ cc_library_shared {
         "-Wno-nested-anon-types",
         "-Wno-gnu-anonymous-struct",
 
+        // We are aware of the risks inherent in comparing floats for equality
+        "-Wno-float-equal",
+
         "-DDEBUG_ONLY_CODE=0",
     ],
 
@@ -71,6 +74,7 @@ cc_library_shared {
         "ConsumerBase.cpp",
         "CpuConsumer.cpp",
         "DisplayEventReceiver.cpp",
+        "FrameTimestamps.cpp",
         "GLConsumer.cpp",
         "GraphicBufferAlloc.cpp",
         "GuiConfig.cpp",
@@ -95,6 +99,7 @@ cc_library_shared {
     ],
 
     shared_libs: [
+        "libsync",
         "libbinder",
         "libcutils",
         "libEGL",

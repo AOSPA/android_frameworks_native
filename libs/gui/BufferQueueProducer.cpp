@@ -348,7 +348,8 @@ status_t BufferQueueProducer::waitForFreeSlotThenRelock(FreeSlotCaller caller,
 
 status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
         sp<android::Fence> *outFence, uint32_t width, uint32_t height,
-        PixelFormat format, uint32_t usage) {
+        PixelFormat format, uint32_t usage,
+        FrameEventHistoryDelta* outTimestamps) {
     ATRACE_CALL();
     { // Autolock scope
         Mutex::Autolock lock(mCore->mMutex);
@@ -560,6 +561,8 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
             mSlots[*outSlot].mFrameNumber,
             mSlots[*outSlot].mGraphicBuffer->handle, returnFlags);
 
+    addAndGetFrameTimestamps(nullptr, outTimestamps);
+
     return returnFlags;
 }
 
@@ -740,22 +743,26 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     ATRACE_CALL();
     ATRACE_BUFFER_INDEX(slot);
 
-    int64_t timestamp;
+    int64_t requestedPresentTimestamp;
     bool isAutoTimestamp;
     android_dataspace dataSpace;
     Rect crop(Rect::EMPTY_RECT);
     int scalingMode;
     uint32_t transform;
     uint32_t stickyTransform;
-    sp<Fence> fence;
-    input.deflate(&timestamp, &isAutoTimestamp, &dataSpace, &crop, &scalingMode,
-            &transform, &fence, &stickyTransform);
+    sp<Fence> acquireFence;
+    bool getFrameTimestamps = false;
+    input.deflate(&requestedPresentTimestamp, &isAutoTimestamp, &dataSpace,
+            &crop, &scalingMode, &transform, &acquireFence, &stickyTransform,
+            &getFrameTimestamps);
     Region surfaceDamage = input.getSurfaceDamage();
 
-    if (fence == NULL) {
+    if (acquireFence == NULL) {
         BQ_LOGE("queueBuffer: fence is NULL");
         return BAD_VALUE;
     }
+
+    auto acquireFenceTime = std::make_shared<FenceTime>(acquireFence);
 
     switch (scalingMode) {
         case NATIVE_WINDOW_SCALING_MODE_FREEZE:
@@ -771,6 +778,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     sp<IConsumerListener> frameAvailableListener;
     sp<IConsumerListener> frameReplacedListener;
     int callbackTicket = 0;
+    uint64_t currentFrameNumber = 0;
     BufferItem item;
     { // Autolock scope
         Mutex::Autolock lock(mCore->mMutex);
@@ -809,8 +817,9 @@ status_t BufferQueueProducer::queueBuffer(int slot,
 
         BQ_LOGV("queueBuffer: slot=%d/%" PRIu64 " time=%" PRIu64 " dataSpace=%d"
                 " crop=[%d,%d,%d,%d] transform=%#x scale=%s",
-                slot, mCore->mFrameCounter + 1, timestamp, dataSpace,
-                crop.left, crop.top, crop.right, crop.bottom, transform,
+                slot, mCore->mFrameCounter + 1, requestedPresentTimestamp,
+                dataSpace, crop.left, crop.top, crop.right, crop.bottom,
+                transform,
                 BufferItem::scalingModeName(static_cast<uint32_t>(scalingMode)));
 
         const sp<GraphicBuffer>& graphicBuffer(mSlots[slot].mGraphicBuffer);
@@ -828,11 +837,14 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             dataSpace = mCore->mDefaultBufferDataSpace;
         }
 
-        mSlots[slot].mFence = fence;
+        mSlots[slot].mFence = acquireFence;
         mSlots[slot].mBufferState.queue();
 
+        // Increment the frame counter and store a local version of it
+        // for use outside the lock on mCore->mMutex.
         ++mCore->mFrameCounter;
-        mSlots[slot].mFrameNumber = mCore->mFrameCounter;
+        currentFrameNumber = mCore->mFrameCounter;
+        mSlots[slot].mFrameNumber = currentFrameNumber;
 
         item.mAcquireCalled = mSlots[slot].mAcquireCalled;
         item.mGraphicBuffer = mSlots[slot].mGraphicBuffer;
@@ -842,12 +854,13 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         item.mTransformToDisplayInverse =
                 (transform & NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY) != 0;
         item.mScalingMode = static_cast<uint32_t>(scalingMode);
-        item.mTimestamp = timestamp;
+        item.mTimestamp = requestedPresentTimestamp;
         item.mIsAutoTimestamp = isAutoTimestamp;
         item.mDataSpace = dataSpace;
-        item.mFrameNumber = mCore->mFrameCounter;
+        item.mFrameNumber = currentFrameNumber;
         item.mSlot = slot;
-        item.mFence = fence;
+        item.mFence = acquireFence;
+        item.mFenceTime = acquireFenceTime;
         item.mIsDroppable = mCore->mAsyncMode ||
                 mCore->mDequeueBufferCannotBlock ||
                 (mCore->mSharedBufferMode && mCore->mSharedBufferSlot == slot);
@@ -908,10 +921,11 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         mCore->mDequeueCondition.broadcast();
         mCore->mLastQueuedSlot = slot;
 
-        output->inflate(mCore->mDefaultWidth, mCore->mDefaultHeight,
-                mCore->mTransformHint,
-                static_cast<uint32_t>(mCore->mQueue.size()),
-                mCore->mFrameCounter + 1);
+        output->width = mCore->mDefaultWidth;
+        output->height = mCore->mDefaultHeight;
+        output->transformHint = mCore->mTransformHint;
+        output->numPendingBuffers = static_cast<uint32_t>(mCore->mQueue.size());
+        output->nextFrameNumber = mCore->mFrameCounter + 1;
 
         ATRACE_INT(mCore->mConsumerName.string(),
                 static_cast<int32_t>(mCore->mQueue.size()));
@@ -958,9 +972,20 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         // small trade-off in favor of latency rather than throughput.
         mLastQueueBufferFence->waitForever("Throttling EGL Production");
     }
-    mLastQueueBufferFence = fence;
+    mLastQueueBufferFence = std::move(acquireFence);
     mLastQueuedCrop = item.mCrop;
     mLastQueuedTransform = item.mTransform;
+
+    // Update and get FrameEventHistory.
+    nsecs_t postedTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    NewFrameEventsEntry newFrameEventsEntry = {
+        currentFrameNumber,
+        postedTime,
+        requestedPresentTimestamp,
+        std::move(acquireFenceTime)
+    };
+    addAndGetFrameTimestamps(&newFrameEventsEntry,
+            getFrameTimestamps ? &output->frameTimestamps : nullptr);
 
     return NO_ERROR;
 }
@@ -1126,10 +1151,13 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
         case NATIVE_WINDOW_API_MEDIA:
         case NATIVE_WINDOW_API_CAMERA:
             mCore->mConnectedApi = api;
-            output->inflate(mCore->mDefaultWidth, mCore->mDefaultHeight,
-                    mCore->mTransformHint,
-                    static_cast<uint32_t>(mCore->mQueue.size()),
-                    mCore->mFrameCounter + 1);
+
+            output->width = mCore->mDefaultWidth;
+            output->height = mCore->mDefaultHeight;
+            output->transformHint = mCore->mTransformHint;
+            output->numPendingBuffers =
+                    static_cast<uint32_t>(mCore->mQueue.size());
+            output->nextFrameNumber = mCore->mFrameCounter + 1;
 
             if (listener != NULL) {
                 // Set up a death notification so that we can disconnect
@@ -1449,20 +1477,27 @@ status_t BufferQueueProducer::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
     return NO_ERROR;
 }
 
-bool BufferQueueProducer::getFrameTimestamps(uint64_t frameNumber,
-        FrameTimestamps* outTimestamps) const {
-    ATRACE_CALL();
-    BQ_LOGV("getFrameTimestamps, %" PRIu64, frameNumber);
-    sp<IConsumerListener> listener;
+void BufferQueueProducer::getFrameTimestamps(FrameEventHistoryDelta* outDelta) {
+    addAndGetFrameTimestamps(nullptr, outDelta);
+}
 
+void BufferQueueProducer::addAndGetFrameTimestamps(
+        const NewFrameEventsEntry* newTimestamps,
+        FrameEventHistoryDelta* outDelta) {
+    if (newTimestamps == nullptr && outDelta == nullptr) {
+        return;
+    }
+
+    ATRACE_CALL();
+    BQ_LOGV("addAndGetFrameTimestamps");
+    sp<IConsumerListener> listener;
     {
         Mutex::Autolock lock(mCore->mMutex);
         listener = mCore->mConsumerListener;
     }
     if (listener != NULL) {
-        return listener->getFrameTimestamps(frameNumber, outTimestamps);
+        listener->addAndGetFrameTimestamps(newTimestamps, outDelta);
     }
-    return false;
 }
 
 void BufferQueueProducer::binderDied(const wp<android::IBinder>& /* who */) {

@@ -18,6 +18,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <fts.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -29,10 +30,10 @@
 #include <sys/statfs.h>
 #endif
 
+#include <android/log.h>
 #include <android-base/logging.h>
 #include <android-base/stringprintf.h>
 #include <cutils/fs.h>
-#include <cutils/log.h>
 #include <private/android_filesystem_config.h>
 
 #include "globals.h"  // extern variables.
@@ -53,7 +54,7 @@ namespace installd {
  * Check that given string is valid filename, and that it attempts no
  * parent or child directory traversal.
  */
-static bool is_valid_filename(const std::string& name) {
+bool is_valid_filename(const std::string& name) {
     if (name.empty() || (name == ".") || (name == "..")
             || (name.find('/') != std::string::npos)) {
         return false;
@@ -64,7 +65,7 @@ static bool is_valid_filename(const std::string& name) {
 
 static void check_package_name(const char* package_name) {
     CHECK(is_valid_filename(package_name));
-    CHECK(is_valid_package_name(package_name) == 0);
+    CHECK(is_valid_package_name(package_name));
 }
 
 /**
@@ -135,7 +136,7 @@ std::string create_data_user_de_package_path(const char* volume_uuid,
 
 int create_pkg_path(char path[PKG_PATH_MAX], const char *pkgname,
         const char *postfix, userid_t userid) {
-    if (is_valid_package_name(pkgname) != 0) {
+    if (!is_valid_package_name(pkgname)) {
         path[0] = '\0';
         return -1;
     }
@@ -198,22 +199,51 @@ std::string create_data_media_path(const char* volume_uuid, userid_t userid) {
     return StringPrintf("%s/media/%u", create_data_path(volume_uuid).c_str(), userid);
 }
 
+std::string create_data_media_obb_path(const char* volume_uuid, const char* package_name) {
+    return StringPrintf("%s/media/obb/%s", create_data_path(volume_uuid).c_str(), package_name);
+}
+
+std::string create_data_media_package_path(const char* volume_uuid, userid_t userid,
+        const char* data_type, const char* package_name) {
+    return StringPrintf("%s/Android/%s/%s", create_data_media_path(volume_uuid, userid).c_str(),
+            data_type, package_name);
+}
+
 std::string create_data_misc_legacy_path(userid_t userid) {
     return StringPrintf("%s/misc/user/%u", create_data_path(nullptr).c_str(), userid);
 }
 
-std::string create_data_user_profiles_path(userid_t userid) {
+std::string create_data_user_profile_path(userid_t userid) {
     return StringPrintf("%s/cur/%u", android_profiles_dir.path, userid);
 }
 
 std::string create_data_user_profile_package_path(userid_t user, const char* package_name) {
     check_package_name(package_name);
-    return StringPrintf("%s/%s",create_data_user_profiles_path(user).c_str(), package_name);
+    return StringPrintf("%s/%s",create_data_user_profile_path(user).c_str(), package_name);
+}
+
+std::string create_data_ref_profile_path() {
+    return StringPrintf("%s/ref", android_profiles_dir.path);
 }
 
 std::string create_data_ref_profile_package_path(const char* package_name) {
     check_package_name(package_name);
     return StringPrintf("%s/ref/%s", android_profiles_dir.path, package_name);
+}
+
+std::string create_data_dalvik_cache_path() {
+    return "/data/dalvik-cache";
+}
+
+std::string create_data_misc_foreign_dex_path(userid_t userid) {
+    return StringPrintf("/data/misc/profiles/cur/%d/foreign-dex", userid);
+}
+
+// Keep profile paths in sync with ActivityThread.
+constexpr const char* PRIMARY_PROFILE_NAME = "primary.prof";
+
+std::string create_primary_profile(const std::string& profile_dir) {
+    return StringPrintf("%s/%s", profile_dir.c_str(), PRIMARY_PROFILE_NAME);
 }
 
 std::vector<userid_t> get_known_users(const char* volume_uuid) {
@@ -248,6 +278,59 @@ std::vector<userid_t> get_known_users(const char* volume_uuid) {
     return users;
 }
 
+int calculate_tree_size(const std::string& path, int64_t* size,
+        int32_t include_gid, int32_t exclude_gid, bool exclude_apps) {
+    FTS *fts;
+    FTSENT *p;
+    int64_t matchedSize = 0;
+    char *argv[] = { (char*) path.c_str(), nullptr };
+    if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_XDEV, NULL))) {
+        if (errno != ENOENT) {
+            PLOG(ERROR) << "Failed to fts_open " << path;
+        }
+        return -1;
+    }
+    while ((p = fts_read(fts)) != NULL) {
+        switch (p->fts_info) {
+        case FTS_D:
+        case FTS_DEFAULT:
+        case FTS_F:
+        case FTS_SL:
+        case FTS_SLNONE:
+            int32_t uid = p->fts_statp->st_uid;
+            int32_t gid = p->fts_statp->st_gid;
+            int32_t user_uid = multiuser_get_app_id(uid);
+            int32_t user_gid = multiuser_get_app_id(gid);
+            if (exclude_apps && ((user_uid >= AID_APP_START && user_uid <= AID_APP_END)
+                    || (user_gid >= AID_CACHE_GID_START && user_gid <= AID_CACHE_GID_END)
+                    || (user_gid >= AID_SHARED_GID_START && user_gid <= AID_SHARED_GID_END))) {
+                // Don't traverse inside or measure
+                fts_set(fts, p, FTS_SKIP);
+                break;
+            }
+            if (include_gid != -1 && gid != include_gid) {
+                break;
+            }
+            if (exclude_gid != -1 && gid == exclude_gid) {
+                break;
+            }
+            matchedSize += (p->fts_statp->st_blocks * 512);
+            break;
+        }
+    }
+    fts_close(fts);
+#if MEASURE_DEBUG
+    if ((include_gid == -1) && (exclude_gid == -1)) {
+        LOG(DEBUG) << "Measured " << path << " size " << matchedSize;
+    } else {
+        LOG(DEBUG) << "Measured " << path << " size " << matchedSize << "; include " << include_gid
+                << " exclude " << exclude_gid;
+    }
+#endif
+    *size += matchedSize;
+    return 0;
+}
+
 int create_move_path(char path[PKG_PATH_MAX],
     const char* pkgname,
     const char* leaf,
@@ -266,12 +349,13 @@ int create_move_path(char path[PKG_PATH_MAX],
  * Checks whether the package name is valid. Returns -1 on error and
  * 0 on success.
  */
-int is_valid_package_name(const char* pkgname) {
+bool is_valid_package_name(const std::string& packageName) {
+    const char* pkgname = packageName.c_str();
     const char *x = pkgname;
     int alpha = -1;
 
     if (strlen(pkgname) > PKG_NAME_MAX) {
-        return -1;
+        return false;
     }
 
     while (*x) {
@@ -281,7 +365,7 @@ int is_valid_package_name(const char* pkgname) {
             if ((x == pkgname) || (x[1] == '.') || (x[1] == 0)) {
                     /* periods must not be first, last, or doubled */
                 ALOGE("invalid package name '%s'\n", pkgname);
-                return -1;
+                return false;
             }
         } else if (*x == '-') {
             /* Suffix -X is fine to let versioning of packages.
@@ -290,7 +374,7 @@ int is_valid_package_name(const char* pkgname) {
         } else {
                 /* anything not A-Z, a-z, 0-9, _, or . is invalid */
             ALOGE("invalid package name '%s'\n", pkgname);
-            return -1;
+            return false;
         }
 
         x++;
@@ -302,13 +386,13 @@ int is_valid_package_name(const char* pkgname) {
         while (*x) {
             if (!isalnum(*x)) {
                 ALOGE("invalid package name '%s' should include only numbers after -\n", pkgname);
-                return -1;
+                return false;
             }
             x++;
         }
     }
 
-    return 0;
+    return true;
 }
 
 static int _delete_dir_contents(DIR *d,

@@ -5,8 +5,8 @@ cc_test {
     srcs: ["installd_utils_test.cpp"],
     shared_libs: [
         "libbase",
-        "libutils",
         "liblog",
+        "libutils",
         "libcutils",
     ],
     static_libs: [

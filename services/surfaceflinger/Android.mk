@@ -10,7 +10,6 @@ LOCAL_SRC_FILES := \
     DispSync.cpp \
     EventControlThread.cpp \
     EventThread.cpp \
-    FenceTracker.cpp \
     FrameTracker.cpp \
     GpuService.cpp \
     Layer.cpp \
@@ -43,6 +42,7 @@ LOCAL_MODULE := libsurfaceflinger
 LOCAL_C_INCLUDES := \
     frameworks/native/vulkan/include \
     external/vulkan-validation-layers/libs/vkjson \
+    system/libhwbinder/fast_msgq/include \
 
 LOCAL_CFLAGS := -DLOG_TAG=\"SurfaceFlinger\"
 LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -DEGL_EGLEXT_PROTOTYPES
@@ -67,10 +67,6 @@ ifeq ($(TARGET_BOARD_PLATFORM),omap4)
 endif
 ifeq ($(TARGET_BOARD_PLATFORM),s5pc110)
     LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY
-endif
-
-ifeq ($(TARGET_DISABLE_TRIPLE_BUFFERING),true)
-    LOCAL_CFLAGS += -DTARGET_DISABLE_TRIPLE_BUFFERING
 endif
 
 ifeq ($(TARGET_FORCE_HWC_FOR_VIRTUAL_DISPLAYS),true)
@@ -131,13 +127,14 @@ endif
 
 LOCAL_CFLAGS += -fvisibility=hidden -Werror=format
 
-LOCAL_STATIC_LIBRARIES := libtrace_proto libvkjson
+LOCAL_STATIC_LIBRARIES := libhwcomposer-command-buffer libtrace_proto libvkjson
 LOCAL_SHARED_LIBRARIES := \
     android.hardware.graphics.allocator@2.0 \
     android.hardware.graphics.composer@2.1 \
     libcutils \
     liblog \
     libdl \
+    libfmq \
     libhardware \
     libhidlbase \
     libhidltransport \
@@ -151,6 +148,7 @@ LOCAL_SHARED_LIBRARIES := \
     libgui \
     libpowermanager \
     libvulkan \
+    libsync \
     libprotobuf-cpp-lite \
     libbase \
     android.hardware.power@1.0

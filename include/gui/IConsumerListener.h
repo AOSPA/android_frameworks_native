@@ -82,10 +82,11 @@ public:
     // different stream.
     virtual void onSidebandStreamChanged() = 0; /* Asynchronous */
 
-    // See IGraphicBufferProducer::getFrameTimestamps
-    // This queries the consumer for the timestamps
-    virtual bool getFrameTimestamps(uint64_t /*frameNumber*/,
-            FrameTimestamps* /*outTimestamps*/) const { return false; }
+    // Notifies the consumer of any new producer-side timestamps and
+    // returns the combined frame history that hasn't already been retrieved.
+    virtual void addAndGetFrameTimestamps(
+            const NewFrameEventsEntry* /*newTimestamps*/,
+            FrameEventHistoryDelta* /*outDelta*/) {}
 };
 
 

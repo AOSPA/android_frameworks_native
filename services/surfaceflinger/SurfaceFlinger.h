@@ -37,6 +37,7 @@
 
 #include <binder/IMemory.h>
 
+#include <ui/FenceTime.h>
 #include <ui/PixelFormat.h>
 #include <ui/mat4.h>
 
@@ -53,7 +54,6 @@
 #include "Barrier.h"
 #include "DisplayDevice.h"
 #include "DispSync.h"
-#include "FenceTracker.h"
 #include "FrameTracker.h"
 #include "MessageQueue.h"
 #include "SurfaceInterceptor.h"
@@ -200,6 +200,8 @@ private:
     virtual void bootFinished();
     virtual bool authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const;
+    virtual status_t getSupportedFrameTimestamps(
+            std::vector<FrameEvent>* outSupported) const;
     virtual sp<IDisplayEventConnection> createDisplayEventConnection();
     virtual status_t captureScreen(const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
@@ -282,7 +284,7 @@ private:
      * Transactions
      */
     uint32_t getTransactionFlags(uint32_t flags);
-    uint32_t peekTransactionFlags(uint32_t flags);
+    uint32_t peekTransactionFlags();
     uint32_t setTransactionFlags(uint32_t flags);
     void commitTransaction();
     uint32_t setClientStateLocked(const sp<Client>& client, const layer_state_t& s);
@@ -399,20 +401,20 @@ private:
             const LayerVector& currentLayers, uint32_t layerStack,
             Region& dirtyRegion, Region& opaqueRegion);
 
-    void preComposition();
-    void postComposition(nsecs_t refreshStartTime);
+    void preComposition(nsecs_t refreshStartTime);
+    void postComposition();
     void rebuildLayerStacks();
     void setUpHWComposer();
     void doComposition();
     void doDebugFlashRegions();
-    void doDisplayComposition(const sp<const DisplayDevice>& hw, const Region& dirtyRegion);
+    void doDisplayComposition(const sp<const DisplayDevice>& displayDevice, const Region& dirtyRegion);
 
     // compose surfaces for display hw. this fails if using GL and the surface
     // has been destroyed and is no longer valid.
-    bool doComposeSurfaces(const sp<const DisplayDevice>& hw, const Region& dirty);
+    bool doComposeSurfaces(const sp<const DisplayDevice>& displayDevice, const Region& dirty);
 
     void postFramebuffer();
-    void drawWormhole(const sp<const DisplayDevice>& hw, const Region& region) const;
+    void drawWormhole(const sp<const DisplayDevice>& displayDevice, const Region& region) const;
 
     /* ------------------------------------------------------------------------
      * Display management
@@ -436,7 +438,7 @@ private:
     void clearStatsLocked(const Vector<String16>& args, size_t& index, String8& result);
     void dumpAllLocked(const Vector<String16>& args, size_t& index, String8& result) const;
     bool startDdmConnection();
-    static void appendSfConfigString(String8& result);
+    void appendSfConfigString(String8& result) const;
     void checkScreenshot(size_t w, size_t s, size_t h, void const* vaddr,
             const sp<const DisplayDevice>& hw,
             uint32_t minLayerZ, uint32_t maxLayerZ);
@@ -444,14 +446,16 @@ private:
     void logFrameStats();
 
     void dumpStaticScreenStats(String8& result) const;
+    // Not const because each Layer needs to query Fences and cache timestamps.
+    void dumpFrameEventsLocked(String8& result);
 
     void recordBufferingStats(const char* layerName,
             std::vector<OccupancyTracker::Segment>&& history);
     void dumpBufferingStats(String8& result) const;
 
-    bool getFrameTimestamps(const Layer& layer, uint64_t frameNumber,
-            FrameTimestamps* outTimestamps);
-
+    bool isLayerTripleBufferingDisabled() const {
+        return this->mLayerTripleBufferingDisabled;
+    }
     /* ------------------------------------------------------------------------
      * Attributes
      */
@@ -501,6 +505,8 @@ private:
     sp<Fence> mPreviousPresentFence = Fence::NO_FENCE;
     bool mHadClientComposition = false;
 #endif
+    FenceTimeline mGlCompositionDoneTimeline;
+    FenceTimeline mDisplayTimeline;
 
     // this may only be written from the main thread with mStateLock held
     // it may be read from other threads with mStateLock held
@@ -517,12 +523,14 @@ private:
     nsecs_t mLastTransactionTime;
     bool mBootFinished;
     bool mForceFullDamage;
-    FenceTracker mFenceTracker;
 #ifdef USE_HWC2
     bool mPropagateBackpressure = true;
 #endif
     SurfaceInterceptor mInterceptor;
     bool mUseHwcVirtualDisplays = true;
+
+    // Restrict layers to use two buffers in their bufferqueues.
+    bool mLayerTripleBufferingDisabled = false;
 
     // these are thread safe
     mutable MessageQueue mEventQueue;

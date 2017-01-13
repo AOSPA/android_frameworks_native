@@ -27,7 +27,7 @@
 
 #include <EGL/egl.h>
 
-#include <cutils/log.h>
+#include <android/log.h>
 #include <cutils/properties.h>
 
 #include <binder/IPCThreadState.h>
@@ -164,7 +164,6 @@ SurfaceFlinger::SurfaceFlinger()
 {
     ALOGI("SurfaceFlinger is starting");
 
-    // debugging stuff...
     char value[PROPERTY_VALUE_MAX];
 
     property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
@@ -187,6 +186,10 @@ SurfaceFlinger::SurfaceFlinger()
     property_get("debug.sf.disable_hwc_vds", value, "0");
     mUseHwcVirtualDisplays = !atoi(value);
     ALOGI_IF(!mUseHwcVirtualDisplays, "Disabling HWC virtual displays");
+
+    property_get("ro.sf.disable_triple_buffer", value, "0");
+    mLayerTripleBufferingDisabled = !atoi(value);
+    ALOGI_IF(mLayerTripleBufferingDisabled, "Disabling Triple Buffering");
 }
 
 void SurfaceFlinger::onFirstRef()
@@ -597,6 +600,19 @@ bool SurfaceFlinger::authenticateSurfaceTexture(
     Mutex::Autolock _l(mStateLock);
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
+}
+
+status_t SurfaceFlinger::getSupportedFrameTimestamps(
+        std::vector<FrameEvent>* outSupported) const {
+    *outSupported = {
+        FrameEvent::REQUESTED_PRESENT,
+        FrameEvent::ACQUIRE,
+        FrameEvent::FIRST_REFRESH_START,
+        FrameEvent::GL_COMPOSITION_DONE,
+        FrameEvent::DISPLAY_RETIRE,
+        FrameEvent::RELEASE,
+    };
+    return NO_ERROR;
 }
 
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
@@ -1037,7 +1053,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
 }
 
 bool SurfaceFlinger::handleMessageTransaction() {
-    uint32_t transactionFlags = peekTransactionFlags(eTransactionMask);
+    uint32_t transactionFlags = peekTransactionFlags();
     if (transactionFlags) {
         handleTransaction(transactionFlags);
         return true;
@@ -1055,12 +1071,12 @@ void SurfaceFlinger::handleMessageRefresh() {
 
     nsecs_t refreshStartTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
-    preComposition();
+    preComposition(refreshStartTime);
     rebuildLayerStacks();
     setUpHWComposer();
     doDebugFlashRegions();
     doComposition();
-    postComposition(refreshStartTime);
+    postComposition();
 }
 
 void SurfaceFlinger::doDebugFlashRegions()
@@ -1103,13 +1119,13 @@ void SurfaceFlinger::doDebugFlashRegions()
     }
 }
 
-void SurfaceFlinger::preComposition()
+void SurfaceFlinger::preComposition(nsecs_t refreshStartTime)
 {
     bool needExtraInvalidate = false;
     const LayerVector& layers(mDrawingState.layersSortedByZ);
     const size_t count = layers.size();
     for (size_t i=0 ; i<count ; i++) {
-        if (layers[i]->onPreComposition()) {
+        if (layers[i]->onPreComposition(refreshStartTime)) {
             needExtraInvalidate = true;
         }
     }
@@ -1118,44 +1134,57 @@ void SurfaceFlinger::preComposition()
     }
 }
 
-void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
+void SurfaceFlinger::postComposition()
 {
+    const HWComposer& hwc = getHwComposer();
+    const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
+
+    std::shared_ptr<FenceTime> glCompositionDoneFenceTime;
+    if (getHwComposer().hasGlesComposition(hw->getHwcDisplayId())) {
+        glCompositionDoneFenceTime =
+                std::make_shared<FenceTime>(hw->getClientTargetAcquireFence());
+        mGlCompositionDoneTimeline.push(glCompositionDoneFenceTime);
+    } else {
+        glCompositionDoneFenceTime = FenceTime::NO_FENCE;
+    }
+    mGlCompositionDoneTimeline.updateSignalTimes();
+
+    sp<Fence> displayFence = mHwc->getDisplayFence(HWC_DISPLAY_PRIMARY);
+    const std::shared_ptr<FenceTime>& presentFenceTime = FenceTime::NO_FENCE;
+    auto retireFenceTime = std::make_shared<FenceTime>(displayFence);
+    mDisplayTimeline.push(retireFenceTime);
+    mDisplayTimeline.updateSignalTimes();
+
     const LayerVector& layers(mDrawingState.layersSortedByZ);
     const size_t count = layers.size();
     for (size_t i=0 ; i<count ; i++) {
-        bool frameLatched = layers[i]->onPostComposition();
+        bool frameLatched = layers[i]->onPostComposition(
+                glCompositionDoneFenceTime, presentFenceTime, retireFenceTime);
         if (frameLatched) {
             recordBufferingStats(layers[i]->getName().string(),
                     layers[i]->getOccupancyHistory(false));
         }
     }
 
-    const HWComposer& hwc = getHwComposer();
-    sp<Fence> presentFence = hwc.getDisplayFence(HWC_DISPLAY_PRIMARY);
-
-    if (presentFence->isValid()) {
-        if (mPrimaryDispSync.addPresentFence(presentFence)) {
+    if (displayFence->isValid()) {
+        if (mPrimaryDispSync.addPresentFence(displayFence)) {
             enableHardwareVsync();
         } else {
             disableHardwareVsync(false);
         }
     }
 
-    const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
     if (kIgnorePresentFences) {
         if (hw->isDisplayOn()) {
             enableHardwareVsync();
         }
     }
 
-    mFenceTracker.addFrame(refreshStartTime, presentFence,
-            hw->getVisibleLayersSortedByZ(), hw->getClientTargetAcquireFence());
-
     if (mAnimCompositionPending) {
         mAnimCompositionPending = false;
 
-        if (presentFence->isValid()) {
-            mAnimFrameTracker.setActualPresentFence(presentFence);
+        if (retireFenceTime->isValid()) {
+            mAnimFrameTracker.setActualPresentFence(std::move(retireFenceTime));
         } else {
             // The HWC doesn't support present fences, so use the refresh
             // timestamp instead.
@@ -1918,6 +1947,7 @@ void SurfaceFlinger::invalidateLayerStack(uint32_t layerStack,
 
 bool SurfaceFlinger::handlePageFlip()
 {
+    nsecs_t latchTime = systemTime();
     Region dirtyRegion;
 
     bool visibleRegions = false;
@@ -1949,7 +1979,7 @@ bool SurfaceFlinger::handlePageFlip()
     }
     for (size_t i = 0, count = layersWithQueuedFrames.size() ; i<count ; i++) {
         Layer* layer = layersWithQueuedFrames[i];
-        const Region dirty(layer->latchBuffer(visibleRegions));
+        const Region dirty(layer->latchBuffer(visibleRegions, latchTime));
         layer->useSurfaceDamage();
         const Layer::State& s(layer->getDrawingState());
         invalidateLayerStack(s.layerStack, dirty);
@@ -2124,7 +2154,7 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const 
                                 && hasGlesComposition) {
                             // never clear the very first layer since we're
                             // guaranteed the FB is already cleared
-                            layer->clearWithOpenGL(hw, clip);
+                            layer->clearWithOpenGL(hw);
                         }
                         break;
                     }
@@ -2204,7 +2234,7 @@ status_t SurfaceFlinger::removeLayer(const wp<Layer>& weakLayer) {
     return status_t(index);
 }
 
-uint32_t SurfaceFlinger::peekTransactionFlags(uint32_t /* flags */) {
+uint32_t SurfaceFlinger::peekTransactionFlags() {
     return android_atomic_release_load(&mTransactionFlags);
 }
 
@@ -2741,9 +2771,9 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
             }
 
             if ((index < numArgs) &&
-                    (args[index] == String16("--fences"))) {
+                    (args[index] == String16("--frame-events"))) {
                 index++;
-                mFenceTracker.dump(&result);
+                dumpFrameEventsLocked(result);
                 dumpAll = false;
             }
         }
@@ -2832,21 +2862,18 @@ void SurfaceFlinger::logFrameStats() {
     mAnimFrameTracker.logAndResetStats(String8("<win-anim>"));
 }
 
-/*static*/ void SurfaceFlinger::appendSfConfigString(String8& result)
+void SurfaceFlinger::appendSfConfigString(String8& result) const
 {
-    static const char* config =
-            " [sf"
+    result.append(" [sf");
 #ifdef HAS_CONTEXT_PRIORITY
-            " HAS_CONTEXT_PRIORITY"
+    result.append(" HAS_CONTEXT_PRIORITY");
 #endif
 #ifdef NEVER_DEFAULT_TO_ASYNC_MODE
-            " NEVER_DEFAULT_TO_ASYNC_MODE"
+    result.append(" NEVER_DEFAULT_TO_ASYNC_MODE");
 #endif
-#ifdef TARGET_DISABLE_TRIPLE_BUFFERING
-            " TARGET_DISABLE_TRIPLE_BUFFERING"
-#endif
-            "]";
-    result.append(config);
+    if (isLayerTripleBufferingDisabled())
+        result.append(" DISABLE_TRIPLE_BUFFERING");
+    result.append("]");
 }
 
 void SurfaceFlinger::dumpStaticScreenStats(String8& result) const
@@ -2864,6 +2891,16 @@ void SurfaceFlinger::dumpStaticScreenStats(String8& result) const
             static_cast<float>(mFrameBuckets[NUM_BUCKETS - 1]) / mTotalTime;
     result.appendFormat("  %zd+ frames: %.3f s (%.1f%%)\n",
             NUM_BUCKETS - 1, bucketTimeSec, percent);
+}
+
+void SurfaceFlinger::dumpFrameEventsLocked(String8& result) {
+    result.appendFormat("Layer frame timestamps:\n");
+
+    const LayerVector& currentLayers = mCurrentState.layersSortedByZ;
+    const size_t count = currentLayers.size();
+    for (size_t i=0 ; i<count ; i++) {
+        currentLayers[i]->dumpFrameEvents(result);
+    }
 }
 
 void SurfaceFlinger::recordBufferingStats(const char* layerName,
@@ -3738,11 +3775,6 @@ status_t SurfaceFlinger::captureScreenImplLocked(
     }
 
     return result;
-}
-
-bool SurfaceFlinger::getFrameTimestamps(const Layer& layer,
-        uint64_t frameNumber, FrameTimestamps* outTimestamps) {
-    return mFenceTracker.getFrameTimestamps(layer, frameNumber, outTimestamps);
 }
 
 void SurfaceFlinger::checkScreenshot(size_t w, size_t s, size_t h, void const* vaddr,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 The Android Open Source Project
+ * Copyright (C) 2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,31 +14,29 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_SF_FLOAT_RECT
-#define ANDROID_SF_FLOAT_RECT
+#ifndef ANDROID_IACTIVITY_MANAGER_H
+#define ANDROID_IACTIVITY_MANAGER_H
 
-#include <ui/Rect.h>
-#include <utils/TypeHelpers.h>
+#include <binder/IInterface.h>
 
 namespace android {
 
-class FloatRect
+// ------------------------------------------------------------------------------------
+
+class IActivityManager : public IInterface
 {
 public:
-    float left;
-    float top;
-    float right;
-    float bottom;
+    DECLARE_META_INTERFACE(ActivityManager)
 
-    inline FloatRect()
-        : left(0), top(0), right(0), bottom(0) { }
-    inline FloatRect(const Rect& other)  // NOLINT(implicit)
-        : left(other.left), top(other.top), right(other.right), bottom(other.bottom) { }
+    virtual int openContentUri(const String16& /* stringUri */) = 0;
 
-    inline float getWidth() const { return right - left; }
-    inline float getHeight() const { return bottom - top; }
+    enum {
+        OPEN_CONTENT_URI_TRANSACTION = IBinder::FIRST_CALL_TRANSACTION
+    };
 };
+
+// ------------------------------------------------------------------------------------
 
 }; // namespace android
 
-#endif // ANDROID_SF_FLOAT_RECT
+#endif // ANDROID_IACTIVITY_MANAGER_H

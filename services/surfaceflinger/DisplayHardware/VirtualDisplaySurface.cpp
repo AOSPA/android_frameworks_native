@@ -241,7 +241,7 @@ void VirtualDisplaySurface::onFrameCommitted() {
     mDbgState = DBG_STATE_IDLE;
 
 #ifdef USE_HWC2
-    sp<Fence> retireFence = mHwc.getRetireFence(mDisplayId);
+    sp<Fence> retireFence = mHwc.getPresentFence(mDisplayId);
 #else
     sp<Fence> fbFence = mHwc.getAndResetReleaseFence(mDisplayId);
 #endif
@@ -281,7 +281,7 @@ void VirtualDisplaySurface::onFrameCommitted() {
 #endif
                     &qbo);
             if (result == NO_ERROR) {
-                updateQueueBufferOutput(qbo);
+                updateQueueBufferOutput(std::move(qbo));
             }
         } else {
             // If the surface hadn't actually been updated, then we only went
@@ -303,13 +303,8 @@ void VirtualDisplaySurface::dumpAsString(String8& /* result */) const {
 }
 
 void VirtualDisplaySurface::resizeBuffers(const uint32_t w, const uint32_t h) {
-    uint32_t tmpW, tmpH, transformHint, numPendingBuffers;
-    uint64_t nextFrameNumber;
-    mQueueBufferOutput.deflate(&tmpW, &tmpH, &transformHint, &numPendingBuffers,
-            &nextFrameNumber);
-    mQueueBufferOutput.inflate(w, h, transformHint, numPendingBuffers,
-            nextFrameNumber);
-
+    mQueueBufferOutput.width = w;
+    mQueueBufferOutput.height = h;
     mSinkBufferWidth = w;
     mSinkBufferHeight = h;
 }
@@ -345,7 +340,7 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
     LOG_FATAL_IF(mDisplayId < 0, "mDisplayId=%d but should not be < 0.", mDisplayId);
 
     status_t result = mSource[source]->dequeueBuffer(sslot, fence,
-            mSinkBufferWidth, mSinkBufferHeight, format, usage);
+            mSinkBufferWidth, mSinkBufferHeight, format, usage, nullptr);
     if (result < 0)
         return result;
     int pslot = mapSource2ProducerSlot(source, *sslot);
@@ -384,9 +379,12 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
 }
 
 status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence,
-        uint32_t w, uint32_t h, PixelFormat format, uint32_t usage) {
-    if (mDisplayId < 0)
-        return mSource[SOURCE_SINK]->dequeueBuffer(pslot, fence, w, h, format, usage);
+        uint32_t w, uint32_t h, PixelFormat format, uint32_t usage,
+        FrameEventHistoryDelta* outTimestamps) {
+    if (mDisplayId < 0) {
+        return mSource[SOURCE_SINK]->dequeueBuffer(
+                pslot, fence, w, h, format, usage, outTimestamps);
+    }
 
     VDS_LOGW_IF(mDbgState != DBG_STATE_PREPARED,
             "Unexpected dequeueBuffer() in %s state", dbgStateStr());
@@ -518,7 +516,8 @@ status_t VirtualDisplaySurface::queueBuffer(int pslot,
         mOutputFence = mFbFence;
     }
 
-    *output = mQueueBufferOutput;
+    // This moves the frame timestamps and keeps a copy of all other fields.
+    *output = std::move(mQueueBufferOutput);
     return NO_ERROR;
 }
 
@@ -557,8 +556,9 @@ status_t VirtualDisplaySurface::connect(const sp<IProducerListener>& listener,
     status_t result = mSource[SOURCE_SINK]->connect(listener, api,
             producerControlledByApp, &qbo);
     if (result == NO_ERROR) {
-        updateQueueBufferOutput(qbo);
-        *output = mQueueBufferOutput;
+        updateQueueBufferOutput(std::move(qbo));
+        // This moves the frame timestamps and keeps a copy of all other fields.
+        *output = std::move(mQueueBufferOutput);
     }
     return result;
 }
@@ -617,11 +617,9 @@ status_t VirtualDisplaySurface::getUniqueId(uint64_t* /*outId*/) const {
 }
 
 void VirtualDisplaySurface::updateQueueBufferOutput(
-        const QueueBufferOutput& qbo) {
-    uint32_t w, h, transformHint, numPendingBuffers;
-    uint64_t nextFrameNumber;
-    qbo.deflate(&w, &h, &transformHint, &numPendingBuffers, &nextFrameNumber);
-    mQueueBufferOutput.inflate(w, h, 0, numPendingBuffers, nextFrameNumber);
+        QueueBufferOutput&& qbo) {
+    mQueueBufferOutput = std::move(qbo);
+    mQueueBufferOutput.transformHint = 0;
 }
 
 void VirtualDisplaySurface::resetPerFrameState() {

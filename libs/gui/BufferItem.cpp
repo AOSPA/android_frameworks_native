@@ -91,11 +91,11 @@ size_t BufferItem::getFlattenedSize() const {
     size_t size = sizeof(uint32_t); // Flags
     if (mGraphicBuffer != 0) {
         size += mGraphicBuffer->getFlattenedSize();
-        FlattenableUtils::align<4>(size);
+        size = FlattenableUtils::align<4>(size);
     }
     if (mFence != 0) {
         size += mFence->getFlattenedSize();
-        FlattenableUtils::align<4>(size);
+        size = FlattenableUtils::align<4>(size);
     }
     size += mSurfaceDamage.getFlattenedSize();
     size = FlattenableUtils::align<8>(size);
@@ -204,6 +204,8 @@ status_t BufferItem::unflatten(
         status_t err = mFence->unflatten(buffer, size, fds, count);
         if (err) return err;
         size -= FlattenableUtils::align<4>(buffer);
+
+        mFenceTime = std::make_shared<FenceTime>(mFence);
     }
 
     status_t err = mSurfaceDamage.unflatten(buffer, size);

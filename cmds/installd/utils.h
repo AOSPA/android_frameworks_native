@@ -30,6 +30,9 @@
 
 #include <installd_constants.h>
 
+#define MEASURE_DEBUG 0
+#define MEASURE_EXTERNAL 0
+
 namespace android {
 namespace installd {
 
@@ -73,7 +76,6 @@ int create_pkg_path(char path[PKG_PATH_MAX],
 std::string create_data_path(const char* volume_uuid);
 
 std::string create_data_app_path(const char* volume_uuid);
-
 std::string create_data_app_package_path(const char* volume_uuid, const char* package_name);
 
 std::string create_data_user_ce_path(const char* volume_uuid, userid_t userid);
@@ -87,14 +89,27 @@ std::string create_data_user_de_package_path(const char* volume_uuid,
         userid_t user, const char* package_name);
 
 std::string create_data_media_path(const char* volume_uuid, userid_t userid);
+std::string create_data_media_obb_path(const char* volume_uuid, const char* package_name);
+std::string create_data_media_package_path(const char* volume_uuid, userid_t userid,
+        const char* data_type, const char* package_name);
 
 std::string create_data_misc_legacy_path(userid_t userid);
 
-std::string create_data_user_profiles_path(userid_t userid);
+std::string create_data_user_profile_path(userid_t userid);
 std::string create_data_user_profile_package_path(userid_t user, const char* package_name);
+
+std::string create_data_ref_profile_path();
 std::string create_data_ref_profile_package_path(const char* package_name);
 
+std::string create_data_dalvik_cache_path();
+std::string create_data_misc_foreign_dex_path(userid_t userid);
+
+std::string create_primary_profile(const std::string& profile_dir);
+
 std::vector<userid_t> get_known_users(const char* volume_uuid);
+
+int calculate_tree_size(const std::string& path, int64_t* size,
+        int32_t include_gid = -1, int32_t exclude_gid = -1, bool exclude_apps = false);
 
 int create_user_config_path(char path[PKG_PATH_MAX], userid_t userid);
 
@@ -103,7 +118,8 @@ int create_move_path(char path[PKG_PATH_MAX],
                      const char* leaf,
                      userid_t userid);
 
-int is_valid_package_name(const char* pkgname);
+bool is_valid_filename(const std::string& name);
+bool is_valid_package_name(const std::string& packageName);
 
 int delete_dir_contents(const std::string& pathname, bool ignore_if_missing = false);
 int delete_dir_contents_and_dir(const std::string& pathname, bool ignore_if_missing = false);

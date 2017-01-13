@@ -104,7 +104,8 @@ private:
     virtual status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers);
     virtual status_t setAsyncMode(bool async);
     virtual status_t dequeueBuffer(int* pslot, sp<Fence>* fence, uint32_t w,
-            uint32_t h, PixelFormat format, uint32_t usage);
+            uint32_t h, PixelFormat format, uint32_t usage,
+            FrameEventHistoryDelta *outTimestamps);
     virtual status_t detachBuffer(int slot);
     virtual status_t detachNextBuffer(sp<GraphicBuffer>* outBuffer,
             sp<Fence>* outFence);
@@ -135,7 +136,7 @@ private:
     static Source fbSourceForCompositionType(CompositionType type);
     status_t dequeueBuffer(Source source, PixelFormat format, uint32_t usage,
             int* sslot, sp<Fence>* fence);
-    void updateQueueBufferOutput(const QueueBufferOutput& qbo);
+    void updateQueueBufferOutput(QueueBufferOutput&& qbo);
     void resetPerFrameState();
     status_t refreshOutputBuffer();
 
@@ -180,6 +181,8 @@ private:
     // The QueueBufferOutput with the latest info from the sink, and with the
     // transform hint cleared. Since we defer queueBuffer from the GLES driver
     // to the sink, we have to return the previous version.
+    // Moves instead of copies are performed to avoid duplicate
+    // FrameEventHistoryDeltas.
     QueueBufferOutput mQueueBufferOutput;
 
     // Details of the current sink buffer. These become valid when a buffer is

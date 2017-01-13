@@ -23,7 +23,7 @@
 #include "HWC2.h"
 #include "ComposerHal.h"
 
-#include "FloatRect.h"
+#include <gfx/FloatRect.h>
 
 #include <ui/Fence.h>
 #include <ui/GraphicBuffer.h>
@@ -74,12 +74,12 @@ extern "C" {
 }
 
 using android::Fence;
-using android::FloatRect;
 using android::GraphicBuffer;
 using android::HdrCapabilities;
 using android::Rect;
 using android::Region;
 using android::sp;
+using android::gfx::FloatRect;
 using android::hardware::Return;
 using android::hardware::Void;
 
@@ -231,7 +231,7 @@ Error Device::createVirtualDisplay(uint32_t width, uint32_t height,
 #else
     auto intFormat = static_cast<Hwc2::PixelFormat>(*format);
     auto intError = mComposer->createVirtualDisplay(width, height,
-            intFormat, displayId);
+            &intFormat, &displayId);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
@@ -286,6 +286,9 @@ void Device::callHotplug(std::shared_ptr<Display> display, Connection connected)
 {
     if (connected == Connection::Connected) {
         if (!display->isConnected()) {
+#ifndef BYPASS_IHWC
+            mComposer->setClientTargetSlotCount(display->getId());
+#endif
             display->loadConfigs();
             display->setConnected(true);
         }
@@ -587,7 +590,7 @@ Error Display::createLayer(std::shared_ptr<Layer>* outLayer)
 #ifdef BYPASS_IHWC
     int32_t intError = mDevice.mCreateLayer(mDevice.mHwcDevice, mId, &layerId);
 #else
-    auto intError = mDevice.mComposer->createLayer(mId, layerId);
+    auto intError = mDevice.mComposer->createLayer(mId, &layerId);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
@@ -609,7 +612,7 @@ Error Display::getActiveConfig(
     int32_t intError = mDevice.mGetActiveConfig(mDevice.mHwcDevice, mId,
             &configId);
 #else
-    auto intError = mDevice.mComposer->getActiveConfig(mId, configId);
+    auto intError = mDevice.mComposer->getActiveConfig(mId, &configId);
 #endif
     auto error = static_cast<Error>(intError);
 
@@ -650,9 +653,9 @@ Error Display::getChangedCompositionTypes(
             &numElements, layerIds.data(), types.data());
 #else
     std::vector<Hwc2::Layer> layerIds;
-    std::vector<Hwc2::IComposer::Composition> types;
+    std::vector<Hwc2::IComposerClient::Composition> types;
     auto intError = mDevice.mComposer->getChangedCompositionTypes(mId,
-            layerIds, types);
+            &layerIds, &types);
     uint32_t numElements = layerIds.size();
     auto error = static_cast<Error>(intError);
 #endif
@@ -696,7 +699,7 @@ Error Display::getColorModes(std::vector<android_color_mode_t>* outModes) const
     error = static_cast<Error>(intError);
 #else
     std::vector<Hwc2::ColorMode> modes;
-    auto intError = mDevice.mComposer->getColorModes(mId, modes);
+    auto intError = mDevice.mComposer->getColorModes(mId, &modes);
     uint32_t numModes = modes.size();
     auto error = static_cast<Error>(intError);
 #endif
@@ -742,7 +745,7 @@ Error Display::getName(std::string* outName) const
     *outName = std::string(rawName.cbegin(), rawName.cend());
     return Error::None;
 #else
-    auto intError = mDevice.mComposer->getDisplayName(mId, *outName);
+    auto intError = mDevice.mComposer->getDisplayName(mId, outName);
     return static_cast<Error>(intError);
 #endif
 }
@@ -772,7 +775,7 @@ Error Display::getRequests(HWC2::DisplayRequest* outDisplayRequests,
     std::vector<Hwc2::Layer> layerIds;
     std::vector<uint32_t> layerRequests;
     auto intError = mDevice.mComposer->getDisplayRequests(mId,
-            intDisplayRequests, layerIds, layerRequests);
+            &intDisplayRequests, &layerIds, &layerRequests);
     uint32_t numElements = layerIds.size();
     auto error = static_cast<Error>(intError);
 #endif
@@ -805,9 +808,9 @@ Error Display::getType(DisplayType* outType) const
     int32_t intError = mDevice.mGetDisplayType(mDevice.mHwcDevice, mId,
             &intType);
 #else
-    Hwc2::IComposer::DisplayType intType =
-        Hwc2::IComposer::DisplayType::INVALID;
-    auto intError = mDevice.mComposer->getDisplayType(mId, intType);
+    Hwc2::IComposerClient::DisplayType intType =
+        Hwc2::IComposerClient::DisplayType::INVALID;
+    auto intError = mDevice.mComposer->getDisplayType(mId, &intType);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
@@ -826,7 +829,7 @@ Error Display::supportsDoze(bool* outSupport) const
             &intSupport);
 #else
     bool intSupport = false;
-    auto intError = mDevice.mComposer->getDozeSupport(mId, intSupport);
+    auto intError = mDevice.mComposer->getDozeSupport(mId, &intSupport);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
@@ -858,8 +861,8 @@ Error Display::getHdrCapabilities(
     error = static_cast<HWC2::Error>(intError);
 #else
     std::vector<Hwc2::Hdr> intTypes;
-    auto intError = mDevice.mComposer->getHdrCapabilities(mId, intTypes,
-            maxLuminance, maxAverageLuminance, minLuminance);
+    auto intError = mDevice.mComposer->getHdrCapabilities(mId, &intTypes,
+            &maxLuminance, &maxAverageLuminance, &minLuminance);
     auto error = static_cast<HWC2::Error>(intError);
 
     std::vector<int32_t> types;
@@ -898,7 +901,7 @@ Error Display::getReleaseFences(
     std::vector<Hwc2::Layer> layerIds;
     std::vector<int> fenceFds;
     auto intError = mDevice.mComposer->getReleaseFences(mId,
-            layerIds, fenceFds);
+            &layerIds, &fenceFds);
     auto error = static_cast<Error>(intError);
     uint32_t numElements = layerIds.size();
 #endif
@@ -924,21 +927,21 @@ Error Display::getReleaseFences(
     return Error::None;
 }
 
-Error Display::present(sp<Fence>* outRetireFence)
+Error Display::present(sp<Fence>* outPresentFence)
 {
-    int32_t retireFenceFd = 0;
+    int32_t presentFenceFd = -1;
 #ifdef BYPASS_IHWC
     int32_t intError = mDevice.mPresentDisplay(mDevice.mHwcDevice, mId,
-            &retireFenceFd);
+            &presentFenceFd);
 #else
-    auto intError = mDevice.mComposer->presentDisplay(mId, retireFenceFd);
+    auto intError = mDevice.mComposer->presentDisplay(mId, &presentFenceFd);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
         return error;
     }
 
-    *outRetireFence = new Fence(retireFenceFd);
+    *outPresentFence = new Fence(presentFenceFd);
     return Error::None;
 }
 
@@ -970,7 +973,7 @@ Error Display::setClientTarget(buffer_handle_t target,
 #else
     auto intError = mDevice.mComposer->setClientTarget(mId, target, fenceFd,
             static_cast<Hwc2::Dataspace>(dataspace),
-            std::vector<Hwc2::IComposer::Rect>());
+            std::vector<Hwc2::IComposerClient::Rect>());
 #endif
     return static_cast<Error>(intError);
 }
@@ -1020,7 +1023,7 @@ Error Display::setPowerMode(PowerMode mode)
     auto intMode = static_cast<int32_t>(mode);
     int32_t intError = mDevice.mSetPowerMode(mDevice.mHwcDevice, mId, intMode);
 #else
-    auto intMode = static_cast<Hwc2::IComposer::PowerMode>(mode);
+    auto intMode = static_cast<Hwc2::IComposerClient::PowerMode>(mode);
     auto intError = mDevice.mComposer->setPowerMode(mId, intMode);
 #endif
     return static_cast<Error>(intError);
@@ -1033,7 +1036,7 @@ Error Display::setVsyncEnabled(Vsync enabled)
     int32_t intError = mDevice.mSetVsyncEnabled(mDevice.mHwcDevice, mId,
             intEnabled);
 #else
-    auto intEnabled = static_cast<Hwc2::IComposer::Vsync>(enabled);
+    auto intEnabled = static_cast<Hwc2::IComposerClient::Vsync>(enabled);
     auto intError = mDevice.mComposer->setVsyncEnabled(mId, intEnabled);
 #endif
     return static_cast<Error>(intError);
@@ -1048,7 +1051,7 @@ Error Display::validate(uint32_t* outNumTypes, uint32_t* outNumRequests)
             &numTypes, &numRequests);
 #else
     auto intError = mDevice.mComposer->validateDisplay(mId,
-            numTypes, numRequests);
+            &numTypes, &numRequests);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None && error != Error::HasChanges) {
@@ -1069,9 +1072,9 @@ int32_t Display::getAttribute(hwc2_config_t configId, Attribute attribute)
     int32_t intError = mDevice.mGetDisplayAttribute(mDevice.mHwcDevice, mId,
             configId, static_cast<int32_t>(attribute), &value);
 #else
-    auto intError = mDevice.mComposer->getDisplayAttribute(mId,
-            configId, static_cast<Hwc2::IComposer::Attribute>(attribute),
-            value);
+    auto intError = mDevice.mComposer->getDisplayAttribute(mId, configId,
+            static_cast<Hwc2::IComposerClient::Attribute>(attribute),
+            &value);
 #endif
     auto error = static_cast<Error>(intError);
     if (error != Error::None) {
@@ -1118,7 +1121,7 @@ void Display::loadConfigs()
     error = static_cast<Error>(intError);
 #else
     std::vector<Hwc2::Config> configIds;
-    auto intError = mDevice.mComposer->getDisplayConfigs(mId, configIds);
+    auto intError = mDevice.mComposer->getDisplayConfigs(mId, &configIds);
     auto error = static_cast<Error>(intError);
 #endif
     if (error != Error::None) {
@@ -1221,7 +1224,7 @@ Error Layer::setSurfaceDamage(const Region& damage)
                 mDisplayId, mId, {0, nullptr});
 #else
         intError = mDevice.mComposer->setLayerSurfaceDamage(mDisplayId,
-                mId, std::vector<Hwc2::IComposer::Rect>());
+                mId, std::vector<Hwc2::IComposerClient::Rect>());
 #endif
     } else {
         size_t rectCount = 0;
@@ -1230,7 +1233,7 @@ Error Layer::setSurfaceDamage(const Region& damage)
 #ifdef BYPASS_IHWC
         std::vector<hwc_rect_t> hwcRects;
 #else
-        std::vector<Hwc2::IComposer::Rect> hwcRects;
+        std::vector<Hwc2::IComposerClient::Rect> hwcRects;
 #endif
         for (size_t rect = 0; rect < rectCount; ++rect) {
             hwcRects.push_back({rectArray[rect].left, rectArray[rect].top,
@@ -1260,7 +1263,7 @@ Error Layer::setBlendMode(BlendMode mode)
     int32_t intError = mDevice.mSetLayerBlendMode(mDevice.mHwcDevice,
             mDisplayId, mId, intMode);
 #else
-    auto intMode = static_cast<Hwc2::IComposer::BlendMode>(mode);
+    auto intMode = static_cast<Hwc2::IComposerClient::BlendMode>(mode);
     auto intError = mDevice.mComposer->setLayerBlendMode(mDisplayId,
             mId, intMode);
 #endif
@@ -1273,7 +1276,7 @@ Error Layer::setColor(hwc_color_t color)
     int32_t intError = mDevice.mSetLayerColor(mDevice.mHwcDevice, mDisplayId,
             mId, color);
 #else
-    Hwc2::IComposer::Color hwcColor{color.r, color.g, color.b, color.a};
+    Hwc2::IComposerClient::Color hwcColor{color.r, color.g, color.b, color.a};
     auto intError = mDevice.mComposer->setLayerColor(mDisplayId,
             mId, hwcColor);
 #endif
@@ -1287,7 +1290,7 @@ Error Layer::setCompositionType(Composition type)
     int32_t intError = mDevice.mSetLayerCompositionType(mDevice.mHwcDevice,
             mDisplayId, mId, intType);
 #else
-    auto intType = static_cast<Hwc2::IComposer::Composition>(type);
+    auto intType = static_cast<Hwc2::IComposerClient::Composition>(type);
     auto intError = mDevice.mComposer->setLayerCompositionType(mDisplayId,
             mId, intType);
 #endif
@@ -1315,7 +1318,7 @@ Error Layer::setDisplayFrame(const Rect& frame)
     int32_t intError = mDevice.mSetLayerDisplayFrame(mDevice.mHwcDevice,
             mDisplayId, mId, hwcRect);
 #else
-    Hwc2::IComposer::Rect hwcRect{frame.left, frame.top,
+    Hwc2::IComposerClient::Rect hwcRect{frame.left, frame.top,
         frame.right, frame.bottom};
     auto intError = mDevice.mComposer->setLayerDisplayFrame(mDisplayId,
             mId, hwcRect);
@@ -1359,7 +1362,7 @@ Error Layer::setSourceCrop(const FloatRect& crop)
     int32_t intError = mDevice.mSetLayerSourceCrop(mDevice.mHwcDevice,
             mDisplayId, mId, hwcRect);
 #else
-    Hwc2::IComposer::FRect hwcRect{
+    Hwc2::IComposerClient::FRect hwcRect{
         crop.left, crop.top, crop.right, crop.bottom};
     auto intError = mDevice.mComposer->setLayerSourceCrop(mDisplayId,
             mId, hwcRect);
@@ -1389,7 +1392,7 @@ Error Layer::setVisibleRegion(const Region& region)
 #ifdef BYPASS_IHWC
     std::vector<hwc_rect_t> hwcRects;
 #else
-    std::vector<Hwc2::IComposer::Rect> hwcRects;
+    std::vector<Hwc2::IComposerClient::Rect> hwcRects;
 #endif
     for (size_t rect = 0; rect < rectCount; ++rect) {
         hwcRects.push_back({rectArray[rect].left, rectArray[rect].top,

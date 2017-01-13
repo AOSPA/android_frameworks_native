@@ -20,6 +20,8 @@
 
 #include <inttypes.h>
 
+#include "InstalldNativeService.h"
+
 namespace android {
 namespace installd {
 

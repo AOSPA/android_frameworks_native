@@ -15,15 +15,15 @@
  */
 
 #include <ctype.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <dlfcn.h>
-#include <limits.h>
 #include <dirent.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <cutils/log.h>
+#include <android/log.h>
 #include <cutils/properties.h>
 
 #include <EGL/egl.h>
@@ -94,24 +94,6 @@ checkGlesEmulationStatus(void)
     /* We are in the emulator, get GPU status value */
     property_get("qemu.gles",prop,"0");
     return atoi(prop);
-}
-
-// ----------------------------------------------------------------------------
-
-static char const * getProcessCmdline() {
-    long pid = getpid();
-    char procPath[128];
-    snprintf(procPath, 128, "/proc/%ld/cmdline", pid);
-    FILE * file = fopen(procPath, "r");
-    if (file) {
-        static char cmdline[256];
-        char *str = fgets(cmdline, sizeof(cmdline) - 1, file);
-        fclose(file);
-        if (str) {
-            return cmdline;
-        }
-    }
-    return NULL;
 }
 
 // ----------------------------------------------------------------------------

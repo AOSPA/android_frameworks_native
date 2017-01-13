@@ -27,6 +27,8 @@
 #include <utils/String8.h>
 #include <utils/Timers.h>
 
+#include <gfx/FloatRect.h>
+
 #include <ui/FrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/PixelFormat.h>
@@ -46,7 +48,6 @@
 #include "Transform.h"
 
 #include "DisplayHardware/HWComposer.h"
-#include "DisplayHardware/FloatRect.h"
 #include "RenderEngine/Mesh.h"
 #include "RenderEngine/Texture.h"
 
@@ -121,9 +122,11 @@ public:
         int32_t sequence; // changes when visible regions can change
         bool modified;
 
+        // Crop is expressed in layer space coordinate.
         Rect crop;
         Rect requestedCrop;
 
+        // finalCrop is expressed in display space coordinate.
         Rect finalCrop;
 
         // If set, defers this state update until the Layer identified by handle
@@ -270,13 +273,16 @@ public:
      * called before composition.
      * returns true if the layer has pending updates.
      */
-    bool onPreComposition();
+    bool onPreComposition(nsecs_t refreshStartTime);
 
     /*
      * called after composition.
      * returns true if the layer latched a new buffer this frame.
      */
-    bool onPostComposition();
+    bool onPostComposition(
+            const std::shared_ptr<FenceTime>& glDoneFence,
+            const std::shared_ptr<FenceTime>& presentFence,
+            const std::shared_ptr<FenceTime>& retireFence);
 
 #ifdef USE_HWC2
     // If a buffer was replaced this frame, release the former buffer
@@ -323,7 +329,7 @@ public:
      * operation, so this should be set only if needed). Typically this is used
      * to figure out if the content or size of a surface has changed.
      */
-    Region latchBuffer(bool& recomputeVisibleRegions);
+    Region latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime);
 
     bool isPotentialCursor() const { return mPotentialCursor;}
 
@@ -383,7 +389,7 @@ public:
 #endif
     // -----------------------------------------------------------------------
 
-    void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip) const;
+    void clearWithOpenGL(const sp<const DisplayDevice>& hw) const;
     void setFiltering(bool filtering);
     bool getFiltering() const;
 
@@ -402,20 +408,15 @@ public:
     void miniDump(String8& result, int32_t hwcId) const;
 #endif
     void dumpFrameStats(String8& result) const;
+    void dumpFrameEvents(String8& result);
     void clearFrameStats();
     void logFrameStats();
     void getFrameStats(FrameStats* outStats) const;
 
-    void getFenceData(String8* outName, uint64_t* outFrameNumber,
-            bool* outIsGlesComposition, nsecs_t* outPostedTime,
-            sp<Fence>* outAcquireFence, sp<Fence>* outPrevReleaseFence) const;
-
     std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool forceFlush);
 
-    bool getFrameTimestamps(uint64_t frameNumber,
-            FrameTimestamps* outTimestamps) const {
-        return mFlinger->getFrameTimestamps(*this, frameNumber, outTimestamps);
-    }
+    void addAndGetFrameTimestamps(const NewFrameEventsEntry* newEntry,
+            FrameEventHistoryDelta* outDelta);
 
     bool getTransformToDisplayInverse() const;
 
@@ -459,14 +460,14 @@ private:
     bool needsFiltering(const sp<const DisplayDevice>& hw) const;
 
     uint32_t getEffectiveUsage(uint32_t usage) const;
-    FloatRect computeCrop(const sp<const DisplayDevice>& hw) const;
+    gfx::FloatRect computeCrop(const sp<const DisplayDevice>& hw) const;
     bool isCropped() const;
     static bool getOpacityForFormat(uint32_t format);
 
     // drawing
-    void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
+    void clearWithOpenGL(const sp<const DisplayDevice>& hw,
             float r, float g, float b, float alpha) const;
-    void drawWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
+    void drawWithOpenGL(const sp<const DisplayDevice>& hw,
             bool useIdentityTransform) const;
 
     // Temporary - Used only for LEGACY camera mode.
@@ -583,7 +584,16 @@ private:
     // thread-safe
     volatile int32_t mQueuedFrames;
     volatile int32_t mSidebandStreamChanged; // used like an atomic boolean
+
+    // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
+
+    // Timestamp history for the consumer to query.
+    // Accessed by both consumer and producer on main and binder threads.
+    Mutex mFrameEventHistoryMutex;
+    ConsumerFrameEventHistory mFrameEventHistory;
+    FenceTimeline mAcquireTimeline;
+    FenceTimeline mReleaseTimeline;
 
     // main thread
     sp<GraphicBuffer> mActiveBuffer;
@@ -594,7 +604,9 @@ private:
     // We encode unset as -1.
     int32_t mOverrideScalingMode;
     bool mCurrentOpacity;
+    bool mBufferLatched = false;  // TODO: Use mActiveBuffer?
     std::atomic<uint64_t> mCurrentFrameNumber;
+    uint64_t mPreviousFrameNumber; // Only accessed on the main thread.
     bool mRefreshPending;
     bool mFrameLatencyNeeded;
     // Whether filtering is forced on or not
@@ -620,7 +632,7 @@ private:
         HWC2::Composition compositionType;
         bool clearClientTarget;
         Rect displayFrame;
-        FloatRect sourceCrop;
+        gfx::FloatRect sourceCrop;
     };
     std::unordered_map<int32_t, HWCInfo> mHwcLayers;
 #else
@@ -644,7 +656,7 @@ private:
     Condition mQueueItemCondition;
     Vector<BufferItem> mQueueItems;
     std::atomic<uint64_t> mLastFrameNumberReceived;
-    bool mUpdateTexImageFailed; // This is only modified from the main thread
+    bool mUpdateTexImageFailed; // This is only accessed on the main thread.
 
     bool mAutoRefresh;
     bool mFreezePositionUpdates;

@@ -16,13 +16,14 @@
 
 #include <hardware/hwvulkan.h>
 
-#include <algorithm>
-#include <array>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <log/log.h>
+#include <algorithm>
+#include <array>
+
+#include <android/log.h>
 #include <utils/Errors.h>
 
 #include "null_driver_gen.h"
@@ -881,6 +882,16 @@ VkResult GetSwapchainGrallocUsageANDROID(VkDevice,
                                          VkFormat,
                                          VkImageUsageFlags,
                                          int* grallocUsage) {
+    // The null driver never reads or writes the gralloc buffer
+    *grallocUsage = 0;
+    return VK_SUCCESS;
+}
+
+VkResult GetSwapchainGrallocUsage2ANDROID(VkDevice,
+                                          VkFormat,
+                                          VkImageUsageFlags,
+                                          VkSwapchainImageUsageFlagsANDROID,
+                                          int* grallocUsage) {
     // The null driver never reads or writes the gralloc buffer
     *grallocUsage = 0;
     return VK_SUCCESS;

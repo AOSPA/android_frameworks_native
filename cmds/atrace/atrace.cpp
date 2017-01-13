@@ -109,6 +109,7 @@ static const TracingCategory k_categories[] = {
     { "ss",         "System Server",    ATRACE_TAG_SYSTEM_SERVER, { } },
     { "database",   "Database",         ATRACE_TAG_DATABASE, { } },
     { "network",    "Network",          ATRACE_TAG_NETWORK, { } },
+    { "adb",        "ADB",              ATRACE_TAG_ADB, { } },
     { k_coreServiceCategory, "Core services", 0, { } },
     { "sched",      "CPU Scheduling",   0, {
         { REQ,      "/sys/kernel/debug/tracing/events/sched/sched_switch/enable" },
@@ -524,15 +525,19 @@ static bool pokeBinderServices()
 // their system properties.
 static void pokeHalServices()
 {
+    using ::android::hidl::base::V1_0::IBase;
     using ::android::hidl::manager::V1_0::IServiceManager;
-    using ::android::hardware::IBinder;
     using ::android::hardware::hidl_string;
-    using ::android::hardware::Parcel;
-
-    Parcel data;
+    using ::android::hardware::Return;
 
     sp<IServiceManager> sm = ::android::hardware::defaultServiceManager();
-    sm->list([&](const auto &interfaces) {
+
+    if (sm == nullptr) {
+        fprintf(stderr, "failed to get IServiceManager to poke hal services\n");
+        return;
+    }
+
+    auto listRet = sm->list([&](const auto &interfaces) {
         for (size_t i = 0; i < interfaces.size(); i++) {
             string fqInstanceName = interfaces[i];
             string::size_type n = fqInstanceName.find("/");
@@ -540,13 +545,25 @@ static void pokeHalServices()
                 continue;
             hidl_string fqInterfaceName = fqInstanceName.substr(0, n);
             hidl_string instanceName = fqInstanceName.substr(n+1, std::string::npos);
-            sm->get(fqInterfaceName, instanceName, [&](const auto &interface) {
-                // TODO(b/32756130)
-                // Once IServiceManager returns IBase, use interface->notifySyspropsChanged() here
-                interface->transact(IBinder::SYSPROPS_TRANSACTION, data, nullptr, 0, nullptr);
-            });
+            Return<sp<IBase>> interfaceRet = sm->get(fqInterfaceName, instanceName);
+            if (!interfaceRet.isOk()) {
+                fprintf(stderr, "failed to get service %s: %s\n",
+                        fqInstanceName.c_str(),
+                        interfaceRet.description().c_str());
+                continue;
+            }
+            sp<IBase> interface = interfaceRet;
+            auto notifyRet = interface->notifySyspropsChanged();
+            if (!notifyRet.isOk()) {
+                fprintf(stderr, "failed to notifySyspropsChanged on service %s: %s\n",
+                        fqInstanceName.c_str(),
+                        notifyRet.description().c_str());
+            }
         }
     });
+    if (!listRet.isOk()) {
+        fprintf(stderr, "failed to list services: %s\n", listRet.description().c_str());
+    }
 }
 
 // Set the trace tags that userland tracing uses, and poke the running

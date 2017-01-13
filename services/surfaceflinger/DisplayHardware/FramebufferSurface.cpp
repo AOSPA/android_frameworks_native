@@ -19,13 +19,12 @@
 #undef LOG_TAG
 #define LOG_TAG "FramebufferSurface"
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <cutils/log.h>
-
+#include <android/log.h>
 #include <utils/String8.h>
 
 #include <ui/Rect.h>
@@ -205,7 +204,7 @@ void FramebufferSurface::freeBufferLocked(int slotIndex) {
 void FramebufferSurface::onFrameCommitted() {
 #ifdef USE_HWC2
     if (mHasPendingRelease) {
-        sp<Fence> fence = mHwc.getRetireFence(mDisplayType);
+        sp<Fence> fence = mHwc.getPresentFence(mDisplayType);
         if (fence->isValid()) {
             status_t result = addReleaseFence(mPreviousBufferSlot,
                     mPreviousBuffer, fence);

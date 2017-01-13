@@ -190,7 +190,8 @@ public:
     // All other negative values are an unknown error returned downstream
     // from the graphics allocator (typically errno).
     virtual status_t dequeueBuffer(int* slot, sp<Fence>* fence, uint32_t w,
-            uint32_t h, PixelFormat format, uint32_t usage) = 0;
+            uint32_t h, PixelFormat format, uint32_t usage,
+            FrameEventHistoryDelta* outTimestamps) = 0;
 
     // detachBuffer attempts to remove all ownership of the buffer in the given
     // slot from the buffer queue. If this call succeeds, the slot will be
@@ -295,6 +296,7 @@ public:
     struct QueueBufferInput : public Flattenable<QueueBufferInput> {
         friend class Flattenable<QueueBufferInput>;
         explicit inline QueueBufferInput(const Parcel& parcel);
+
         // timestamp - a monotonically increasing value in nanoseconds
         // isAutoTimestamp - if the timestamp was synthesized at queue time
         // dataSpace - description of the contents, interpretation depends on format
@@ -305,19 +307,23 @@ public:
         //         set this to Fence::NO_FENCE if the buffer is ready immediately
         // sticky - the sticky transform set in Surface (only used by the LEGACY
         //          camera mode).
+        // getFrameTimestamps - whether or not the latest frame timestamps
+        //                      should be retrieved from the consumer.
         inline QueueBufferInput(int64_t _timestamp, bool _isAutoTimestamp,
                 android_dataspace _dataSpace, const Rect& _crop,
                 int _scalingMode, uint32_t _transform, const sp<Fence>& _fence,
-                uint32_t _sticky = 0)
+                uint32_t _sticky = 0, bool _getFrameTimestamps = false)
                 : timestamp(_timestamp), isAutoTimestamp(_isAutoTimestamp),
                   dataSpace(_dataSpace), crop(_crop), scalingMode(_scalingMode),
                   transform(_transform), stickyTransform(_sticky), fence(_fence),
-                  surfaceDamage() { }
+                  surfaceDamage(), getFrameTimestamps(_getFrameTimestamps) { }
+
         inline void deflate(int64_t* outTimestamp, bool* outIsAutoTimestamp,
                 android_dataspace* outDataSpace,
                 Rect* outCrop, int* outScalingMode,
                 uint32_t* outTransform, sp<Fence>* outFence,
-                uint32_t* outStickyTransform = NULL) const {
+                uint32_t* outStickyTransform = nullptr,
+                bool* outGetFrameTimestamps = nullptr) const {
             *outTimestamp = timestamp;
             *outIsAutoTimestamp = bool(isAutoTimestamp);
             *outDataSpace = dataSpace;
@@ -328,9 +334,13 @@ public:
             if (outStickyTransform != NULL) {
                 *outStickyTransform = stickyTransform;
             }
+            if (outGetFrameTimestamps) {
+                *outGetFrameTimestamps = getFrameTimestamps;
+            }
         }
 
         // Flattenable protocol
+        static constexpr size_t minFlattenedSize();
         size_t getFlattenedSize() const;
         size_t getFdCount() const;
         status_t flatten(void*& buffer, size_t& size, int*& fds, size_t& count) const;
@@ -349,41 +359,32 @@ public:
         uint32_t stickyTransform{0};
         sp<Fence> fence;
         Region surfaceDamage;
+        bool getFrameTimestamps{false};
     };
 
-    // QueueBufferOutput must be a POD structure
-    struct QueueBufferOutput {
-        // outWidth - filled with default width applied to the buffer
-        // outHeight - filled with default height applied to the buffer
-        // outTransformHint - filled with default transform applied to the buffer
-        // outNumPendingBuffers - num buffers queued that haven't yet been acquired
-        //                        (counting the currently queued buffer)
-        inline void deflate(uint32_t* outWidth,
-                uint32_t* outHeight,
-                uint32_t* outTransformHint,
-                uint32_t* outNumPendingBuffers,
-                uint64_t* outNextFrameNumber) const {
-            *outWidth = width;
-            *outHeight = height;
-            *outTransformHint = transformHint;
-            *outNumPendingBuffers = numPendingBuffers;
-            *outNextFrameNumber = nextFrameNumber;
-        }
-        inline void inflate(uint32_t inWidth, uint32_t inHeight,
-                uint32_t inTransformHint, uint32_t inNumPendingBuffers,
-                uint64_t inNextFrameNumber) {
-            width = inWidth;
-            height = inHeight;
-            transformHint = inTransformHint;
-            numPendingBuffers = inNumPendingBuffers;
-            nextFrameNumber = inNextFrameNumber;
-        }
-    private:
+    struct QueueBufferOutput : public Flattenable<QueueBufferOutput> {
+        QueueBufferOutput() = default;
+
+        // Moveable.
+        QueueBufferOutput(QueueBufferOutput&& src) = default;
+        QueueBufferOutput& operator=(QueueBufferOutput&& src) = default;
+        // Not copyable.
+        QueueBufferOutput(const QueueBufferOutput& src) = delete;
+        QueueBufferOutput& operator=(const QueueBufferOutput& src) = delete;
+
+        // Flattenable protocol
+        static constexpr size_t minFlattenedSize();
+        size_t getFlattenedSize() const;
+        size_t getFdCount() const;
+        status_t flatten(void*& buffer, size_t& size, int*& fds, size_t& count) const;
+        status_t unflatten(void const*& buffer, size_t& size, int const*& fds, size_t& count);
+
         uint32_t width{0};
         uint32_t height{0};
         uint32_t transformHint{0};
         uint32_t numPendingBuffers{0};
         uint64_t nextFrameNumber{0};
+        FrameEventHistoryDelta frameTimestamps;
     };
 
     virtual status_t queueBuffer(int slot, const QueueBufferInput& input,
@@ -580,13 +581,8 @@ public:
     virtual status_t getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
             sp<Fence>* outFence, float outTransformMatrix[16]) = 0;
 
-    // Attempts to retrieve timestamp information for the given frame number.
-    // If information for the given frame number is not found, returns false.
-    // Returns true otherwise.
-    //
-    // If a fence has not yet signaled the timestamp returned will be 0;
-    virtual bool getFrameTimestamps(uint64_t /*frameNumber*/,
-            FrameTimestamps* /*outTimestamps*/) const { return false; }
+    // Gets the frame events that haven't already been retrieved.
+    virtual void getFrameTimestamps(FrameEventHistoryDelta* /*outDelta*/) {}
 
     // Returns a unique id for this BufferQueue
     virtual status_t getUniqueId(uint64_t* outId) const = 0;

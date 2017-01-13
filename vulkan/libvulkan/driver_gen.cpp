@@ -18,7 +18,7 @@
 
 #include <string.h>
 #include <algorithm>
-#include <log/log.h>
+#include <android/log.h>
 
 #include "driver.h"
 
@@ -69,6 +69,24 @@ VKAPI_ATTR VkResult checkedQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR
         return QueuePresentKHR(queue, pPresentInfo);
     } else {
         Logger(queue).Err(queue, "VK_KHR_swapchain not enabled. vkQueuePresentKHR not executed.");
+        return VK_SUCCESS;
+    }
+}
+
+VKAPI_ATTR VkResult checkedGetRefreshCycleDurationGOOGLE(VkDevice device, VkSwapchainKHR swapchain, VkRefreshCycleDurationGOOGLE* pDisplayTimingProperties) {
+    if (GetData(device).hook_extensions[ProcHook::GOOGLE_display_timing]) {
+        return GetRefreshCycleDurationGOOGLE(device, swapchain, pDisplayTimingProperties);
+    } else {
+        Logger(device).Err(device, "VK_GOOGLE_display_timing not enabled. vkGetRefreshCycleDurationGOOGLE not executed.");
+        return VK_SUCCESS;
+    }
+}
+
+VKAPI_ATTR VkResult checkedGetPastPresentationTimingGOOGLE(VkDevice device, VkSwapchainKHR swapchain, uint32_t* pPresentationTimingCount, VkPastPresentationTimingGOOGLE* pPresentationTimings) {
+    if (GetData(device).hook_extensions[ProcHook::GOOGLE_display_timing]) {
+        return GetPastPresentationTimingGOOGLE(device, swapchain, pPresentationTimingCount, pPresentationTimings);
+    } else {
+        Logger(device).Err(device, "VK_GOOGLE_display_timing not enabled. vkGetPastPresentationTimingGOOGLE not executed.");
         return VK_SUCCESS;
     }
 }
@@ -218,6 +236,13 @@ const ProcHook g_proc_hooks[] = {
         nullptr,
     },
     {
+        "vkGetPastPresentationTimingGOOGLE",
+        ProcHook::DEVICE,
+        ProcHook::GOOGLE_display_timing,
+        reinterpret_cast<PFN_vkVoidFunction>(GetPastPresentationTimingGOOGLE),
+        reinterpret_cast<PFN_vkVoidFunction>(checkedGetPastPresentationTimingGOOGLE),
+    },
+    {
         "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
         ProcHook::INSTANCE,
         ProcHook::KHR_surface,
@@ -243,6 +268,20 @@ const ProcHook g_proc_hooks[] = {
         ProcHook::INSTANCE,
         ProcHook::KHR_surface,
         reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceSupportKHR),
+        nullptr,
+    },
+    {
+        "vkGetRefreshCycleDurationGOOGLE",
+        ProcHook::DEVICE,
+        ProcHook::GOOGLE_display_timing,
+        reinterpret_cast<PFN_vkVoidFunction>(GetRefreshCycleDurationGOOGLE),
+        reinterpret_cast<PFN_vkVoidFunction>(checkedGetRefreshCycleDurationGOOGLE),
+    },
+    {
+        "vkGetSwapchainGrallocUsage2ANDROID",
+        ProcHook::DEVICE,
+        ProcHook::ANDROID_native_buffer,
+        nullptr,
         nullptr,
     },
     {
@@ -295,26 +334,27 @@ ProcHook::Extension GetProcHookExtension(const char* name) {
     if (strcmp(name, "VK_KHR_android_surface") == 0) return ProcHook::KHR_android_surface;
     if (strcmp(name, "VK_KHR_surface") == 0) return ProcHook::KHR_surface;
     if (strcmp(name, "VK_KHR_swapchain") == 0) return ProcHook::KHR_swapchain;
+    if (strcmp(name, "VK_GOOGLE_display_timing") == 0) return ProcHook::GOOGLE_display_timing;
     // clang-format on
     return ProcHook::EXTENSION_UNKNOWN;
 }
 
 #define UNLIKELY(expr) __builtin_expect((expr), 0)
 
-#define INIT_PROC(obj, proc)                                           \
+#define INIT_PROC(required, obj, proc)                                 \
     do {                                                               \
         data.driver.proc =                                             \
             reinterpret_cast<PFN_vk##proc>(get_proc(obj, "vk" #proc)); \
-        if (UNLIKELY(!data.driver.proc)) {                             \
+        if (UNLIKELY(required && !data.driver.proc)) {                 \
             ALOGE("missing " #obj " proc: vk" #proc);                  \
             success = false;                                           \
         }                                                              \
     } while (0)
 
-#define INIT_PROC_EXT(ext, obj, proc)  \
-    do {                               \
-        if (extensions[ProcHook::ext]) \
-            INIT_PROC(obj, proc);      \
+#define INIT_PROC_EXT(ext, required, obj, proc) \
+    do {                                        \
+        if (extensions[ProcHook::ext])          \
+            INIT_PROC(required, obj, proc);     \
     } while (0)
 
 bool InitDriverTable(VkInstance instance,
@@ -324,14 +364,14 @@ bool InitDriverTable(VkInstance instance,
     bool success = true;
 
     // clang-format off
-    INIT_PROC(instance, DestroyInstance);
-    INIT_PROC(instance, EnumeratePhysicalDevices);
-    INIT_PROC(instance, GetInstanceProcAddr);
-    INIT_PROC(instance, CreateDevice);
-    INIT_PROC(instance, EnumerateDeviceExtensionProperties);
-    INIT_PROC_EXT(EXT_debug_report, instance, CreateDebugReportCallbackEXT);
-    INIT_PROC_EXT(EXT_debug_report, instance, DestroyDebugReportCallbackEXT);
-    INIT_PROC_EXT(EXT_debug_report, instance, DebugReportMessageEXT);
+    INIT_PROC(true, instance, DestroyInstance);
+    INIT_PROC(true, instance, EnumeratePhysicalDevices);
+    INIT_PROC(true, instance, GetInstanceProcAddr);
+    INIT_PROC(true, instance, CreateDevice);
+    INIT_PROC(true, instance, EnumerateDeviceExtensionProperties);
+    INIT_PROC_EXT(EXT_debug_report, true, instance, CreateDebugReportCallbackEXT);
+    INIT_PROC_EXT(EXT_debug_report, true, instance, DestroyDebugReportCallbackEXT);
+    INIT_PROC_EXT(EXT_debug_report, true, instance, DebugReportMessageEXT);
     // clang-format on
 
     return success;
@@ -344,15 +384,16 @@ bool InitDriverTable(VkDevice dev,
     bool success = true;
 
     // clang-format off
-    INIT_PROC(dev, GetDeviceProcAddr);
-    INIT_PROC(dev, DestroyDevice);
-    INIT_PROC(dev, GetDeviceQueue);
-    INIT_PROC(dev, CreateImage);
-    INIT_PROC(dev, DestroyImage);
-    INIT_PROC(dev, AllocateCommandBuffers);
-    INIT_PROC_EXT(ANDROID_native_buffer, dev, GetSwapchainGrallocUsageANDROID);
-    INIT_PROC_EXT(ANDROID_native_buffer, dev, AcquireImageANDROID);
-    INIT_PROC_EXT(ANDROID_native_buffer, dev, QueueSignalReleaseImageANDROID);
+    INIT_PROC(true, dev, GetDeviceProcAddr);
+    INIT_PROC(true, dev, DestroyDevice);
+    INIT_PROC(true, dev, GetDeviceQueue);
+    INIT_PROC(true, dev, CreateImage);
+    INIT_PROC(true, dev, DestroyImage);
+    INIT_PROC(true, dev, AllocateCommandBuffers);
+    INIT_PROC_EXT(ANDROID_native_buffer, true, dev, GetSwapchainGrallocUsageANDROID);
+    INIT_PROC_EXT(ANDROID_native_buffer, false, dev, GetSwapchainGrallocUsage2ANDROID);
+    INIT_PROC_EXT(ANDROID_native_buffer, true, dev, AcquireImageANDROID);
+    INIT_PROC_EXT(ANDROID_native_buffer, true, dev, QueueSignalReleaseImageANDROID);
     // clang-format on
 
     return success;

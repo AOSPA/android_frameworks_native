@@ -322,6 +322,7 @@ status_t GLConsumer::releaseTexImage() {
         mCurrentTransform = 0;
         mCurrentTimestamp = 0;
         mCurrentFence = Fence::NO_FENCE;
+        mCurrentFenceTime = FenceTime::NO_FENCE;
 
         if (mAttached) {
             // This binds a dummy buffer (mReleasedTexImage).
@@ -488,6 +489,7 @@ status_t GLConsumer::updateAndReleaseLocked(const BufferItem& item,
     mCurrentScalingMode = item.mScalingMode;
     mCurrentTimestamp = item.mTimestamp;
     mCurrentFence = item.mFence;
+    mCurrentFenceTime = item.mFenceTime;
     mCurrentFrameNumber = item.mFrameNumber;
 
     computeCurrentTransformMatrixLocked();
@@ -856,6 +858,7 @@ void GLConsumer::computeTransformMatrix(float outTransform[16],
             switch (buf->getPixelFormat()) {
                 case PIXEL_FORMAT_RGBA_8888:
                 case PIXEL_FORMAT_RGBX_8888:
+                case PIXEL_FORMAT_RGBA_FP16:
                 case PIXEL_FORMAT_RGB_888:
                 case PIXEL_FORMAT_RGB_565:
                 case PIXEL_FORMAT_BGRA_8888:
@@ -979,6 +982,11 @@ uint32_t GLConsumer::getCurrentScalingMode() const {
 sp<Fence> GLConsumer::getCurrentFence() const {
     Mutex::Autolock lock(mMutex);
     return mCurrentFence;
+}
+
+std::shared_ptr<FenceTime> GLConsumer::getCurrentFenceTime() const {
+    Mutex::Autolock lock(mMutex);
+    return mCurrentFenceTime;
 }
 
 status_t GLConsumer::doGLFenceWait() const {

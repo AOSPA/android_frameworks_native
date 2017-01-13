@@ -43,7 +43,7 @@
 
 #include <android/configuration.h>
 
-#include <cutils/log.h>
+#include <android/log.h>
 #include <cutils/properties.h>
 
 #include "HWComposer.h"
@@ -309,22 +309,22 @@ std::shared_ptr<HWC2::Layer> HWComposer::createLayer(int32_t displayId) {
     return layer;
 }
 
-nsecs_t HWComposer::getRefreshTimestamp(int32_t disp) const {
+nsecs_t HWComposer::getRefreshTimestamp(int32_t displayId) const {
     // this returns the last refresh timestamp.
     // if the last one is not available, we estimate it based on
     // the refresh period and whatever closest timestamp we have.
     Mutex::Autolock _l(mLock);
     nsecs_t now = systemTime(CLOCK_MONOTONIC);
-    auto vsyncPeriod = getActiveConfig(disp)->getVsyncPeriod();
-    return now - ((now - mLastHwVSync[disp]) % vsyncPeriod);
+    auto vsyncPeriod = getActiveConfig(displayId)->getVsyncPeriod();
+    return now - ((now - mLastHwVSync[displayId]) % vsyncPeriod);
 }
 
-bool HWComposer::isConnected(int32_t disp) const {
-    if (!isValidDisplay(disp)) {
-        ALOGE("isConnected: Attempted to access invalid display %d", disp);
+bool HWComposer::isConnected(int32_t displayId) const {
+    if (!isValidDisplay(displayId)) {
+        ALOGE("isConnected: Attempted to access invalid display %d", displayId);
         return false;
     }
-    return mDisplayData[disp].hwcDisplay->isConnected();
+    return mDisplayData[displayId].hwcDisplay->isConnected();
 }
 
 std::vector<std::shared_ptr<const HWC2::Display::Config>>
@@ -408,14 +408,15 @@ status_t HWComposer::setActiveColorMode(int32_t displayId, android_color_mode_t 
 }
 
 
-void HWComposer::setVsyncEnabled(int32_t disp, HWC2::Vsync enabled) {
-    if (disp < 0 || disp >= HWC_DISPLAY_VIRTUAL) {
-        ALOGD("setVsyncEnabled: Ignoring for virtual display %d", disp);
+void HWComposer::setVsyncEnabled(int32_t displayId, HWC2::Vsync enabled) {
+    if (displayId < 0 || displayId >= HWC_DISPLAY_VIRTUAL) {
+        ALOGD("setVsyncEnabled: Ignoring for virtual display %d", displayId);
         return;
     }
 
-    if (!isValidDisplay(disp)) {
-        ALOGE("setVsyncEnabled: Attempted to access invalid display %d", disp);
+    if (!isValidDisplay(displayId)) {
+        ALOGE("setVsyncEnabled: Attempted to access invalid display %d",
+               displayId);
         return;
     }
 
@@ -424,7 +425,7 @@ void HWComposer::setVsyncEnabled(int32_t disp, HWC2::Vsync enabled) {
     // that even if HWC blocks (which it shouldn't), it won't
     // affect other threads.
     Mutex::Autolock _l(mVsyncLock);
-    auto& displayData = mDisplayData[disp];
+    auto& displayData = mDisplayData[displayId];
     if (enabled != displayData.vsyncEnabled) {
         ATRACE_CALL();
         auto error = displayData.hwcDisplay->setVsyncEnabled(enabled);
@@ -432,12 +433,12 @@ void HWComposer::setVsyncEnabled(int32_t disp, HWC2::Vsync enabled) {
             displayData.vsyncEnabled = enabled;
 
             char tag[16];
-            snprintf(tag, sizeof(tag), "HW_VSYNC_ON_%1u", disp);
+            snprintf(tag, sizeof(tag), "HW_VSYNC_ON_%1u", displayId);
             ATRACE_INT(tag, enabled == HWC2::Vsync::Enable ? 1 : 0);
         } else {
             ALOGE("setVsyncEnabled: Failed to set vsync to %s on %d/%" PRIu64
-                    ": %s (%d)", to_string(enabled).c_str(), disp,
-                    mDisplayData[disp].hwcDisplay->getId(),
+                    ": %s (%d)", to_string(enabled).c_str(), displayId,
+                    mDisplayData[displayId].hwcDisplay->getId(),
                     to_string(error).c_str(), static_cast<int32_t>(error));
         }
     }
@@ -593,12 +594,16 @@ bool HWComposer::hasClientComposition(int32_t displayId) const {
     return mDisplayData[displayId].hasClientComposition;
 }
 
-sp<Fence> HWComposer::getRetireFence(int32_t displayId) const {
+sp<Fence> HWComposer::getPresentFence(int32_t displayId) const {
     if (!isValidDisplay(displayId)) {
-        ALOGE("getRetireFence failed for invalid display %d", displayId);
+        ALOGE("getPresentFence failed for invalid display %d", displayId);
         return Fence::NO_FENCE;
     }
-    return mDisplayData[displayId].lastRetireFence;
+    return mDisplayData[displayId].lastPresentFence;
+}
+
+bool HWComposer::presentFenceRepresentsStartOfScanout() const {
+    return mAdapter ? false : true;
 }
 
 sp<Fence> HWComposer::getLayerReleaseFence(int32_t displayId,
@@ -615,7 +620,7 @@ sp<Fence> HWComposer::getLayerReleaseFence(int32_t displayId,
     return displayFences[layer];
 }
 
-status_t HWComposer::commit(int32_t displayId) {
+status_t HWComposer::presentAndGetReleaseFences(int32_t displayId) {
     ATRACE_CALL();
 
     if (!isValidDisplay(displayId)) {
@@ -624,17 +629,18 @@ status_t HWComposer::commit(int32_t displayId) {
 
     auto& displayData = mDisplayData[displayId];
     auto& hwcDisplay = displayData.hwcDisplay;
-    auto error = hwcDisplay->present(&displayData.lastRetireFence);
+    auto error = hwcDisplay->present(&displayData.lastPresentFence);
     if (error != HWC2::Error::None) {
-        ALOGE("commit: present failed for display %d: %s (%d)", displayId,
-                to_string(error).c_str(), static_cast<int32_t>(error));
+        ALOGE("presentAndGetReleaseFences: failed for display %d: %s (%d)",
+              displayId, to_string(error).c_str(), static_cast<int32_t>(error));
         return UNKNOWN_ERROR;
     }
 
     std::unordered_map<std::shared_ptr<HWC2::Layer>, sp<Fence>> releaseFences;
     error = hwcDisplay->getReleaseFences(&releaseFences);
     if (error != HWC2::Error::None) {
-        ALOGE("commit: Failed to get release fences for display %d: %s (%d)",
+        ALOGE("presentAndGetReleaseFences: Failed to get release fences "
+              "for display %d: %s (%d)",
                 displayId, to_string(error).c_str(),
                 static_cast<int32_t>(error));
         return UNKNOWN_ERROR;
@@ -873,7 +879,7 @@ HWComposer::DisplayData::DisplayData()
   : hasClientComposition(false),
     hasDeviceComposition(false),
     hwcDisplay(),
-    lastRetireFence(Fence::NO_FENCE),
+    lastPresentFence(Fence::NO_FENCE),
     outbufHandle(nullptr),
     outbufAcquireFence(Fence::NO_FENCE),
     vsyncEnabled(HWC2::Vsync::Disable) {

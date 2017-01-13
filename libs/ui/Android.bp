@@ -28,6 +28,9 @@ cc_library_shared {
         // We only care about compiling as C++14
         "-Wno-c++98-compat-pedantic",
 
+        // We are aware of the risks inherent in comparing floats for equality
+        "-Wno-float-equal",
+
         // We use four-character constants for the GraphicBuffer header, and don't care
         // that they're non-portable as long as they're consistent within one execution
         "-Wno-four-char-constants",
@@ -43,6 +46,7 @@ cc_library_shared {
     srcs: [
         "ColorSpace.cpp",
         "Fence.cpp",
+        "FenceTime.cpp",
         "FrameStats.cpp",
         "Gralloc1.cpp",
         "Gralloc1On0Adapter.cpp",
@@ -58,12 +62,9 @@ cc_library_shared {
         "UiConfig.cpp",
     ],
 
-    static_libs: [
-        "android.hardware.graphics.mapper@2.0",
-    ],
-
     shared_libs: [
         "android.hardware.graphics.allocator@2.0",
+        "android.hardware.graphics.mapper@2.0",
         "libbinder",
         "libcutils",
         "libhardware",

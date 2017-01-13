@@ -38,6 +38,7 @@ struct ProcHook {
         KHR_android_surface,
         KHR_surface,
         KHR_swapchain,
+        GOOGLE_display_timing,
 
         EXTENSION_CORE,  // valid bit
         EXTENSION_COUNT,
@@ -74,6 +75,7 @@ struct DeviceDriverTable {
     PFN_vkDestroyImage DestroyImage;
     PFN_vkAllocateCommandBuffers AllocateCommandBuffers;
     PFN_vkGetSwapchainGrallocUsageANDROID GetSwapchainGrallocUsageANDROID;
+    PFN_vkGetSwapchainGrallocUsage2ANDROID GetSwapchainGrallocUsage2ANDROID;
     PFN_vkAcquireImageANDROID AcquireImageANDROID;
     PFN_vkQueueSignalReleaseImageANDROID QueueSignalReleaseImageANDROID;
     // clang-format on

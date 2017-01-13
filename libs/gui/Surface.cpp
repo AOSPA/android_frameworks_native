@@ -49,7 +49,11 @@ Surface::Surface(
       mAutoRefresh(false),
       mSharedBufferSlot(BufferItem::INVALID_BUFFER_SLOT),
       mSharedBufferHasBeenQueued(false),
-      mNextFrameNumber(1)
+      mNextFrameNumber(1),
+      mQueriedSupportedTimestamps(false),
+      mFrameTimestampsSupportsPresent(false),
+      mFrameTimestampsSupportsRetire(false),
+      mEnableFrameTimestamps(false)
 {
     // Initialize the ANativeWindow function pointers.
     ANativeWindow::setSwapInterval  = hook_setSwapInterval;
@@ -135,37 +139,80 @@ status_t Surface::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
             outTransformMatrix);
 }
 
-bool Surface::getFrameTimestamps(uint64_t frameNumber, nsecs_t* outPostedTime,
-        nsecs_t* outAcquireTime, nsecs_t* outRefreshStartTime,
-        nsecs_t* outGlCompositionDoneTime, nsecs_t* outDisplayRetireTime,
+void Surface::enableFrameTimestamps(bool enable) {
+    Mutex::Autolock lock(mMutex);
+    mEnableFrameTimestamps = enable;
+}
+
+static void getFrameTimestamp(nsecs_t *dst, const nsecs_t& src) {
+    if (dst != nullptr) {
+        *dst = Fence::isValidTimestamp(src) ? src : 0;
+    }
+}
+
+static void getFrameTimestampFence(nsecs_t *dst, const std::shared_ptr<FenceTime>& src) {
+    if (dst != nullptr) {
+        nsecs_t signalTime = src->getSignalTime();
+        *dst = Fence::isValidTimestamp(signalTime) ? signalTime : 0;
+    }
+}
+
+status_t Surface::getFrameTimestamps(uint64_t frameNumber,
+        nsecs_t* outRequestedPresentTime, nsecs_t* outAcquireTime,
+        nsecs_t* outRefreshStartTime, nsecs_t* outGlCompositionDoneTime,
+        nsecs_t* outDisplayPresentTime, nsecs_t* outDisplayRetireTime,
         nsecs_t* outReleaseTime) {
     ATRACE_CALL();
 
-    FrameTimestamps timestamps;
-    bool found = mGraphicBufferProducer->getFrameTimestamps(frameNumber,
-            &timestamps);
-    if (found) {
-        if (outPostedTime) {
-            *outPostedTime = timestamps.postedTime;
-        }
-        if (outAcquireTime) {
-            *outAcquireTime = timestamps.acquireTime;
-        }
-        if (outRefreshStartTime) {
-            *outRefreshStartTime = timestamps.refreshStartTime;
-        }
-        if (outGlCompositionDoneTime) {
-            *outGlCompositionDoneTime = timestamps.glCompositionDoneTime;
-        }
-        if (outDisplayRetireTime) {
-            *outDisplayRetireTime = timestamps.displayRetireTime;
-        }
-        if (outReleaseTime) {
-            *outReleaseTime = timestamps.releaseTime;
-        }
-        return true;
+    Mutex::Autolock lock(mMutex);
+
+    if (!mEnableFrameTimestamps) {
+        return INVALID_OPERATION;
     }
-    return false;
+
+    // Verify the requested timestamps are supported.
+    querySupportedTimestampsLocked();
+    if (outDisplayPresentTime != nullptr && !mFrameTimestampsSupportsPresent) {
+        return BAD_VALUE;
+    }
+    if (outDisplayRetireTime != nullptr && !mFrameTimestampsSupportsRetire) {
+        return BAD_VALUE;
+    }
+
+    FrameEvents* events = mFrameEventHistory.getFrame(frameNumber);
+
+    // Update our cache of events if the requested events are not available.
+    if (events == nullptr ||
+        (outRequestedPresentTime && !events->hasRequestedPresentInfo()) ||
+        (outAcquireTime && !events->hasAcquireInfo()) ||
+        (outRefreshStartTime && !events->hasFirstRefreshStartInfo()) ||
+        (outGlCompositionDoneTime && !events->hasGpuCompositionDoneInfo()) ||
+        (outDisplayPresentTime && !events->hasDisplayPresentInfo()) ||
+        (outDisplayRetireTime && !events->hasDisplayRetireInfo()) ||
+        (outReleaseTime && !events->hasReleaseInfo())) {
+            FrameEventHistoryDelta delta;
+            mGraphicBufferProducer->getFrameTimestamps(&delta);
+            mFrameEventHistory.applyDelta(delta);
+            events = mFrameEventHistory.getFrame(frameNumber);
+    }
+
+    // A record for the requested frame does not exist.
+    if (events == nullptr) {
+        return NAME_NOT_FOUND;
+    }
+
+    getFrameTimestamp(outRequestedPresentTime, events->requestedPresentTime);
+    getFrameTimestamp(outRefreshStartTime, events->firstRefreshStartTime);
+
+    getFrameTimestampFence(outAcquireTime, events->acquireFence);
+    getFrameTimestampFence(
+            outGlCompositionDoneTime, events->gpuCompositionDoneFence);
+    getFrameTimestampFence(
+            outDisplayPresentTime, events->displayPresentFence);
+    getFrameTimestampFence(outDisplayRetireTime, events->displayRetireFence);
+    getFrameTimestampFence(outReleaseTime, events->releaseFence);
+
+    return NO_ERROR;
 }
 
 int Surface::hook_setSwapInterval(ANativeWindow* window, int interval) {
@@ -271,6 +318,7 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     uint32_t reqHeight;
     PixelFormat reqFormat;
     uint32_t reqUsage;
+    bool enableFrameTimestamps;
 
     {
         Mutex::Autolock lock(mMutex);
@@ -280,6 +328,8 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
 
         reqFormat = mReqFormat;
         reqUsage = mReqUsage;
+
+        enableFrameTimestamps = mEnableFrameTimestamps;
 
         if (mSharedBufferMode && mAutoRefresh && mSharedBufferSlot !=
                 BufferItem::INVALID_BUFFER_SLOT) {
@@ -295,8 +345,13 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     int buf = -1;
     sp<Fence> fence;
     nsecs_t now = systemTime();
+
+    FrameEventHistoryDelta frameTimestamps;
+    FrameEventHistoryDelta* frameTimestampsOrNull =
+            enableFrameTimestamps ? &frameTimestamps : nullptr;
+
     status_t result = mGraphicBufferProducer->dequeueBuffer(&buf, &fence,
-            reqWidth, reqHeight, reqFormat, reqUsage);
+            reqWidth, reqHeight, reqFormat, reqUsage, frameTimestampsOrNull);
     mLastDequeueDuration = systemTime() - now;
 
     if (result < 0) {
@@ -315,6 +370,10 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
 
     if (result & IGraphicBufferProducer::RELEASE_ALL_BUFFERS) {
         freeAllBuffers();
+    }
+
+    if (enableFrameTimestamps) {
+         mFrameEventHistory.applyDelta(frameTimestamps);
     }
 
     if ((result & IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION) || gbuf == 0) {
@@ -435,7 +494,7 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     IGraphicBufferProducer::QueueBufferOutput output;
     IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
             mDataSpace, crop, mScalingMode, mTransform ^ mStickyTransform,
-            fence, mStickyTransform);
+            fence, mStickyTransform, mEnableFrameTimestamps);
 
     if (mConnectedToCpu || mDirtyRegion.bounds() == Rect::INVALID_RECT) {
         input.setSurfaceDamage(Region::INVALID_REGION);
@@ -507,17 +566,29 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
         ALOGE("queueBuffer: error queuing buffer to SurfaceTexture, %d", err);
     }
 
-    uint32_t numPendingBuffers = 0;
-    uint32_t hint = 0;
-    output.deflate(&mDefaultWidth, &mDefaultHeight, &hint,
-            &numPendingBuffers, &mNextFrameNumber);
+    if (mEnableFrameTimestamps) {
+        mFrameEventHistory.applyDelta(output.frameTimestamps);
+        // Update timestamps with the local acquire fence.
+        // The consumer doesn't send it back to prevent us from having two
+        // file descriptors of the same fence.
+        mFrameEventHistory.updateAcquireFence(mNextFrameNumber,
+                std::make_shared<FenceTime>(std::move(fence)));
+
+        // Cache timestamps of signaled fences so we can close their file
+        // descriptors.
+        mFrameEventHistory.updateSignalTimes();
+    }
+
+    mDefaultWidth = output.width;
+    mDefaultHeight = output.height;
+    mNextFrameNumber = output.nextFrameNumber;
 
     // Disable transform hint if sticky transform is set.
     if (mStickyTransform == 0) {
-        mTransformHint = hint;
+        mTransformHint = output.transformHint;
     }
 
-    mConsumerRunningBehind = (numPendingBuffers >= 2);
+    mConsumerRunningBehind = (output.numPendingBuffers >= 2);
 
     if (!mConnectedToCpu) {
         // Clear surface damage back to full-buffer
@@ -531,6 +602,32 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     mQueueBufferCondition.broadcast();
 
     return err;
+}
+
+void Surface::querySupportedTimestampsLocked() const {
+    // mMutex must be locked when calling this method.
+
+    if (mQueriedSupportedTimestamps) {
+        return;
+    }
+    mQueriedSupportedTimestamps = true;
+
+    std::vector<FrameEvent> supportedFrameTimestamps;
+    sp<ISurfaceComposer> composer(ComposerService::getComposerService());
+    status_t err = composer->getSupportedFrameTimestamps(
+            &supportedFrameTimestamps);
+
+    if (err != NO_ERROR) {
+        return;
+    }
+
+    for (auto sft : supportedFrameTimestamps) {
+        if (sft == FrameEvent::DISPLAY_PRESENT) {
+            mFrameTimestampsSupportsPresent = true;
+        } else if (sft == FrameEvent::DISPLAY_RETIRE) {
+            mFrameTimestampsSupportsRetire = true;
+        }
+    }
 }
 
 int Surface::query(int what, int* value) const {
@@ -593,6 +690,16 @@ int Surface::query(int what, int* value) const {
                 *value = durationUs > std::numeric_limits<int>::max() ?
                         std::numeric_limits<int>::max() :
                         static_cast<int>(durationUs);
+                return NO_ERROR;
+            }
+            case NATIVE_WINDOW_FRAME_TIMESTAMPS_SUPPORTS_PRESENT: {
+                querySupportedTimestampsLocked();
+                *value = mFrameTimestampsSupportsPresent ? 1 : 0;
+                return NO_ERROR;
+            }
+            case NATIVE_WINDOW_FRAME_TIMESTAMPS_SUPPORTS_RETIRE: {
+                querySupportedTimestampsLocked();
+                *value = mFrameTimestampsSupportsRetire ? 1 : 0;
                 return NO_ERROR;
             }
         }
@@ -669,6 +776,9 @@ int Surface::perform(int operation, va_list args)
         break;
     case NATIVE_WINDOW_SET_AUTO_REFRESH:
         res = dispatchSetAutoRefresh(args);
+        break;
+    case NATIVE_WINDOW_ENABLE_FRAME_TIMESTAMPS:
+        res = dispatchEnableFrameTimestamps(args);
         break;
     case NATIVE_WINDOW_GET_FRAME_TIMESTAMPS:
         res = dispatchGetFrameTimestamps(args);
@@ -793,18 +903,25 @@ int Surface::dispatchSetAutoRefresh(va_list args) {
     return setAutoRefresh(autoRefresh);
 }
 
+int Surface::dispatchEnableFrameTimestamps(va_list args) {
+    bool enable = va_arg(args, int);
+    enableFrameTimestamps(enable);
+    return NO_ERROR;
+}
+
 int Surface::dispatchGetFrameTimestamps(va_list args) {
     uint32_t framesAgo = va_arg(args, uint32_t);
-    nsecs_t* outPostedTime = va_arg(args, int64_t*);
+    nsecs_t* outRequestedPresentTime = va_arg(args, int64_t*);
     nsecs_t* outAcquireTime = va_arg(args, int64_t*);
     nsecs_t* outRefreshStartTime = va_arg(args, int64_t*);
     nsecs_t* outGlCompositionDoneTime = va_arg(args, int64_t*);
+    nsecs_t* outDisplayPresentTime = va_arg(args, int64_t*);
     nsecs_t* outDisplayRetireTime = va_arg(args, int64_t*);
     nsecs_t* outReleaseTime = va_arg(args, int64_t*);
-    bool ret = getFrameTimestamps(getNextFrameNumber() - 1 - framesAgo,
-            outPostedTime, outAcquireTime, outRefreshStartTime,
-            outGlCompositionDoneTime, outDisplayRetireTime, outReleaseTime);
-    return ret ? NO_ERROR : BAD_VALUE;
+    return getFrameTimestamps(getNextFrameNumber() - 1 - framesAgo,
+            outRequestedPresentTime, outAcquireTime, outRefreshStartTime,
+            outGlCompositionDoneTime, outDisplayPresentTime,
+            outDisplayRetireTime, outReleaseTime);
 }
 
 int Surface::connect(int api) {
@@ -819,17 +936,16 @@ int Surface::connect(int api, const sp<IProducerListener>& listener) {
     IGraphicBufferProducer::QueueBufferOutput output;
     int err = mGraphicBufferProducer->connect(listener, api, mProducerControlledByApp, &output);
     if (err == NO_ERROR) {
-        uint32_t numPendingBuffers = 0;
-        uint32_t hint = 0;
-        output.deflate(&mDefaultWidth, &mDefaultHeight, &hint,
-                &numPendingBuffers, &mNextFrameNumber);
+        mDefaultWidth = output.width;
+        mDefaultHeight = output.height;
+        mNextFrameNumber = output.nextFrameNumber;
 
         // Disable transform hint if sticky transform is set.
         if (mStickyTransform == 0) {
-            mTransformHint = hint;
+            mTransformHint = output.transformHint;
         }
 
-        mConsumerRunningBehind = (numPendingBuffers >= 2);
+        mConsumerRunningBehind = (output.numPendingBuffers >= 2);
     }
     if (!err && api == NATIVE_WINDOW_API_CPU) {
         mConnectedToCpu = true;
@@ -1172,7 +1288,8 @@ void Surface::setSurfaceDamage(android_native_rect_t* rects, size_t numRects) {
 static status_t copyBlt(
         const sp<GraphicBuffer>& dst,
         const sp<GraphicBuffer>& src,
-        const Region& reg)
+        const Region& reg,
+        int *dstFenceFd)
 {
     // src and dst with, height and format must be identical. no verification
     // is done here.
@@ -1183,9 +1300,10 @@ static status_t copyBlt(
     ALOGE_IF(err, "error locking src buffer %s", strerror(-err));
 
     uint8_t* dst_bits = NULL;
-    err = dst->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, reg.bounds(),
-            reinterpret_cast<void**>(&dst_bits));
+    err = dst->lockAsync(GRALLOC_USAGE_SW_WRITE_OFTEN, reg.bounds(),
+            reinterpret_cast<void**>(&dst_bits), *dstFenceFd);
     ALOGE_IF(err, "error locking dst buffer %s", strerror(-err));
+    *dstFenceFd = -1;
 
     Region::const_iterator head(reg.begin());
     Region::const_iterator tail(reg.end());
@@ -1219,7 +1337,7 @@ static status_t copyBlt(
         src->unlock();
 
     if (dst_bits)
-        dst->unlock();
+        dst->unlockAsync(dstFenceFd);
 
     return err;
 }
@@ -1269,8 +1387,9 @@ status_t Surface::lock(
         if (canCopyBack) {
             // copy the area that is invalid and not repainted this round
             const Region copyback(mDirtyRegion.subtract(newDirtyRegion));
-            if (!copyback.isEmpty())
-                copyBlt(backBuffer, frontBuffer, copyback);
+            if (!copyback.isEmpty()) {
+                copyBlt(backBuffer, frontBuffer, copyback, &fenceFd);
+            }
         } else {
             // if we can't copy-back anything, modify the user's dirty
             // region to make sure they redraw the whole buffer

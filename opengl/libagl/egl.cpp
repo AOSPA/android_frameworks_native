@@ -18,16 +18,16 @@
 #include <assert.h>
 #include <atomic>
 #include <errno.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
-#include <cutils/log.h>
+#include <android/log.h>
 
 #include <utils/threads.h>
 #include <ui/ANativeObjectBase.h>
@@ -1459,6 +1459,9 @@ EGLBoolean eglGetConfigs(   EGLDisplay dpy,
     if (egl_display_t::is_valid(dpy) == EGL_FALSE)
         return setError(EGL_BAD_DISPLAY, EGL_FALSE);
 
+    if (ggl_unlikely(num_config==NULL))
+        return setError(EGL_BAD_PARAMETER, EGL_FALSE);
+
     GLint numConfigs = NELEM(gConfigs);
     if (!configs) {
         *num_config = numConfigs;
@@ -1478,8 +1481,8 @@ EGLBoolean eglChooseConfig( EGLDisplay dpy, const EGLint *attrib_list,
 {
     if (egl_display_t::is_valid(dpy) == EGL_FALSE)
         return setError(EGL_BAD_DISPLAY, EGL_FALSE);
-    
-    if (ggl_unlikely(num_config==0)) {
+
+    if (ggl_unlikely(num_config==NULL)) {
         return setError(EGL_BAD_PARAMETER, EGL_FALSE);
     }
 

@@ -27,22 +27,23 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
+#include <android/log.h>
 #include <android-base/logging.h>
 #include <android-base/macros.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <cutils/fs.h>
-#include <cutils/log.h>
 #include <cutils/properties.h>
 #include <private/android_filesystem_config.h>
 
-#include <commands.h>
-#include <file_parsing.h>
-#include <globals.h>
-#include <installd_deps.h>  // Need to fill in requirements of commands.
-#include <otapreopt_utils.h>
-#include <system_properties.h>
-#include <utils.h>
+#include "InstalldNativeService.h"
+#include "dexopt.h"
+#include "file_parsing.h"
+#include "globals.h"
+#include "installd_deps.h"  // Need to fill in requirements of commands.
+#include "otapreopt_utils.h"
+#include "system_properties.h"
+#include "utils.h"
 
 #ifndef LOG_TAG
 #define LOG_TAG "otapreopt"

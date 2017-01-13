@@ -1,270 +1,59 @@
 /*
-** Copyright 2008, The Android Open Source Project
-**
-** Licensed under the Apache License, Version 2.0 (the "License");
-** you may not use this file except in compliance with the License.
-** You may obtain a copy of the License at
-**
-**     http://www.apache.org/licenses/LICENSE-2.0
-**
-** Unless required by applicable law or agreed to in writing, software
-** distributed under the License is distributed on an "AS IS" BASIS,
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-** See the License for the specific language governing permissions and
-** limitations under the License.
-*/
+ * Copyright (C) 2016 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#define LOG_TAG "installed"
 
-#include "commands.h"
-
-#include <errno.h>
-#include <inttypes.h>
-#include <regex>
+#include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/capability.h>
 #include <sys/file.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
-#include <sys/xattr.h>
 #include <unistd.h>
 
+#include <android/log.h>               // TODO: Move everything to base/logging.
 #include <android-base/logging.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
-#include <cutils/fs.h>
-#include <cutils/log.h>               // TODO: Move everything to base/logging.
+#include <cutils/properties.h>
 #include <cutils/sched_policy.h>
-#include <diskusage/dirsize.h>
-#include <logwrap/logwrap.h>
 #include <private/android_filesystem_config.h>
-#include <selinux/android.h>
 #include <system/thread_defs.h>
 
-#include <globals.h>
-#include <installd_deps.h>
-#include <otapreopt_utils.h>
-#include <utils.h>
+#include "dexopt.h"
+#include "installd_deps.h"
+#include "otapreopt_utils.h"
+#include "utils.h"
 
-#ifndef LOG_TAG
-#define LOG_TAG "installd"
-#endif
-
-using android::base::EndsWith;
 using android::base::StringPrintf;
+using android::base::EndsWith;
 
 namespace android {
 namespace installd {
 
-static constexpr const char* kCpPath = "/system/bin/cp";
-static constexpr const char* kXattrDefault = "user.default";
-
-static constexpr const int MIN_RESTRICTED_HOME_SDK_VERSION = 24; // > M
-
-static constexpr const char* PKG_LIB_POSTFIX = "/lib";
-static constexpr const char* CACHE_DIR_POSTFIX = "/cache";
-static constexpr const char* CODE_CACHE_DIR_POSTFIX = "/code_cache";
-
-static constexpr const char* IDMAP_PREFIX = "/data/resource-cache/";
-static constexpr const char* IDMAP_SUFFIX = "@idmap";
-
-// NOTE: keep in sync with StorageManager
-static constexpr int FLAG_STORAGE_DE = 1 << 0;
-static constexpr int FLAG_STORAGE_CE = 1 << 1;
-
-// NOTE: keep in sync with Installer
-static constexpr int FLAG_CLEAR_CACHE_ONLY = 1 << 8;
-static constexpr int FLAG_CLEAR_CODE_CACHE_ONLY = 1 << 9;
-
-/* dexopt needed flags matching those in dalvik.system.DexFile */
-static constexpr int DEXOPT_DEX2OAT_NEEDED       = 1;
-static constexpr int DEXOPT_PATCHOAT_NEEDED      = 2;
-static constexpr int DEXOPT_SELF_PATCHOAT_NEEDED = 3;
-
-typedef int fd_t;
-
-static bool property_get_bool(const char* property_name, bool default_value = false) {
-    char tmp_property_value[kPropertyValueMax];
-    bool have_property = get_property(property_name, tmp_property_value, nullptr) > 0;
-    if (!have_property) {
-        return default_value;
+static const char* parse_null(const char* arg) {
+    if (strcmp(arg, "!") == 0) {
+        return nullptr;
+    } else {
+        return arg;
     }
-    return strcmp(tmp_property_value, "true") == 0;
-}
-
-// Keep profile paths in sync with ActivityThread.
-constexpr const char* PRIMARY_PROFILE_NAME = "primary.prof";
-static std::string create_primary_profile(const std::string& profile_dir) {
-    return StringPrintf("%s/%s", profile_dir.c_str(), PRIMARY_PROFILE_NAME);
-}
-
-/**
- * Perform restorecon of the given path, but only perform recursive restorecon
- * if the label of that top-level file actually changed.  This can save us
- * significant time by avoiding no-op traversals of large filesystem trees.
- */
-static int restorecon_app_data_lazy(const std::string& path, const char* seinfo, uid_t uid) {
-    int res = 0;
-    char* before = nullptr;
-    char* after = nullptr;
-
-    // Note that SELINUX_ANDROID_RESTORECON_DATADATA flag is set by
-    // libselinux. Not needed here.
-
-    if (lgetfilecon(path.c_str(), &before) < 0) {
-        PLOG(ERROR) << "Failed before getfilecon for " << path;
-        goto fail;
-    }
-    if (selinux_android_restorecon_pkgdir(path.c_str(), seinfo, uid, 0) < 0) {
-        PLOG(ERROR) << "Failed top-level restorecon for " << path;
-        goto fail;
-    }
-    if (lgetfilecon(path.c_str(), &after) < 0) {
-        PLOG(ERROR) << "Failed after getfilecon for " << path;
-        goto fail;
-    }
-
-    // If the initial top-level restorecon above changed the label, then go
-    // back and restorecon everything recursively
-    if (strcmp(before, after)) {
-        LOG(DEBUG) << "Detected label change from " << before << " to " << after << " at " << path
-                << "; running recursive restorecon";
-        if (selinux_android_restorecon_pkgdir(path.c_str(), seinfo, uid,
-                SELINUX_ANDROID_RESTORECON_RECURSE) < 0) {
-            PLOG(ERROR) << "Failed recursive restorecon for " << path;
-            goto fail;
-        }
-    }
-
-    goto done;
-fail:
-    res = -1;
-done:
-    free(before);
-    free(after);
-    return res;
-}
-
-static int restorecon_app_data_lazy(const std::string& parent, const char* name, const char* seinfo,
-        uid_t uid) {
-    return restorecon_app_data_lazy(StringPrintf("%s/%s", parent.c_str(), name), seinfo, uid);
-}
-
-static int prepare_app_dir(const std::string& path, mode_t target_mode, uid_t uid) {
-    if (fs_prepare_dir_strict(path.c_str(), target_mode, uid, uid) != 0) {
-        PLOG(ERROR) << "Failed to prepare " << path;
-        return -1;
-    }
-    return 0;
-}
-
-static int prepare_app_dir(const std::string& parent, const char* name, mode_t target_mode,
-        uid_t uid) {
-    return prepare_app_dir(StringPrintf("%s/%s", parent.c_str(), name), target_mode, uid);
-}
-
-int create_app_data(const char *uuid, const char *pkgname, userid_t userid, int flags,
-        appid_t appid, const char* seinfo, int target_sdk_version) {
-    uid_t uid = multiuser_get_uid(userid, appid);
-    mode_t target_mode = target_sdk_version >= MIN_RESTRICTED_HOME_SDK_VERSION ? 0700 : 0751;
-    if (flags & FLAG_STORAGE_CE) {
-        auto path = create_data_user_ce_package_path(uuid, userid, pkgname);
-        if (prepare_app_dir(path, target_mode, uid) ||
-                prepare_app_dir(path, "cache", 0771, uid) ||
-                prepare_app_dir(path, "code_cache", 0771, uid)) {
-            return -1;
-        }
-
-        // Consider restorecon over contents if label changed
-        if (restorecon_app_data_lazy(path, seinfo, uid) ||
-                restorecon_app_data_lazy(path, "cache", seinfo, uid) ||
-                restorecon_app_data_lazy(path, "code_cache", seinfo, uid)) {
-            return -1;
-        }
-
-        // Remember inode numbers of cache directories so that we can clear
-        // contents while CE storage is locked
-        if (write_path_inode(path, "cache", kXattrInodeCache) ||
-                write_path_inode(path, "code_cache", kXattrInodeCodeCache)) {
-            return -1;
-        }
-    }
-    if (flags & FLAG_STORAGE_DE) {
-        auto path = create_data_user_de_package_path(uuid, userid, pkgname);
-        if (prepare_app_dir(path, target_mode, uid)) {
-            // TODO: include result once 25796509 is fixed
-            return 0;
-        }
-
-        // Consider restorecon over contents if label changed
-        if (restorecon_app_data_lazy(path, seinfo, uid)) {
-            return -1;
-        }
-
-        if (property_get_bool("dalvik.vm.usejitprofiles")) {
-            const std::string profile_path = create_data_user_profile_package_path(userid, pkgname);
-            // read-write-execute only for the app user.
-            if (fs_prepare_dir_strict(profile_path.c_str(), 0700, uid, uid) != 0) {
-                PLOG(ERROR) << "Failed to prepare " << profile_path;
-                return -1;
-            }
-            std::string profile_file = create_primary_profile(profile_path);
-            // read-write only for the app user.
-            if (fs_prepare_file_strict(profile_file.c_str(), 0600, uid, uid) != 0) {
-                PLOG(ERROR) << "Failed to prepare " << profile_path;
-                return -1;
-            }
-            const std::string ref_profile_path = create_data_ref_profile_package_path(pkgname);
-            // dex2oat/profman runs under the shared app gid and it needs to read/write reference
-            // profiles.
-            appid_t shared_app_gid = multiuser_get_shared_app_gid(uid);
-            if (fs_prepare_dir_strict(
-                    ref_profile_path.c_str(), 0700, shared_app_gid, shared_app_gid) != 0) {
-                PLOG(ERROR) << "Failed to prepare " << ref_profile_path;
-                return -1;
-            }
-        }
-    }
-    return 0;
-}
-
-int migrate_app_data(const char *uuid, const char *pkgname, userid_t userid, int flags) {
-    // This method only exists to upgrade system apps that have requested
-    // forceDeviceEncrypted, so their default storage always lives in a
-    // consistent location.  This only works on non-FBE devices, since we
-    // never want to risk exposing data on a device with real CE/DE storage.
-
-    auto ce_path = create_data_user_ce_package_path(uuid, userid, pkgname);
-    auto de_path = create_data_user_de_package_path(uuid, userid, pkgname);
-
-    // If neither directory is marked as default, assume CE is default
-    if (getxattr(ce_path.c_str(), kXattrDefault, nullptr, 0) == -1
-            && getxattr(de_path.c_str(), kXattrDefault, nullptr, 0) == -1) {
-        if (setxattr(ce_path.c_str(), kXattrDefault, nullptr, 0, 0) != 0) {
-            PLOG(ERROR) << "Failed to mark default storage " << ce_path;
-            return -1;
-        }
-    }
-
-    // Migrate default data location if needed
-    auto target = (flags & FLAG_STORAGE_DE) ? de_path : ce_path;
-    auto source = (flags & FLAG_STORAGE_DE) ? ce_path : de_path;
-
-    if (getxattr(target.c_str(), kXattrDefault, nullptr, 0) == -1) {
-        LOG(WARNING) << "Requested default storage " << target
-                << " is not active; migrating from " << source;
-        if (delete_dir_contents_and_dir(target) != 0) {
-            PLOG(ERROR) << "Failed to delete";
-            return -1;
-        }
-        if (rename(source.c_str(), target.c_str()) != 0) {
-            PLOG(ERROR) << "Failed to rename";
-            return -1;
-        }
-    }
-
-    return 0;
 }
 
 static bool clear_profile(const std::string& profile) {
@@ -311,407 +100,25 @@ static bool clear_profile(const std::string& profile) {
     return truncated;
 }
 
-static bool clear_reference_profile(const char* pkgname) {
+bool clear_reference_profile(const char* pkgname) {
     std::string reference_profile_dir = create_data_ref_profile_package_path(pkgname);
     std::string reference_profile = create_primary_profile(reference_profile_dir);
     return clear_profile(reference_profile);
 }
 
-static bool clear_current_profile(const char* pkgname, userid_t user) {
+bool clear_current_profile(const char* pkgname, userid_t user) {
     std::string profile_dir = create_data_user_profile_package_path(user, pkgname);
     std::string profile = create_primary_profile(profile_dir);
     return clear_profile(profile);
 }
 
-static bool clear_current_profiles(const char* pkgname) {
+bool clear_current_profiles(const char* pkgname) {
     bool success = true;
     std::vector<userid_t> users = get_known_users(/*volume_uuid*/ nullptr);
     for (auto user : users) {
         success &= clear_current_profile(pkgname, user);
     }
     return success;
-}
-
-int clear_app_profiles(const char* pkgname) {
-    bool success = true;
-    success &= clear_reference_profile(pkgname);
-    success &= clear_current_profiles(pkgname);
-    return success ? 0 : -1;
-}
-
-int clear_app_data(const char *uuid, const char *pkgname, userid_t userid, int flags,
-        ino_t ce_data_inode) {
-    int res = 0;
-    if (flags & FLAG_STORAGE_CE) {
-        auto path = create_data_user_ce_package_path(uuid, userid, pkgname, ce_data_inode);
-        if (flags & FLAG_CLEAR_CACHE_ONLY) {
-            path = read_path_inode(path, "cache", kXattrInodeCache);
-        } else if (flags & FLAG_CLEAR_CODE_CACHE_ONLY) {
-            path = read_path_inode(path, "code_cache", kXattrInodeCodeCache);
-        }
-        if (access(path.c_str(), F_OK) == 0) {
-            res |= delete_dir_contents(path);
-        }
-    }
-    if (flags & FLAG_STORAGE_DE) {
-        std::string suffix = "";
-        bool only_cache = false;
-        if (flags & FLAG_CLEAR_CACHE_ONLY) {
-            suffix = CACHE_DIR_POSTFIX;
-            only_cache = true;
-        } else if (flags & FLAG_CLEAR_CODE_CACHE_ONLY) {
-            suffix = CODE_CACHE_DIR_POSTFIX;
-            only_cache = true;
-        }
-
-        auto path = create_data_user_de_package_path(uuid, userid, pkgname) + suffix;
-        if (access(path.c_str(), F_OK) == 0) {
-            // TODO: include result once 25796509 is fixed
-            delete_dir_contents(path);
-        }
-        if (!only_cache) {
-            if (!clear_current_profile(pkgname, userid)) {
-                res |= -1;
-            }
-        }
-    }
-    return res;
-}
-
-static int destroy_app_reference_profile(const char *pkgname) {
-    return delete_dir_contents_and_dir(
-        create_data_ref_profile_package_path(pkgname),
-        /*ignore_if_missing*/ true);
-}
-
-static int destroy_app_current_profiles(const char *pkgname, userid_t userid) {
-    return delete_dir_contents_and_dir(
-        create_data_user_profile_package_path(userid, pkgname),
-        /*ignore_if_missing*/ true);
-}
-
-int destroy_app_profiles(const char *pkgname) {
-    int result = 0;
-    std::vector<userid_t> users = get_known_users(/*volume_uuid*/ nullptr);
-    for (auto user : users) {
-        result |= destroy_app_current_profiles(pkgname, user);
-    }
-    result |= destroy_app_reference_profile(pkgname);
-    return result;
-}
-
-int destroy_app_data(const char *uuid, const char *pkgname, userid_t userid, int flags,
-        ino_t ce_data_inode) {
-    int res = 0;
-    if (flags & FLAG_STORAGE_CE) {
-        res |= delete_dir_contents_and_dir(
-                create_data_user_ce_package_path(uuid, userid, pkgname, ce_data_inode));
-    }
-    if (flags & FLAG_STORAGE_DE) {
-        res |= delete_dir_contents_and_dir(
-                create_data_user_de_package_path(uuid, userid, pkgname));
-        destroy_app_current_profiles(pkgname, userid);
-        // TODO(calin): If the package is still installed by other users it's probably
-        // beneficial to keep the reference profile around.
-        // Verify if it's ok to do that.
-        destroy_app_reference_profile(pkgname);
-    }
-    return res;
-}
-
-int move_complete_app(const char *from_uuid, const char *to_uuid, const char *package_name,
-        const char *data_app_name, appid_t appid, const char* seinfo, int target_sdk_version) {
-    std::vector<userid_t> users = get_known_users(from_uuid);
-
-    // Copy app
-    {
-        auto from = create_data_app_package_path(from_uuid, data_app_name);
-        auto to = create_data_app_package_path(to_uuid, data_app_name);
-        auto to_parent = create_data_app_path(to_uuid);
-
-        char *argv[] = {
-            (char*) kCpPath,
-            (char*) "-F", /* delete any existing destination file first (--remove-destination) */
-            (char*) "-p", /* preserve timestamps, ownership, and permissions */
-            (char*) "-R", /* recurse into subdirectories (DEST must be a directory) */
-            (char*) "-P", /* Do not follow symlinks [default] */
-            (char*) "-d", /* don't dereference symlinks */
-            (char*) from.c_str(),
-            (char*) to_parent.c_str()
-        };
-
-        LOG(DEBUG) << "Copying " << from << " to " << to;
-        int rc = android_fork_execvp(ARRAY_SIZE(argv), argv, NULL, false, true);
-
-        if (rc != 0) {
-            LOG(ERROR) << "Failed copying " << from << " to " << to
-                    << ": status " << rc;
-            goto fail;
-        }
-
-        if (selinux_android_restorecon(to.c_str(), SELINUX_ANDROID_RESTORECON_RECURSE) != 0) {
-            LOG(ERROR) << "Failed to restorecon " << to;
-            goto fail;
-        }
-    }
-
-    // Copy private data for all known users
-    for (auto user : users) {
-
-        // Data source may not exist for all users; that's okay
-        auto from_ce = create_data_user_ce_package_path(from_uuid, user, package_name);
-        if (access(from_ce.c_str(), F_OK) != 0) {
-            LOG(INFO) << "Missing source " << from_ce;
-            continue;
-        }
-
-        if (create_app_data(to_uuid, package_name, user, FLAG_STORAGE_CE | FLAG_STORAGE_DE,
-                appid, seinfo, target_sdk_version) != 0) {
-            LOG(ERROR) << "Failed to create package target on " << to_uuid;
-            goto fail;
-        }
-
-        char *argv[] = {
-            (char*) kCpPath,
-            (char*) "-F", /* delete any existing destination file first (--remove-destination) */
-            (char*) "-p", /* preserve timestamps, ownership, and permissions */
-            (char*) "-R", /* recurse into subdirectories (DEST must be a directory) */
-            (char*) "-P", /* Do not follow symlinks [default] */
-            (char*) "-d", /* don't dereference symlinks */
-            nullptr,
-            nullptr
-        };
-
-        {
-            auto from = create_data_user_de_package_path(from_uuid, user, package_name);
-            auto to = create_data_user_de_path(to_uuid, user);
-            argv[6] = (char*) from.c_str();
-            argv[7] = (char*) to.c_str();
-
-            LOG(DEBUG) << "Copying " << from << " to " << to;
-            int rc = android_fork_execvp(ARRAY_SIZE(argv), argv, NULL, false, true);
-            if (rc != 0) {
-                LOG(ERROR) << "Failed copying " << from << " to " << to << " with status " << rc;
-                goto fail;
-            }
-        }
-        {
-            auto from = create_data_user_ce_package_path(from_uuid, user, package_name);
-            auto to = create_data_user_ce_path(to_uuid, user);
-            argv[6] = (char*) from.c_str();
-            argv[7] = (char*) to.c_str();
-
-            LOG(DEBUG) << "Copying " << from << " to " << to;
-            int rc = android_fork_execvp(ARRAY_SIZE(argv), argv, NULL, false, true);
-            if (rc != 0) {
-                LOG(ERROR) << "Failed copying " << from << " to " << to << " with status " << rc;
-                goto fail;
-            }
-        }
-
-        if (restorecon_app_data(to_uuid, package_name, user, FLAG_STORAGE_CE | FLAG_STORAGE_DE,
-                appid, seinfo) != 0) {
-            LOG(ERROR) << "Failed to restorecon";
-            goto fail;
-        }
-    }
-
-    // We let the framework scan the new location and persist that before
-    // deleting the data in the old location; this ordering ensures that
-    // we can recover from things like battery pulls.
-    return 0;
-
-fail:
-    // Nuke everything we might have already copied
-    {
-        auto to = create_data_app_package_path(to_uuid, data_app_name);
-        if (delete_dir_contents(to.c_str(), 1, NULL) != 0) {
-            LOG(WARNING) << "Failed to rollback " << to;
-        }
-    }
-    for (auto user : users) {
-        {
-            auto to = create_data_user_de_package_path(to_uuid, user, package_name);
-            if (delete_dir_contents(to.c_str(), 1, NULL) != 0) {
-                LOG(WARNING) << "Failed to rollback " << to;
-            }
-        }
-        {
-            auto to = create_data_user_ce_package_path(to_uuid, user, package_name);
-            if (delete_dir_contents(to.c_str(), 1, NULL) != 0) {
-                LOG(WARNING) << "Failed to rollback " << to;
-            }
-        }
-    }
-    return -1;
-}
-
-int create_user_data(const char *uuid, userid_t userid, int user_serial ATTRIBUTE_UNUSED,
-        int flags) {
-    if (flags & FLAG_STORAGE_DE) {
-        if (uuid == nullptr) {
-            return ensure_config_user_dirs(userid);
-        }
-    }
-    return 0;
-}
-
-int destroy_user_data(const char *uuid, userid_t userid, int flags) {
-    int res = 0;
-    if (flags & FLAG_STORAGE_DE) {
-        res |= delete_dir_contents_and_dir(create_data_user_de_path(uuid, userid), true);
-        if (uuid == nullptr) {
-            res |= delete_dir_contents_and_dir(create_data_misc_legacy_path(userid), true);
-            res |= delete_dir_contents_and_dir(create_data_user_profiles_path(userid), true);
-        }
-    }
-    if (flags & FLAG_STORAGE_CE) {
-        res |= delete_dir_contents_and_dir(create_data_user_ce_path(uuid, userid), true);
-        res |= delete_dir_contents_and_dir(create_data_media_path(uuid, userid), true);
-    }
-    return res;
-}
-
-/* Try to ensure free_size bytes of storage are available.
- * Returns 0 on success.
- * This is rather simple-minded because doing a full LRU would
- * be potentially memory-intensive, and without atime it would
- * also require that apps constantly modify file metadata even
- * when just reading from the cache, which is pretty awful.
- */
-int free_cache(const char *uuid, int64_t free_size) {
-    cache_t* cache;
-    int64_t avail;
-
-    auto data_path = create_data_path(uuid);
-
-    avail = data_disk_free(data_path);
-    if (avail < 0) return -1;
-
-    ALOGI("free_cache(%" PRId64 ") avail %" PRId64 "\n", free_size, avail);
-    if (avail >= free_size) return 0;
-
-    cache = start_cache_collection();
-
-    auto users = get_known_users(uuid);
-    for (auto user : users) {
-        add_cache_files(cache, create_data_user_ce_path(uuid, user));
-        add_cache_files(cache, create_data_user_de_path(uuid, user));
-        add_cache_files(cache,
-                StringPrintf("%s/Android/data", create_data_media_path(uuid, user).c_str()));
-    }
-
-    clear_cache_files(data_path, cache, free_size);
-    finish_cache_collection(cache);
-
-    return data_disk_free(data_path) >= free_size ? 0 : -1;
-}
-
-int rm_dex(const char *path, const char *instruction_set)
-{
-    char dex_path[PKG_PATH_MAX];
-
-    if (validate_apk_path(path) && validate_system_app_path(path)) {
-        ALOGE("invalid apk path '%s' (bad prefix)\n", path);
-        return -1;
-    }
-
-    if (!create_cache_path(dex_path, path, instruction_set)) return -1;
-
-    ALOGV("unlink %s\n", dex_path);
-    if (unlink(dex_path) < 0) {
-        if (errno != ENOENT) {
-            ALOGE("Couldn't unlink %s: %s\n", dex_path, strerror(errno));
-        }
-        return -1;
-    } else {
-        return 0;
-    }
-}
-
-static void add_app_data_size(std::string& path, int64_t *codesize, int64_t *datasize,
-        int64_t *cachesize) {
-    DIR *d;
-    int dfd;
-    struct dirent *de;
-    struct stat s;
-
-    d = opendir(path.c_str());
-    if (d == nullptr) {
-        PLOG(WARNING) << "Failed to open " << path;
-        return;
-    }
-    dfd = dirfd(d);
-    while ((de = readdir(d))) {
-        const char *name = de->d_name;
-
-        int64_t statsize = 0;
-        if (fstatat(dfd, name, &s, AT_SYMLINK_NOFOLLOW) == 0) {
-            statsize = stat_size(&s);
-        }
-
-        if (de->d_type == DT_DIR) {
-            int subfd;
-            int64_t dirsize = 0;
-            /* always skip "." and ".." */
-            if (name[0] == '.') {
-                if (name[1] == 0) continue;
-                if ((name[1] == '.') && (name[2] == 0)) continue;
-            }
-            subfd = openat(dfd, name, O_RDONLY | O_DIRECTORY);
-            if (subfd >= 0) {
-                dirsize = calculate_dir_size(subfd);
-                close(subfd);
-            }
-            // TODO: check xattrs!
-            if (!strcmp(name, "cache") || !strcmp(name, "code_cache")) {
-                *datasize += statsize;
-                *cachesize += dirsize;
-            } else {
-                *datasize += dirsize + statsize;
-            }
-        } else if (de->d_type == DT_LNK && !strcmp(name, "lib")) {
-            *codesize += statsize;
-        } else {
-            *datasize += statsize;
-        }
-    }
-    closedir(d);
-}
-
-int get_app_size(const char *uuid, const char *pkgname, int userid, int flags, ino_t ce_data_inode,
-        const char *code_path, int64_t *codesize, int64_t *datasize, int64_t *cachesize,
-        int64_t* asecsize) {
-    DIR *d;
-    int dfd;
-
-    d = opendir(code_path);
-    if (d != nullptr) {
-        dfd = dirfd(d);
-        *codesize += calculate_dir_size(dfd);
-        closedir(d);
-    }
-
-    if (flags & FLAG_STORAGE_CE) {
-        auto path = create_data_user_ce_package_path(uuid, userid, pkgname, ce_data_inode);
-        add_app_data_size(path, codesize, datasize, cachesize);
-    }
-    if (flags & FLAG_STORAGE_DE) {
-        auto path = create_data_user_de_package_path(uuid, userid, pkgname);
-        add_app_data_size(path, codesize, datasize, cachesize);
-    }
-
-    *asecsize = 0;
-
-    return 0;
-}
-
-int get_app_data_inode(const char *uuid, const char *pkgname, int userid, int flags, ino_t *inode) {
-    if (flags & FLAG_STORAGE_CE) {
-        auto path = create_data_user_ce_package_path(uuid, userid, pkgname);
-        return get_path_inode(path, inode);
-    }
-    return -1;
 }
 
 static int split_count(const char *str)
@@ -853,7 +260,7 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
                              (strcmp(vold_decrypt, "trigger_restart_min_framework") == 0 ||
                              (strcmp(vold_decrypt, "1") == 0)));
 
-    bool generate_debug_info = property_get_bool("debug.generate-debug-info");
+    bool generate_debug_info = property_get_bool("debug.generate-debug-info", false);
 
     char app_image_format[kPropertyValueMax];
     char image_format_arg[strlen("--image-format=") + kPropertyValueMax];
@@ -1086,7 +493,7 @@ static bool ShouldUseSwapFileForDexopt() {
         return true;
     }
 
-    bool is_low_mem = property_get_bool("ro.config.low_ram");
+    bool is_low_mem = property_get_bool("ro.config.low_ram", false);
     if (is_low_mem) {
         return true;
     }
@@ -1255,7 +662,7 @@ static void run_profman_merge(const std::vector<fd_t>& profiles_fd, fd_t referen
 // a re-compilation of the package.
 // If the return value is true all the current profiles would have been merged into
 // the reference profiles accessible with open_reference_profile().
-static bool analyse_profiles(uid_t uid, const char* pkgname) {
+bool analyse_profiles(uid_t uid, const char* pkgname) {
     std::vector<fd_t> profiles_fd;
     fd_t reference_profile_fd = -1;
     open_profile_files(uid, pkgname, &profiles_fd, &reference_profile_fd);
@@ -1381,9 +788,7 @@ static const char* get_location_from_path(const char* path) {
     }
 }
 
-// Dumps the contents of a profile file, using pkgname's dex files for pretty
-// printing the result.
-bool dump_profile(uid_t uid, const char* pkgname, const char* code_path_string) {
+bool dump_profiles(int32_t uid, const char* pkgname, const char* code_paths) {
     std::vector<fd_t> profile_fds;
     fd_t reference_profile_fd = -1;
     std::string out_file_name = StringPrintf("/data/misc/profman/%s.txt", pkgname);
@@ -1405,7 +810,7 @@ bool dump_profile(uid_t uid, const char* pkgname, const char* code_path_string) 
         ALOGE("installd cannot chmod '%s' dump_profile\n", out_file_name.c_str());
         return false;
     }
-    std::vector<std::string> code_full_paths = base::Split(code_path_string, ";");
+    std::vector<std::string> code_full_paths = base::Split(code_paths, ";");
     std::vector<std::string> dex_locations;
     std::vector<fd_t> apk_fds;
     for (const std::string& code_full_path : code_full_paths) {
@@ -1545,33 +950,6 @@ static bool create_oat_out_path(const char* apk_path, const char* instruction_se
     return true;
 }
 
-// TODO: Consider returning error codes.
-bool merge_profiles(uid_t uid, const char *pkgname) {
-    return analyse_profiles(uid, pkgname);
-}
-
-static const char* parse_null(const char* arg) {
-    if (strcmp(arg, "!") == 0) {
-        return nullptr;
-    } else {
-        return arg;
-    }
-}
-
-int dexopt(const char* const params[DEXOPT_PARAM_COUNT]) {
-    return dexopt(params[0],                    // apk_path
-                  atoi(params[1]),              // uid
-                  params[2],                    // pkgname
-                  params[3],                    // instruction_set
-                  atoi(params[4]),              // dexopt_needed
-                  params[5],                    // oat_dir
-                  atoi(params[6]),              // dexopt_flags
-                  params[7],                    // compiler_filter
-                  parse_null(params[8]),        // volume_uuid
-                  parse_null(params[9]));       // shared_libraries
-    static_assert(DEXOPT_PARAM_COUNT == 10U, "Unexpected dexopt param count");
-}
-
 // Helper for fd management. This is similar to a unique_fd in that it closes the file descriptor
 // on destruction. It will also run the given cleanup (unless told not to) after closing.
 //
@@ -1651,9 +1029,8 @@ class Dex2oatFileWrapper {
 };
 
 int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* instruction_set,
-           int dexopt_needed, const char* oat_dir, int dexopt_flags, const char* compiler_filter,
-           const char* volume_uuid ATTRIBUTE_UNUSED, const char* shared_libraries)
-{
+        int dexopt_needed, const char* oat_dir, int dexopt_flags,const char* compiler_filter,
+        const char* volume_uuid ATTRIBUTE_UNUSED, const char* shared_libraries) {
     bool is_public = ((dexopt_flags & DEXOPT_PUBLIC) != 0);
     bool vm_safe_mode = (dexopt_flags & DEXOPT_SAFEMODE) != 0;
     bool debuggable = (dexopt_flags & DEXOPT_DEBUGGABLE) != 0;
@@ -1687,20 +1064,25 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
 
     const char *input_file;
     char in_odex_path[PKG_PATH_MAX];
-    switch (dexopt_needed) {
-        case DEXOPT_DEX2OAT_NEEDED:
+    int dexopt_action = abs(dexopt_needed);
+    bool is_odex_location = dexopt_needed < 0;
+    switch (dexopt_action) {
+        case DEX2OAT_FROM_SCRATCH:
+        case DEX2OAT_FOR_BOOT_IMAGE:
+        case DEX2OAT_FOR_FILTER:
+        case DEX2OAT_FOR_RELOCATION:
             input_file = apk_path;
             break;
 
-        case DEXOPT_PATCHOAT_NEEDED:
-            if (!calculate_odex_file_path(in_odex_path, apk_path, instruction_set)) {
-                return -1;
+        case PATCHOAT_FOR_RELOCATION:
+            if (is_odex_location) {
+                if (!calculate_odex_file_path(in_odex_path, apk_path, instruction_set)) {
+                    return -1;
+                }
+                input_file = in_odex_path;
+            } else {
+                input_file = out_oat_path;
             }
-            input_file = in_odex_path;
-            break;
-
-        case DEXOPT_SELF_PATCHOAT_NEEDED:
-            input_file = out_oat_path;
             break;
 
         default:
@@ -1737,8 +1119,7 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
     // unlink the old one.
     base::unique_fd in_vdex_fd;
     std::string in_vdex_path_str;
-    if (dexopt_needed == DEXOPT_PATCHOAT_NEEDED
-        || dexopt_needed == DEXOPT_SELF_PATCHOAT_NEEDED) {
+    if (dexopt_action == PATCHOAT_FOR_RELOCATION) {
         // `input_file` is the OAT file to be relocated. The VDEX has to be there as well.
         in_vdex_path_str = create_vdex_filename(input_file);
         if (in_vdex_path_str.empty()) {
@@ -1751,26 +1132,30 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
                 in_vdex_path_str.c_str(), strerror(errno));
             return -1;
         }
-    } else {
-        // Open the possibly existing vdex in the `out_oat_path`. If none exist, we pass -1
-        // to dex2oat for input-vdex-fd.
-        in_vdex_path_str = create_vdex_filename(out_oat_path);
+    } else if (dexopt_action != DEX2OAT_FROM_SCRATCH) {
+        // Open the possibly existing vdex. If none exist, we pass -1 to dex2oat for input-vdex-fd.
+        const char* path = nullptr;
+        if (is_odex_location) {
+            if (calculate_odex_file_path(in_odex_path, apk_path, instruction_set)) {
+                path = in_odex_path;
+            } else {
+                ALOGE("installd cannot compute input vdex location for '%s'\n", apk_path);
+                return -1;
+            }
+        } else {
+            path = out_oat_path;
+        }
+        in_vdex_path_str = create_vdex_filename(path);
         if (in_vdex_path_str.empty()) {
-            ALOGE("installd cannot compute input vdex location for '%s'\n", out_oat_path);
+            ALOGE("installd cannot compute input vdex location for '%s'\n", path);
             return -1;
         }
-        in_vdex_fd.reset(open(in_vdex_path_str.c_str(), O_RDONLY, 0));
-        // If there is no vdex file in out_oat_path, check if we have a vdex
-        // file next to the odex file. For other failures, we will just pass a -1 fd.
-        if (in_vdex_fd.get() < 0 && (errno == ENOENT) && IsOutputDalvikCache(oat_dir)) {
-            if (calculate_odex_file_path(in_odex_path, apk_path, instruction_set)) {
-              in_vdex_path_str = create_vdex_filename(std::string(in_odex_path));
-              if (in_vdex_path_str.empty()) {
-                  ALOGE("installd cannot compute input vdex location for '%s'\n", in_odex_path);
-                  return -1;
-              }
-              in_vdex_fd.reset(open(in_vdex_path_str.c_str(), O_RDONLY, 0));
-            }
+        if (dexopt_action == DEX2OAT_FOR_BOOT_IMAGE) {
+            // When we dex2oat because iof boot image change, we are going to update
+            // in-place the vdex file.
+            in_vdex_fd.reset(open(in_vdex_path_str.c_str(), O_RDWR, 0));
+        } else {
+            in_vdex_fd.reset(open(in_vdex_path_str.c_str(), O_RDONLY, 0));
         }
     }
 
@@ -1779,14 +1164,26 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
     if (out_vdex_path_str.empty()) {
         return -1;
     }
-    Dex2oatFileWrapper<std::function<void ()>> out_vdex_fd(
-            open_output_file(out_vdex_path_str.c_str(), /*recreate*/true, /*permissions*/0644),
-            [out_vdex_path_str]() { unlink(out_vdex_path_str.c_str()); });
-    if (out_vdex_fd.get() < 0) {
-        ALOGE("installd cannot open '%s' for output during dexopt\n", out_vdex_path_str.c_str());
-        return -1;
+    Dex2oatFileWrapper<std::function<void ()>> out_vdex_wrapper_fd;
+    int out_vdex_fd = -1;
+
+    // If we are compiling because the boot image is out of date, we do not
+    // need to recreate a vdex, and can use the same existing one.
+    if (dexopt_action == DEX2OAT_FOR_BOOT_IMAGE &&
+            in_vdex_fd != -1 &&
+            in_vdex_path_str == out_vdex_path_str) {
+        out_vdex_fd = in_vdex_fd;
+    } else {
+        out_vdex_wrapper_fd.reset(
+              open_output_file(out_vdex_path_str.c_str(), /*recreate*/true, /*permissions*/0644),
+              [out_vdex_path_str]() { unlink(out_vdex_path_str.c_str()); });
+        out_vdex_fd = out_vdex_wrapper_fd.get();
+        if (out_vdex_fd < 0) {
+            ALOGE("installd cannot open '%s' for output during dexopt\n", out_vdex_path_str.c_str());
+            return -1;
+        }
     }
-    if (!set_permissions_and_ownership(out_vdex_fd.get(), is_public,
+    if (!set_permissions_and_ownership(out_vdex_fd, is_public,
                 uid, out_vdex_path_str.c_str())) {
         return -1;
     }
@@ -1815,7 +1212,7 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
     // Avoid generating an app image for extract only since it will not contain any classes.
     Dex2oatFileWrapper<std::function<void ()>> image_fd;
     const std::string image_path = create_image_filename(out_oat_path);
-    if (dexopt_needed == DEXOPT_DEX2OAT_NEEDED && !image_path.empty()) {
+    if (dexopt_action != PATCHOAT_FOR_RELOCATION && !image_path.empty()) {
         char app_image_format[kPropertyValueMax];
         bool have_app_image_format =
                 get_property("dalvik.vm.appimageformat", app_image_format, NULL) > 0;
@@ -1865,25 +1262,24 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
             _exit(67);
         }
 
-        if (dexopt_needed == DEXOPT_PATCHOAT_NEEDED
-            || dexopt_needed == DEXOPT_SELF_PATCHOAT_NEEDED) {
+        if (dexopt_action == PATCHOAT_FOR_RELOCATION) {
             run_patchoat(input_fd.get(),
                          in_vdex_fd.get(),
                          out_oat_fd.get(),
-                         out_vdex_fd.get(),
+                         out_vdex_fd,
                          input_file,
                          in_vdex_path_str.c_str(),
                          out_oat_path,
                          out_vdex_path_str.c_str(),
                          pkgname,
                          instruction_set);
-        } else if (dexopt_needed == DEXOPT_DEX2OAT_NEEDED) {
+        } else {
             // Pass dex2oat the relative path to the input file.
             const char *input_file_name = get_location_from_path(input_file);
             run_dex2oat(input_fd.get(),
                         out_oat_fd.get(),
                         in_vdex_fd.get(),
-                        out_vdex_fd.get(),
+                        out_vdex_fd,
                         image_fd.get(),
                         input_file_name,
                         out_oat_path,
@@ -1895,9 +1291,6 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
                         boot_complete,
                         reference_profile_fd.get(),
                         shared_libraries);
-        } else {
-            ALOGE("Invalid dexopt needed: %d\n", dexopt_needed);
-            _exit(73);
         }
         _exit(68);   /* only get here on exec failure */
     } else {
@@ -1917,314 +1310,9 @@ int dexopt(const char* apk_path, uid_t uid, const char* pkgname, const char* ins
 
     // We've been successful, don't delete output.
     out_oat_fd.SetCleanup(false);
-    out_vdex_fd.SetCleanup(false);
+    out_vdex_wrapper_fd.SetCleanup(false);
     image_fd.SetCleanup(false);
     reference_profile_fd.SetCleanup(false);
-
-    return 0;
-}
-
-int mark_boot_complete(const char* instruction_set)
-{
-  char boot_marker_path[PKG_PATH_MAX];
-  sprintf(boot_marker_path,
-          "%s/%s/%s/.booting",
-          android_data_dir.path,
-          DALVIK_CACHE,
-          instruction_set);
-
-  ALOGV("mark_boot_complete : %s", boot_marker_path);
-  if (unlink(boot_marker_path) != 0) {
-      ALOGE("Unable to unlink boot marker at %s, error=%s", boot_marker_path,
-            strerror(errno));
-      return -1;
-  }
-
-  return 0;
-}
-
-void mkinnerdirs(char* path, int basepos, mode_t mode, int uid, int gid,
-        struct stat* statbuf)
-{
-    while (path[basepos] != 0) {
-        if (path[basepos] == '/') {
-            path[basepos] = 0;
-            if (lstat(path, statbuf) < 0) {
-                ALOGV("Making directory: %s\n", path);
-                if (mkdir(path, mode) == 0) {
-                    chown(path, uid, gid);
-                } else {
-                    ALOGW("Unable to make directory %s: %s\n", path, strerror(errno));
-                }
-            }
-            path[basepos] = '/';
-            basepos++;
-        }
-        basepos++;
-    }
-}
-
-int linklib(const char* uuid, const char* pkgname, const char* asecLibDir, int userId)
-{
-    struct stat s, libStat;
-    int rc = 0;
-
-    std::string _pkgdir(create_data_user_ce_package_path(uuid, userId, pkgname));
-    std::string _libsymlink(_pkgdir + PKG_LIB_POSTFIX);
-
-    const char* pkgdir = _pkgdir.c_str();
-    const char* libsymlink = _libsymlink.c_str();
-
-    if (stat(pkgdir, &s) < 0) return -1;
-
-    if (chown(pkgdir, AID_INSTALL, AID_INSTALL) < 0) {
-        ALOGE("failed to chown '%s': %s\n", pkgdir, strerror(errno));
-        return -1;
-    }
-
-    if (chmod(pkgdir, 0700) < 0) {
-        ALOGE("linklib() 1: failed to chmod '%s': %s\n", pkgdir, strerror(errno));
-        rc = -1;
-        goto out;
-    }
-
-    if (lstat(libsymlink, &libStat) < 0) {
-        if (errno != ENOENT) {
-            ALOGE("couldn't stat lib dir: %s\n", strerror(errno));
-            rc = -1;
-            goto out;
-        }
-    } else {
-        if (S_ISDIR(libStat.st_mode)) {
-            if (delete_dir_contents(libsymlink, 1, NULL) < 0) {
-                rc = -1;
-                goto out;
-            }
-        } else if (S_ISLNK(libStat.st_mode)) {
-            if (unlink(libsymlink) < 0) {
-                ALOGE("couldn't unlink lib dir: %s\n", strerror(errno));
-                rc = -1;
-                goto out;
-            }
-        }
-    }
-
-    if (symlink(asecLibDir, libsymlink) < 0) {
-        ALOGE("couldn't symlink directory '%s' -> '%s': %s\n", libsymlink, asecLibDir,
-                strerror(errno));
-        rc = -errno;
-        goto out;
-    }
-
-out:
-    if (chmod(pkgdir, s.st_mode) < 0) {
-        ALOGE("linklib() 2: failed to chmod '%s': %s\n", pkgdir, strerror(errno));
-        rc = -errno;
-    }
-
-    if (chown(pkgdir, s.st_uid, s.st_gid) < 0) {
-        ALOGE("failed to chown '%s' : %s\n", pkgdir, strerror(errno));
-        return -errno;
-    }
-
-    return rc;
-}
-
-static void run_idmap(const char *target_apk, const char *overlay_apk, int idmap_fd)
-{
-    static const char *IDMAP_BIN = "/system/bin/idmap";
-    static const size_t MAX_INT_LEN = 32;
-    char idmap_str[MAX_INT_LEN];
-
-    snprintf(idmap_str, sizeof(idmap_str), "%d", idmap_fd);
-
-    execl(IDMAP_BIN, IDMAP_BIN, "--fd", target_apk, overlay_apk, idmap_str, (char*)NULL);
-    ALOGE("execl(%s) failed: %s\n", IDMAP_BIN, strerror(errno));
-}
-
-// Transform string /a/b/c.apk to (prefix)/a@b@c.apk@(suffix)
-// eg /a/b/c.apk to /data/resource-cache/a@b@c.apk@idmap
-static int flatten_path(const char *prefix, const char *suffix,
-        const char *overlay_path, char *idmap_path, size_t N)
-{
-    if (overlay_path == NULL || idmap_path == NULL) {
-        return -1;
-    }
-    const size_t len_overlay_path = strlen(overlay_path);
-    // will access overlay_path + 1 further below; requires absolute path
-    if (len_overlay_path < 2 || *overlay_path != '/') {
-        return -1;
-    }
-    const size_t len_idmap_root = strlen(prefix);
-    const size_t len_suffix = strlen(suffix);
-    if (SIZE_MAX - len_idmap_root < len_overlay_path ||
-            SIZE_MAX - (len_idmap_root + len_overlay_path) < len_suffix) {
-        // additions below would cause overflow
-        return -1;
-    }
-    if (N < len_idmap_root + len_overlay_path + len_suffix) {
-        return -1;
-    }
-    memset(idmap_path, 0, N);
-    snprintf(idmap_path, N, "%s%s%s", prefix, overlay_path + 1, suffix);
-    char *ch = idmap_path + len_idmap_root;
-    while (*ch != '\0') {
-        if (*ch == '/') {
-            *ch = '@';
-        }
-        ++ch;
-    }
-    return 0;
-}
-
-int idmap(const char *target_apk, const char *overlay_apk, uid_t uid)
-{
-    ALOGV("idmap target_apk=%s overlay_apk=%s uid=%d\n", target_apk, overlay_apk, uid);
-
-    int idmap_fd = -1;
-    char idmap_path[PATH_MAX];
-
-    if (flatten_path(IDMAP_PREFIX, IDMAP_SUFFIX, overlay_apk,
-                idmap_path, sizeof(idmap_path)) == -1) {
-        ALOGE("idmap cannot generate idmap path for overlay %s\n", overlay_apk);
-        goto fail;
-    }
-
-    unlink(idmap_path);
-    idmap_fd = open(idmap_path, O_RDWR | O_CREAT | O_EXCL, 0644);
-    if (idmap_fd < 0) {
-        ALOGE("idmap cannot open '%s' for output: %s\n", idmap_path, strerror(errno));
-        goto fail;
-    }
-    if (fchown(idmap_fd, AID_SYSTEM, uid) < 0) {
-        ALOGE("idmap cannot chown '%s'\n", idmap_path);
-        goto fail;
-    }
-    if (fchmod(idmap_fd, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) < 0) {
-        ALOGE("idmap cannot chmod '%s'\n", idmap_path);
-        goto fail;
-    }
-
-    pid_t pid;
-    pid = fork();
-    if (pid == 0) {
-        /* child -- drop privileges before continuing */
-        if (setgid(uid) != 0) {
-            ALOGE("setgid(%d) failed during idmap\n", uid);
-            exit(1);
-        }
-        if (setuid(uid) != 0) {
-            ALOGE("setuid(%d) failed during idmap\n", uid);
-            exit(1);
-        }
-        if (flock(idmap_fd, LOCK_EX | LOCK_NB) != 0) {
-            ALOGE("flock(%s) failed during idmap: %s\n", idmap_path, strerror(errno));
-            exit(1);
-        }
-
-        run_idmap(target_apk, overlay_apk, idmap_fd);
-        exit(1); /* only if exec call to idmap failed */
-    } else {
-        int status = wait_child(pid);
-        if (status != 0) {
-            ALOGE("idmap failed, status=0x%04x\n", status);
-            goto fail;
-        }
-    }
-
-    close(idmap_fd);
-    return 0;
-fail:
-    if (idmap_fd >= 0) {
-        close(idmap_fd);
-        unlink(idmap_path);
-    }
-    return -1;
-}
-
-int restorecon_app_data(const char* uuid, const char* pkgName, userid_t userid, int flags,
-        appid_t appid, const char* seinfo) {
-    int res = 0;
-
-    // SELINUX_ANDROID_RESTORECON_DATADATA flag is set by libselinux. Not needed here.
-    unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
-
-    if (!pkgName || !seinfo) {
-        ALOGE("Package name or seinfo tag is null when trying to restorecon.");
-        return -1;
-    }
-
-    uid_t uid = multiuser_get_uid(userid, appid);
-    if (flags & FLAG_STORAGE_CE) {
-        auto path = create_data_user_ce_package_path(uuid, userid, pkgName);
-        if (selinux_android_restorecon_pkgdir(path.c_str(), seinfo, uid, seflags) < 0) {
-            PLOG(ERROR) << "restorecon failed for " << path;
-            res = -1;
-        }
-    }
-    if (flags & FLAG_STORAGE_DE) {
-        auto path = create_data_user_de_package_path(uuid, userid, pkgName);
-        if (selinux_android_restorecon_pkgdir(path.c_str(), seinfo, uid, seflags) < 0) {
-            PLOG(ERROR) << "restorecon failed for " << path;
-            // TODO: include result once 25796509 is fixed
-        }
-    }
-
-    return res;
-}
-
-int create_oat_dir(const char* oat_dir, const char* instruction_set)
-{
-    char oat_instr_dir[PKG_PATH_MAX];
-
-    if (validate_apk_path(oat_dir)) {
-        ALOGE("invalid apk path '%s' (bad prefix)\n", oat_dir);
-        return -1;
-    }
-    if (fs_prepare_dir(oat_dir, S_IRWXU | S_IRWXG | S_IXOTH, AID_SYSTEM, AID_INSTALL)) {
-        return -1;
-    }
-    if (selinux_android_restorecon(oat_dir, 0)) {
-        ALOGE("cannot restorecon dir '%s': %s\n", oat_dir, strerror(errno));
-        return -1;
-    }
-    snprintf(oat_instr_dir, PKG_PATH_MAX, "%s/%s", oat_dir, instruction_set);
-    if (fs_prepare_dir(oat_instr_dir, S_IRWXU | S_IRWXG | S_IXOTH, AID_SYSTEM, AID_INSTALL)) {
-        return -1;
-    }
-    return 0;
-}
-
-int rm_package_dir(const char* apk_path)
-{
-    if (validate_apk_path(apk_path)) {
-        ALOGE("invalid apk path '%s' (bad prefix)\n", apk_path);
-        return -1;
-    }
-    return delete_dir_contents(apk_path, 1 /* also_delete_dir */ , NULL /* exclusion_predicate */);
-}
-
-int link_file(const char* relative_path, const char* from_base, const char* to_base) {
-    char from_path[PKG_PATH_MAX];
-    char to_path[PKG_PATH_MAX];
-    snprintf(from_path, PKG_PATH_MAX, "%s/%s", from_base, relative_path);
-    snprintf(to_path, PKG_PATH_MAX, "%s/%s", to_base, relative_path);
-
-    if (validate_apk_path_subdirs(from_path)) {
-        ALOGE("invalid app data sub-path '%s' (bad prefix)\n", from_path);
-        return -1;
-    }
-
-    if (validate_apk_path_subdirs(to_path)) {
-        ALOGE("invalid app data sub-path '%s' (bad prefix)\n", to_path);
-        return -1;
-    }
-
-    const int ret = link(from_path, to_path);
-    if (ret < 0) {
-        ALOGE("link(%s, %s) failed : %s", from_path, to_path, strerror(errno));
-        return -1;
-    }
 
     return 0;
 }
@@ -2287,40 +1375,35 @@ static bool move_ab_path(const std::string& b_path, const std::string& a_path) {
     return true;
 }
 
-int move_ab(const char* apk_path, const char* instruction_set, const char* oat_dir) {
-    if (apk_path == nullptr || instruction_set == nullptr || oat_dir == nullptr) {
-        LOG(ERROR) << "Cannot move_ab with null input";
-        return -1;
-    }
-
+bool move_ab(const char* apk_path, const char* instruction_set, const char* oat_dir) {
     // Get the current slot suffix. No suffix, no A/B.
     std::string slot_suffix;
     {
         char buf[kPropertyValueMax];
         if (get_property("ro.boot.slot_suffix", buf, nullptr) <= 0) {
-            return -1;
+            return false;
         }
         slot_suffix = buf;
 
         if (!ValidateTargetSlotSuffix(slot_suffix)) {
             LOG(ERROR) << "Target slot suffix not legal: " << slot_suffix;
-            return -1;
+            return false;
         }
     }
 
     // Validate other inputs.
     if (validate_apk_path(apk_path) != 0) {
-        LOG(ERROR) << "invalid apk_path " << apk_path;
-        return -1;
+        LOG(ERROR) << "Invalid apk_path: " << apk_path;
+        return false;
     }
     if (validate_apk_path(oat_dir) != 0) {
-        LOG(ERROR) << "invalid oat_dir " << oat_dir;
-        return -1;
+        LOG(ERROR) << "Invalid oat_dir: " << oat_dir;
+        return false;
     }
 
     char a_path[PKG_PATH_MAX];
     if (!calculate_oat_file_path(a_path, oat_dir, apk_path, instruction_set)) {
-        return -1;
+        return false;
     }
     const std::string a_vdex_path = create_vdex_filename(a_path);
     const std::string a_image_path = create_image_filename(a_path);
@@ -2359,11 +1442,10 @@ int move_ab(const char* apk_path, const char* instruction_set, const char* oat_d
         unlink(b_image_path.c_str());
         success = false;
     }
-
-    return success ? 0 : -1;
+    return success;
 }
 
-bool delete_odex(const char *apk_path, const char *instruction_set, const char *oat_dir) {
+bool delete_odex(const char* apk_path, const char* instruction_set, const char* oat_dir) {
     // Delete the oat/odex file.
     char out_path[PKG_PATH_MAX];
     if (!create_oat_out_path(apk_path, instruction_set, oat_dir, out_path)) {
@@ -2391,6 +1473,20 @@ bool delete_odex(const char *apk_path, const char *instruction_set, const char *
 
     // Report success.
     return return_value_oat && return_value_art;
+}
+
+int dexopt(const char* const params[DEXOPT_PARAM_COUNT]) {
+    return dexopt(params[0],                    // apk_path
+                  atoi(params[1]),              // uid
+                  params[2],                    // pkgname
+                  params[3],                    // instruction_set
+                  atoi(params[4]),              // dexopt_needed
+                  params[5],                    // oat_dir
+                  atoi(params[6]),              // dexopt_flags
+                  params[7],                    // compiler_filter
+                  parse_null(params[8]),        // volume_uuid
+                  parse_null(params[9]));       // shared_libraries
+    static_assert(DEXOPT_PARAM_COUNT == 10U, "Unexpected dexopt param count");
 }
 
 }  // namespace installd

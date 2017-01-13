@@ -28,7 +28,7 @@
 
 #include <EGL/egl.h>
 
-#include <cutils/log.h>
+#include <android/log.h>
 #include <cutils/properties.h>
 
 #include <binder/IPCThreadState.h>
@@ -189,6 +189,10 @@ SurfaceFlinger::SurfaceFlinger()
     property_get("debug.sf.disable_hwc_vds", value, "0");
     mUseHwcVirtualDisplays = !atoi(value);
     ALOGI_IF(!mUseHwcVirtualDisplays, "Disabling HWC virtual displays");
+
+    property_get("ro.sf.disable_triple_buffer", value, "0");
+    mLayerTripleBufferingDisabled = !atoi(value);
+    ALOGI_IF(mLayerTripleBufferingDisabled, "Disabling Triple Buffering");
 }
 
 void SurfaceFlinger::onFirstRef()
@@ -566,6 +570,20 @@ bool SurfaceFlinger::authenticateSurfaceTexture(
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
 }
 
+status_t SurfaceFlinger::getSupportedFrameTimestamps(
+        std::vector<FrameEvent>* outSupported) const {
+    *outSupported = {
+        FrameEvent::REQUESTED_PRESENT,
+        FrameEvent::ACQUIRE,
+        FrameEvent::FIRST_REFRESH_START,
+        FrameEvent::GL_COMPOSITION_DONE,
+        getHwComposer().presentFenceRepresentsStartOfScanout() ?
+                FrameEvent::DISPLAY_PRESENT : FrameEvent::DISPLAY_RETIRE,
+        FrameEvent::RELEASE,
+    };
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         Vector<DisplayInfo>* configs) {
     if ((configs == NULL) || (display.get() == NULL)) {
@@ -683,6 +701,10 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>& /* display */,
 }
 
 int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
+    if (display == NULL) {
+        ALOGE("%s : display is NULL", __func__);
+        return BAD_VALUE;
+    }
     sp<DisplayDevice> device(getDisplayDevice(display));
     if (device != NULL) {
         return device->getActiveConfig();
@@ -1099,7 +1121,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
 }
 
 bool SurfaceFlinger::handleMessageTransaction() {
-    uint32_t transactionFlags = peekTransactionFlags(eTransactionMask);
+    uint32_t transactionFlags = peekTransactionFlags();
     if (transactionFlags) {
         handleTransaction(transactionFlags);
         return true;
@@ -1117,14 +1139,14 @@ void SurfaceFlinger::handleMessageRefresh() {
 
     nsecs_t refreshStartTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
-    preComposition();
+    preComposition(refreshStartTime);
     rebuildLayerStacks();
     setUpHWComposer();
     doDebugFlashRegions();
     doComposition();
-    postComposition(refreshStartTime);
+    postComposition();
 
-    mPreviousPresentFence = mHwc->getRetireFence(HWC_DISPLAY_PRIMARY);
+    mPreviousPresentFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
 
     mHadClientComposition = false;
     for (size_t displayId = 0; displayId < mDisplays.size(); ++displayId) {
@@ -1133,10 +1155,6 @@ void SurfaceFlinger::handleMessageRefresh() {
                 mHwc->hasClientComposition(displayDevice->getHwcDisplayId());
     }
 
-    // Release any buffers which were replaced this frame
-    for (auto& layer : mLayersWithQueuedFrames) {
-        layer->releasePendingBuffer();
-    }
     mLayersWithQueuedFrames.clear();
 }
 
@@ -1184,7 +1202,7 @@ void SurfaceFlinger::doDebugFlashRegions()
     }
 }
 
-void SurfaceFlinger::preComposition()
+void SurfaceFlinger::preComposition(nsecs_t refreshStartTime)
 {
     ATRACE_CALL();
     ALOGV("preComposition");
@@ -1193,7 +1211,7 @@ void SurfaceFlinger::preComposition()
     const LayerVector& layers(mDrawingState.layersSortedByZ);
     const size_t count = layers.size();
     for (size_t i=0 ; i<count ; i++) {
-        if (layers[i]->onPreComposition()) {
+        if (layers[i]->onPreComposition(refreshStartTime)) {
             needExtraInvalidate = true;
         }
     }
@@ -1202,46 +1220,73 @@ void SurfaceFlinger::preComposition()
     }
 }
 
-void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
+void SurfaceFlinger::postComposition()
 {
     ATRACE_CALL();
     ALOGV("postComposition");
 
+    // Release any buffers which were replaced this frame
+    for (auto& layer : mLayersWithQueuedFrames) {
+        layer->releasePendingBuffer();
+    }
+
+    const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
+
+    std::shared_ptr<FenceTime> glCompositionDoneFenceTime;
+    if (mHwc->hasClientComposition(HWC_DISPLAY_PRIMARY)) {
+        glCompositionDoneFenceTime =
+                std::make_shared<FenceTime>(hw->getClientTargetAcquireFence());
+        mGlCompositionDoneTimeline.push(glCompositionDoneFenceTime);
+    } else {
+        glCompositionDoneFenceTime = FenceTime::NO_FENCE;
+    }
+    mGlCompositionDoneTimeline.updateSignalTimes();
+
+    sp<Fence> displayFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
+    auto displayFenceTime = std::make_shared<FenceTime>(displayFence);
+    mDisplayTimeline.push(displayFenceTime);
+    mDisplayTimeline.updateSignalTimes();
+
+    const std::shared_ptr<FenceTime>* presentFenceTime = &FenceTime::NO_FENCE;
+    const std::shared_ptr<FenceTime>* retireFenceTime = &FenceTime::NO_FENCE;
+    if (mHwc->presentFenceRepresentsStartOfScanout()) {
+        presentFenceTime = &displayFenceTime;
+    } else {
+        retireFenceTime = &displayFenceTime;
+    }
+
     const LayerVector& layers(mDrawingState.layersSortedByZ);
     const size_t count = layers.size();
     for (size_t i=0 ; i<count ; i++) {
-        bool frameLatched = layers[i]->onPostComposition();
+        bool frameLatched =
+                layers[i]->onPostComposition(glCompositionDoneFenceTime,
+                        *presentFenceTime, *retireFenceTime);
         if (frameLatched) {
             recordBufferingStats(layers[i]->getName().string(),
                     layers[i]->getOccupancyHistory(false));
         }
     }
 
-    sp<Fence> presentFence = mHwc->getRetireFence(HWC_DISPLAY_PRIMARY);
-
-    if (presentFence->isValid()) {
-        if (mPrimaryDispSync.addPresentFence(presentFence)) {
+    if (displayFence->isValid()) {
+        if (mPrimaryDispSync.addPresentFence(displayFence)) {
             enableHardwareVsync();
         } else {
             disableHardwareVsync(false);
         }
     }
 
-    const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
     if (kIgnorePresentFences) {
         if (hw->isDisplayOn()) {
             enableHardwareVsync();
         }
     }
 
-    mFenceTracker.addFrame(refreshStartTime, presentFence,
-            hw->getVisibleLayersSortedByZ(), hw->getClientTargetAcquireFence());
-
     if (mAnimCompositionPending) {
         mAnimCompositionPending = false;
 
-        if (presentFence->isValid()) {
-            mAnimFrameTracker.setActualPresentFence(presentFence);
+        if (displayFenceTime->isValid()) {
+            mAnimFrameTracker.setActualPresentFence(
+                    std::move(displayFenceTime));
         } else {
             // The HWC doesn't support present fences, so use the refresh
             // timestamp instead.
@@ -1459,7 +1504,7 @@ void SurfaceFlinger::postFramebuffer()
         }
         const auto hwcId = displayDevice->getHwcDisplayId();
         if (hwcId >= 0) {
-            mHwc->commit(hwcId);
+            mHwc->presentAndGetReleaseFences(hwcId);
         }
         displayDevice->onSwapBuffersCompleted();
         displayDevice->makeCurrent(mEGLDisplay, mEGLContext);
@@ -1993,7 +2038,7 @@ bool SurfaceFlinger::handlePageFlip()
 {
     ALOGV("handlePageFlip");
 
-    Region dirtyRegion;
+    nsecs_t latchTime = systemTime();
 
     bool visibleRegions = false;
     const LayerVector& layers(mDrawingState.layersSortedByZ);
@@ -2022,7 +2067,7 @@ bool SurfaceFlinger::handlePageFlip()
         }
     }
     for (auto& layer : mLayersWithQueuedFrames) {
-        const Region dirty(layer->latchBuffer(visibleRegions));
+        const Region dirty(layer->latchBuffer(visibleRegions, latchTime));
         layer->useSurfaceDamage();
         const Layer::State& s(layer->getDrawingState());
         invalidateLayerStack(s.layerStack, dirty);
@@ -2047,14 +2092,15 @@ void SurfaceFlinger::invalidateHwcGeometry()
 }
 
 
-void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
+void SurfaceFlinger::doDisplayComposition(
+        const sp<const DisplayDevice>& displayDevice,
         const Region& inDirtyRegion)
 {
     // We only need to actually compose the display if:
     // 1) It is being handled by hardware composer, which may need this to
     //    keep its virtual display state machine in sync, or
     // 2) There is work to be done (the dirty region isn't empty)
-    bool isHwcDisplay = hw->getHwcDisplayId() >= 0;
+    bool isHwcDisplay = displayDevice->getHwcDisplayId() >= 0;
     if (!isHwcDisplay && inDirtyRegion.isEmpty()) {
         ALOGV("Skipping display composition");
         return;
@@ -2065,35 +2111,35 @@ void SurfaceFlinger::doDisplayComposition(const sp<const DisplayDevice>& hw,
     Region dirtyRegion(inDirtyRegion);
 
     // compute the invalid region
-    hw->swapRegion.orSelf(dirtyRegion);
+    displayDevice->swapRegion.orSelf(dirtyRegion);
 
-    uint32_t flags = hw->getFlags();
+    uint32_t flags = displayDevice->getFlags();
     if (flags & DisplayDevice::SWAP_RECTANGLE) {
         // we can redraw only what's dirty, but since SWAP_RECTANGLE only
         // takes a rectangle, we must make sure to update that whole
         // rectangle in that case
-        dirtyRegion.set(hw->swapRegion.bounds());
+        dirtyRegion.set(displayDevice->swapRegion.bounds());
     } else {
         if (flags & DisplayDevice::PARTIAL_UPDATES) {
             // We need to redraw the rectangle that will be updated
             // (pushed to the framebuffer).
             // This is needed because PARTIAL_UPDATES only takes one
             // rectangle instead of a region (see DisplayDevice::flip())
-            dirtyRegion.set(hw->swapRegion.bounds());
+            dirtyRegion.set(displayDevice->swapRegion.bounds());
         } else {
             // we need to redraw everything (the whole screen)
-            dirtyRegion.set(hw->bounds());
-            hw->swapRegion = dirtyRegion;
+            dirtyRegion.set(displayDevice->bounds());
+            displayDevice->swapRegion = dirtyRegion;
         }
     }
 
-    if (!doComposeSurfaces(hw, dirtyRegion)) return;
+    if (!doComposeSurfaces(displayDevice, dirtyRegion)) return;
 
     // update the swap region and clear the dirty region
-    hw->swapRegion.orSelf(dirtyRegion);
+    displayDevice->swapRegion.orSelf(dirtyRegion);
 
     // swap buffers (presentation)
-    hw->swapBuffers(getHwComposer());
+    displayDevice->swapBuffers(getHwComposer());
 }
 
 bool SurfaceFlinger::doComposeSurfaces(
@@ -2201,7 +2247,7 @@ bool SurfaceFlinger::doComposeSurfaces(
                                 && hasClientComposition) {
                             // never clear the very first layer since we're
                             // guaranteed the FB is already cleared
-                            layer->clearWithOpenGL(displayDevice, clip);
+                            layer->clearWithOpenGL(displayDevice);
                         }
                         break;
                     }
@@ -2237,8 +2283,8 @@ bool SurfaceFlinger::doComposeSurfaces(
     return true;
 }
 
-void SurfaceFlinger::drawWormhole(const sp<const DisplayDevice>& hw, const Region& region) const {
-    const int32_t height = hw->getHeight();
+void SurfaceFlinger::drawWormhole(const sp<const DisplayDevice>& displayDevice, const Region& region) const {
+    const int32_t height = displayDevice->getHeight();
     RenderEngine& engine(getRenderEngine());
     engine.fillRegionWithColor(region, height, 0, 0, 0, 0);
 }
@@ -2282,7 +2328,7 @@ status_t SurfaceFlinger::removeLayer(const wp<Layer>& weakLayer) {
     return status_t(index);
 }
 
-uint32_t SurfaceFlinger::peekTransactionFlags(uint32_t /* flags */) {
+uint32_t SurfaceFlinger::peekTransactionFlags() {
     return android_atomic_release_load(&mTransactionFlags);
 }
 
@@ -2819,9 +2865,9 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
             }
 
             if ((index < numArgs) &&
-                    (args[index] == String16("--fences"))) {
+                    (args[index] == String16("--frame-events"))) {
                 index++;
-                mFenceTracker.dump(&result);
+                dumpFrameEventsLocked(result);
                 dumpAll = false;
             }
         }
@@ -2910,21 +2956,18 @@ void SurfaceFlinger::logFrameStats() {
     mAnimFrameTracker.logAndResetStats(String8("<win-anim>"));
 }
 
-/*static*/ void SurfaceFlinger::appendSfConfigString(String8& result)
+void SurfaceFlinger::appendSfConfigString(String8& result) const
 {
-    static const char* config =
-            " [sf"
+    result.append(" [sf");
 #ifdef HAS_CONTEXT_PRIORITY
-            " HAS_CONTEXT_PRIORITY"
+    result.append(" HAS_CONTEXT_PRIORITY");
 #endif
 #ifdef NEVER_DEFAULT_TO_ASYNC_MODE
-            " NEVER_DEFAULT_TO_ASYNC_MODE"
+    result.append(" NEVER_DEFAULT_TO_ASYNC_MODE");
 #endif
-#ifdef TARGET_DISABLE_TRIPLE_BUFFERING
-            " TARGET_DISABLE_TRIPLE_BUFFERING"
-#endif
-            "]";
-    result.append(config);
+    if (isLayerTripleBufferingDisabled())
+        result.append(" DISABLE_TRIPLE_BUFFERING");
+    result.append("]");
 }
 
 void SurfaceFlinger::dumpStaticScreenStats(String8& result) const
@@ -2959,6 +3002,16 @@ void SurfaceFlinger::recordBufferingStats(const char* layerName,
         }
         ++stats.numSegments;
         stats.totalTime += segment.totalTime;
+    }
+}
+
+void SurfaceFlinger::dumpFrameEventsLocked(String8& result) {
+    result.appendFormat("Layer frame timestamps:\n");
+
+    const LayerVector& currentLayers = mCurrentState.layersSortedByZ;
+    const size_t count = currentLayers.size();
+    for (size_t i=0 ; i<count ; i++) {
+        currentLayers[i]->dumpFrameEvents(result);
     }
 }
 
@@ -3879,11 +3932,6 @@ void SurfaceFlinger::checkScreenshot(size_t w, size_t s, size_t h, void const* v
                             layer->isVisible(), state.flags, state.alpha);
         }
     }
-}
-
-bool SurfaceFlinger::getFrameTimestamps(const Layer& layer,
-        uint64_t frameNumber, FrameTimestamps* outTimestamps) {
-    return mFenceTracker.getFrameTimestamps(layer, frameNumber, outTimestamps);
 }
 
 // ---------------------------------------------------------------------------

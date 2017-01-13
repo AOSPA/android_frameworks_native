@@ -16,8 +16,8 @@
 
 #include <algorithm>
 
+#include <android/log.h>
 #include <gui/BufferQueue.h>
-#include <log/log.h>
 #include <sync/sync.h>
 #include <utils/StrongPointer.h>
 
@@ -122,10 +122,13 @@ Surface* SurfaceFromHandle(VkSurfaceKHR handle) {
 
 struct Swapchain {
     Swapchain(Surface& surface_, uint32_t num_images_)
-        : surface(surface_), num_images(num_images_) {}
+        : surface(surface_),
+          num_images(num_images_),
+          frame_timestamps_enabled(false) {}
 
     Surface& surface;
     uint32_t num_images;
+    bool frame_timestamps_enabled;
 
     struct Image {
         Image() : image(VK_NULL_HANDLE), dequeue_fence(-1), dequeued(false) {}
@@ -723,9 +726,14 @@ void DestroySwapchainKHR(VkDevice device,
                          const VkAllocationCallbacks* allocator) {
     const auto& dispatch = GetData(device).driver;
     Swapchain* swapchain = SwapchainFromHandle(swapchain_handle);
+    if (!swapchain)
+        return;
     bool active = swapchain->surface.swapchain_handle == swapchain_handle;
     ANativeWindow* window = active ? swapchain->surface.window.get() : nullptr;
 
+    if (swapchain->frame_timestamps_enabled) {
+        native_window_enable_frame_timestamps(window, false);
+    }
     for (uint32_t i = 0; i < swapchain->num_images; i++)
         ReleaseSwapchainImage(device, window, -1, swapchain->images[i]);
     if (active)
@@ -860,17 +868,55 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     ALOGV_IF(present_info->sType != VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
              "vkQueuePresentKHR: invalid VkPresentInfoKHR structure type %d",
              present_info->sType);
-    ALOGV_IF(present_info->pNext, "VkPresentInfo::pNext != NULL");
 
     VkDevice device = GetData(queue).driver_device;
     const auto& dispatch = GetData(queue).driver;
     VkResult final_result = VK_SUCCESS;
+
+    // Look at the pNext chain for supported extension structs:
+    const VkPresentRegionsKHR* present_regions = nullptr;
+    const VkPresentTimesInfoGOOGLE* present_times = nullptr;
+    const VkPresentRegionsKHR* next =
+        reinterpret_cast<const VkPresentRegionsKHR*>(present_info->pNext);
+    while (next) {
+        switch (next->sType) {
+            case VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR:
+                present_regions = next;
+                break;
+            case VK_STRUCTURE_TYPE_PRESENT_TIMES_GOOGLE:
+                present_times =
+                    reinterpret_cast<const VkPresentTimesInfoGOOGLE*>(next);
+                break;
+            default:
+                ALOGV("QueuePresentKHR ignoring unrecognized pNext->sType = %x",
+                      next->sType);
+                break;
+        }
+        next = reinterpret_cast<const VkPresentRegionsKHR*>(next->pNext);
+    }
+    ALOGV_IF(
+        present_regions &&
+            present_regions->swapchainCount != present_info->swapchainCount,
+        "VkPresentRegions::swapchainCount != VkPresentInfo::swapchainCount");
+    ALOGV_IF(present_times &&
+                 present_times->swapchainCount != present_info->swapchainCount,
+             "VkPresentTimesInfoGOOGLE::swapchainCount != "
+             "VkPresentInfo::swapchainCount");
+    const VkPresentRegionKHR* regions =
+        (present_regions) ? present_regions->pRegions : nullptr;
+    const VkPresentTimeGOOGLE* times =
+        (present_times) ? present_times->pTimes : nullptr;
+    const VkAllocationCallbacks* allocator = &GetData(device).allocator;
+    android_native_rect_t* rects = nullptr;
+    uint32_t nrects = 0;
 
     for (uint32_t sc = 0; sc < present_info->swapchainCount; sc++) {
         Swapchain& swapchain =
             *SwapchainFromHandle(present_info->pSwapchains[sc]);
         uint32_t image_idx = present_info->pImageIndices[sc];
         Swapchain::Image& img = swapchain.images[image_idx];
+        const VkPresentRegionKHR* region = (regions) ? &regions[sc] : nullptr;
+        const VkPresentTimeGOOGLE* time = (times) ? &times[sc] : nullptr;
         VkResult swapchain_result = VK_SUCCESS;
         VkResult result;
         int err;
@@ -888,6 +934,58 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
             present_info->pSwapchains[sc]) {
             ANativeWindow* window = swapchain.surface.window.get();
             if (swapchain_result == VK_SUCCESS) {
+                if (region) {
+                    // Process the incremental-present hint for this swapchain:
+                    uint32_t rcount = region->rectangleCount;
+                    if (rcount > nrects) {
+                        android_native_rect_t* new_rects =
+                            static_cast<android_native_rect_t*>(
+                                allocator->pfnReallocation(
+                                    allocator->pUserData, rects,
+                                    sizeof(android_native_rect_t) * rcount,
+                                    alignof(android_native_rect_t),
+                                    VK_SYSTEM_ALLOCATION_SCOPE_COMMAND));
+                        if (new_rects) {
+                            rects = new_rects;
+                            nrects = rcount;
+                        } else {
+                            rcount = 0;  // Ignore the hint for this swapchain
+                        }
+                    }
+                    for (uint32_t r = 0; r < rcount; ++r) {
+                        if (region->pRectangles[r].layer > 0) {
+                            ALOGV(
+                                "vkQueuePresentKHR ignoring invalid layer "
+                                "(%u); using layer 0 instead",
+                                region->pRectangles[r].layer);
+                        }
+                        int x = region->pRectangles[r].offset.x;
+                        int y = region->pRectangles[r].offset.y;
+                        int width = static_cast<int>(
+                            region->pRectangles[r].extent.width);
+                        int height = static_cast<int>(
+                            region->pRectangles[r].extent.height);
+                        android_native_rect_t* cur_rect = &rects[r];
+                        cur_rect->left = x;
+                        cur_rect->top = y + height;
+                        cur_rect->right = x + width;
+                        cur_rect->bottom = y;
+                    }
+                    native_window_set_surface_damage(window, rects, rcount);
+                }
+                if (time) {
+                    if (!swapchain.frame_timestamps_enabled) {
+                        native_window_enable_frame_timestamps(window, true);
+                        swapchain.frame_timestamps_enabled = true;
+                    }
+                    // TODO(ianelliott): need to store the presentID (and
+                    // desiredPresentTime), so it can be later correlated to
+                    // this present.  Probably modify the following function
+                    // (and below) to plumb a path to store it in FrameEvents
+                    // code, on the producer side.
+                    native_window_set_buffers_timestamp(
+                        window, static_cast<int64_t>(time->desiredPresentTime));
+                }
                 err = window->queueBuffer(window, img.buffer.get(), fence);
                 // queueBuffer always closes fence, even on error
                 if (err != 0) {
@@ -918,8 +1016,50 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         if (swapchain_result != final_result)
             final_result = WorstPresentResult(final_result, swapchain_result);
     }
+    if (rects) {
+        allocator->pfnFree(allocator->pUserData, rects);
+    }
 
     return final_result;
+}
+
+VKAPI_ATTR
+VkResult GetRefreshCycleDurationGOOGLE(
+    VkDevice,
+    VkSwapchainKHR,
+    VkRefreshCycleDurationGOOGLE* pDisplayTimingProperties) {
+    VkResult result = VK_SUCCESS;
+
+    // TODO(ianelliott): FULLY IMPLEMENT THIS FUNCTION!!!
+    pDisplayTimingProperties->minRefreshDuration = 16666666666;
+    pDisplayTimingProperties->maxRefreshDuration = 16666666666;
+
+    return result;
+}
+
+VKAPI_ATTR
+VkResult GetPastPresentationTimingGOOGLE(
+    VkDevice,
+    VkSwapchainKHR swapchain_handle,
+    uint32_t* count,
+    VkPastPresentationTimingGOOGLE* timings) {
+    Swapchain& swapchain = *SwapchainFromHandle(swapchain_handle);
+    ANativeWindow* window = swapchain.surface.window.get();
+    VkResult result = VK_SUCCESS;
+
+    if (!swapchain.frame_timestamps_enabled) {
+        native_window_enable_frame_timestamps(window, true);
+        swapchain.frame_timestamps_enabled = true;
+    }
+
+    // TODO(ianelliott): FULLY IMPLEMENT THIS FUNCTION!!!
+    if (timings) {
+        *count = 0;
+    } else {
+        *count = 0;
+    }
+
+    return result;
 }
 
 }  // namespace driver

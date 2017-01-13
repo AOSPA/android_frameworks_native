@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #define LOG_TAG "dumpstate"
 
 #include <dirent.h>
@@ -42,6 +43,7 @@
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
 #include <android/hardware/dumpstate/1.0/IDumpstateDevice.h>
+#include <android/hardware/vibrator/1.0/IVibrator.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
 #include <hardware_legacy/power.h>
@@ -49,8 +51,13 @@
 #include <private/android_filesystem_config.h>
 #include <private/android_logger.h>
 
+#include "DumpstateInternal.h"
 #include "DumpstateService.h"
 #include "dumpstate.h"
+
+using ::android::hardware::dumpstate::V1_0::IDumpstateDevice;
+using ::android::hardware::vibrator::V1_0::IVibrator;
+using VibratorStatus = ::android::hardware::vibrator::V1_0::Status;
 
 /* read before root is shed */
 static char cmdline_buf[16384] = "(unknown)";
@@ -99,9 +106,6 @@ static void RunDumpsys(const std::string& title, const std::vector<std::string>&
 static int DumpFile(const std::string& title, const std::string& path) {
     return ds.DumpFile(title, path);
 }
-bool IsUserBuild() {
-    return ds.IsUserBuild();
-}
 
 // Relative directory (inside the zip) for all files copied as-is into the bugreport.
 static const std::string ZIP_ROOT_DIR = "FS";
@@ -109,6 +113,8 @@ static const std::string ZIP_ROOT_DIR = "FS";
 static constexpr char PROPERTY_EXTRA_OPTIONS[] = "dumpstate.options";
 static constexpr char PROPERTY_LAST_ID[] = "dumpstate.last_id";
 static constexpr char PROPERTY_VERSION[] = "dumpstate.version";
+
+static const CommandOptions AS_ROOT_20 = CommandOptions::WithTimeout(20).AsRoot().Build();
 
 /* gets the tombstone data, according to the bugreport type: if zipped, gets all tombstones;
  * otherwise, gets just those modified in the last half an hour. */
@@ -359,7 +365,7 @@ static void dump_systrace() {
 }
 
 static void dump_raft() {
-    if (IsUserBuild()) {
+    if (PropertiesHelper::IsUserBuild()) {
         return;
     }
 
@@ -430,7 +436,7 @@ static std::string GetLastModifiedFileWithPrefix(const std::string& dir,
 
 static void DumpModemLogs() {
     DurationReporter durationReporter("DUMP MODEM LOGS");
-    if (IsUserBuild()) {
+    if (PropertiesHelper::IsUserBuild()) {
         return;
     }
 
@@ -638,11 +644,10 @@ static int dump_stat_from_fd(const char *title __unused, const char *path, int f
                                  / fields[__STAT_IO_TICKS];
 
         if (!write_perf && !write_ios) {
-            printf("%s: perf(ios) rd: %luKB/s(%lu/s) q: %u\n",
-                   path, read_perf, read_ios, queue);
+            printf("%s: perf(ios) rd: %luKB/s(%lu/s) q: %u\n", path, read_perf, read_ios, queue);
         } else {
-            printf("%s: perf(ios) rd: %luKB/s(%lu/s) wr: %luKB/s(%lu/s) q: %u\n",
-                   path, read_perf, read_ios, write_perf, write_ios, queue);
+            printf("%s: perf(ios) rd: %luKB/s(%lu/s) wr: %luKB/s(%lu/s) q: %u\n", path, read_perf,
+                   read_ios, write_perf, write_ios, queue);
         }
 
         /* bugreport timeout factor adjustment */
@@ -685,14 +690,12 @@ void Dumpstate::PrintHeader() const {
     printf("Network: %s\n", network.c_str());
 
     printf("Kernel: ");
-    fflush(stdout);
-    DumpFileToFd(STDOUT_FILENO, "/proc/version");
+    DumpFileToFd(STDOUT_FILENO, "", "/proc/version");
     printf("Command line: %s\n", strtok(cmdline_buf, "\n"));
     printf("Bugreport format version: %s\n", version_.c_str());
     printf("Dumpstate info: id=%d pid=%d dry_run=%d args=%s extra_options=%s\n", id_, pid_,
-           dry_run_, args_.c_str(), extra_options_.c_str());
+           PropertiesHelper::IsDryRun(), args_.c_str(), extra_options_.c_str());
     printf("\n");
-    fflush(stdout);
 }
 
 // List of file extensions that can cause a zip file attachment to be rejected by some email
@@ -916,7 +919,7 @@ static void dumpstate() {
     DumpFile("MEMORY INFO", "/proc/meminfo");
     RunCommand("CPU INFO", {"top", "-b", "-n", "1", "-H", "-s", "6", "-o",
                             "pid,tid,user,pr,ni,%cpu,s,virt,res,pcy,cmd,name"});
-    RunCommand("PROCRANK", {"procrank"}, CommandOptions::AS_ROOT_20);
+    RunCommand("PROCRANK", {"procrank"}, AS_ROOT_20);
     DumpFile("VIRTUAL MEMORY STATS", "/proc/vmstat");
     DumpFile("VMALLOC INFO", "/proc/vmallocinfo");
     DumpFile("SLAB INFO", "/proc/slabinfo");
@@ -931,7 +934,7 @@ static void dumpstate() {
 
     RunCommand("PROCESSES AND THREADS",
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy"});
-    RunCommand("LIBRANK", {"librank"}, CommandOptions::AS_ROOT_10);
+    RunCommand("LIBRANK", {"librank"}, CommandOptions::AS_ROOT);
 
     RunCommand("PRINTENV", {"printenv"});
     RunCommand("NETSTAT", {"netstat", "-nW"});
@@ -944,7 +947,7 @@ static void dumpstate() {
 
     do_dmesg();
 
-    RunCommand("LIST OF OPEN FILES", {"lsof"}, CommandOptions::AS_ROOT_10);
+    RunCommand("LIST OF OPEN FILES", {"lsof"}, CommandOptions::AS_ROOT);
     for_each_pid(do_showmap, "SMAPS OF ALL PROCESSES");
     for_each_tid(show_wchan, "BLOCKED PROCESS WAIT-CHANNELS");
     for_each_pid(show_showtime, "PROCESS TIMES (pid cmd user system iowait+percentage)");
@@ -1047,7 +1050,7 @@ static void dumpstate() {
 #ifdef FWDUMP_bcmdhd
     RunCommand("ND OFFLOAD TABLE", {WLUTIL, "nd_hostip"}, CommandOptions::AS_ROOT_5);
 
-    RunCommand("DUMP WIFI INTERNAL COUNTERS (1)", {WLUTIL, "counters"}, CommandOptions::AS_ROOT_20);
+    RunCommand("DUMP WIFI INTERNAL COUNTERS (1)", {WLUTIL, "counters"}, AS_ROOT_20);
 
     RunCommand("ND OFFLOAD STATUS (1)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT_5);
 
@@ -1058,9 +1061,9 @@ static void dumpstate() {
                CommandOptions::WithTimeout(10).Build());
 
 #ifdef FWDUMP_bcmdhd
-    RunCommand("DUMP WIFI STATUS", {"dhdutil", "-i", "wlan0", "dump"}, CommandOptions::AS_ROOT_20);
+    RunCommand("DUMP WIFI STATUS", {"dhdutil", "-i", "wlan0", "dump"}, AS_ROOT_20);
 
-    RunCommand("DUMP WIFI INTERNAL COUNTERS (2)", {WLUTIL, "counters"}, CommandOptions::AS_ROOT_20);
+    RunCommand("DUMP WIFI INTERNAL COUNTERS (2)", {WLUTIL, "counters"}, AS_ROOT_20);
 
     RunCommand("ND OFFLOAD STATUS (2)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT_5);
 #endif
@@ -1070,6 +1073,8 @@ static void dumpstate() {
 
     RunCommand("VOLD DUMP", {"vdc", "dump"});
     RunCommand("SECURE CONTAINERS", {"vdc", "asec", "list"});
+
+    RunCommand("STORAGED TASKIOINFO", {"storaged", "-d"}, CommandOptions::WithTimeout(10).Build());
 
     RunCommand("FILESYSTEMS & FREE SPACE", {"df"});
 
@@ -1105,7 +1110,7 @@ static void dumpstate() {
         // root can run on user builds.
         CommandOptions::CommandOptionsBuilder options =
             CommandOptions::WithTimeout(rilDumpstateTimeout);
-        if (!IsUserBuild()) {
+        if (!PropertiesHelper::IsUserBuild()) {
             options.AsRoot();
         }
         RunCommand("DUMP VENDOR RIL LOGS", {"vril-dump"}, options.Build());
@@ -1165,10 +1170,9 @@ void Dumpstate::DumpstateBoard() {
     printf("========================================================\n");
     printf("== Board\n");
     printf("========================================================\n");
-    fflush(stdout);
 
-    android::sp<android::hardware::dumpstate::V1_0::IDumpstateDevice> dumpstate_device(
-        android::hardware::dumpstate::V1_0::IDumpstateDevice::getService("DumpstateDevice"));
+    ::android::sp<IDumpstateDevice> dumpstate_device(
+        IDumpstateDevice::getService("DumpstateDevice"));
     if (dumpstate_device == nullptr) {
         // TODO: temporary workaround until devices on master implement it
         MYLOGE("no IDumpstateDevice implementation; using legacy dumpstate_board()\n");
@@ -1199,11 +1203,11 @@ void Dumpstate::DumpstateBoard() {
     }
     handle->data[0] = fd;
 
+    // TODO: need a timeout mechanism so dumpstate does not hang on device implementation call.
     dumpstate_device->dumpstateBoard(handle);
 
     AddZipEntry("dumpstate-board.txt", path);
     printf("*** See dumpstate-board.txt entry ***\n");
-    fflush(stdout);
 
     native_handle_close(handle);
     native_handle_delete(handle);
@@ -1498,7 +1502,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (ds.IsDryRun()) {
+    if (PropertiesHelper::IsDryRun()) {
         MYLOGI("Running on dry-run mode (to disable it, call 'setprop dumpstate.dry_run false')\n");
     }
 
@@ -1589,12 +1593,21 @@ int main(int argc, char *argv[]) {
         fclose(cmdline);
     }
 
-    /* open the vibrator before dropping root */
-    std::unique_ptr<FILE, int(*)(FILE*)> vibrator(NULL, fclose);
+    ::android::sp<IVibrator> vibrator = nullptr;
     if (do_vibrate) {
-        vibrator.reset(fopen("/sys/class/timed_output/vibrator/enable", "we"));
-        if (vibrator) {
-            vibrate(vibrator.get(), 150);
+        vibrator = IVibrator::getService("vibrator");
+
+        if (vibrator != nullptr) {
+            // cancel previous vibration if any
+            ::android::hardware::Return<VibratorStatus> offStatus = vibrator->off();
+            if (!offStatus.isOk() || offStatus != VibratorStatus::OK) {
+                MYLOGE("Vibrator off failed.");
+            } else {
+                ::android::hardware::Return<VibratorStatus> onStatus = vibrator->on(150);
+                if (!onStatus.isOk() || onStatus != VibratorStatus::OK) {
+                    MYLOGE("Vibrator on failed.");
+                }
+            }
         }
     }
 
@@ -1630,6 +1643,10 @@ int main(int argc, char *argv[]) {
                    ds.tmp_path_.c_str(), strerror(errno));
         }
     }
+
+    // Don't buffer stdout
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
     // NOTE: there should be no stdout output until now, otherwise it would break the header.
     // In particular, DurationReport objects should be created passing 'title, NULL', so their
     // duration is logged into MYLOG instead.
@@ -1660,7 +1677,7 @@ int main(int argc, char *argv[]) {
     ds.AddDir(RECOVERY_DIR, true);
     ds.AddDir(RECOVERY_DATA_DIR, true);
     ds.AddDir(LOGPERSIST_DATA_DIR, false);
-    if (!IsUserBuild()) {
+    if (!PropertiesHelper::IsUserBuild()) {
         ds.AddDir(PROFILE_DATA_DIR_CUR, true);
         ds.AddDir(PROFILE_DATA_DIR_REF, true);
     }
@@ -1674,7 +1691,7 @@ int main(int argc, char *argv[]) {
     // Run ss as root so we can see socket marks.
     RunCommand("DETAILED SOCKET STATE", {"ss", "-eionptu"}, CommandOptions::WithTimeout(10).Build());
 
-    if (!drop_root_user()) {
+    if (!DropRootUser()) {
         return -1;
     }
 
@@ -1758,10 +1775,20 @@ int main(int argc, char *argv[]) {
     }
 
     /* vibrate a few but shortly times to let user know it's finished */
-    if (vibrator) {
-        for (int i = 0; i < 3; i++) {
-            vibrate(vibrator.get(), 75);
-            usleep((75 + 50) * 1000);
+    if (vibrator != nullptr) {
+        // in case dumpstate magically completes before the above vibration
+        ::android::hardware::Return<VibratorStatus> offStatus = vibrator->off();
+        if (!offStatus.isOk() || offStatus != VibratorStatus::OK) {
+            MYLOGE("Vibrator off failed.");
+        } else {
+            for (int i = 0; i < 3; i++) {
+                ::android::hardware::Return<VibratorStatus> onStatus = vibrator->on(75);
+                if (!onStatus.isOk() || onStatus != VibratorStatus::OK) {
+                    MYLOGE("Vibrator on failed.");
+                    break;
+                }
+                usleep((75 + 50) * 1000);
+            }
         }
     }
 

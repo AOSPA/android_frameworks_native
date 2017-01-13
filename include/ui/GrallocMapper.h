@@ -32,97 +32,35 @@ using hardware::graphics::allocator::V2_0::ConsumerUsage;
 using hardware::graphics::common::V1_0::PixelFormat;
 using hardware::graphics::mapper::V2_0::FlexLayout;
 using hardware::graphics::mapper::V2_0::BackingStore;
-using hardware::graphics::mapper::V2_0::Device;
 using hardware::graphics::mapper::V2_0::IMapper;
 
 // Mapper is a wrapper to IMapper, a client-side graphics buffer mapper.
 class Mapper {
 public:
     Mapper();
-    ~Mapper();
 
     // this will be removed and Mapper will be always valid
     bool valid() const { return (mMapper != nullptr); }
 
-    Error retain(buffer_handle_t handle) const
-    {
-        return mMapper->retain(mDevice, handle);
-    }
-
+    Error retain(buffer_handle_t handle) const;
     void release(buffer_handle_t handle) const;
 
-    Error getDimensions(buffer_handle_t handle,
-            uint32_t& width, uint32_t& height) const
-    {
-        return mMapper->getDimensions(mDevice, handle, &width, &height);
-    }
-
-    Error getFormat(buffer_handle_t handle,
-            PixelFormat& format) const
-    {
-        return mMapper->getFormat(mDevice, handle, &format);
-    }
-
-    Error getLayerCount(buffer_handle_t handle, uint32_t& layerCount) const
-    {
-        return mMapper->getLayerCount(mDevice, handle, &layerCount);
-    }
-
-    Error getProducerUsageMask(buffer_handle_t handle,
-            uint64_t& usageMask) const
-    {
-        return mMapper->getProducerUsageMask(mDevice, handle, &usageMask);
-    }
-
-    Error getConsumerUsageMask(buffer_handle_t handle,
-            uint64_t& usageMask) const
-    {
-        return mMapper->getConsumerUsageMask(mDevice, handle, &usageMask);
-    }
-
-    Error getBackingStore(buffer_handle_t handle,
-            BackingStore& store) const
-    {
-        return mMapper->getBackingStore(mDevice, handle, &store);
-    }
-
-    Error getStride(buffer_handle_t handle, uint32_t& stride) const
-    {
-        return mMapper->getStride(mDevice, handle, &stride);
-    }
-
-    Error getNumFlexPlanes(buffer_handle_t handle, uint32_t& numPlanes) const
-    {
-        return mMapper->getNumFlexPlanes(mDevice, handle, &numPlanes);
-    }
+    Error getStride(buffer_handle_t handle, uint32_t* outStride) const;
 
     Error lock(buffer_handle_t handle,
             uint64_t producerUsageMask,
             uint64_t consumerUsageMask,
-            const Device::Rect& accessRegion,
-            int acquireFence, void*& data) const
-    {
-        return mMapper->lock(mDevice, handle,
-                producerUsageMask, consumerUsageMask,
-                &accessRegion, acquireFence, &data);
-    }
-
+            const IMapper::Rect& accessRegion,
+            int acquireFence, void** outData) const;
     Error lock(buffer_handle_t handle,
             uint64_t producerUsageMask,
             uint64_t consumerUsageMask,
-            const Device::Rect& accessRegion,
-            int acquireFence, FlexLayout& flexLayout) const
-    {
-        return mMapper->lockFlex(mDevice, handle,
-                producerUsageMask, consumerUsageMask,
-                &accessRegion, acquireFence, &flexLayout);
-    }
-
+            const IMapper::Rect& accessRegion,
+            int acquireFence, FlexLayout* outLayout) const;
     int unlock(buffer_handle_t handle) const;
 
 private:
-    const IMapper* mMapper;
-    Device* mDevice;
+    sp<IMapper> mMapper;
 };
 
 } // namespace Gralloc2

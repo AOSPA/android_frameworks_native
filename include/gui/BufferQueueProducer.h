@@ -80,9 +80,9 @@ public:
     //
     // In both cases, the producer will need to call requestBuffer to get a
     // GraphicBuffer handle for the returned slot.
-    virtual status_t dequeueBuffer(int *outSlot, sp<Fence>* outFence,
+    status_t dequeueBuffer(int *outSlot, sp<Fence>* outFence,
             uint32_t width, uint32_t height, PixelFormat format,
-            uint32_t usage);
+            uint32_t usage, FrameEventHistoryDelta* outTimestamps) override;
 
     // See IGraphicBufferProducer::detachBuffer
     virtual status_t detachBuffer(int slot);
@@ -177,8 +177,7 @@ public:
             sp<Fence>* outFence, float outTransformMatrix[16]) override;
 
     // See IGraphicBufferProducer::getFrameTimestamps
-    virtual bool getFrameTimestamps(uint64_t frameNumber,
-            FrameTimestamps* outTimestamps) const override;
+    virtual void getFrameTimestamps(FrameEventHistoryDelta* outDelta) override;
 
     // See IGraphicBufferProducer::getUniqueId
     virtual status_t getUniqueId(uint64_t* outId) const override;
@@ -194,6 +193,9 @@ private:
     // Returns the next free slot if one is available or
     // BufferQueueCore::INVALID_BUFFER_SLOT otherwise
     int getFreeSlotLocked() const;
+
+    void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
+            FrameEventHistoryDelta* outDelta);
 
     // waitForFreeSlotThenRelock finds the oldest slot in the FREE state. It may
     // block if there are no available slots and we are not in non-blocking

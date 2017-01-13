@@ -27,7 +27,7 @@ class SurfaceFlinger;
 
 // MonitoredProducer wraps an IGraphicBufferProducer so that SurfaceFlinger will
 // be notified upon its destruction
-class MonitoredProducer : public IGraphicBufferProducer {
+class MonitoredProducer : public BnGraphicBufferProducer {
 public:
     MonitoredProducer(const sp<IGraphicBufferProducer>& producer,
             const sp<SurfaceFlinger>& flinger);
@@ -38,7 +38,8 @@ public:
     virtual status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers);
     virtual status_t setAsyncMode(bool async);
     virtual status_t dequeueBuffer(int* slot, sp<Fence>* fence, uint32_t w,
-            uint32_t h, PixelFormat format, uint32_t usage);
+            uint32_t h, PixelFormat format, uint32_t usage,
+            FrameEventHistoryDelta* outTimestamps);
     virtual status_t detachBuffer(int slot);
     virtual status_t detachNextBuffer(sp<GraphicBuffer>* outBuffer,
             sp<Fence>* outFence);
@@ -63,6 +64,7 @@ public:
     virtual IBinder* onAsBinder();
     virtual status_t setSharedBufferMode(bool sharedBufferMode) override;
     virtual status_t setAutoRefresh(bool autoRefresh) override;
+    virtual void getFrameTimestamps(FrameEventHistoryDelta *outDelta) override;
     virtual status_t getUniqueId(uint64_t* outId) const override;
 
 private:

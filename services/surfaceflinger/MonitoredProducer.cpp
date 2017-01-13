@@ -49,7 +49,7 @@ MonitoredProducer::~MonitoredProducer() {
         wp<IBinder> mProducer;
     };
 
-    mFlinger->postMessageAsync(new MessageCleanUpList(mFlinger, asBinder(this)));
+    mFlinger->postMessageAsync(new MessageCleanUpList(mFlinger, asBinder(mProducer)));
 }
 
 status_t MonitoredProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
@@ -66,8 +66,10 @@ status_t MonitoredProducer::setAsyncMode(bool async) {
 }
 
 status_t MonitoredProducer::dequeueBuffer(int* slot, sp<Fence>* fence,
-        uint32_t w, uint32_t h, PixelFormat format, uint32_t usage) {
-    return mProducer->dequeueBuffer(slot, fence, w, h, format, usage);
+        uint32_t w, uint32_t h, PixelFormat format, uint32_t usage,
+        FrameEventHistoryDelta* outTimestamps) {
+    return mProducer->dequeueBuffer(
+            slot, fence, w, h, format, usage, outTimestamps);
 }
 
 status_t MonitoredProducer::detachBuffer(int slot) {
@@ -145,12 +147,16 @@ status_t MonitoredProducer::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
             outTransformMatrix);
 }
 
+void MonitoredProducer::getFrameTimestamps(FrameEventHistoryDelta* outDelta) {
+    mProducer->getFrameTimestamps(outDelta);
+}
+
 status_t MonitoredProducer::getUniqueId(uint64_t* outId) const {
     return mProducer->getUniqueId(outId);
 }
 
 IBinder* MonitoredProducer::onAsBinder() {
-    return IInterface::asBinder(mProducer).get();
+    return this;
 }
 
 // ---------------------------------------------------------------------------

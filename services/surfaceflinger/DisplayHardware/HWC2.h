@@ -38,13 +38,15 @@
 
 namespace android {
     class Fence;
-    class FloatRect;
     class GraphicBuffer;
     class Rect;
     class Region;
+    namespace gfx {
+        class FloatRect;
+    }
     namespace Hwc2 {
         class Composer;
-    };
+    }
 }
 
 namespace HWC2 {
@@ -57,6 +59,8 @@ typedef std::function<void(std::shared_ptr<Display>, Connection)>
 typedef std::function<void(std::shared_ptr<Display>)> RefreshCallback;
 typedef std::function<void(std::shared_ptr<Display>, nsecs_t)> VsyncCallback;
 
+// C++ Wrapper around hwc2_device_t. Load all functions pointers
+// and handle callback registration.
 class Device
 {
 public:
@@ -207,6 +211,7 @@ private:
     std::vector<std::pair<std::shared_ptr<Display>, nsecs_t>> mPendingVsyncs;
 };
 
+// Convenience C++ class to access hwc2_device_t Display functions directly.
 class Display : public std::enable_shared_from_this<Display>
 {
 public:
@@ -313,7 +318,7 @@ public:
             std::unordered_map<std::shared_ptr<Layer>,
                     android::sp<android::Fence>>* outFences) const;
     [[clang::warn_unused_result]] Error present(
-            android::sp<android::Fence>* outRetireFence);
+            android::sp<android::Fence>* outPresentFence);
     [[clang::warn_unused_result]] Error setActiveConfig(
             const std::shared_ptr<const Config>& config);
     [[clang::warn_unused_result]] Error setClientTarget(
@@ -368,6 +373,7 @@ private:
     std::unordered_map<hwc2_config_t, std::shared_ptr<const Config>> mConfigs;
 };
 
+// Convenience C++ class to access hwc2_device_t Layer functions directly.
 class Layer
 {
 public:
@@ -394,7 +400,7 @@ public:
     [[clang::warn_unused_result]] Error setSidebandStream(
             const native_handle_t* stream);
     [[clang::warn_unused_result]] Error setSourceCrop(
-            const android::FloatRect& crop);
+            const android::gfx::FloatRect& crop);
     [[clang::warn_unused_result]] Error setTransform(Transform transform);
     [[clang::warn_unused_result]] Error setVisibleRegion(
             const android::Region& region);
