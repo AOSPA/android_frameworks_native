@@ -18,6 +18,7 @@
 
 #include <cutils/compiler.h>  // For CC_[UN]LIKELY
 #include <inttypes.h>
+#include <utils/Log.h>
 #include <utils/String8.h>
 
 #include <algorithm>
@@ -52,6 +53,10 @@ bool FrameEvents::hasLastRefreshStartInfo() const {
     // is latched. We know we have the final value once the release or retire
     // info is set. See ConsumerFrameEventHistory::addRetire/Release.
     return addRetireCalled || addReleaseCalled;
+}
+
+bool FrameEvents::hasDequeueReadyInfo() const {
+    return Fence::isValidTimestamp(dequeueReadyTime);
 }
 
 bool FrameEvents::hasAcquireInfo() const {
@@ -140,6 +145,14 @@ void FrameEvents::dump(String8& outString) const
             !addPostCompositeCalled, *displayPresentFence);
     dumpFenceTime(outString, "Display Retire    \t",
             !addRetireCalled, *displayRetireFence);
+
+    outString.appendFormat("--- DequeueReady  \t");
+    if (Fence::isValidTimestamp(dequeueReadyTime)) {
+        outString.appendFormat("%" PRId64 "\n", dequeueReadyTime);
+    } else {
+        outString.appendFormat("Pending\n");
+    }
+
     dumpFenceTime(outString, "Release           \t",
             true, *releaseFence);
 }
@@ -241,33 +254,6 @@ void ProducerFrameEventHistory::updateAcquireFence(
     }
 }
 
-static void applyFenceDelta(FenceTimeline* timeline,
-        std::shared_ptr<FenceTime>* dst, const FenceTime::Snapshot& src) {
-    if (CC_UNLIKELY(dst == nullptr)) {
-        ALOGE("applyFenceDelta: dst is null.");
-        return;
-    }
-
-    switch (src.state) {
-        case FenceTime::Snapshot::State::EMPTY:
-            return;
-        case FenceTime::Snapshot::State::FENCE:
-            if (CC_UNLIKELY((*dst)->isValid())) {
-                ALOGE("applyFenceDelta: Unexpected fence.");
-            }
-            *dst = std::make_shared<FenceTime>(src.fence);
-            timeline->push(*dst);
-            return;
-        case FenceTime::Snapshot::State::SIGNAL_TIME:
-            if ((*dst)->isValid()) {
-                (*dst)->applyTrustedSnapshot(src);
-            } else {
-                *dst = std::make_shared<FenceTime>(src.signalTime);
-            }
-            return;
-    }
-}
-
 void ProducerFrameEventHistory::applyDelta(
         const FrameEventHistoryDelta& delta) {
     for (auto& d : delta.mDeltas) {
@@ -288,6 +274,7 @@ void ProducerFrameEventHistory::applyDelta(
         frame.latchTime = d.mLatchTime;
         frame.firstRefreshStartTime = d.mFirstRefreshStartTime;
         frame.lastRefreshStartTime = d.mLastRefreshStartTime;
+        frame.dequeueReadyTime = d.mDequeueReadyTime;
 
         if (frame.frameNumber != d.mFrameNumber) {
             // We got a new frame. Initialize some of the fields.
@@ -318,6 +305,38 @@ void ProducerFrameEventHistory::updateSignalTimes() {
     mPresentTimeline.updateSignalTimes();
     mRetireTimeline.updateSignalTimes();
     mReleaseTimeline.updateSignalTimes();
+}
+
+void ProducerFrameEventHistory::applyFenceDelta(FenceTimeline* timeline,
+        std::shared_ptr<FenceTime>* dst, const FenceTime::Snapshot& src) const {
+    if (CC_UNLIKELY(dst == nullptr)) {
+        ALOGE("applyFenceDelta: dst is null.");
+        return;
+    }
+
+    switch (src.state) {
+        case FenceTime::Snapshot::State::EMPTY:
+            return;
+        case FenceTime::Snapshot::State::FENCE:
+            if (CC_UNLIKELY((*dst)->isValid())) {
+                ALOGE("applyFenceDelta: Unexpected fence.");
+            }
+            *dst = createFenceTime(src.fence);
+            timeline->push(*dst);
+            return;
+        case FenceTime::Snapshot::State::SIGNAL_TIME:
+            if ((*dst)->isValid()) {
+                (*dst)->applyTrustedSnapshot(src);
+            } else {
+                *dst = std::make_shared<FenceTime>(src.signalTime);
+            }
+            return;
+    }
+}
+
+std::shared_ptr<FenceTime> ProducerFrameEventHistory::createFenceTime(
+        const sp<Fence>& fence) const {
+    return std::make_shared<FenceTime>(fence);
 }
 
 
@@ -405,14 +424,15 @@ void ConsumerFrameEventHistory::addRetire(
     mFramesDirty[mRetireOffset].setDirty<FrameEvent::DISPLAY_RETIRE>();
 }
 
-void ConsumerFrameEventHistory::addRelease(
-        uint64_t frameNumber, std::shared_ptr<FenceTime>&& release) {
+void ConsumerFrameEventHistory::addRelease(uint64_t frameNumber,
+        nsecs_t dequeueReadyTime, std::shared_ptr<FenceTime>&& release) {
     FrameEvents* frame = getFrame(frameNumber, &mReleaseOffset);
     if (frame == nullptr) {
         ALOGE("ConsumerFrameEventHistory::addRelease: Did not find frame.");
         return;
     }
     frame->addReleaseCalled = true;
+    frame->dequeueReadyTime = dequeueReadyTime;
     frame->releaseFence = std::move(release);
     mFramesDirty[mReleaseOffset].setDirty<FrameEvent::RELEASE>();
 }
@@ -461,7 +481,8 @@ FrameEventsDelta::FrameEventsDelta(
       mRequestedPresentTime(frameTimestamps.requestedPresentTime),
       mLatchTime(frameTimestamps.latchTime),
       mFirstRefreshStartTime(frameTimestamps.firstRefreshStartTime),
-      mLastRefreshStartTime(frameTimestamps.lastRefreshStartTime) {
+      mLastRefreshStartTime(frameTimestamps.lastRefreshStartTime),
+      mDequeueReadyTime(frameTimestamps.dequeueReadyTime) {
     if (dirtyFields.isDirty<FrameEvent::GL_COMPOSITION_DONE>()) {
         mGpuCompositionDoneFence =
                 frameTimestamps.gpuCompositionDoneFence->getSnapshot();
@@ -489,7 +510,8 @@ size_t FrameEventsDelta::minFlattenedSize() {
             sizeof(FrameEventsDelta::mRequestedPresentTime) +
             sizeof(FrameEventsDelta::mLatchTime) +
             sizeof(FrameEventsDelta::mFirstRefreshStartTime) +
-            sizeof(FrameEventsDelta::mLastRefreshStartTime);
+            sizeof(FrameEventsDelta::mLastRefreshStartTime) +
+            sizeof(FrameEventsDelta::mDequeueReadyTime);
     return min;
 }
 
@@ -538,6 +560,7 @@ status_t FrameEventsDelta::flatten(void*& buffer, size_t& size, int*& fds,
     FlattenableUtils::write(buffer, size, mLatchTime);
     FlattenableUtils::write(buffer, size, mFirstRefreshStartTime);
     FlattenableUtils::write(buffer, size, mLastRefreshStartTime);
+    FlattenableUtils::write(buffer, size, mDequeueReadyTime);
 
     // Fences
     for (auto fence : allFences(this)) {
@@ -576,6 +599,7 @@ status_t FrameEventsDelta::unflatten(void const*& buffer, size_t& size,
     FlattenableUtils::read(buffer, size, mLatchTime);
     FlattenableUtils::read(buffer, size, mFirstRefreshStartTime);
     FlattenableUtils::read(buffer, size, mLastRefreshStartTime);
+    FlattenableUtils::read(buffer, size, mDequeueReadyTime);
 
     // Fences
     for (auto fence : allFences(this)) {

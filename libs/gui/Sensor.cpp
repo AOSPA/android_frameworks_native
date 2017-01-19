@@ -19,11 +19,11 @@
 #include <sys/limits.h>
 #include <sys/types.h>
 
-#include <android/log.h>
 #include <binder/AppOpsManager.h>
 #include <binder/IServiceManager.h>
 #include <gui/Sensor.h>
 #include <hardware/sensors.h>
+#include <log/log.h>
 #include <utils/Errors.h>
 #include <utils/String8.h>
 #include <utils/Flattenable.h>
@@ -219,7 +219,10 @@ Sensor::Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersi
         break;
     case SENSOR_TYPE_DYNAMIC_SENSOR_META:
         mStringType = SENSOR_STRING_TYPE_DYNAMIC_SENSOR_META;
-        mFlags = SENSOR_FLAG_SPECIAL_REPORTING_MODE; // special trigger and non-wake up
+        mFlags |= SENSOR_FLAG_SPECIAL_REPORTING_MODE; // special trigger
+        if (halVersion < SENSORS_DEVICE_API_VERSION_1_3) {
+            mFlags |= SENSOR_FLAG_WAKE_UP;
+        }
         break;
     case SENSOR_TYPE_POSE_6DOF:
         mStringType = SENSOR_STRING_TYPE_POSE_6DOF;
@@ -242,6 +245,14 @@ Sensor::Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersi
     case SENSOR_TYPE_HEART_BEAT:
         mStringType = SENSOR_STRING_TYPE_HEART_BEAT;
         mFlags |= SENSOR_FLAG_SPECIAL_REPORTING_MODE;
+        break;
+
+    // TODO:  Placeholder for LLOB sensor type
+
+
+    case SENSOR_TYPE_ACCELEROMETER_UNCALIBRATED:
+        mStringType = SENSOR_STRING_TYPE_ACCELEROMETER_UNCALIBRATED;
+        mFlags |= SENSOR_FLAG_CONTINUOUS_MODE;
         break;
     default:
         // Only pipe the stringType, requiredPermission and flags for custom sensors.

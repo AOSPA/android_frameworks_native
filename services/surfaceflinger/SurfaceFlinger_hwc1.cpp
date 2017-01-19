@@ -16,19 +16,20 @@
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#include <dlfcn.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include <errno.h>
-#include <math.h>
+
 #include <mutex>
-#include <dlfcn.h>
-#include <inttypes.h>
-#include <stdatomic.h>
 
 #include <EGL/egl.h>
 
-#include <android/log.h>
 #include <cutils/properties.h>
+#include <log/log.h>
 
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
@@ -607,9 +608,12 @@ status_t SurfaceFlinger::getSupportedFrameTimestamps(
     *outSupported = {
         FrameEvent::REQUESTED_PRESENT,
         FrameEvent::ACQUIRE,
+        FrameEvent::LATCH,
         FrameEvent::FIRST_REFRESH_START,
+        FrameEvent::LAST_REFRESH_START,
         FrameEvent::GL_COMPOSITION_DONE,
         FrameEvent::DISPLAY_RETIRE,
+        FrameEvent::DEQUEUE_READY,
         FrameEvent::RELEASE,
     };
     return NO_ERROR;

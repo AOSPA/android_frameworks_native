@@ -14,13 +14,21 @@
  * limitations under the License.
  */
 
+#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+
 #include <algorithm>
 #include <array>
+#include <dlfcn.h>
 #include <new>
-#include <malloc.h>
-#include <sys/prctl.h>
+
+#include <log/log.h>
+
+#include <android/dlext.h>
+#include <cutils/properties.h>
+#include <gui/GraphicsEnv.h>
 
 #include "driver.h"
 #include "stubhal.h"
@@ -123,17 +131,74 @@ class CreateInfoWrapper {
 
 Hal Hal::hal_;
 
+void* LoadLibrary(const android_dlextinfo& dlextinfo,
+                  const char* subname,
+                  int subname_len) {
+    const char kLibFormat[] = "vulkan.%*s.so";
+    char* name = static_cast<char*>(
+        alloca(sizeof(kLibFormat) + static_cast<size_t>(subname_len)));
+    sprintf(name, kLibFormat, subname_len, subname);
+    return android_dlopen_ext(name, RTLD_LOCAL | RTLD_NOW, &dlextinfo);
+}
+
+const std::array<const char*, 2> HAL_SUBNAME_KEY_PROPERTIES = {{
+    "ro.hardware." HWVULKAN_HARDWARE_MODULE_ID,
+    "ro.board.platform",
+}};
+
+int LoadUpdatedDriver(const hw_module_t** module) {
+    const android_dlextinfo dlextinfo = {
+        .flags = ANDROID_DLEXT_USE_NAMESPACE,
+        .library_namespace = android::GraphicsEnv::getInstance().getDriverNamespace(),
+    };
+    if (!dlextinfo.library_namespace)
+        return -ENOENT;
+
+    void* so = nullptr;
+    char prop[PROPERTY_VALUE_MAX];
+    for (auto key : HAL_SUBNAME_KEY_PROPERTIES) {
+        int prop_len = property_get(key, prop, nullptr);
+        if (prop_len > 0) {
+            so = LoadLibrary(dlextinfo, prop, prop_len);
+            if (so)
+                break;
+        }
+    }
+    if (!so)
+        return -ENOENT;
+
+    hw_module_t* hmi = static_cast<hw_module_t*>(dlsym(so, HAL_MODULE_INFO_SYM_AS_STR));
+    if (!hmi) {
+        ALOGE("couldn't find symbol '%s' in HAL library: %s", HAL_MODULE_INFO_SYM_AS_STR, dlerror());
+        dlclose(so);
+        return -EINVAL;
+    }
+    if (strcmp(hmi->id, HWVULKAN_HARDWARE_MODULE_ID) != 0) {
+        ALOGE("HAL id '%s' != '%s'", hmi->id, HWVULKAN_HARDWARE_MODULE_ID);
+        dlclose(so);
+        return -EINVAL;
+    }
+    hmi->dso = so;
+    *module = hmi;
+    ALOGD("loaded updated driver");
+    return 0;
+}
+
 bool Hal::Open() {
     ALOG_ASSERT(!hal_.dev_, "OpenHAL called more than once");
 
     // Use a stub device unless we successfully open a real HAL device.
     hal_.dev_ = &stubhal::kDevice;
 
-    const hwvulkan_module_t* module;
-    int result =
-        hw_get_module("vulkan", reinterpret_cast<const hw_module_t**>(&module));
+    int result;
+    const hwvulkan_module_t* module = nullptr;
+
+    result = LoadUpdatedDriver(reinterpret_cast<const hw_module_t**>(&module));
+    if (result == -ENOENT) {
+        result = hw_get_module(HWVULKAN_HARDWARE_MODULE_ID, reinterpret_cast<const hw_module_t**>(&module));
+    }
     if (result != 0) {
-        ALOGI("no Vulkan HAL present, using stub HAL");
+        ALOGV("unable to load Vulkan HAL, using stub HAL (result=%d)", result);
         return true;
     }
 
@@ -660,26 +725,49 @@ VkResult EnumerateDeviceExtensionProperties(
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
     const InstanceData& data = GetData(physicalDevice);
+    static const std::array<VkExtensionProperties, 1> loader_extensions = {{
+        // WSI extensions
+        {VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME,
+         VK_KHR_INCREMENTAL_PRESENT_SPEC_VERSION},
+    }};
+
+    // enumerate our extensions first
+    if (!pLayerName && pProperties) {
+        uint32_t count = std::min(
+            *pPropertyCount, static_cast<uint32_t>(loader_extensions.size()));
+
+        std::copy_n(loader_extensions.begin(), count, pProperties);
+
+        if (count < loader_extensions.size()) {
+            *pPropertyCount = count;
+            return VK_INCOMPLETE;
+        }
+
+        pProperties += count;
+        *pPropertyCount -= count;
+    }
 
     VkResult result = data.driver.EnumerateDeviceExtensionProperties(
         physicalDevice, pLayerName, pPropertyCount, pProperties);
-    if (result != VK_SUCCESS && result != VK_INCOMPLETE)
-        return result;
 
-    if (!pProperties)
-        return result;
+    if (pProperties) {
+        // map VK_ANDROID_native_buffer to VK_KHR_swapchain
+        for (uint32_t i = 0; i < *pPropertyCount; i++) {
+            auto& prop = pProperties[i];
 
-    // map VK_ANDROID_native_buffer to VK_KHR_swapchain
-    for (uint32_t i = 0; i < *pPropertyCount; i++) {
-        auto& prop = pProperties[i];
+            if (strcmp(prop.extensionName,
+                       VK_ANDROID_NATIVE_BUFFER_EXTENSION_NAME) != 0)
+                continue;
 
-        if (strcmp(prop.extensionName,
-                   VK_ANDROID_NATIVE_BUFFER_EXTENSION_NAME) != 0)
-            continue;
+            memcpy(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                   sizeof(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
+            prop.specVersion = VK_KHR_SWAPCHAIN_SPEC_VERSION;
+        }
+    }
 
-        memcpy(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-               sizeof(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
-        prop.specVersion = VK_KHR_SWAPCHAIN_SPEC_VERSION;
+    // restore loader extension count
+    if (!pLayerName && (result == VK_SUCCESS || result == VK_INCOMPLETE)) {
+        *pPropertyCount += loader_extensions.size();
     }
 
     return result;

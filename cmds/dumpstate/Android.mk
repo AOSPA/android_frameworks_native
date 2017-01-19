@@ -20,14 +20,13 @@ COMMON_SHARED_LIBRARIES := \
         libbase \
         libbinder \
         libcutils \
+        libdebuggerd_client \
         libdumpstateaidl \
-        libhardware_legacy \
+        libdumpstateutil \
         liblog \
         libselinux \
         libutils \
         $(COMMON_ZIP_LIBRARIES)
-COMMON_STATIC_LIBRARIES := \
-        libdumpstateutil
 
 # ====================#
 # libdumpstateutil #
@@ -43,9 +42,10 @@ LOCAL_SRC_FILES := \
         DumpstateInternal.cpp \
         DumpstateUtil.cpp
 LOCAL_SHARED_LIBRARIES := \
-        libbase
+        libbase \
+        liblog \
 
-include $(BUILD_STATIC_LIBRARY)
+include $(BUILD_SHARED_LIBRARY)
 
 # ====================#
 # libdumpstateheaders #
@@ -107,8 +107,6 @@ LOCAL_SHARED_LIBRARIES := $(COMMON_SHARED_LIBRARIES) \
     android.hardware.vibrator@1.0
 
 LOCAL_STATIC_LIBRARIES := $(COMMON_STATIC_LIBRARIES)
-
-LOCAL_HAL_STATIC_LIBRARIES := libdumpstate
 
 LOCAL_CFLAGS += $(COMMON_LOCAL_CFLAGS)
 
@@ -182,14 +180,3 @@ LOCAL_GENERATED_SOURCES += $(GEN)
 LOCAL_PICKUP_FILES := $(dumpstate_tests_intermediates)
 
 include $(BUILD_NATIVE_TEST)
-
-# =======================#
-# libdumpstate.default #
-# =======================#
-include $(CLEAR_VARS)
-
-LOCAL_SRC_FILES := libdumpstate_default.cpp
-LOCAL_MODULE := libdumpstate.default
-
-LOCAL_STATIC_LIBRARIES := libdumpstateheaders
-include $(BUILD_STATIC_LIBRARY)

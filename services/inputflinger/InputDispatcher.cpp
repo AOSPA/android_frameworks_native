@@ -51,7 +51,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <android/log.h>
+#include <log/log.h>
 #include <utils/Trace.h>
 #include <powermanager/PowerManager.h>
 #include <ui/Region.h>
@@ -1224,15 +1224,8 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
 
                 if (maskedAction == AMOTION_EVENT_ACTION_DOWN
                         && (flags & InputWindowInfo::FLAG_WATCH_OUTSIDE_TOUCH)) {
-                    int32_t outsideTargetFlags = InputTarget::FLAG_DISPATCH_AS_OUTSIDE;
-                    if (isWindowObscuredAtPointLocked(windowHandle, x, y)) {
-                        outsideTargetFlags |= InputTarget::FLAG_WINDOW_IS_OBSCURED;
-                    } else if (isWindowObscuredLocked(windowHandle)) {
-                        outsideTargetFlags |= InputTarget::FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
-                    }
-
                     mTempTouchState.addOrUpdateWindow(
-                            windowHandle, outsideTargetFlags, BitSet32(0));
+                            windowHandle, InputTarget::FLAG_DISPATCH_AS_OUTSIDE, BitSet32(0));
                 }
             }
         }

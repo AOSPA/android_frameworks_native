@@ -17,8 +17,10 @@
 // WARNING: This file is generated. See ../README.md for instructions.
 
 #include <string.h>
+
 #include <algorithm>
-#include <android/log.h>
+
+#include <log/log.h>
 
 #include "driver.h"
 
@@ -87,6 +89,15 @@ VKAPI_ATTR VkResult checkedGetPastPresentationTimingGOOGLE(VkDevice device, VkSw
         return GetPastPresentationTimingGOOGLE(device, swapchain, pPresentationTimingCount, pPresentationTimings);
     } else {
         Logger(device).Err(device, "VK_GOOGLE_display_timing not enabled. vkGetPastPresentationTimingGOOGLE not executed.");
+        return VK_SUCCESS;
+    }
+}
+
+VKAPI_ATTR VkResult checkedGetSwapchainStatusKHR(VkDevice device, VkSwapchainKHR swapchain) {
+    if (GetData(device).hook_extensions[ProcHook::KHR_swapchain_front_buffered]) {
+        return GetSwapchainStatusKHR(device, swapchain);
+    } else {
+        Logger(device).Err(device, "VK_KHR_swapchain_front_buffered not enabled. vkGetSwapchainStatusKHR not executed.");
         return VK_SUCCESS;
     }
 }
@@ -299,6 +310,13 @@ const ProcHook g_proc_hooks[] = {
         reinterpret_cast<PFN_vkVoidFunction>(checkedGetSwapchainImagesKHR),
     },
     {
+        "vkGetSwapchainStatusKHR",
+        ProcHook::DEVICE,
+        ProcHook::KHR_swapchain_front_buffered,
+        reinterpret_cast<PFN_vkVoidFunction>(GetSwapchainStatusKHR),
+        reinterpret_cast<PFN_vkVoidFunction>(checkedGetSwapchainStatusKHR),
+    },
+    {
         "vkQueuePresentKHR",
         ProcHook::DEVICE,
         ProcHook::KHR_swapchain,
@@ -332,9 +350,11 @@ ProcHook::Extension GetProcHookExtension(const char* name) {
     if (strcmp(name, "VK_ANDROID_native_buffer") == 0) return ProcHook::ANDROID_native_buffer;
     if (strcmp(name, "VK_EXT_debug_report") == 0) return ProcHook::EXT_debug_report;
     if (strcmp(name, "VK_KHR_android_surface") == 0) return ProcHook::KHR_android_surface;
+    if (strcmp(name, "VK_KHR_incremental_present") == 0) return ProcHook::KHR_incremental_present;
     if (strcmp(name, "VK_KHR_surface") == 0) return ProcHook::KHR_surface;
     if (strcmp(name, "VK_KHR_swapchain") == 0) return ProcHook::KHR_swapchain;
     if (strcmp(name, "VK_GOOGLE_display_timing") == 0) return ProcHook::GOOGLE_display_timing;
+    if (strcmp(name, "VK_KHR_swapchain_front_buffered") == 0) return ProcHook::KHR_swapchain_front_buffered;
     // clang-format on
     return ProcHook::EXTENSION_UNKNOWN;
 }

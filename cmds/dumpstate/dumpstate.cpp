@@ -24,7 +24,6 @@
 #include <memory>
 #include <regex>
 #include <set>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,7 +45,6 @@
 #include <android/hardware/vibrator/1.0/IVibrator.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
-#include <hardware_legacy/power.h>
 #include <openssl/sha.h>
 #include <private/android_filesystem_config.h>
 #include <private/android_logger.h>
@@ -58,6 +56,12 @@
 using ::android::hardware::dumpstate::V1_0::IDumpstateDevice;
 using ::android::hardware::vibrator::V1_0::IVibrator;
 using VibratorStatus = ::android::hardware::vibrator::V1_0::Status;
+
+// TODO: remove once moved to namespace
+using android::os::dumpstate::CommandOptions;
+using android::os::dumpstate::DumpFileToFd;
+using android::os::dumpstate::PropertiesHelper;
+using android::os::dumpstate::GetPidByName;
 
 /* read before root is shed */
 static char cmdline_buf[16384] = "(unknown)";
@@ -83,7 +87,6 @@ void add_mountinfo();
 #define TOMBSTONE_MAX_LEN (sizeof(TOMBSTONE_FILE_PREFIX) + 4)
 #define NUM_TOMBSTONES  10
 #define WLUTIL "/vendor/xbin/wlutil"
-#define WAKE_LOCK_NAME "dumpstate_wakelock"
 
 typedef struct {
   char name[TOMBSTONE_MAX_LEN];
@@ -109,6 +112,9 @@ static int DumpFile(const std::string& title, const std::string& path) {
 
 // Relative directory (inside the zip) for all files copied as-is into the bugreport.
 static const std::string ZIP_ROOT_DIR = "FS";
+
+// Must be hardcoded because dumpstate HAL implementation need SELinux access to it
+static const std::string kDumpstateBoardPath = "/bugreports/dumpstate_board.txt";
 
 static constexpr char PROPERTY_EXTRA_OPTIONS[] = "dumpstate.options";
 static constexpr char PROPERTY_LAST_ID[] = "dumpstate.last_id";
@@ -192,34 +198,7 @@ static void dump_dev_files(const char *title, const char *driverpath, const char
     closedir(d);
 }
 
-// return pid of a userspace process. If not found or error, return 0.
-static unsigned int pid_of_process(const char* ps_name) {
-    DIR *proc_dir;
-    struct dirent *ps;
-    unsigned int pid;
-    std::string cmdline;
 
-    if (!(proc_dir = opendir("/proc"))) {
-        MYLOGE("Can't open /proc\n");
-        return 0;
-    }
-
-    while ((ps = readdir(proc_dir))) {
-        if (!(pid = atoi(ps->d_name))) {
-            continue;
-        }
-        android::base::ReadFileToString("/proc/"
-                + std::string(ps->d_name) + "/cmdline", &cmdline);
-        if (cmdline.find(ps_name) == std::string::npos) {
-            continue;
-        } else {
-            closedir(proc_dir);
-            return pid;
-        }
-    }
-    closedir(proc_dir);
-    return 0;
-}
 
 // dump anrd's trace and add to the zip file.
 // 1. check if anrd is running on this device.
@@ -242,7 +221,7 @@ static bool dump_anrd_trace() {
     }
 
     // find anrd's pid if it is running.
-    pid = pid_of_process("/system/xbin/anrd");
+    pid = GetPidByName("/system/xbin/anrd");
 
     if (pid > 0) {
         if (stat(trace_path, &st) == 0) {
@@ -816,7 +795,52 @@ bool Dumpstate::AddTextZipEntry(const std::string& entry_name, const std::string
     return true;
 }
 
-static void dump_iptables() {
+static void DoKmsg() {
+    struct stat st;
+    if (!stat(PSTORE_LAST_KMSG, &st)) {
+        /* Also TODO: Make console-ramoops CAP_SYSLOG protected. */
+        DumpFile("LAST KMSG", PSTORE_LAST_KMSG);
+    } else if (!stat(ALT_PSTORE_LAST_KMSG, &st)) {
+        DumpFile("LAST KMSG", ALT_PSTORE_LAST_KMSG);
+    } else {
+        /* TODO: Make last_kmsg CAP_SYSLOG protected. b/5555691 */
+        DumpFile("LAST KMSG", "/proc/last_kmsg");
+    }
+}
+
+static void DoLogcat() {
+    unsigned long timeout;
+    // DumpFile("EVENT LOG TAGS", "/etc/event-log-tags");
+    // calculate timeout
+    timeout = logcat_timeout("main") + logcat_timeout("system") + logcat_timeout("crash");
+    if (timeout < 20000) {
+        timeout = 20000;
+    }
+    RunCommand("SYSTEM LOG", {"logcat", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+               CommandOptions::WithTimeout(timeout / 1000).Build());
+    timeout = logcat_timeout("events");
+    if (timeout < 20000) {
+        timeout = 20000;
+    }
+    RunCommand("EVENT LOG",
+               {"logcat", "-b", "events", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+               CommandOptions::WithTimeout(timeout / 1000).Build());
+    timeout = logcat_timeout("radio");
+    if (timeout < 20000) {
+        timeout = 20000;
+    }
+    RunCommand("RADIO LOG",
+               {"logcat", "-b", "radio", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+               CommandOptions::WithTimeout(timeout / 1000).Build());
+
+    RunCommand("LOG STATISTICS", {"logcat", "-b", "all", "-S"});
+
+    /* kernels must set CONFIG_PSTORE_PMSG, slice up pstore with device tree */
+    RunCommand("LAST LOGCAT",
+               {"logcat", "-L", "-b", "all", "-v", "threadtime", "-v", "printable", "-d", "*:v"});
+}
+
+static void DumpIpTables() {
     RunCommand("IPTABLES", {"iptables", "-L", "-nvx"});
     RunCommand("IP6TABLES", {"ip6tables", "-L", "-nvx"});
     RunCommand("IPTABLES NAT", {"iptables", "-t", "nat", "-L", "-nvx"});
@@ -910,7 +934,6 @@ static void AddAnrTraceFiles() {
 
 static void dumpstate() {
     DurationReporter duration_reporter("DUMPSTATE");
-    unsigned long timeout;
 
     dump_dev_files("TRUSTY VERSION", "/sys/bus/platform/drivers/trusty", "trusty_version");
     RunCommand("UPTIME", {"uptime"});
@@ -960,30 +983,7 @@ static void dumpstate() {
         ds.TakeScreenshot();
     }
 
-    // DumpFile("EVENT LOG TAGS", "/etc/event-log-tags");
-    // calculate timeout
-    timeout = logcat_timeout("main") + logcat_timeout("system") + logcat_timeout("crash");
-    if (timeout < 20000) {
-        timeout = 20000;
-    }
-    RunCommand("SYSTEM LOG", {"logcat", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
-               CommandOptions::WithTimeout(timeout / 1000).Build());
-    timeout = logcat_timeout("events");
-    if (timeout < 20000) {
-        timeout = 20000;
-    }
-    RunCommand("EVENT LOG",
-               {"logcat", "-b", "events", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
-               CommandOptions::WithTimeout(timeout / 1000).Build());
-    timeout = logcat_timeout("radio");
-    if (timeout < 20000) {
-        timeout = 20000;
-    }
-    RunCommand("RADIO LOG",
-               {"logcat", "-b", "radio", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
-               CommandOptions::WithTimeout(timeout / 1000).Build());
-
-    RunCommand("LOG STATISTICS", {"logcat", "-b", "all", "-S"});
+    DoLogcat();
 
     AddAnrTraceFiles();
 
@@ -1014,20 +1014,7 @@ static void dumpstate() {
     DumpFile("QTAGUID CTRL INFO", "/proc/net/xt_qtaguid/ctrl");
     DumpFile("QTAGUID STATS INFO", "/proc/net/xt_qtaguid/stats");
 
-    struct stat st;
-    if (!stat(PSTORE_LAST_KMSG, &st)) {
-        /* Also TODO: Make console-ramoops CAP_SYSLOG protected. */
-        DumpFile("LAST KMSG", PSTORE_LAST_KMSG);
-    } else if (!stat(ALT_PSTORE_LAST_KMSG, &st)) {
-        DumpFile("LAST KMSG", ALT_PSTORE_LAST_KMSG);
-    } else {
-        /* TODO: Make last_kmsg CAP_SYSLOG protected. b/5555691 */
-        DumpFile("LAST KMSG", "/proc/last_kmsg");
-    }
-
-    /* kernels must set CONFIG_PSTORE_PMSG, slice up pstore with device tree */
-    RunCommand("LAST LOGCAT",
-               {"logcat", "-L", "-b", "all", "-v", "threadtime", "-v", "printable", "-d", "*:v"});
+    DoKmsg();
 
     /* The following have a tendency to get wedged when wifi drivers/fw goes belly-up. */
 
@@ -1048,11 +1035,11 @@ static void dumpstate() {
                CommandOptions::WithTimeout(20).Build());
 
 #ifdef FWDUMP_bcmdhd
-    RunCommand("ND OFFLOAD TABLE", {WLUTIL, "nd_hostip"}, CommandOptions::AS_ROOT_5);
+    RunCommand("ND OFFLOAD TABLE", {WLUTIL, "nd_hostip"}, CommandOptions::AS_ROOT);
 
     RunCommand("DUMP WIFI INTERNAL COUNTERS (1)", {WLUTIL, "counters"}, AS_ROOT_20);
 
-    RunCommand("ND OFFLOAD STATUS (1)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT_5);
+    RunCommand("ND OFFLOAD STATUS (1)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT);
 
 #endif
     DumpFile("INTERRUPTS (1)", "/proc/interrupts");
@@ -1065,7 +1052,7 @@ static void dumpstate() {
 
     RunCommand("DUMP WIFI INTERNAL COUNTERS (2)", {WLUTIL, "counters"}, AS_ROOT_20);
 
-    RunCommand("ND OFFLOAD STATUS (2)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT_5);
+    RunCommand("ND OFFLOAD STATUS (2)", {WLUTIL, "nd_status"}, CommandOptions::AS_ROOT);
 #endif
     DumpFile("INTERRUPTS (2)", "/proc/interrupts");
 
@@ -1102,7 +1089,7 @@ static void dumpstate() {
 
     ds.DumpstateBoard();
 
-    /* Migrate the ril_dumpstate to a dumpstate_board()? */
+    /* Migrate the ril_dumpstate to a device specific dumpstate? */
     int rilDumpstateTimeout = android::base::GetIntProperty("ril.dumpstate.timeout", 0);
     if (rilDumpstateTimeout > 0) {
         // su does not exist on user builds, so try running without it.
@@ -1171,21 +1158,18 @@ void Dumpstate::DumpstateBoard() {
     printf("== Board\n");
     printf("========================================================\n");
 
-    ::android::sp<IDumpstateDevice> dumpstate_device(
-        IDumpstateDevice::getService("DumpstateDevice"));
+    ::android::sp<IDumpstateDevice> dumpstate_device(IDumpstateDevice::getService("dumpstate"));
     if (dumpstate_device == nullptr) {
-        // TODO: temporary workaround until devices on master implement it
-        MYLOGE("no IDumpstateDevice implementation; using legacy dumpstate_board()\n");
-        dumpstate_board();
+        MYLOGE("No IDumpstateDevice implementation\n");
         return;
     }
 
     if (!IsZipping()) {
-        MYLOGE("Not dumping board info because it's not a zipped bugreport\n");
+        MYLOGD("Not dumping board info because it's not a zipped bugreport\n");
         return;
     }
 
-    std::string path = ds.GetPath("-dumpstate-board.txt");
+    std::string path = kDumpstateBoardPath;
     MYLOGI("Calling IDumpstateDevice implementation using path %s\n", path.c_str());
 
     int fd =
@@ -1204,7 +1188,13 @@ void Dumpstate::DumpstateBoard() {
     handle->data[0] = fd;
 
     // TODO: need a timeout mechanism so dumpstate does not hang on device implementation call.
-    dumpstate_device->dumpstateBoard(handle);
+    android::hardware::Return<void> status = dumpstate_device->dumpstateBoard(handle);
+    if (!status.isOk()) {
+        MYLOGE("dumpstateBoard failed: %s\n", status.description().c_str());
+        native_handle_close(handle);
+        native_handle_delete(handle);
+        return;
+    }
 
     AddZipEntry("dumpstate-board.txt", path);
     printf("*** See dumpstate-board.txt entry ***\n");
@@ -1245,16 +1235,7 @@ static void ExitOnInvalidArgs() {
     ShowUsageAndExit();
 }
 
-static void wake_lock_releaser() {
-    if (release_wake_lock(WAKE_LOCK_NAME) < 0) {
-        MYLOGE("Failed to release wake lock: %s \n", strerror(errno));
-    } else {
-        MYLOGD("Wake lock released.\n");
-    }
-}
-
-static void sig_handler(int signo __attribute__((unused))) {
-    wake_lock_releaser();
+static void sig_handler(int) {
     _exit(EXIT_FAILURE);
 }
 
@@ -1364,6 +1345,7 @@ int main(int argc, char *argv[]) {
     int is_remote_mode = 0;
     bool show_header_only = false;
     bool do_start_service = false;
+    bool telephony_only = false;
 
     /* set as high priority, and protect from OOM killer */
     setpriority(PRIO_PROCESS, 0, -20);
@@ -1431,6 +1413,8 @@ int main(int argc, char *argv[]) {
             do_fb = 0;
         } else if (ds.extra_options_ == "bugreportwear") {
             ds.update_progress_ = true;
+        } else if (ds.extra_options_ == "bugreporttelephony") {
+            telephony_only = true;
         } else {
             MYLOGE("Unknown extra option: %s\n", ds.extra_options_.c_str());
         }
@@ -1486,13 +1470,7 @@ int main(int argc, char *argv[]) {
 
     MYLOGI("begin\n");
 
-    if (acquire_wake_lock(PARTIAL_WAKE_LOCK, WAKE_LOCK_NAME) < 0) {
-        MYLOGE("Failed to acquire wake lock: %s \n", strerror(errno));
-    } else {
-        MYLOGD("Wake lock acquired.\n");
-        atexit(wake_lock_releaser);
-        register_sig_handler();
-    }
+    register_sig_handler();
 
     if (do_start_service) {
         MYLOGI("Starting 'dumpstate' service\n");
@@ -1536,6 +1514,11 @@ int main(int argc, char *argv[]) {
             ds.name_ = "undated";
         }
         std::string buildId = android::base::GetProperty("ro.build.id", "UNKNOWN_BUILD");
+
+        if (telephony_only) {
+            ds.base_name_ += "-telephony";
+        }
+
         ds.base_name_ += "-" + buildId;
         if (do_fb) {
             ds.screenshot_path_ = ds.GetPath(".png");
@@ -1652,50 +1635,63 @@ int main(int argc, char *argv[]) {
     // duration is logged into MYLOG instead.
     ds.PrintHeader();
 
-    // Dumps systrace right away, otherwise it will be filled with unnecessary events.
-    // First try to dump anrd trace if the daemon is running. Otherwise, dump
-    // the raw trace.
-    if (!dump_anrd_trace()) {
-        dump_systrace();
+    if (telephony_only) {
+        DumpIpTables();
+        if (!DropRootUser()) {
+            return -1;
+        }
+        do_dmesg();
+        DoLogcat();
+        DoKmsg();
+        ds.DumpstateBoard();
+        DumpModemLogs();
+    } else {
+        // Dumps systrace right away, otherwise it will be filled with unnecessary events.
+        // First try to dump anrd trace if the daemon is running. Otherwise, dump
+        // the raw trace.
+        if (!dump_anrd_trace()) {
+            dump_systrace();
+        }
+
+        // Invoking the following dumpsys calls before dump_traces() to try and
+        // keep the system stats as close to its initial state as possible.
+        RunDumpsys("DUMPSYS MEMINFO", {"meminfo", "-a"},
+                   CommandOptions::WithTimeout(90).DropRoot().Build());
+        RunDumpsys("DUMPSYS CPUINFO", {"cpuinfo", "-a"},
+                   CommandOptions::WithTimeout(10).DropRoot().Build());
+
+        // TODO: Drop root user and move into dumpstate() once b/28633932 is fixed.
+        dump_raft();
+
+        /* collect stack traces from Dalvik and native processes (needs root) */
+        dump_traces_path = dump_traces();
+
+        /* Run some operations that require root. */
+        get_tombstone_fds(tombstone_data);
+        ds.AddDir(RECOVERY_DIR, true);
+        ds.AddDir(RECOVERY_DATA_DIR, true);
+        ds.AddDir(LOGPERSIST_DATA_DIR, false);
+        if (!PropertiesHelper::IsUserBuild()) {
+            ds.AddDir(PROFILE_DATA_DIR_CUR, true);
+            ds.AddDir(PROFILE_DATA_DIR_REF, true);
+        }
+        add_mountinfo();
+        DumpIpTables();
+
+        // Capture any IPSec policies in play.  No keys are exposed here.
+        RunCommand("IP XFRM POLICY", {"ip", "xfrm", "policy"},
+                   CommandOptions::WithTimeout(10).Build());
+
+        // Run ss as root so we can see socket marks.
+        RunCommand("DETAILED SOCKET STATE", {"ss", "-eionptu"},
+                   CommandOptions::WithTimeout(10).Build());
+
+        if (!DropRootUser()) {
+            return -1;
+        }
+
+        dumpstate();
     }
-
-    // Invoking the following dumpsys calls before dump_traces() to try and
-    // keep the system stats as close to its initial state as possible.
-    RunDumpsys("DUMPSYS MEMINFO", {"meminfo", "-a"},
-               CommandOptions::WithTimeout(90).DropRoot().Build());
-    RunDumpsys("DUMPSYS CPUINFO", {"cpuinfo", "-a"},
-               CommandOptions::WithTimeout(10).DropRoot().Build());
-
-    // TODO: Drop root user and move into dumpstate() once b/28633932 is fixed.
-    dump_raft();
-
-    /* collect stack traces from Dalvik and native processes (needs root) */
-    dump_traces_path = dump_traces();
-
-    /* Run some operations that require root. */
-    get_tombstone_fds(tombstone_data);
-    ds.AddDir(RECOVERY_DIR, true);
-    ds.AddDir(RECOVERY_DATA_DIR, true);
-    ds.AddDir(LOGPERSIST_DATA_DIR, false);
-    if (!PropertiesHelper::IsUserBuild()) {
-        ds.AddDir(PROFILE_DATA_DIR_CUR, true);
-        ds.AddDir(PROFILE_DATA_DIR_REF, true);
-    }
-    add_mountinfo();
-    dump_iptables();
-
-    // Capture any IPSec policies in play.  No keys are exposed here.
-    RunCommand("IP XFRM POLICY", {"ip", "xfrm", "policy"},
-               CommandOptions::WithTimeout(10).Build());
-
-    // Run ss as root so we can see socket marks.
-    RunCommand("DETAILED SOCKET STATE", {"ss", "-eionptu"}, CommandOptions::WithTimeout(10).Build());
-
-    if (!DropRootUser()) {
-        return -1;
-    }
-
-    dumpstate();
 
     /* close output if needed */
     if (is_redirecting) {

@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <vector>
+#include <unordered_map>
 
 #include <binder/BinderService.h>
 #include <cutils/multiuser.h>
@@ -99,6 +100,16 @@ public:
             const std::string& outputPath);
     binder::Status deleteOdex(const std::string& apkPath, const std::string& instructionSet,
             const std::string& outputPath);
+
+    binder::Status invalidateMounts();
+
+private:
+    std::recursive_mutex mLock;
+
+    /* Map from mount point to underlying device node */
+    std::unordered_map<std::string, std::string> mQuotaDevices;
+
+    std::string findQuotaDeviceForUuid(const std::unique_ptr<std::string>& uuid);
 };
 
 }  // namespace installd

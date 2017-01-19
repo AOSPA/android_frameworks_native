@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef FRAMEWORK_NATIVE_CMD_DUMPSTATE_UTIL_H_
-#define FRAMEWORK_NATIVE_CMD_DUMPSTATE_UTIL_H_
+#ifndef ANDROID_OS_DUMPSTATE_UTIL_H_
+#define ANDROID_OS_DUMPSTATE_UTIL_H_
 
 #include <cstdint>
 #include <string>
 
-// TODO: use android::os::dumpstate (must wait until device code is refactored)
+namespace android {
+namespace os {
+namespace dumpstate {
 
 /*
  * Defines the Linux account that should be executing a command.
@@ -120,9 +122,6 @@ class CommandOptions {
     // Common options.
     static CommandOptions DEFAULT;
     static CommandOptions AS_ROOT;
-
-    // TODO: temporary, until device implementations use AS_ROOT
-    static CommandOptions AS_ROOT_5;
 };
 
 /*
@@ -174,4 +173,14 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
  */
 int DumpFileToFd(int fd, const std::string& title, const std::string& path);
 
-#endif  // FRAMEWORK_NATIVE_CMD_DUMPSTATE_UTIL_H_
+/*
+ * Finds the process id by process name.
+ * |ps_name| the process name we want to search for
+ */
+int GetPidByName(const std::string& ps_name);
+
+}  // namespace dumpstate
+}  // namespace os
+}  // namespace android
+
+#endif  // ANDROID_OS_DUMPSTATE_UTIL_H_

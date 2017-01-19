@@ -37,7 +37,9 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 
-using namespace android;
+namespace android {
+namespace os {
+namespace dumpstate {
 
 using ::testing::EndsWith;
 using ::testing::HasSubstr;
@@ -51,14 +53,6 @@ using ::testing::internal::CaptureStderr;
 using ::testing::internal::CaptureStdout;
 using ::testing::internal::GetCapturedStderr;
 using ::testing::internal::GetCapturedStdout;
-
-using os::DumpstateService;
-using os::IDumpstateListener;
-using os::IDumpstateToken;
-
-// Not used on test cases yet...
-void dumpstate_board(void) {
-}
 
 class DumpstateListenerMock : public IDumpstateListener {
   public:
@@ -845,6 +839,14 @@ class DumpstateUtilTest : public DumpstateBaseTest {
         return status;
     }
 
+    // Find out the pid of the process_name
+    int FindPidOfProcess(const std::string& process_name) {
+        CaptureStderr();
+        int status = GetPidByName(process_name);
+        err = GetCapturedStderr();
+        return status;
+    }
+
     int fd;
 
     // 'fd` output and `stderr` from the last command ran.
@@ -1137,3 +1139,19 @@ TEST_F(DumpstateUtilTest, DumpFileOnDryRun) {
         out, StartsWith("------ Might as well dump. Dump! (" + kTestDataPath + "single-line.txt:"));
     EXPECT_THAT(out, EndsWith("skipped on dry run\n"));
 }
+
+TEST_F(DumpstateUtilTest, FindingPidWithExistingProcess) {
+    // init process always has pid 1.
+    EXPECT_EQ(1, FindPidOfProcess("init"));
+    EXPECT_THAT(err, IsEmpty());
+}
+
+TEST_F(DumpstateUtilTest, FindingPidWithNotExistingProcess) {
+    // find the process with abnormal name.
+    EXPECT_EQ(-1, FindPidOfProcess("abcdef12345-543"));
+    EXPECT_THAT(err, StrEq("can't find the pid\n"));
+}
+
+}  // namespace dumpstate
+}  // namespace os
+}  // namespace android

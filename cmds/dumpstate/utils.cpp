@@ -41,17 +41,22 @@
 #include <string>
 #include <vector>
 
-#include <android/log.h>
 #include <android-base/file.h>
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
-#include <cutils/debugger.h>
 #include <cutils/properties.h>
 #include <cutils/sockets.h>
+#include <debuggerd/client.h>
+#include <log/log.h>
 #include <private/android_filesystem_config.h>
 
 #include "DumpstateInternal.h"
+
+// TODO: remove once moved to namespace
+using android::os::dumpstate::CommandOptions;
+using android::os::dumpstate::DumpFileToFd;
+using android::os::dumpstate::PropertiesHelper;
 
 static const int TRACE_DUMP_TIMEOUT_MS = 10000; // 10 seconds
 
@@ -63,9 +68,6 @@ static Dumpstate& ds = Dumpstate::GetInstance();
 static int RunCommand(const std::string& title, const std::vector<std::string>& full_command,
                       const CommandOptions& options = CommandOptions::DEFAULT) {
     return ds.RunCommand(title, full_command, options);
-}
-bool Dumpstate::IsUserBuild() {
-    return PropertiesHelper::IsUserBuild();
 }
 
 /* list of native processes to include in the native dumps */
@@ -862,9 +864,9 @@ const char *dump_traces() {
     }
 
     /* create a new, empty traces.txt file to receive stack dumps */
-    int fd = TEMP_FAILURE_RETRY(open(traces_path.c_str(),
-                                     O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW | O_CLOEXEC,
-                                     0666)); /* -rw-rw-rw- */
+    int fd = TEMP_FAILURE_RETRY(
+        open(traces_path.c_str(), O_CREAT | O_WRONLY | O_APPEND | O_TRUNC | O_NOFOLLOW | O_CLOEXEC,
+             0666)); /* -rw-rw-rw- */
     if (fd < 0) {
         MYLOGE("%s: %s\n", traces_path.c_str(), strerror(errno));
         return nullptr;

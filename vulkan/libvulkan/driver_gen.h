@@ -36,9 +36,11 @@ struct ProcHook {
         ANDROID_native_buffer,
         EXT_debug_report,
         KHR_android_surface,
+        KHR_incremental_present,
         KHR_surface,
         KHR_swapchain,
         GOOGLE_display_timing,
+        KHR_swapchain_front_buffered,
 
         EXTENSION_CORE,  // valid bit
         EXTENSION_COUNT,
