@@ -38,7 +38,7 @@ cc_library_shared {
     "system/core/libsync",
 
     // Access to internal gralloc implementation.
-    "hardware/qcom/display/msm8996/libgralloc",
+    "hardware/qcom/display/libgralloc",
   ],
 
   cflags: [

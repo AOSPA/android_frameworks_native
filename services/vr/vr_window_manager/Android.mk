@@ -64,7 +64,7 @@ shared_libs := \
 
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(src)
-LOCAL_C_INCLUDES := hardware/qcom/display/msm8996/libgralloc
+LOCAL_C_INCLUDES := $(TARGET_OUT_HEADERS)/qcom/display
 LOCAL_STATIC_LIBRARIES := $(static_libs)
 LOCAL_SHARED_LIBRARIES := $(shared_libs) libevent
 LOCAL_SHARED_LIBRARIES += libgvr
