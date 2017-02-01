@@ -47,7 +47,7 @@ using android::hardware::graphics::composer::V2_1::Display;
 using android::hardware::graphics::composer::V2_1::Layer;
 using android::hardware::graphics::composer::V2_1::Config;
 
-using android::hardware::graphics::composer::V2_1::CommandWriter;
+using android::hardware::graphics::composer::V2_1::CommandWriterBase;
 using android::hardware::graphics::composer::V2_1::CommandReaderBase;
 
 using android::hardware::kSynchronizedReadWrite;
@@ -215,8 +215,17 @@ public:
     Error setLayerVisibleRegion(Display display, Layer layer,
             const std::vector<IComposerClient::Rect>& visible);
     Error setLayerZOrder(Display display, Layer layer, uint32_t z);
-
+    Error setLayerInfo(Display display, Layer layer, uint32_t type,
+                       uint32_t appId);
 private:
+    class CommandWriter : public CommandWriterBase {
+    public:
+        CommandWriter(uint32_t initialMaxSize);
+        ~CommandWriter() override;
+
+        void setLayerInfo(uint32_t type, uint32_t appId);
+    };
+
     // Many public functions above simply write a command into the command
     // queue to batch the calls.  validateDisplay and presentDisplay will call
     // this function to execute the command queue.
@@ -230,6 +239,8 @@ private:
         64 * 1024 / sizeof(uint32_t) - 16;
     CommandWriter mWriter;
     CommandReader mReader;
+
+    bool mIsInVrMode = false;
 };
 
 } // namespace Hwc2

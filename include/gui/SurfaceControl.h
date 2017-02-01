@@ -61,7 +61,8 @@ public:
     void        disconnect();
 
     status_t    setLayerStack(uint32_t layerStack);
-    status_t    setLayer(uint32_t layer);
+    status_t    setLayer(int32_t layer);
+    status_t    setLayerInfo(uint32_t type, uint32_t appid);
     status_t    setPosition(float x, float y);
     status_t    setSize(uint32_t w, uint32_t h);
     status_t    hide();
@@ -81,7 +82,9 @@ public:
 
     // Defers applying any changes made in this transaction until the Layer
     // identified by handle reaches the given frameNumber
-    status_t deferTransactionUntil(sp<IBinder> handle, uint64_t frameNumber);
+    status_t deferTransactionUntil(const sp<IBinder>& handle, uint64_t frameNumber);
+    // Reparents all children of this layer to the new parent handle.
+    status_t reparentChildren(const sp<IBinder>& newParentHandle);
 
     // Set an override scaling mode as documented in <system/window.h>
     // the override scaling mode will take precedence over any client

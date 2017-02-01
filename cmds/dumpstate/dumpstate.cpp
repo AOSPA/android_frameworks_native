@@ -431,12 +431,16 @@ static void DumpModemLogs() {
         return;
     }
 
-    // TODO: use bugreport_dir_ directly when this function is moved to Dumpstate class
-    std::string bugreport_dir = dirname(ds.GetPath("").c_str());
-    MYLOGD("DumpModemLogs: directory is %s and file_prefix is %s\n",
-           bugreport_dir.c_str(), file_prefix.c_str());
+    // TODO: b/33820081 we need to provide a right way to dump modem logs.
+    std::string radio_bugreport_dir = android::base::GetProperty("ro.radio.log_loc", "");
+    if (radio_bugreport_dir.empty()) {
+        radio_bugreport_dir = dirname(ds.GetPath("").c_str());
+    }
 
-    std::string modem_log_file = GetLastModifiedFileWithPrefix(bugreport_dir, file_prefix);
+    MYLOGD("DumpModemLogs: directory is %s and file_prefix is %s\n",
+           radio_bugreport_dir.c_str(), file_prefix.c_str());
+
+    std::string modem_log_file = GetLastModifiedFileWithPrefix(radio_bugreport_dir, file_prefix);
 
     struct stat s;
     if (modem_log_file.empty() || stat(modem_log_file.c_str(), &s) != 0) {
@@ -1061,7 +1065,7 @@ static void dumpstate() {
     RunCommand("VOLD DUMP", {"vdc", "dump"});
     RunCommand("SECURE CONTAINERS", {"vdc", "asec", "list"});
 
-    RunCommand("STORAGED TASKIOINFO", {"storaged", "-d"}, CommandOptions::WithTimeout(10).Build());
+    RunCommand("STORAGED TASKIOINFO", {"storaged", "-u"}, CommandOptions::WithTimeout(10).Build());
 
     RunCommand("FILESYSTEMS & FREE SPACE", {"df"});
 
@@ -1505,7 +1509,10 @@ int main(int argc, char *argv[]) {
 
     if (is_redirecting) {
         ds.bugreport_dir_ = dirname(use_outfile);
-        ds.base_name_ = basename(use_outfile);
+        std::string build_id = android::base::GetProperty("ro.build.id", "UNKNOWN_BUILD");
+        std::string device_name = android::base::GetProperty("ro.product.device", "UNKNOWN_DEVICE");
+        ds.base_name_ = android::base::StringPrintf("%s-%s-%s", basename(use_outfile),
+                                                    device_name.c_str(), build_id.c_str());
         if (do_add_date) {
             char date[80];
             strftime(date, sizeof(date), "%Y-%m-%d-%H-%M-%S", localtime(&ds.now_));
@@ -1513,13 +1520,11 @@ int main(int argc, char *argv[]) {
         } else {
             ds.name_ = "undated";
         }
-        std::string buildId = android::base::GetProperty("ro.build.id", "UNKNOWN_BUILD");
 
         if (telephony_only) {
             ds.base_name_ += "-telephony";
         }
 
-        ds.base_name_ += "-" + buildId;
         if (do_fb) {
             ds.screenshot_path_ = ds.GetPath(".png");
         }
@@ -1553,8 +1558,12 @@ int main(int argc, char *argv[]) {
         if (ds.update_progress_) {
             if (do_broadcast) {
                 // clang-format off
+
+                // NOTE: flag must be kept in sync when the value of
+                // FLAG_RECEIVER_INCLUDE_BACKGROUND is changed.
                 std::vector<std::string> am_args = {
                      "--receiver-permission", "android.permission.DUMP", "--receiver-foreground",
+                     "-f", "0x01000000",
                      "--es", "android.intent.extra.NAME", ds.name_,
                      "--ei", "android.intent.extra.ID", std::to_string(ds.id_),
                      "--ei", "android.intent.extra.PID", std::to_string(ds.pid_),
@@ -1578,7 +1587,7 @@ int main(int argc, char *argv[]) {
 
     ::android::sp<IVibrator> vibrator = nullptr;
     if (do_vibrate) {
-        vibrator = IVibrator::getService("vibrator");
+        vibrator = IVibrator::getService();
 
         if (vibrator != nullptr) {
             // cancel previous vibration if any
@@ -1793,8 +1802,12 @@ int main(int argc, char *argv[]) {
         if (!ds.path_.empty()) {
             MYLOGI("Final bugreport path: %s\n", ds.path_.c_str());
             // clang-format off
+
+            // NOTE: flag must be kept in sync when the value of
+            // FLAG_RECEIVER_INCLUDE_BACKGROUND is changed.
             std::vector<std::string> am_args = {
                  "--receiver-permission", "android.permission.DUMP", "--receiver-foreground",
+                 "-f", "0x01000000",
                  "--ei", "android.intent.extra.ID", std::to_string(ds.id_),
                  "--ei", "android.intent.extra.PID", std::to_string(ds.pid_),
                  "--ei", "android.intent.extra.MAX", std::to_string(ds.progress_->GetMax()),

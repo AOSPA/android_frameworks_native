@@ -102,10 +102,15 @@ status_t SurfaceControl::setLayerStack(uint32_t layerStack) {
     if (err < 0) return err;
     return mClient->setLayerStack(mHandle, layerStack);
 }
-status_t SurfaceControl::setLayer(uint32_t layer) {
+status_t SurfaceControl::setLayer(int32_t layer) {
     status_t err = validate();
     if (err < 0) return err;
     return mClient->setLayer(mHandle, layer);
+}
+status_t SurfaceControl::setLayerInfo(uint32_t type, uint32_t appid) {
+    status_t err = validate();
+    if (err < 0) return err;
+    return mClient->setLayerInfo(mHandle, type, appid);
 }
 status_t SurfaceControl::setPosition(float x, float y) {
     status_t err = validate();
@@ -163,11 +168,17 @@ status_t SurfaceControl::setFinalCrop(const Rect& crop) {
     return mClient->setFinalCrop(mHandle, crop);
 }
 
-status_t SurfaceControl::deferTransactionUntil(sp<IBinder> handle,
+status_t SurfaceControl::deferTransactionUntil(const sp<IBinder>& handle,
         uint64_t frameNumber) {
     status_t err = validate();
     if (err < 0) return err;
     return mClient->deferTransactionUntil(mHandle, handle, frameNumber);
+}
+
+status_t SurfaceControl::reparentChildren(const sp<IBinder>& newParentHandle) {
+    status_t err = validate();
+    if (err < 0) return err;
+    return mClient->reparentChildren(mHandle, newParentHandle);
 }
 
 status_t SurfaceControl::setOverrideScalingMode(int32_t overrideScalingMode) {

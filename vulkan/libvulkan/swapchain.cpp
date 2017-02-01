@@ -20,6 +20,7 @@
 #include <gui/BufferQueue.h>
 #include <sync/sync.h>
 #include <utils/StrongPointer.h>
+#include <utils/SortedVector.h>
 
 #include "driver.h"
 
@@ -105,6 +106,69 @@ int InvertTransformToNative(VkSurfaceTransformFlagBitsKHR transform) {
     }
 }
 
+class TimingInfo {
+   public:
+    TimingInfo()
+        : vals_{0, 0, 0, 0, 0},
+          timestamp_desired_present_time_(0),
+          timestamp_actual_present_time_(0),
+          timestamp_render_complete_time_(0),
+          timestamp_composition_latch_time_(0) {}
+    TimingInfo(const VkPresentTimeGOOGLE* qp)
+        : vals_{qp->presentID, qp->desiredPresentTime, 0, 0, 0},
+          timestamp_desired_present_time_(0),
+          timestamp_actual_present_time_(0),
+          timestamp_render_complete_time_(0),
+          timestamp_composition_latch_time_(0) {}
+    bool ready() {
+        return (timestamp_desired_present_time_ &&
+                timestamp_actual_present_time_ &&
+                timestamp_render_complete_time_ &&
+                timestamp_composition_latch_time_);
+    }
+    void calculate(uint64_t rdur) {
+        vals_.actualPresentTime = timestamp_actual_present_time_;
+        uint64_t margin = (timestamp_composition_latch_time_ -
+                           timestamp_render_complete_time_);
+        // Calculate vals_.earliestPresentTime, and potentially adjust
+        // vals_.presentMargin.  The initial value of vals_.earliestPresentTime
+        // is vals_.actualPresentTime.  If we can subtract rdur (the duration
+        // of a refresh cycle) from vals_.earliestPresentTime (and also from
+        // vals_.presentMargin) and still leave a positive margin, then we can
+        // report to the application that it could have presented earlier than
+        // it did (per the extension specification).  If for some reason, we
+        // can do this subtraction repeatedly, we do, since
+        // vals_.earliestPresentTime really is supposed to be the "earliest".
+        uint64_t early_time = vals_.actualPresentTime;
+        while ((margin > rdur) &&
+               ((early_time - rdur) > timestamp_composition_latch_time_)) {
+            early_time -= rdur;
+            margin -= rdur;
+        }
+        vals_.earliestPresentTime = early_time;
+        vals_.presentMargin = margin;
+    }
+    void get_values(VkPastPresentationTimingGOOGLE* values) { *values = vals_; }
+
+   public:
+    VkPastPresentationTimingGOOGLE vals_;
+
+    uint64_t timestamp_desired_present_time_;
+    uint64_t timestamp_actual_present_time_;
+    uint64_t timestamp_render_complete_time_;
+    uint64_t timestamp_composition_latch_time_;
+};
+
+static inline int compare_type(const TimingInfo& lhs, const TimingInfo& rhs) {
+    // TODO(ianelliott): Change this from presentID to the frame ID once
+    // brianderson lands the appropriate patch:
+    if (lhs.vals_.presentID < rhs.vals_.presentID)
+        return -1;
+    if (lhs.vals_.presentID > rhs.vals_.presentID)
+        return 1;
+    return 0;
+}
+
 // ----------------------------------------------------------------------------
 
 struct Surface {
@@ -120,15 +184,30 @@ Surface* SurfaceFromHandle(VkSurfaceKHR handle) {
     return reinterpret_cast<Surface*>(handle);
 }
 
+// Maximum number of TimingInfo structs to keep per swapchain:
+enum { MAX_TIMING_INFOS = 10 };
+// Minimum number of frames to look for in the past (so we don't cause
+// syncronous requests to Surface Flinger):
+enum { MIN_NUM_FRAMES_AGO = 5 };
+
 struct Swapchain {
     Swapchain(Surface& surface_, uint32_t num_images_)
         : surface(surface_),
           num_images(num_images_),
-          frame_timestamps_enabled(false) {}
+          frame_timestamps_enabled(false) {
+        timing.clear();
+        ANativeWindow* window = surface.window.get();
+        int64_t rdur;
+        native_window_get_refresh_cycle_duration(
+            window,
+            &rdur);
+        refresh_duration = static_cast<uint64_t>(rdur);
+    }
 
     Surface& surface;
     uint32_t num_images;
     bool frame_timestamps_enabled;
+    uint64_t refresh_duration;
 
     struct Image {
         Image() : image(VK_NULL_HANDLE), dequeue_fence(-1), dequeued(false) {}
@@ -141,6 +220,8 @@ struct Swapchain {
         int dequeue_fence;
         bool dequeued;
     } images[android::BufferQueue::NUM_BUFFER_SLOTS];
+
+    android::SortedVector<TimingInfo> timing;
 };
 
 VkSwapchainKHR HandleFromSwapchain(Swapchain* swapchain) {
@@ -208,6 +289,110 @@ void OrphanSwapchain(VkDevice device, Swapchain* swapchain) {
             ReleaseSwapchainImage(device, nullptr, -1, swapchain->images[i]);
     }
     swapchain->surface.swapchain_handle = VK_NULL_HANDLE;
+    swapchain->timing.clear();
+}
+
+uint32_t get_num_ready_timings(Swapchain& swapchain) {
+    uint32_t num_ready = 0;
+    uint32_t num_timings = static_cast<uint32_t>(swapchain.timing.size());
+    uint32_t frames_ago = num_timings;
+    for (uint32_t i = 0; i < num_timings; i++) {
+        TimingInfo* ti = &swapchain.timing.editItemAt(i);
+        if (ti) {
+            if (ti->ready()) {
+                // This TimingInfo is ready to be reported to the user.  Add it
+                // to the num_ready.
+                num_ready++;
+            } else {
+                // This TimingInfo is not yet ready to be reported to the user,
+                // and so we should look for any available timestamps that
+                // might make it ready.
+                int64_t desired_present_time = 0;
+                int64_t render_complete_time = 0;
+                int64_t composition_latch_time = 0;
+                int64_t actual_present_time = 0;
+                for (uint32_t f = MIN_NUM_FRAMES_AGO; f < frames_ago; f++) {
+                    // Obtain timestamps:
+                    int ret = native_window_get_frame_timestamps(
+                        swapchain.surface.window.get(), f,
+                        &desired_present_time, &render_complete_time,
+                        &composition_latch_time,
+                        NULL,  //&first_composition_start_time,
+                        NULL,  //&last_composition_start_time,
+                        NULL,  //&composition_finish_time,
+                        // TODO(ianelliott): Maybe ask if this one is
+                        // supported, at startup time (since it may not be
+                        // supported):
+                        &actual_present_time,
+                        NULL,  //&display_retire_time,
+                        NULL,  //&dequeue_ready_time,
+                        NULL /*&reads_done_time*/);
+                    if (ret) {
+                        break;
+                    } else if (!ret) {
+                        // We obtained at least one valid timestamp.  See if it
+                        // is for the present represented by this TimingInfo:
+                        if (static_cast<uint64_t>(desired_present_time) ==
+                            ti->vals_.desiredPresentTime) {
+                            // Record the timestamp(s) we received, and then
+                            // see if this TimingInfo is ready to be reported
+                            // to the user:
+                            ti->timestamp_desired_present_time_ =
+                                static_cast<uint64_t>(desired_present_time);
+                            ti->timestamp_actual_present_time_ =
+                                static_cast<uint64_t>(actual_present_time);
+                            ti->timestamp_render_complete_time_ =
+                                static_cast<uint64_t>(render_complete_time);
+                            ti->timestamp_composition_latch_time_ =
+                                static_cast<uint64_t>(composition_latch_time);
+
+                            if (ti->ready()) {
+                                // The TimingInfo has received enough
+                                // timestamps, and should now use those
+                                // timestamps to calculate the info that should
+                                // be reported to the user:
+                                //
+                                ti->calculate(swapchain.refresh_duration);
+                                num_ready++;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return num_ready;
+}
+
+// TODO(ianelliott): DEAL WITH RETURN VALUE (e.g. VK_INCOMPLETE)!!!
+void copy_ready_timings(Swapchain& swapchain,
+                        uint32_t* count,
+                        VkPastPresentationTimingGOOGLE* timings) {
+    uint32_t num_copied = 0;
+    uint32_t num_timings = static_cast<uint32_t>(swapchain.timing.size());
+    if (*count < num_timings) {
+        num_timings = *count;
+    }
+    for (uint32_t i = 0; i < num_timings; i++) {
+        TimingInfo* ti = &swapchain.timing.editItemAt(i);
+        if (ti && ti->ready()) {
+            ti->get_values(&timings[num_copied]);
+            num_copied++;
+            // We only report the values for a given present once, so remove
+            // them from swapchain.timing:
+            //
+            // TODO(ianelliott): SEE WHAT HAPPENS TO THE LOOP WHEN THE
+            // FOLLOWING IS DONE:
+            swapchain.timing.removeAt(i);
+            i--;
+            num_timings--;
+            if (*count == num_copied) {
+                break;
+            }
+        }
+    }
+    *count = num_copied;
 }
 
 }  // anonymous namespace
@@ -379,8 +564,8 @@ VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice /*pdev*/,
     const VkPresentModeKHR kModes[] = {
         VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR,
         // TODO(chrisforbes): should only expose this if the driver can.
-        VK_PRESENT_MODE_FRONT_BUFFERED_DEMAND_REFRESH_KHR,
-        VK_PRESENT_MODE_FRONT_BUFFERED_CONTINUOUS_REFRESH_KHR,
+        VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR,
+        VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR,
     };
     const uint32_t kNumModes = sizeof(kModes) / sizeof(kModes[0]);
 
@@ -429,8 +614,8 @@ VkResult CreateSwapchainKHR(VkDevice device,
              create_info->preTransform);
     ALOGV_IF(!(create_info->presentMode == VK_PRESENT_MODE_FIFO_KHR ||
                create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR ||
-               create_info->presentMode == VK_PRESENT_MODE_FRONT_BUFFERED_DEMAND_REFRESH_KHR ||
-               create_info->presentMode == VK_PRESENT_MODE_FRONT_BUFFERED_CONTINUOUS_REFRESH_KHR),
+               create_info->presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR ||
+               create_info->presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR),
              "swapchain presentMode=%u not supported",
              create_info->presentMode);
 
@@ -606,9 +791,9 @@ VkResult CreateSwapchainKHR(VkDevice device,
     }
 
     VkSwapchainImageUsageFlagsANDROID swapchain_image_usage = 0;
-    if (create_info->presentMode == VK_PRESENT_MODE_FRONT_BUFFERED_DEMAND_REFRESH_KHR ||
-        create_info->presentMode == VK_PRESENT_MODE_FRONT_BUFFERED_CONTINUOUS_REFRESH_KHR) {
-        swapchain_image_usage |= VK_SWAPCHAIN_IMAGE_USAGE_FRONT_BUFFER_BIT_ANDROID;
+    if (create_info->presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR ||
+        create_info->presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR) {
+        swapchain_image_usage |= VK_SWAPCHAIN_IMAGE_USAGE_SHARED_BIT_ANDROID;
 
         err = native_window_set_shared_buffer_mode(surface.window.get(), true);
         if (err != 0) {
@@ -617,7 +802,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         }
     }
 
-    if (create_info->presentMode == VK_PRESENT_MODE_FRONT_BUFFERED_CONTINUOUS_REFRESH_KHR) {
+    if (create_info->presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR) {
         err = native_window_set_auto_refresh(surface.window.get(), true);
         if (err != 0) {
             ALOGE("native_window_set_auto_refresh failed: %s (%d)", strerror(-err), err);
@@ -936,7 +1121,7 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
             case VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR:
                 present_regions = next;
                 break;
-            case VK_STRUCTURE_TYPE_PRESENT_TIMES_GOOGLE:
+            case VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE:
                 present_times =
                     reinterpret_cast<const VkPresentTimesInfoGOOGLE*>(next);
                 break;
@@ -1028,16 +1213,31 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
                 }
                 if (time) {
                     if (!swapchain.frame_timestamps_enabled) {
+                        ALOGV(
+                            "Calling "
+                            "native_window_enable_frame_timestamps(true)");
                         native_window_enable_frame_timestamps(window, true);
                         swapchain.frame_timestamps_enabled = true;
                     }
-                    // TODO(ianelliott): need to store the presentID (and
-                    // desiredPresentTime), so it can be later correlated to
-                    // this present.  Probably modify the following function
-                    // (and below) to plumb a path to store it in FrameEvents
-                    // code, on the producer side.
-                    native_window_set_buffers_timestamp(
-                        window, static_cast<int64_t>(time->desiredPresentTime));
+                    // Record this presentID and desiredPresentTime so it can
+                    // be later correlated to this present.
+                    TimingInfo timing_record(time);
+                    swapchain.timing.add(timing_record);
+                    uint32_t num_timings =
+                        static_cast<uint32_t>(swapchain.timing.size());
+                    if (num_timings > MAX_TIMING_INFOS) {
+                        swapchain.timing.removeAt(0);
+                    }
+                    if (time->desiredPresentTime) {
+                        // Set the desiredPresentTime:
+                        ALOGV(
+                            "Calling "
+                            "native_window_set_buffers_timestamp(%" PRId64 ")",
+                            time->desiredPresentTime);
+                        native_window_set_buffers_timestamp(
+                            window,
+                            static_cast<int64_t>(time->desiredPresentTime));
+                    }
                 }
                 err = window->queueBuffer(window, img.buffer.get(), fence);
                 // queueBuffer always closes fence, even on error
@@ -1079,13 +1279,12 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 VKAPI_ATTR
 VkResult GetRefreshCycleDurationGOOGLE(
     VkDevice,
-    VkSwapchainKHR,
+    VkSwapchainKHR swapchain_handle,
     VkRefreshCycleDurationGOOGLE* pDisplayTimingProperties) {
+    Swapchain& swapchain = *SwapchainFromHandle(swapchain_handle);
     VkResult result = VK_SUCCESS;
 
-    // TODO(ianelliott): FULLY IMPLEMENT THIS FUNCTION!!!
-    pDisplayTimingProperties->minRefreshDuration = 16666666666;
-    pDisplayTimingProperties->maxRefreshDuration = 16666666666;
+    pDisplayTimingProperties->refreshDuration = swapchain.refresh_duration;
 
     return result;
 }
@@ -1101,15 +1300,16 @@ VkResult GetPastPresentationTimingGOOGLE(
     VkResult result = VK_SUCCESS;
 
     if (!swapchain.frame_timestamps_enabled) {
+        ALOGV("Calling native_window_enable_frame_timestamps(true)");
         native_window_enable_frame_timestamps(window, true);
         swapchain.frame_timestamps_enabled = true;
     }
 
-    // TODO(ianelliott): FULLY IMPLEMENT THIS FUNCTION!!!
     if (timings) {
-        *count = 0;
+        // TODO(ianelliott): plumb return value (e.g. VK_INCOMPLETE)
+        copy_ready_timings(swapchain, count, timings);
     } else {
-        *count = 0;
+        *count = get_num_ready_timings(swapchain);
     }
 
     return result;
@@ -1118,8 +1318,13 @@ VkResult GetPastPresentationTimingGOOGLE(
 VKAPI_ATTR
 VkResult GetSwapchainStatusKHR(
     VkDevice,
-    VkSwapchainKHR) {
+    VkSwapchainKHR swapchain_handle) {
+    Swapchain& swapchain = *SwapchainFromHandle(swapchain_handle);
     VkResult result = VK_SUCCESS;
+
+    if (swapchain.surface.swapchain_handle != swapchain_handle) {
+        return VK_ERROR_OUT_OF_DATE_KHR;
+    }
 
     // TODO(chrisforbes): Implement this function properly
 

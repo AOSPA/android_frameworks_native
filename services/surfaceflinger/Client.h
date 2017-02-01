@@ -38,8 +38,9 @@ class SurfaceFlinger;
 class Client : public BnSurfaceComposerClient
 {
 public:
-        explicit Client(const sp<SurfaceFlinger>& flinger);
-        ~Client();
+    explicit Client(const sp<SurfaceFlinger>& flinger);
+    Client(const sp<SurfaceFlinger>& flinger, const sp<Layer>& parentLayer);
+    ~Client();
 
     status_t initCheck() const;
 
@@ -50,11 +51,14 @@ public:
 
     sp<Layer> getLayerUser(const sp<IBinder>& handle) const;
 
+    void setParentLayer(const sp<Layer>& parentLayer);
+
 private:
     // ISurfaceComposerClient interface
     virtual status_t createSurface(
             const String8& name,
             uint32_t w, uint32_t h,PixelFormat format, uint32_t flags,
+            const sp<IBinder>& parent,
             sp<IBinder>* handle,
             sp<IGraphicBufferProducer>* gbp);
 
@@ -74,6 +78,8 @@ private:
 
     // protected by mLock
     DefaultKeyedVector< wp<IBinder>, wp<Layer> > mLayers;
+
+    wp<Layer> mParentLayer;
 
     // thread-safe
     mutable Mutex mLock;

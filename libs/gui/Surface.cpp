@@ -28,6 +28,7 @@
 
 #include <ui/Fence.h>
 #include <ui/Region.h>
+#include <ui/DisplayStatInfo.h>
 
 #include <gui/IProducerListener.h>
 #include <gui/ISurfaceComposer.h>
@@ -258,6 +259,16 @@ status_t Surface::getFrameTimestamps(uint64_t frameNumber,
             outDisplayPresentTime, events->displayPresentFence);
     getFrameTimestampFence(outDisplayRetireTime, events->displayRetireFence);
     getFrameTimestampFence(outReleaseTime, events->releaseFence);
+
+    return NO_ERROR;
+}
+status_t Surface::getDisplayRefreshCycleDuration(nsecs_t* outRefreshDuration) {
+    ATRACE_CALL();
+
+    DisplayStatInfo stats;
+    status_t err = composerService()->getDisplayStats(NULL, &stats);
+
+    *outRefreshDuration = stats.vsyncPeriod;
 
     return NO_ERROR;
 }
@@ -828,6 +839,9 @@ int Surface::perform(int operation, va_list args)
     case NATIVE_WINDOW_GET_FRAME_TIMESTAMPS:
         res = dispatchGetFrameTimestamps(args);
         break;
+    case NATIVE_WINDOW_GET_REFRESH_CYCLE_DURATION:
+        res = dispatchGetDisplayRefreshCycleDuration(args);
+        break;
     default:
         res = NAME_NOT_FOUND;
         break;
@@ -971,6 +985,11 @@ int Surface::dispatchGetFrameTimestamps(va_list args) {
             outFirstRefreshStartTime, outLastRefreshStartTime,
             outGlCompositionDoneTime, outDisplayPresentTime,
             outDisplayRetireTime, outDequeueReadyTime, outReleaseTime);
+}
+
+int Surface::dispatchGetDisplayRefreshCycleDuration(va_list args) {
+    nsecs_t* outRefreshDuration = va_arg(args, int64_t*);
+    return getDisplayRefreshCycleDuration(outRefreshDuration);
 }
 
 int Surface::connect(int api) {

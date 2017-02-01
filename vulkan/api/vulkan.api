@@ -150,8 +150,8 @@ define NULL_HANDLE 0
 @extension("VK_NVX_device_generated_commands") define VK_NVX_DEVICE_GENERATED_COMMANDS_SPEC_VERSION 1
 @extension("VK_NVX_device_generated_commands") define VK_NVX_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME "VK_NVX_device_generated_commands"
 
-@extension("VK_KHR_swapchain_front_buffered") define VK_KHR_SWAPCHAIN_FRONT_BUFFERED_SPEC_VERSION 2
-@extension("VK_KHR_swapchain_front_buffered") define VK_KHR_SWAPCHAIN_FRONT_BUFFERED_EXTENSION_NAME "VK_KHR_swapchain_front_buffered"
+@extension("VK_KHR_shared_presentable_image") define VK_KHR_SHARED_PRESENTABLE_IMAGE_SPEC_VERSION 1
+@extension("VK_KHR_shared_presentable_image") define VK_KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME "VK_KHR_shared_presentable_image"
 
 
 
@@ -223,6 +223,9 @@ enum VkImageLayout {
 
     //@extension("VK_KHR_swapchain")
     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR                         = 1000001002,
+
+    //@extension("VK_KHR_shared_presentable_image")
+    VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR                      = 1000111000,
 }
 
 enum VkAttachmentLoadOp {
@@ -760,7 +763,7 @@ enum VkStructureType {
     VK_STRUCTURE_TYPE_SWAPCHAIN_IMAGE_CREATE_INFO_ANDROID       = 1000010001,
 
     //@extension("VK_GOOGLE_display_timing")
-    VK_STRUCTURE_TYPE_PRESENT_TIMES_GOOGLE                      = 1000092000,
+    VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE                 = 1000092000,
 
     //@extension("VK_EXT_debug_report")
     VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT     = 1000011000,
@@ -927,15 +930,27 @@ enum VkPresentModeKHR {
     VK_PRESENT_MODE_MAILBOX_KHR                             = 0x00000001,
     VK_PRESENT_MODE_FIFO_KHR                                = 0x00000002,
     VK_PRESENT_MODE_FIFO_RELAXED_KHR                        = 0x00000003,
-    //@extension("VK_KHR_swapchain_front_buffered")
-    VK_PRESENT_MODE_FRONT_BUFFERED_DEMAND_REFRESH_KHR       = 1000111000,
-    //@extension("VK_KHR_swapchain_front_buffered")
-    VK_PRESENT_MODE_FRONT_BUFFERED_CONTINUOUS_REFRESH_KHR   = 1000111001,
+    //@extension("VK_KHR_shared_presentable_image")
+    VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR       = 1000111000,
+    //@extension("VK_KHR_shared_presentable_image")
+    VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR   = 1000111001,
 }
 
 @extension("VK_KHR_surface")
 enum VkColorSpaceKHR {
     VK_COLORSPACE_SRGB_NONLINEAR_KHR                        = 0x00000000,
+    VK_COLOR_SPACE_DISPLAY_P3_LINEAR_EXT 	 	    = 1000104001,
+    VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT                 = 1000104002,
+    VK_COLOR_SPACE_SCRGB_LINEAR_EXT                         = 1000104003,
+    VK_COLOR_SPACE_SCRGB_NONLINEAR_EXT                      = 1000104004,
+    VK_COLOR_SPACE_DCI_P3_LINEAR_EXT                        = 1000104005,
+    VK_COLOR_SPACE_DCI_P3_NONLINEAR_EXT                     = 1000104006,
+    VK_COLOR_SPACE_BT709_LINEAR_EXT                         = 1000104007,
+    VK_COLOR_SPACE_BT709_NONLINEAR_EXT                      = 1000104008,
+    VK_COLOR_SPACE_BT2020_LINEAR_EXT                        = 1000104009,
+    VK_COLOR_SPACE_BT2020_NONLINEAR_EXT                     = 1000104010,
+    VK_COLOR_SPACE_ADOBERGB_LINEAR_EXT                      = 1000104011,
+    VK_COLOR_SPACE_ADOBERGB_NONLINEAR_EXT                   = 1000104012,
 }
 
 @extension("VK_EXT_debug_report")
@@ -1568,7 +1583,7 @@ bitfield VkDebugReportFlagBitsEXT {
 type VkFlags VkSwapchainImageUsageFlagsANDROID
 @extension("VK_ANDROID_native_buffer")
 bitfield VkSwapchainImageUsageFlagBitsANDROID {
-    VK_SWAPCHAIN_IMAGE_USAGE_FLAGS_FRONT_BUFFER_BIT_ANDROID = 0x00000001,
+    VK_SWAPCHAIN_IMAGE_USAGE_FLAGS_SHARED_BIT_ANDROID = 0x00000001,
 }
 
 @extension("VK_NV_external_memory_capabilities")
@@ -6116,7 +6131,7 @@ cmd void  vkGetPhysicalDeviceGeneratedCommandsPropertiesNVX(
         VkDeviceGeneratedCommandsLimitsNVX*         pLimits) {
 }
 
-@extension("VK_KHR_swapchain_front_buffered")
+@extension("VK_KHR_shared_presentable_image")
 cmd VkResult vkGetSwapchainStatusKHR(
         VkDevice                                    device,
         VkSwapchainKHR                              swapchain) {

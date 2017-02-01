@@ -52,6 +52,7 @@ class SurfaceComposerClient : public RefBase
     friend class Composer;
 public:
                 SurfaceComposerClient();
+                SurfaceComposerClient(const sp<IGraphicBufferProducer>& parent);
     virtual     ~SurfaceComposerClient();
 
     // Always make sure we could initialize
@@ -105,7 +106,8 @@ public:
             uint32_t w,         // width in pixel
             uint32_t h,         // height in pixel
             PixelFormat format, // pixel-format desired
-            uint32_t flags = 0  // usage flags
+            uint32_t flags = 0,  // usage flags
+            SurfaceControl* parent = nullptr // parent
     );
 
     //! Create a virtual display
@@ -142,7 +144,8 @@ public:
     status_t    show(const sp<IBinder>& id);
     status_t    setFlags(const sp<IBinder>& id, uint32_t flags, uint32_t mask);
     status_t    setTransparentRegionHint(const sp<IBinder>& id, const Region& transparent);
-    status_t    setLayer(const sp<IBinder>& id, uint32_t layer);
+    status_t    setLayer(const sp<IBinder>& id, int32_t layer);
+    status_t    setLayerInfo(const sp<IBinder>& id, uint32_t type, uint32_t appid);
     status_t    setAlpha(const sp<IBinder>& id, float alpha=1.0f);
     status_t    setMatrix(const sp<IBinder>& id, float dsdx, float dtdx, float dsdy, float dtdy);
     status_t    setPosition(const sp<IBinder>& id, float x, float y);
@@ -152,6 +155,8 @@ public:
     status_t    setLayerStack(const sp<IBinder>& id, uint32_t layerStack);
     status_t    deferTransactionUntil(const sp<IBinder>& id,
             const sp<IBinder>& handle, uint64_t frameNumber);
+    status_t    reparentChildren(const sp<IBinder>& id,
+            const sp<IBinder>& newParentHandle);
     status_t    setOverrideScalingMode(const sp<IBinder>& id,
             int32_t overrideScalingMode);
     status_t    setGeometryAppliesWithResize(const sp<IBinder>& id);
@@ -199,6 +204,7 @@ private:
                 status_t                    mStatus;
                 sp<ISurfaceComposerClient>  mClient;
                 Composer&                   mComposer;
+                wp<IGraphicBufferProducer>  mParent;
 };
 
 // ---------------------------------------------------------------------------
@@ -212,12 +218,12 @@ public:
             const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-            uint32_t minLayerZ, uint32_t maxLayerZ,
+            int32_t minLayerZ, int32_t maxLayerZ,
             bool useIdentityTransform);
     static status_t captureToBuffer(
             const sp<IBinder>& display,
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-            uint32_t minLayerZ, uint32_t maxLayerZ,
+            int32_t minLayerZ, int32_t maxLayerZ,
             bool useIdentityTransform,
             uint32_t rotation,
             sp<GraphicBuffer>* outbuffer);
@@ -241,11 +247,11 @@ public:
             bool useIdentityTransform);
     status_t update(const sp<IBinder>& display,
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-            uint32_t minLayerZ, uint32_t maxLayerZ,
+            int32_t minLayerZ, int32_t maxLayerZ,
             bool useIdentityTransform);
     status_t update(const sp<IBinder>& display,
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-            uint32_t minLayerZ, uint32_t maxLayerZ,
+            int32_t minLayerZ, int32_t maxLayerZ,
             bool useIdentityTransform, uint32_t rotation);
 
     sp<CpuConsumer> getCpuConsumer() const;

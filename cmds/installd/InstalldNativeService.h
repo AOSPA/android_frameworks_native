@@ -24,6 +24,7 @@
 #include <vector>
 #include <unordered_map>
 
+#include <android-base/macros.h>
 #include <binder/BinderService.h>
 #include <cutils/multiuser.h>
 
@@ -67,6 +68,9 @@ public:
     binder::Status getExternalSize(const std::unique_ptr<std::string>& uuid,
             int32_t userId, int32_t flags, std::vector<int64_t>* _aidl_return);
 
+    binder::Status setAppQuota(const std::unique_ptr<std::string>& uuid,
+            int32_t userId, int32_t appId, int64_t cacheQuota);
+
     binder::Status moveCompleteApp(const std::unique_ptr<std::string>& fromUuid,
             const std::unique_ptr<std::string>& toUuid, const std::string& packageName,
             const std::string& dataAppName, int32_t appId, const std::string& seInfo,
@@ -88,9 +92,11 @@ public:
 
     binder::Status idmap(const std::string& targetApkPath, const std::string& overlayApkPath,
             int32_t uid);
+    binder::Status removeIdmap(const std::string& overlayApkPath);
     binder::Status rmPackageDir(const std::string& packageDir);
     binder::Status markBootComplete(const std::string& instructionSet);
-    binder::Status freeCache(const std::unique_ptr<std::string>& uuid, int64_t freeStorageSize);
+    binder::Status freeCache(const std::unique_ptr<std::string>& uuid, int64_t freeStorageSize,
+            int32_t flags);
     binder::Status linkNativeLibraryDirectory(const std::unique_ptr<std::string>& uuid,
             const std::string& packageName, const std::string& nativeLibPath32, int32_t userId);
     binder::Status createOatDir(const std::string& oatDir, const std::string& instructionSet);
@@ -100,6 +106,9 @@ public:
             const std::string& outputPath);
     binder::Status deleteOdex(const std::string& apkPath, const std::string& instructionSet,
             const std::string& outputPath);
+    binder::Status reconcileSecondaryDexFile(const std::string& dexPath,
+        const std::string& packageName, int32_t uid, const std::vector<std::string>& isa,
+        const std::unique_ptr<std::string>& volumeUuid, int32_t storage_flag, bool* _aidl_return);
 
     binder::Status invalidateMounts();
 
@@ -108,6 +117,8 @@ private:
 
     /* Map from mount point to underlying device node */
     std::unordered_map<std::string, std::string> mQuotaDevices;
+    /* Map from UID to cache quota size */
+    std::unordered_map<uid_t, int64_t> mCacheQuotas;
 
     std::string findQuotaDeviceForUuid(const std::unique_ptr<std::string>& uuid);
 };

@@ -64,6 +64,16 @@ public:
         return interface_cast<ISurfaceComposerClient>(reply.readStrongBinder());
     }
 
+    virtual sp<ISurfaceComposerClient> createScopedConnection(
+            const sp<IGraphicBufferProducer>& parent)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
+        data.writeStrongBinder(IInterface::asBinder(parent));
+        remote()->transact(BnSurfaceComposer::CREATE_SCOPED_CONNECTION, data, &reply);
+        return interface_cast<ISurfaceComposerClient>(reply.readStrongBinder());
+    }
+
     virtual sp<IGraphicBufferAlloc> createGraphicBufferAlloc()
     {
         Parcel data, reply;
@@ -104,7 +114,7 @@ public:
     virtual status_t captureScreen(const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-            uint32_t minLayerZ, uint32_t maxLayerZ,
+            int32_t minLayerZ, int32_t maxLayerZ,
             bool useIdentityTransform,
             ISurfaceComposer::Rotation rotation)
     {
@@ -115,8 +125,8 @@ public:
         data.write(sourceCrop);
         data.writeUint32(reqWidth);
         data.writeUint32(reqHeight);
-        data.writeUint32(minLayerZ);
-        data.writeUint32(maxLayerZ);
+        data.writeInt32(minLayerZ);
+        data.writeInt32(maxLayerZ);
         data.writeInt32(static_cast<int32_t>(useIdentityTransform));
         data.writeInt32(static_cast<int32_t>(rotation));
         remote()->transact(BnSurfaceComposer::CAPTURE_SCREEN, data, &reply);
@@ -489,6 +499,14 @@ status_t BnSurfaceComposer::onTransact(
             reply->writeStrongBinder(b);
             return NO_ERROR;
         }
+        case CREATE_SCOPED_CONNECTION: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IGraphicBufferProducer> bufferProducer =
+                interface_cast<IGraphicBufferProducer>(data.readStrongBinder());
+            sp<IBinder> b = IInterface::asBinder(createScopedConnection(bufferProducer));
+            reply->writeStrongBinder(b);
+            return NO_ERROR;
+        }
         case CREATE_GRAPHIC_BUFFER_ALLOC: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             sp<IBinder> b = IInterface::asBinder(createGraphicBufferAlloc());
@@ -544,8 +562,8 @@ status_t BnSurfaceComposer::onTransact(
             data.read(sourceCrop);
             uint32_t reqWidth = data.readUint32();
             uint32_t reqHeight = data.readUint32();
-            uint32_t minLayerZ = data.readUint32();
-            uint32_t maxLayerZ = data.readUint32();
+            int32_t minLayerZ = data.readInt32();
+            int32_t maxLayerZ = data.readInt32();
             bool useIdentityTransform = static_cast<bool>(data.readInt32());
             int32_t rotation = data.readInt32();
 

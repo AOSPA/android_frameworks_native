@@ -139,6 +139,9 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
     mCurrentState.flags = layerFlags;
     mCurrentState.sequence = 0;
     mCurrentState.requested = mCurrentState.active;
+    mCurrentState.dataSpace = HAL_DATASPACE_UNKNOWN;
+    mCurrentState.appId = 0;
+    mCurrentState.type = 0;
 
     // drawing state & current state are identical
     mDrawingState = mCurrentState;
@@ -159,7 +162,7 @@ void Layer::onFirstRef() {
     sp<IGraphicBufferProducer> producer;
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer, nullptr, true);
-    mProducer = new MonitoredProducer(producer, mFlinger);
+    mProducer = new MonitoredProducer(producer, mFlinger, this);
     mSurfaceFlingerConsumer = new SurfaceFlingerConsumer(consumer, mTextureName, this);
     mSurfaceFlingerConsumer->setConsumerUsageBits(getEffectiveUsage(0));
     mSurfaceFlingerConsumer->setContentsChangedListener(this);
@@ -279,6 +282,9 @@ void Layer::onSidebandStreamChanged() {
 // it's removed from the drawing state list)
 void Layer::onRemoved() {
     mSurfaceFlingerConsumer->abandon();
+    for (const auto& child : mCurrentChildren) {
+        child->onRemoved();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +367,40 @@ static Rect reduce(const Rect& win, const Region& exclude) {
     return Region(win).subtract(exclude).getBounds();
 }
 
+Rect Layer::computeScreenBounds(bool reduceTransparentRegion) const {
+    const Layer::State& s(getDrawingState());
+    Rect win(s.active.w, s.active.h);
+
+    if (!s.crop.isEmpty()) {
+        win.intersect(s.crop, &win);
+    }
+
+    Transform t = getTransform();
+    win = t.transform(win);
+
+    const sp<Layer>& p = getParent();
+    // Now we need to calculate the parent bounds, so we can clip ourselves to those.
+    // When calculating the parent bounds for purposes of clipping,
+    // we don't need to constrain the parent to its transparent region.
+    // The transparent region is an optimization based on the
+    // buffer contents of the layer, but does not affect the space allocated to
+    // it by policy, and thus children should be allowed to extend into the
+    // parent's transparent region. In fact one of the main uses, is to reduce
+    // buffer allocation size in cases where a child window sits behind a main window
+    // (by marking the hole in the parent window as a transparent region)
+    if (p != nullptr) {
+        Rect bounds = p->computeScreenBounds(false);
+        bounds.intersect(win, &win);
+    }
+
+    if (reduceTransparentRegion) {
+        auto const screenTransparentRegion = t.transform(s.activeTransparentRegion);
+        win = reduce(win, screenTransparentRegion);
+    }
+
+    return win;
+}
+
 Rect Layer::computeBounds() const {
     const Layer::State& s(getDrawingState());
     return computeBounds(s.activeTransparentRegion);
@@ -373,15 +413,25 @@ Rect Layer::computeBounds(const Region& activeTransparentRegion) const {
     if (!s.crop.isEmpty()) {
         win.intersect(s.crop, &win);
     }
+
+    Rect bounds = win;
+    const auto& p = getParent();
+    if (p != nullptr) {
+        bounds = p->computeScreenBounds();
+    }
+
+    Transform t = getTransform();
+    if (p != nullptr) {
+        win = t.transform(win);
+        win.intersect(bounds, &win);
+        win = t.inverse().transform(win);
+    }
+
     // subtract the transparent region and snap to the bounds
     return reduce(win, activeTransparentRegion);
 }
 
-gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
-    // the content crop is the area of the content that gets scaled to the
-    // layer's size.
-    gfx::FloatRect crop = getContentCrop().toFloatRect();
-
+Rect Layer::computeInitialCrop(const sp<const DisplayDevice>& hw) const {
     // the crop is the area of the window that gets cropped, but not
     // scaled in any ways.
     const State& s(getDrawingState());
@@ -398,7 +448,8 @@ gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
         activeCrop = s.crop;
     }
 
-    activeCrop = s.active.transform.transform(activeCrop);
+    Transform t = getTransform();
+    activeCrop = t.transform(activeCrop);
     if (!activeCrop.intersect(hw->getViewport(), &activeCrop)) {
         activeCrop.clear();
     }
@@ -407,7 +458,27 @@ gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
             activeCrop.clear();
         }
     }
-    activeCrop = s.active.transform.inverse().transform(activeCrop);
+    return activeCrop;
+}
+
+gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
+    // the content crop is the area of the content that gets scaled to the
+    // layer's size. This is in buffer space.
+    gfx::FloatRect crop = getContentCrop().toFloatRect();
+
+    // In addition there is a WM-specified crop we pull from our drawing state.
+    const State& s(getDrawingState());
+
+    // Screen space to make reduction to parent crop clearer.
+    Rect activeCrop = computeInitialCrop(hw);
+    const auto& p = getParent();
+    if (p != nullptr) {
+        auto parentCrop = p->computeInitialCrop(hw);
+        activeCrop.intersect(parentCrop, &activeCrop);
+    }
+    Transform t = getTransform();
+    // Back to layer space to work with the content crop.
+    activeCrop = t.inverse().transform(activeCrop);
 
     // This needs to be here as transform.transform(Rect) computes the
     // transformed rect and then takes the bounding box of the result before
@@ -481,7 +552,7 @@ gfx::FloatRect Layer::computeCrop(const sp<const DisplayDevice>& hw) const {
 }
 
 #ifdef USE_HWC2
-void Layer::setGeometry(const sp<const DisplayDevice>& displayDevice)
+void Layer::setGeometry(const sp<const DisplayDevice>& displayDevice, uint32_t z)
 #else
 void Layer::setGeometry(
     const sp<const DisplayDevice>& hw,
@@ -534,9 +605,10 @@ void Layer::setGeometry(
     // apply the layer's transform, followed by the display's global transform
     // here we're guaranteed that the layer's transform preserves rects
     Region activeTransparentRegion(s.activeTransparentRegion);
+    Transform t = getTransform();
     if (!s.crop.isEmpty()) {
         Rect activeCrop(s.crop);
-        activeCrop = s.active.transform.transform(activeCrop);
+        activeCrop = t.transform(activeCrop);
 #ifdef USE_HWC2
         if(!activeCrop.intersect(displayDevice->getViewport(), &activeCrop)) {
 #else
@@ -544,7 +616,7 @@ void Layer::setGeometry(
 #endif
             activeCrop.clear();
         }
-        activeCrop = s.active.transform.inverse().transform(activeCrop, true);
+        activeCrop = t.inverse().transform(activeCrop, true);
         // This needs to be here as transform.transform(Rect) computes the
         // transformed rect and then takes the bounding box of the result before
         // returning. This means
@@ -563,7 +635,8 @@ void Layer::setGeometry(
         activeTransparentRegion.orSelf(Rect(activeCrop.right, activeCrop.top,
                 s.active.w, activeCrop.bottom));
     }
-    Rect frame(s.active.transform.transform(computeBounds(activeTransparentRegion)));
+
+    Rect frame(t.transform(computeBounds(activeTransparentRegion)));
     if (!s.finalCrop.isEmpty()) {
         if(!frame.intersect(s.finalCrop, &frame)) {
             frame.clear();
@@ -601,10 +674,14 @@ void Layer::setGeometry(
             "%s (%d)", mName.string(), s.alpha, to_string(error).c_str(),
             static_cast<int32_t>(error));
 
-    error = hwcLayer->setZOrder(s.z);
+    error = hwcLayer->setZOrder(z);
     ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set Z %u: %s (%d)",
-            mName.string(), s.z, to_string(error).c_str(),
+            mName.string(), z, to_string(error).c_str(),
             static_cast<int32_t>(error));
+
+    error = hwcLayer->setInfo(s.type, s.appId);
+    ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set info (%d)",
+             mName.string(), static_cast<int32_t>(error));
 #else
     if (!frame.intersect(hw->getViewport(), &frame)) {
         frame.clear();
@@ -624,7 +701,7 @@ void Layer::setGeometry(
      */
 
     const Transform bufferOrientation(mCurrentTransform);
-    Transform transform(tr * s.active.transform * bufferOrientation);
+    Transform transform(tr * t * bufferOrientation);
 
     if (mSurfaceFlingerConsumer->getTransformToDisplayInverse()) {
         /*
@@ -751,6 +828,14 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& displayDevice) {
         setCompositionType(hwcId, HWC2::Composition::Device);
     }
 
+    ALOGV("setPerFrameData: dataspace = %d", mCurrentState.dataSpace);
+    error = hwcLayer->setDataspace(mCurrentState.dataSpace);
+    if (error != HWC2::Error::None) {
+        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", mName.string(),
+              mCurrentState.dataSpace, to_string(error).c_str(),
+              static_cast<int32_t>(error));
+    }
+
     auto acquireFence = mSurfaceFlingerConsumer->getCurrentFence();
     error = hwcLayer->setBuffer(mActiveBuffer->handle, acquireFence);
     if (error != HWC2::Error::None) {
@@ -802,7 +887,7 @@ void Layer::updateCursorPosition(const sp<const DisplayDevice>& displayDevice) {
     }
     // Subtract the transparent region and snap to the bounds
     Rect bounds = reduce(win, s.activeTransparentRegion);
-    Rect frame(s.active.transform.transform(bounds));
+    Rect frame(getTransform().transform(bounds));
     frame.intersect(displayDevice->getViewport(), &frame);
     if (!s.finalCrop.isEmpty()) {
         frame.intersect(s.finalCrop, &frame);
@@ -851,7 +936,7 @@ Rect Layer::getPosition(
     }
     // subtract the transparent region and snap to the bounds
     Rect bounds = reduce(win, s.activeTransparentRegion);
-    Rect frame(s.active.transform.transform(bounds));
+    Rect frame(getTransform().transform(bounds));
     frame.intersect(hw->getViewport(), &frame);
     if (!s.finalCrop.isEmpty()) {
         frame.intersect(s.finalCrop, &frame);
@@ -894,15 +979,14 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
 
         // figure out if there is something below us
         Region under;
-        const SurfaceFlinger::LayerVector& drawingLayers(
-                mFlinger->mDrawingState.layersSortedByZ);
-        const size_t count = drawingLayers.size();
-        for (size_t i=0 ; i<count ; ++i) {
-            const sp<Layer>& layer(drawingLayers[i]);
-            if (layer.get() == static_cast<Layer const*>(this))
-                break;
+        bool finished = false;
+        mFlinger->mDrawingState.layersSortedByZ.traverseInZOrder([&](Layer* layer) {
+            if (finished || layer == static_cast<Layer const*>(this)) {
+                finished = true;
+                return;
+            }
             under.orSelf( hw->getTransform().transform(layer->visibleRegion) );
-        }
+        });
         // if not everything below us is covered, we plug the holes!
         Region holes(clip.subtract(under));
         if (!holes.isEmpty()) {
@@ -1014,12 +1098,13 @@ void Layer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
      */
     Rect win(computeBounds());
 
+    Transform t = getTransform();
     if (!s.finalCrop.isEmpty()) {
-        win = s.active.transform.transform(win);
+        win = t.transform(win);
         if (!win.intersect(s.finalCrop, &win)) {
             win.clear();
         }
-        win = s.active.transform.inverse().transform(win);
+        win = t.inverse().transform(win);
         if (!win.intersect(computeBounds(), &win)) {
             win.clear();
         }
@@ -1219,25 +1304,21 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
         bool useIdentityTransform) const
 {
     const Layer::State& s(getDrawingState());
-    const Transform tr(hw->getTransform());
+    const Transform hwTransform(hw->getTransform());
     const uint32_t hw_h = hw->getHeight();
-    Rect win(s.active.w, s.active.h);
-    if (!s.crop.isEmpty()) {
-        win.intersect(s.crop, &win);
-    }
-    // subtract the transparent region and snap to the bounds
-    win = reduce(win, s.activeTransparentRegion);
+    Rect win = computeBounds();
 
     vec2 lt = vec2(win.left, win.top);
     vec2 lb = vec2(win.left, win.bottom);
     vec2 rb = vec2(win.right, win.bottom);
     vec2 rt = vec2(win.right, win.top);
 
+    Transform layerTransform = getTransform();
     if (!useIdentityTransform) {
-        lt = s.active.transform.transform(lt);
-        lb = s.active.transform.transform(lb);
-        rb = s.active.transform.transform(rb);
-        rt = s.active.transform.transform(rt);
+        lt = layerTransform.transform(lt);
+        lb = layerTransform.transform(lb);
+        rb = layerTransform.transform(rb);
+        rt = layerTransform.transform(rt);
     }
 
     if (!s.finalCrop.isEmpty()) {
@@ -1248,10 +1329,10 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
     }
 
     Mesh::VertexArray<vec2> position(mesh.getPositionArray<vec2>());
-    position[0] = tr.transform(lt);
-    position[1] = tr.transform(lb);
-    position[2] = tr.transform(rb);
-    position[3] = tr.transform(rt);
+    position[0] = hwTransform.transform(lt);
+    position[1] = hwTransform.transform(lb);
+    position[2] = hwTransform.transform(rb);
+    position[3] = hwTransform.transform(rt);
     for (size_t i=0 ; i<4 ; i++) {
         position[i].y = hw_h - position[i].y;
     }
@@ -1533,11 +1614,7 @@ uint32_t Layer::doTransaction(uint32_t flags) {
     // that transactions for layers depending on this layer's frames becoming
     // visible are not blocked
     if (c.flags & layer_state_t::eLayerHidden) {
-        Mutex::Autolock lock(mLocalSyncPointMutex);
-        for (auto& point : mLocalSyncPoints) {
-            point->setFrameAvailable();
-        }
-        mLocalSyncPoints.clear();
+        clearSyncPoints();
     }
 
     // Commit the transaction
@@ -1576,7 +1653,19 @@ bool Layer::setPosition(float x, float y, bool immediate) {
     return true;
 }
 
-bool Layer::setLayer(uint32_t z) {
+bool Layer::setChildLayer(const sp<Layer>& childLayer, int32_t z) {
+    ssize_t idx = mCurrentChildren.indexOf(childLayer);
+    if (idx < 0) {
+        return false;
+    }
+    if (childLayer->setLayer(z)) {
+        mCurrentChildren.removeAt(idx);
+        mCurrentChildren.add(childLayer);
+    }
+    return true;
+}
+
+bool Layer::setLayer(int32_t z) {
     if (mCurrentState.z == z)
         return false;
     mCurrentState.sequence++;
@@ -1585,6 +1674,7 @@ bool Layer::setLayer(uint32_t z) {
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
+
 bool Layer::setSize(uint32_t w, uint32_t h) {
     if (mCurrentState.requested.w == w && mCurrentState.requested.h == h)
         return false;
@@ -1663,6 +1753,13 @@ bool Layer::setOverrideScalingMode(int32_t scalingMode) {
     return true;
 }
 
+void Layer::setInfo(uint32_t type, uint32_t appId) {
+  mCurrentState.appId = appId;
+  mCurrentState.type = type;
+  mCurrentState.modified = true;
+  setTransactionFlags(eTransactionNeeded);
+}
+
 uint32_t Layer::getEffectiveScalingMode() const {
     if (mOverrideScalingMode >= 0) {
       return mOverrideScalingMode;
@@ -1678,6 +1775,24 @@ bool Layer::setLayerStack(uint32_t layerStack) {
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
+}
+
+bool Layer::setDataSpace(android_dataspace dataSpace) {
+    if (mCurrentState.dataSpace == dataSpace)
+        return false;
+    mCurrentState.sequence++;
+    mCurrentState.dataSpace = dataSpace;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+uint32_t Layer::getLayerStack() const {
+    auto p = getParent();
+    if (p == nullptr) {
+        return getDrawingState().layerStack;
+    }
+    return p->getLayerStack();
 }
 
 void Layer::deferTransactionUntil(const sp<IBinder>& handle,
@@ -1808,13 +1923,22 @@ void Layer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
 }
 #endif
 
+bool Layer::isHiddenByPolicy() const {
+    const Layer::State& s(mDrawingState);
+    const auto& parent = getParent();
+    if (parent != nullptr && parent->isHiddenByPolicy()) {
+        return true;
+    }
+    return s.flags & layer_state_t::eLayerHidden;
+}
+
 bool Layer::isVisible() const {
     const Layer::State& s(mDrawingState);
 #ifdef USE_HWC2
-    return !(s.flags & layer_state_t::eLayerHidden) && s.alpha > 0.0f
+    return !(isHiddenByPolicy()) && s.alpha > 0.0f
             && (mActiveBuffer != NULL || mSidebandStream != NULL);
 #else
-    return !(s.flags & layer_state_t::eLayerHidden) && s.alpha
+    return !(isHiddenByPolicy()) && s.alpha
             && (mActiveBuffer != NULL || mSidebandStream != NULL);
 #endif
 }
@@ -1859,7 +1983,7 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
         recomputeVisibleRegions = true;
 
         const State& s(getDrawingState());
-        return s.active.transform.transform(Region(Rect(s.active.w, s.active.h)));
+        return getTransform().transform(Region(Rect(s.active.w, s.active.h)));
     }
 
     Region outDirtyRegion;
@@ -1993,6 +2117,8 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
         recomputeVisibleRegions = true;
      }
 
+    setDataSpace(mSurfaceFlingerConsumer->getCurrentDataSpace());
+
     Rect crop(mSurfaceFlingerConsumer->getCurrentCrop());
     const uint32_t transform(mSurfaceFlingerConsumer->getCurrentTransform());
     const uint32_t scalingMode(mSurfaceFlingerConsumer->getCurrentScalingMode());
@@ -2046,7 +2172,7 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
     Region dirtyRegion(Rect(s.active.w, s.active.h));
 
     // transform the dirty region to window-manager space
-    outDirtyRegion = (s.active.transform.transform(dirtyRegion));
+    outDirtyRegion = (getTransform().transform(dirtyRegion));
 
     return outDirtyRegion;
 }
@@ -2109,7 +2235,9 @@ void Layer::dump(String8& result, Colorizer& colorizer) const
             "alpha=0x%02x, flags=0x%08x, tr=[%.2f, %.2f][%.2f, %.2f]\n"
 #endif
             "      client=%p\n",
-            s.layerStack, s.z, s.active.transform.tx(), s.active.transform.ty(), s.active.w, s.active.h,
+            getLayerStack(), s.z,
+            s.active.transform.tx(), s.active.transform.ty(),
+            s.active.w, s.active.h,
             s.crop.left, s.crop.top,
             s.crop.right, s.crop.bottom,
             s.finalCrop.left, s.finalCrop.top,
@@ -2240,6 +2368,116 @@ std::vector<OccupancyTracker::Segment> Layer::getOccupancyHistory(
 
 bool Layer::getTransformToDisplayInverse() const {
     return mSurfaceFlingerConsumer->getTransformToDisplayInverse();
+}
+
+void Layer::addChild(const sp<Layer>& layer) {
+    mCurrentChildren.add(layer);
+    layer->setParent(this);
+}
+
+ssize_t Layer::removeChild(const sp<Layer>& layer) {
+    layer->setParent(nullptr);
+    return mCurrentChildren.remove(layer);
+}
+
+bool Layer::reparentChildren(const sp<IBinder>& newParentHandle) {
+    sp<Handle> handle = nullptr;
+    sp<Layer> newParent = nullptr;
+    if (newParentHandle == nullptr) {
+        return false;
+    }
+    handle = static_cast<Handle*>(newParentHandle.get());
+    newParent = handle->owner.promote();
+    if (newParent == nullptr) {
+        ALOGE("Unable to promote Layer handle");
+        return false;
+    }
+
+    for (const sp<Layer>& child : mCurrentChildren) {
+        newParent->addChild(child);
+
+        sp<Client> client(child->mClientRef.promote());
+        if (client != nullptr) {
+            client->setParentLayer(newParent);
+        }
+    }
+    mCurrentChildren.clear();
+
+    return true;
+}
+
+void Layer::setParent(const sp<Layer>& layer) {
+    mParent = layer;
+}
+
+void Layer::clearSyncPoints() {
+    for (const auto& child : mCurrentChildren) {
+        child->clearSyncPoints();
+    }
+
+    Mutex::Autolock lock(mLocalSyncPointMutex);
+    for (auto& point : mLocalSyncPoints) {
+        point->setFrameAvailable();
+    }
+    mLocalSyncPoints.clear();
+}
+
+int32_t Layer::getZ() const {
+    return mDrawingState.z;
+}
+
+/**
+ * Negatively signed children are before 'this' in Z-order.
+ */
+void Layer::traverseInZOrder(const std::function<void(Layer*)>& exec) {
+    size_t i = 0;
+    for (; i < mDrawingChildren.size(); i++) {
+        const auto& child = mDrawingChildren[i];
+        if (child->getZ() >= 0)
+            break;
+        child->traverseInZOrder(exec);
+    }
+    exec(this);
+    for (; i < mDrawingChildren.size(); i++) {
+        const auto& child = mDrawingChildren[i];
+        child->traverseInZOrder(exec);
+    }
+}
+
+/**
+ * Positively signed children are before 'this' in reverse Z-order.
+ */
+void Layer::traverseInReverseZOrder(const std::function<void(Layer*)>& exec) {
+    int32_t i = 0;
+    for (i = mDrawingChildren.size()-1; i>=0; i--) {
+        const auto& child = mDrawingChildren[i];
+        if (child->getZ() < 0) {
+            break;
+        }
+        child->traverseInReverseZOrder(exec);
+    }
+    exec(this);
+    for (; i>=0; i--) {
+        const auto& child = mDrawingChildren[i];
+        child->traverseInReverseZOrder(exec);
+    }
+}
+
+Transform Layer::getTransform() const {
+    Transform t;
+    const auto& p = getParent();
+    if (p != nullptr) {
+        t = p->getTransform();
+    }
+    return t * getDrawingState().active.transform;
+}
+
+void Layer::commitChildList() {
+    for (size_t i = 0; i < mCurrentChildren.size(); i++) {
+        const auto& child = mCurrentChildren[i];
+        child->commitChildList();
+    }
+    mDrawingChildren = mCurrentChildren;
 }
 
 // ---------------------------------------------------------------------------
