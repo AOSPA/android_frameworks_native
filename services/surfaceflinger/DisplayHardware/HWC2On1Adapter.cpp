@@ -607,6 +607,7 @@ Error HWC2On1Adapter::Display::createLayer(hwc2_layer_t* outLayerId)
     mDevice.mLayers.emplace(std::make_pair(layer->getId(), layer));
     *outLayerId = layer->getId();
     ALOGV("[%" PRIu64 "] created layer %" PRIu64, mId, *outLayerId);
+    mZIsDirty = true;
     return Error::None;
 }
 
@@ -630,6 +631,7 @@ Error HWC2On1Adapter::Display::destroyLayer(hwc2_layer_t layerId)
         }
     }
     ALOGV("[%" PRIu64 "] destroyed layer %" PRIu64, mId, layerId);
+    mZIsDirty = true;
     return Error::None;
 }
 
@@ -1295,6 +1297,7 @@ bool HWC2On1Adapter::Display::prepare()
     for (auto& layer : mLayers) {
         auto& hwc1Layer = mHwc1RequestedContents->hwLayers[layer->getHwc1Id()];
         hwc1Layer.releaseFenceFd = -1;
+        hwc1Layer.acquireFenceFd = -1;
         layer->applyState(hwc1Layer, applyAllState);
     }
 
