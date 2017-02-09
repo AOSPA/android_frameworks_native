@@ -1,10 +1,11 @@
 #include "shell_view.h"
 
-#include <binder/IServiceManager.h>
-#include <cutils/log.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
+#include <android/input.h>
+#include <binder/IServiceManager.h>
 #include <hardware/hwcomposer2.h>
+#include <log/log.h>
 
 #include "controller_mesh.h"
 #include "texture.h"
@@ -13,6 +14,8 @@ namespace android {
 namespace dvr {
 
 namespace {
+
+constexpr float kLayerScaleFactor = 4.0f;
 
 constexpr unsigned int kVRAppLayerCount = 2;
 
@@ -104,6 +107,9 @@ mat4 GetScalingMatrix(float width, float height) {
   else
     xscale = ar;
 
+  xscale *= kLayerScaleFactor;
+  yscale *= kLayerScaleFactor;
+
   return mat4(Eigen::Scaling<float>(xscale, yscale, 1.0));
 }
 
@@ -125,7 +131,7 @@ mat4 GetHorizontallyAlignedMatrixFromPose(const Posef& pose) {
   m(3, 0) = 0.0f; m(3, 1) = 0.0f; m(3, 2) = 0.0f; m(3, 3) = 1.0f;
   // clang-format on
 
-  return m;
+  return m * Eigen::AngleAxisf(M_PI * 0.5f, vec3::UnitZ());
 }
 
 // Helper function that applies the crop transform to the texture layer and
@@ -193,16 +199,22 @@ quat FromGvrQuatf(const gvr_quatf& quaternion) {
 }
 
 // Determine if ths frame should be shown or hidden.
-bool CalculateVisibilityFromLayerConfig(const HwcCallback::Frame& frame,
-                                        uint32_t vr_app) {
+ViewMode CalculateVisibilityFromLayerConfig(const HwcCallback::Frame& frame,
+                                            uint32_t vr_app) {
   auto& layers = frame.layers();
 
   // We assume the first two layers are the VR app.
   if (layers.size() < kVRAppLayerCount)
-    return false;
+    return ViewMode::Hidden;
 
-  if (vr_app != layers[0].appid || layers[0].appid == 0)
-    return false;
+  if (vr_app != layers[0].appid || layers[0].appid == 0 ||
+      layers[1].appid != layers[0].appid) {
+    if (layers[1].appid != layers[0].appid && layers[0].appid) {
+      // This might be a 2D app.
+      return ViewMode::App;
+    }
+    return ViewMode::Hidden;
+  }
 
   // If a non-VR-app, non-skipped layer appears, show.
   size_t index = kVRAppLayerCount;
@@ -218,10 +230,11 @@ bool CalculateVisibilityFromLayerConfig(const HwcCallback::Frame& frame,
   // If any non-skipped layers exist now then we show, otherwise hide.
   for (size_t i = index; i < layers.size(); i++) {
     if (!layers[i].should_skip_layer())
-      return true;
+      return ViewMode::VR;
   }
-  return false;
+  return ViewMode::Hidden;
 }
+
 
 }  // namespace
 
@@ -244,6 +257,10 @@ int ShellView::Initialize(JNIEnv* env, jobject app_context,
   if (!InitializeTouch())
     ALOGE("Failed to initialize virtual touchpad");
 
+  surface_flinger_view_.reset(new SurfaceFlingerView);
+  if (!surface_flinger_view_->Initialize(this))
+    return 1;
+
   return 0;
 }
 
@@ -259,10 +276,6 @@ int ShellView::AllocateResources() {
   controller_program_.reset(new ShaderProgram);
   controller_program_->Link(kVertexShader, kControllerFragmentShader);
   if (!program_ || !overlay_program_ || !controller_program_)
-    return 1;
-
-  surface_flinger_view_.reset(new SurfaceFlingerView);
-  if (!surface_flinger_view_->Initialize(this))
     return 1;
 
   reticle_.reset(new Reticle());
@@ -298,34 +311,45 @@ void ShellView::VrMode(bool mode) {
                  : MainThreadTask::ExitingVrMode);
 }
 
+void ShellView::AdvanceFrame() {
+  if (!pending_frames_.empty()) {
+    // Check if we should advance the frame.
+    auto& frame = pending_frames_.front();
+    if (frame.visibility == ViewMode::Hidden ||
+        frame.frame->Finish() == HwcCallback::FrameStatus::kFinished) {
+      current_frame_ = std::move(frame);
+      pending_frames_.pop_front();
+
+      for(int i = 0; i < skipped_frame_count_ + 1; i++)
+        surface_flinger_view_->ReleaseFrame();
+      skipped_frame_count_ = 0;
+    }
+  }
+}
+
 void ShellView::OnDrawFrame() {
   textures_.clear();
   has_ime_ = false;
 
   {
     std::unique_lock<std::mutex> l(pending_frame_mutex_);
-    if (!pending_frames_.empty()) {
-      // Check if we should advance the frame.
-      auto& frame = pending_frames_.front();
-      if (!frame.visibility ||
-          frame.frame->Finish() == HwcCallback::FrameStatus::kFinished) {
-        current_frame_ = std::move(frame);
-        pending_frames_.pop_front();
-      }
-    }
+    AdvanceFrame();
   }
 
-  if (!debug_mode_ && current_frame_.visibility != is_visible_) {
-    SetVisibility(current_frame_.visibility);
+  bool visible = current_frame_.visibility != ViewMode::Hidden;
+
+  if (!debug_mode_ && visible != is_visible_) {
+    SetVisibility(current_frame_.visibility != ViewMode::Hidden);
   }
 
-  if (!current_frame_.visibility)
+  if (!debug_mode_ && !visible)
     return;
 
   ime_texture_ = TextureLayer();
 
   surface_flinger_view_->GetTextures(*current_frame_.frame.get(), &textures_,
-                                     &ime_texture_, debug_mode_);
+                                     &ime_texture_, debug_mode_,
+                                     current_frame_.visibility == ViewMode::VR);
   has_ime_ = ime_texture_.texture != nullptr;
 }
 
@@ -369,33 +393,35 @@ bool ShellView::OnClick(bool down) {
 }
 
 void ShellView::OnFrame(std::unique_ptr<HwcCallback::Frame> frame) {
-  if (!frame || frame->layers().empty())
-    return;
+  ViewMode visibility =
+      CalculateVisibilityFromLayerConfig(*frame.get(), current_vr_app_);
 
-  bool visibility = debug_mode_ || CalculateVisibilityFromLayerConfig(
-                                       *frame.get(), current_vr_app_);
+  if (visibility == ViewMode::Hidden && debug_mode_)
+    visibility = ViewMode::VR;
   current_vr_app_ = frame->layers().front().appid;
-
-  // If we are not showing the frame there's no need to keep anything around.
-  if (!visibility) {
-    // Hidden, no change so drop it completely
-    if (!current_frame_.visibility)
-      return;
-
-    frame.reset(nullptr);
-  }
 
   std::unique_lock<std::mutex> l(pending_frame_mutex_);
 
   pending_frames_.emplace_back(std::move(frame), visibility);
 
-  if (pending_frames_.size() > kMaximumPendingFrames)
+  if (pending_frames_.size() > kMaximumPendingFrames) {
+    skipped_frame_count_++;
     pending_frames_.pop_front();
+  }
+
+  if (visibility == ViewMode::Hidden &&
+      current_frame_.visibility == ViewMode::Hidden) {
+    // Consume all frames while hidden.
+    while (!pending_frames_.empty())
+      AdvanceFrame();
+  }
 
   // If we are showing ourselves the main thread is not processing anything,
   // so give it a kick.
-  if (visibility && !current_frame_.visibility)
+  if (visibility != ViewMode::Hidden && current_frame_.visibility == ViewMode::Hidden) {
+    QueueTask(MainThreadTask::EnteringVrMode);
     QueueTask(MainThreadTask::Show);
+  }
 }
 
 bool ShellView::IsHit(const vec3& view_location, const vec3& view_direction,
@@ -572,7 +598,7 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
   vec3 pointer_location = last_pose_.GetPosition();
   quat view_quaternion = last_pose_.GetRotation();
 
-  if (controller_api_status_ == gvr::kControllerApiOk) {
+  if (controller_ && controller_api_status_ == gvr::kControllerApiOk) {
     view_quaternion = FromGvrQuatf(controller_orientation_);
     vec4 controller_location = controller_translate_ * vec4(0, 0, 0, 1);
     pointer_location = vec3(controller_location.x(), controller_location.y(),
@@ -583,6 +609,12 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
 
     if (controller_state_->GetButtonUp(gvr::kControllerButtonClick))
       OnClick(false);
+
+    if (controller_state_->GetButtonDown(gvr::kControllerButtonApp))
+      OnTouchpadButton(true, AMOTION_EVENT_BUTTON_BACK);
+
+    if (controller_state_->GetButtonUp(gvr::kControllerButtonApp))
+      OnTouchpadButton(false, AMOTION_EVENT_BUTTON_BACK);
   }
 
   vec3 view_direction = vec3(view_quaternion * vec3(0, 0, -1));
@@ -611,6 +643,9 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
 
 void ShellView::DrawController(const mat4& perspective, const mat4& eye_matrix,
                                const mat4& head_matrix) {
+  if (!controller_)
+    return;
+
   controller_program_->Use();
   mat4 mvp = perspective * eye_matrix * head_matrix;
 
@@ -663,6 +698,33 @@ void ShellView::Touch() {
   if (!status.isOk()) {
     ALOGE("touch failed: %s", status.toString8().string());
   }
+}
+
+bool ShellView::OnTouchpadButton(bool down, int button) {
+  int buttons = touchpad_buttons_;
+  if (down) {
+    if (allow_input_) {
+      buttons |= button;
+    }
+  } else {
+    buttons &= ~button;
+  }
+  if (buttons == touchpad_buttons_) {
+    return true;
+  }
+  touchpad_buttons_ = buttons;
+  if (!virtual_touchpad_.get()) {
+    ALOGE("missing virtual touchpad");
+    return false;
+  }
+
+  const android::binder::Status status =
+      virtual_touchpad_->buttonState(touchpad_buttons_);
+  if (!status.isOk()) {
+    ALOGE("touchpad button failed: %d %s", touchpad_buttons_,
+          status.toString8().string());
+  }
+  return true;
 }
 
 }  // namespace dvr

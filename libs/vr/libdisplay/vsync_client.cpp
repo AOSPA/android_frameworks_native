@@ -1,6 +1,6 @@
 #include "include/private/dvr/vsync_client.h"
 
-#include <cutils/log.h>
+#include <log/log.h>
 
 #include <pdx/default_transport/client_channel_factory.h>
 #include <private/dvr/display_rpc.h>
@@ -26,7 +26,10 @@ int VSyncClient::Wait(int64_t* timestamp_ns) {
           status.GetErrorMessage().c_str());
     return -status.error();
   }
-  *timestamp_ns = status.get();
+
+  if (timestamp_ns != nullptr) {
+    *timestamp_ns = status.get();
+  }
   return 0;
 }
 

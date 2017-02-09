@@ -338,6 +338,9 @@ sp<IGraphicBufferAlloc> SurfaceFlinger::createGraphicBufferAlloc()
 
 void SurfaceFlinger::bootFinished()
 {
+    if (mStartBootAnimThread->join() != NO_ERROR) {
+        ALOGE("Join StartBootAnimThread failed!");
+    }
     const nsecs_t now = systemTime();
     const nsecs_t duration = now - mBootTime;
     ALOGI("Boot is finished (%ld ms)", long(ns2ms(duration)) );
@@ -579,16 +582,22 @@ void SurfaceFlinger::init() {
 
     mRenderEngine->primeCache();
 
-    // start boot animation
-    startBootAnim();
+    mStartBootAnimThread = new StartBootAnimThread();
+    if (mStartBootAnimThread->Start() != NO_ERROR) {
+        ALOGE("Run StartBootAnimThread failed!");
+    }
 
     ALOGV("Done initializing");
 }
 
 void SurfaceFlinger::startBootAnim() {
-    // start boot animation
-    property_set("service.bootanim.exit", "0");
-    property_set("ctl.start", "bootanim");
+    // Start boot animation service by setting a property mailbox
+    // if property setting thread is already running, Start() will be just a NOP
+    mStartBootAnimThread->Start();
+    // Wait until property was set
+    if (mStartBootAnimThread->join() != NO_ERROR) {
+        ALOGE("Join StartBootAnimThread failed!");
+    }
 }
 
 size_t SurfaceFlinger::getMaxTextureSize() const {
@@ -2266,6 +2275,7 @@ bool SurfaceFlinger::doComposeSurfaces(
                 switch (layer->getCompositionType(hwcId)) {
                     case HWC2::Composition::Cursor:
                     case HWC2::Composition::Device:
+                    case HWC2::Composition::Sideband:
                     case HWC2::Composition::SolidColor: {
                         const Layer::State& state(layer->getDrawingState());
                         if (layer->getClearClientTarget(hwcId) && !firstLayer &&
@@ -2429,8 +2439,7 @@ void SurfaceFlinger::setTransactionState(
         if (s.client != NULL) {
             sp<IBinder> binder = IInterface::asBinder(s.client);
             if (binder != NULL) {
-                String16 desc(binder->getInterfaceDescriptor());
-                if (desc == ISurfaceComposerClient::descriptor) {
+                if (binder->queryLocalInterface(ISurfaceComposerClient::descriptor) != NULL) {
                     sp<Client> client( static_cast<Client *>(s.client.get()) );
                     transactionFlags |= setClientStateLocked(client, s.state);
                 }

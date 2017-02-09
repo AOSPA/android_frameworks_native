@@ -19,10 +19,10 @@ typedef struct float32x4x4_t { float32x4_t val[4]; };
 #endif
 #endif
 
-#include <cutils/log.h>
 #include <dvr/graphics.h>
 #include <dvr/performance_client_api.h>
 #include <dvr/pose_client.h>
+#include <log/log.h>
 #include <private/dvr/buffer_hub_queue_core.h>
 #include <private/dvr/buffer_hub_queue_producer.h>
 #include <private/dvr/clock_ns.h>
@@ -509,6 +509,11 @@ void gvr_distort_to_screen(
   // TODO(leandrogracia): this needs to be properly implemented.
   ALOGE("gvr_distort_to_screen not implemented.");
   gvr_set_error(gvr, GVR_ERROR_INTERNAL);
+}
+
+bool gvr_is_feature_supported(const gvr_context* /*gvr*/, int32_t feature) {
+  return feature == GVR_FEATURE_ASYNC_REPROJECTION ||
+      feature == GVR_FEATURE_HEAD_POSE_6DOF;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -1200,17 +1205,6 @@ void gvr_swap_chain_set_z_order(const gvr_swap_chain* swap_chain, int z_order) {
   dvrGraphicsSurfaceSetZOrder(swap_chain->graphics_context_, z_order);
 }
 
-bool gvr_experimental_is_feature_supported(const gvr_context* /* gvr */,
-                                           int32_t feature) {
-  switch (feature) {
-    case GVR_ASYNC_REPROJECTION:
-    case GVR_6DOF_HEAD_POSE:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool gvr_experimental_register_perf_event_callback(
     gvr_context* gvr, int* /* out_handle */, void* /* user_data */,
     void (* /* event_callback */)(void*, int, float)) {
@@ -1333,14 +1327,14 @@ void gvr_external_surface_destroy(gvr_external_surface** surface) {
 }
 
 void* gvr_external_surface_get_surface(const gvr_external_surface* surface) {
-  CHECK(surface->swap_chain != nullptr &&
-        surface->swap_chain->context != nullptr &&
-        surface->swap_chain->context->jni_env_ != nullptr)
-      << "gvr_external_surface_get_surface: Surface must be constructed within "
-      << "a JNIEnv. Check |gvr_create| call.";
+  LOG_ALWAYS_FATAL_IF(surface->swap_chain == nullptr ||
+                          surface->swap_chain->context == nullptr ||
+                          surface->swap_chain->context->jni_env_ == nullptr,
+                      "gvr_external_surface_get_surface: Surface must be "
+                      "constructed within a JNIEnv. Check |gvr_create| call.");
 
-  CHECK(surface->video_surface != nullptr)
-      << "gvr_external_surface_get_surface: Invalid surface.";
+  LOG_ALWAYS_FATAL_IF(surface->video_surface == nullptr,
+                      "gvr_external_surface_get_surface: Invalid surface.");
 
   std::shared_ptr<android::dvr::ProducerQueue> producer_queue =
       surface->video_surface->client->GetProducerQueue();

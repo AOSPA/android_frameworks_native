@@ -11,12 +11,12 @@
 #include <sstream>
 #include <type_traits>
 
-#include <cutils/log.h>
 #include <cutils/properties.h>
 #include <cutils/trace.h>
 #include <dvr/performance_client_api.h>
 #include <dvr/pose_client.h>
 #include <hardware/sensors.h>
+#include <log/log.h>
 #include <pdx/default_transport/service_endpoint.h>
 #include <private/dvr/benchmark.h>
 #include <private/dvr/clock_ns.h>
@@ -57,8 +57,7 @@ static constexpr char kDisablePosePredictionProp[] =
 
 // Device type property for controlling classes of behavior that differ
 // between devices. If unset, defaults to kOrientationTypeSmartphone.
-static constexpr char kOrientationTypeProp[] = "dvr.orientation_type";
-
+static constexpr char kOrientationTypeProp[] = "ro.dvr.orientation_type";
 static constexpr char kEnableSensorRecordProp[] = "dvr.enable_6dof_recording";
 static constexpr char kEnableSensorPlayProp[] = "dvr.enable_6dof_playback";
 static constexpr char kEnableSensorPlayIdProp[] = "dvr.6dof_playback_id";

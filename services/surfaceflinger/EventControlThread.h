@@ -45,4 +45,4 @@ private:
 
 }
 
-#endif // ANDROID_DISPSYNC_H
+#endif // ANDROID_EVENTCONTROLTHREAD_H

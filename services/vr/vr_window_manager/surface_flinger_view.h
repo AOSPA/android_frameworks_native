@@ -33,7 +33,10 @@ class SurfaceFlingerView {
 
   bool GetTextures(const HwcCallback::Frame& layers,
                    std::vector<TextureLayer>* texture_layers,
-                   TextureLayer* ime_layer, bool debug) const;
+                   TextureLayer* ime_layer, bool debug,
+                   bool skip_first_layer) const;
+
+  void ReleaseFrame();
 
  private:
   sp<IVrComposerView> composer_service_;

@@ -1,6 +1,6 @@
 #include "producer_channel.h"
 
-#include <cutils/log.h>
+#include <log/log.h>
 #include <sync/sync.h>
 #include <sys/poll.h>
 #include <utils/Trace.h>
@@ -9,7 +9,6 @@
 #include <atomic>
 #include <thread>
 
-#include <base/logging.h>
 #include <private/dvr/bufferhub_rpc.h>
 #include "consumer_channel.h"
 
@@ -61,8 +60,9 @@ std::shared_ptr<ProducerChannel> ProducerChannel::Create(
 }
 
 ProducerChannel::~ProducerChannel() {
-  ALOGD_IF(TRACE, "ProducerChannel::~ProducerChannel: channel_id=%d",
-           channel_id());
+  ALOGD_IF(TRACE,
+           "ProducerChannel::~ProducerChannel: channel_id=%d buffer_id=%d",
+           channel_id(), buffer_id());
   for (auto consumer : consumer_channels_)
     consumer->OnProducerClosed();
 }
@@ -275,8 +275,9 @@ int ProducerChannel::OnConsumerRelease(Message&, LocalFence release_fence) {
   // Attempt to merge the fences if necessary.
   if (release_fence) {
     if (returned_fence_) {
-      LocalFence merged_fence(sync_merge(
-          "bufferhub_merged", returned_fence_.get_fd(), release_fence.get_fd()));
+      LocalFence merged_fence(sync_merge("bufferhub_merged",
+                                         returned_fence_.get_fd(),
+                                         release_fence.get_fd()));
       const int error = errno;
       if (!merged_fence) {
         ALOGE("ProducerChannel::OnConsumerRelease: Failed to merge fences: %s",
@@ -367,10 +368,9 @@ bool ProducerChannel::CheckAccess(int euid, int egid) {
 bool ProducerChannel::CheckParameters(int width, int height, int format,
                                       int usage, size_t meta_size_bytes,
                                       size_t slice_count) {
-  return slices_.size() == slice_count &&
-         meta_size_bytes == meta_size_bytes_ && slices_[0].width() == width &&
-         slices_[0].height() == height && slices_[0].format() == format &&
-         slices_[0].usage() == usage;
+  return slices_.size() == slice_count && meta_size_bytes == meta_size_bytes_ &&
+         slices_[0].width() == width && slices_[0].height() == height &&
+         slices_[0].format() == format && slices_[0].usage() == usage;
 }
 
 }  // namespace dvr

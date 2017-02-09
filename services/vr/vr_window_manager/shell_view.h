@@ -14,6 +14,12 @@
 namespace android {
 namespace dvr {
 
+enum class ViewMode {
+  Hidden,
+  VR,
+  App,
+};
+
 class ShellView : public Application, public HwcCallback::Client {
  public:
   ShellView();
@@ -50,11 +56,14 @@ class ShellView : public Application, public HwcCallback::Client {
                 vec3 *hit_location);
   bool InitializeTouch();
   void Touch();
+  bool OnTouchpadButton(bool down, int button);
 
   void OnDrawFrame() override;
   void DrawWithTransform(const mat4& transform, const ShaderProgram& program);
 
   bool OnClick(bool down);
+
+  void AdvanceFrame();
 
   // HwcCallback::Client:
   void OnFrame(std::unique_ptr<HwcCallback::Frame> frame) override;
@@ -62,6 +71,9 @@ class ShellView : public Application, public HwcCallback::Client {
   std::unique_ptr<ShaderProgram> program_;
   std::unique_ptr<ShaderProgram> overlay_program_;
   std::unique_ptr<ShaderProgram> controller_program_;
+
+  // This starts at -1 so we don't call ReleaseFrame for the first frame.
+  int skipped_frame_count_ = -1;
 
   uint32_t current_vr_app_;
 
@@ -81,6 +93,7 @@ class ShellView : public Application, public HwcCallback::Client {
 
   bool is_touching_ = false;
   bool allow_input_ = false;
+  int touchpad_buttons_ = 0;
   vec2 hit_location_in_window_coord_;
   vec2 ime_top_left_;
   vec2 ime_size_;
@@ -90,7 +103,7 @@ class ShellView : public Application, public HwcCallback::Client {
 
   struct PendingFrame {
     PendingFrame() = default;
-    PendingFrame(std::unique_ptr<HwcCallback::Frame>&& frame, bool visibility)
+    PendingFrame(std::unique_ptr<HwcCallback::Frame>&& frame, ViewMode visibility)
         : frame(std::move(frame)), visibility(visibility) {}
     PendingFrame(PendingFrame&& r)
         : frame(std::move(r.frame)), visibility(r.visibility) {}
@@ -101,7 +114,7 @@ class ShellView : public Application, public HwcCallback::Client {
     }
 
     std::unique_ptr<HwcCallback::Frame> frame;
-    bool visibility = false;
+    ViewMode visibility = ViewMode::Hidden;
   };
   std::deque<PendingFrame> pending_frames_;
   std::mutex pending_frame_mutex_;
