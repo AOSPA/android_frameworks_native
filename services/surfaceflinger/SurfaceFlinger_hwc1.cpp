@@ -188,12 +188,12 @@ SurfaceFlinger::SurfaceFlinger()
     ALOGI_IF(mDebugRegion, "showupdates enabled");
     ALOGI_IF(mDebugDDMS, "DDMS debugging enabled");
 
-    property_get("debug.sf.disable_hwc_vds", value, "0");
-    mUseHwcVirtualDisplays = !atoi(value);
-    ALOGI_IF(!mUseHwcVirtualDisplays, "Disabling HWC virtual displays");
+    property_get("debug.sf.enable_hwc_vds", value, "0");
+    mUseHwcVirtualDisplays = atoi(value);
+    ALOGI_IF(!mUseHwcVirtualDisplays, "Enabling HWC virtual displays");
 
-    property_get("ro.sf.disable_triple_buffer", value, "0");
-    mLayerTripleBufferingDisabled = !atoi(value);
+    property_get("ro.sf.disable_triple_buffer", value, "1");
+    mLayerTripleBufferingDisabled = atoi(value);
     ALOGI_IF(mLayerTripleBufferingDisabled, "Disabling Triple Buffering");
 }
 
@@ -1018,7 +1018,8 @@ void SurfaceFlinger::resyncWithRateLimit() {
     }
 }
 
-void SurfaceFlinger::onVSyncReceived(int type, nsecs_t timestamp) {
+void SurfaceFlinger::onVSyncReceived(HWComposer* /*composer*/, int type,
+                                     nsecs_t timestamp) {
     bool needsHwVsync = false;
 
     { // Scope for the lock
@@ -1056,6 +1057,10 @@ void SurfaceFlinger::onHotplugReceived(int type, bool connected) {
 
         // Defer EventThread notification until SF has updated mDisplays.
     }
+}
+
+void SurfaceFlinger::onInvalidateReceived(HWComposer* /*composer*/) {
+    repaintEverything();
 }
 
 void SurfaceFlinger::eventControl(int disp, int event, int enabled) {

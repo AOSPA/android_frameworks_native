@@ -14,6 +14,30 @@
 
 LOCAL_PATH := $(call my-dir)
 
+binder_src := \
+  vr_window_manager_binder.cpp \
+  aidl/android/service/vr/IVrWindowManager.aidl
+
+static_libs := \
+  libcutils
+
+shared_libs := \
+  libbase \
+  libbinder \
+  libutils
+
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES := $(binder_src)
+LOCAL_STATIC_LIBRARIES := $(static_libs)
+LOCAL_SHARED_LIBRARIES := $(shared_libs)
+LOCAL_CPPFLAGS += -std=c++11
+LOCAL_CFLAGS += -DLOG_TAG=\"VrWindowManager\"
+LOCAL_LDLIBS := -llog
+LOCAL_MODULE := libvrwm_binder
+LOCAL_MODULE_TAGS := optional
+include $(BUILD_STATIC_LIBRARY)
+
+
 native_src := \
   application.cpp \
   controller_mesh.cpp \
@@ -87,14 +111,14 @@ LOCAL_CFLAGS += -DLOG_TAG=\"VrWindowManager\"
 LOCAL_LDLIBS := -llog
 LOCAL_MODULE := libvr_window_manager_jni
 LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE_TARGET_ARCH := arm arm64 x86 x86_64
 LOCAL_MULTILIB := 64
 LOCAL_CXX_STL := libc++_static
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(native_src)
-LOCAL_C_INCLUDES := hardware/qcom/display/msm8996/libgralloc
-LOCAL_STATIC_LIBRARIES := $(static_libs)
+LOCAL_STATIC_LIBRARIES := $(static_libs) libvrwm_binder
 LOCAL_SHARED_LIBRARIES := $(shared_libs)
 LOCAL_SHARED_LIBRARIES += libgvr
 LOCAL_STATIC_LIBRARIES += libgvr_ext
@@ -104,6 +128,7 @@ LOCAL_CFLAGS += -DLOG_TAG=\"VrWindowManager\"
 LOCAL_LDLIBS := -llog
 LOCAL_MODULE := vr_wm
 LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE_TARGET_ARCH := arm arm64 x86 x86_64
 LOCAL_INIT_RC := vr_wm.rc
 include $(BUILD_EXECUTABLE)
 
@@ -125,4 +150,29 @@ LOCAL_STATIC_JAVA_LIBRARIES := libprotobuf-java-nano
 LOCAL_AAPT_FLAGS += --auto-add-overlay
 LOCAL_AAPT_FLAGS += --extra-packages com.google.vr.cardboard
 LOCAL_PROGUARD_FLAG_FILES := proguard.flags
+LOCAL_MODULE_TARGET_ARCH := arm arm64 x86 x86_64
 include $(BUILD_PACKAGE)
+
+
+cmd_src := \
+  vr_wm_ctl.cpp \
+  aidl/android/service/vr/IVrWindowManager.aidl
+
+static_libs := \
+  libcutils
+
+shared_libs := \
+  libbase \
+  libbinder \
+  libutils
+
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES := $(cmd_src)
+LOCAL_STATIC_LIBRARIES := $(static_libs)
+LOCAL_SHARED_LIBRARIES := $(shared_libs)
+LOCAL_CPPFLAGS += -std=c++11
+LOCAL_CFLAGS += -DLOG_TAG=\"vrwmctl\"
+LOCAL_LDLIBS := -llog
+LOCAL_MODULE := vr_wm_ctl
+LOCAL_MODULE_TAGS := optional
+include $(BUILD_EXECUTABLE)

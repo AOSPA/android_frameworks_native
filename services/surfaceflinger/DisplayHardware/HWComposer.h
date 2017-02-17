@@ -26,6 +26,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <gui/BufferQueue.h>
+
 #include <ui/Fence.h>
 
 #include <utils/BitSet.h>
@@ -62,20 +64,24 @@ class HWC2On1Adapter;
 class NativeHandle;
 class Region;
 class String8;
-class SurfaceFlinger;
 
 class HWComposer
 {
 public:
     class EventHandler {
         friend class HWComposer;
-        virtual void onVSyncReceived(int32_t disp, nsecs_t timestamp) = 0;
+        virtual void onVSyncReceived(
+            HWComposer* composer, int32_t disp, nsecs_t timestamp) = 0;
         virtual void onHotplugReceived(int32_t disp, bool connected) = 0;
+        virtual void onInvalidateReceived(HWComposer* composer) = 0;
     protected:
         virtual ~EventHandler() {}
     };
 
-    HWComposer(const sp<SurfaceFlinger>& flinger);
+    // useVrComposer is passed to the composer HAL. When true, the composer HAL
+    // will use the vr composer service, otherwise it uses the real hardware
+    // composer.
+    HWComposer(bool useVrComposer);
 
     ~HWComposer();
 
@@ -94,7 +100,8 @@ public:
     // Asks the HAL what it can do
     status_t prepare(DisplayDevice& displayDevice);
 
-    status_t setClientTarget(int32_t displayId, const sp<Fence>& acquireFence,
+    status_t setClientTarget(int32_t displayId, uint32_t slot,
+            const sp<Fence>& acquireFence,
             const sp<GraphicBuffer>& target, android_dataspace_t dataspace);
 
     // Present layers to the display and read releaseFences.
@@ -162,13 +169,16 @@ public:
 
     status_t setActiveColorMode(int32_t displayId, android_color_mode_t mode);
 
+    bool isUsingVrComposer() const;
+
     // for debugging ----------------------------------------------------------
     void dump(String8& out) const;
 
+    android::Hwc2::Composer* getComposer() const { return mHwcDevice->getComposer(); }
 private:
     static const int32_t VIRTUAL_DISPLAY_ID_BASE = 2;
 
-    void loadHwcModule();
+    void loadHwcModule(bool useVrComposer);
 
     bool isValidDisplay(int32_t displayId) const;
     static void validateChange(HWC2::Composition from, HWC2::Composition to);
@@ -202,7 +212,6 @@ private:
         HWC2::Vsync vsyncEnabled;
     };
 
-    sp<SurfaceFlinger>              mFlinger;
     std::unique_ptr<HWC2On1Adapter> mAdapter;
     std::unique_ptr<HWC2::Device>   mHwcDevice;
     std::vector<DisplayData>        mDisplayData;
@@ -222,6 +231,19 @@ private:
 
     // thread-safe
     mutable Mutex mVsyncLock;
+};
+
+class HWComposerBufferCache {
+public:
+    void clear();
+
+    void getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer,
+            uint32_t* outSlot, sp<GraphicBuffer>* outBuffer);
+
+private:
+    // a vector as we expect "slot" to be in the range of [0, 63] (that is,
+    // less than BufferQueue::NUM_BUFFER_SLOTS).
+    std::vector<sp<GraphicBuffer>> mBuffers;
 };
 
 // ---------------------------------------------------------------------------

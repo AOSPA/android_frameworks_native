@@ -42,7 +42,6 @@
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
 #include <android/hardware/dumpstate/1.0/IDumpstateDevice.h>
-#include <android/hardware/vibrator/1.0/IVibrator.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
 #include <openssl/sha.h>
@@ -54,8 +53,6 @@
 #include "dumpstate.h"
 
 using ::android::hardware::dumpstate::V1_0::IDumpstateDevice;
-using ::android::hardware::vibrator::V1_0::IVibrator;
-using VibratorStatus = ::android::hardware::vibrator::V1_0::Status;
 
 // TODO: remove once moved to namespace
 using android::os::dumpstate::CommandOptions;
@@ -1339,6 +1336,40 @@ static std::string SHA256_file_hash(std::string filepath) {
     return std::string(hash_buffer);
 }
 
+static void SendShellBroadcast(const std::string& action, const std::vector<std::string>& args) {
+    std::vector<std::string> am = {
+        "/system/bin/cmd", "activity", "broadcast", "--user", "0", "-a", action};
+
+    am.insert(am.end(), args.begin(), args.end());
+
+    // TODO: explicity setting Shell's component to allow broadcast to launch it.
+    // That might break other components that are listening to the bugreport notifications
+    // (android.intent.action.BUGREPORT_STARTED and android.intent.action.BUGREPORT_STOPED), but
+    // those should be just handled by Shell anyways.
+    // A more generic alternative would be passing the -f 0x01000000 flag (or whatever
+    // value is defined by FLAG_RECEIVER_INCLUDE_BACKGROUND), but that would reset the
+    // --receiver-foreground option
+    am.push_back("com.android.shell");
+
+    RunCommand("", am,
+               CommandOptions::WithTimeout(20)
+                   .Log("Sending broadcast: '%s'\n")
+                   .Always()
+                   .DropRoot()
+                   .RedirectStderr()
+                   .Build());
+}
+
+static void Vibrate(int duration_ms) {
+    // clang-format off
+    RunCommand("", {"cmd", "vibrator", "vibrate", std::to_string(duration_ms), "dumpstate"},
+               CommandOptions::WithTimeout(10)
+                   .Log("Vibrate: '%s'\n")
+                   .Always()
+                   .Build());
+    // clang-format on
+}
+
 int main(int argc, char *argv[]) {
     int do_add_date = 0;
     int do_zip_file = 0;
@@ -1561,18 +1592,15 @@ int main(int argc, char *argv[]) {
             if (do_broadcast) {
                 // clang-format off
 
-                // NOTE: flag must be kept in sync when the value of
-                // FLAG_RECEIVER_INCLUDE_BACKGROUND is changed.
                 std::vector<std::string> am_args = {
                      "--receiver-permission", "android.permission.DUMP", "--receiver-foreground",
-                     "-f", "0x01000000",
                      "--es", "android.intent.extra.NAME", ds.name_,
                      "--ei", "android.intent.extra.ID", std::to_string(ds.id_),
                      "--ei", "android.intent.extra.PID", std::to_string(ds.pid_),
                      "--ei", "android.intent.extra.MAX", std::to_string(ds.progress_->GetMax()),
                 };
                 // clang-format on
-                send_broadcast("android.intent.action.BUGREPORT_STARTED", am_args);
+                SendShellBroadcast("android.intent.action.BUGREPORT_STARTED", am_args);
             }
             if (use_control_socket) {
                 dprintf(ds.control_socket_fd_, "BEGIN:%s\n", ds.path_.c_str());
@@ -1587,22 +1615,8 @@ int main(int argc, char *argv[]) {
         fclose(cmdline);
     }
 
-    ::android::sp<IVibrator> vibrator = nullptr;
     if (do_vibrate) {
-        vibrator = IVibrator::getService();
-
-        if (vibrator != nullptr) {
-            // cancel previous vibration if any
-            ::android::hardware::Return<VibratorStatus> offStatus = vibrator->off();
-            if (!offStatus.isOk() || offStatus != VibratorStatus::OK) {
-                MYLOGE("Vibrator off failed.");
-            } else {
-                ::android::hardware::Return<VibratorStatus> onStatus = vibrator->on(150);
-                if (!onStatus.isOk() || onStatus != VibratorStatus::OK) {
-                    MYLOGE("Vibrator on failed.");
-                }
-            }
-        }
+        Vibrate(150);
     }
 
     if (do_fb && ds.do_early_screenshot_) {
@@ -1782,21 +1796,9 @@ int main(int argc, char *argv[]) {
     }
 
     /* vibrate a few but shortly times to let user know it's finished */
-    if (vibrator != nullptr) {
-        // in case dumpstate magically completes before the above vibration
-        ::android::hardware::Return<VibratorStatus> offStatus = vibrator->off();
-        if (!offStatus.isOk() || offStatus != VibratorStatus::OK) {
-            MYLOGE("Vibrator off failed.");
-        } else {
-            for (int i = 0; i < 3; i++) {
-                ::android::hardware::Return<VibratorStatus> onStatus = vibrator->on(75);
-                if (!onStatus.isOk() || onStatus != VibratorStatus::OK) {
-                    MYLOGE("Vibrator on failed.");
-                    break;
-                }
-                usleep((75 + 50) * 1000);
-            }
-        }
+    for (int i = 0; i < 3; i++) {
+        Vibrate(75);
+        usleep((75 + 50) * 1000);
     }
 
     /* tell activity manager we're done */
@@ -1805,11 +1807,8 @@ int main(int argc, char *argv[]) {
             MYLOGI("Final bugreport path: %s\n", ds.path_.c_str());
             // clang-format off
 
-            // NOTE: flag must be kept in sync when the value of
-            // FLAG_RECEIVER_INCLUDE_BACKGROUND is changed.
             std::vector<std::string> am_args = {
                  "--receiver-permission", "android.permission.DUMP", "--receiver-foreground",
-                 "-f", "0x01000000",
                  "--ei", "android.intent.extra.ID", std::to_string(ds.id_),
                  "--ei", "android.intent.extra.PID", std::to_string(ds.pid_),
                  "--ei", "android.intent.extra.MAX", std::to_string(ds.progress_->GetMax()),
@@ -1826,9 +1825,9 @@ int main(int argc, char *argv[]) {
                 am_args.push_back("--es");
                 am_args.push_back("android.intent.extra.REMOTE_BUGREPORT_HASH");
                 am_args.push_back(SHA256_file_hash(ds.path_));
-                send_broadcast("android.intent.action.REMOTE_BUGREPORT_FINISHED", am_args);
+                SendShellBroadcast("android.intent.action.REMOTE_BUGREPORT_FINISHED", am_args);
             } else {
-                send_broadcast("android.intent.action.BUGREPORT_FINISHED", am_args);
+                SendShellBroadcast("android.intent.action.BUGREPORT_FINISHED", am_args);
             }
         } else {
             MYLOGE("Skipping finished broadcast because bugreport could not be generated\n");

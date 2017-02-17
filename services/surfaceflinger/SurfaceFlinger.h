@@ -17,6 +17,7 @@
 #ifndef ANDROID_SURFACE_FLINGER_H
 #define ANDROID_SURFACE_FLINGER_H
 
+#include <memory>
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -81,6 +82,11 @@ class RenderEngine;
 class EventControlThread;
 class VSyncSource;
 class InjectVSyncSource;
+class VrStateCallbacks;
+
+namespace dvr {
+class VrFlinger;
+} // namespace dvr
 
 // ---------------------------------------------------------------------------
 
@@ -156,6 +162,7 @@ private:
     friend class EventThread;
     friend class Layer;
     friend class MonitoredProducer;
+    friend class VrStateCallbacks;
 
     // This value is specified in number of frames.  Log frame stats at most
     // every half hour.
@@ -240,8 +247,9 @@ private:
     /* ------------------------------------------------------------------------
      * HWComposer::EventHandler interface
      */
-    virtual void onVSyncReceived(int type, nsecs_t timestamp);
+    virtual void onVSyncReceived(HWComposer* composer, int type, nsecs_t timestamp);
     virtual void onHotplugReceived(int disp, bool connected);
+    virtual void onInvalidateReceived(HWComposer* composer);
 
     /* ------------------------------------------------------------------------
      * Message handling
@@ -460,6 +468,19 @@ private:
     bool isLayerTripleBufferingDisabled() const {
         return this->mLayerTripleBufferingDisabled;
     }
+
+#ifdef USE_HWC2
+    /* ------------------------------------------------------------------------
+     * VrFlinger
+     */
+    void clearHwcLayers(const LayerVector& layers);
+    void resetHwc();
+
+    // Check to see if we should change to or from vr mode, and if so, perform
+    // the handoff.
+    void updateVrMode();
+#endif
+
     /* ------------------------------------------------------------------------
      * Attributes
      */
@@ -481,8 +502,13 @@ private:
     // access must be protected by mInvalidateLock
     volatile int32_t mRepaintEverything;
 
-    // constant members (no synchronization needed for access)
+    // current, real and vr hardware composers.
     HWComposer* mHwc;
+#ifdef USE_HWC2
+    HWComposer* mRealHwc;
+    HWComposer* mVrHwc;
+#endif
+    // constant members (no synchronization needed for access)
     RenderEngine* mRenderEngine;
     nsecs_t mBootTime;
     bool mGpuToCpuSupported;
@@ -494,6 +520,10 @@ private:
     EGLContext mEGLContext;
     EGLDisplay mEGLDisplay;
     sp<IBinder> mBuiltinDisplays[DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES];
+
+#ifdef USE_HWC2
+    std::unique_ptr<dvr::VrFlinger> mVrFlinger;
+#endif
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
@@ -532,7 +562,7 @@ private:
     bool mPropagateBackpressure = true;
 #endif
     SurfaceInterceptor mInterceptor;
-    bool mUseHwcVirtualDisplays = true;
+    bool mUseHwcVirtualDisplays = false;
 
     // Restrict layers to use two buffers in their bufferqueues.
     bool mLayerTripleBufferingDisabled = false;
@@ -601,6 +631,12 @@ private:
     // Verify that transaction is being called by an approved process:
     // either AID_GRAPHICS or AID_SYSTEM.
     status_t CheckTransactCodeCredentials(uint32_t code);
+
+#ifdef USE_HWC2
+    sp<VrStateCallbacks> mVrStateCallbacks;
+
+    std::atomic<bool> mEnterVrMode;
+#endif
     };
 
 }; // namespace android

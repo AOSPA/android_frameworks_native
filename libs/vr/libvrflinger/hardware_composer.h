@@ -191,7 +191,6 @@ class HardwareComposer {
 
   bool Suspend();
   bool Resume();
-  bool IsSuspended() const { return pause_post_thread_; }
 
   // Get the HMD display metrics for the current display.
   DisplayMetrics GetHmdDisplayMetrics() const;
@@ -225,9 +224,10 @@ class HardwareComposer {
 
   Compositor* GetCompositor() { return &compositor_; }
 
+  void OnHardwareComposerRefresh();
+
  private:
   int32_t EnableVsync(bool enabled);
-  int32_t SetPowerMode(hwc2_display_t display, hwc2_power_mode_t mode);
 
   class ComposerCallback : public Hwc2::IComposerCallback {
    public:
@@ -263,7 +263,7 @@ class HardwareComposer {
   void PostThread();
 
   int ReadWaitPPState();
-  int BlockUntilVSync();
+  int BlockUntilVSync(/*out*/ bool* suspend_requested);
   int ReadVSyncTimestamp(int64_t* timestamp);
   int WaitForVSync(int64_t* timestamp);
   int SleepUntil(int64_t wakeup_timestamp);
@@ -303,8 +303,6 @@ class HardwareComposer {
 
   void HandlePendingScreenshots();
 
-  void PausePostThread();
-
   // Hardware composer HAL device.
   std::unique_ptr<Hwc2::Composer> hwc2_hidl_;
   sp<ComposerCallback> callbacks_;
@@ -329,9 +327,6 @@ class HardwareComposer {
   bool display_surfaces_updated_;
   bool hardware_layers_need_update_;
 
-  // Cache whether the display was turned on by us
-  bool display_on_; // TODO(hendrikw): The display is always on. Revisit.
-
   // Layer array for handling buffer flow into hardware composer layers.
   // Note that the first array is the actual storage for the layer objects,
   // and the latter is an array of pointers, which can be freely re-arranged
@@ -347,16 +342,35 @@ class HardwareComposer {
   // Handler to hook vsync events outside of this class.
   VSyncCallback vsync_callback_;
 
-  // Thread and condition for managing the layer posting thread. This thread
-  // wakes up a short time before vsync to hand buffers to post processing and
-  // the results to hardware composer.
+  // The layer posting thread. This thread wakes up a short time before vsync to
+  // hand buffers to post processing and the results to hardware composer.
   std::thread post_thread_;
 
+  enum class PostThreadState {
+    // post_thread_state_ starts off paused. When suspending, the control thread
+    // will block until post_thread_state_ == kPaused, indicating the post
+    // thread has completed the transition to paused (most importantly: no more
+    // hardware composer calls).
+    kPaused,
+    // post_thread_state_ is set to kRunning by the control thread (either
+    // surface flinger's main thread or the vr flinger dispatcher thread). The
+    // post thread blocks until post_thread_state_ == kRunning.
+    kRunning,
+    // Set by the control thread to indicate the post thread should pause. The
+    // post thread will change post_thread_state_ from kPauseRequested to
+    // kPaused when it stops.
+    kPauseRequested
+  };
   // Control variables to control the state of the post thread
+  PostThreadState post_thread_state_;
+  // Used to wake the post thread up while it's waiting for vsync, for faster
+  // transition to the paused state.
   pdx::LocalHandle terminate_post_thread_event_fd_;
-  bool pause_post_thread_;
-  std::mutex thread_pause_mutex_;
-  std::condition_variable thread_pause_semaphore_;
+  // post_thread_state_mutex_ should be held before checking or modifying
+  // post_thread_state_.
+  std::mutex post_thread_state_mutex_;
+  // Used to communicate between the control thread and the post thread.
+  std::condition_variable post_thread_state_cond_var_;
 
   // Backlight LED brightness sysfs node.
   pdx::LocalHandle backlight_brightness_fd_;

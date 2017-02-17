@@ -28,7 +28,7 @@
 
 #include <android/dlext.h>
 #include <cutils/properties.h>
-#include <gui/GraphicsEnv.h>
+#include <ui/GraphicsEnv.h>
 
 #include "driver.h"
 #include "stubhal.h"
@@ -739,8 +739,10 @@ VkResult EnumerateDeviceExtensionProperties(
     const InstanceData& data = GetData(physicalDevice);
     static const std::array<VkExtensionProperties, 2> loader_extensions = {{
         // WSI extensions
+#if 0 // Remove this "#if 0" once the VK_KHR_incremental_present extension is ratified
         {VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME,
          VK_KHR_INCREMENTAL_PRESENT_SPEC_VERSION},
+#endif
         {VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
          VK_GOOGLE_DISPLAY_TIMING_SPEC_VERSION},
     }};
@@ -899,7 +901,29 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
 
         return VK_ERROR_INCOMPATIBLE_DRIVER;
     }
+
+    // sanity check ANDROID_native_buffer implementation, whose set of
+    // entrypoints varies according to the spec version.
+    if ((wrapper.GetHalExtensions()[ProcHook::ANDROID_native_buffer]) &&
+        !data->driver.GetSwapchainGrallocUsageANDROID &&
+        !data->driver.GetSwapchainGrallocUsage2ANDROID) {
+        ALOGE("Driver's implementation of ANDROID_native_buffer is broken;"
+              " must expose at least one of "
+              "vkGetSwapchainGrallocUsageANDROID or "
+              "vkGetSwapchainGrallocUsage2ANDROID");
+
+        data->driver.DestroyDevice(dev, pAllocator);
+        FreeDeviceData(data, data_allocator);
+
+        return VK_ERROR_INCOMPATIBLE_DRIVER;
+    }
+
+    VkPhysicalDeviceProperties properties;
+    instance_data.driver.GetPhysicalDeviceProperties(physicalDevice,
+                                                     &properties);
+
     data->driver_device = dev;
+    data->driver_version = properties.driverVersion;
 
     *pDevice = dev;
 

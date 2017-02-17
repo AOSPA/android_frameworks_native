@@ -77,7 +77,6 @@ cc_library_shared {
         "FrameTimestamps.cpp",
         "GLConsumer.cpp",
         "GraphicBufferAlloc.cpp",
-        "GraphicsEnv.cpp",
         "GuiConfig.cpp",
         "IDisplayEventConnection.cpp",
         "IGraphicBufferAlloc.cpp",
@@ -97,10 +96,10 @@ cc_library_shared {
         "SurfaceControl.cpp",
         "SurfaceComposerClient.cpp",
         "SyncFeatures.cpp",
+        "view/Surface.cpp",
     ],
 
     shared_libs: [
-        "libnativeloader",
         "libsync",
         "libbinder",
         "libcutils",

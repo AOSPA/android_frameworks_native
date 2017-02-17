@@ -270,6 +270,16 @@ void Layer::onFrameReplaced(const BufferItem& item) {
     }
 }
 
+void Layer::onBuffersReleased() {
+#ifdef USE_HWC2
+    Mutex::Autolock lock(mHwcBufferCacheMutex);
+
+    for (auto info : mHwcBufferCaches) {
+        info.second.clear();
+    }
+#endif
+}
+
 void Layer::onSidebandStreamChanged() {
     if (android_atomic_release_cas(false, true, &mSidebandStreamChanged) == 0) {
         // mSidebandStreamChanged was false
@@ -417,7 +427,9 @@ Rect Layer::computeBounds(const Region& activeTransparentRegion) const {
     Rect bounds = win;
     const auto& p = getParent();
     if (p != nullptr) {
-        bounds = p->computeScreenBounds();
+        // Look in computeScreenBounds recursive call for explanation of
+        // why we pass false here.
+        bounds = p->computeScreenBounds(false /* reduceTransparentRegion */);
     }
 
     Transform t = getTransform();
@@ -836,8 +848,22 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& displayDevice) {
               static_cast<int32_t>(error));
     }
 
+    uint32_t hwcSlot = 0;
+    buffer_handle_t hwcHandle = nullptr;
+    {
+        Mutex::Autolock lock(mHwcBufferCacheMutex);
+
+        auto& hwcBufferCache = mHwcBufferCaches[hwcId];
+        sp<GraphicBuffer> hwcBuffer;
+        hwcBufferCache.getHwcBuffer(mActiveBufferSlot, mActiveBuffer,
+                &hwcSlot, &hwcBuffer);
+        if (hwcBuffer != nullptr) {
+            hwcHandle = hwcBuffer->handle;
+        }
+    }
+
     auto acquireFence = mSurfaceFlingerConsumer->getCurrentFence();
-    error = hwcLayer->setBuffer(mActiveBuffer->handle, acquireFence);
+    error = hwcLayer->setBuffer(hwcSlot, hwcHandle, acquireFence);
     if (error != HWC2::Error::None) {
         ALOGE("[%s] Failed to set buffer %p: %s (%d)", mName.string(),
                 mActiveBuffer->handle, to_string(error).c_str(),
@@ -2087,7 +2113,8 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
     }
 
     // update the active buffer
-    mActiveBuffer = mSurfaceFlingerConsumer->getCurrentBuffer();
+    mActiveBuffer = mSurfaceFlingerConsumer->getCurrentBuffer(
+            &mActiveBufferSlot);
     if (mActiveBuffer == NULL) {
         // this can only happen if the very first buffer was rejected.
         return outDirtyRegion;

@@ -67,7 +67,10 @@ public:
 #ifdef BYPASS_IHWC
     explicit Device(hwc2_device_t* device);
 #else
-    Device();
+    // useVrComposer is passed to the composer HAL. When true, the composer HAL
+    // will use the vr composer service, otherwise it uses the real hardware
+    // composer.
+    Device(bool useVrComposer);
 #endif
     ~Device();
 
@@ -105,6 +108,12 @@ public:
     std::shared_ptr<Display> getDisplayById(hwc2_display_t id);
 
     bool hasCapability(HWC2::Capability capability) const;
+
+#ifdef BYPASS_IHWC
+    android::Hwc2::Composer* getComposer() { return nullptr; }
+#else
+    android::Hwc2::Composer* getComposer() { return mComposer.get(); }
+#endif
 
 private:
     // Initialization methods
@@ -322,7 +331,7 @@ public:
     [[clang::warn_unused_result]] Error setActiveConfig(
             const std::shared_ptr<const Config>& config);
     [[clang::warn_unused_result]] Error setClientTarget(
-            buffer_handle_t target,
+            uint32_t slot, buffer_handle_t target,
             const android::sp<android::Fence>& acquireFence,
             android_dataspace_t dataspace);
     [[clang::warn_unused_result]] Error setColorMode(android_color_mode_t mode);
@@ -384,7 +393,8 @@ public:
     hwc2_layer_t getId() const { return mId; }
 
     [[clang::warn_unused_result]] Error setCursorPosition(int32_t x, int32_t y);
-    [[clang::warn_unused_result]] Error setBuffer(buffer_handle_t buffer,
+    [[clang::warn_unused_result]] Error setBuffer(uint32_t slot,
+            buffer_handle_t buffer,
             const android::sp<android::Fence>& acquireFence);
     [[clang::warn_unused_result]] Error setSurfaceDamage(
             const android::Region& damage);

@@ -20,6 +20,7 @@
 #include <android/dvr/composer/1.0/IVrComposerClient.h>
 #include <inttypes.h>
 #include <log/log.h>
+#include <gui/BufferQueue.h>
 
 #include "ComposerHal.h"
 
@@ -123,13 +124,11 @@ void Composer::CommandWriter::setLayerInfo(uint32_t type, uint32_t appId)
     endCommand();
 }
 
-Composer::Composer() : mWriter(kWriterInitialSize)
+Composer::Composer(bool useVrComposer)
+    : mWriter(kWriterInitialSize),
+      mIsUsingVrComposer(useVrComposer)
 {
-#if defined(IN_VR_MODE)
-    mIsInVrMode = true;
-#endif
-
-    if (mIsInVrMode) {
+    if (mIsUsingVrComposer) {
         mComposer = IComposer::getService("vr_hwcomposer");
     } else {
         mComposer = IComposer::getService("hwcomposer");
@@ -221,9 +220,8 @@ Error Composer::acceptDisplayChanges(Display display)
 
 Error Composer::createLayer(Display display, Layer* outLayer)
 {
-    const uint32_t bufferSlotCount = 1;
     Error error = kDefaultError;
-    mClient->createLayer(display, bufferSlotCount,
+    mClient->createLayer(display, BufferQueue::NUM_BUFFER_SLOTS,
             [&](const auto& tmpError, const auto& tmpLayer) {
                 error = tmpError;
                 if (error != Error::NONE) {
@@ -427,12 +425,13 @@ Error Composer::setActiveConfig(Display display, Config config)
     return unwrapRet(ret);
 }
 
-Error Composer::setClientTarget(Display display, const native_handle_t* target,
+Error Composer::setClientTarget(Display display, uint32_t slot,
+        const native_handle_t* target,
         int acquireFence, Dataspace dataspace,
         const std::vector<IComposerClient::Rect>& damage)
 {
     mWriter.selectDisplay(display);
-    mWriter.setClientTarget(0, target, acquireFence, dataspace, damage);
+    mWriter.setClientTarget(slot, target, acquireFence, dataspace, damage);
     return Error::NONE;
 }
 
@@ -472,7 +471,7 @@ Error Composer::setVsyncEnabled(Display display, IComposerClient::Vsync enabled)
 
 Error Composer::setClientTargetSlotCount(Display display)
 {
-    const uint32_t bufferSlotCount = 1;
+    const uint32_t bufferSlotCount = BufferQueue::NUM_BUFFER_SLOTS;
     auto ret = mClient->setClientTargetSlotCount(display, bufferSlotCount);
     return unwrapRet(ret);
 }
@@ -503,11 +502,11 @@ Error Composer::setCursorPosition(Display display, Layer layer,
 }
 
 Error Composer::setLayerBuffer(Display display, Layer layer,
-        const native_handle_t* buffer, int acquireFence)
+        uint32_t slot, const native_handle_t* buffer, int acquireFence)
 {
     mWriter.selectDisplay(display);
     mWriter.selectLayer(layer);
-    mWriter.setLayerBuffer(0, buffer, acquireFence);
+    mWriter.setLayerBuffer(slot, buffer, acquireFence);
     return Error::NONE;
 }
 
@@ -621,8 +620,7 @@ Error Composer::setLayerZOrder(Display display, Layer layer, uint32_t z)
 Error Composer::setLayerInfo(Display display, Layer layer, uint32_t type,
                              uint32_t appId)
 {
-    if (mIsInVrMode)
-    {
+    if (mIsUsingVrComposer) {
         mWriter.selectDisplay(display);
         mWriter.selectLayer(layer);
         mWriter.setLayerInfo(type, appId);

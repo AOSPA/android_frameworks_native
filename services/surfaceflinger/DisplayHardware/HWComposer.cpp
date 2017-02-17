@@ -49,6 +49,7 @@
 #include "HWComposer.h"
 #include "HWC2On1Adapter.h"
 #include "HWC2.h"
+#include "ComposerHal.h"
 
 #include "../Layer.h"           // needed only for debugging
 #include "../SurfaceFlinger.h"
@@ -59,9 +60,8 @@ namespace android {
 
 // ---------------------------------------------------------------------------
 
-HWComposer::HWComposer(const sp<SurfaceFlinger>& flinger)
-    : mFlinger(flinger),
-      mAdapter(),
+HWComposer::HWComposer(bool useVrComposer)
+    : mAdapter(),
       mHwcDevice(),
       mDisplayData(2),
       mFreeDisplaySlots(),
@@ -76,7 +76,7 @@ HWComposer::HWComposer(const sp<SurfaceFlinger>& flinger)
         mVSyncCounts[i] = 0;
     }
 
-    loadHwcModule();
+    loadHwcModule(useVrComposer);
 }
 
 HWComposer::~HWComposer() {}
@@ -105,11 +105,13 @@ void HWComposer::setEventHandler(EventHandler* handler)
 }
 
 // Load and prepare the hardware composer module.  Sets mHwc.
-void HWComposer::loadHwcModule()
+void HWComposer::loadHwcModule(bool useVrComposer)
 {
     ALOGV("loadHwcModule");
 
 #ifdef BYPASS_IHWC
+    (void)useVrComposer; // Silence unused parameter warning.
+
     hw_module_t const* module;
 
     if (hw_get_module(HWC_HARDWARE_MODULE_ID, &module) != 0) {
@@ -142,7 +144,7 @@ void HWComposer::loadHwcModule()
                 static_cast<hwc2_device_t*>(mAdapter.get()));
     }
 #else
-    mHwcDevice = std::make_unique<HWC2::Device>();
+    mHwcDevice = std::make_unique<HWC2::Device>(useVrComposer);
 #endif
 
     mRemainingHwcVirtualDisplays = mHwcDevice->getMaxVirtualDisplayCount();
@@ -208,7 +210,7 @@ void HWComposer::hotplug(const std::shared_ptr<HWC2::Display>& display,
 }
 
 void HWComposer::invalidate(const std::shared_ptr<HWC2::Display>& /*display*/) {
-    mFlinger->repaintEverything();
+    mEventHandler->onInvalidateReceived(this);
 }
 
 void HWComposer::vsync(const std::shared_ptr<HWC2::Display>& display,
@@ -254,7 +256,7 @@ void HWComposer::vsync(const std::shared_ptr<HWC2::Display>& display,
     snprintf(tag, sizeof(tag), "HW_VSYNC_%1u", disp);
     ATRACE_INT(tag, ++mVSyncCounts[disp] & 1);
 
-    mEventHandler->onVSyncReceived(disp, timestamp);
+    mEventHandler->onVSyncReceived(this, disp, timestamp);
 }
 
 status_t HWComposer::allocateVirtualDisplay(uint32_t width, uint32_t height,
@@ -444,7 +446,7 @@ void HWComposer::setVsyncEnabled(int32_t displayId, HWC2::Vsync enabled) {
     }
 }
 
-status_t HWComposer::setClientTarget(int32_t displayId,
+status_t HWComposer::setClientTarget(int32_t displayId, uint32_t slot,
         const sp<Fence>& acquireFence, const sp<GraphicBuffer>& target,
         android_dataspace_t dataspace) {
     if (!isValidDisplay(displayId)) {
@@ -457,7 +459,8 @@ status_t HWComposer::setClientTarget(int32_t displayId,
     if ((target != nullptr) && target->getNativeBuffer()) {
         handle = target->getNativeBuffer()->handle;
     }
-    auto error = hwcDisplay->setClientTarget(handle, acquireFence, dataspace);
+    auto error = hwcDisplay->setClientTarget(slot, handle,
+            acquireFence, dataspace);
     if (error != HWC2::Error::None) {
         ALOGE("Failed to set client target for display %d: %s (%d)", displayId,
                 to_string(error).c_str(), static_cast<int32_t>(error));
@@ -866,6 +869,14 @@ static String8 getFormatStr(PixelFormat format) {
 }
 */
 
+bool HWComposer::isUsingVrComposer() const {
+#ifdef BYPASS_IHWC
+    return false;
+#else
+    return getComposer()->isUsingVrComposer();
+#endif
+}
+
 void HWComposer::dump(String8& result) const {
     // TODO: In order to provide a dump equivalent to HWC1, we need to shadow
     // all the state going into the layers. This is probably better done in
@@ -892,6 +903,37 @@ HWComposer::DisplayData::~DisplayData() {
 void HWComposer::DisplayData::reset() {
     ALOGV("DisplayData reset");
     *this = DisplayData();
+}
+
+void HWComposerBufferCache::clear()
+{
+    mBuffers.clear();
+}
+
+void HWComposerBufferCache::getHwcBuffer(int slot,
+        const sp<GraphicBuffer>& buffer,
+        uint32_t* outSlot, sp<GraphicBuffer>* outBuffer)
+{
+    if (slot == BufferQueue::INVALID_BUFFER_SLOT || slot < 0) {
+        // default to slot 0
+        slot = 0;
+    }
+
+    if (static_cast<size_t>(slot) >= mBuffers.size()) {
+        mBuffers.resize(slot + 1);
+    }
+
+    *outSlot = slot;
+
+    if (mBuffers[slot] == buffer) {
+        // already cached in HWC, skip sending the buffer
+        *outBuffer = nullptr;
+    } else {
+        *outBuffer = buffer;
+
+        // update cache
+        mBuffers[slot] = buffer;
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -25,10 +25,11 @@
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
 
-#include <gui/BitTube.h>
 #include <gui/IDisplayEventConnection.h>
-#include <gui/ISurfaceComposer.h>
+#include <gui/IGraphicBufferAlloc.h>
 #include <gui/IGraphicBufferProducer.h>
+#include <gui/ISurfaceComposer.h>
+#include <gui/ISurfaceComposerClient.h>
 
 #include <private/gui/LayerState.h>
 
@@ -43,8 +44,6 @@
 // ---------------------------------------------------------------------------
 
 namespace android {
-
-class IDisplayEventConnection;
 
 class BpSurfaceComposer : public BpInterface<ISurfaceComposer>
 {
@@ -433,7 +432,7 @@ public:
         }
         result = reply.readInt32();
         if (result == NO_ERROR) {
-            result = reply.readParcelable(outCapabilities);
+            result = reply.read(*outCapabilities);
         }
         return result;
     }
@@ -754,7 +753,7 @@ status_t BnSurfaceComposer::onTransact(
             result = getHdrCapabilities(display, &capabilities);
             reply->writeInt32(result);
             if (result == NO_ERROR) {
-                reply->writeParcelable(capabilities);
+                reply->write(capabilities);
             }
             return NO_ERROR;
         }

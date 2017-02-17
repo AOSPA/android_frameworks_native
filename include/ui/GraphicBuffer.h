@@ -76,11 +76,6 @@ public:
     GraphicBuffer(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
             uint32_t inUsage, std::string requestorName = "<Unknown>");
 
-    // creates w * h buffer with a layer count
-    GraphicBuffer(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
-            uint32_t inLayerCount, uint32_t inUsage,
-            std::string requestorName = "<Unknown>");
-
     // creates w * h buffer with a layer count using gralloc1
     GraphicBuffer(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
             uint32_t inLayerCount, uint64_t inProducerUsage,
@@ -89,6 +84,12 @@ public:
     // create a buffer from an existing handle
     GraphicBuffer(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
             uint32_t inLayerCount, uint32_t inUsage, uint32_t inStride,
+            native_handle_t* inHandle, bool keepOwnership);
+
+    // create a buffer from an existing handle using gralloc1
+    GraphicBuffer(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
+            uint32_t inLayerCount, uint32_t inProducerUsage,
+            uint32_t inConsumerUsage, uint32_t inStride,
             native_handle_t* inHandle, bool keepOwnership);
 
     // create a buffer from an existing ANativeWindowBuffer
