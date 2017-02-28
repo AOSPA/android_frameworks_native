@@ -1031,7 +1031,7 @@ public:
     virtual void setFrame(const Rect& frame) {
         getLayer()->displayFrame = reinterpret_cast<hwc_rect_t const&>(frame);
     }
-    virtual void setCrop(const gfx::FloatRect& crop) {
+    virtual void setCrop(const FloatRect& crop) {
         if (hwcHasApiVersion(mHwc, HWC_DEVICE_API_VERSION_1_3)) {
             getLayer()->sourceCropf = reinterpret_cast<hwc_frect_t const&>(crop);
         } else {
@@ -1160,6 +1160,7 @@ static String8 getFormatStr(PixelFormat format) {
     case PIXEL_FORMAT_RGBA_8888:    return String8("RGBA_8888");
     case PIXEL_FORMAT_RGBX_8888:    return String8("RGBx_8888");
     case PIXEL_FORMAT_RGBA_FP16:    return String8("RGBA_FP16");
+    case PIXEL_FORMAT_RGBA_1010102: return String8("RGBA_1010102");
     case PIXEL_FORMAT_RGB_888:      return String8("RGB_888");
     case PIXEL_FORMAT_RGB_565:      return String8("RGB_565");
     case PIXEL_FORMAT_BGRA_8888:    return String8("BGRA_8888");

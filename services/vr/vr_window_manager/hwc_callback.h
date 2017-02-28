@@ -6,8 +6,8 @@
 #include <mutex>
 #include <vector>
 
-#include <android/dvr/composer/1.0/IVrComposerCallback.h>
-#include <android/dvr/composer/1.0/IVrComposerView.h>
+#include <android-base/unique_fd.h>
+#include <impl/vr_composer_view.h>
 #include <impl/vr_hwc.h>
 
 namespace android {
@@ -20,10 +20,7 @@ namespace dvr {
 using Recti = ComposerView::ComposerLayer::Recti;
 using Rectf = ComposerView::ComposerLayer::Rectf;
 
-using composer::V1_0::IVrComposerCallback;
-using composer::V1_0::IVrComposerView;
-
-class HwcCallback : public IVrComposerCallback {
+class HwcCallback : public VrComposerView::Callback {
  public:
   struct HwcLayer {
     enum LayerType : uint32_t {
@@ -83,22 +80,16 @@ class HwcCallback : public IVrComposerCallback {
   class Client {
    public:
     virtual ~Client() {}
-    virtual void OnFrame(std::unique_ptr<Frame>) = 0;
+    virtual base::unique_fd OnFrame(std::unique_ptr<Frame>) = 0;
   };
 
-  explicit HwcCallback(IVrComposerView* composer_view, Client* client);
+  explicit HwcCallback(Client* client);
   ~HwcCallback() override;
 
  private:
-  // This is the only method called on the binder thread. Everything else is
-  // called on the render thread.
-  Return<void> onNewFrame(const hidl_vec<IVrComposerCallback::Layer>& frame)
-      override;
+  base::unique_fd OnNewFrame(const ComposerView::Frame& frame) override;
 
-  IVrComposerView* composer_view_;
   Client *client_;
-  std::mutex mutex_;
-
 
   HwcCallback(const HwcCallback&) = delete;
   void operator=(const HwcCallback&) = delete;

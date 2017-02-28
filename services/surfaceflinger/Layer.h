@@ -27,8 +27,6 @@
 #include <utils/String8.h>
 #include <utils/Timers.h>
 
-#include <gfx/FloatRect.h>
-
 #include <ui/FrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/PixelFormat.h>
@@ -296,10 +294,10 @@ public:
      * called after composition.
      * returns true if the layer latched a new buffer this frame.
      */
-    bool onPostComposition(
-            const std::shared_ptr<FenceTime>& glDoneFence,
+    bool onPostComposition(const std::shared_ptr<FenceTime>& glDoneFence,
             const std::shared_ptr<FenceTime>& presentFence,
-            const std::shared_ptr<FenceTime>& retireFence);
+            const std::shared_ptr<FenceTime>& retireFence,
+            const CompositorTiming& compositorTiming);
 
 #ifdef USE_HWC2
     // If a buffer was replaced this frame, release the former buffer
@@ -446,6 +444,7 @@ public:
 
     std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool forceFlush);
 
+    void onDisconnect();
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newEntry,
             FrameEventHistoryDelta* outDelta);
 
@@ -513,7 +512,7 @@ private:
 
     uint32_t getEffectiveUsage(uint32_t usage) const;
 
-    gfx::FloatRect computeCrop(const sp<const DisplayDevice>& hw) const;
+    FloatRect computeCrop(const sp<const DisplayDevice>& hw) const;
     // Compute the initial crop as specified by parent layers and the SurfaceControl
     // for this layer. Does not include buffer crop from the IGraphicBufferProducer
     // client, as that should not affect child clipping. Returns in screen space.
@@ -657,7 +656,7 @@ private:
     FenceTimeline mReleaseTimeline;
 
     // main thread
-    int mActiveBufferSlot = BufferQueue::INVALID_BUFFER_SLOT;
+    int mActiveBufferSlot;
     sp<GraphicBuffer> mActiveBuffer;
     sp<NativeHandle> mSidebandStream;
     Rect mCurrentCrop;
@@ -694,7 +693,7 @@ private:
         HWC2::Composition compositionType;
         bool clearClientTarget;
         Rect displayFrame;
-        gfx::FloatRect sourceCrop;
+        FloatRect sourceCrop;
     };
     std::unordered_map<int32_t, HWCInfo> mHwcLayers;
 

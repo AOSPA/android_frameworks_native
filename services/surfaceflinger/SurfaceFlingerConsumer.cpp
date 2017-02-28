@@ -23,6 +23,7 @@
 #include <private/gui/SyncFeatures.h>
 
 #include <gui/BufferItem.h>
+#include <gui/BufferQueue.h>
 
 #include <utils/Errors.h>
 #include <utils/NativeHandle.h>
@@ -211,11 +212,11 @@ void SurfaceFlingerConsumer::setReleaseFence(const sp<Fence>& fence)
     }
 }
 
-void SurfaceFlingerConsumer::releasePendingBuffer()
+bool SurfaceFlingerConsumer::releasePendingBuffer()
 {
     if (!mPendingRelease.isPending) {
         ALOGV("Pending buffer already released");
-        return;
+        return false;
     }
     ALOGV("Releasing pending buffer");
     Mutex::Autolock lock(mMutex);
@@ -225,6 +226,7 @@ void SurfaceFlingerConsumer::releasePendingBuffer()
     ALOGE_IF(result != NO_ERROR, "releasePendingBuffer failed: %s (%d)",
             strerror(-result), result);
     mPendingRelease = PendingRelease();
+    return true;
 }
 #endif
 
@@ -258,6 +260,13 @@ void SurfaceFlingerConsumer::onSidebandStreamChanged() {
 
     if (listener != NULL) {
         listener->onSidebandStreamChanged();
+    }
+}
+
+void SurfaceFlingerConsumer::onDisconnect() {
+    sp<Layer> l = mLayer.promote();
+    if (l.get()) {
+        l->onDisconnect();
     }
 }
 

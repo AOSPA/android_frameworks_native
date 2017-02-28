@@ -17,9 +17,11 @@
 #ifndef ANDROID_UI_GRALLOC_1_ON_0_ADAPTER_H
 #define ANDROID_UI_GRALLOC_1_ON_0_ADAPTER_H
 
-#include <ui/Fence.h>
-#include <ui/GraphicBuffer.h>
+#include <log/log.h>
 
+#include <ui/Fence.h>
+
+#include <hardware/gralloc.h>
 #include <hardware/gralloc1.h>
 
 #include <mutex>
@@ -27,34 +29,11 @@
 #include <unordered_map>
 #include <vector>
 
+namespace android {
+class GraphicBuffer;
+} // namespace android
+
 struct gralloc_module_t;
-
-// This is not an "official" capability (i.e., it is not found in gralloc1.h),
-// but we will use it to detect that we are running through the adapter, which
-// is capable of collaborating with GraphicBuffer such that queries on a
-// buffer_handle_t succeed
-static const auto GRALLOC1_CAPABILITY_ON_ADAPTER =
-        static_cast<gralloc1_capability_t>(GRALLOC1_LAST_CAPABILITY + 1);
-
-static const auto GRALLOC1_FUNCTION_RETAIN_GRAPHIC_BUFFER =
-        static_cast<gralloc1_function_descriptor_t>(GRALLOC1_LAST_FUNCTION + 1);
-static const auto GRALLOC1_FUNCTION_ALLOCATE_WITH_ID =
-        static_cast<gralloc1_function_descriptor_t>(GRALLOC1_LAST_FUNCTION + 2);
-static const auto GRALLOC1_FUNCTION_LOCK_YCBCR =
-        static_cast<gralloc1_function_descriptor_t>(GRALLOC1_LAST_FUNCTION + 3);
-static const auto GRALLOC1_LAST_ADAPTER_FUNCTION = GRALLOC1_FUNCTION_LOCK_YCBCR;
-
-typedef gralloc1_error_t (*GRALLOC1_PFN_RETAIN_GRAPHIC_BUFFER)(
-        gralloc1_device_t* device, const android::GraphicBuffer* buffer);
-typedef gralloc1_error_t (*GRALLOC1_PFN_ALLOCATE_WITH_ID)(
-        gralloc1_device_t* device, gralloc1_buffer_descriptor_t descriptor,
-        gralloc1_backing_store_t id, buffer_handle_t* outBuffer);
-typedef int32_t /*gralloc1_error_t*/ (*GRALLOC1_PFN_LOCK_YCBCR)(
-        gralloc1_device_t* device, buffer_handle_t buffer,
-        uint64_t /*gralloc1_producer_usage_t*/ producerUsage,
-        uint64_t /*gralloc1_consumer_usage_t*/ consumerUsage,
-        const gralloc1_rect_t* accessRegion, struct android_ycbcr* outYCbCr,
-        int32_t acquireFence);
 
 namespace android {
 

@@ -133,6 +133,7 @@ LOCAL_CFLAGS += -fvisibility=hidden -Werror=format
 
 LOCAL_STATIC_LIBRARIES := \
     libhwcomposer-command-buffer \
+    android.hardware.configstore-utils \
     libtrace_proto \
     libvkjson \
     libvr_manager \
@@ -188,10 +189,6 @@ LOCAL_CFLAGS := -DLOG_TAG=\"SurfaceFlinger\"
 
 LOCAL_INIT_RC := surfaceflinger.rc
 
-ifneq ($(ENABLE_CPUSETS),)
-    LOCAL_CFLAGS += -DENABLE_CPUSETS
-endif
-
 ifeq ($(TARGET_USES_HWC2),true)
     LOCAL_CFLAGS += -DUSE_HWC2
 endif
@@ -205,6 +202,7 @@ LOCAL_SHARED_LIBRARIES := \
     liblog \
     libbinder \
     libutils \
+    libui \
     libdl
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libsigchain

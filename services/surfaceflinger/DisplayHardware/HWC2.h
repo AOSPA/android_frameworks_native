@@ -24,7 +24,7 @@
 #undef HWC2_USE_CPP11
 
 #include <ui/HdrCapabilities.h>
-#include <ui/mat4.h>
+#include <math/mat4.h>
 
 #include <utils/Log.h>
 #include <utils/StrongPointer.h>
@@ -38,12 +38,10 @@
 
 namespace android {
     class Fence;
+    class FloatRect;
     class GraphicBuffer;
     class Rect;
     class Region;
-    namespace gfx {
-        class FloatRect;
-    }
     namespace Hwc2 {
         class Composer;
     }
@@ -410,7 +408,7 @@ public:
     [[clang::warn_unused_result]] Error setSidebandStream(
             const native_handle_t* stream);
     [[clang::warn_unused_result]] Error setSourceCrop(
-            const android::gfx::FloatRect& crop);
+            const android::FloatRect& crop);
     [[clang::warn_unused_result]] Error setTransform(Transform transform);
     [[clang::warn_unused_result]] Error setVisibleRegion(
             const android::Region& region);

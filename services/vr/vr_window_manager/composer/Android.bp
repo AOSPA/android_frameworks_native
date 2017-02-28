@@ -6,7 +6,6 @@ cc_library_shared {
   name: "libvrhwc",
 
   srcs: [
-    "impl/sync_timeline.cpp",
     "impl/vr_composer_view.cpp",
     "impl/vr_hwc.cpp",
     "impl/vr_composer_client.cpp",

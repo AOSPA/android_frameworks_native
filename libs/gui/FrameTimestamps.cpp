@@ -16,6 +16,8 @@
 
 #include <gui/FrameTimestamps.h>
 
+#define LOG_TAG "FrameEvents"
+
 #include <cutils/compiler.h>  // For CC_[UN]LIKELY
 #include <inttypes.h>
 #include <utils/Log.h>
@@ -33,19 +35,19 @@ namespace android {
 // ============================================================================
 
 bool FrameEvents::hasPostedInfo() const {
-    return Fence::isValidTimestamp(postedTime);
+    return FrameEvents::isValidTimestamp(postedTime);
 }
 
 bool FrameEvents::hasRequestedPresentInfo() const {
-    return Fence::isValidTimestamp(requestedPresentTime);
+    return FrameEvents::isValidTimestamp(requestedPresentTime);
 }
 
 bool FrameEvents::hasLatchInfo() const {
-    return Fence::isValidTimestamp(latchTime);
+    return FrameEvents::isValidTimestamp(latchTime);
 }
 
 bool FrameEvents::hasFirstRefreshStartInfo() const {
-    return Fence::isValidTimestamp(firstRefreshStartTime);
+    return FrameEvents::isValidTimestamp(firstRefreshStartTime);
 }
 
 bool FrameEvents::hasLastRefreshStartInfo() const {
@@ -56,7 +58,7 @@ bool FrameEvents::hasLastRefreshStartInfo() const {
 }
 
 bool FrameEvents::hasDequeueReadyInfo() const {
-    return Fence::isValidTimestamp(dequeueReadyTime);
+    return FrameEvents::isValidTimestamp(dequeueReadyTime);
 }
 
 bool FrameEvents::hasAcquireInfo() const {
@@ -117,21 +119,21 @@ void FrameEvents::dump(String8& outString) const
     outString.appendFormat("--- Req. Present\t%" PRId64 "\n", requestedPresentTime);
 
     outString.appendFormat("--- Latched     \t");
-    if (Fence::isValidTimestamp(latchTime)) {
+    if (FrameEvents::isValidTimestamp(latchTime)) {
         outString.appendFormat("%" PRId64 "\n", latchTime);
     } else {
         outString.appendFormat("Pending\n");
     }
 
     outString.appendFormat("--- Refresh (First)\t");
-    if (Fence::isValidTimestamp(firstRefreshStartTime)) {
+    if (FrameEvents::isValidTimestamp(firstRefreshStartTime)) {
         outString.appendFormat("%" PRId64 "\n", firstRefreshStartTime);
     } else {
         outString.appendFormat("Pending\n");
     }
 
     outString.appendFormat("--- Refresh (Last)\t");
-    if (Fence::isValidTimestamp(lastRefreshStartTime)) {
+    if (FrameEvents::isValidTimestamp(lastRefreshStartTime)) {
         outString.appendFormat("%" PRId64 "\n", lastRefreshStartTime);
     } else {
         outString.appendFormat("Pending\n");
@@ -147,7 +149,7 @@ void FrameEvents::dump(String8& outString) const
             !addRetireCalled, *displayRetireFence);
 
     outString.appendFormat("--- DequeueReady  \t");
-    if (Fence::isValidTimestamp(dequeueReadyTime)) {
+    if (FrameEvents::isValidTimestamp(dequeueReadyTime)) {
         outString.appendFormat("%" PRId64 "\n", dequeueReadyTime);
     } else {
         outString.appendFormat("Pending\n");
@@ -235,12 +237,28 @@ void FrameEventHistory::dump(String8& outString) const {
 
 ProducerFrameEventHistory::~ProducerFrameEventHistory() = default;
 
+nsecs_t ProducerFrameEventHistory::snapToNextTick(
+        nsecs_t timestamp, nsecs_t tickPhase, nsecs_t tickInterval) {
+    nsecs_t tickOffset = (tickPhase - timestamp) % tickInterval;
+    // Integer modulo rounds towards 0 and not -inf before taking the remainder,
+    // so adjust the offset if it is negative.
+    if (tickOffset < 0) {
+        tickOffset += tickInterval;
+    }
+    return timestamp + tickOffset;
+}
+
+nsecs_t ProducerFrameEventHistory::getNextCompositeDeadline(
+        const nsecs_t now) const{
+    return snapToNextTick(
+            now, mCompositorTiming.deadline, mCompositorTiming.interval);
+}
+
 void ProducerFrameEventHistory::updateAcquireFence(
         uint64_t frameNumber, std::shared_ptr<FenceTime>&& acquire) {
     FrameEvents* frame = getFrame(frameNumber, &mAcquireOffset);
     if (frame == nullptr) {
-        ALOGE("ProducerFrameEventHistory::updateAcquireFence: "
-              "Did not find frame.");
+        ALOGE("updateAcquireFence: Did not find frame.");
         return;
     }
 
@@ -256,10 +274,12 @@ void ProducerFrameEventHistory::updateAcquireFence(
 
 void ProducerFrameEventHistory::applyDelta(
         const FrameEventHistoryDelta& delta) {
+    mCompositorTiming = delta.mCompositorTiming;
+
     for (auto& d : delta.mDeltas) {
         // Avoid out-of-bounds access.
-        if (d.mIndex >= mFrames.size()) {
-            ALOGE("ProducerFrameEventHistory::applyDelta: Bad index.");
+        if (CC_UNLIKELY(d.mIndex >= mFrames.size())) {
+            ALOGE("applyDelta: Bad index.");
             return;
         }
 
@@ -309,7 +329,7 @@ void ProducerFrameEventHistory::updateSignalTimes() {
 
 void ProducerFrameEventHistory::applyFenceDelta(FenceTimeline* timeline,
         std::shared_ptr<FenceTime>* dst, const FenceTime::Snapshot& src) const {
-    if (CC_UNLIKELY(dst == nullptr)) {
+    if (CC_UNLIKELY(dst == nullptr || dst->get() == nullptr)) {
         ALOGE("applyFenceDelta: dst is null.");
         return;
     }
@@ -318,9 +338,7 @@ void ProducerFrameEventHistory::applyFenceDelta(FenceTimeline* timeline,
         case FenceTime::Snapshot::State::EMPTY:
             return;
         case FenceTime::Snapshot::State::FENCE:
-            if (CC_UNLIKELY((*dst)->isValid())) {
-                ALOGE("applyFenceDelta: Unexpected fence.");
-            }
+            ALOGE_IF((*dst)->isValid(), "applyFenceDelta: Unexpected fence.");
             *dst = createFenceTime(src.fence);
             timeline->push(*dst);
             return;
@@ -346,9 +364,20 @@ std::shared_ptr<FenceTime> ProducerFrameEventHistory::createFenceTime(
 
 ConsumerFrameEventHistory::~ConsumerFrameEventHistory() = default;
 
+void ConsumerFrameEventHistory::onDisconnect() {
+    mCurrentConnectId++;
+    mProducerWantsEvents = false;
+}
+
+void ConsumerFrameEventHistory::initializeCompositorTiming(
+        const CompositorTiming& compositorTiming) {
+    mCompositorTiming = compositorTiming;
+}
+
 void ConsumerFrameEventHistory::addQueue(const NewFrameEventsEntry& newEntry) {
     // Overwrite all fields of the frame with default values unless set here.
     FrameEvents newTimestamps;
+    newTimestamps.connectId = mCurrentConnectId;
     newTimestamps.frameNumber = newEntry.frameNumber;
     newTimestamps.postedTime = newEntry.postedTime;
     newTimestamps.requestedPresentTime = newEntry.requestedPresentTime;
@@ -385,7 +414,7 @@ void ConsumerFrameEventHistory::addPreComposition(
     }
     frame->lastRefreshStartTime = refreshStartTime;
     mFramesDirty[mCompositionOffset].setDirty<FrameEvent::LAST_REFRESH_START>();
-    if (!Fence::isValidTimestamp(frame->firstRefreshStartTime)) {
+    if (!FrameEvents::isValidTimestamp(frame->firstRefreshStartTime)) {
         frame->firstRefreshStartTime = refreshStartTime;
         mFramesDirty[mCompositionOffset].setDirty<FrameEvent::FIRST_REFRESH_START>();
     }
@@ -393,7 +422,10 @@ void ConsumerFrameEventHistory::addPreComposition(
 
 void ConsumerFrameEventHistory::addPostComposition(uint64_t frameNumber,
         const std::shared_ptr<FenceTime>& gpuCompositionDone,
-        const std::shared_ptr<FenceTime>& displayPresent) {
+        const std::shared_ptr<FenceTime>& displayPresent,
+        const CompositorTiming& compositorTiming) {
+    mCompositorTiming = compositorTiming;
+
     FrameEvents* frame = getFrame(frameNumber, &mCompositionOffset);
     if (frame == nullptr) {
         ALOGE_IF(mProducerWantsEvents,
@@ -404,7 +436,7 @@ void ConsumerFrameEventHistory::addPostComposition(uint64_t frameNumber,
     if (!frame->addPostCompositeCalled) {
         frame->addPostCompositeCalled = true;
         frame->gpuCompositionDoneFence = gpuCompositionDone;
-        mFramesDirty[mCompositionOffset].setDirty<FrameEvent::GL_COMPOSITION_DONE>();
+        mFramesDirty[mCompositionOffset].setDirty<FrameEvent::GPU_COMPOSITION_DONE>();
         if (!frame->displayPresentFence->isValid()) {
             frame->displayPresentFence = displayPresent;
             mFramesDirty[mCompositionOffset].setDirty<FrameEvent::DISPLAY_PRESENT>();
@@ -428,7 +460,7 @@ void ConsumerFrameEventHistory::addRelease(uint64_t frameNumber,
         nsecs_t dequeueReadyTime, std::shared_ptr<FenceTime>&& release) {
     FrameEvents* frame = getFrame(frameNumber, &mReleaseOffset);
     if (frame == nullptr) {
-        ALOGE("ConsumerFrameEventHistory::addRelease: Did not find frame.");
+        ALOGE_IF(mProducerWantsEvents, "addRelease: Did not find frame.");
         return;
     }
     frame->addReleaseCalled = true;
@@ -443,13 +475,21 @@ void ConsumerFrameEventHistory::getFrameDelta(
     mProducerWantsEvents = true;
     size_t i = static_cast<size_t>(std::distance(mFrames.begin(), frame));
     if (mFramesDirty[i].anyDirty()) {
-        delta->mDeltas.emplace_back(i, *frame, mFramesDirty[i]);
+        // Make sure only to send back deltas for the current connection
+        // since the producer won't have the correct state to apply a delta
+        // from a previous connection.
+        if (mFrames[i].connectId == mCurrentConnectId) {
+            delta->mDeltas.emplace_back(i, *frame, mFramesDirty[i]);
+        }
         mFramesDirty[i].reset();
     }
 }
 
 void ConsumerFrameEventHistory::getAndResetDelta(
         FrameEventHistoryDelta* delta) {
+    mProducerWantsEvents = true;
+    delta->mCompositorTiming = mCompositorTiming;
+
     // Write these in order of frame number so that it is easy to
     // add them to a FenceTimeline in the proper order producer side.
     delta->mDeltas.reserve(mFramesDirty.size());
@@ -483,7 +523,7 @@ FrameEventsDelta::FrameEventsDelta(
       mFirstRefreshStartTime(frameTimestamps.firstRefreshStartTime),
       mLastRefreshStartTime(frameTimestamps.lastRefreshStartTime),
       mDequeueReadyTime(frameTimestamps.dequeueReadyTime) {
-    if (dirtyFields.isDirty<FrameEvent::GL_COMPOSITION_DONE>()) {
+    if (dirtyFields.isDirty<FrameEvent::GPU_COMPOSITION_DONE>()) {
         mGpuCompositionDoneFence =
                 frameTimestamps.gpuCompositionDoneFence->getSnapshot();
     }
@@ -499,9 +539,8 @@ FrameEventsDelta::FrameEventsDelta(
     }
 }
 
-size_t FrameEventsDelta::minFlattenedSize() {
-    constexpr size_t min =
-            sizeof(FrameEventsDelta::mFrameNumber) +
+constexpr size_t FrameEventsDelta::minFlattenedSize() {
+    return sizeof(FrameEventsDelta::mFrameNumber) +
             sizeof(uint8_t) + // mIndex
             sizeof(uint8_t) + // mAddPostCompositeCalled
             sizeof(uint8_t) + // mAddRetireCalled
@@ -512,7 +551,6 @@ size_t FrameEventsDelta::minFlattenedSize() {
             sizeof(FrameEventsDelta::mFirstRefreshStartTime) +
             sizeof(FrameEventsDelta::mLastRefreshStartTime) +
             sizeof(FrameEventsDelta::mDequeueReadyTime);
-    return min;
 }
 
 // Flattenable implementation
@@ -618,16 +656,19 @@ status_t FrameEventsDelta::unflatten(void const*& buffer, size_t& size,
 
 FrameEventHistoryDelta& FrameEventHistoryDelta::operator=(
         FrameEventHistoryDelta&& src) {
+    mCompositorTiming = src.mCompositorTiming;
+
     if (CC_UNLIKELY(!mDeltas.empty())) {
-        ALOGE("FrameEventHistoryDelta: Clobbering history.");
+        ALOGE("FrameEventHistoryDelta assign clobbering history.");
     }
     mDeltas = std::move(src.mDeltas);
     ALOGE_IF(src.mDeltas.empty(), "Source mDeltas not empty.");
     return *this;
 }
 
-size_t FrameEventHistoryDelta::minFlattenedSize() {
-    return sizeof(uint32_t);
+constexpr size_t FrameEventHistoryDelta::minFlattenedSize() {
+    return sizeof(uint32_t) + // mDeltas.size()
+            sizeof(mCompositorTiming);
 }
 
 size_t FrameEventHistoryDelta::getFlattenedSize() const {
@@ -654,6 +695,8 @@ status_t FrameEventHistoryDelta::flatten(
         return NO_MEMORY;
     }
 
+    FlattenableUtils::write(buffer, size, mCompositorTiming);
+
     FlattenableUtils::write(
             buffer, size, static_cast<uint32_t>(mDeltas.size()));
     for (auto& d : mDeltas) {
@@ -670,6 +713,8 @@ status_t FrameEventHistoryDelta::unflatten(
     if (size < minFlattenedSize()) {
         return NO_MEMORY;
     }
+
+    FlattenableUtils::read(buffer, size, mCompositorTiming);
 
     uint32_t deltaCount = 0;
     FlattenableUtils::read(buffer, size, deltaCount);

@@ -18,6 +18,8 @@
 #define ANDROID_SURFACEFLINGERCONSUMER_H
 
 #include "DispSync.h"
+
+#include <ui/Region.h>
 #include <gui/GLConsumer.h>
 
 namespace android {
@@ -82,10 +84,11 @@ public:
     sp<Fence> getPrevFinalReleaseFence() const;
 #ifdef USE_HWC2
     virtual void setReleaseFence(const sp<Fence>& fence) override;
-    void releasePendingBuffer();
+    bool releasePendingBuffer();
 #endif
 
-    virtual void addAndGetFrameTimestamps(
+    void onDisconnect() override;
+    void addAndGetFrameTimestamps(
             const NewFrameEventsEntry* newTimestamps,
             FrameEventHistoryDelta* outDelta) override;
 

@@ -23,10 +23,10 @@
 #include <memory>
 #include <string>
 
-#include <ui/mat3.h>
-#include <ui/scalar.h>
-#include <ui/vec2.h>
-#include <ui/vec3.h>
+#include <math/mat3.h>
+#include <math/scalar.h>
+#include <math/vec2.h>
+#include <math/vec3.h>
 
 namespace android {
 
@@ -212,14 +212,14 @@ private:
         return v;
     }
 
-    const std::string mName;
+    std::string mName;
 
-    const mat3 mRGBtoXYZ;
-    const mat3 mXYZtoRGB;
+    mat3 mRGBtoXYZ;
+    mat3 mXYZtoRGB;
 
-    const transfer_function mOETF;
-    const transfer_function mEOTF;
-    const clamping_function mClamper;
+    transfer_function mOETF;
+    transfer_function mEOTF;
+    clamping_function mClamper;
 
     std::array<float2, 3> mPrimaries;
     float2 mWhitePoint;

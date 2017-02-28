@@ -619,6 +619,16 @@ typedef EGLClientBuffer (EGLAPIENTRYP PFNEGLCREATENATIVECLIENTBUFFERANDROID) (co
 #endif
 #endif
 
+#ifndef EGL_ANDROID_get_native_client_buffer
+#define EGL_ANDROID_get_native_client_buffer 1
+struct AHardwareBuffer;
+#ifdef EGL_EGLEXT_PROTOTYPES
+EGLAPI EGLClientBuffer eglGetNativeClientBufferANDROID (const AHardwareBuffer *buffer);
+#else
+typedef EGLClientBuffer (EGLAPIENTRYP PFNEGLGETNATIVECLIENTBUFFERANDROID) (const AHardwareBuffer *buffer);
+#endif
+#endif
+
 #ifndef EGL_ANDROID_front_buffer_auto_refresh
 #define EGL_ANDROID_front_buffer_auto_refresh 1
 #define EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID 0x314C
@@ -632,22 +642,31 @@ typedef EGLClientBuffer (EGLAPIENTRYP PFNEGLCREATENATIVECLIENTBUFFERANDROID) (co
 #ifndef EGL_ANDROID_get_frame_timestamps
 #define EGL_ANDROID_get_frame_timestamps 1
 #define EGL_TIMESTAMPS_ANDROID 0x314D
-#define EGL_REQUESTED_PRESENT_TIME_ANDROID 0x314E
-#define EGL_RENDERING_COMPLETE_TIME_ANDROID 0x314F
-#define EGL_COMPOSITION_LATCH_TIME_ANDROID 0x3150
-#define EGL_FIRST_COMPOSITION_START_TIME_ANDROID 0x3151
-#define EGL_LAST_COMPOSITION_START_TIME_ANDROID 0x3152
-#define EGL_FIRST_COMPOSITION_FINISHED_TIME_ANDROID 0x3153
-#define EGL_DISPLAY_PRESENT_TIME_ANDROID 0x3154
-#define EGL_DISPLAY_RETIRE_TIME_ANDROID 0x3155
-#define EGL_DEQUEUE_READY_TIME_ANDROID 0x3156
-#define EGL_READS_DONE_TIME_ANDROID 0x3157
+#define EGL_COMPOSITE_DEADLINE_ANDROID 0x314E
+#define EGL_COMPOSITE_INTERVAL_ANDROID 0x314F
+#define EGL_COMPOSITE_TO_PRESENT_LATENCY_ANDROID 0x3150
+#define EGL_REQUESTED_PRESENT_TIME_ANDROID 0x3151
+#define EGL_RENDERING_COMPLETE_TIME_ANDROID 0x3152
+#define EGL_COMPOSITION_LATCH_TIME_ANDROID 0x3153
+#define EGL_FIRST_COMPOSITION_START_TIME_ANDROID 0x3154
+#define EGL_LAST_COMPOSITION_START_TIME_ANDROID 0x3155
+#define EGL_FIRST_COMPOSITION_GPU_FINISHED_TIME_ANDROID 0x3156
+#define EGL_DISPLAY_PRESENT_TIME_ANDROID 0x3157
+#define EGL_DISPLAY_RETIRE_TIME_ANDROID 0x3158
+#define EGL_DEQUEUE_READY_TIME_ANDROID 0x3159
+#define EGL_READS_DONE_TIME_ANDROID 0x315A
 #ifdef EGL_EGLEXT_PROTOTYPES
-EGLAPI EGLBoolean eglGetFrameTimestampsANDROID(EGLDisplay dpy, EGLSurface surface, EGLint framesAgo, EGLint numTimestamps, const EGLint *timestamps, EGLnsecsANDROID *values);
-EGLAPI EGLBoolean eglQueryTimestampSupportedANDROID(EGLDisplay dpy, EGLSurface surface, EGLint timestamp);
+EGLAPI EGLBoolean eglGetNextFrameIdANDROID(EGLDisplay dpy, EGLSurface surface, EGLuint64KHR *frameId);
+EGLAPI EGLBoolean eglGetCompositorTimingANDROID(EGLDisplay dpy, EGLSurface surface, EGLint numTimestamps, const EGLint *names, EGLnsecsANDROID *values);
+EGLAPI EGLBoolean eglGetCompositorTimingSupportedANDROID(EGLDisplay dpy, EGLSurface surface, EGLint name);
+EGLAPI EGLBoolean eglGetFrameTimestampsANDROID(EGLDisplay dpy, EGLSurface surface, EGLuint64KHR frameId, EGLint numTimestamps, const EGLint *timestamps, EGLnsecsANDROID *values);
+EGLAPI EGLBoolean eglGetFrameTimestampSupportedANDROID(EGLDisplay dpy, EGLSurface surface, EGLint timestamp);
 #else
-typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETFRAMETIMESTAMPSANDROID) (EGLDisplay dpy, EGLSurface surface, EGLint framesAgo, EGLint numTimestamps, const EGLint *timestamps, EGLnsecsANDROID *values);
-typedef EGLBoolean (EGLAPIENTRYP PFNEGLQUERYTIMESTAMPSUPPORTEDANDROID) (EGLDisplay dpy, EGLSurface surface, EGLint timestamp);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETNEXTFRAMEIDANDROID) (EGLDisplay dpy, EGLSurface surface, EGLuint64KHR *frameId);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETCOMPOSITORTIMINGANDROID) (EGLDisplay dpy, EGLSurface surface, EGLint numTimestamps, const EGLint *names, EGLnsecsANDROID *values);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETCOMPOSITORTIMINGSUPPORTEDANDROID) (EGLDisplay dpy, EGLSurface surface, EGLint name);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETFRAMETIMESTAMPSANDROID) (EGLDisplay dpy, EGLSurface surface, EGLuint64KHR frameId, EGLint numTimestamps, const EGLint *timestamps, EGLnsecsANDROID *values);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLGETFRAMETIMESTAMPSUPPORTEDANDROID) (EGLDisplay dpy, EGLSurface surface, EGLint timestamp);
 #endif
 #endif
 

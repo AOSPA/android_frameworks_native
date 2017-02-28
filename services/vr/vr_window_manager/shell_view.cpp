@@ -238,9 +238,8 @@ ShellView::ShellView() {
 
 ShellView::~ShellView() {}
 
-int ShellView::Initialize(JNIEnv* env, jobject app_context,
-                          jobject class_loader) {
-  int ret = Application::Initialize(env, app_context, class_loader);
+int ShellView::Initialize() {
+  int ret = Application::Initialize();
   if (ret)
     return ret;
 
@@ -320,10 +319,6 @@ void ShellView::AdvanceFrame() {
         frame.frame->Finish() == HwcCallback::FrameStatus::kFinished) {
       current_frame_ = std::move(frame);
       pending_frames_.pop_front();
-
-      for(int i = 0; i < skipped_frame_count_ + 1; i++)
-        surface_flinger_view_->ReleaseFrame();
-      skipped_frame_count_ = 0;
     }
   }
 }
@@ -393,7 +388,7 @@ bool ShellView::OnClick(bool down) {
   return true;
 }
 
-void ShellView::OnFrame(std::unique_ptr<HwcCallback::Frame> frame) {
+base::unique_fd ShellView::OnFrame(std::unique_ptr<HwcCallback::Frame> frame) {
   ViewMode visibility =
       CalculateVisibilityFromLayerConfig(*frame.get(), current_vr_app_);
 
@@ -410,7 +405,6 @@ void ShellView::OnFrame(std::unique_ptr<HwcCallback::Frame> frame) {
   pending_frames_.emplace_back(std::move(frame), visibility);
 
   if (pending_frames_.size() > kMaximumPendingFrames) {
-    skipped_frame_count_++;
     pending_frames_.pop_front();
   }
 
@@ -428,6 +422,8 @@ void ShellView::OnFrame(std::unique_ptr<HwcCallback::Frame> frame) {
     QueueTask(MainThreadTask::EnteringVrMode);
     QueueTask(MainThreadTask::Show);
   }
+
+  return base::unique_fd(dup(release_fence_.get()));
 }
 
 bool ShellView::IsHit(const vec3& view_location, const vec3& view_direction,
@@ -519,6 +515,20 @@ void ShellView::DrawOverlays(const mat4& perspective, const mat4& eye_matrix,
 
     DrawIme();
   }
+
+  EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  EGLSyncKHR sync = eglCreateSyncKHR(display, EGL_SYNC_NATIVE_FENCE_ANDROID,
+                                     nullptr);
+  if (sync != EGL_NO_SYNC_KHR) {
+    // Need to flush in order to get the fence FD.
+    glFlush();
+    base::unique_fd fence(eglDupNativeFenceFDANDROID(display, sync));
+    eglDestroySyncKHR(display, sync);
+    UpdateReleaseFence(std::move(fence));
+  } else {
+    ALOGE("Failed to create sync fence");
+    UpdateReleaseFence(base::unique_fd());
+  }
 }
 
 void ShellView::DrawIme() {
@@ -604,10 +614,7 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
   vec3 pointer_location = last_pose_.GetPosition();
   quat view_quaternion = last_pose_.GetRotation();
 
-  bool gvr_api_active =
-      controller_ && controller_api_status_ == gvr::kControllerApiOk;
-
-  if (gvr_api_active || shmem_controller_active_) {
+  if (shmem_controller_active_) {
     view_quaternion = controller_orientation_;
     vec4 controller_location = controller_translate_ * vec4(0, 0, 0, 1);
     pointer_location = vec3(controller_location.x(), controller_location.y(),
@@ -635,18 +642,6 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
         }
         buttons >>= 4;
       }
-    } else if (controller_) {
-      if (controller_state_->GetButtonDown(gvr::kControllerButtonClick))
-        OnClick(true);
-
-      if (controller_state_->GetButtonUp(gvr::kControllerButtonClick))
-        OnClick(false);
-
-      if (controller_state_->GetButtonDown(gvr::kControllerButtonApp))
-        OnTouchpadButton(true, AMOTION_EVENT_BUTTON_BACK);
-
-      if (controller_state_->GetButtonUp(gvr::kControllerButtonApp))
-        OnTouchpadButton(false, AMOTION_EVENT_BUTTON_BACK);
     }
   }
 
@@ -676,7 +671,7 @@ void ShellView::DrawReticle(const mat4& perspective, const mat4& eye_matrix,
 
 void ShellView::DrawController(const mat4& perspective, const mat4& eye_matrix,
                                const mat4& head_matrix) {
-  if (!controller_ && !shmem_controller_active_)
+  if (!shmem_controller_active_)
     return;
 
   controller_program_->Use();
@@ -758,6 +753,11 @@ bool ShellView::OnTouchpadButton(bool down, int button) {
           status.toString8().string());
   }
   return true;
+}
+
+void ShellView::UpdateReleaseFence(base::unique_fd fence) {
+  std::lock_guard<std::mutex> guard(pending_frame_mutex_);
+  release_fence_ = std::move(fence);
 }
 
 }  // namespace dvr

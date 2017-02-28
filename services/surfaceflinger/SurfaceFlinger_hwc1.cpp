@@ -640,7 +640,7 @@ status_t SurfaceFlinger::getSupportedFrameTimestamps(
         FrameEvent::LATCH,
         FrameEvent::FIRST_REFRESH_START,
         FrameEvent::LAST_REFRESH_START,
-        FrameEvent::GL_COMPOSITION_DONE,
+        FrameEvent::GPU_COMPOSITION_DONE,
         FrameEvent::DISPLAY_RETIRE,
         FrameEvent::DEQUEUE_READY,
         FrameEvent::RELEASE,
@@ -1036,6 +1036,11 @@ void SurfaceFlinger::onVSyncReceived(HWComposer* /*composer*/, int type,
     }
 }
 
+void SurfaceFlinger::getCompositorTiming(CompositorTiming* compositorTiming) {
+    std::lock_guard<std::mutex> lock(mCompositeTimingLock);
+    *compositorTiming = mCompositorTiming;
+}
+
 void SurfaceFlinger::onHotplugReceived(int type, bool connected) {
     if (mEventThread == NULL) {
         // This is a temporary workaround for b/7145521.  A non-null pointer
@@ -1114,7 +1119,7 @@ void SurfaceFlinger::handleMessageRefresh() {
     setUpHWComposer();
     doDebugFlashRegions();
     doComposition();
-    postComposition();
+    postComposition(refreshStartTime);
 }
 
 void SurfaceFlinger::doDebugFlashRegions()
@@ -1171,7 +1176,61 @@ void SurfaceFlinger::preComposition(nsecs_t refreshStartTime)
     }
 }
 
-void SurfaceFlinger::postComposition()
+void SurfaceFlinger::updateCompositorTiming(
+        nsecs_t vsyncPhase, nsecs_t vsyncInterval, nsecs_t compositeTime,
+        std::shared_ptr<FenceTime>& presentFenceTime) {
+    // Update queue of past composite+present times and determine the
+    // most recently known composite to present latency.
+    mCompositePresentTimes.push({compositeTime, presentFenceTime});
+    nsecs_t compositeToPresentLatency = -1;
+    while (!mCompositePresentTimes.empty()) {
+        CompositePresentTime& cpt = mCompositePresentTimes.front();
+        // Cached values should have been updated before calling this method,
+        // which helps avoid duplicate syscalls.
+        nsecs_t displayTime = cpt.display->getCachedSignalTime();
+        if (displayTime == Fence::SIGNAL_TIME_PENDING) {
+            break;
+        }
+        compositeToPresentLatency = displayTime - cpt.composite;
+        mCompositePresentTimes.pop();
+    }
+
+    // Don't let mCompositePresentTimes grow unbounded, just in case.
+    while (mCompositePresentTimes.size() > 16) {
+        mCompositePresentTimes.pop();
+    }
+
+    // Integer division and modulo round toward 0 not -inf, so we need to
+    // treat negative and positive offsets differently.
+    nsecs_t idealLatency = (sfVsyncPhaseOffsetNs >= 0) ?
+            (vsyncInterval - (sfVsyncPhaseOffsetNs % vsyncInterval)) :
+            ((-sfVsyncPhaseOffsetNs) % vsyncInterval);
+
+    // Snap the latency to a value that removes scheduling jitter from the
+    // composition and present times, which often have >1ms of jitter.
+    // Reducing jitter is important if an app attempts to extrapolate
+    // something (such as user input) to an accurate diasplay time.
+    // Snapping also allows an app to precisely calculate sfVsyncPhaseOffsetNs
+    // with (presentLatency % interval).
+    nsecs_t snappedCompositeToPresentLatency = -1;
+    if (compositeToPresentLatency >= 0) {
+        nsecs_t bias = vsyncInterval / 2;
+        int64_t extraVsyncs =
+                (compositeToPresentLatency - idealLatency + bias) /
+                vsyncInterval;
+        nsecs_t extraLatency = extraVsyncs * vsyncInterval;
+        snappedCompositeToPresentLatency = idealLatency + extraLatency;
+    }
+
+    std::lock_guard<std::mutex> lock(mCompositeTimingLock);
+    mCompositorTiming.deadline = vsyncPhase - idealLatency;
+    mCompositorTiming.interval = vsyncInterval;
+    if (snappedCompositeToPresentLatency >= 0) {
+        mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
+    }
+}
+
+void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
 {
     const HWComposer& hwc = getHwComposer();
     const sp<const DisplayDevice> hw(getDefaultDisplayDevice());
@@ -1192,10 +1251,18 @@ void SurfaceFlinger::postComposition()
     mDisplayTimeline.push(retireFenceTime);
     mDisplayTimeline.updateSignalTimes();
 
+    nsecs_t vsyncPhase = mPrimaryDispSync.computeNextRefresh(0);
+    nsecs_t vsyncInterval = mPrimaryDispSync.getPeriod();
+
+    // We use the refreshStartTime which might be sampled a little later than
+    // when we started doing work for this frame, but that should be okay
+    // since updateCompositorTiming has snapping logic.
+    updateCompositorTiming(
+        vsyncPhase, vsyncInterval, refreshStartTime, retireFenceTime);
+
     mDrawingState.traverseInZOrder([&](Layer* layer) {
         bool frameLatched = layer->onPostComposition(glCompositionDoneFenceTime,
-                presentFenceTime, retireFenceTime);
-
+                presentFenceTime, retireFenceTime, mCompositorTiming);
         if (frameLatched) {
             recordBufferingStats(layer->getName().string(),
                     layer->getOccupancyHistory(false));
@@ -2258,11 +2325,18 @@ status_t SurfaceFlinger::removeLayer(const wp<Layer>& weakLayer) {
     const ssize_t index = (p != nullptr) ? p->removeChild(layer) :
              mCurrentState.layersSortedByZ.remove(layer);
 
-    if (index < 0) {
+    // As a matter of normal operation, the LayerCleaner will produce a second
+    // attempt to remove the surface. The Layer will be kept alive in mDrawingState
+    // so we will succeed in promoting it, but it's already been removed
+    // from mCurrentState. As long as we can find it in mDrawingState we have no problem
+    // otherwise something has gone wrong and we are leaking the layer.
+    if (index < 0 && mDrawingState.layersSortedByZ.indexOf(layer) < 0) {
         ALOGE("Failed to find layer (%s) in layer parent (%s).",
                 layer->getName().string(),
                 (p != nullptr) ? p->getName().string() : "no-parent");
         return BAD_VALUE;
+    } else if (index < 0) {
+        return NO_ERROR;
     }
 
     mLayersPendingRemoval.add(layer);

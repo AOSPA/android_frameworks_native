@@ -1,9 +1,9 @@
 #ifndef APPLICATIONS_EXPERIMENTS_SURFACE_FLINGER_DEMO_SURFACE_FLINGER_VIEW_H_
 #define APPLICATIONS_EXPERIMENTS_SURFACE_FLINGER_DEMO_SURFACE_FLINGER_VIEW_H_
 
-#include <utils/StrongPointer.h>
-
 #include <memory>
+
+#include <impl/vr_composer_view.h>
 
 #include "hwc_callback.h"
 
@@ -36,12 +36,9 @@ class SurfaceFlingerView {
                    TextureLayer* ime_layer, bool debug,
                    bool skip_first_layer) const;
 
-  void ReleaseFrame();
-
  private:
-  sp<IVrComposerView> composer_service_;
-  std::unique_ptr<HwcCallback> composer_observer_;
-
+  sp<IComposer> vr_hwcomposer_;
+  std::unique_ptr<VrComposerView> vr_composer_view_;
   int width_ = 0;
   int height_ = 0;
 

@@ -62,6 +62,7 @@ static constexpr char kEnableSensorRecordProp[] = "dvr.enable_6dof_recording";
 static constexpr char kEnableSensorPlayProp[] = "dvr.enable_6dof_playback";
 static constexpr char kEnableSensorPlayIdProp[] = "dvr.6dof_playback_id";
 static constexpr char kEnablePoseRecordProp[] = "dvr.enable_pose_recording";
+static constexpr char kPredictorTypeProp[] = "dvr.predictor_type";
 
 // Persistent buffer names.
 static constexpr char kPoseRingBufferName[] = "PoseService:RingBuffer";
@@ -229,6 +230,15 @@ PoseService::PoseService(SensorThread* sensor_thread)
     }
   }
 
+  switch (property_get_int32(kPredictorTypeProp, 0)) {
+    case 1:
+      pose_predictor_ = posepredictor::Predictor::Create(
+          posepredictor::PredictorType::Quadric);
+    default:
+      pose_predictor_ = posepredictor::Predictor::Create(
+          posepredictor::PredictorType::Linear);
+  }
+
   enable_pose_recording_ = property_get_bool(kEnablePoseRecordProp, 0) == 1;
 
   SetPoseMode(DVR_POSE_MODE_6DOF);
@@ -326,10 +336,8 @@ void PoseService::WriteAsyncPoses(const Vector3d& start_t_head,
     pose_timestamp = GetSystemClockNs() - 1;
 
   // Feed the sample to the predictor
-  pose_predictor_.Add(PosePredictor::Sample{.position = start_t_head,
-                                            .orientation = start_q_head,
-                                            .time_ns = pose_timestamp},
-                      &last_known_pose_);
+  AddPredictorPose(pose_predictor_.get(), start_t_head, start_q_head,
+                   pose_timestamp, &last_known_pose_);
 
   // Store one extra value, because the application is working on the next
   // frame and expects the minimum count from that frame on.
@@ -351,9 +359,9 @@ void PoseService::WriteAsyncPoses(const Vector3d& start_t_head,
 
     // Make a pose prediction
     if (enable_pose_prediction_) {
-      pose_predictor_.Predict(target_time,
-                              target_time + right_eye_photon_offset_ns_,
-                              mapped_pose_buffer_->ring + index);
+      PredictPose(pose_predictor_.get(), target_time,
+                  target_time + right_eye_photon_offset_ns_,
+                  mapped_pose_buffer_->ring + index);
     } else {
       mapped_pose_buffer_->ring[index] = last_known_pose_;
     }
