@@ -26,7 +26,6 @@
 #include <utils/String8.h>
 #include <utils/threads.h>
 
-#include <binder/IMemory.h>
 #include <binder/IServiceManager.h>
 
 #include <system/graphics.h>
@@ -38,6 +37,7 @@
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/ISurfaceComposerClient.h>
+#include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 
 #include <private/gui/ComposerService.h>
@@ -157,7 +157,7 @@ public:
     status_t setAlpha(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
             float alpha);
     status_t setMatrix(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
-            float dsdx, float dtdx, float dsdy, float dtdy);
+            float dsdx, float dtdx, float dtdy, float dsdy);
     status_t setOrientation(int orientation);
     status_t setCrop(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
             const Rect& crop);
@@ -168,9 +168,14 @@ public:
     status_t deferTransactionUntil(const sp<SurfaceComposerClient>& client,
             const sp<IBinder>& id, const sp<IBinder>& handle,
             uint64_t frameNumber);
+    status_t deferTransactionUntil(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id, const sp<Surface>& barrierSurface,
+            uint64_t frameNumber);
     status_t reparentChildren(const sp<SurfaceComposerClient>& client,
             const sp<IBinder>& id,
             const sp<IBinder>& newParentHandle);
+    status_t detachChildren(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id);
     status_t setOverrideScalingMode(const sp<SurfaceComposerClient>& client,
             const sp<IBinder>& id, int32_t overrideScalingMode);
     status_t setGeometryAppliesWithResize(const sp<SurfaceComposerClient>& client,
@@ -392,7 +397,7 @@ status_t Composer::setLayerStack(const sp<SurfaceComposerClient>& client,
 
 status_t Composer::setMatrix(const sp<SurfaceComposerClient>& client,
         const sp<IBinder>& id, float dsdx, float dtdx,
-        float dsdy, float dtdy) {
+        float dtdy, float dsdy) {
     Mutex::Autolock _l(mLock);
     layer_state_t* s = getLayerStateLocked(client, id);
     if (!s)
@@ -439,7 +444,21 @@ status_t Composer::deferTransactionUntil(
         return BAD_INDEX;
     }
     s->what |= layer_state_t::eDeferTransaction;
-    s->handle = handle;
+    s->barrierHandle = handle;
+    s->frameNumber = frameNumber;
+    return NO_ERROR;
+}
+
+status_t Composer::deferTransactionUntil(
+        const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
+        const sp<Surface>& barrierSurface, uint64_t frameNumber) {
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDeferTransaction;
+    s->barrierGbp = barrierSurface->getIGraphicBufferProducer();
     s->frameNumber = frameNumber;
     return NO_ERROR;
 }
@@ -455,6 +474,18 @@ status_t Composer::reparentChildren(
     }
     s->what |= layer_state_t::eReparentChildren;
     s->reparentHandle = newParentHandle;
+    return NO_ERROR;
+}
+
+status_t Composer::detachChildren(
+        const sp<SurfaceComposerClient>& client,
+        const sp<IBinder>& id) {
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDetachChildren;
     return NO_ERROR;
 }
 
@@ -768,8 +799,8 @@ status_t SurfaceComposerClient::setLayerStack(const sp<IBinder>& id, uint32_t la
 }
 
 status_t SurfaceComposerClient::setMatrix(const sp<IBinder>& id, float dsdx, float dtdx,
-        float dsdy, float dtdy) {
-    return getComposer().setMatrix(this, id, dsdx, dtdx, dsdy, dtdy);
+        float dtdy, float dsdy) {
+    return getComposer().setMatrix(this, id, dsdx, dtdx, dtdy, dsdy);
 }
 
 status_t SurfaceComposerClient::deferTransactionUntil(const sp<IBinder>& id,
@@ -777,9 +808,18 @@ status_t SurfaceComposerClient::deferTransactionUntil(const sp<IBinder>& id,
     return getComposer().deferTransactionUntil(this, id, handle, frameNumber);
 }
 
+status_t SurfaceComposerClient::deferTransactionUntil(const sp<IBinder>& id,
+        const sp<Surface>& barrierSurface, uint64_t frameNumber) {
+    return getComposer().deferTransactionUntil(this, id, barrierSurface, frameNumber);
+}
+
 status_t SurfaceComposerClient::reparentChildren(const sp<IBinder>& id,
         const sp<IBinder>& newParentHandle) {
     return getComposer().reparentChildren(this, id, newParentHandle);
+}
+
+status_t SurfaceComposerClient::detachChildren(const sp<IBinder>& id) {
+    return getComposer().detachChildren(this, id);
 }
 
 status_t SurfaceComposerClient::setOverrideScalingMode(

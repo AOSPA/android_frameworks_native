@@ -47,6 +47,7 @@
 #include "Transform.h"
 
 #include "DisplayHardware/HWComposer.h"
+#include "DisplayHardware/HWComposerBufferCache.h"
 #include "RenderEngine/Mesh.h"
 #include "RenderEngine/Texture.h"
 
@@ -109,7 +110,14 @@ public:
         Geometry active;
         Geometry requested;
         int32_t z;
+
+        // The identifier of the layer stack this layer belongs to. A layer can
+        // only be associated to a single layer stack. A layer stack is a
+        // z-ordered group of layers which can be associated to one or more
+        // displays. Using the same layer stack on different displays is a way
+        // to achieve mirroring.
         uint32_t layerStack;
+
 #ifdef USE_HWC2
         float alpha;
 #else
@@ -128,9 +136,9 @@ public:
         // finalCrop is expressed in display space coordinate.
         Rect finalCrop;
 
-        // If set, defers this state update until the Layer identified by handle
+        // If set, defers this state update until the identified Layer
         // receives a frame with the given frameNumber
-        wp<IBinder> handle;
+        wp<Layer> barrierLayer;
         uint64_t frameNumber;
 
         // the transparentRegion hint is a bit special, it's latched only
@@ -171,10 +179,12 @@ public:
     bool setLayerStack(uint32_t layerStack);
     bool setDataSpace(android_dataspace dataSpace);
     uint32_t getLayerStack() const;
-    void deferTransactionUntil(const sp<IBinder>& handle, uint64_t frameNumber);
+    void deferTransactionUntil(const sp<IBinder>& barrierHandle, uint64_t frameNumber);
+    void deferTransactionUntil(const sp<Layer>& barrierLayer, uint64_t frameNumber);
     bool setOverrideScalingMode(int32_t overrideScalingMode);
     void setInfo(uint32_t type, uint32_t appId);
     bool reparentChildren(const sp<IBinder>& layer);
+    bool detachChildren();
 
     // If we have received a new buffer this frame, we will pass its surface
     // damage down to hardware composer. Otherwise, we must send a region with
@@ -374,20 +384,13 @@ public:
 #ifdef USE_HWC2
     // -----------------------------------------------------------------------
 
-    void eraseHwcLayer(int32_t hwcId) {
-        mHwcLayers.erase(hwcId);
-
-        Mutex::Autolock lock(mHwcBufferCacheMutex);
-        mHwcBufferCaches.erase(hwcId);
-    }
-
     bool hasHwcLayer(int32_t hwcId) {
         if (mHwcLayers.count(hwcId) == 0) {
             return false;
         }
         if (mHwcLayers[hwcId].layer->isAbandoned()) {
             ALOGI("Erasing abandoned layer %s on %d", mName.string(), hwcId);
-            eraseHwcLayer(hwcId);
+            mHwcLayers.erase(hwcId);
             return false;
         }
         return true;
@@ -403,11 +406,8 @@ public:
     void setHwcLayer(int32_t hwcId, std::shared_ptr<HWC2::Layer>&& layer) {
         if (layer) {
             mHwcLayers[hwcId].layer = layer;
-
-            Mutex::Autolock lock(mHwcBufferCacheMutex);
-            mHwcBufferCaches[hwcId] = HWComposerBufferCache();
         } else {
-            eraseHwcLayer(hwcId);
+            mHwcLayers.erase(hwcId);
         }
     }
 
@@ -502,7 +502,6 @@ private:
     // Interface implementation for SurfaceFlingerConsumer::ContentsChangedListener
     virtual void onFrameAvailable(const BufferItem& item) override;
     virtual void onFrameReplaced(const BufferItem& item) override;
-    virtual void onBuffersReleased() override;
     virtual void onSidebandStreamChanged() override;
 
     void commitTransaction(const State& stateToCommit);
@@ -694,14 +693,14 @@ private:
         bool clearClientTarget;
         Rect displayFrame;
         FloatRect sourceCrop;
+        HWComposerBufferCache bufferCache;
     };
-    std::unordered_map<int32_t, HWCInfo> mHwcLayers;
 
-    // We need one HWComposerBufferCache for each HWC display.  We cannot have
-    // HWComposerBufferCache in HWCInfo because HWCInfo can only be accessed
-    // from the main thread.
-    Mutex mHwcBufferCacheMutex;
-    std::unordered_map<int32_t, HWComposerBufferCache> mHwcBufferCaches;
+    // A layer can be attached to multiple displays when operating in mirror mode
+    // (a.k.a: when several displays are attached with equal layerStack). In this
+    // case we need to keep track. In non-mirror mode, a layer will have only one
+    // HWCInfo. This map key is a display layerStack.
+    std::unordered_map<int32_t, HWCInfo> mHwcLayers;
 #else
     bool mIsGlesComposition;
 #endif

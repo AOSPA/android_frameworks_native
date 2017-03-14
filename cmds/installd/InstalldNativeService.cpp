@@ -203,14 +203,20 @@ status_t InstalldNativeService::dump(int fd, const Vector<String16> & /* args */
 
     out << "installd is happy!" << endl;
 
-    out << endl << "Devices with quota support:" << endl;
-    for (const auto& n : mQuotaDevices) {
-        out << "    " << n.first << " = " << n.second << endl;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
+        out << endl << "Devices with quota support:" << endl;
+        for (const auto& n : mQuotaDevices) {
+            out << "    " << n.first << " = " << n.second << endl;
+        }
     }
 
-    out << endl << "Per-UID cache quotas:" << endl;
-    for (const auto& n : mCacheQuotas) {
-        out << "    " << n.first << " = " << n.second << endl;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
+        out << endl << "Per-UID cache quotas:" << endl;
+        for (const auto& n : mCacheQuotas) {
+            out << "    " << n.first << " = " << n.second << endl;
+        }
     }
 
     out << endl;
@@ -426,12 +432,11 @@ binder::Status InstalldNativeService::clearAppProfiles(const std::string& packag
     CHECK_ARGUMENT_PACKAGE_NAME(packageName);
     std::lock_guard<std::recursive_mutex> lock(mLock);
 
-    const char* pkgname = packageName.c_str();
     binder::Status res = ok();
-    if (!clear_reference_profile(pkgname)) {
+    if (!clear_reference_profile(packageName)) {
         res = error("Failed to clear reference profile for " + packageName);
     }
-    if (!clear_current_profiles(pkgname)) {
+    if (!clear_current_profiles(packageName)) {
         res = error("Failed to clear current profiles for " + packageName);
     }
     return res;
@@ -479,7 +484,7 @@ binder::Status InstalldNativeService::clearAppData(const std::unique_ptr<std::st
             }
         }
         if (!only_cache) {
-            if (!clear_current_profile(pkgname, userId)) {
+            if (!clear_current_profile(packageName, userId)) {
                 res = error("Failed to clear current profile for " + packageName);
             }
         }
@@ -487,13 +492,13 @@ binder::Status InstalldNativeService::clearAppData(const std::unique_ptr<std::st
     return res;
 }
 
-static int destroy_app_reference_profile(const char *pkgname) {
+static int destroy_app_reference_profile(const std::string& pkgname) {
     return delete_dir_contents_and_dir(
         create_data_ref_profile_package_path(pkgname),
         /*ignore_if_missing*/ true);
 }
 
-static int destroy_app_current_profiles(const char *pkgname, userid_t userid) {
+static int destroy_app_current_profiles(const std::string& pkgname, userid_t userid) {
     return delete_dir_contents_and_dir(
         create_data_user_profile_package_path(userid, pkgname),
         /*ignore_if_missing*/ true);
@@ -504,15 +509,14 @@ binder::Status InstalldNativeService::destroyAppProfiles(const std::string& pack
     CHECK_ARGUMENT_PACKAGE_NAME(packageName);
     std::lock_guard<std::recursive_mutex> lock(mLock);
 
-    const char* pkgname = packageName.c_str();
     binder::Status res = ok();
     std::vector<userid_t> users = get_known_users(/*volume_uuid*/ nullptr);
     for (auto user : users) {
-        if (destroy_app_current_profiles(pkgname, user) != 0) {
+        if (destroy_app_current_profiles(packageName, user) != 0) {
             res = error("Failed to destroy current profiles for " + packageName);
         }
     }
-    if (destroy_app_reference_profile(pkgname) != 0) {
+    if (destroy_app_reference_profile(packageName) != 0) {
         res = error("Failed to destroy reference profile for " + packageName);
     }
     return res;
@@ -540,11 +544,11 @@ binder::Status InstalldNativeService::destroyAppData(const std::unique_ptr<std::
         if (delete_dir_contents_and_dir(path) != 0) {
             res = error("Failed to delete " + path);
         }
-        destroy_app_current_profiles(pkgname, userId);
+        destroy_app_current_profiles(packageName, userId);
         // TODO(calin): If the package is still installed by other users it's probably
         // beneficial to keep the reference profile around.
         // Verify if it's ok to do that.
-        destroy_app_reference_profile(pkgname);
+        destroy_app_reference_profile(packageName);
     }
     return res;
 }
@@ -755,9 +759,6 @@ binder::Status InstalldNativeService::freeCache(const std::unique_ptr<std::strin
     CHECK_ARGUMENT_UUID(uuid);
     std::lock_guard<std::recursive_mutex> lock(mLock);
 
-    // TODO: remove this once framework is more robust
-    invalidateMounts();
-
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
     auto data_path = create_data_path(uuid_);
     auto device = findQuotaDeviceForUuid(uuid);
@@ -789,7 +790,7 @@ binder::Status InstalldNativeService::freeCache(const std::unique_ptr<std::strin
                     (char*) create_data_user_de_path(uuid_, user).c_str(),
                     nullptr
             };
-            if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_XDEV, NULL))) {
+            if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
                 return error("Failed to fts_open");
             }
             while ((p = fts_read(fts)) != NULL) {
@@ -802,7 +803,10 @@ binder::Status InstalldNativeService::freeCache(const std::unique_ptr<std::strin
                         auto tracker = std::shared_ptr<CacheTracker>(new CacheTracker(
                                 multiuser_get_user_id(uid), multiuser_get_app_id(uid), device));
                         tracker->addDataPath(p->fts_path);
-                        tracker->cacheQuota = mCacheQuotas[uid];
+                        {
+                            std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
+                            tracker->cacheQuota = mCacheQuotas[uid];
+                        }
                         if (tracker->cacheQuota == 0) {
                             LOG(WARNING) << "UID " << uid << " has no cache quota; assuming 64MB";
                             tracker->cacheQuota = 67108864;
@@ -1122,7 +1126,7 @@ static void collectManualExternalStatsForUser(const std::string& path, struct st
     FTS *fts;
     FTSENT *p;
     char *argv[] = { (char*) path.c_str(), nullptr };
-    if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_XDEV, NULL))) {
+    if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
         PLOG(ERROR) << "Failed to fts_open " << path;
         return;
     }
@@ -1161,7 +1165,8 @@ binder::Status InstalldNativeService::getAppSize(const std::unique_ptr<std::stri
     for (auto packageName : packageNames) {
         CHECK_ARGUMENT_PACKAGE_NAME(packageName);
     }
-    std::lock_guard<std::recursive_mutex> lock(mLock);
+    // NOTE: Locking is relaxed on this method, since it's limited to
+    // read-only measurements without mutation.
 
     // When modifying this logic, always verify using tests:
     // runtest -x frameworks/base/services/tests/servicestests/src/com/android/server/pm/InstallerTest.java -m testGetAppSize
@@ -1252,7 +1257,7 @@ binder::Status InstalldNativeService::getAppSize(const std::unique_ptr<std::stri
             calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
                     sharedGid, -1);
         }
-        calculate_tree_size(create_data_misc_foreign_dex_path(userId), &stats.dataSize,
+        calculate_tree_size(create_data_user_profile_path(userId), &stats.dataSize,
                 multiuser_get_uid(userId, appId), -1);
         ATRACE_END();
     }
@@ -1276,7 +1281,8 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         std::vector<int64_t>* _aidl_return) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
-    std::lock_guard<std::recursive_mutex> lock(mLock);
+    // NOTE: Locking is relaxed on this method, since it's limited to
+    // read-only measurements without mutation.
 
     // When modifying this logic, always verify using tests:
     // runtest -x frameworks/base/services/tests/servicestests/src/com/android/server/pm/InstallerTest.java -m testGetUserSize
@@ -1350,7 +1356,7 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         ATRACE_BEGIN("dalvik");
         calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
                 -1, -1, true);
-        calculate_tree_size(create_data_misc_foreign_dex_path(userId), &stats.dataSize,
+        calculate_tree_size(create_data_user_profile_path(userId), &stats.dataSize,
                 -1, -1, true);
         ATRACE_END();
 
@@ -1400,7 +1406,7 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
 
         ATRACE_BEGIN("dalvik");
         calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize);
-        calculate_tree_size(create_data_misc_foreign_dex_path(userId), &stats.dataSize);
+        calculate_tree_size(create_data_user_profile_path(userId), &stats.dataSize);
         ATRACE_END();
     }
 
@@ -1422,7 +1428,8 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
         int32_t userId, int32_t flags, std::vector<int64_t>* _aidl_return) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
-    std::lock_guard<std::recursive_mutex> lock(mLock);
+    // NOTE: Locking is relaxed on this method, since it's limited to
+    // read-only measurements without mutation.
 
     // When modifying this logic, always verify using tests:
     // runtest -x frameworks/base/services/tests/servicestests/src/com/android/server/pm/InstallerTest.java -m testGetExternalSize
@@ -1488,7 +1495,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
         FTSENT *p;
         auto path = create_data_media_path(uuid_, userId);
         char *argv[] = { (char*) path.c_str(), nullptr };
-        if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_XDEV, NULL))) {
+        if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
             return error("Failed to fts_open " + path);
         }
         while ((p = fts_read(fts)) != NULL) {
@@ -1497,7 +1504,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
             switch (p->fts_info) {
             case FTS_F:
                 // Only categorize files not belonging to apps
-                if (p->fts_statp->st_gid < AID_APP_START) {
+                if (p->fts_parent->fts_number == 0) {
                     ext = strrchr(p->fts_name, '.');
                     if (ext != nullptr) {
                         switch (MatchExtension(++ext)) {
@@ -1509,6 +1516,11 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
                 }
                 // Fall through to always count against total
             case FTS_D:
+                // Ignore data belonging to specific apps
+                p->fts_number = p->fts_parent->fts_number;
+                if (p->fts_level == 1 && !strcmp(p->fts_name, "Android")) {
+                    p->fts_number = 1;
+                }
             case FTS_DEFAULT:
             case FTS_SL:
             case FTS_SLNONE:
@@ -1535,7 +1547,7 @@ binder::Status InstalldNativeService::setAppQuota(const std::unique_ptr<std::str
         int32_t userId, int32_t appId, int64_t cacheQuota) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
-    std::lock_guard<std::recursive_mutex> lock(mLock);
+    std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
 
     int32_t uid = multiuser_get_uid(userId, appId);
     mCacheQuotas[uid] = cacheQuota;
@@ -1988,7 +2000,7 @@ binder::Status InstalldNativeService::reconcileSecondaryDexFile(
 
 binder::Status InstalldNativeService::invalidateMounts() {
     ENFORCE_UID(AID_SYSTEM);
-    std::lock_guard<std::recursive_mutex> lock(mLock);
+    std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
 
     mQuotaDevices.clear();
 
@@ -2019,6 +2031,7 @@ binder::Status InstalldNativeService::invalidateMounts() {
 
 std::string InstalldNativeService::findQuotaDeviceForUuid(
         const std::unique_ptr<std::string>& uuid) {
+    std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
     auto path = create_data_path(uuid ? uuid->c_str() : nullptr);
     return mQuotaDevices[path];
 }

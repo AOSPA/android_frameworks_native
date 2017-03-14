@@ -19,12 +19,13 @@
 
 #include <stdint.h>
 
-#include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include <android/hidl/manager/1.0/IServiceManager.h>
 
+#include "NullableOStream.h"
 #include "TableEntry.h"
 
 namespace android {
@@ -38,6 +39,7 @@ enum : unsigned int {
     DUMP_BINDERIZED_ERROR                   = 1 << 3,
     DUMP_PASSTHROUGH_ERROR                  = 1 << 4,
     DUMP_ALL_LIBS_ERROR                     = 1 << 5,
+    IO_ERROR                                = 1 << 6,
 };
 using Status = unsigned int;
 
@@ -49,17 +51,21 @@ private:
     Status parseArgs(int argc, char **argv);
     Status fetch();
     void postprocess();
-    void dump() const;
+    void dump();
     void usage() const;
-    void putEntry(TableEntry &&entry);
+    void putEntry(TableEntrySource source, TableEntry &&entry);
     Status fetchPassthrough(const sp<::android::hidl::manager::V1_0::IServiceManager> &manager);
     Status fetchBinderized(const sp<::android::hidl::manager::V1_0::IServiceManager> &manager);
     Status fetchAllLibraries(const sp<::android::hidl::manager::V1_0::IServiceManager> &manager);
     bool getReferencedPids(
         pid_t serverPid, std::map<uint64_t, Pids> *objects) const;
+    void dumpTable();
+    void dumpVintf() const;
     void printLine(
             const std::string &interfaceName,
-            const std::string &transport, const std::string &server,
+            const std::string &transport,
+            const std::string &arch,
+            const std::string &server,
             const std::string &serverCmdline,
             const std::string &address, const std::string &clients,
             const std::string &clientCmdlines) const ;
@@ -68,14 +74,21 @@ private:
     // Call getCmdline on all pid in pids. If it returns empty string, the process might
     // have died, and the pid is removed from pids.
     void removeDeadProcesses(Pids *pids);
+    void forEachTable(const std::function<void(Table &)> &f);
+    void forEachTable(const std::function<void(const Table &)> &f) const;
 
-    Table mTable{};
-    std::ostream &mErr = std::cerr;
-    std::ostream &mOut = std::cout;
+    Table mServicesTable{};
+    Table mPassthroughRefTable{};
+    Table mImplementationsTable{};
+
+    NullableOStream<std::ostream> mErr = std::cerr;
+    NullableOStream<std::ostream> mOut = std::cout;
+    NullableOStream<std::ofstream> mFileOutput = nullptr;
     TableEntryCompare mSortColumn = nullptr;
     TableEntrySelect mSelectedColumns = 0;
     // If true, cmdlines will be printed instead of pid.
-    bool mEnableCmdlines;
+    bool mEnableCmdlines = false;
+    bool mVintf = false;
     // If an entry does not exist, need to ask /proc/{pid}/cmdline to get it.
     // If an entry exist but is an empty string, process might have died.
     // If an entry exist and not empty, it contains the cached content of /proc/{pid}/cmdline.

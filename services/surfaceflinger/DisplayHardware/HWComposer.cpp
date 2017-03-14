@@ -47,7 +47,7 @@
 #include <log/log.h>
 
 #include "HWComposer.h"
-#include "HWC2On1Adapter.h"
+#include "hwc2on1adapter/HWC2On1Adapter.h"
 #include "HWC2.h"
 #include "ComposerHal.h"
 
@@ -69,7 +69,8 @@ HWComposer::HWComposer(bool useVrComposer)
       mCBContext(),
       mEventHandler(nullptr),
       mVSyncCounts(),
-      mRemainingHwcVirtualDisplays(0)
+      mRemainingHwcVirtualDisplays(0),
+      mDumpMayLockUp(false)
 {
     for (size_t i=0 ; i<HWC_NUM_PHYSICAL_DISPLAY_TYPES ; i++) {
         mLastHwVSync[i] = 0;
@@ -264,6 +265,15 @@ status_t HWComposer::allocateVirtualDisplay(uint32_t width, uint32_t height,
     if (mRemainingHwcVirtualDisplays == 0) {
         ALOGE("allocateVirtualDisplay: No remaining virtual displays");
         return NO_MEMORY;
+    }
+
+    if (MAX_VIRTUAL_DISPLAY_DIMENSION != 0 &&
+        (width > MAX_VIRTUAL_DISPLAY_DIMENSION ||
+         height > MAX_VIRTUAL_DISPLAY_DIMENSION)) {
+        ALOGE("createVirtualDisplay: Can't create a virtual display with"
+                      " a dimension > %u (tried %u x %u)",
+              MAX_VIRTUAL_DISPLAY_DIMENSION, width, height);
+        return INVALID_OPERATION;
     }
 
     std::shared_ptr<HWC2::Display> display;
@@ -489,6 +499,8 @@ status_t HWComposer::prepare(DisplayDevice& displayDevice) {
         return NO_ERROR;
     }
 
+    mDumpMayLockUp = true;
+
     uint32_t numTypes = 0;
     uint32_t numRequests = 0;
     auto error = hwcDisplay->validate(&numTypes, &numRequests);
@@ -633,6 +645,9 @@ status_t HWComposer::presentAndGetReleaseFences(int32_t displayId) {
     auto& displayData = mDisplayData[displayId];
     auto& hwcDisplay = displayData.hwcDisplay;
     auto error = hwcDisplay->present(&displayData.lastPresentFence);
+
+    mDumpMayLockUp = false;
+
     if (error != HWC2::Error::None) {
         ALOGE("presentAndGetReleaseFences: failed for display %d: %s (%d)",
               displayId, to_string(error).c_str(), static_cast<int32_t>(error));
@@ -878,6 +893,11 @@ bool HWComposer::isUsingVrComposer() const {
 }
 
 void HWComposer::dump(String8& result) const {
+    if (mDumpMayLockUp) {
+        result.append("HWComposer dump skipped because present in progress");
+        return;
+    }
+
     // TODO: In order to provide a dump equivalent to HWC1, we need to shadow
     // all the state going into the layers. This is probably better done in
     // Layer itself, but it's going to take a bit of work to get there.
@@ -903,42 +923,6 @@ HWComposer::DisplayData::~DisplayData() {
 void HWComposer::DisplayData::reset() {
     ALOGV("DisplayData reset");
     *this = DisplayData();
-}
-
-void HWComposerBufferCache::clear()
-{
-    mBuffers.clear();
-}
-
-void HWComposerBufferCache::getHwcBuffer(int slot,
-        const sp<GraphicBuffer>& buffer,
-        uint32_t* outSlot, sp<GraphicBuffer>* outBuffer)
-{
-#ifdef BYPASS_IHWC
-    *outSlot = slot;
-    *outBuffer = buffer;
-#else
-    if (slot == BufferQueue::INVALID_BUFFER_SLOT || slot < 0) {
-        // default to slot 0
-        slot = 0;
-    }
-
-    if (static_cast<size_t>(slot) >= mBuffers.size()) {
-        mBuffers.resize(slot + 1);
-    }
-
-    *outSlot = slot;
-
-    if (mBuffers[slot] == buffer) {
-        // already cached in HWC, skip sending the buffer
-        *outBuffer = nullptr;
-    } else {
-        *outBuffer = buffer;
-
-        // update cache
-        mBuffers[slot] = buffer;
-    }
-#endif
 }
 
 // ---------------------------------------------------------------------------

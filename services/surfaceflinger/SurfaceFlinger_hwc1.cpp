@@ -33,13 +33,11 @@
 
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
-#include <binder/MemoryHeapBase.h>
 #include <binder/PermissionCache.h>
 
 #include <ui/DisplayInfo.h>
 #include <ui/DisplayStatInfo.h>
 
-#include <gui/BitTube.h>
 #include <gui/BufferQueue.h>
 #include <gui/GuiConfig.h>
 #include <gui/IDisplayEventConnection.h>
@@ -86,6 +84,9 @@
 #include "RenderEngine/RenderEngine.h"
 #include <cutils/compiler.h>
 
+#include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
+#include <configstore/Utils.h>
+
 #define DISPLAY_COUNT       1
 
 /*
@@ -97,33 +98,10 @@
 EGLAPI const char* eglQueryStringImplementationANDROID(EGLDisplay dpy, EGLint name);
 
 namespace android {
-
-// This is the phase offset in nanoseconds of the software vsync event
-// relative to the vsync event reported by HWComposer.  The software vsync
-// event is when SurfaceFlinger and Choreographer-based applications run each
-// frame.
-//
-// This phase offset allows adjustment of the minimum latency from application
-// wake-up (by Choregographer) time to the time at which the resulting window
-// image is displayed.  This value may be either positive (after the HW vsync)
-// or negative (before the HW vsync).  Setting it to 0 will result in a
-// minimum latency of two vsync periods because the app and SurfaceFlinger
-// will run just after the HW vsync.  Setting it to a positive number will
-// result in the minimum latency being:
-//
-//     (2 * VSYNC_PERIOD - (vsyncPhaseOffsetNs % VSYNC_PERIOD))
-//
-// Note that reducing this latency makes it more likely for the applications
-// to not have their window content image ready in time.  When this happens
-// the latency will end up being an additional vsync period, and animations
-// will hiccup.  Therefore, this latency should be tuned somewhat
-// conservatively (or at least with awareness of the trade-off being made).
-static const int64_t vsyncPhaseOffsetNs = VSYNC_EVENT_PHASE_OFFSET_NS;
-
-// This is the phase offset at which SurfaceFlinger's composition runs.
-static const int64_t sfVsyncPhaseOffsetNs = SF_VSYNC_EVENT_PHASE_OFFSET_NS;
-
 // ---------------------------------------------------------------------------
+
+using namespace android::hardware::configstore;
+using namespace android::hardware::configstore::V1_0;
 
 const String16 sHardwareTest("android.permission.HARDWARE_TEST");
 const String16 sAccessSurfaceFlinger("android.permission.ACCESS_SURFACE_FLINGER");
@@ -131,6 +109,8 @@ const String16 sReadFramebuffer("android.permission.READ_FRAME_BUFFER");
 const String16 sDump("android.permission.DUMP");
 
 // ---------------------------------------------------------------------------
+int64_t SurfaceFlinger::vsyncPhaseOffsetNs;
+int64_t SurfaceFlinger::sfVsyncPhaseOffsetNs;
 
 SurfaceFlinger::SurfaceFlinger()
     :   BnSurfaceComposer(),
@@ -155,7 +135,7 @@ SurfaceFlinger::SurfaceFlinger()
         mLastTransactionTime(0),
         mBootFinished(false),
         mForceFullDamage(false),
-        mInterceptor(),
+        mInterceptor(this),
         mPrimaryDispSync("PrimaryDispSync"),
         mPrimaryHWVsyncEnabled(false),
         mHWVsyncAvailable(false),
@@ -167,6 +147,12 @@ SurfaceFlinger::SurfaceFlinger()
         mLastSwapTime(0),
         mNumLayers(0)
 {
+    vsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::vsyncEventPhaseOffsetNs>(1000000);
+
+    sfVsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::vsyncSfEventPhaseOffsetNs>(1000000);
+
     ALOGI("SurfaceFlinger is starting");
 
     char value[PROPERTY_VALUE_MAX];
@@ -628,6 +614,11 @@ size_t SurfaceFlinger::getMaxViewportDims() const {
 bool SurfaceFlinger::authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const {
     Mutex::Autolock _l(mStateLock);
+    return authenticateSurfaceTextureLocked(bufferProducer);
+}
+
+bool SurfaceFlinger::authenticateSurfaceTextureLocked(
+        const sp<IGraphicBufferProducer>& bufferProducer) const {
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
 }
@@ -716,7 +707,7 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         info.xdpi = xdpi;
         info.ydpi = ydpi;
         info.fps = float(1e9 / hwConfig.refresh);
-        info.appVsyncOffset = VSYNC_EVENT_PHASE_OFFSET_NS;
+        info.appVsyncOffset = vsyncPhaseOffsetNs;
 
         // This is how far in advance a buffer must be queued for
         // presentation at a given time.  If you want a buffer to appear
@@ -731,7 +722,7 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         // We add an additional 1ms to allow for processing time and
         // differences between the ideal and actual refresh rate.
         info.presentationDeadline =
-                hwConfig.refresh - SF_VSYNC_EVENT_PHASE_OFFSET_NS + 1000000;
+                hwConfig.refresh - sfVsyncPhaseOffsetNs + 1000000;
 
         // All non-virtual displays are currently considered secure.
         info.secure = true;
@@ -2313,13 +2304,8 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::removeLayer(const wp<Layer>& weakLayer) {
+status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
     Mutex::Autolock _l(mStateLock);
-    sp<Layer> layer = weakLayer.promote();
-    if (layer == nullptr) {
-        // The layer has already been removed, carry on
-        return NO_ERROR;
-    }
 
     const auto& p = layer->getParent();
     const ssize_t index = (p != nullptr) ? p->removeChild(layer) :
@@ -2582,7 +2568,19 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             }
         }
         if (what & layer_state_t::eDeferTransaction) {
-            layer->deferTransactionUntil(s.handle, s.frameNumber);
+            if (s.barrierHandle != nullptr) {
+                layer->deferTransactionUntil(s.barrierHandle, s.frameNumber);
+            } else if (s.barrierGbp != nullptr) {
+                const sp<IGraphicBufferProducer>& gbp = s.barrierGbp;
+                if (authenticateSurfaceTextureLocked(gbp)) {
+                    const auto& otherLayer =
+                        (static_cast<MonitoredProducer*>(gbp.get()))->getLayer();
+                    layer->deferTransactionUntil(otherLayer, s.frameNumber);
+                } else {
+                    ALOGE("Attempt to defer transaction to to an"
+                            " unrecognized GraphicBufferProducer");
+                }
+            }
             // We don't trigger a traversal here because if no other state is
             // changed, we don't want this to cause any more work
         }
@@ -2590,6 +2588,9 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             if (layer->reparentChildren(s.reparentHandle)) {
                 flags |= eTransactionNeeded|eTraversalNeeded;
             }
+        }
+        if (what & layer_state_t::eDetachChildren) {
+            layer->detachChildren();
         }
         if (what & layer_state_t::eOverrideScalingModeChanged) {
             layer->setOverrideScalingMode(s.overrideScalingMode);
@@ -2687,7 +2688,7 @@ status_t SurfaceFlinger::createDimLayer(const sp<Client>& client,
 
 status_t SurfaceFlinger::onLayerRemoved(const sp<Client>& client, const sp<IBinder>& handle)
 {
-    // called by the window manager when it wants to remove a Layer
+    // called by a client when it wants to remove a Layer
     status_t err = NO_ERROR;
     sp<Layer> l(client->getLayerUser(handle));
     if (l != NULL) {
@@ -2703,7 +2704,15 @@ status_t SurfaceFlinger::onLayerDestroyed(const wp<Layer>& layer)
 {
     // called by ~LayerCleaner() when all references to the IBinder (handle)
     // are gone
-    return removeLayer(layer);
+    sp<Layer> l = layer.promote();
+    if (l == nullptr) {
+        // The layer has already been removed, carry on
+        return NO_ERROR;
+    } if (l->getParent() != nullptr) {
+        // If we have a parent, then we can continue to live as long as it does.
+        return NO_ERROR;
+    }
+    return removeLayer(l);
 }
 
 // ---------------------------------------------------------------------------

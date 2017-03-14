@@ -13,22 +13,28 @@ namespace dvr {
 //
 class VirtualTouchpadService : public BnVirtualTouchpadService {
  public:
-  VirtualTouchpadService(VirtualTouchpad& touchpad)
-      : touchpad_(touchpad) {}
-
-  // Must be called before clients can connect.
-  // Returns 0 if initialization is successful.
-  int Initialize();
-
-  static char const* getServiceName() { return "virtual_touchpad"; }
+  VirtualTouchpadService(sp<VirtualTouchpad> touchpad)
+      : touchpad_(touchpad), client_pid_(0) {}
+  ~VirtualTouchpadService() override;
 
  protected:
   // Implements IVirtualTouchpadService.
-  ::android::binder::Status touch(float x, float y, float pressure) override;
-  ::android::binder::Status buttonState(int buttons) override;
+  binder::Status attach() override;
+  binder::Status detach() override;
+  binder::Status touch(int touchpad, float x, float y, float pressure) override;
+  binder::Status buttonState(int touchpad, int buttons) override;
+
+  // Implements BBinder::dump().
+  status_t dump(int fd, const Vector<String16>& args) override;
 
  private:
-  VirtualTouchpad& touchpad_;
+  bool CheckPermissions();
+  bool CheckTouchPermission(pid_t* out_pid);
+
+  sp<VirtualTouchpad> touchpad_;
+
+  // Only one client at a time can use the virtual touchpad.
+  pid_t client_pid_;
 
   VirtualTouchpadService(const VirtualTouchpadService&) = delete;
   void operator=(const VirtualTouchpadService&) = delete;

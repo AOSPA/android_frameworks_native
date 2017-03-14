@@ -276,16 +276,6 @@ void Layer::onFrameReplaced(const BufferItem& item) {
     }
 }
 
-void Layer::onBuffersReleased() {
-#ifdef USE_HWC2
-    Mutex::Autolock lock(mHwcBufferCacheMutex);
-
-    for (auto info : mHwcBufferCaches) {
-        info.second.clear();
-    }
-#endif
-}
-
 void Layer::onSidebandStreamChanged() {
     if (android_atomic_release_cas(false, true, &mSidebandStreamChanged) == 0) {
         // mSidebandStreamChanged was false
@@ -604,14 +594,15 @@ void Layer::setGeometry(
     // this gives us only the "orientation" component of the transform
     const State& s(getDrawingState());
 #ifdef USE_HWC2
+    auto blendMode = HWC2::BlendMode::None;
     if (!isOpaque(s) || s.alpha != 1.0f) {
-        auto blendMode = mPremultipliedAlpha ?
+        blendMode = mPremultipliedAlpha ?
                 HWC2::BlendMode::Premultiplied : HWC2::BlendMode::Coverage;
-        auto error = hwcLayer->setBlendMode(blendMode);
-        ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set blend mode %s:"
-                " %s (%d)", mName.string(), to_string(blendMode).c_str(),
-                to_string(error).c_str(), static_cast<int32_t>(error));
     }
+    auto error = hwcLayer->setBlendMode(blendMode);
+    ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set blend mode %s:"
+             " %s (%d)", mName.string(), to_string(blendMode).c_str(),
+             to_string(error).c_str(), static_cast<int32_t>(error));
 #else
     if (!isOpaque(s) || s.alpha != 0xFF) {
         layer.setBlending(mPremultipliedAlpha ?
@@ -666,7 +657,7 @@ void Layer::setGeometry(
     }
     const Transform& tr(displayDevice->getTransform());
     Rect transformedFrame = tr.transform(frame);
-    auto error = hwcLayer->setDisplayFrame(transformedFrame);
+    error = hwcLayer->setDisplayFrame(transformedFrame);
     if (error != HWC2::Error::None) {
         ALOGE("[%s] Failed to set display frame [%d, %d, %d, %d]: %s (%d)",
                 mName.string(), transformedFrame.left, transformedFrame.top,
@@ -779,7 +770,8 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& displayDevice) {
     const auto& viewport = displayDevice->getViewport();
     Region visible = tr.transform(visibleRegion.intersect(viewport));
     auto hwcId = displayDevice->getHwcDisplayId();
-    auto& hwcLayer = mHwcLayers[hwcId].layer;
+    auto& hwcInfo = mHwcLayers[hwcId];
+    auto& hwcLayer = hwcInfo.layer;
     auto error = hwcLayer->setVisibleRegion(visible);
     if (error != HWC2::Error::None) {
         ALOGE("[%s] Failed to set visible region: %s (%d)", mName.string(),
@@ -808,7 +800,7 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& displayDevice) {
     }
 
     // Client layers
-    if (mHwcLayers[hwcId].forceClientComposition ||
+    if (hwcInfo.forceClientComposition ||
             (mActiveBuffer != nullptr && mActiveBuffer->handle == nullptr)) {
         ALOGV("[%s] Requesting Client composition", mName.string());
         setCompositionType(hwcId, HWC2::Composition::Client);
@@ -857,11 +849,8 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& displayDevice) {
     uint32_t hwcSlot = 0;
     buffer_handle_t hwcHandle = nullptr;
     {
-        Mutex::Autolock lock(mHwcBufferCacheMutex);
-
-        auto& hwcBufferCache = mHwcBufferCaches[hwcId];
         sp<GraphicBuffer> hwcBuffer;
-        hwcBufferCache.getHwcBuffer(mActiveBufferSlot, mActiveBuffer,
+        hwcInfo.bufferCache.getHwcBuffer(mActiveBufferSlot, mActiveBuffer,
                 &hwcSlot, &hwcBuffer);
         if (hwcBuffer != nullptr) {
             hwcHandle = hwcBuffer->handle;
@@ -1436,29 +1425,23 @@ void Layer::pushPendingState() {
 
     // If this transaction is waiting on the receipt of a frame, generate a sync
     // point and send it to the remote layer.
-    if (mCurrentState.handle != nullptr) {
-        sp<IBinder> strongBinder = mCurrentState.handle.promote();
-        sp<Handle> handle = nullptr;
-        sp<Layer> handleLayer = nullptr;
-        if (strongBinder != nullptr) {
-            handle = static_cast<Handle*>(strongBinder.get());
-            handleLayer = handle->owner.promote();
-        }
-        if (strongBinder == nullptr || handleLayer == nullptr) {
-            ALOGE("[%s] Unable to promote Layer handle", mName.string());
+    if (mCurrentState.barrierLayer != nullptr) {
+        sp<Layer> barrierLayer = mCurrentState.barrierLayer.promote();
+        if (barrierLayer == nullptr) {
+            ALOGE("[%s] Unable to promote barrier Layer.", mName.string());
             // If we can't promote the layer we are intended to wait on,
             // then it is expired or otherwise invalid. Allow this transaction
             // to be applied as per normal (no synchronization).
-            mCurrentState.handle = nullptr;
+            mCurrentState.barrierLayer = nullptr;
         } else {
             auto syncPoint = std::make_shared<SyncPoint>(
                     mCurrentState.frameNumber);
-            if (handleLayer->addSyncPoint(syncPoint)) {
+            if (barrierLayer->addSyncPoint(syncPoint)) {
                 mRemoteSyncPoints.push_back(std::move(syncPoint));
             } else {
                 // We already missed the frame we're supposed to synchronize
                 // on, so go ahead and apply the state update
-                mCurrentState.handle = nullptr;
+                mCurrentState.barrierLayer = nullptr;
             }
         }
 
@@ -1481,7 +1464,7 @@ void Layer::popPendingState(State* stateToCommit) {
 bool Layer::applyPendingStates(State* stateToCommit) {
     bool stateUpdateAvailable = false;
     while (!mPendingStates.empty()) {
-        if (mPendingStates[0].handle != nullptr) {
+        if (mPendingStates[0].barrierLayer != nullptr) {
             if (mRemoteSyncPoints.empty()) {
                 // If we don't have a sync point for this, apply it anyway. It
                 // will be visually wrong, but it should keep us from getting
@@ -1733,7 +1716,7 @@ bool Layer::setAlpha(uint8_t alpha) {
 bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix) {
     mCurrentState.sequence++;
     mCurrentState.requested.transform.set(
-            matrix.dsdx, matrix.dsdy, matrix.dtdx, matrix.dtdy);
+            matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -1828,17 +1811,24 @@ uint32_t Layer::getLayerStack() const {
     return p->getLayerStack();
 }
 
-void Layer::deferTransactionUntil(const sp<IBinder>& handle,
+void Layer::deferTransactionUntil(const sp<Layer>& barrierLayer,
         uint64_t frameNumber) {
-    mCurrentState.handle = handle;
+    mCurrentState.barrierLayer = barrierLayer;
     mCurrentState.frameNumber = frameNumber;
     // We don't set eTransactionNeeded, because just receiving a deferral
     // request without any other state updates shouldn't actually induce a delay
     mCurrentState.modified = true;
     pushPendingState();
-    mCurrentState.handle = nullptr;
+    mCurrentState.barrierLayer = nullptr;
     mCurrentState.frameNumber = 0;
     mCurrentState.modified = false;
+    ALOGE("Deferred transaction");
+}
+
+void Layer::deferTransactionUntil(const sp<IBinder>& barrierHandle,
+        uint64_t frameNumber) {
+    sp<Handle> handle = static_cast<Handle*>(barrierHandle.get());
+    deferTransactionUntil(handle->owner.promote(), frameNumber);
 }
 
 void Layer::useSurfaceDamage() {
@@ -2450,6 +2440,21 @@ bool Layer::reparentChildren(const sp<IBinder>& newParentHandle) {
         }
     }
     mCurrentChildren.clear();
+
+    return true;
+}
+
+bool Layer::detachChildren() {
+    traverseInZOrder([this](Layer* child) {
+        if (child == this) {
+            return;
+        }
+
+        sp<Client> client(child->mClientRef.promote());
+        if (client != nullptr) {
+            client->detachLayer(child);
+        }
+    });
 
     return true;
 }

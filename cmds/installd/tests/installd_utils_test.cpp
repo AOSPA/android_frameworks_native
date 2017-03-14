@@ -36,6 +36,8 @@
 #define TEST_SYSTEM_DIR1 "/system/app/"
 #define TEST_SYSTEM_DIR2 "/vendor/app/"
 
+#define TEST_PROFILE_DIR "/data/misc/profiles"
+
 #define REALLY_LONG_APP_NAME "com.example." \
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa." \
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa." \
@@ -78,6 +80,9 @@ protected:
 
         android_system_dirs.dirs[1].path = (char*) TEST_SYSTEM_DIR2;
         android_system_dirs.dirs[1].len = strlen(TEST_SYSTEM_DIR2);
+
+        android_profiles_dir.path = (char*) TEST_PROFILE_DIR;
+        android_profiles_dir.len = strlen(TEST_PROFILE_DIR);
     }
 
     virtual void TearDown() {
@@ -321,6 +326,7 @@ TEST_F(UtilsTest, CreatePkgPath_LongPkgNameSuccess) {
     size_t pkgnameSize = PKG_NAME_MAX;
     char pkgname[pkgnameSize + 1];
     memset(pkgname, 'a', pkgnameSize);
+    pkgname[1] = '.';
     pkgname[pkgnameSize] = '\0';
 
     EXPECT_EQ(0, create_pkg_path(path, pkgname, "", 0))
@@ -331,19 +337,6 @@ TEST_F(UtilsTest, CreatePkgPath_LongPkgNameSuccess) {
 
     EXPECT_STREQ(pkgname, path + offset)
              << "Package path should be a really long string of a's";
-}
-
-TEST_F(UtilsTest, CreatePkgPath_LongPkgNameFail) {
-    char path[PKG_PATH_MAX];
-
-    // Create long packagename of "aaaaa..."
-    size_t pkgnameSize = PKG_NAME_MAX + 1;
-    char pkgname[pkgnameSize + 1];
-    memset(pkgname, 'a', pkgnameSize);
-    pkgname[pkgnameSize] = '\0';
-
-    EXPECT_EQ(-1, create_pkg_path(path, pkgname, "", 0))
-            << "Should return error because package name is too long.";
 }
 
 TEST_F(UtilsTest, CreatePkgPath_LongPostfixFail) {
@@ -510,6 +503,51 @@ TEST_F(UtilsTest, CreateDataUserPackagePath) {
             create_data_user_ce_package_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 0, "com.example"));
     EXPECT_EQ("/mnt/expand/57f8f4bc-abf4-655f-bf67-946fc0f9f25b/user/10/com.example",
             create_data_user_ce_package_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 10, "com.example"));
+}
+
+TEST_F(UtilsTest, IsValidPackageName) {
+    EXPECT_EQ(true, is_valid_package_name("android"));
+    EXPECT_EQ(true, is_valid_package_name("com.example"));
+    EXPECT_EQ(true, is_valid_package_name("com.example-1"));
+    EXPECT_EQ(true, is_valid_package_name("com.example-1024"));
+    EXPECT_EQ(true, is_valid_package_name("com.example.foo---KiJFj4a_tePVw95pSrjg=="));
+    EXPECT_EQ(true, is_valid_package_name("really_LONG.a1234.package_name"));
+
+    EXPECT_EQ(false, is_valid_package_name("1234.package"));
+    EXPECT_EQ(false, is_valid_package_name("com.1234.package"));
+    EXPECT_EQ(false, is_valid_package_name(""));
+    EXPECT_EQ(false, is_valid_package_name("."));
+    EXPECT_EQ(false, is_valid_package_name(".."));
+    EXPECT_EQ(false, is_valid_package_name("../"));
+    EXPECT_EQ(false, is_valid_package_name("com.example/../com.evil/"));
+    EXPECT_EQ(false, is_valid_package_name("com.example-1/../com.evil/"));
+    EXPECT_EQ(false, is_valid_package_name("/com.evil"));
+}
+
+TEST_F(UtilsTest, CreateDataUserProfilePath) {
+    EXPECT_EQ("/data/misc/profiles/cur/0", create_data_user_profile_path(0));
+    EXPECT_EQ("/data/misc/profiles/cur/1", create_data_user_profile_path(1));
+}
+
+TEST_F(UtilsTest, CreateDataUserProfilePackagePath) {
+    EXPECT_EQ("/data/misc/profiles/cur/0/com.example",
+            create_data_user_profile_package_path(0, "com.example"));
+    EXPECT_EQ("/data/misc/profiles/cur/1/com.example",
+            create_data_user_profile_package_path(1, "com.example"));
+}
+
+TEST_F(UtilsTest, CreateDataRefProfilePath) {
+    EXPECT_EQ("/data/misc/profiles/ref", create_data_ref_profile_path());
+}
+
+TEST_F(UtilsTest, CreateDataRefProfilePackagePath) {
+    EXPECT_EQ("/data/misc/profiles/ref/com.example",
+        create_data_ref_profile_package_path("com.example"));
+}
+
+TEST_F(UtilsTest, CreatePrimaryProfile) {
+    EXPECT_EQ("/data/misc/profiles/ref/com.example/primary.prof",
+        create_primary_profile("/data/misc/profiles/ref/com.example"));
 }
 
 }  // namespace installd

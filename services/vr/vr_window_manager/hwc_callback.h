@@ -25,7 +25,8 @@ class HwcCallback : public VrComposerView::Callback {
   struct HwcLayer {
     enum LayerType : uint32_t {
       // These are from frameworks/base/core/java/android/view/WindowManager.java
-      kUndefinedWindow = 0,
+      kSurfaceFlingerLayer = 0,
+      kUndefinedWindow = ~0U,
       kFirstApplicationWindow = 1,
       kLastApplicationWindow = 99,
       kFirstSubWindow = 1000,
@@ -42,6 +43,19 @@ class HwcCallback : public VrComposerView::Callback {
         // Always skip the following layer types
       case kNavigationBar:
       case kStatusBar:
+      case kSurfaceFlingerLayer:
+      case kUndefinedWindow:
+        return true;
+      default:
+        return false;
+      }
+    }
+
+    // This is a layer that provides some other functionality, eg dim layer.
+    // We use this to determine the point at which layers are "on top".
+    bool is_extra_layer() const {
+      switch(type) {
+      case kSurfaceFlingerLayer:
       case kUndefinedWindow:
         return true;
       default:

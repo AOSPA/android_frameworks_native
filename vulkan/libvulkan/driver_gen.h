@@ -36,12 +36,14 @@ struct ProcHook {
         ANDROID_native_buffer,
         EXT_debug_report,
         EXT_hdr_metadata,
+        EXT_swapchain_colorspace,
         GOOGLE_display_timing,
         KHR_android_surface,
         KHR_incremental_present,
+        KHR_shared_presentable_image,
         KHR_surface,
         KHR_swapchain,
-        KHR_shared_presentable_image,
+        KHR_get_physical_device_properties2,
 
         EXTENSION_CORE,  // valid bit
         EXTENSION_COUNT,
@@ -67,6 +69,7 @@ struct InstanceDriverTable {
     PFN_vkCreateDebugReportCallbackEXT CreateDebugReportCallbackEXT;
     PFN_vkDestroyDebugReportCallbackEXT DestroyDebugReportCallbackEXT;
     PFN_vkDebugReportMessageEXT DebugReportMessageEXT;
+    PFN_vkGetPhysicalDeviceProperties2KHR GetPhysicalDeviceProperties2KHR;
     // clang-format on
 };
 

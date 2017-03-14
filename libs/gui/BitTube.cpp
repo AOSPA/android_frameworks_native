@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <private/gui/BitTube.h>
+
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -25,7 +27,6 @@
 
 #include <binder/Parcel.h>
 
-#include <gui/BitTube.h>
 
 namespace android {
 // ----------------------------------------------------------------------------

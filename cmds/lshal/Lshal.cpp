@@ -28,6 +28,9 @@
 #include <android-base/parseint.h>
 #include <android/hidl/manager/1.0/IServiceManager.h>
 #include <hidl/ServiceManagement.h>
+#include <hidl-util/FQName.h>
+#include <vintf/HalManifest.h>
+#include <vintf/parse_xml.h>
 
 #include "Timeout.h"
 
@@ -58,12 +61,13 @@ static std::string toHexString(uint64_t t) {
     return os.str();
 }
 
-static std::pair<hidl_string, hidl_string> split(const hidl_string &s, char c) {
+template<typename String>
+static std::pair<String, String> splitFirst(const String &s, char c) {
     const char *pos = strchr(s.c_str(), c);
     if (pos == nullptr) {
         return {s, {}};
     }
-    return {hidl_string(s.c_str(), pos - s.c_str()), hidl_string(pos + 1)};
+    return {String(s.c_str(), pos - s.c_str()), String(pos + 1)};
 }
 
 static std::vector<std::string> split(const std::string &s, char c) {
@@ -79,6 +83,14 @@ static std::vector<std::string> split(const std::string &s, char c) {
         components.push_back(s.substr(startPos));
     }
     return components;
+}
+
+static void replaceAll(std::string *s, char from, char to) {
+    for (size_t i = 0; i < s->size(); ++i) {
+        if (s->at(i) == from) {
+            s->at(i) = to;
+        }
+    }
 }
 
 std::string getCmdline(pid_t pid) {
@@ -147,22 +159,57 @@ bool Lshal::getReferencedPids(
     return true;
 }
 
+void Lshal::forEachTable(const std::function<void(Table &)> &f) {
+    f(mServicesTable);
+    f(mPassthroughRefTable);
+    f(mImplementationsTable);
+}
+void Lshal::forEachTable(const std::function<void(const Table &)> &f) const {
+    f(mServicesTable);
+    f(mPassthroughRefTable);
+    f(mImplementationsTable);
+}
+
 void Lshal::postprocess() {
-    if (mSortColumn) {
-        std::sort(mTable.begin(), mTable.end(), mSortColumn);
-    }
-    for (TableEntry &entry : mTable) {
-        entry.serverCmdline = getCmdline(entry.serverPid);
-        removeDeadProcesses(&entry.clientPids);
-        for (auto pid : entry.clientPids) {
-            entry.clientCmdlines.push_back(this->getCmdline(pid));
+    forEachTable([this](Table &table) {
+        if (mSortColumn) {
+            std::sort(table.begin(), table.end(), mSortColumn);
+        }
+        for (TableEntry &entry : table) {
+            entry.serverCmdline = getCmdline(entry.serverPid);
+            removeDeadProcesses(&entry.clientPids);
+            for (auto pid : entry.clientPids) {
+                entry.clientCmdlines.push_back(this->getCmdline(pid));
+            }
+        }
+    });
+    // use a double for loop here because lshal doesn't care about efficiency.
+    for (TableEntry &packageEntry : mImplementationsTable) {
+        std::string packageName = packageEntry.interfaceName;
+        FQName fqPackageName{packageName.substr(0, packageName.find("::"))};
+        if (!fqPackageName.isValid()) {
+            continue;
+        }
+        for (TableEntry &interfaceEntry : mPassthroughRefTable) {
+            if (interfaceEntry.arch != ARCH_UNKNOWN) {
+                continue;
+            }
+            FQName interfaceName{splitFirst(interfaceEntry.interfaceName, '/').first};
+            if (!interfaceName.isValid()) {
+                continue;
+            }
+            if (interfaceName.getPackageAndVersion() == fqPackageName) {
+                interfaceEntry.arch = packageEntry.arch;
+            }
         }
     }
 }
 
 void Lshal::printLine(
         const std::string &interfaceName,
-        const std::string &transport, const std::string &server,
+        const std::string &transport,
+        const std::string &arch,
+        const std::string &server,
         const std::string &serverCmdline,
         const std::string &address, const std::string &clients,
         const std::string &clientCmdlines) const {
@@ -170,6 +217,8 @@ void Lshal::printLine(
         mOut << std::setw(80) << interfaceName << "\t";
     if (mSelectedColumns & ENABLE_TRANSPORT)
         mOut << std::setw(10) << transport << "\t";
+    if (mSelectedColumns & ENABLE_ARCH)
+        mOut << std::setw(5) << arch << "\t";
     if (mSelectedColumns & ENABLE_SERVER_PID) {
         if (mEnableCmdlines) {
             mOut << std::setw(15) << serverCmdline << "\t";
@@ -189,38 +238,207 @@ void Lshal::printLine(
     mOut << std::endl;
 }
 
-void Lshal::dump() const {
-    mOut << "All services:" << std::endl;
-    mOut << std::left;
-    printLine("Interface", "Transport", "Server", "Server CMD", "PTR", "Clients", "Clients CMD");
-    for (const auto &entry : mTable) {
-        printLine(entry.interfaceName,
-                entry.transport,
-                entry.serverPid == NO_PID ? "N/A" : std::to_string(entry.serverPid),
-                entry.serverCmdline,
-                entry.serverObjectAddress == NO_PTR ? "N/A" : toHexString(entry.serverObjectAddress),
-                join(entry.clientPids, " "),
-                join(entry.clientCmdlines, ";"));
+void Lshal::dumpVintf() const {
+    vintf::HalManifest manifest;
+    forEachTable([this, &manifest] (const Table &table) {
+        for (const TableEntry &entry : table) {
+
+            std::string fqInstanceName = entry.interfaceName;
+
+            if (&table == &mImplementationsTable) {
+                // Quick hack to work around *'s
+                replaceAll(&fqInstanceName, '*', 'D');
+            }
+            auto splittedFqInstanceName = splitFirst(fqInstanceName, '/');
+            FQName fqName(splittedFqInstanceName.first);
+            if (!fqName.isValid()) {
+                mErr << "Warning: '" << splittedFqInstanceName.first
+                     << "' is not a valid FQName." << std::endl;
+                continue;
+            }
+            // Strip out system libs.
+            // TODO(b/34772739): might want to add other framework HAL packages
+            if (fqName.inPackage("android.hidl")) {
+                continue;
+            }
+            std::string interfaceName =
+                    &table == &mImplementationsTable ? "" : fqName.name();
+            std::string instanceName =
+                    &table == &mImplementationsTable ? "" : splittedFqInstanceName.second;
+
+            vintf::Transport transport;
+            vintf::Arch arch;
+            if (entry.transport == "hwbinder") {
+                transport = vintf::Transport::HWBINDER;
+                arch = vintf::Arch::ARCH_EMPTY;
+            } else if (entry.transport == "passthrough") {
+                transport = vintf::Transport::PASSTHROUGH;
+                switch (entry.arch) {
+                    case lshal::ARCH32:
+                        arch = vintf::Arch::ARCH_32;    break;
+                    case lshal::ARCH64:
+                        arch = vintf::Arch::ARCH_64;    break;
+                    case lshal::ARCH_BOTH:
+                        arch = vintf::Arch::ARCH_32_64; break;
+                    case lshal::ARCH_UNKNOWN: // fallthrough
+                    default:
+                        mErr << "Warning: '" << fqName.package()
+                             << "' doesn't have bitness info, assuming 32+64." << std::endl;
+                        arch = vintf::Arch::ARCH_32_64;
+                }
+            } else {
+                mErr << "Warning: '" << entry.transport << "' is not a valid transport." << std::endl;
+                continue;
+            }
+
+            vintf::ManifestHal *hal = manifest.getHal(fqName.package());
+            if (hal == nullptr) {
+                if (!manifest.add(vintf::ManifestHal{
+                    .format = vintf::HalFormat::HIDL,
+                    .name = fqName.package(),
+                    .impl = {.implLevel = vintf::ImplLevel::GENERIC, .impl = ""},
+                    .transportArch = {transport, arch}
+                })) {
+                    mErr << "Warning: cannot add hal '" << fqInstanceName << "'" << std::endl;
+                    continue;
+                }
+                hal = manifest.getHal(fqName.package());
+            }
+            if (hal == nullptr) {
+                mErr << "Warning: cannot get hal '" << fqInstanceName
+                     << "' after adding it" << std::endl;
+                continue;
+            }
+            vintf::Version version{fqName.getPackageMajorVersion(), fqName.getPackageMinorVersion()};
+            if (std::find(hal->versions.begin(), hal->versions.end(), version) == hal->versions.end()) {
+                hal->versions.push_back(version);
+            }
+            if (&table != &mImplementationsTable) {
+                auto it = hal->interfaces.find(interfaceName);
+                if (it == hal->interfaces.end()) {
+                    hal->interfaces.insert({interfaceName, {interfaceName, {{instanceName}}}});
+                } else {
+                    it->second.instances.insert(instanceName);
+                }
+            }
+        }
+    });
+    mOut << vintf::gHalManifestConverter(manifest);
+}
+
+static const std::string &getArchString(Architecture arch) {
+    static const std::string sStr64 = "64";
+    static const std::string sStr32 = "32";
+    static const std::string sStrBoth = "32+64";
+    static const std::string sStrUnknown = "";
+    switch (arch) {
+        case ARCH64:
+            return sStr64;
+        case ARCH32:
+            return sStr32;
+        case ARCH_BOTH:
+            return sStrBoth;
+        case ARCH_UNKNOWN: // fall through
+        default:
+            return sStrUnknown;
     }
 }
 
-void Lshal::putEntry(TableEntry &&entry) {
-    mTable.push_back(std::forward<TableEntry>(entry));
+static Architecture fromBaseArchitecture(::android::hidl::base::V1_0::DebugInfo::Architecture a) {
+    switch (a) {
+        case ::android::hidl::base::V1_0::DebugInfo::Architecture::IS_64BIT:
+            return ARCH64;
+        case ::android::hidl::base::V1_0::DebugInfo::Architecture::IS_32BIT:
+            return ARCH32;
+        case ::android::hidl::base::V1_0::DebugInfo::Architecture::UNKNOWN: // fallthrough
+        default:
+            return ARCH_UNKNOWN;
+    }
+}
+
+void Lshal::dumpTable() {
+    mServicesTable.description =
+            "All binderized services (registered services through hwservicemanager)";
+    mPassthroughRefTable.description =
+            "All interfaces that getService() has ever return as a passthrough interface;\n"
+            "PIDs / processes shown below might be inaccurate because the process\n"
+            "might have relinquished the interface or might have died.\n"
+            "The Server / Server CMD column can be ignored.\n"
+            "The Clients / Clients CMD column shows all process that have ever dlopen'ed \n"
+            "the library and successfully fetched the passthrough implementation.";
+    mImplementationsTable.description =
+            "All available passthrough implementations (all -impl.so files)";
+    forEachTable([this] (const Table &table) {
+        mOut << table.description << std::endl;
+        mOut << std::left;
+        printLine("Interface", "Transport", "Arch", "Server", "Server CMD",
+                  "PTR", "Clients", "Clients CMD");
+        for (const auto &entry : table) {
+            printLine(entry.interfaceName,
+                    entry.transport,
+                    getArchString(entry.arch),
+                    entry.serverPid == NO_PID ? "N/A" : std::to_string(entry.serverPid),
+                    entry.serverCmdline,
+                    entry.serverObjectAddress == NO_PTR ? "N/A" : toHexString(entry.serverObjectAddress),
+                    join(entry.clientPids, " "),
+                    join(entry.clientCmdlines, ";"));
+        }
+        mOut << std::endl;
+    });
+
+}
+
+void Lshal::dump() {
+    if (mVintf) {
+        dumpVintf();
+        if (!!mFileOutput) {
+            mFileOutput.buf().close();
+            delete &mFileOutput.buf();
+            mFileOutput = nullptr;
+        }
+        mOut = std::cout;
+    } else {
+        dumpTable();
+    }
+}
+
+void Lshal::putEntry(TableEntrySource source, TableEntry &&entry) {
+    Table *table = nullptr;
+    switch (source) {
+        case HWSERVICEMANAGER_LIST :
+            table = &mServicesTable; break;
+        case PTSERVICEMANAGER_REG_CLIENT :
+            table = &mPassthroughRefTable; break;
+        case LIST_DLLIB :
+            table = &mImplementationsTable; break;
+        default:
+            mErr << "Error: Unknown source of entry " << source << std::endl;
+    }
+    if (table) {
+        table->entries.push_back(std::forward<TableEntry>(entry));
+    }
 }
 
 Status Lshal::fetchAllLibraries(const sp<IServiceManager> &manager) {
     using namespace ::android::hardware;
     using namespace ::android::hidl::manager::V1_0;
     using namespace ::android::hidl::base::V1_0;
-    auto ret = timeoutIPC(manager, &IServiceManager::list, [&] (const auto &fqInstanceNames) {
-        for (const auto &fqInstanceName : fqInstanceNames) {
-            putEntry({
-                .interfaceName = fqInstanceName,
+    auto ret = timeoutIPC(manager, &IServiceManager::debugDump, [&] (const auto &infos) {
+        std::map<std::string, TableEntry> entries;
+        for (const auto &info : infos) {
+            std::string interfaceName = std::string{info.interfaceName.c_str()} + "/" +
+                    std::string{info.instanceName.c_str()};
+            entries.emplace(interfaceName, TableEntry{
+                .interfaceName = interfaceName,
                 .transport = "passthrough",
                 .serverPid = NO_PID,
                 .serverObjectAddress = NO_PTR,
-                .clientPids = {}
-            });
+                .clientPids = {},
+                .arch = ARCH_UNKNOWN
+            }).first->second.arch |= fromBaseArchitecture(info.arch);
+        }
+        for (auto &&pair : entries) {
+            putEntry(LIST_DLLIB, std::move(pair.second));
         }
     });
     if (!ret.isOk()) {
@@ -233,18 +451,20 @@ Status Lshal::fetchAllLibraries(const sp<IServiceManager> &manager) {
 
 Status Lshal::fetchPassthrough(const sp<IServiceManager> &manager) {
     using namespace ::android::hardware;
+    using namespace ::android::hardware::details;
     using namespace ::android::hidl::manager::V1_0;
     using namespace ::android::hidl::base::V1_0;
     auto ret = timeoutIPC(manager, &IServiceManager::debugDump, [&] (const auto &infos) {
         for (const auto &info : infos) {
-            putEntry({
+            putEntry(PTSERVICEMANAGER_REG_CLIENT, {
                 .interfaceName =
                         std::string{info.interfaceName.c_str()} + "/" +
                         std::string{info.instanceName.c_str()},
                 .transport = "passthrough",
                 .serverPid = info.clientPids.size() == 1 ? info.clientPids[0] : NO_PID,
                 .serverObjectAddress = NO_PTR,
-                .clientPids = info.clientPids
+                .clientPids = info.clientPids,
+                .arch = fromBaseArchitecture(info.arch)
             });
         }
     });
@@ -262,79 +482,85 @@ Status Lshal::fetchBinderized(const sp<IServiceManager> &manager) {
     using namespace ::android::hidl::manager::V1_0;
     using namespace ::android::hidl::base::V1_0;
     const std::string mode = "hwbinder";
-    Status status = OK;
-    auto listRet = timeoutIPC(manager, &IServiceManager::list, [&] (const auto &fqInstanceNames) {
-        // server pid, .ptr value of binder object, child pids
-        std::map<std::string, DebugInfo> allDebugInfos;
-        std::map<pid_t, std::map<uint64_t, Pids>> allPids;
-        for (const auto &fqInstanceName : fqInstanceNames) {
-            const auto pair = split(fqInstanceName, '/');
-            const auto &serviceName = pair.first;
-            const auto &instanceName = pair.second;
-            auto getRet = timeoutIPC(manager, &IServiceManager::get, serviceName, instanceName);
-            if (!getRet.isOk()) {
-                mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
-                     << "cannot be fetched from service manager:"
-                     << getRet.description() << std::endl;
-                status |= DUMP_BINDERIZED_ERROR;
-                continue;
-            }
-            sp<IBase> service = getRet;
-            if (service == nullptr) {
-                mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
-                     << "cannot be fetched from service manager (null)";
-                status |= DUMP_BINDERIZED_ERROR;
-                continue;
-            }
-            auto debugRet = timeoutIPC(service, &IBase::getDebugInfo, [&] (const auto &debugInfo) {
-                allDebugInfos[fqInstanceName] = debugInfo;
-                if (debugInfo.pid >= 0) {
-                    allPids[static_cast<pid_t>(debugInfo.pid)].clear();
-                }
-            });
-            if (!debugRet.isOk()) {
-                mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
-                     << "debugging information cannot be retrieved:"
-                     << debugRet.description() << std::endl;
-                status |= DUMP_BINDERIZED_ERROR;
-            }
-        }
-        for (auto &pair : allPids) {
-            pid_t serverPid = pair.first;
-            if (!getReferencedPids(serverPid, &allPids[serverPid])) {
-                mErr << "Warning: no information for PID " << serverPid
-                          << ", are you root?" << std::endl;
-                status |= DUMP_BINDERIZED_ERROR;
-            }
-        }
-        for (const auto &fqInstanceName : fqInstanceNames) {
-            auto it = allDebugInfos.find(fqInstanceName);
-            if (it == allDebugInfos.end()) {
-                putEntry({
-                    .interfaceName = fqInstanceName,
-                    .transport = mode,
-                    .serverPid = NO_PID,
-                    .serverObjectAddress = NO_PTR,
-                    .clientPids = {}
-                });
-                continue;
-            }
-            const DebugInfo &info = it->second;
-            putEntry({
-                .interfaceName = fqInstanceName,
-                .transport = mode,
-                .serverPid = info.pid,
-                .serverObjectAddress = info.ptr,
-                .clientPids = info.pid == NO_PID || info.ptr == NO_PTR
-                        ? Pids{} : allPids[info.pid][info.ptr]
-            });
-        }
 
+    hidl_vec<hidl_string> fqInstanceNames;
+    // copying out for timeoutIPC
+    auto listRet = timeoutIPC(manager, &IServiceManager::list, [&] (const auto &names) {
+        fqInstanceNames = names;
     });
     if (!listRet.isOk()) {
         mErr << "Error: Failed to list services for " << mode << ": "
              << listRet.description() << std::endl;
-        status |= DUMP_BINDERIZED_ERROR;
+        return DUMP_BINDERIZED_ERROR;
+    }
+
+    Status status = OK;
+    // server pid, .ptr value of binder object, child pids
+    std::map<std::string, DebugInfo> allDebugInfos;
+    std::map<pid_t, std::map<uint64_t, Pids>> allPids;
+    for (const auto &fqInstanceName : fqInstanceNames) {
+        const auto pair = splitFirst(fqInstanceName, '/');
+        const auto &serviceName = pair.first;
+        const auto &instanceName = pair.second;
+        auto getRet = timeoutIPC(manager, &IServiceManager::get, serviceName, instanceName);
+        if (!getRet.isOk()) {
+            mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
+                 << "cannot be fetched from service manager:"
+                 << getRet.description() << std::endl;
+            status |= DUMP_BINDERIZED_ERROR;
+            continue;
+        }
+        sp<IBase> service = getRet;
+        if (service == nullptr) {
+            mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
+                 << "cannot be fetched from service manager (null)";
+            status |= DUMP_BINDERIZED_ERROR;
+            continue;
+        }
+        auto debugRet = timeoutIPC(service, &IBase::getDebugInfo, [&] (const auto &debugInfo) {
+            allDebugInfos[fqInstanceName] = debugInfo;
+            if (debugInfo.pid >= 0) {
+                allPids[static_cast<pid_t>(debugInfo.pid)].clear();
+            }
+        });
+        if (!debugRet.isOk()) {
+            mErr << "Warning: Skipping \"" << fqInstanceName << "\": "
+                 << "debugging information cannot be retrieved:"
+                 << debugRet.description() << std::endl;
+            status |= DUMP_BINDERIZED_ERROR;
+        }
+    }
+    for (auto &pair : allPids) {
+        pid_t serverPid = pair.first;
+        if (!getReferencedPids(serverPid, &allPids[serverPid])) {
+            mErr << "Warning: no information for PID " << serverPid
+                      << ", are you root?" << std::endl;
+            status |= DUMP_BINDERIZED_ERROR;
+        }
+    }
+    for (const auto &fqInstanceName : fqInstanceNames) {
+        auto it = allDebugInfos.find(fqInstanceName);
+        if (it == allDebugInfos.end()) {
+            putEntry(HWSERVICEMANAGER_LIST, {
+                .interfaceName = fqInstanceName,
+                .transport = mode,
+                .serverPid = NO_PID,
+                .serverObjectAddress = NO_PTR,
+                .clientPids = {},
+                .arch = ARCH_UNKNOWN
+            });
+            continue;
+        }
+        const DebugInfo &info = it->second;
+        putEntry(HWSERVICEMANAGER_LIST, {
+            .interfaceName = fqInstanceName,
+            .transport = mode,
+            .serverPid = info.pid,
+            .serverObjectAddress = info.ptr,
+            .clientPids = info.pid == NO_PID || info.ptr == NO_PTR
+                    ? Pids{} : allPids[info.pid][info.ptr],
+            .arch = fromBaseArchitecture(info.arch),
+        });
     }
     return status;
 }
@@ -364,13 +590,14 @@ Status Lshal::fetch() {
 void Lshal::usage() const {
     mErr
         << "usage: lshal" << std::endl
-        << "           Dump all hals with default ordering and columns [-itpc]." << std::endl
-        << "       lshal [--interface|-i] [--transport|-t]" << std::endl
+        << "           Dump all hals with default ordering and columns [-ipc]." << std::endl
+        << "       lshal [--interface|-i] [--transport|-t] [-r|--arch]" << std::endl
         << "             [--pid|-p] [--address|-a] [--clients|-c] [--cmdline|-m]" << std::endl
-        << "             [--sort={interface|i|pid|p}]" << std::endl
+        << "             [--sort={interface|i|pid|p}] [--init-vintf[=path]]" << std::endl
         << "           -i, --interface: print the interface name column" << std::endl
         << "           -n, --instance: print the instance name column" << std::endl
         << "           -t, --transport: print the transport mode column" << std::endl
+        << "           -r, --arch: print if the HAL is in 64-bit or 32-bit" << std::endl
         << "           -p, --pid: print the server PID, or server cmdline if -m is set" << std::endl
         << "           -a, --address: print the server object address column" << std::endl
         << "           -c, --clients: print the client PIDs, or client cmdlines if -m is set"
@@ -378,6 +605,8 @@ void Lshal::usage() const {
         << "           -m, --cmdline: print cmdline instead of PIDs" << std::endl
         << "           --sort=i, --sort=interface: sort by interface name" << std::endl
         << "           --sort=p, --sort=pid: sort by server pid" << std::endl
+        << "           --init-vintf=path: form a skeleton HAL manifest to specified file " << std::endl
+        << "                         (stdout if no file specified)" << std::endl
         << "       lshal [-h|--help]" << std::endl
         << "           -h, --help: show this help information." << std::endl;
 }
@@ -388,6 +617,7 @@ Status Lshal::parseArgs(int argc, char **argv) {
         {"help",      no_argument,       0, 'h' },
         {"interface", no_argument,       0, 'i' },
         {"transport", no_argument,       0, 't' },
+        {"arch",      no_argument,       0, 'r' },
         {"pid",       no_argument,       0, 'p' },
         {"address",   no_argument,       0, 'a' },
         {"clients",   no_argument,       0, 'c' },
@@ -395,6 +625,7 @@ Status Lshal::parseArgs(int argc, char **argv) {
 
         // long options without short alternatives
         {"sort",      required_argument, 0, 's' },
+        {"init-vintf",optional_argument, 0, 'v' },
         { 0,          0,                 0,  0  }
     };
 
@@ -403,7 +634,7 @@ Status Lshal::parseArgs(int argc, char **argv) {
     optind = 1;
     for (;;) {
         // using getopt_long in case we want to add other options in the future
-        c = getopt_long(argc, argv, "hitpacm", longOptions, &optionIndex);
+        c = getopt_long(argc, argv, "hitrpacm", longOptions, &optionIndex);
         if (c == -1) {
             break;
         }
@@ -420,12 +651,27 @@ Status Lshal::parseArgs(int argc, char **argv) {
             }
             break;
         }
+        case 'v': {
+            if (optarg) {
+                mFileOutput = new std::ofstream{optarg};
+                mOut = mFileOutput;
+                if (!mFileOutput.buf().is_open()) {
+                    mErr << "Could not open file '" << optarg << "'." << std::endl;
+                    return IO_ERROR;
+                }
+            }
+            mVintf = true;
+        }
         case 'i': {
             mSelectedColumns |= ENABLE_INTERFACE_NAME;
             break;
         }
         case 't': {
             mSelectedColumns |= ENABLE_TRANSPORT;
+            break;
+        }
+        case 'r': {
+            mSelectedColumns |= ENABLE_ARCH;
             break;
         }
         case 'p': {
@@ -452,8 +698,7 @@ Status Lshal::parseArgs(int argc, char **argv) {
     }
 
     if (mSelectedColumns == 0) {
-        mSelectedColumns = ENABLE_INTERFACE_NAME
-                | ENABLE_TRANSPORT | ENABLE_SERVER_PID | ENABLE_CLIENT_PIDS;
+        mSelectedColumns = ENABLE_INTERFACE_NAME | ENABLE_SERVER_PID | ENABLE_CLIENT_PIDS;
     }
     return OK;
 }

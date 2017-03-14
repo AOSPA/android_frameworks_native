@@ -16,7 +16,12 @@
 
 #define LOG_TAG "GraphicBuffer"
 
+#include <cutils/atomic.h>
+
 #include <ui/GraphicBuffer.h>
+
+#include <cutils/atomic.h>
+
 #include <ui/GrallocMapper.h>
 #include <ui/GraphicBufferAllocator.h>
 #include <ui/GraphicBufferMapper.h>

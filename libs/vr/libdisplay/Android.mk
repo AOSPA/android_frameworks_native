@@ -15,7 +15,6 @@
 LOCAL_PATH := $(call my-dir)
 
 sourceFiles := \
-	native_window.cpp \
 	native_buffer_queue.cpp \
 	display_client.cpp \
 	display_manager_client.cpp \
@@ -46,7 +45,8 @@ sharedLibraries := \
 	libui \
 	libgui \
 	libhardware \
-	libsync
+	libsync \
+	libnativewindow \
 
 staticLibraries := \
 	libbufferhub \
@@ -71,8 +71,7 @@ LOCAL_STATIC_LIBRARIES := $(staticLibraries)
 LOCAL_MODULE := libdisplay
 include $(BUILD_STATIC_LIBRARY)
 
-
-testFiles := \
+graphicsAppTestFiles := \
   tests/graphics_app_tests.cpp
 
 include $(CLEAR_VARS)
@@ -80,7 +79,7 @@ LOCAL_MODULE := graphics_app_tests
 LOCAL_MODULE_TAGS := optional
 
 LOCAL_SRC_FILES := \
-  $(testFiles) \
+  $(graphicsAppTestFiles) \
 
 LOCAL_C_INCLUDES := \
   $(includeFiles) \
@@ -93,3 +92,25 @@ LOCAL_STATIC_LIBRARIES := \
   $(staticLibraries) \
 
 include $(BUILD_NATIVE_TEST)
+
+dummyNativeWindowTestFiles := \
+  tests/dummy_native_window_tests.cpp \
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := dummy_native_window_tests
+LOCAL_MODULE_TAGS := optional
+
+LOCAL_SRC_FILES := \
+  $(dummyNativeWindowTestFiles) \
+
+LOCAL_C_INCLUDES := \
+  $(includeFiles) \
+
+LOCAL_SHARED_LIBRARIES := \
+  $(sharedLibraries) \
+
+LOCAL_STATIC_LIBRARIES := \
+  libdisplay \
+  $(staticLibraries) \
+include $(BUILD_NATIVE_TEST)
+

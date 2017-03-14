@@ -26,8 +26,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#include <gui/BufferQueue.h>
-
 #include <ui/Fence.h>
 
 #include <utils/BitSet.h>
@@ -231,19 +229,9 @@ private:
 
     // thread-safe
     mutable Mutex mVsyncLock;
-};
 
-class HWComposerBufferCache {
-public:
-    void clear();
-
-    void getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer,
-            uint32_t* outSlot, sp<GraphicBuffer>* outBuffer);
-
-private:
-    // a vector as we expect "slot" to be in the range of [0, 63] (that is,
-    // less than BufferQueue::NUM_BUFFER_SLOTS).
-    std::vector<sp<GraphicBuffer>> mBuffers;
+    // XXX temporary workaround for b/35806047
+    mutable std::atomic<bool> mDumpMayLockUp;
 };
 
 // ---------------------------------------------------------------------------

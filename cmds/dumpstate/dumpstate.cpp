@@ -960,7 +960,7 @@ static void dumpstate() {
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy"});
     RunCommand("LIBRANK", {"librank"}, CommandOptions::AS_ROOT);
 
-    RunCommand("HARDWARE HALS", {"lshal"});
+    RunCommand("HARDWARE HALS", {"lshal"}, CommandOptions::AS_ROOT);
 
     RunCommand("PRINTENV", {"printenv"});
     RunCommand("NETSTAT", {"netstat", "-nW"});
@@ -1059,7 +1059,7 @@ static void dumpstate() {
 #endif
     DumpFile("INTERRUPTS (2)", "/proc/interrupts");
 
-    print_properties();
+    RunCommand("SYSTEM PROPERTIES", {"getprop"});
 
     RunCommand("VOLD DUMP", {"vdc", "dump"});
     RunCommand("SECURE CONTAINERS", {"vdc", "asec", "list"});
@@ -1128,7 +1128,7 @@ static void dumpstate() {
     printf("== Running Application Activities\n");
     printf("========================================================\n");
 
-    RunDumpsys("APP ACTIVITIES", {"activity", "all"});
+    RunDumpsys("APP ACTIVITIES", {"activity", "-v", "all"});
 
     printf("========================================================\n");
     printf("== Running Application Services\n");
@@ -1161,7 +1161,7 @@ void Dumpstate::DumpstateBoard() {
     printf("== Board\n");
     printf("========================================================\n");
 
-    ::android::sp<IDumpstateDevice> dumpstate_device(IDumpstateDevice::getService("dumpstate"));
+    ::android::sp<IDumpstateDevice> dumpstate_device(IDumpstateDevice::getService());
     if (dumpstate_device == nullptr) {
         MYLOGE("No IDumpstateDevice implementation\n");
         return;

@@ -93,20 +93,20 @@ VKAPI_ATTR VkResult checkedGetPastPresentationTimingGOOGLE(VkDevice device, VkSw
     }
 }
 
+VKAPI_ATTR void checkedSetHdrMetadataEXT(VkDevice device, uint32_t swapchainCount, const VkSwapchainKHR* pSwapchains, const VkHdrMetadataEXT* pMetadata) {
+    if (GetData(device).hook_extensions[ProcHook::EXT_hdr_metadata]) {
+        SetHdrMetadataEXT(device, swapchainCount, pSwapchains, pMetadata);
+    } else {
+        Logger(device).Err(device, "VK_EXT_hdr_metadata not enabled. vkSetHdrMetadataEXT not executed.");
+    }
+}
+
 VKAPI_ATTR VkResult checkedGetSwapchainStatusKHR(VkDevice device, VkSwapchainKHR swapchain) {
     if (GetData(device).hook_extensions[ProcHook::KHR_shared_presentable_image]) {
         return GetSwapchainStatusKHR(device, swapchain);
     } else {
         Logger(device).Err(device, "VK_KHR_shared_presentable_image not enabled. vkGetSwapchainStatusKHR not executed.");
         return VK_SUCCESS;
-    }
-}
-
-VKAPI_ATTR void checkedSetHdrMetadataEXT(VkDevice device, uint32_t swapchainCount, const VkSwapchainKHR* pSwapchains, const VkHdrMetadataEXT* pMetadata) {
-    if (GetData(device).hook_extensions[ProcHook::EXT_hdr_metadata]) {
-        SetHdrMetadataEXT(device, swapchainCount, pSwapchains, pMetadata);
-    } else {
-        Logger(device).Err(device, "VK_EXT_hdr_metadata not enabled. vkSetHdrMetadataEXT not executed.");
     }
 }
 
@@ -365,12 +365,14 @@ ProcHook::Extension GetProcHookExtension(const char* name) {
     if (strcmp(name, "VK_ANDROID_native_buffer") == 0) return ProcHook::ANDROID_native_buffer;
     if (strcmp(name, "VK_EXT_debug_report") == 0) return ProcHook::EXT_debug_report;
     if (strcmp(name, "VK_EXT_hdr_metadata") == 0) return ProcHook::EXT_hdr_metadata;
+    if (strcmp(name, "VK_EXT_swapchain_colorspace") == 0) return ProcHook::EXT_swapchain_colorspace;
     if (strcmp(name, "VK_GOOGLE_display_timing") == 0) return ProcHook::GOOGLE_display_timing;
     if (strcmp(name, "VK_KHR_android_surface") == 0) return ProcHook::KHR_android_surface;
     if (strcmp(name, "VK_KHR_incremental_present") == 0) return ProcHook::KHR_incremental_present;
+    if (strcmp(name, "VK_KHR_shared_presentable_image") == 0) return ProcHook::KHR_shared_presentable_image;
     if (strcmp(name, "VK_KHR_surface") == 0) return ProcHook::KHR_surface;
     if (strcmp(name, "VK_KHR_swapchain") == 0) return ProcHook::KHR_swapchain;
-    if (strcmp(name, "VK_KHR_shared_presentable_image") == 0) return ProcHook::KHR_shared_presentable_image;
+    if (strcmp(name, "VK_KHR_get_physical_device_properties2") == 0) return ProcHook::KHR_get_physical_device_properties2;
     // clang-format on
     return ProcHook::EXTENSION_UNKNOWN;
 }
@@ -409,6 +411,7 @@ bool InitDriverTable(VkInstance instance,
     INIT_PROC_EXT(EXT_debug_report, true, instance, CreateDebugReportCallbackEXT);
     INIT_PROC_EXT(EXT_debug_report, true, instance, DestroyDebugReportCallbackEXT);
     INIT_PROC_EXT(EXT_debug_report, true, instance, DebugReportMessageEXT);
+    INIT_PROC_EXT(KHR_get_physical_device_properties2, true, instance, GetPhysicalDeviceProperties2KHR);
     // clang-format on
 
     return success;

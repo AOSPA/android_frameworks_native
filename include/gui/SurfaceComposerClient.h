@@ -21,7 +21,6 @@
 #include <sys/types.h>
 
 #include <binder/IBinder.h>
-#include <binder/IMemory.h>
 
 #include <utils/RefBase.h>
 #include <utils/Singleton.h>
@@ -148,7 +147,7 @@ public:
     status_t    setTransparentRegionHint(const sp<IBinder>& id, const Region& transparent);
     status_t    setLayer(const sp<IBinder>& id, int32_t layer);
     status_t    setAlpha(const sp<IBinder>& id, float alpha=1.0f);
-    status_t    setMatrix(const sp<IBinder>& id, float dsdx, float dtdx, float dsdy, float dtdy);
+    status_t    setMatrix(const sp<IBinder>& id, float dsdx, float dtdx, float dtdy, float dsdy);
     status_t    setPosition(const sp<IBinder>& id, float x, float y);
     status_t    setSize(const sp<IBinder>& id, uint32_t w, uint32_t h);
     status_t    setCrop(const sp<IBinder>& id, const Rect& crop);
@@ -156,8 +155,11 @@ public:
     status_t    setLayerStack(const sp<IBinder>& id, uint32_t layerStack);
     status_t    deferTransactionUntil(const sp<IBinder>& id,
             const sp<IBinder>& handle, uint64_t frameNumber);
+    status_t    deferTransactionUntil(const sp<IBinder>& id,
+            const sp<Surface>& handle, uint64_t frameNumber);
     status_t    reparentChildren(const sp<IBinder>& id,
             const sp<IBinder>& newParentHandle);
+    status_t    detachChildren(const sp<IBinder>& id);
     status_t    setOverrideScalingMode(const sp<IBinder>& id,
             int32_t overrideScalingMode);
     status_t    setGeometryAppliesWithResize(const sp<IBinder>& id);

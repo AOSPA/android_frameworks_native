@@ -183,7 +183,7 @@ nsecs_t SurfaceFlingerConsumer::computeExpectedPresent(const DispSync& dispSync)
     // we don't need to factor that in here.  Pad a little to avoid
     // weird effects if apps might be requesting times right on the edge.
     nsecs_t extraPadding = 0;
-    if (VSYNC_EVENT_PHASE_OFFSET_NS == 0) {
+    if (SurfaceFlinger::vsyncPhaseOffsetNs == 0) {
         extraPadding = 1000000;        // 1ms (6% of 60Hz)
     }
 
@@ -223,7 +223,7 @@ bool SurfaceFlingerConsumer::releasePendingBuffer()
     status_t result = releaseBufferLocked(mPendingRelease.currentTexture,
             mPendingRelease.graphicBuffer, mPendingRelease.display,
             mPendingRelease.fence);
-    ALOGE_IF(result != NO_ERROR, "releasePendingBuffer failed: %s (%d)",
+    ALOGE_IF(result < NO_ERROR, "releasePendingBuffer failed: %s (%d)",
             strerror(-result), result);
     mPendingRelease = PendingRelease();
     return true;
@@ -235,19 +235,6 @@ void SurfaceFlingerConsumer::setContentsChangedListener(
     setFrameAvailableListener(listener);
     Mutex::Autolock lock(mMutex);
     mContentsChangedListener = listener;
-}
-
-void SurfaceFlingerConsumer::onBuffersReleased() {
-    sp<ContentsChangedListener> listener;
-    {   // scope for the lock
-        Mutex::Autolock lock(mMutex);
-        ALOG_ASSERT(mFrameAvailableListener.unsafe_get() == mContentsChangedListener.unsafe_get());
-        listener = mContentsChangedListener.promote();
-    }
-
-    if (listener != NULL) {
-        listener->onBuffersReleased();
-    }
 }
 
 void SurfaceFlingerConsumer::onSidebandStreamChanged() {

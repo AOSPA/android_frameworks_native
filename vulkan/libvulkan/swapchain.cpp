@@ -380,6 +380,75 @@ void copy_ready_timings(Swapchain& swapchain,
     *count = num_copied;
 }
 
+android_pixel_format GetNativePixelFormat(VkFormat format) {
+    android_pixel_format native_format = HAL_PIXEL_FORMAT_RGBA_8888;
+    switch (format) {
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            native_format = HAL_PIXEL_FORMAT_RGBA_8888;
+            break;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+            native_format = HAL_PIXEL_FORMAT_RGB_565;
+            break;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            native_format = HAL_PIXEL_FORMAT_RGBA_FP16;
+            break;
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+            native_format = HAL_PIXEL_FORMAT_RGBA_1010102;
+            break;
+        default:
+            ALOGV("unsupported swapchain format %d", format);
+            break;
+    }
+    return native_format;
+}
+
+android_dataspace GetNativeDataspace(VkColorSpaceKHR colorspace) {
+    switch (colorspace) {
+        case VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:
+            return HAL_DATASPACE_V0_SRGB;
+        case VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT:
+            return HAL_DATASPACE_DISPLAY_P3;
+        case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:
+            return HAL_DATASPACE_V0_SCRGB_LINEAR;
+        case VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:
+            return HAL_DATASPACE_V0_SCRGB;
+        case VK_COLOR_SPACE_DCI_P3_LINEAR_EXT:
+            return HAL_DATASPACE_DCI_P3_LINEAR;
+        case VK_COLOR_SPACE_DCI_P3_NONLINEAR_EXT:
+            return HAL_DATASPACE_DCI_P3;
+        case VK_COLOR_SPACE_BT709_LINEAR_EXT:
+            return HAL_DATASPACE_V0_SRGB_LINEAR;
+        case VK_COLOR_SPACE_BT709_NONLINEAR_EXT:
+            return HAL_DATASPACE_V0_SRGB;
+        case VK_COLOR_SPACE_BT2020_170M_EXT:
+            return static_cast<android_dataspace>(
+                HAL_DATASPACE_STANDARD_BT2020 |
+                HAL_DATASPACE_TRANSFER_SMPTE_170M | HAL_DATASPACE_RANGE_FULL);
+        case VK_COLOR_SPACE_BT2020_ST2084_EXT:
+            return static_cast<android_dataspace>(
+                HAL_DATASPACE_STANDARD_BT2020 | HAL_DATASPACE_TRANSFER_ST2084 |
+                HAL_DATASPACE_RANGE_FULL);
+        case VK_COLOR_SPACE_ADOBERGB_LINEAR_EXT:
+            return static_cast<android_dataspace>(
+                HAL_DATASPACE_STANDARD_ADOBE_RGB |
+                HAL_DATASPACE_TRANSFER_LINEAR | HAL_DATASPACE_RANGE_FULL);
+        case VK_COLOR_SPACE_ADOBERGB_NONLINEAR_EXT:
+            return HAL_DATASPACE_ADOBE_RGB;
+
+        // Pass through is intended to allow app to provide data that is passed
+        // to the display system without modification.
+        case VK_COLOR_SPACE_PASS_THROUGH_EXT:
+            return HAL_DATASPACE_ARBITRARY;
+
+        default:
+            // This indicates that we don't know about the
+            // dataspace specified and we should indicate that
+            // it's unsupported
+            return HAL_DATASPACE_UNKNOWN;
+    }
+}
+
 }  // anonymous namespace
 
 VKAPI_ATTR
@@ -410,7 +479,7 @@ VkResult CreateAndroidSurfaceKHR(
               err);
         surface->~Surface();
         allocator->pfnFree(allocator->pUserData, surface);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_NATIVE_WINDOW_IN_USE_KHR;
     }
 
     *out_surface = HandleFromSurface(surface);
@@ -458,13 +527,13 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
     if (err != 0) {
         ALOGE("NATIVE_WINDOW_DEFAULT_WIDTH query failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
     err = window->query(window, NATIVE_WINDOW_DEFAULT_HEIGHT, &height);
     if (err != 0) {
         ALOGE("NATIVE_WINDOW_DEFAULT_WIDTH query failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     int transform_hint;
@@ -472,7 +541,7 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
     if (err != 0) {
         ALOGE("NATIVE_WINDOW_TRANSFORM_HINT query failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     // TODO(jessehall): Figure out what the min/max values should be.
@@ -512,10 +581,12 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
 }
 
 VKAPI_ATTR
-VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice /*pdev*/,
-                                            VkSurfaceKHR /*surface*/,
+VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
+                                            VkSurfaceKHR surface_handle,
                                             uint32_t* count,
                                             VkSurfaceFormatKHR* formats) {
+    const InstanceData& instance_data = GetData(pdev);
+
     // TODO(jessehall): Fill out the set of supported formats. Longer term, add
     // a new gralloc method to query whether a (format, usage) pair is
     // supported, and check that for each gralloc format that corresponds to a
@@ -528,40 +599,82 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice /*pdev*/,
         {VK_FORMAT_R5G6B5_UNORM_PACK16, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
     };
     const uint32_t kNumFormats = sizeof(kFormats) / sizeof(kFormats[0]);
+    uint32_t total_num_formats = kNumFormats;
+
+    bool wide_color_support = false;
+    Surface& surface = *SurfaceFromHandle(surface_handle);
+    int err = native_window_get_wide_color_support(surface.window.get(),
+                                                   &wide_color_support);
+    if (err) {
+        // Not allowed to return a more sensible error code, so do this
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    ALOGV("wide_color_support is: %d", wide_color_support);
+    wide_color_support =
+        wide_color_support &&
+        instance_data.hook_extensions.test(ProcHook::EXT_swapchain_colorspace);
+
+    const VkSurfaceFormatKHR kWideColorFormats[] = {
+        {VK_FORMAT_R16G16B16A16_SFLOAT,
+         VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT},
+        {VK_FORMAT_A2R10G10B10_UNORM_PACK32,
+         VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT},
+    };
+    const uint32_t kNumWideColorFormats =
+        sizeof(kWideColorFormats) / sizeof(kWideColorFormats[0]);
+    if (wide_color_support) {
+        total_num_formats += kNumWideColorFormats;
+    }
 
     VkResult result = VK_SUCCESS;
     if (formats) {
-        if (*count < kNumFormats)
+        uint32_t out_count = 0;
+        uint32_t transfer_count = 0;
+        if (*count < total_num_formats)
             result = VK_INCOMPLETE;
-        *count = std::min(*count, kNumFormats);
-        std::copy(kFormats, kFormats + *count, formats);
+        transfer_count = std::min(*count, kNumFormats);
+        std::copy(kFormats, kFormats + transfer_count, formats);
+        out_count += transfer_count;
+        if (wide_color_support) {
+            transfer_count = std::min(*count - out_count, kNumWideColorFormats);
+            std::copy(kWideColorFormats, kWideColorFormats + transfer_count,
+                      formats + out_count);
+            out_count += transfer_count;
+        }
+        *count = out_count;
     } else {
-        *count = kNumFormats;
+        *count = total_num_formats;
     }
     return result;
 }
 
 VKAPI_ATTR
-VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice /*pdev*/,
+VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice pdev,
                                                  VkSurfaceKHR /*surface*/,
                                                  uint32_t* count,
                                                  VkPresentModeKHR* modes) {
-    const VkPresentModeKHR kModes[] = {
-        VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR,
-        // TODO(chrisforbes): should only expose this if the driver can.
-        // VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR,
-        // VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR,
-    };
-    const uint32_t kNumModes = sizeof(kModes) / sizeof(kModes[0]);
+    android::Vector<VkPresentModeKHR> present_modes;
+    present_modes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
+    present_modes.push_back(VK_PRESENT_MODE_FIFO_KHR);
+
+    VkPhysicalDevicePresentationPropertiesANDROID present_properties;
+    if (QueryPresentationProperties(pdev, &present_properties)) {
+        if (present_properties.sharedImage) {
+            present_modes.push_back(VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR);
+            present_modes.push_back(VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR);
+        }
+    }
+
+    uint32_t num_modes = uint32_t(present_modes.size());
 
     VkResult result = VK_SUCCESS;
     if (modes) {
-        if (*count < kNumModes)
+        if (*count < num_modes)
             result = VK_INCOMPLETE;
-        *count = std::min(*count, kNumModes);
-        std::copy(kModes, kModes + *count, modes);
+        *count = std::min(*count, num_modes);
+        std::copy(present_modes.begin(), present_modes.begin() + int(*count), modes);
     } else {
-        *count = kNumModes;
+        *count = num_modes;
     }
     return result;
 }
@@ -588,12 +701,21 @@ VkResult CreateSwapchainKHR(VkDevice device,
     if (!allocator)
         allocator = &GetData(device).allocator;
 
+    android_pixel_format native_pixel_format =
+        GetNativePixelFormat(create_info->imageFormat);
+    android_dataspace native_dataspace =
+        GetNativeDataspace(create_info->imageColorSpace);
+    if (native_dataspace == HAL_DATASPACE_UNKNOWN) {
+        ALOGE(
+            "CreateSwapchainKHR(VkSwapchainCreateInfoKHR.imageColorSpace = %d) "
+            "failed: Unsupported color space",
+            create_info->imageColorSpace);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
     ALOGV_IF(create_info->imageArrayLayers != 1,
              "swapchain imageArrayLayers=%u not supported",
              create_info->imageArrayLayers);
-    ALOGV_IF(create_info->imageColorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-             "swapchain imageColorSpace=%u not supported",
-             create_info->imageColorSpace);
     ALOGV_IF((create_info->preTransform & ~kSupportedTransforms) != 0,
              "swapchain preTransform=%#x not supported",
              create_info->preTransform);
@@ -642,65 +764,55 @@ VkResult CreateSwapchainKHR(VkDevice device,
     if (err != 0) {
         ALOGE("native_window_set_buffer_count(0) failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
-    err = surface.window->setSwapInterval(surface.window.get(), 1);
+    int swap_interval =
+        create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? 0 : 1;
+    err = surface.window->setSwapInterval(surface.window.get(), swap_interval);
     if (err != 0) {
         // TODO(jessehall): Improve error reporting. Can we enumerate possible
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window->setSwapInterval(1) failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     err = native_window_set_shared_buffer_mode(surface.window.get(), false);
     if (err != 0) {
         ALOGE("native_window_set_shared_buffer_mode(false) failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     err = native_window_set_auto_refresh(surface.window.get(), false);
     if (err != 0) {
         ALOGE("native_window_set_auto_refresh(false) failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     // -- Configure the native window --
 
     const auto& dispatch = GetData(device).driver;
 
-    int native_format = HAL_PIXEL_FORMAT_RGBA_8888;
-    switch (create_info->imageFormat) {
-        case VK_FORMAT_R8G8B8A8_UNORM:
-        case VK_FORMAT_R8G8B8A8_SRGB:
-            native_format = HAL_PIXEL_FORMAT_RGBA_8888;
-            break;
-        case VK_FORMAT_R5G6B5_UNORM_PACK16:
-            native_format = HAL_PIXEL_FORMAT_RGB_565;
-            break;
-        default:
-            ALOGV("unsupported swapchain format %d", create_info->imageFormat);
-            break;
-    }
-    err = native_window_set_buffers_format(surface.window.get(), native_format);
+    err = native_window_set_buffers_format(surface.window.get(),
+                                           native_pixel_format);
     if (err != 0) {
         // TODO(jessehall): Improve error reporting. Can we enumerate possible
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window_set_buffers_format(%d) failed: %s (%d)",
-              native_format, strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+              native_pixel_format, strerror(-err), err);
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
     err = native_window_set_buffers_data_space(surface.window.get(),
-                                               HAL_DATASPACE_SRGB_LINEAR);
+                                               native_dataspace);
     if (err != 0) {
         // TODO(jessehall): Improve error reporting. Can we enumerate possible
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window_set_buffers_data_space(%d) failed: %s (%d)",
-              HAL_DATASPACE_SRGB_LINEAR, strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+              native_dataspace, strerror(-err), err);
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     err = native_window_set_buffers_dimensions(
@@ -712,7 +824,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         ALOGE("native_window_set_buffers_dimensions(%d,%d) failed: %s (%d)",
               create_info->imageExtent.width, create_info->imageExtent.height,
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     // VkSwapchainCreateInfo::preTransform indicates the transformation the app
@@ -732,7 +844,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         ALOGE("native_window_set_buffers_transform(%d) failed: %s (%d)",
               InvertTransformToNative(create_info->preTransform),
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     err = native_window_set_scaling_mode(
@@ -742,7 +854,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window_set_scaling_mode(SCALE_TO_WINDOW) failed: %s (%d)",
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     int query_value;
@@ -754,16 +866,9 @@ VkResult CreateSwapchainKHR(VkDevice device,
         // errors and translate them to valid Vulkan result codes?
         ALOGE("window->query failed: %s (%d) value=%d", strerror(-err), err,
               query_value);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
     uint32_t min_undequeued_buffers = static_cast<uint32_t>(query_value);
-    // The MIN_UNDEQUEUED_BUFFERS query doesn't know whether we'll be using
-    // async mode or not, and assumes not. But in async mode, the BufferQueue
-    // requires an extra undequeued buffer.
-    // See BufferQueueCore::getMinUndequeuedBufferCountLocked().
-    if (create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR)
-        min_undequeued_buffers += 1;
-
     uint32_t num_images =
         (create_info->minImageCount - 1) + min_undequeued_buffers;
     err = native_window_set_buffer_count(surface.window.get(), num_images);
@@ -772,7 +877,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window_set_buffer_count(%d) failed: %s (%d)", num_images,
               strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     VkSwapchainImageUsageFlagsANDROID swapchain_image_usage = 0;
@@ -783,7 +888,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         err = native_window_set_shared_buffer_mode(surface.window.get(), true);
         if (err != 0) {
             ALOGE("native_window_set_shared_buffer_mode failed: %s (%d)", strerror(-err), err);
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_SURFACE_LOST_KHR;
         }
     }
 
@@ -791,7 +896,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         err = native_window_set_auto_refresh(surface.window.get(), true);
         if (err != 0) {
             ALOGE("native_window_set_auto_refresh failed: %s (%d)", strerror(-err), err);
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_SURFACE_LOST_KHR;
         }
     }
 
@@ -819,7 +924,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         }
         if (result != VK_SUCCESS) {
             ALOGE("vkGetSwapchainGrallocUsage2ANDROID failed: %d", result);
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_SURFACE_LOST_KHR;
         }
         // TODO: This is the same translation done by Gralloc1On0Adapter.
         // Remove it once ANativeWindow has been updated to take gralloc1-style
@@ -832,7 +937,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
             &gralloc_usage);
         if (result != VK_SUCCESS) {
             ALOGE("vkGetSwapchainGrallocUsageANDROID failed: %d", result);
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_SURFACE_LOST_KHR;
         }
     }
     err = native_window_set_usage(surface.window.get(), gralloc_usage);
@@ -840,18 +945,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         // TODO(jessehall): Improve error reporting. Can we enumerate possible
         // errors and translate them to valid Vulkan result codes?
         ALOGE("native_window_set_usage failed: %s (%d)", strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-
-    int swap_interval =
-        create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? 0 : 1;
-    err = surface.window->setSwapInterval(surface.window.get(), swap_interval);
-    if (err != 0) {
-        // TODO(jessehall): Improve error reporting. Can we enumerate possible
-        // errors and translate them to valid Vulkan result codes?
-        ALOGE("native_window->setSwapInterval(%d) failed: %s (%d)",
-              swap_interval, strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     // -- Allocate our Swapchain object --
@@ -910,7 +1004,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
             // TODO(jessehall): Improve error reporting. Can we enumerate
             // possible errors and translate them to valid Vulkan result codes?
             ALOGE("dequeueBuffer[%u] failed: %s (%d)", i, strerror(-err), err);
-            result = VK_ERROR_INITIALIZATION_FAILED;
+            result = VK_ERROR_SURFACE_LOST_KHR;
             break;
         }
         img.buffer = buffer;
@@ -1046,7 +1140,7 @@ VkResult AcquireNextImageKHR(VkDevice device,
         // TODO(jessehall): Improve error reporting. Can we enumerate possible
         // errors and translate them to valid Vulkan result codes?
         ALOGE("dequeueBuffer failed: %s (%d)", strerror(-err), err);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_SURFACE_LOST_KHR;
     }
 
     uint32_t idx;

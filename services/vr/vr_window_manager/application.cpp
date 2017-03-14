@@ -1,5 +1,6 @@
 #include "application.h"
 
+#include <inttypes.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <binder/IServiceManager.h>
@@ -16,9 +17,16 @@
 namespace android {
 namespace dvr {
 
-Application::Application() {}
+Application::Application() {
+  vr_mode_listener_ = new VrModeListener(this);
+}
 
 Application::~Application() {
+  sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
+      defaultServiceManager()->getService(String16("vrmanager")));
+  if (vrManagerService.get()) {
+    vrManagerService->unregisterListener(vr_mode_listener_);
+  }
 }
 
 int Application::Initialize() {
@@ -28,6 +36,11 @@ int Application::Initialize() {
   elbow_model_.Enable(ElbowModel::kDefaultNeckPosition, is_right_handed);
   last_frame_time_ = std::chrono::system_clock::now();
 
+  sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
+      defaultServiceManager()->getService(String16("vrmanager")));
+  if (vrManagerService.get()) {
+    vrManagerService->registerListener(vr_mode_listener_);
+  }
   return 0;
 }
 
@@ -273,10 +286,18 @@ void Application::ProcessControllerInput() {
 }
 
 void Application::SetVisibility(bool visible) {
+  if (visible && !initialized_) {
+    if (AllocateResources())
+      ALOGE("Failed to allocate resources");
+  }
+
   bool changed = is_visible_ != visible;
   if (changed) {
     is_visible_ = visible;
-    dvrGraphicsSurfaceSetVisible(graphics_context_, is_visible_);
+    // TODO (alexst): b/36036583 Disable vr_wm visibility until we figure out
+    // why it's always on top. Still make it visible in debug mode.
+    if (debug_mode_)
+      dvrGraphicsSurfaceSetVisible(graphics_context_, is_visible_);
     OnVisibilityChanged(is_visible_);
   }
 }
@@ -293,6 +314,11 @@ void Application::QueueTask(MainThreadTask task) {
   std::unique_lock<std::mutex> lock(mutex_);
   main_thread_tasks_.push_back(task);
   wake_up_init_and_render_.notify_one();
+}
+
+void Application::VrModeListener::onVrStateChanged(bool enabled) {
+  if (!enabled)
+    app_->QueueTask(MainThreadTask::ExitingVrMode);
 }
 
 }  // namespace dvr

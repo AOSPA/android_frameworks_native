@@ -33,7 +33,6 @@
 
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
-#include <binder/MemoryHeapBase.h>
 #include <binder/PermissionCache.h>
 
 #include <dvr/vr_flinger.h>
@@ -41,7 +40,6 @@
 #include <ui/DisplayInfo.h>
 #include <ui/DisplayStatInfo.h>
 
-#include <gui/BitTube.h>
 #include <gui/BufferQueue.h>
 #include <gui/GuiConfig.h>
 #include <gui/IDisplayEventConnection.h>
@@ -104,33 +102,6 @@ namespace android {
 using namespace android::hardware::configstore;
 using namespace android::hardware::configstore::V1_0;
 
-// This is the phase offset in nanoseconds of the software vsync event
-// relative to the vsync event reported by HWComposer.  The software vsync
-// event is when SurfaceFlinger and Choreographer-based applications run each
-// frame.
-//
-// This phase offset allows adjustment of the minimum latency from application
-// wake-up (by Choregographer) time to the time at which the resulting window
-// image is displayed.  This value may be either positive (after the HW vsync)
-// or negative (before the HW vsync).  Setting it to 0 will result in a
-// minimum latency of two vsync periods because the app and SurfaceFlinger
-// will run just after the HW vsync.  Setting it to a positive number will
-// result in the minimum latency being:
-//
-//     (2 * VSYNC_PERIOD - (vsyncPhaseOffsetNs % VSYNC_PERIOD))
-//
-// Note that reducing this latency makes it more likely for the applications
-// to not have their window content image ready in time.  When this happens
-// the latency will end up being an additional vsync period, and animations
-// will hiccup.  Therefore, this latency should be tuned somewhat
-// conservatively (or at least with awareness of the trade-off being made).
-static int64_t vsyncPhaseOffsetNs = getInt64<
-        ISurfaceFlingerConfigs,
-        &ISurfaceFlingerConfigs::vsyncEventPhaseOffsetNs>(1000000);
-
-// This is the phase offset at which SurfaceFlinger's composition runs.
-static constexpr int64_t sfVsyncPhaseOffsetNs = SF_VSYNC_EVENT_PHASE_OFFSET_NS;
-
 // ---------------------------------------------------------------------------
 
 const String16 sHardwareTest("android.permission.HARDWARE_TEST");
@@ -139,6 +110,8 @@ const String16 sReadFramebuffer("android.permission.READ_FRAME_BUFFER");
 const String16 sDump("android.permission.DUMP");
 
 // ---------------------------------------------------------------------------
+int64_t SurfaceFlinger::vsyncPhaseOffsetNs;
+int64_t SurfaceFlinger::sfVsyncPhaseOffsetNs;
 
 SurfaceFlinger::SurfaceFlinger()
     :   BnSurfaceComposer(),
@@ -157,6 +130,7 @@ SurfaceFlinger::SurfaceFlinger()
         mVisibleRegionsDirty(false),
         mGeometryInvalid(false),
         mAnimCompositionPending(false),
+        mVrModeSupported(0),
         mDebugRegion(0),
         mDebugDDMS(0),
         mDebugDisableHWC(0),
@@ -167,7 +141,7 @@ SurfaceFlinger::SurfaceFlinger()
         mLastTransactionTime(0),
         mBootFinished(false),
         mForceFullDamage(false),
-        mInterceptor(),
+        mInterceptor(this),
         mPrimaryDispSync("PrimaryDispSync"),
         mPrimaryHWVsyncEnabled(false),
         mHWVsyncAvailable(false),
@@ -176,13 +150,26 @@ SurfaceFlinger::SurfaceFlinger()
         mFrameBuckets(),
         mTotalTime(0),
         mLastSwapTime(0),
-        mNumLayers(0),
-        mEnterVrMode(false)
+        mNumLayers(0)
+#ifdef USE_HWC2
+        ,mEnterVrMode(false)
+#endif
 {
+
+    vsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::vsyncEventPhaseOffsetNs>(1000000);
+
+    sfVsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::vsyncSfEventPhaseOffsetNs>(1000000);
+
     ALOGI("SurfaceFlinger is starting");
 
     // debugging stuff...
     char value[PROPERTY_VALUE_MAX];
+
+    // TODO (urbanus): remove once b/35319396 is fixed.
+    property_get("ro.boot.vr", value, "0");
+    mVrModeSupported = atoi(value);
 
     property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
     mGpuToCpuSupported = !atoi(value);
@@ -627,6 +614,11 @@ size_t SurfaceFlinger::getMaxViewportDims() const {
 bool SurfaceFlinger::authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const {
     Mutex::Autolock _l(mStateLock);
+    return authenticateSurfaceTextureLocked(bufferProducer);
+}
+
+bool SurfaceFlinger::authenticateSurfaceTextureLocked(
+        const sp<IGraphicBufferProducer>& bufferProducer) const {
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
 }
@@ -740,7 +732,7 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         // We add an additional 1ms to allow for processing time and
         // differences between the ideal and actual refresh rate.
         info.presentationDeadline = hwConfig->getVsyncPeriod() -
-                SF_VSYNC_EVENT_PHASE_OFFSET_NS + 1000000;
+                sfVsyncPhaseOffsetNs + 1000000;
 
         // All non-virtual displays are currently considered secure.
         info.secure = true;
@@ -1204,12 +1196,17 @@ void SurfaceFlinger::resetHwc() {
 }
 
 void SurfaceFlinger::updateVrMode() {
+    bool enteringVrMode = mEnterVrMode;
+    if (enteringVrMode == mHwc->isUsingVrComposer()) {
+        return;
+    }
+    if (enteringVrMode && !mVrHwc) {
+        // Construct new HWComposer without holding any locks.
+        mVrHwc = new HWComposer(true);
+        ALOGV("Vr HWC created");
+    }
     {
         Mutex::Autolock _l(mStateLock);
-        bool enteringVrMode = mEnterVrMode;
-        if (enteringVrMode == mHwc->isUsingVrComposer()) {
-            return;
-        }
 
         if (enteringVrMode) {
             // Start vrflinger thread, if it hasn't been started already.
@@ -1222,11 +1219,6 @@ void SurfaceFlinger::updateVrMode() {
                     mEnterVrMode = false;
                     return;
                 }
-            }
-
-            if (!mVrHwc) {
-                mVrHwc = new HWComposer(true);
-                ALOGV("Vr HWC created");
             }
 
             resetHwc();
@@ -1256,8 +1248,11 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
     ATRACE_CALL();
     switch (what) {
         case MessageQueue::INVALIDATE: {
-            // TODO(eieio): Disabled until SELinux issues are resolved.
-            //updateVrMode();
+            // TODO(eieio): Tied to a conditional until SELinux issues
+            // are resolved.
+            if (mVrModeSupported) {
+                updateVrMode();
+            }
 
             bool frameMissed = !mHadClientComposition &&
                     mPreviousPresentFence != Fence::NO_FENCE &&
@@ -1265,6 +1260,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
                             Fence::SIGNAL_TIME_PENDING);
             ATRACE_INT("FrameMissed", static_cast<int>(frameMissed));
             if (mPropagateBackpressure && frameMissed) {
+                ALOGD("Backpressure trigger, skipping transaction & refresh!");
                 signalLayerUpdate();
                 break;
             }
@@ -1579,6 +1575,12 @@ void SurfaceFlinger::rebuildLayerStacks() {
                             layer->setHwcLayer(displayDevice->getHwcDisplayId(),
                                     nullptr);
                         }
+                    } else {
+                        // WM changes displayDevice->layerStack upon sleep/awake.
+                        // Here we make sure we delete the HWC layers even if
+                        // WM changed their layer stack.
+                        layer->setHwcLayer(displayDevice->getHwcDisplayId(),
+                                nullptr);
                     }
                 });
             }
@@ -1633,7 +1635,6 @@ void SurfaceFlinger::setUpHWComposer() {
             if (hwcId >= 0) {
                 const Vector<sp<Layer>>& currentLayers(
                         displayDevice->getVisibleLayersSortedByZ());
-                bool foundLayerWithoutHwc = false;
                 for (size_t i = 0; i < currentLayers.size(); i++) {
                     const auto& layer = currentLayers[i];
                     if (!layer->hasHwcLayer(hwcId)) {
@@ -1642,7 +1643,6 @@ void SurfaceFlinger::setUpHWComposer() {
                             layer->setHwcLayer(hwcId, std::move(hwcLayer));
                         } else {
                             layer->forceClientComposition(hwcId);
-                            foundLayerWithoutHwc = true;
                             continue;
                         }
                     }
@@ -2527,13 +2527,8 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::removeLayer(const wp<Layer>& weakLayer) {
+status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
     Mutex::Autolock _l(mStateLock);
-    sp<Layer> layer = weakLayer.promote();
-    if (layer == nullptr) {
-        // The layer has already been removed, carry on
-        return NO_ERROR;
-    }
 
     const auto& p = layer->getParent();
     const ssize_t index = (p != nullptr) ? p->removeChild(layer) :
@@ -2796,7 +2791,19 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             }
         }
         if (what & layer_state_t::eDeferTransaction) {
-            layer->deferTransactionUntil(s.handle, s.frameNumber);
+            if (s.barrierHandle != nullptr) {
+                layer->deferTransactionUntil(s.barrierHandle, s.frameNumber);
+            } else if (s.barrierGbp != nullptr) {
+                const sp<IGraphicBufferProducer>& gbp = s.barrierGbp;
+                if (authenticateSurfaceTextureLocked(gbp)) {
+                    const auto& otherLayer =
+                        (static_cast<MonitoredProducer*>(gbp.get()))->getLayer();
+                    layer->deferTransactionUntil(otherLayer, s.frameNumber);
+                } else {
+                    ALOGE("Attempt to defer transaction to to an"
+                            " unrecognized GraphicBufferProducer");
+                }
+            }
             // We don't trigger a traversal here because if no other state is
             // changed, we don't want this to cause any more work
         }
@@ -2804,6 +2811,9 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             if (layer->reparentChildren(s.reparentHandle)) {
                 flags |= eTransactionNeeded|eTraversalNeeded;
             }
+        }
+        if (what & layer_state_t::eDetachChildren) {
+            layer->detachChildren();
         }
         if (what & layer_state_t::eOverrideScalingModeChanged) {
             layer->setOverrideScalingMode(s.overrideScalingMode);
@@ -2901,7 +2911,7 @@ status_t SurfaceFlinger::createDimLayer(const sp<Client>& client,
 
 status_t SurfaceFlinger::onLayerRemoved(const sp<Client>& client, const sp<IBinder>& handle)
 {
-    // called by the window manager when it wants to remove a Layer
+    // called by a client when it wants to remove a Layer
     status_t err = NO_ERROR;
     sp<Layer> l(client->getLayerUser(handle));
     if (l != NULL) {
@@ -2917,7 +2927,15 @@ status_t SurfaceFlinger::onLayerDestroyed(const wp<Layer>& layer)
 {
     // called by ~LayerCleaner() when all references to the IBinder (handle)
     // are gone
-    return removeLayer(layer);
+    sp<Layer> l = layer.promote();
+    if (l == nullptr) {
+        // The layer has already been removed, carry on
+        return NO_ERROR;
+    } if (l->getParent() != nullptr) {
+        // If we have a parent, then we can continue to live as long as it does.
+        return NO_ERROR;
+    }
+    return removeLayer(l);
 }
 
 // ---------------------------------------------------------------------------
