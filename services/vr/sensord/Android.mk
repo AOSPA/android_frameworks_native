@@ -30,7 +30,7 @@ includeFiles += \
 
 staticLibraries := \
 	libdvrcommon \
-	libsensor \
+	libvrsensor \
 	libperformance \
 	libbufferhub \
 	libpdx_default_transport \
@@ -44,6 +44,7 @@ sharedLibraries := \
 	liblog \
 	libhardware \
 	libutils \
+        libui \
 	$(SENSORD_EXTEND) \
 
 cFlags := -DLOG_TAG=\"sensord\" \

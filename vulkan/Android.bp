@@ -16,11 +16,14 @@ ndk_headers {
     name: "libvulkan_headers",
     from: "include",
     to: "",
-    srcs: ["include/vulkan/**/*.h"],
+    srcs: [
+        "include/vulkan/vk_platform.h",
+        "include/vulkan/vulkan.h",
+    ],
     license: "include/vulkan/NOTICE",
 }
 
-cc_library_static {
+cc_library_headers {
     name: "vulkan_headers",
     export_include_dirs: ["include"],
 }

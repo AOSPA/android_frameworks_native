@@ -224,6 +224,8 @@ void Application::DrawFrame() {
     DrawEye(kRightEye, fov_[kRightEye].GetProjectionMatrix(0.1f, 500.0f),
             eye_from_head_[kRightEye], head_matrix);
 
+    OnEndFrame();
+
     dvrPresent(graphics_context_);
   }
 }
@@ -294,10 +296,7 @@ void Application::SetVisibility(bool visible) {
   bool changed = is_visible_ != visible;
   if (changed) {
     is_visible_ = visible;
-    // TODO (alexst): b/36036583 Disable vr_wm visibility until we figure out
-    // why it's always on top. Still make it visible in debug mode.
-    if (debug_mode_)
-      dvrGraphicsSurfaceSetVisible(graphics_context_, is_visible_);
+    dvrGraphicsSurfaceSetVisible(graphics_context_, is_visible_);
     OnVisibilityChanged(is_visible_);
   }
 }

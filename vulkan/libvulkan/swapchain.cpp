@@ -17,7 +17,7 @@
 #include <algorithm>
 
 #include <log/log.h>
-#include <gui/BufferQueue.h>
+#include <ui/BufferQueueDefs.h>
 #include <sync/sync.h>
 #include <utils/StrongPointer.h>
 #include <utils/Vector.h>
@@ -207,7 +207,7 @@ struct Swapchain {
         // or by passing ownership e.g. to ANativeWindow::cancelBuffer().
         int dequeue_fence;
         bool dequeued;
-    } images[android::BufferQueue::NUM_BUFFER_SLOTS];
+    } images[android::BufferQueueDefs::NUM_BUFFER_SLOTS];
 
     android::Vector<TimingInfo> timing;
 };
@@ -411,8 +411,6 @@ android_dataspace GetNativeDataspace(VkColorSpaceKHR colorspace) {
             return HAL_DATASPACE_DISPLAY_P3;
         case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:
             return HAL_DATASPACE_V0_SCRGB_LINEAR;
-        case VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:
-            return HAL_DATASPACE_V0_SCRGB;
         case VK_COLOR_SPACE_DCI_P3_LINEAR_EXT:
             return HAL_DATASPACE_DCI_P3_LINEAR;
         case VK_COLOR_SPACE_DCI_P3_NONLINEAR_EXT:
@@ -421,13 +419,19 @@ android_dataspace GetNativeDataspace(VkColorSpaceKHR colorspace) {
             return HAL_DATASPACE_V0_SRGB_LINEAR;
         case VK_COLOR_SPACE_BT709_NONLINEAR_EXT:
             return HAL_DATASPACE_V0_SRGB;
-        case VK_COLOR_SPACE_BT2020_170M_EXT:
-            return static_cast<android_dataspace>(
-                HAL_DATASPACE_STANDARD_BT2020 |
-                HAL_DATASPACE_TRANSFER_SMPTE_170M | HAL_DATASPACE_RANGE_FULL);
-        case VK_COLOR_SPACE_BT2020_ST2084_EXT:
+        case VK_COLOR_SPACE_BT2020_LINEAR_EXT:
+            return HAL_DATASPACE_BT2020_LINEAR;
+        case VK_COLOR_SPACE_HDR10_ST2084_EXT:
             return static_cast<android_dataspace>(
                 HAL_DATASPACE_STANDARD_BT2020 | HAL_DATASPACE_TRANSFER_ST2084 |
+                HAL_DATASPACE_RANGE_FULL);
+        case VK_COLOR_SPACE_DOLBYVISION_EXT:
+            return static_cast<android_dataspace>(
+                HAL_DATASPACE_STANDARD_BT2020 | HAL_DATASPACE_TRANSFER_ST2084 |
+                HAL_DATASPACE_RANGE_FULL);
+        case VK_COLOR_SPACE_HDR10_HLG_EXT:
+            return static_cast<android_dataspace>(
+                HAL_DATASPACE_STANDARD_BT2020 | HAL_DATASPACE_TRANSFER_HLG |
                 HAL_DATASPACE_RANGE_FULL);
         case VK_COLOR_SPACE_ADOBERGB_LINEAR_EXT:
             return static_cast<android_dataspace>(
@@ -646,6 +650,72 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
         *count = total_num_formats;
     }
     return result;
+}
+
+VKAPI_ATTR
+VkResult GetPhysicalDeviceSurfaceCapabilities2KHR(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+    VkSurfaceCapabilities2KHR* pSurfaceCapabilities) {
+    VkResult result = GetPhysicalDeviceSurfaceCapabilitiesKHR(
+        physicalDevice, pSurfaceInfo->surface,
+        &pSurfaceCapabilities->surfaceCapabilities);
+
+    VkSurfaceCapabilities2KHR* caps = pSurfaceCapabilities;
+    while (caps->pNext) {
+        caps = reinterpret_cast<VkSurfaceCapabilities2KHR*>(caps->pNext);
+
+        switch (caps->sType) {
+            case VK_STRUCTURE_TYPE_SHARED_PRESENT_SURFACE_CAPABILITIES_KHR: {
+                VkSharedPresentSurfaceCapabilitiesKHR* shared_caps =
+                    reinterpret_cast<VkSharedPresentSurfaceCapabilitiesKHR*>(
+                        caps);
+                // Claim same set of usage flags are supported for
+                // shared present modes as for other modes.
+                shared_caps->sharedPresentSupportedUsageFlags =
+                    pSurfaceCapabilities->surfaceCapabilities
+                        .supportedUsageFlags;
+            } break;
+
+            default:
+                // Ignore all other extension structs
+                break;
+        }
+    }
+
+    return result;
+}
+
+VKAPI_ATTR
+VkResult GetPhysicalDeviceSurfaceFormats2KHR(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+    uint32_t* pSurfaceFormatCount,
+    VkSurfaceFormat2KHR* pSurfaceFormats) {
+    if (!pSurfaceFormats) {
+        return GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice,
+                                                  pSurfaceInfo->surface,
+                                                  pSurfaceFormatCount, nullptr);
+    } else {
+        // temp vector for forwarding; we'll marshal it into the pSurfaceFormats
+        // after the call.
+        android::Vector<VkSurfaceFormatKHR> surface_formats;
+        surface_formats.resize(*pSurfaceFormatCount);
+        VkResult result = GetPhysicalDeviceSurfaceFormatsKHR(
+            physicalDevice, pSurfaceInfo->surface, pSurfaceFormatCount,
+            &surface_formats.editItemAt(0));
+
+        if (result == VK_SUCCESS || result == VK_INCOMPLETE) {
+            // marshal results individually due to stride difference.
+            // completely ignore any chained extension structs.
+            uint32_t formats_to_marshal = *pSurfaceFormatCount;
+            for (uint32_t i = 0u; i < formats_to_marshal; i++) {
+                pSurfaceFormats[i].surfaceFormat = surface_formats[i];
+            }
+        }
+
+        return result;
+    }
 }
 
 VKAPI_ATTR

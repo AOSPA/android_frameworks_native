@@ -105,7 +105,6 @@ class SurfaceFlinger : public BnSurfaceComposer,
 {
 public:
 
-
     // This is the phase offset in nanoseconds of the software vsync event
     // relative to the vsync event reported by HWComposer.  The software vsync
     // event is when SurfaceFlinger and Choreographer-based applications run each
@@ -128,6 +127,26 @@ public:
     // conservatively (or at least with awareness of the trade-off being made).
     static int64_t vsyncPhaseOffsetNs;
     static int64_t sfVsyncPhaseOffsetNs;
+
+    // If fences from sync Framework are supported.
+    static bool hasSyncFramework;
+
+    // Instruct the Render Engine to use EGL_IMG_context_priority is available.
+    static bool useContextPriority;
+
+    // The offset in nanoseconds to use when DispSync timestamps present fence
+    // signaling time.
+    static int64_t dispSyncPresentTimeOffset;
+
+    // Some hardware can do RGB->YUV conversion more efficiently in hardware
+    // controlled by HWC than in hardware controlled by the video encoder.
+    // This instruct VirtualDisplaySurface to use HWC for such conversion on
+    // GL composition.
+    static bool useHwcForRgbToYuv;
+
+    // Maximum dimension supported by HWC for virtual display.
+    // Equal to min(max_height, max_width).
+    static uint64_t maxVirtualDisplaySize;
 
     static char const* getServiceName() ANDROID_API {
         return "SurfaceFlinger";
@@ -447,6 +466,9 @@ private:
     void updateCompositorTiming(
             nsecs_t vsyncPhase, nsecs_t vsyncInterval, nsecs_t compositeTime,
             std::shared_ptr<FenceTime>& presentFenceTime);
+    void setCompositorTimingSnapped(
+            nsecs_t vsyncPhase, nsecs_t vsyncInterval,
+            nsecs_t compositeToPresentLatency);
     void rebuildLayerStacks();
     void setUpHWComposer();
     void doComposition();
@@ -617,7 +639,7 @@ private:
     bool mHWVsyncAvailable;
 
     // protected by mCompositorTimingLock;
-    mutable std::mutex mCompositeTimingLock;
+    mutable std::mutex mCompositorTimingLock;
     CompositorTiming mCompositorTiming;
 
     // Only accessed from the main thread.

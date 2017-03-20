@@ -1,6 +1,7 @@
 #include "surface_flinger_view.h"
 
 #include <impl/vr_composer_view.h>
+#include <private/dvr/display_client.h>
 #include <private/dvr/native_buffer.h>
 
 #include "hwc_callback.h"
@@ -38,7 +39,7 @@ bool SurfaceFlingerView::Initialize(HwcCallback::Client *client) {
   vr_composer_view_->Initialize(GetComposerViewFromIComposer(
       vr_hwcomposer_.get()));
 
-  // TODO(dnicoara): Query this from the composer service.
+  // TODO(alexst): Refactor ShellView to account for orientation and change this back.
   width_ = 1920;
   height_ = 1080;
   return true;
@@ -54,9 +55,7 @@ bool SurfaceFlingerView::GetTextures(const HwcCallback::Frame& frame,
   size_t start = 0;
   // Skip the second layer if it is from the VR app.
   if (!debug && skip_first_layer) {
-    start = 1;
-    if (layers[0].appid && layers[0].appid == layers[1].appid)
-      start = 2;
+    start = 2;
   }
 
   for (size_t i = start; i < layers.size(); ++i) {

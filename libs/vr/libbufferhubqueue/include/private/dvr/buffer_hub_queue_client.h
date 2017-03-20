@@ -20,6 +20,7 @@ class ConsumerQueue;
 // automatically re-requeued when released by the remote side.
 class BufferHubQueue : public pdx::Client {
  public:
+  using LocalHandle = pdx::LocalHandle;
   using LocalChannelHandle = pdx::LocalChannelHandle;
   template <typename T>
   using Status = pdx::Status<T>;
@@ -47,6 +48,14 @@ class BufferHubQueue : public pdx::Client {
 
   std::shared_ptr<BufferHubBuffer> GetBuffer(size_t slot) const {
     return buffers_[slot];
+  }
+
+  Status<int> GetEventMask(int events) {
+    if (auto* client_channel = GetChannel()) {
+      return client_channel->GetEventMask(events);
+    } else {
+      return pdx::ErrorStatus(EINVAL);
+    }
   }
 
   // Enqueue a buffer marks buffer to be available (|Gain|'ed for producer
@@ -83,11 +92,15 @@ class BufferHubQueue : public pdx::Client {
   // while specifying a timeout equal to zero cause |Dequeue()| to return
   // immediately, even if no buffers are available.
   std::shared_ptr<BufferHubBuffer> Dequeue(int timeout, size_t* slot,
-                                           void* meta);
+                                           void* meta, LocalHandle* fence);
 
   // Wait for buffers to be released and re-add them to the queue.
   bool WaitForBuffers(int timeout);
-  virtual int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf) = 0;
+  void HandleBufferEvent(size_t slot, const epoll_event& event);
+  void HandleQueueEvent(const epoll_event& event);
+
+  virtual int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf,
+                            LocalHandle* fence) = 0;
 
   // Called when a buffer is allocated remotely.
   virtual int OnBufferAllocated() = 0;
@@ -160,12 +173,40 @@ class BufferHubQueue : public pdx::Client {
   // |buffers_| tracks all |BufferHubBuffer|s created by this |BufferHubQueue|.
   std::vector<std::shared_ptr<BufferHubBuffer>> buffers_;
 
+  // |epollhup_pending_| tracks whether a slot of |buffers_| get detached before
+  // its corresponding EPOLLHUP event got handled. This could happen as the
+  // following sequence:
+  // 1. Producer queue's client side allocates a new buffer (at slot 1).
+  // 2. Producer queue's client side replaces an existing buffer (at slot 0).
+  //    This is implemented by first detaching the buffer and then allocating a
+  //    new buffer.
+  // 3. During the same epoll_wait, Consumer queue's client side gets EPOLLIN
+  //    event on the queue which indicates a new buffer is avaiable and the
+  //    EPOLLHUP event for slot 0. Consumer handles these two events in order.
+  // 4. Consumer client calls BufferHubRPC::ConsumerQueueImportBuffers and both
+  //    slot 0 and (the new) slot 1 buffer will be imported. During the import
+  //    of the buffer at slot 1, consuemr client detaches the old buffer so that
+  //    the new buffer can be registered. At the same time
+  //    |epollhup_pending_[slot]| is marked to indicate that buffer at this slot
+  //    was detached prior to EPOLLHUP event.
+  // 5. Consumer client continues to handle the EPOLLHUP. Since
+  //    |epollhup_pending_[slot]| is marked as true, it can safely ignore the
+  //    event without detaching the newly allocated buffer at slot 1.
+  //
+  // In normal situations where the previously described sequence doesn't
+  // happen, an EPOLLHUP event should trigger a regular buffer detach.
+  std::vector<bool> epollhup_pending_;
+
   // |available_buffers_| uses |dvr::RingBuffer| to implementation queue
   // sematics. When |Dequeue|, we pop the front element from
   // |available_buffers_|, and  that buffer's reference count will decrease by
   // one, while another reference in |buffers_| keeps the last reference to
   // prevent the buffer from being deleted.
   RingBuffer<BufferInfo> available_buffers_;
+
+  // Fences (acquire fence for consumer and release fence for consumer) , one
+  // for each buffer slot.
+  std::vector<LocalHandle> fences_;
 
   // Keep track with how many buffers have been added into the queue.
   size_t capacity_;
@@ -225,7 +266,7 @@ class ProducerQueue : public pdx::ClientBase<ProducerQueue, BufferHubQueue> {
   // Returns Zero on success and negative error code when buffer allocation
   // fails.
   int AllocateBuffer(int width, int height, int format, int usage,
-                     size_t buffer_count, size_t* out_slot);
+                     size_t slice_count, size_t* out_slot);
 
   // Add a producer buffer to populate the queue. Once added, a producer buffer
   // is available to use (i.e. in |Gain|'ed mode).
@@ -239,7 +280,8 @@ class ProducerQueue : public pdx::ClientBase<ProducerQueue, BufferHubQueue> {
   // Dequeue a producer buffer to write. The returned buffer in |Gain|'ed mode,
   // and caller should call Post() once it's done writing to release the buffer
   // to the consumer side.
-  std::shared_ptr<BufferProducer> Dequeue(int timeout, size_t* slot);
+  std::shared_ptr<BufferProducer> Dequeue(int timeout, size_t* slot,
+                                          LocalHandle* release_fence);
 
  private:
   friend BASE;
@@ -252,7 +294,8 @@ class ProducerQueue : public pdx::ClientBase<ProducerQueue, BufferHubQueue> {
   ProducerQueue(size_t meta_size, int usage_set_mask, int usage_clear_mask,
                 int usage_deny_set_mask, int usage_deny_clear_mask);
 
-  int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf) override;
+  int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf,
+                    LocalHandle* release_fence) override;
 
   // Producer buffer is always allocated from the client (i.e. local) side.
   int OnBufferAllocated() override { return 0; }
@@ -281,13 +324,10 @@ class ConsumerQueue : public pdx::ClientBase<ConsumerQueue, BufferHubQueue> {
   // Dequeue() is done with the corect metadata type and size with those used
   // when the buffer is orignally created.
   template <typename Meta>
-  std::shared_ptr<BufferConsumer> Dequeue(int timeout, size_t* slot,
-                                          Meta* meta) {
-    return Dequeue(timeout, slot, meta, sizeof(*meta));
+  std::shared_ptr<BufferConsumer> Dequeue(int timeout, size_t* slot, Meta* meta,
+                                          LocalHandle* acquire_fence) {
+    return Dequeue(timeout, slot, meta, sizeof(*meta), acquire_fence);
   }
-
-  std::shared_ptr<BufferConsumer> Dequeue(int timeout, size_t* slot, void* meta,
-                                          size_t meta_size);
 
  private:
   friend BASE;
@@ -300,9 +340,14 @@ class ConsumerQueue : public pdx::ClientBase<ConsumerQueue, BufferHubQueue> {
   // consumer.
   int AddBuffer(const std::shared_ptr<BufferConsumer>& buf, size_t slot);
 
-  int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf) override;
+  int OnBufferReady(std::shared_ptr<BufferHubBuffer> buf,
+                    LocalHandle* acquire_fence) override;
 
   int OnBufferAllocated() override;
+
+  std::shared_ptr<BufferConsumer> Dequeue(int timeout, size_t* slot, void* meta,
+                                          size_t meta_size,
+                                          LocalHandle* acquire_fence);
 };
 
 }  // namespace dvr

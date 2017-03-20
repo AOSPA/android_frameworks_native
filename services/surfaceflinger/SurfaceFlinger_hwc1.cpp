@@ -111,6 +111,11 @@ const String16 sDump("android.permission.DUMP");
 // ---------------------------------------------------------------------------
 int64_t SurfaceFlinger::vsyncPhaseOffsetNs;
 int64_t SurfaceFlinger::sfVsyncPhaseOffsetNs;
+bool SurfaceFlinger::useContextPriority;
+int64_t SurfaceFlinger::dispSyncPresentTimeOffset;
+bool SurfaceFlinger::useHwcForRgbToYuv;
+uint64_t SurfaceFlinger::maxVirtualDisplaySize;
+bool SurfaceFlinger::hasSyncFramework;
 
 SurfaceFlinger::SurfaceFlinger()
     :   BnSurfaceComposer(),
@@ -147,13 +152,28 @@ SurfaceFlinger::SurfaceFlinger()
         mLastSwapTime(0),
         mNumLayers(0)
 {
+    ALOGI("SurfaceFlinger is starting");
+
     vsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
             &ISurfaceFlingerConfigs::vsyncEventPhaseOffsetNs>(1000000);
 
     sfVsyncPhaseOffsetNs = getInt64< ISurfaceFlingerConfigs,
             &ISurfaceFlingerConfigs::vsyncSfEventPhaseOffsetNs>(1000000);
 
-    ALOGI("SurfaceFlinger is starting");
+    maxVirtualDisplaySize = getUInt64<ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::maxVirtualDisplaySize>(0);
+
+    hasSyncFramework = getBool< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::hasSyncFramework>(true);
+
+    useContextPriority = getBool< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::useContextPriority>(false);
+
+    dispSyncPresentTimeOffset = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::presentTimeOffsetFromVSyncNs>(0);
+
+    useHwcForRgbToYuv = getBool< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::useHwcForRGBtoYUV>(false);
 
     char value[PROPERTY_VALUE_MAX];
 
@@ -1028,7 +1048,7 @@ void SurfaceFlinger::onVSyncReceived(HWComposer* /*composer*/, int type,
 }
 
 void SurfaceFlinger::getCompositorTiming(CompositorTiming* compositorTiming) {
-    std::lock_guard<std::mutex> lock(mCompositeTimingLock);
+    std::lock_guard<std::mutex> lock(mCompositorTimingLock);
     *compositorTiming = mCompositorTiming;
 }
 
@@ -1191,11 +1211,22 @@ void SurfaceFlinger::updateCompositorTiming(
         mCompositePresentTimes.pop();
     }
 
+    setCompositorTimingSnapped(
+            vsyncPhase, vsyncInterval, compositeToPresentLatency);
+}
+
+void SurfaceFlinger::setCompositorTimingSnapped(nsecs_t vsyncPhase,
+        nsecs_t vsyncInterval, nsecs_t compositeToPresentLatency) {
     // Integer division and modulo round toward 0 not -inf, so we need to
     // treat negative and positive offsets differently.
-    nsecs_t idealLatency = (sfVsyncPhaseOffsetNs >= 0) ?
+    nsecs_t idealLatency = (sfVsyncPhaseOffsetNs > 0) ?
             (vsyncInterval - (sfVsyncPhaseOffsetNs % vsyncInterval)) :
             ((-sfVsyncPhaseOffsetNs) % vsyncInterval);
+
+    // Just in case sfVsyncPhaseOffsetNs == -vsyncInterval.
+    if (idealLatency <= 0) {
+        idealLatency = vsyncInterval;
+    }
 
     // Snap the latency to a value that removes scheduling jitter from the
     // composition and present times, which often have >1ms of jitter.
@@ -1203,22 +1234,16 @@ void SurfaceFlinger::updateCompositorTiming(
     // something (such as user input) to an accurate diasplay time.
     // Snapping also allows an app to precisely calculate sfVsyncPhaseOffsetNs
     // with (presentLatency % interval).
-    nsecs_t snappedCompositeToPresentLatency = -1;
-    if (compositeToPresentLatency >= 0) {
-        nsecs_t bias = vsyncInterval / 2;
-        int64_t extraVsyncs =
-                (compositeToPresentLatency - idealLatency + bias) /
-                vsyncInterval;
-        nsecs_t extraLatency = extraVsyncs * vsyncInterval;
-        snappedCompositeToPresentLatency = idealLatency + extraLatency;
-    }
+    nsecs_t bias = vsyncInterval / 2;
+    int64_t extraVsyncs =
+            (compositeToPresentLatency - idealLatency + bias) / vsyncInterval;
+    nsecs_t snappedCompositeToPresentLatency = (extraVsyncs > 0) ?
+            idealLatency + (extraVsyncs * vsyncInterval) : idealLatency;
 
-    std::lock_guard<std::mutex> lock(mCompositeTimingLock);
+    std::lock_guard<std::mutex> lock(mCompositorTimingLock);
     mCompositorTiming.deadline = vsyncPhase - idealLatency;
     mCompositorTiming.interval = vsyncInterval;
-    if (snappedCompositeToPresentLatency >= 0) {
-        mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
-    }
+    mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
 }
 
 void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
@@ -1250,10 +1275,15 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     // since updateCompositorTiming has snapping logic.
     updateCompositorTiming(
         vsyncPhase, vsyncInterval, refreshStartTime, retireFenceTime);
+    CompositorTiming compositorTiming;
+    {
+        std::lock_guard<std::mutex> lock(mCompositorTimingLock);
+        compositorTiming = mCompositorTiming;
+    }
 
     mDrawingState.traverseInZOrder([&](Layer* layer) {
         bool frameLatched = layer->onPostComposition(glCompositionDoneFenceTime,
-                presentFenceTime, retireFenceTime, mCompositorTiming);
+                presentFenceTime, retireFenceTime, compositorTiming);
         if (frameLatched) {
             recordBufferingStats(layer->getName().string(),
                     layer->getOccupancyHistory(false));
@@ -1268,7 +1298,7 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
         }
     }
 
-    if (kIgnorePresentFences) {
+    if (!hasSyncFramework) {
         if (hw->isDisplayOn()) {
             enableHardwareVsync();
         }
@@ -1689,9 +1719,9 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                             ALOGE_IF(status != NO_ERROR,
                                     "Unable to query height (%d)", status);
                             if (mUseHwcVirtualDisplays &&
-                                    (MAX_VIRTUAL_DISPLAY_DIMENSION == 0 ||
-                                    (width <= MAX_VIRTUAL_DISPLAY_DIMENSION &&
-                                     height <= MAX_VIRTUAL_DISPLAY_DIMENSION))) {
+                                    (SurfaceFlinger::maxVirtualDisplaySize == 0 ||
+                                    (width <= static_cast<int>(SurfaceFlinger::maxVirtualDisplaySize) &&
+                                     height <= static_cast<int>(SurfaceFlinger::maxVirtualDisplaySize)))) {
                                 hwcDisplayId = allocateHwcDisplayId(state.type);
                             }
 
@@ -2738,6 +2768,10 @@ void SurfaceFlinger::onInitializeDisplays() {
     const nsecs_t period =
             getHwComposer().getRefreshPeriod(HWC_DISPLAY_PRIMARY);
     mAnimFrameTracker.setDisplayRefreshPeriod(period);
+
+    // Use phase of 0 since phase is not known.
+    // Use latency of 0, which will snap to the ideal latency.
+    setCompositorTimingSnapped(0, period, 0);
 }
 
 void SurfaceFlinger::initializeDisplays() {
@@ -2996,14 +3030,15 @@ void SurfaceFlinger::logFrameStats() {
 void SurfaceFlinger::appendSfConfigString(String8& result) const
 {
     result.append(" [sf");
-#ifdef HAS_CONTEXT_PRIORITY
-    result.append(" HAS_CONTEXT_PRIORITY");
-#endif
-#ifdef NEVER_DEFAULT_TO_ASYNC_MODE
-    result.append(" NEVER_DEFAULT_TO_ASYNC_MODE");
-#endif
+    result.appendFormat(" HAS_CONTEXT_PRIORITY=%d", useContextPriority);
+
     if (isLayerTripleBufferingDisabled())
         result.append(" DISABLE_TRIPLE_BUFFERING");
+
+    result.appendFormat(" PRESENT_TIME_OFFSET=%" PRId64, dispSyncPresentTimeOffset);
+    result.appendFormat(" FORCE_HWC_FOR_RBG_TO_YUV=%d", useHwcForRgbToYuv);
+    result.appendFormat(" MAX_VIRT_DISPLAY_DIM=%" PRIu64, maxVirtualDisplaySize);
+    result.appendFormat(" RUNNING_WITHOUT_SYNC_FRAMEWORK=%d", !hasSyncFramework);
     result.append("]");
 }
 
@@ -3127,8 +3162,8 @@ void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
     result.append("DispSync configuration: ");
     colorizer.reset(result);
     result.appendFormat("app phase %" PRId64 " ns, sf phase %" PRId64 " ns, "
-            "present offset %d ns (refresh %" PRId64 " ns)",
-        vsyncPhaseOffsetNs, sfVsyncPhaseOffsetNs, PRESENT_TIME_OFFSET_FROM_VSYNC_NS,
+            "present offset %" PRId64 " ns (refresh %" PRId64 " ns)",
+        vsyncPhaseOffsetNs, sfVsyncPhaseOffsetNs, dispSyncPresentTimeOffset,
         mHwc->getRefreshPeriod(HWC_DISPLAY_PRIMARY));
     result.append("\n");
 

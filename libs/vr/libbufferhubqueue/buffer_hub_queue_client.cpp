@@ -1,5 +1,7 @@
 #include "include/private/dvr/buffer_hub_queue_client.h"
 
+//#define LOG_NDEBUG 0
+
 #include <inttypes.h>
 #include <log/log.h>
 #include <sys/epoll.h>
@@ -11,9 +13,6 @@
 #include <pdx/file_handle.h>
 #include <private/dvr/bufferhub_rpc.h>
 
-using android::pdx::LocalHandle;
-using android::pdx::LocalChannelHandle;
-
 namespace android {
 namespace dvr {
 
@@ -24,7 +23,9 @@ BufferHubQueue::BufferHubQueue(LocalChannelHandle channel_handle,
       meta_size_(meta_size),
       meta_buffer_tmp_(meta_size ? new uint8_t[meta_size] : nullptr),
       buffers_(BufferHubQueue::kMaxQueueCapacity),
+      epollhup_pending_(BufferHubQueue::kMaxQueueCapacity, false),
       available_buffers_(BufferHubQueue::kMaxQueueCapacity),
+      fences_(BufferHubQueue::kMaxQueueCapacity),
       capacity_(0) {
   Initialize();
 }
@@ -36,7 +37,9 @@ BufferHubQueue::BufferHubQueue(const std::string& endpoint_path,
       meta_size_(meta_size),
       meta_buffer_tmp_(meta_size ? new uint8_t[meta_size] : nullptr),
       buffers_(BufferHubQueue::kMaxQueueCapacity),
+      epollhup_pending_(BufferHubQueue::kMaxQueueCapacity, false),
       available_buffers_(BufferHubQueue::kMaxQueueCapacity),
+      fences_(BufferHubQueue::kMaxQueueCapacity),
       capacity_(0) {
   Initialize();
 }
@@ -101,36 +104,79 @@ bool BufferHubQueue::WaitForBuffers(int timeout) {
 
       ALOGD("New BufferHubQueue event %d: index=%" PRId64, i, index);
 
-      if (is_buffer_event_index(index) && (events[i].events & EPOLLIN)) {
-        auto buffer = buffers_[index];
-        ret = OnBufferReady(buffer);
-        if (ret < 0) {
-          ALOGE("Failed to set buffer ready: %s", strerror(-ret));
-          continue;
-        }
-        Enqueue(buffer, index);
-      } else if (is_buffer_event_index(index) &&
-                 (events[i].events & EPOLLHUP)) {
-        // This maybe caused by producer replacing an exising buffer slot.
-        // Currently the epoll FD is cleaned up when the replacement consumer
-        // client is imported.
-        ALOGW("Receives EPOLLHUP at slot: %" PRId64, index);
-      } else if (is_queue_event_index(index) && (events[i].events & EPOLLIN)) {
-        // Note that after buffer imports, if |count()| still returns 0, epoll
-        // wait will be tried again to acquire the newly imported buffer.
-        ret = OnBufferAllocated();
-        if (ret < 0) {
-          ALOGE("Failed to import buffer: %s", strerror(-ret));
-          continue;
-        }
+      if (is_buffer_event_index(index)) {
+        HandleBufferEvent(static_cast<size_t>(index), events[i]);
+      } else if (is_queue_event_index(index)) {
+        HandleQueueEvent(events[i]);
       } else {
-        ALOGW("Unknown event %d: u64=%" PRId64 ": events=%" PRIu32, i, index,
-              events[i].events);
+        ALOGW("Unknown event index: %" PRId64, index);
       }
     }
   }
 
   return true;
+}
+
+void BufferHubQueue::HandleBufferEvent(size_t slot, const epoll_event& event) {
+  auto buffer = buffers_[slot];
+  if (!buffer) {
+    ALOGW("BufferHubQueue::HandleBufferEvent: Invalid buffer slot: %zu", slot);
+    return;
+  }
+
+  auto status = buffer->GetEventMask(event.events);
+  if (!status) {
+    ALOGW("BufferHubQueue::HandleBufferEvent: Failed to get event mask: %s",
+          status.GetErrorMessage().c_str());
+    return;
+  }
+
+  int events = status.get();
+  if (events & EPOLLIN) {
+    int ret = OnBufferReady(buffer, &fences_[slot]);
+    if (ret < 0) {
+      ALOGE("Failed to set buffer ready: %s", strerror(-ret));
+      return;
+    }
+    Enqueue(buffer, slot);
+  } else if (events & EPOLLHUP) {
+    // This might be caused by producer replacing an existing buffer slot, or
+    // when BufferHubQueue is shutting down. For the first case, currently the
+    // epoll FD is cleaned up when the replacement consumer client is imported,
+    // we shouldn't detach again if |epollhub_pending_[slot]| is set.
+    ALOGW(
+        "Receives EPOLLHUP at slot: %zu, buffer event fd: %d, EPOLLHUP "
+        "pending: %d",
+        slot, buffer->event_fd(), epollhup_pending_[slot]);
+    if (epollhup_pending_[slot]) {
+      epollhup_pending_[slot] = false;
+    } else {
+      DetachBuffer(slot);
+    }
+  } else {
+    ALOGW("Unknown event, slot=%zu, epoll events=%d", slot, events);
+  }
+}
+
+void BufferHubQueue::HandleQueueEvent(const epoll_event& event) {
+  auto status = GetEventMask(event.events);
+  if (!status) {
+    ALOGW("BufferHubQueue::HandleQueueEvent: Failed to get event mask: %s",
+          status.GetErrorMessage().c_str());
+    return;
+  }
+
+  int events = status.get();
+  if (events & EPOLLIN) {
+    // Note that after buffer imports, if |count()| still returns 0, epoll
+    // wait will be tried again to acquire the newly imported buffer.
+    int ret = OnBufferAllocated();
+    if (ret < 0) {
+      ALOGE("Failed to import buffer: %s", strerror(-ret));
+    }
+  } else {
+    ALOGW("Unknown epoll events=%d", events);
+  }
 }
 
 int BufferHubQueue::AddBuffer(const std::shared_ptr<BufferHubBuffer>& buf,
@@ -146,8 +192,9 @@ int BufferHubQueue::AddBuffer(const std::shared_ptr<BufferHubBuffer>& buf,
   if (buffers_[slot] != nullptr) {
     // Replace the buffer if the slot is preoccupied. This could happen when the
     // producer side replaced the slot with a newly allocated buffer. Detach the
-    // buffer and set up with the new one.
+    // buffer before setting up with the new one.
     DetachBuffer(slot);
+    epollhup_pending_[slot] = true;
   }
 
   epoll_event event = {.events = EPOLLIN | EPOLLET, .data = {.u64 = slot}};
@@ -206,7 +253,8 @@ void BufferHubQueue::Enqueue(std::shared_ptr<BufferHubBuffer> buf,
 
 std::shared_ptr<BufferHubBuffer> BufferHubQueue::Dequeue(int timeout,
                                                          size_t* slot,
-                                                         void* meta) {
+                                                         void* meta,
+                                                         LocalHandle* fence) {
   ALOGD("Dequeue: count=%zu, timeout=%d", count(), timeout);
 
   if (count() == 0 && !WaitForBuffers(timeout))
@@ -214,6 +262,8 @@ std::shared_ptr<BufferHubBuffer> BufferHubQueue::Dequeue(int timeout,
 
   std::shared_ptr<BufferHubBuffer> buf;
   BufferInfo& buffer_info = available_buffers_.Front();
+
+  *fence = std::move(fences_[buffer_info.slot]);
 
   // Report current pos as the output slot.
   std::swap(buffer_info.slot, *slot);
@@ -325,15 +375,21 @@ int ProducerQueue::DetachBuffer(size_t slot) {
   return BufferHubQueue::DetachBuffer(slot);
 }
 
-std::shared_ptr<BufferProducer> ProducerQueue::Dequeue(int timeout,
-                                                       size_t* slot) {
-  auto buf = BufferHubQueue::Dequeue(timeout, slot, nullptr);
+std::shared_ptr<BufferProducer> ProducerQueue::Dequeue(
+    int timeout, size_t* slot, LocalHandle* release_fence) {
+  if (slot == nullptr || release_fence == nullptr) {
+    ALOGE("invalid parameter, slot=%p, release_fence=%p", slot, release_fence);
+    return nullptr;
+  }
+
+  auto buf = BufferHubQueue::Dequeue(timeout, slot, nullptr, release_fence);
   return std::static_pointer_cast<BufferProducer>(buf);
 }
 
-int ProducerQueue::OnBufferReady(std::shared_ptr<BufferHubBuffer> buf) {
+int ProducerQueue::OnBufferReady(std::shared_ptr<BufferHubBuffer> buf,
+                                 LocalHandle* release_fence) {
   auto buffer = std::static_pointer_cast<BufferProducer>(buf);
-  return buffer->GainAsync();
+  return buffer->Gain(release_fence);
 }
 
 ConsumerQueue::ConsumerQueue(LocalChannelHandle handle, size_t meta_size)
@@ -383,9 +439,9 @@ int ConsumerQueue::AddBuffer(const std::shared_ptr<BufferConsumer>& buf,
   return BufferHubQueue::AddBuffer(buf, slot);
 }
 
-std::shared_ptr<BufferConsumer> ConsumerQueue::Dequeue(int timeout,
-                                                       size_t* slot, void* meta,
-                                                       size_t meta_size) {
+std::shared_ptr<BufferConsumer> ConsumerQueue::Dequeue(
+    int timeout, size_t* slot, void* meta, size_t meta_size,
+    LocalHandle* acquire_fence) {
   if (meta_size != meta_size_) {
     ALOGE(
         "metadata size (%zu) for the dequeuing buffer does not match metadata "
@@ -393,14 +449,21 @@ std::shared_ptr<BufferConsumer> ConsumerQueue::Dequeue(int timeout,
         meta_size, meta_size_);
     return nullptr;
   }
-  auto buf = BufferHubQueue::Dequeue(timeout, slot, meta);
+
+  if (slot == nullptr || meta == nullptr || acquire_fence == nullptr) {
+    ALOGE("invalid parameter, slot=%p, meta=%p, acquire_fence=%p", slot, meta,
+          acquire_fence);
+    return nullptr;
+  }
+
+  auto buf = BufferHubQueue::Dequeue(timeout, slot, meta, acquire_fence);
   return std::static_pointer_cast<BufferConsumer>(buf);
 }
 
-int ConsumerQueue::OnBufferReady(std::shared_ptr<BufferHubBuffer> buf) {
+int ConsumerQueue::OnBufferReady(std::shared_ptr<BufferHubBuffer> buf,
+                                 LocalHandle* acquire_fence) {
   auto buffer = std::static_pointer_cast<BufferConsumer>(buf);
-  LocalHandle fence;
-  return buffer->Acquire(&fence, meta_buffer_tmp_.get(), meta_size_);
+  return buffer->Acquire(acquire_fence, meta_buffer_tmp_.get(), meta_size_);
 }
 
 int ConsumerQueue::OnBufferAllocated() {
