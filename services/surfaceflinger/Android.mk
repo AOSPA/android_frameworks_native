@@ -53,7 +53,6 @@ ifeq ($(TARGET_USES_HWC2),true)
     LOCAL_CFLAGS += -DUSE_HWC2
     LOCAL_SRC_FILES += \
         SurfaceFlinger.cpp \
-        VrStateCallbacks.cpp \
         DisplayHardware/HWComposer.cpp
     ifeq ($(TARGET_USES_HWC2ON1ADAPTER), true)
         LOCAL_CFLAGS += -DBYPASS_IHWC
@@ -63,10 +62,6 @@ else
     LOCAL_SRC_FILES += \
         SurfaceFlinger_hwc1.cpp \
         DisplayHardware/HWComposer_hwc1.cpp
-endif
-
-ifneq ($(NUM_FRAMEBUFFER_SURFACE_BUFFERS),)
-    LOCAL_CFLAGS += -DNUM_FRAMEBUFFER_SURFACE_BUFFERS=$(NUM_FRAMEBUFFER_SURFACE_BUFFERS)
 endif
 
 LOCAL_CFLAGS += -fvisibility=hidden -Werror=format

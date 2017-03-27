@@ -16,6 +16,7 @@ COMMON_SRC_FILES := \
         utils.cpp
 COMMON_SHARED_LIBRARIES := \
         android.hardware.dumpstate@1.0 \
+        android.hidl.manager@1.0 \
         libhidlbase \
         libbase \
         libbinder \
@@ -92,10 +93,6 @@ include $(BUILD_SHARED_LIBRARY)
 # dumpstate #
 # ==========#
 include $(CLEAR_VARS)
-
-ifdef BOARD_WLAN_DEVICE
-LOCAL_CFLAGS := -DFWDUMP_$(BOARD_WLAN_DEVICE)
-endif
 
 LOCAL_SRC_FILES := $(COMMON_SRC_FILES) \
         DumpstateService.cpp \

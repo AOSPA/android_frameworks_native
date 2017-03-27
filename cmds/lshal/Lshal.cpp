@@ -257,8 +257,9 @@ void Lshal::dumpVintf() const {
                 continue;
             }
             // Strip out system libs.
-            // TODO(b/34772739): might want to add other framework HAL packages
-            if (fqName.inPackage("android.hidl")) {
+            if (fqName.inPackage("android.hidl") ||
+                fqName.inPackage("android.frameworks") ||
+                fqName.inPackage("android.system")) {
                 continue;
             }
             std::string interfaceName =
@@ -456,6 +457,9 @@ Status Lshal::fetchPassthrough(const sp<IServiceManager> &manager) {
     using namespace ::android::hidl::base::V1_0;
     auto ret = timeoutIPC(manager, &IServiceManager::debugDump, [&] (const auto &infos) {
         for (const auto &info : infos) {
+            if (info.clientPids.size() <= 0) {
+                continue;
+            }
             putEntry(PTSERVICEMANAGER_REG_CLIENT, {
                 .interfaceName =
                         std::string{info.interfaceName.c_str()} + "/" +

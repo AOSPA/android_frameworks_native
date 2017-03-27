@@ -84,7 +84,6 @@ class RenderEngine;
 class EventControlThread;
 class VSyncSource;
 class InjectVSyncSource;
-class VrStateCallbacks;
 
 namespace dvr {
 class VrFlinger;
@@ -147,6 +146,10 @@ public:
     // Maximum dimension supported by HWC for virtual display.
     // Equal to min(max_height, max_width).
     static uint64_t maxVirtualDisplaySize;
+
+    // Controls the number of buffers SurfaceFlinger will allocate for use in
+    // FramebufferSurface
+    static int64_t maxFrameBufferAcquiredBuffers;
 
     static char const* getServiceName() ANDROID_API {
         return "SurfaceFlinger";
@@ -211,7 +214,6 @@ private:
     friend class EventThread;
     friend class Layer;
     friend class MonitoredProducer;
-    friend class VrStateCallbacks;
 
     // This value is specified in number of frames.  Log frame stats at most
     // every half hour.
@@ -256,8 +258,6 @@ private:
     virtual void bootFinished();
     virtual bool authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const;
-    virtual status_t getSupportedFrameTimestamps(
-            std::vector<FrameEvent>* outSupported) const;
     virtual sp<IDisplayEventConnection> createDisplayEventConnection();
     virtual status_t captureScreen(const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
@@ -532,9 +532,8 @@ private:
     void clearHwcLayers(const LayerVector& layers);
     void resetHwc();
 
-    // Check to see if we should change to or from vr mode, and if so, perform
-    // the handoff.
-    void updateVrMode();
+    // Check to see if we should handoff to vr flinger.
+    void updateVrFlinger();
 #endif
 
     /* ------------------------------------------------------------------------
@@ -604,7 +603,6 @@ private:
     DefaultKeyedVector< wp<IBinder>, sp<DisplayDevice> > mDisplays;
 
     // don't use a lock for these, we don't care
-    int mVrModeSupported;
     int mDebugRegion;
     int mDebugDDMS;
     int mDebugDisableHWC;
@@ -701,9 +699,8 @@ private:
     status_t CheckTransactCodeCredentials(uint32_t code);
 
 #ifdef USE_HWC2
-    sp<VrStateCallbacks> mVrStateCallbacks;
-
-    std::atomic<bool> mEnterVrMode;
+    std::atomic<bool> mVrFlingerRequestsDisplay;
+    static bool useVrFlinger;
 #endif
     };
 }; // namespace android

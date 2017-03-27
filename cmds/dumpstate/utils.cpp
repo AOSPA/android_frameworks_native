@@ -38,6 +38,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,7 @@
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
+#include <android/hidl/manager/1.0/IServiceManager.h>
 #include <cutils/properties.h>
 #include <cutils/sockets.h>
 #include <debuggerd/client.h>
@@ -58,6 +60,8 @@ using android::os::dumpstate::CommandOptions;
 using android::os::dumpstate::DumpFileToFd;
 using android::os::dumpstate::PropertiesHelper;
 
+// Keep in sync with
+// frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
 static const int TRACE_DUMP_TIMEOUT_MS = 10000; // 10 seconds
 
 /* Most simple commands have 10 as timeout, so 5 is a good estimate */
@@ -76,13 +80,22 @@ static const char* native_processes_to_dump[] = {
         "/system/bin/audioserver",
         "/system/bin/cameraserver",
         "/system/bin/drmserver",
-        "/system/bin/mediacodec",     // media.codec
         "/system/bin/mediadrmserver",
         "/system/bin/mediaextractor", // media.extractor
         "/system/bin/mediaserver",
         "/system/bin/sdcard",
         "/system/bin/surfaceflinger",
         "/system/bin/vehicle_network_service",
+        NULL,
+};
+
+/* list of hal interface to dump containing process during native dumps */
+static const char* hal_interfaces_to_dump[] {
+        "android.hardware.audio@2.0::IDevicesFactory",
+        "android.hardware.bluetooth@1.0::IBluetoothHci",
+        "android.hardware.camera.provider@2.4::ICameraProvider",
+        "android.hardware.vr@1.0::IVr",
+        "android.hardware.media.omx@1.0::IOmx",
         NULL,
 };
 
@@ -791,6 +804,15 @@ void redirect_to_existing_file(FILE *redirect, char *path) {
     _redirect_to_file(redirect, path, O_APPEND);
 }
 
+static bool should_dump_hal_interface(const char* interface) {
+    for (const char** i = hal_interfaces_to_dump; *i; i++) {
+        if (!strcmp(*i, interface)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool should_dump_native_traces(const char* path) {
     for (const char** p = native_processes_to_dump; *p; p++) {
         if (!strcmp(*p, path)) {
@@ -798,6 +820,35 @@ static bool should_dump_native_traces(const char* path) {
         }
     }
     return false;
+}
+
+std::set<int> get_interesting_hal_pids() {
+    using android::hidl::manager::V1_0::IServiceManager;
+    using android::sp;
+    using android::hardware::Return;
+
+    sp<IServiceManager> manager = IServiceManager::getService();
+    std::set<int> pids;
+
+    Return<void> ret = manager->debugDump([&](auto& hals) {
+        for (const auto &info : hals) {
+            if (info.pid == static_cast<int>(IServiceManager::PidConstant::NO_PID)) {
+                continue;
+            }
+
+            if (!should_dump_hal_interface(info.interfaceName)) {
+                continue;
+            }
+
+            pids.insert(info.pid);
+        }
+    });
+
+    if (!ret.isOk()) {
+        MYLOGE("Could not get list of HAL PIDs: %s\n", ret.description().c_str());
+    }
+
+    return pids; // whether it was okay or not
 }
 
 /* dump Dalvik and native stack traces, return the trace file location (NULL if none) */
@@ -834,6 +885,7 @@ const char *dump_traces() {
     /* Variables below must be initialized before 'goto' statements */
     int dalvik_found = 0;
     int ifd, wfd = -1;
+    std::set<int> hal_pids = get_interesting_hal_pids();
 
     /* walk /proc and kill -QUIT all Dalvik processes */
     DIR *proc = opendir("/proc");
@@ -908,7 +960,8 @@ const char *dump_traces() {
                 dprintf(fd, "[dump dalvik stack %d: %.3fs elapsed]\n", pid,
                         (float)(Nanotime() - start) / NANOS_PER_SEC);
             }
-        } else if (should_dump_native_traces(data)) {
+        } else if (should_dump_native_traces(data) ||
+                   hal_pids.find(pid) != hal_pids.end()) {
             /* dump native process if appropriate */
             if (lseek(fd, 0, SEEK_END) < 0) {
                 MYLOGE("lseek: %s\n", strerror(errno));

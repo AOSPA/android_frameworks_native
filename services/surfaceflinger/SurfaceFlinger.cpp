@@ -73,7 +73,6 @@
 #include "LayerDim.h"
 #include "MonitoredProducer.h"
 #include "SurfaceFlinger.h"
-#include "VrStateCallbacks.h"
 
 #include "DisplayHardware/FramebufferSurface.h"
 #include "DisplayHardware/HWComposer.h"
@@ -118,6 +117,8 @@ int64_t SurfaceFlinger::dispSyncPresentTimeOffset;
 bool SurfaceFlinger::useHwcForRgbToYuv;
 uint64_t SurfaceFlinger::maxVirtualDisplaySize;
 bool SurfaceFlinger::hasSyncFramework;
+bool SurfaceFlinger::useVrFlinger;
+int64_t SurfaceFlinger::maxFrameBufferAcquiredBuffers;
 
 SurfaceFlinger::SurfaceFlinger()
     :   BnSurfaceComposer(),
@@ -136,7 +137,6 @@ SurfaceFlinger::SurfaceFlinger()
         mVisibleRegionsDirty(false),
         mGeometryInvalid(false),
         mAnimCompositionPending(false),
-        mVrModeSupported(0),
         mDebugRegion(0),
         mDebugDDMS(0),
         mDebugDisableHWC(0),
@@ -156,10 +156,8 @@ SurfaceFlinger::SurfaceFlinger()
         mFrameBuckets(),
         mTotalTime(0),
         mLastSwapTime(0),
-        mNumLayers(0)
-#ifdef USE_HWC2
-        ,mEnterVrMode(false)
-#endif
+        mNumLayers(0),
+        mVrFlingerRequestsDisplay(false)
 {
     ALOGI("SurfaceFlinger is starting");
 
@@ -184,12 +182,15 @@ SurfaceFlinger::SurfaceFlinger()
     maxVirtualDisplaySize = getUInt64<ISurfaceFlingerConfigs,
             &ISurfaceFlingerConfigs::maxVirtualDisplaySize>(0);
 
+    // Vr flinger is only enabled on Daydream ready devices.
+    useVrFlinger = getBool< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::useVrFlinger>(false);
+
+    maxFrameBufferAcquiredBuffers = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::maxFrameBufferAcquiredBuffers>(2);
+
     // debugging stuff...
     char value[PROPERTY_VALUE_MAX];
-
-    // TODO (urbanus): remove once b/35319396 is fixed.
-    property_get("ro.boot.vr", value, "0");
-    mVrModeSupported = atoi(value);
 
     property_get("ro.bq.gpu_to_cpu_unsupported", value, "0");
     mGpuToCpuSupported = !atoi(value);
@@ -231,14 +232,6 @@ SurfaceFlinger::~SurfaceFlinger()
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglTerminate(display);
-
-    if (mVrStateCallbacks.get()) {
-        sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
-            defaultServiceManager()->checkService(String16("vrmanager")));
-        if (vrManagerService.get()) {
-            vrManagerService->unregisterListener(mVrStateCallbacks);
-        }
-    }
 }
 
 void SurfaceFlinger::binderDied(const wp<IBinder>& /* who */)
@@ -365,6 +358,10 @@ void SurfaceFlinger::bootFinished()
         window->linkToDeath(static_cast<IBinder::DeathRecipient*>(this));
     }
 
+    if (mVrFlinger) {
+      mVrFlinger->OnBootFinished();
+    }
+
     // stop boot animation
     // formerly we would just kill the process, but we now ask it to exit so it
     // can choose where to stop the animation.
@@ -373,13 +370,6 @@ void SurfaceFlinger::bootFinished()
     const int LOGTAG_SF_STOP_BOOTANIM = 60110;
     LOG_EVENT_LONG(LOGTAG_SF_STOP_BOOTANIM,
                    ns2ms(systemTime(SYSTEM_TIME_MONOTONIC)));
-
-    sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
-        defaultServiceManager()->checkService(String16("vrmanager")));
-    if (vrManagerService.get()) {
-        mVrStateCallbacks = new VrStateCallbacks(*this);
-        vrManagerService->registerListener(mVrStateCallbacks);
-    }
 }
 
 void SurfaceFlinger::deleteTextureAsync(uint32_t texture) {
@@ -575,12 +565,25 @@ void SurfaceFlinger::init() {
     // Drop the state lock while we initialize the hardware composer. We drop
     // the lock because on creation, it will call back into SurfaceFlinger to
     // initialize the primary display.
-    LOG_ALWAYS_FATAL_IF(mEnterVrMode, "Starting in vr mode is not currently supported.");
+    LOG_ALWAYS_FATAL_IF(mVrFlingerRequestsDisplay,
+        "Starting with vr flinger active is not currently supported.");
     mRealHwc = new HWComposer(false);
     mHwc = mRealHwc;
     mHwc->setEventHandler(static_cast<HWComposer::EventHandler*>(this));
 
     Mutex::Autolock _l(mStateLock);
+
+    if (useVrFlinger) {
+        auto vrFlingerRequestDisplayCallback = [this] (bool requestDisplay) {
+            mVrFlingerRequestsDisplay = requestDisplay;
+            signalTransaction();
+        };
+        mVrFlinger = dvr::VrFlinger::Create(mHwc->getComposer(),
+                                            vrFlingerRequestDisplayCallback);
+        if (!mVrFlinger) {
+            ALOGE("Failed to start vrflinger");
+        }
+    }
 
     // retrieve the EGL context that was selected/created
     mEGLContext = mRenderEngine->getEGLContext();
@@ -641,23 +644,6 @@ bool SurfaceFlinger::authenticateSurfaceTextureLocked(
         const sp<IGraphicBufferProducer>& bufferProducer) const {
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
-}
-
-status_t SurfaceFlinger::getSupportedFrameTimestamps(
-        std::vector<FrameEvent>* outSupported) const {
-    *outSupported = {
-        FrameEvent::REQUESTED_PRESENT,
-        FrameEvent::ACQUIRE,
-        FrameEvent::LATCH,
-        FrameEvent::FIRST_REFRESH_START,
-        FrameEvent::LAST_REFRESH_START,
-        FrameEvent::GPU_COMPOSITION_DONE,
-        getHwComposer().presentFenceRepresentsStartOfScanout() ?
-                FrameEvent::DISPLAY_PRESENT : FrameEvent::DISPLAY_RETIRE,
-        FrameEvent::DEQUEUE_READY,
-        FrameEvent::RELEASE,
-    };
-    return NO_ERROR;
 }
 
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
@@ -1213,14 +1199,17 @@ void SurfaceFlinger::resetHwc() {
     // transition.
     mDrawingState.displays.clear();
     mDisplays.clear();
+    initializeDisplays();
 }
 
-void SurfaceFlinger::updateVrMode() {
-    bool enteringVrMode = mEnterVrMode;
-    if (enteringVrMode == mHwc->isUsingVrComposer()) {
+void SurfaceFlinger::updateVrFlinger() {
+    if (!mVrFlinger)
+        return;
+    bool vrFlingerRequestsDisplay = mVrFlingerRequestsDisplay;
+    if (vrFlingerRequestsDisplay == mHwc->isUsingVrComposer()) {
         return;
     }
-    if (enteringVrMode && !mVrHwc) {
+    if (vrFlingerRequestsDisplay && !mVrHwc) {
         // Construct new HWComposer without holding any locks.
         mVrHwc = new HWComposer(true);
         ALOGV("Vr HWC created");
@@ -1228,25 +1217,13 @@ void SurfaceFlinger::updateVrMode() {
     {
         Mutex::Autolock _l(mStateLock);
 
-        if (enteringVrMode) {
-            // Start vrflinger thread, if it hasn't been started already.
-            if (!mVrFlinger) {
-                mVrFlinger = std::make_unique<dvr::VrFlinger>();
-                int err = mVrFlinger->Run(mHwc->getComposer());
-                if (err != NO_ERROR) {
-                    ALOGE("Failed to run vrflinger: %s (%d)", strerror(-err), err);
-                    mVrFlinger.reset();
-                    mEnterVrMode = false;
-                    return;
-                }
-            }
-
+        if (vrFlingerRequestsDisplay) {
             resetHwc();
 
             mHwc = mVrHwc;
-            mVrFlinger->EnterVrMode();
+            mVrFlinger->GrantDisplayOwnership();
         } else {
-            mVrFlinger->ExitVrMode();
+            mVrFlinger->SeizeDisplayOwnership();
 
             resetHwc();
 
@@ -1268,12 +1245,6 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
     ATRACE_CALL();
     switch (what) {
         case MessageQueue::INVALIDATE: {
-            // TODO(eieio): Tied to a conditional until SELinux issues
-            // are resolved.
-            if (mVrModeSupported) {
-                updateVrMode();
-            }
-
             bool frameMissed = !mHadClientComposition &&
                     mPreviousPresentFence != Fence::NO_FENCE &&
                     (mPreviousPresentFence->getSignalTime() ==
@@ -1284,6 +1255,11 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
                 signalLayerUpdate();
                 break;
             }
+
+            // Now that we're going to make it to the handleMessageTransaction()
+            // call below it's safe to call updateVrFlinger(), which will
+            // potentially trigger a display handoff.
+            updateVrFlinger();
 
             bool refreshNeeded = handleMessageTransaction();
             refreshNeeded |= handleMessageInvalidate();
@@ -1484,18 +1460,10 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     }
     mGlCompositionDoneTimeline.updateSignalTimes();
 
-    sp<Fence> displayFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
-    auto displayFenceTime = std::make_shared<FenceTime>(displayFence);
-    mDisplayTimeline.push(displayFenceTime);
+    sp<Fence> presentFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
+    auto presentFenceTime = std::make_shared<FenceTime>(presentFence);
+    mDisplayTimeline.push(presentFenceTime);
     mDisplayTimeline.updateSignalTimes();
-
-    const std::shared_ptr<FenceTime>* presentFenceTime = &FenceTime::NO_FENCE;
-    const std::shared_ptr<FenceTime>* retireFenceTime = &FenceTime::NO_FENCE;
-    if (mHwc->presentFenceRepresentsStartOfScanout()) {
-        presentFenceTime = &displayFenceTime;
-    } else {
-        retireFenceTime = &displayFenceTime;
-    }
 
     nsecs_t vsyncPhase = mPrimaryDispSync.computeNextRefresh(0);
     nsecs_t vsyncInterval = mPrimaryDispSync.getPeriod();
@@ -1504,7 +1472,7 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     // when we started doing work for this frame, but that should be okay
     // since updateCompositorTiming has snapping logic.
     updateCompositorTiming(
-        vsyncPhase, vsyncInterval, refreshStartTime, displayFenceTime);
+        vsyncPhase, vsyncInterval, refreshStartTime, presentFenceTime);
     CompositorTiming compositorTiming;
     {
         std::lock_guard<std::mutex> lock(mCompositorTimingLock);
@@ -1513,15 +1481,15 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
 
     mDrawingState.traverseInZOrder([&](Layer* layer) {
         bool frameLatched = layer->onPostComposition(glCompositionDoneFenceTime,
-                *presentFenceTime, *retireFenceTime, compositorTiming);
+                presentFenceTime, compositorTiming);
         if (frameLatched) {
             recordBufferingStats(layer->getName().string(),
                     layer->getOccupancyHistory(false));
         }
     });
 
-    if (displayFence->isValid()) {
-        if (mPrimaryDispSync.addPresentFence(displayFence)) {
+    if (presentFence->isValid()) {
+        if (mPrimaryDispSync.addPresentFence(presentFence)) {
             enableHardwareVsync();
         } else {
             disableHardwareVsync(false);
@@ -1537,9 +1505,9 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     if (mAnimCompositionPending) {
         mAnimCompositionPending = false;
 
-        if (displayFenceTime->isValid()) {
+        if (presentFenceTime->isValid()) {
             mAnimFrameTracker.setActualPresentFence(
-                    std::move(displayFenceTime));
+                    std::move(presentFenceTime));
         } else {
             // The HWC doesn't support present fences, so use the refresh
             // timestamp instead.
@@ -2798,7 +2766,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                 flags |= eTraversalNeeded;
         }
         if (what & layer_state_t::eFinalCropChanged) {
-            if (layer->setFinalCrop(s.finalCrop))
+            if (layer->setFinalCrop(s.finalCrop, !geometryAppliesWithResize))
                 flags |= eTraversalNeeded;
         }
         if (what & layer_state_t::eLayerStackChanged) {
@@ -3262,6 +3230,8 @@ void SurfaceFlinger::appendSfConfigString(String8& result) const
     result.appendFormat(" FORCE_HWC_FOR_RBG_TO_YUV=%d", useHwcForRgbToYuv);
     result.appendFormat(" MAX_VIRT_DISPLAY_DIM=%" PRIu64, maxVirtualDisplaySize);
     result.appendFormat(" RUNNING_WITHOUT_SYNC_FRAMEWORK=%d", !hasSyncFramework);
+    result.appendFormat(" NUM_FRAMEBUFFER_SURFACE_BUFFERS=%" PRId64,
+                        maxFrameBufferAcquiredBuffers);
     result.append("]");
 }
 

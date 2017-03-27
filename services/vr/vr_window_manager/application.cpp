@@ -25,7 +25,7 @@ Application::~Application() {
   sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
       defaultServiceManager()->getService(String16("vrmanager")));
   if (vrManagerService.get()) {
-    vrManagerService->unregisterListener(vr_mode_listener_);
+    vrManagerService->unregisterPersistentVrStateListener(vr_mode_listener_);
   }
 }
 
@@ -39,7 +39,7 @@ int Application::Initialize() {
   sp<IVrManager> vrManagerService = interface_cast<IVrManager>(
       defaultServiceManager()->getService(String16("vrmanager")));
   if (vrManagerService.get()) {
-    vrManagerService->registerListener(vr_mode_listener_);
+    vrManagerService->registerPersistentVrStateListener(vr_mode_listener_);
   }
   return 0;
 }
@@ -274,15 +274,13 @@ void Application::ProcessControllerInput() {
     }
     controller_data_provider_->UnlockControllerData();
     if (shmem_controller_active_) {
-      // TODO(kpschoedel): change to ALOGV or remove.
-      ALOGI("Controller shmem orientation: %f %f %f %f",
+      ALOGV("Controller shmem orientation: %f %f %f %f",
             controller_orientation_.x(), controller_orientation_.y(),
             controller_orientation_.z(), controller_orientation_.w());
       if (shmem_controller_buttons_) {
-        ALOGI("Controller shmem buttons: %017" PRIX64,
+        ALOGV("Controller shmem buttons: %017" PRIX64,
             shmem_controller_buttons_);
       }
-      return;
     }
   }
 }
@@ -315,7 +313,7 @@ void Application::QueueTask(MainThreadTask task) {
   wake_up_init_and_render_.notify_one();
 }
 
-void Application::VrModeListener::onVrStateChanged(bool enabled) {
+void Application::VrModeListener::onPersistentVrStateChanged(bool enabled) {
   if (!enabled)
     app_->QueueTask(MainThreadTask::ExitingVrMode);
 }

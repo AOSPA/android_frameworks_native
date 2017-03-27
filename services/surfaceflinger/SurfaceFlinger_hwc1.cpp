@@ -116,6 +116,7 @@ int64_t SurfaceFlinger::dispSyncPresentTimeOffset;
 bool SurfaceFlinger::useHwcForRgbToYuv;
 uint64_t SurfaceFlinger::maxVirtualDisplaySize;
 bool SurfaceFlinger::hasSyncFramework;
+int64_t SurfaceFlinger::maxFrameBufferAcquiredBuffers;
 
 SurfaceFlinger::SurfaceFlinger()
     :   BnSurfaceComposer(),
@@ -174,6 +175,9 @@ SurfaceFlinger::SurfaceFlinger()
 
     useHwcForRgbToYuv = getBool< ISurfaceFlingerConfigs,
             &ISurfaceFlingerConfigs::useHwcForRGBtoYUV>(false);
+
+    maxFrameBufferAcquiredBuffers = getInt64< ISurfaceFlingerConfigs,
+            &ISurfaceFlingerConfigs::maxFrameBufferAcquiredBuffers>(2);
 
     char value[PROPERTY_VALUE_MAX];
 
@@ -641,22 +645,6 @@ bool SurfaceFlinger::authenticateSurfaceTextureLocked(
         const sp<IGraphicBufferProducer>& bufferProducer) const {
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
-}
-
-status_t SurfaceFlinger::getSupportedFrameTimestamps(
-        std::vector<FrameEvent>* outSupported) const {
-    *outSupported = {
-        FrameEvent::REQUESTED_PRESENT,
-        FrameEvent::ACQUIRE,
-        FrameEvent::LATCH,
-        FrameEvent::FIRST_REFRESH_START,
-        FrameEvent::LAST_REFRESH_START,
-        FrameEvent::GPU_COMPOSITION_DONE,
-        FrameEvent::DISPLAY_RETIRE,
-        FrameEvent::DEQUEUE_READY,
-        FrameEvent::RELEASE,
-    };
-    return NO_ERROR;
 }
 
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
@@ -1261,9 +1249,8 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     }
     mGlCompositionDoneTimeline.updateSignalTimes();
 
-    sp<Fence> displayFence = mHwc->getDisplayFence(HWC_DISPLAY_PRIMARY);
-    const std::shared_ptr<FenceTime>& presentFenceTime = FenceTime::NO_FENCE;
-    auto retireFenceTime = std::make_shared<FenceTime>(displayFence);
+    sp<Fence> retireFence = mHwc->getDisplayFence(HWC_DISPLAY_PRIMARY);
+    auto retireFenceTime = std::make_shared<FenceTime>(retireFence);
     mDisplayTimeline.push(retireFenceTime);
     mDisplayTimeline.updateSignalTimes();
 
@@ -1282,16 +1269,18 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     }
 
     mDrawingState.traverseInZOrder([&](Layer* layer) {
+        // TODO(brianderson): The retire fence is incorrectly passed in as the
+        // present fence. Fix this if this file lives on.
         bool frameLatched = layer->onPostComposition(glCompositionDoneFenceTime,
-                presentFenceTime, retireFenceTime, compositorTiming);
+                retireFenceTime, compositorTiming);
         if (frameLatched) {
             recordBufferingStats(layer->getName().string(),
                     layer->getOccupancyHistory(false));
         }
     });
 
-    if (displayFence->isValid()) {
-        if (mPrimaryDispSync.addPresentFence(displayFence)) {
+    if (retireFence->isValid()) {
+        if (mPrimaryDispSync.addPresentFence(retireFence)) {
             enableHardwareVsync();
         } else {
             disableHardwareVsync(false);
@@ -2575,7 +2564,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                 flags |= eTraversalNeeded;
         }
         if (what & layer_state_t::eFinalCropChanged) {
-            if (layer->setFinalCrop(s.finalCrop))
+            if (layer->setFinalCrop(s.finalCrop, !geometryAppliesWithResize))
                 flags |= eTraversalNeeded;
         }
         if (what & layer_state_t::eLayerStackChanged) {
@@ -3039,6 +3028,8 @@ void SurfaceFlinger::appendSfConfigString(String8& result) const
     result.appendFormat(" FORCE_HWC_FOR_RBG_TO_YUV=%d", useHwcForRgbToYuv);
     result.appendFormat(" MAX_VIRT_DISPLAY_DIM=%" PRIu64, maxVirtualDisplaySize);
     result.appendFormat(" RUNNING_WITHOUT_SYNC_FRAMEWORK=%d", !hasSyncFramework);
+    result.appendFormat(" NUM_FRAMEBUFFER_SURFACE_BUFFERS=%" PRId64,
+                        maxFrameBufferAcquiredBuffers);
     result.append("]");
 }
 

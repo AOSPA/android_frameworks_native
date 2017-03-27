@@ -5,6 +5,7 @@
 #include <android/input.h>
 #include <binder/IServiceManager.h>
 #include <hardware/hwcomposer2.h>
+#include <inttypes.h>
 #include <log/log.h>
 
 #include "controller_mesh.h"
@@ -14,6 +15,8 @@ namespace android {
 namespace dvr {
 
 namespace {
+
+constexpr uint32_t kPrimaryDisplayId = 1;
 
 const std::string kVertexShader = SHADER0([]() {
   layout(location = 0) in vec4 aPosition;
@@ -95,7 +98,8 @@ mat4 GetHorizontallyAlignedMatrixFromPose(const Posef& pose) {
 }
 
 int GetTouchIdForDisplay(uint32_t display) {
-  return display == 1 ? VirtualTouchpad::PRIMARY : VirtualTouchpad::VIRTUAL;
+  return display == kPrimaryDisplayId ? DVR_VIRTUAL_TOUCHPAD_PRIMARY
+                                      : DVR_VIRTUAL_TOUCHPAD_VIRTUAL;
 }
 
 }  // namespace
@@ -109,8 +113,9 @@ int ShellView::Initialize() {
   if (ret)
     return ret;
 
-  virtual_touchpad_ = VirtualTouchpadClient::Create();
-  const status_t touchpad_status = virtual_touchpad_->Attach();
+  virtual_touchpad_.reset(dvrVirtualTouchpadCreate());
+  const status_t touchpad_status =
+      dvrVirtualTouchpadAttach(virtual_touchpad_.get());
   if (touchpad_status != OK) {
     ALOGE("Failed to connect to virtual touchpad");
     return touchpad_status;
@@ -164,13 +169,11 @@ void ShellView::DeallocateResources() {
 }
 
 void ShellView::EnableDebug(bool debug) {
-  ALOGI("EnableDebug(%d)", (int)debug);  // XXX TODO delete
   QueueTask(debug ? MainThreadTask::EnableDebugMode
                   : MainThreadTask::DisableDebugMode);
 }
 
 void ShellView::VrMode(bool mode) {
-  ALOGI("VrMode(%d)", (int)mode);  // XXX TODO delete
   QueueTask(mode ? MainThreadTask::EnteringVrMode
                  : MainThreadTask::ExitingVrMode);
 }
@@ -180,6 +183,18 @@ void ShellView::dumpInternal(String8& result) {
   result.appendFormat("initialized = %s\n", initialized_ ? "true" : "false");
   result.appendFormat("is_visible = %s\n", is_visible_ ? "true" : "false");
   result.appendFormat("debug_mode = %s\n\n", debug_mode_ ? "true" : "false");
+
+  result.append("[displays]\n");
+  result.appendFormat("count = %zu\n", displays_.size());
+  for (size_t i = 0; i < displays_.size(); ++i)
+    result.appendFormat(" display_id = %" PRId32 "\n", displays_[i]->id());
+
+  result.append("\n");
+}
+
+void ShellView::Set2DMode(bool mode) {
+  if (!displays_.empty())
+    displays_[0]->set_2dmode(mode);
 }
 
 void ShellView::OnDrawFrame() {
@@ -245,6 +260,9 @@ DisplayView* ShellView::FindOrCreateDisplay(uint32_t id) {
   }
 
   auto display = new DisplayView(id, GetTouchIdForDisplay(id));
+  // Virtual displays only ever have 2D apps so force it.
+  if (id != kPrimaryDisplayId)
+    display->set_always_2d(true);
   new_displays_.emplace_back(display);
   return display;
 }
@@ -419,7 +437,7 @@ void ShellView::DrawController(const mat4& perspective, const mat4& eye_matrix,
 }
 
 void ShellView::Touch() {
-  if (!virtual_touchpad_.get()) {
+  if (!virtual_touchpad_) {
     ALOGE("missing virtual touchpad");
     return;
   }
@@ -431,8 +449,8 @@ void ShellView::Touch() {
 
   // Device is portrait, but in landscape when in VR.
   // Rotate touch input appropriately.
-  const android::status_t status = virtual_touchpad_->Touch(
-      active_display_->touchpad_id(),
+  const android::status_t status = dvrVirtualTouchpadTouch(
+      virtual_touchpad_.get(), active_display_->touchpad_id(),
       1.0f - hit_location.y() / size_.y(), hit_location.x() / size_.x(),
       is_touching_ ? 1.0f : 0.0f);
   if (status != OK) {
@@ -453,7 +471,7 @@ bool ShellView::OnTouchpadButton(bool down, int button) {
     return true;
   }
   touchpad_buttons_ = buttons;
-  if (!virtual_touchpad_.get()) {
+  if (!virtual_touchpad_) {
     ALOGE("missing virtual touchpad");
     return false;
   }
@@ -461,8 +479,9 @@ bool ShellView::OnTouchpadButton(bool down, int button) {
   if (!active_display_)
     return true;
 
-  const android::status_t status = virtual_touchpad_->ButtonState(
-      active_display_->touchpad_id(), touchpad_buttons_);
+  const android::status_t status = dvrVirtualTouchpadButtonState(
+      virtual_touchpad_.get(), active_display_->touchpad_id(),
+      touchpad_buttons_);
   if (status != OK) {
     ALOGE("touchpad button failed: %d %d", touchpad_buttons_, status);
   }

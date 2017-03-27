@@ -18,10 +18,20 @@ using android::pdx::default_transport::Endpoint;
 using android::pdx::rpc::DispatchRemoteMethod;
 using android::pdx::rpc::WrapBuffer;
 
+namespace {
+
+constexpr char kPersistentPoseBufferName[] = "DvrPersistentPoseBuffer";
+const int kPersistentPoseBufferUserId = 0;
+const int kPersistentPoseBufferGroupId = 0;
+const size_t kTimingDataSizeOffset = 128;
+
+}  // anonymous namespace
+
 namespace android {
 namespace dvr {
 
-DisplayService::DisplayService() : DisplayService(nullptr) {}
+DisplayService::DisplayService()
+    : DisplayService(nullptr) {}
 
 DisplayService::DisplayService(Hwc2::Composer* hidl)
     : BASE("DisplayService", Endpoint::Create(DisplayRPC::kClientPath)),
@@ -74,19 +84,14 @@ int DisplayService::HandleMessage(pdx::Message& message) {
           *this, &DisplayService::OnCreateSurface, message);
       return 0;
 
-    case DisplayRPC::EnterVrMode::Opcode:
-      DispatchRemoteMethod<DisplayRPC::EnterVrMode>(
-          *this, &DisplayService::OnEnterVrMode, message);
-      return 0;
-
-    case DisplayRPC::ExitVrMode::Opcode:
-      DispatchRemoteMethod<DisplayRPC::ExitVrMode>(
-          *this, &DisplayService::OnExitVrMode, message);
-      return 0;
-
     case DisplayRPC::SetViewerParams::Opcode:
       DispatchRemoteMethod<DisplayRPC::SetViewerParams>(
           *this, &DisplayService::OnSetViewerParams, message);
+      return 0;
+
+    case DisplayRPC::GetPoseBuffer::Opcode:
+      DispatchRemoteMethod<DisplayRPC::GetPoseBuffer>(
+          *this, &DisplayService::OnGetPoseBuffer, message);
       return 0;
 
     // Direct the surface specific messages to the surface instance.
@@ -182,16 +187,6 @@ DisplayRPC::ByteBuffer DisplayService::OnGetEdsCapture(pdx::Message& message) {
   return WrapBuffer(std::move(buffer));
 }
 
-int DisplayService::OnEnterVrMode(pdx::Message& /*message*/) {
-  hardware_composer_.Resume();
-  return 0;
-}
-
-int DisplayService::OnExitVrMode(pdx::Message& /*message*/) {
-  hardware_composer_.Suspend();
-  return 0;
-}
-
 void DisplayService::OnSetViewerParams(pdx::Message& message,
                                        const ViewerParams& view_params) {
   Compositor* compositor = hardware_composer_.GetCompositor();
@@ -254,6 +249,15 @@ void DisplayService::OnSetViewerParams(pdx::Message& message,
   compositor->UpdateHeadMountMetrics(head_mount_metrics);
 }
 
+pdx::LocalChannelHandle DisplayService::OnGetPoseBuffer(pdx::Message& message) {
+  if (pose_buffer_) {
+    return pose_buffer_->CreateConsumer().take();
+  }
+
+  pdx::rpc::RemoteMethodError(message, EAGAIN);
+  return {};
+}
+
 // Calls the message handler for the DisplaySurface associated with this
 // channel.
 int DisplayService::HandleSurfaceMessage(pdx::Message& message) {
@@ -290,7 +294,7 @@ DisplayService::GetVisibleDisplaySurfaces() const {
   return visible_surfaces;
 }
 
-int DisplayService::UpdateActiveDisplaySurfaces() {
+void DisplayService::UpdateActiveDisplaySurfaces() {
   auto visible_surfaces = GetVisibleDisplaySurfaces();
 
   // Sort the surfaces based on manager z order first, then client z order.
@@ -321,7 +325,20 @@ int DisplayService::UpdateActiveDisplaySurfaces() {
     if (surface->client_blur_behind())
       blur_requested = true;
   }
-  return hardware_composer_.SetDisplaySurfaces(std::move(visible_surfaces));
+
+  hardware_composer_.SetDisplaySurfaces(std::move(visible_surfaces));
+}
+
+pdx::BorrowedChannelHandle DisplayService::SetupPoseBuffer(
+    size_t extended_region_size, int usage) {
+  if (!pose_buffer_) {
+    pose_buffer_ = BufferProducer::Create(
+        kPersistentPoseBufferName, kPersistentPoseBufferUserId,
+        kPersistentPoseBufferGroupId, usage,
+        extended_region_size + kTimingDataSizeOffset);
+  }
+
+  return pose_buffer_->GetChannelHandle().Borrow();
 }
 
 void DisplayService::OnHardwareComposerRefresh() {
