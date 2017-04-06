@@ -1,7 +1,6 @@
 #include "surface_flinger_view.h"
 
 #include <impl/vr_composer_view.h>
-#include <private/dvr/display_client.h>
 #include <private/dvr/native_buffer.h>
 
 #include "hwc_callback.h"
@@ -15,7 +14,7 @@ SurfaceFlingerView::SurfaceFlingerView() {}
 SurfaceFlingerView::~SurfaceFlingerView() {}
 
 bool SurfaceFlingerView::Initialize(HwcCallback::Client *client) {
-  const char vr_hwcomposer_name[] = "vr_hwcomposer";
+  const char vr_hwcomposer_name[] = "vr";
   vr_hwcomposer_ = HIDL_FETCH_IComposer(vr_hwcomposer_name);
   if (!vr_hwcomposer_.get()) {
     ALOGE("Failed to get vr_hwcomposer");
@@ -34,14 +33,6 @@ bool SurfaceFlingerView::Initialize(HwcCallback::Client *client) {
     return false;
   }
 
-  vr_composer_view_ =
-      std::make_unique<VrComposerView>(std::make_unique<HwcCallback>(client));
-  vr_composer_view_->Initialize(GetComposerViewFromIComposer(
-      vr_hwcomposer_.get()));
-
-  // TODO(alexst): Refactor ShellView to account for orientation and change this back.
-  width_ = 1920;
-  height_ = 1080;
   return true;
 }
 

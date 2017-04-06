@@ -2,6 +2,7 @@
 #define VR_WINDOW_MANAGER_SHELL_VIEW_H_
 
 #include <dvr/virtual_touchpad_client.h>
+#include <private/dvr/display_client.h>
 #include <private/dvr/graphics/mesh.h>
 #include <private/dvr/graphics/shader_program.h>
 
@@ -33,6 +34,7 @@ class ShellView : public Application,
   void VrMode(bool mode) override;
   void dumpInternal(String8& result) override;
   void Set2DMode(bool mode) override;
+  void SetRotation(int angle) override;
 
 
  protected:
@@ -66,6 +68,8 @@ class ShellView : public Application,
   std::unique_ptr<SurfaceFlingerView> surface_flinger_view_;
   std::unique_ptr<Reticle> reticle_;
 
+  std::unique_ptr<DisplayClient> display_client_;
+
   struct DvrVirtualTouchpadDeleter {
     void operator()(DvrVirtualTouchpad* p) {
       dvrVirtualTouchpadDetach(p);
@@ -79,7 +83,6 @@ class ShellView : public Application,
 
   bool is_touching_ = false;
   int touchpad_buttons_ = 0;
-  vec2 size_;
 
   // Used to center the scene when the shell becomes visible.
   bool should_recenter_ = true;

@@ -112,6 +112,7 @@ int Application::AllocateResources() {
 void Application::DeallocateResources() {
   if (graphics_context_)
     dvrGraphicsContextDestroy(graphics_context_);
+  graphics_context_ = nullptr;
 
   if (pose_client_)
     dvrPoseDestroy(pose_client_);
@@ -173,7 +174,12 @@ void Application::DrawFrame() {
   // TODO(steventhomas): If we're not visible, block until we are. For now we
   // throttle by calling dvrGraphicsWaitNextFrame.
   DvrFrameSchedule schedule;
-  dvrGraphicsWaitNextFrame(graphics_context_, 0, &schedule);
+  int status = dvrGraphicsWaitNextFrame(graphics_context_, 0, &schedule);
+  if (status < 0) {
+    ALOGE("Context lost, deallocating graphics resources");
+    SetVisibility(false);
+    DeallocateResources();
+  }
 
   OnDrawFrame();
 

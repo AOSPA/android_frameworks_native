@@ -112,10 +112,13 @@ static const std::string ZIP_ROOT_DIR = "FS";
 
 // Must be hardcoded because dumpstate HAL implementation need SELinux access to it
 static const std::string kDumpstateBoardPath = "/bugreports/dumpstate_board.txt";
+static const std::string kLsHalDebugPath = "/bugreports/dumpstate_lshal.txt";
 
 static constexpr char PROPERTY_EXTRA_OPTIONS[] = "dumpstate.options";
 static constexpr char PROPERTY_LAST_ID[] = "dumpstate.last_id";
 static constexpr char PROPERTY_VERSION[] = "dumpstate.version";
+static constexpr char PROPERTY_EXTRA_TITLE[] = "dumpstate.options.title";
+static constexpr char PROPERTY_EXTRA_DESCRIPTION[] = "dumpstate.options.description";
 
 static const CommandOptions AS_ROOT_20 = CommandOptions::WithTimeout(20).AsRoot().Build();
 
@@ -817,28 +820,33 @@ static void DoLogcat() {
     if (timeout < 20000) {
         timeout = 20000;
     }
-    RunCommand("SYSTEM LOG", {"logcat", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+    RunCommand("SYSTEM LOG",
+               {"logcat", "-v", "threadtime", "-v", "printable", "-v", "uid",
+                        "-d", "*:v"},
                CommandOptions::WithTimeout(timeout / 1000).Build());
     timeout = logcat_timeout("events");
     if (timeout < 20000) {
         timeout = 20000;
     }
     RunCommand("EVENT LOG",
-               {"logcat", "-b", "events", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+               {"logcat", "-b", "events", "-v", "threadtime", "-v", "printable", "-v", "uid",
+                        "-d", "*:v"},
                CommandOptions::WithTimeout(timeout / 1000).Build());
     timeout = logcat_timeout("radio");
     if (timeout < 20000) {
         timeout = 20000;
     }
     RunCommand("RADIO LOG",
-               {"logcat", "-b", "radio", "-v", "threadtime", "-v", "printable", "-d", "*:v"},
+               {"logcat", "-b", "radio", "-v", "threadtime", "-v", "printable", "-v", "uid",
+                        "-d", "*:v"},
                CommandOptions::WithTimeout(timeout / 1000).Build());
 
     RunCommand("LOG STATISTICS", {"logcat", "-b", "all", "-S"});
 
     /* kernels must set CONFIG_PSTORE_PMSG, slice up pstore with device tree */
     RunCommand("LAST LOGCAT",
-               {"logcat", "-L", "-b", "all", "-v", "threadtime", "-v", "printable", "-d", "*:v"});
+                {"logcat", "-L", "-b", "all", "-v", "threadtime", "-v", "printable", "-v", "uid",
+                        "-d", "*:v"});
 }
 
 static void DumpIpTables() {
@@ -960,7 +968,19 @@ static void dumpstate() {
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy"});
     RunCommand("LIBRANK", {"librank"}, CommandOptions::AS_ROOT);
 
-    RunCommand("HARDWARE HALS", {"lshal"}, CommandOptions::AS_ROOT);
+    if (ds.IsZipping()) {
+        RunCommand(
+                "HARDWARE HALS",
+                {"lshal", std::string("--debug=") + kLsHalDebugPath},
+                CommandOptions::AS_ROOT);
+
+        ds.AddZipEntry("lshal-debug.txt", kLsHalDebugPath);
+
+        unlink(kLsHalDebugPath.c_str());
+    } else {
+        RunCommand(
+                "HARDWARE HALS", {"lshal", "--debug"}, CommandOptions::AS_ROOT);
+    }
 
     RunCommand("PRINTENV", {"printenv"});
     RunCommand("NETSTAT", {"netstat", "-nW"});
@@ -978,8 +998,13 @@ static void dumpstate() {
     for_each_tid(show_wchan, "BLOCKED PROCESS WAIT-CHANNELS");
     for_each_pid(show_showtime, "PROCESS TIMES (pid cmd user system iowait+percentage)");
 
-    /* Dump Bluetooth HCI logs */
-    ds.AddDir("/data/misc/bluetooth/logs", true);
+    if (true) {
+        // TODO: temporary disabled because /data/misc/bluetooth/logs/btsnoop_hci.log can be huge
+        MYLOGD("Skipping /data/misc/bluetooth/logs");
+    } else {
+        /* Dump Bluetooth HCI logs */
+        ds.AddDir("/data/misc/bluetooth/logs", true);
+    }
 
     if (!ds.do_early_screenshot_) {
         MYLOGI("taking late screenshot\n");
@@ -1437,6 +1462,20 @@ int main(int argc, char *argv[]) {
         android::base::SetProperty(PROPERTY_EXTRA_OPTIONS, "");
     }
 
+    ds.notification_title = android::base::GetProperty(PROPERTY_EXTRA_TITLE, "");
+    if (!ds.notification_title.empty()) {
+        // Reset the property
+        android::base::SetProperty(PROPERTY_EXTRA_TITLE, "");
+
+        ds.notification_description = android::base::GetProperty(PROPERTY_EXTRA_DESCRIPTION, "");
+        if (!ds.notification_description.empty()) {
+            // Reset the property
+            android::base::SetProperty(PROPERTY_EXTRA_DESCRIPTION, "");
+        }
+        MYLOGD("notification (title:  %s, description: %s)\n",
+               ds.notification_title.c_str(), ds.notification_description.c_str());
+    }
+
     if ((do_zip_file || do_add_date || ds.update_progress_ || do_broadcast) && !use_outfile) {
         ExitOnInvalidArgs();
     }
@@ -1798,6 +1837,16 @@ int main(int argc, char *argv[]) {
                 am_args.push_back("--es");
                 am_args.push_back("android.intent.extra.SCREENSHOT");
                 am_args.push_back(ds.screenshot_path_);
+            }
+            if (!ds.notification_title.empty()) {
+                am_args.push_back("--es");
+                am_args.push_back("android.intent.extra.TITLE");
+                am_args.push_back(ds.notification_title);
+                if (!ds.notification_description.empty()) {
+                    am_args.push_back("--es");
+                    am_args.push_back("android.intent.extra.DESCRIPTION");
+                    am_args.push_back(ds.notification_description);
+                }
             }
             if (is_remote_mode) {
                 am_args.push_back("--es");

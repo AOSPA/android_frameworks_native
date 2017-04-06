@@ -23,13 +23,13 @@ class DisplayView {
 
   // Calls to these 3 functions must be synchronized.
   base::unique_fd OnFrame(std::unique_ptr<HwcCallback::Frame> frame,
-                          bool debug_mode, bool* showing);
+                          bool debug_mode, bool is_vr_active, bool* showing);
   void AdvanceFrame();
   void UpdateReleaseFence();
 
   void OnDrawFrame(SurfaceFlingerView* surface_flinger_view, bool debug_mode);
   void DrawEye(EyeType eye, const mat4& perspective, const mat4& eye_matrix,
-               const mat4& head_matrix, const vec2& size, float fade_value);
+               const mat4& head_matrix, float fade_value);
 
   void Recenter(const mat4& initial);
 
@@ -43,9 +43,12 @@ class DisplayView {
   const vec2& hit_location() const { return hit_location_in_window_coord_; }
   uint32_t id() const { return id_; }
   int touchpad_id() const { return touchpad_id_; }
+  vec2 size() const { return size_; }
 
   void set_2dmode(bool mode) { use_2dmode_ = mode; }
   void set_always_2d(bool mode) { always_2d_ = mode; }
+
+  void set_rotation(const mat4& rotation) { rotation_ = rotation; }
 
  private:
   bool IsHit(const vec3& view_location, const vec3& view_direction,
@@ -60,6 +63,9 @@ class DisplayView {
                       const vec2& top_left, const vec2& bottom_right);
   void DrawWithTransform(const mat4& transform, const ShaderProgram& program);
 
+  // This is the rotated, translated but unscaled transform to apply everywhere.
+  mat4 GetStandardTransform();
+
   uint32_t id_;
   int touchpad_id_;
 
@@ -72,6 +78,7 @@ class DisplayView {
   mat4 scale_;
   mat4 translate_;
   mat4 ime_translate_;
+  mat4 rotation_;
   vec2 size_;
 
   std::vector<TextureLayer> textures_;

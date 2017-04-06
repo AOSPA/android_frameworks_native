@@ -17,7 +17,6 @@
 #include <private/dvr/clock_ns.h>
 #include <private/dvr/debug.h>
 #include <private/dvr/display_types.h>
-#include <private/dvr/dvr_buffer.h>
 #include <private/dvr/frame_history.h>
 #include <private/dvr/gl_fenced_flush.h>
 #include <private/dvr/graphics/vr_gl_extensions.h>
@@ -27,6 +26,7 @@
 #include <private/dvr/sensor_constants.h>
 #include <private/dvr/video_mesh_surface_client.h>
 #include <private/dvr/vsync_client.h>
+#include <private/dvr/platform_defines.h>
 
 #include <android/native_window.h>
 
@@ -43,8 +43,10 @@ using android::dvr::DisplaySurfaceAttributeValue;
 
 namespace {
 
+// TODO(urbanus): revisit once we have per-platform usage config in place.
 constexpr int kDefaultDisplaySurfaceUsage =
-    GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
+    GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE |
+    GRALLOC_USAGE_QCOM_FRAMEBUFFER_COMPRESSION;
 constexpr int kDefaultDisplaySurfaceFormat = HAL_PIXEL_FORMAT_RGBA_8888;
 // TODO(alexst): revisit this count when HW encode is available for casting.
 constexpr int kDefaultBufferCount = 4;
@@ -1571,15 +1573,4 @@ extern "C" void dvrGraphicsVideoMeshSurfacePresent(
         transform[i + 0], transform[i + 4], transform[i + 8], transform[i + 12],
     };
   }
-}
-
-extern "C" int dvrGetPoseBuffer(DvrReadBuffer** pose_buffer) {
-  auto client = android::dvr::DisplayClient::Create();
-  if (!client) {
-    ALOGE("Failed to create display client!");
-    return -ECOMM;
-  }
-
-  *pose_buffer = CreateDvrReadBufferFromBufferConsumer(client->GetPoseBuffer());
-  return 0;
 }
