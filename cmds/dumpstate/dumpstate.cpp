@@ -1062,12 +1062,8 @@ static void dumpstate() {
     RunCommand("WIFI NETWORKS", {"wpa_cli", "IFNAME=wlan0", "list_networks"},
                CommandOptions::WithTimeout(20).Build());
 
-    DumpFile("INTERRUPTS (1)", "/proc/interrupts");
-
     RunDumpsys("NETWORK DIAGNOSTICS", {"connectivity", "--diag"},
                CommandOptions::WithTimeout(10).Build());
-
-    DumpFile("INTERRUPTS (2)", "/proc/interrupts");
 
     RunCommand("SYSTEM PROPERTIES", {"getprop"});
 
@@ -1151,6 +1147,13 @@ static void dumpstate() {
     printf("========================================================\n");
 
     RunDumpsys("APP PROVIDERS", {"activity", "provider", "all"});
+
+    printf("========================================================\n");
+    printf("== Dropbox crashes\n");
+    printf("========================================================\n");
+
+    RunDumpsys("DROPBOX SYSTEM SERVER CRASHES", {"dropbox", "-p", "system_server_crash"});
+    RunDumpsys("DROPBOX SYSTEM APP CRASHES", {"dropbox", "-p", "system_app_crash"});
 
     // DumpModemLogs adds the modem logs if available to the bugreport.
     // Do this at the end to allow for sufficient time for the modem logs to be

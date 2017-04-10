@@ -39,41 +39,40 @@ class Endpoint : public pdx::Endpoint {
   ~Endpoint() override = default;
 
   uint32_t GetIpcTag() const override { return kIpcTag; }
-  int SetService(Service* service) override;
-  int SetChannel(int channel_id, Channel* channel) override;
-  int CloseChannel(int channel_id) override;
-  int ModifyChannelEvents(int channel_id, int clear_mask,
-                          int set_mask) override;
+  Status<void> SetService(Service* service) override;
+  Status<void> SetChannel(int channel_id, Channel* channel) override;
+  Status<void> CloseChannel(int channel_id) override;
+  Status<void> ModifyChannelEvents(int channel_id, int clear_mask,
+                                   int set_mask) override;
   Status<RemoteChannelHandle> PushChannel(Message* message, int flags,
                                           Channel* channel,
                                           int* channel_id) override;
   Status<int> CheckChannel(const Message* message, ChannelReference ref,
                            Channel** channel) override;
-  int DefaultHandleMessage(const MessageInfo& info) override;
-  int MessageReceive(Message* message) override;
-  int MessageReply(Message* message, int return_code) override;
-  int MessageReplyFd(Message* message, unsigned int push_fd) override;
-  int MessageReplyChannelHandle(Message* message,
-                                const LocalChannelHandle& handle) override;
-  int MessageReplyChannelHandle(Message* message,
-                                const BorrowedChannelHandle& handle) override;
-  int MessageReplyChannelHandle(Message* message,
-                                const RemoteChannelHandle& handle) override;
-  ssize_t ReadMessageData(Message* message, const iovec* vector,
-                          size_t vector_length) override;
-  ssize_t WriteMessageData(Message* message, const iovec* vector,
-                           size_t vector_length) override;
-  FileReference PushFileHandle(Message* message,
-                               const LocalHandle& handle) override;
-  FileReference PushFileHandle(Message* message,
-                               const BorrowedHandle& handle) override;
-  FileReference PushFileHandle(Message* message,
-                               const RemoteHandle& handle) override;
-  ChannelReference PushChannelHandle(Message* message,
-                                     const LocalChannelHandle& handle) override;
-  ChannelReference PushChannelHandle(
+  Status<void> MessageReceive(Message* message) override;
+  Status<void> MessageReply(Message* message, int return_code) override;
+  Status<void> MessageReplyFd(Message* message, unsigned int push_fd) override;
+  Status<void> MessageReplyChannelHandle(
+      Message* message, const LocalChannelHandle& handle) override;
+  Status<void> MessageReplyChannelHandle(
       Message* message, const BorrowedChannelHandle& handle) override;
-  ChannelReference PushChannelHandle(
+  Status<void> MessageReplyChannelHandle(
+      Message* message, const RemoteChannelHandle& handle) override;
+  Status<size_t> ReadMessageData(Message* message, const iovec* vector,
+                                 size_t vector_length) override;
+  Status<size_t> WriteMessageData(Message* message, const iovec* vector,
+                                  size_t vector_length) override;
+  Status<FileReference> PushFileHandle(Message* message,
+                                       const LocalHandle& handle) override;
+  Status<FileReference> PushFileHandle(Message* message,
+                                       const BorrowedHandle& handle) override;
+  Status<FileReference> PushFileHandle(Message* message,
+                                       const RemoteHandle& handle) override;
+  Status<ChannelReference> PushChannelHandle(
+      Message* message, const LocalChannelHandle& handle) override;
+  Status<ChannelReference> PushChannelHandle(
+      Message* message, const BorrowedChannelHandle& handle) override;
+  Status<ChannelReference> PushChannelHandle(
       Message* message, const RemoteChannelHandle& handle) override;
   LocalHandle GetFileHandle(Message* message, FileReference ref) const override;
   LocalChannelHandle GetChannelHandle(Message* message,
@@ -82,14 +81,21 @@ class Endpoint : public pdx::Endpoint {
   void* AllocateMessageState() override;
   void FreeMessageState(void* state) override;
 
-  int Cancel() override;
+  Status<void> Cancel() override;
 
   // Open an endpoint at the given path.
   // Second parameter is unused for UDS, but we have it here for compatibility
   // in signature with servicefs::Endpoint::Create().
+  // This method uses |endpoint_path| as a relative path to endpoint socket
+  // created by init process.
   static std::unique_ptr<Endpoint> Create(const std::string& endpoint_path,
                                           mode_t /*unused_mode*/ = kDefaultMode,
                                           bool blocking = kDefaultBlocking);
+
+  // Helper method to create an endpoint at the given UDS socket path. This
+  // method physically creates and binds a socket at that path.
+  static std::unique_ptr<Endpoint> CreateAndBindSocket(
+      const std::string& endpoint_path, bool blocking = kDefaultBlocking);
 
   int epoll_fd() const { return epoll_fd_.Get(); }
 
@@ -101,7 +107,8 @@ class Endpoint : public pdx::Endpoint {
   };
 
   // This class must be instantiated using Create() static methods above.
-  Endpoint(const std::string& endpoint_path, bool blocking);
+  Endpoint(const std::string& endpoint_path, bool blocking,
+           bool use_init_socket_fd = true);
 
   Endpoint(const Endpoint&) = delete;
   void operator=(const Endpoint&) = delete;
@@ -110,18 +117,20 @@ class Endpoint : public pdx::Endpoint {
     return next_message_id_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  void BuildCloseMessage(int channel_id, Message* message);
+  void BuildCloseMessage(int32_t channel_id, Message* message);
 
   Status<void> AcceptConnection(Message* message);
-  Status<void> ReceiveMessageForChannel(int channel_id, Message* message);
+  Status<void> ReceiveMessageForChannel(const BorrowedHandle& channel_fd,
+                                        Message* message);
   Status<void> OnNewChannel(LocalHandle channel_fd);
-  Status<ChannelData*> OnNewChannelLocked(LocalHandle channel_fd,
-                                          Channel* channel_state);
-  int CloseChannelLocked(int channel_id);
-  Status<void> ReenableEpollEvent(int fd);
-  Channel* GetChannelState(int channel_id);
-  int GetChannelSocketFd(int channel_id);
-  int GetChannelEventFd(int channel_id);
+  Status<std::pair<int32_t, ChannelData*>> OnNewChannelLocked(
+      LocalHandle channel_fd, Channel* channel_state);
+  Status<void> CloseChannelLocked(int32_t channel_id);
+  Status<void> ReenableEpollEvent(const BorrowedHandle& channel_fd);
+  Channel* GetChannelState(int32_t channel_id);
+  BorrowedHandle GetChannelSocketFd(int32_t channel_id);
+  BorrowedHandle GetChannelEventFd(int32_t channel_id);
+  int32_t GetChannelId(const BorrowedHandle& channel_fd);
 
   std::string endpoint_path_;
   bool is_blocking_;
@@ -130,7 +139,9 @@ class Endpoint : public pdx::Endpoint {
   LocalHandle epoll_fd_;
 
   mutable std::mutex channel_mutex_;
-  std::map<int, ChannelData> channels_;
+  std::map<int32_t, ChannelData> channels_;
+  std::map<int, int32_t> channel_fd_to_id_;
+  int32_t last_channel_id_{0};
 
   Service* service_{nullptr};
   std::atomic<uint32_t> next_message_id_;

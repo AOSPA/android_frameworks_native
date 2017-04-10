@@ -88,6 +88,7 @@ static constexpr int FLAG_USE_QUOTA = 1 << 12;
 static constexpr int FLAG_FREE_CACHE_V2 = 1 << 13;
 static constexpr int FLAG_FREE_CACHE_V2_DEFY_QUOTA = 1 << 14;
 static constexpr int FLAG_FREE_CACHE_NOOP = 1 << 15;
+static constexpr int FLAG_FORCE = 1 << 16;
 
 namespace {
 
@@ -289,6 +290,46 @@ static int prepare_app_dir(const std::string& path, mode_t target_mode, uid_t ui
     return 0;
 }
 
+/**
+ * Ensure that we have a hard-limit quota to protect against abusive apps;
+ * they should never use more than 90% of blocks or 50% of inodes.
+ */
+static int prepare_app_quota(const std::unique_ptr<std::string>& uuid, const std::string& device,
+        uid_t uid) {
+    if (device.empty()) return 0;
+
+    struct dqblk dq;
+    if (quotactl(QCMD(Q_GETQUOTA, USRQUOTA), device.c_str(), uid,
+            reinterpret_cast<char*>(&dq)) != 0) {
+        PLOG(WARNING) << "Failed to find quota for " << uid;
+        return -1;
+    }
+
+    if ((dq.dqb_bhardlimit == 0) || (dq.dqb_ihardlimit == 0)) {
+        auto path = create_data_path(uuid ? uuid->c_str() : nullptr);
+        struct statvfs stat;
+        if (statvfs(path.c_str(), &stat) != 0) {
+            PLOG(WARNING) << "Failed to statvfs " << path;
+            return -1;
+        }
+
+        dq.dqb_valid = QIF_LIMITS;
+        dq.dqb_bhardlimit = (((stat.f_blocks * stat.f_frsize) / 10) * 9) / QIF_DQBLKSIZE;
+        dq.dqb_ihardlimit = (stat.f_files / 2);
+        if (quotactl(QCMD(Q_SETQUOTA, USRQUOTA), device.c_str(), uid,
+                reinterpret_cast<char*>(&dq)) != 0) {
+            PLOG(WARNING) << "Failed to set hard quota for " << uid;
+            return -1;
+        } else {
+            LOG(DEBUG) << "Applied hard quotas for " << uid;
+            return 0;
+        }
+    } else {
+        // Hard quota already set; assume it's reasonable
+        return 0;
+    }
+}
+
 binder::Status InstalldNativeService::createAppData(const std::unique_ptr<std::string>& uuid,
         const std::string& packageName, int32_t userId, int32_t flags, int32_t appId,
         const std::string& seInfo, int32_t targetSdkVersion, int64_t* _aidl_return) {
@@ -356,6 +397,10 @@ binder::Status InstalldNativeService::createAppData(const std::unique_ptr<std::s
         // Consider restorecon over contents if label changed
         if (restorecon_app_data_lazy(path, seInfo, uid, existing)) {
             return error("Failed to restorecon " + path);
+        }
+
+        if (prepare_app_quota(uuid, findQuotaDeviceForUuid(uuid), uid)) {
+            return error("Failed to set hard quota " + path);
         }
 
         if (property_get_bool("dalvik.vm.usejitprofiles", false)) {
@@ -556,6 +601,113 @@ binder::Status InstalldNativeService::destroyAppData(const std::unique_ptr<std::
     return res;
 }
 
+static gid_t get_cache_gid(uid_t uid) {
+    int32_t gid = multiuser_get_cache_gid(multiuser_get_user_id(uid), multiuser_get_app_id(uid));
+    return (gid != -1) ? gid : uid;
+}
+
+binder::Status InstalldNativeService::fixupAppData(const std::unique_ptr<std::string>& uuid,
+        int32_t flags) {
+    ENFORCE_UID(AID_SYSTEM);
+    CHECK_ARGUMENT_UUID(uuid);
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+
+    const char* uuid_ = uuid ? uuid->c_str() : nullptr;
+    for (auto user : get_known_users(uuid_)) {
+        ATRACE_BEGIN("fixup user");
+        FTS* fts;
+        FTSENT* p;
+        char *argv[] = {
+                (char*) create_data_user_ce_path(uuid_, user).c_str(),
+                (char*) create_data_user_de_path(uuid_, user).c_str(),
+                nullptr
+        };
+        if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
+            return error("Failed to fts_open");
+        }
+        while ((p = fts_read(fts)) != nullptr) {
+            if (p->fts_info == FTS_D && p->fts_level == 1) {
+                // Track down inodes of cache directories
+                uint64_t raw = 0;
+                ino_t inode_cache = 0;
+                ino_t inode_code_cache = 0;
+                if (getxattr(p->fts_path, kXattrInodeCache, &raw, sizeof(raw)) == sizeof(raw)) {
+                    inode_cache = raw;
+                }
+                if (getxattr(p->fts_path, kXattrInodeCodeCache, &raw, sizeof(raw)) == sizeof(raw)) {
+                    inode_code_cache = raw;
+                }
+
+                // Figure out expected GID of each child
+                FTSENT* child = fts_children(fts, 0);
+                while (child != nullptr) {
+                    if ((child->fts_statp->st_ino == inode_cache)
+                            || (child->fts_statp->st_ino == inode_code_cache)
+                            || !strcmp(child->fts_name, "cache")
+                            || !strcmp(child->fts_name, "code_cache")) {
+                        child->fts_number = get_cache_gid(p->fts_statp->st_uid);
+                    } else {
+                        child->fts_number = p->fts_statp->st_uid;
+                    }
+                    child = child->fts_link;
+                }
+            } else if (p->fts_level >= 2) {
+                if (p->fts_level > 2) {
+                    // Inherit GID from parent once we're deeper into tree
+                    p->fts_number = p->fts_parent->fts_number;
+                }
+
+                uid_t uid = p->fts_parent->fts_statp->st_uid;
+                gid_t cache_gid = get_cache_gid(uid);
+                gid_t expected = p->fts_number;
+                gid_t actual = p->fts_statp->st_gid;
+                if (actual == expected) {
+#if FIXUP_DEBUG
+                    LOG(DEBUG) << "Ignoring " << p->fts_path << " with expected GID " << expected;
+#endif
+                    if (!(flags & FLAG_FORCE)) {
+                        fts_set(fts, p, FTS_SKIP);
+                    }
+                } else if ((actual == uid) || (actual == cache_gid)) {
+                    // Only consider fixing up when current GID belongs to app
+                    if (p->fts_info != FTS_D) {
+                        LOG(INFO) << "Fixing " << p->fts_path << " with unexpected GID " << actual
+                                << " instead of " << expected;
+                    }
+                    switch (p->fts_info) {
+                    case FTS_DP:
+                        // If we're moving towards cache GID, we need to set S_ISGID
+                        if (expected == cache_gid) {
+                            if (chmod(p->fts_path, 02771) != 0) {
+                                PLOG(WARNING) << "Failed to chmod " << p->fts_path;
+                            }
+                        }
+                        // Intentional fall through to also set GID
+                    case FTS_F:
+                        if (chown(p->fts_path, -1, expected) != 0) {
+                            PLOG(WARNING) << "Failed to chown " << p->fts_path;
+                        }
+                        break;
+                    case FTS_SL:
+                    case FTS_SLNONE:
+                        if (lchown(p->fts_path, -1, expected) != 0) {
+                            PLOG(WARNING) << "Failed to chown " << p->fts_path;
+                        }
+                        break;
+                    }
+                } else {
+                    // Ignore all other GID transitions, since they're kinda shady
+                    LOG(WARNING) << "Ignoring " << p->fts_path << " with unexpected GID " << actual
+                            << " instead of " << expected;
+                }
+            }
+        }
+        fts_close(fts);
+        ATRACE_END();
+    }
+    return ok();
+}
+
 binder::Status InstalldNativeService::moveCompleteApp(const std::unique_ptr<std::string>& fromUuid,
         const std::unique_ptr<std::string>& toUuid, const std::string& packageName,
         const std::string& dataAppName, int32_t appId, const std::string& seInfo,
@@ -709,6 +861,14 @@ binder::Status InstalldNativeService::createUserData(const std::unique_ptr<std::
             }
         }
     }
+
+    // Data under /data/media doesn't have an app, but we still want
+    // to limit it to prevent abuse.
+    if (prepare_app_quota(uuid, findQuotaDeviceForUuid(uuid),
+            multiuser_get_uid(userId, AID_MEDIA_RW))) {
+        return error("Failed to set hard quota for media_rw");
+    }
+
     return ok();
 }
 
@@ -1569,7 +1729,8 @@ binder::Status InstalldNativeService::dexopt(const std::string& apkPath, int32_t
         const std::unique_ptr<std::string>& packageName, const std::string& instructionSet,
         int32_t dexoptNeeded, const std::unique_ptr<std::string>& outputPath, int32_t dexFlags,
         const std::string& compilerFilter, const std::unique_ptr<std::string>& uuid,
-        const std::unique_ptr<std::string>& sharedLibraries) {
+        const std::unique_ptr<std::string>& sharedLibraries,
+        const std::unique_ptr<std::string>& seInfo) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
     if (packageName && *packageName != "*") {
@@ -1584,9 +1745,9 @@ binder::Status InstalldNativeService::dexopt(const std::string& apkPath, int32_t
     const char* compiler_filter = compilerFilter.c_str();
     const char* volume_uuid = uuid ? uuid->c_str() : nullptr;
     const char* shared_libraries = sharedLibraries ? sharedLibraries->c_str() : nullptr;
-
+    const char* se_info = seInfo ? seInfo->c_str() : nullptr;
     int res = android::installd::dexopt(apk_path, uid, pkgname, instruction_set, dexoptNeeded,
-            oat_dir, dexFlags, compiler_filter, volume_uuid, shared_libraries);
+            oat_dir, dexFlags, compiler_filter, volume_uuid, shared_libraries, se_info);
     return res ? error(res, "Failed to dexopt") : ok();
 }
 
@@ -2006,6 +2167,17 @@ binder::Status InstalldNativeService::invalidateMounts() {
                     reinterpret_cast<char*>(&dq)) == 0) {
                 LOG(DEBUG) << "Found " << source << " with quota";
                 mQuotaDevices[target] = source;
+
+                // ext4 only enables DQUOT_USAGE_ENABLED by default, so we
+                // need to kick it again to enable DQUOT_LIMITS_ENABLED.
+                if (quotactl(QCMD(Q_QUOTAON, USRQUOTA), source.c_str(), QFMT_VFS_V1, nullptr) != 0
+                        && errno != EBUSY) {
+                    PLOG(ERROR) << "Failed to enable USRQUOTA on " << source;
+                }
+                if (quotactl(QCMD(Q_QUOTAON, GRPQUOTA), source.c_str(), QFMT_VFS_V1, nullptr) != 0
+                        && errno != EBUSY) {
+                    PLOG(ERROR) << "Failed to enable GRPQUOTA on " << source;
+                }
             }
         }
     }

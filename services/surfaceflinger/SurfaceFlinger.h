@@ -151,6 +151,13 @@ public:
     // FramebufferSurface
     static int64_t maxFrameBufferAcquiredBuffers;
 
+    // Indicate if platform supports color management on its
+    // wide-color display. This is typically found on devices
+    // with wide gamut (e.g. Display-P3) display.
+    // This also allows devices with wide-color displays that don't
+    // want to support color management to disable color management.
+    static bool hasWideColorDisplay;
+
     static char const* getServiceName() ANDROID_API {
         return "SurfaceFlinger";
     }
@@ -177,8 +184,9 @@ public:
     void repaintEverything();
 
     // returns the default Display
-    sp<const DisplayDevice> getDefaultDisplayDevice() const {
-        return getDisplayDevice(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
+    sp<const DisplayDevice> getDefaultDisplayDevice() {
+        Mutex::Autolock _l(mStateLock);
+        return getDefaultDisplayDeviceLocked();
     }
 
     // utility function to delete a texture on the main thread
@@ -297,7 +305,7 @@ private:
      * HWComposer::EventHandler interface
      */
     virtual void onVSyncReceived(HWComposer* composer, int type, nsecs_t timestamp);
-    virtual void onHotplugReceived(int disp, bool connected);
+    virtual void onHotplugReceived(HWComposer* composer, int disp, bool connected);
     virtual void onInvalidateReceived(HWComposer* composer);
 
     /* ------------------------------------------------------------------------
@@ -363,6 +371,8 @@ private:
     status_t createDimLayer(const sp<Client>& client, const String8& name,
             uint32_t w, uint32_t h, uint32_t flags, sp<IBinder>* outHandle,
             sp<IGraphicBufferProducer>* outGbp, sp<Layer>* outLayer);
+
+    String8 getUniqueLayerName(const String8& name);
 
     // called in response to the window-manager calling
     // ISurfaceComposerClient::destroySurface()
@@ -430,6 +440,12 @@ private:
         return mDisplays.valueFor(dpy);
     }
 
+    sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const {
+        return getDisplayDevice(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
+    }
+
+    void createDefaultDisplayDevice();
+
     int32_t getDisplayType(const sp<IBinder>& display) {
         if (!display.get()) return NAME_NOT_FOUND;
         for (int i = 0; i < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES; ++i) {
@@ -470,6 +486,12 @@ private:
             nsecs_t vsyncPhase, nsecs_t vsyncInterval,
             nsecs_t compositeToPresentLatency);
     void rebuildLayerStacks();
+
+    // Given a dataSpace, returns the appropriate color_mode to use
+    // to display that dataSpace.
+    android_color_mode pickColorMode(android_dataspace dataSpace);
+    android_dataspace bestTargetDataSpace(android_dataspace a, android_dataspace b);
+
     void setUpHWComposer();
     void doComposition();
     void doDebugFlashRegions();
@@ -520,6 +542,7 @@ private:
     void recordBufferingStats(const char* layerName,
             std::vector<OccupancyTracker::Segment>&& history);
     void dumpBufferingStats(String8& result) const;
+    void dumpWideColorInfo(String8& result) const;
 
     bool isLayerTripleBufferingDisabled() const {
         return this->mLayerTripleBufferingDisabled;

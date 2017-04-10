@@ -20,6 +20,8 @@ cc_library_static {
         "service_endpoint.cpp",
     ],
     static_libs: [
+        "libcutils",
+        "libbase",
         "libpdx",
     ],
 }
@@ -41,6 +43,8 @@ cc_test {
         "libpdx",
     ],
     shared_libs: [
+        "libbase",
+        "libcutils",
         "liblog",
         "libutils",
     ],

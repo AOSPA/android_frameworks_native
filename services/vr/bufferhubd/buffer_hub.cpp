@@ -16,7 +16,9 @@
 #include "producer_queue_channel.h"
 
 using android::pdx::Channel;
+using android::pdx::ErrorStatus;
 using android::pdx::Message;
+using android::pdx::Status;
 using android::pdx::rpc::DispatchRemoteMethod;
 using android::pdx::default_transport::Endpoint;
 
@@ -28,9 +30,7 @@ BufferHubService::BufferHubService()
 
 BufferHubService::~BufferHubService() {}
 
-bool BufferHubService::IsInitialized() const {
-  return BASE::IsInitialized();
-}
+bool BufferHubService::IsInitialized() const { return BASE::IsInitialized(); }
 
 std::string BufferHubService::DumpState(size_t /*max_length*/) {
   std::ostringstream stream;
@@ -189,7 +189,7 @@ void BufferHubService::HandleImpulse(Message& message) {
     channel->HandleImpulse(message);
 }
 
-int BufferHubService::HandleMessage(Message& message) {
+pdx::Status<void> BufferHubService::HandleMessage(Message& message) {
   ATRACE_NAME("BufferHubService::HandleMessage");
   auto channel = message.GetChannel<BufferHubChannel>();
 
@@ -207,22 +207,22 @@ int BufferHubService::HandleMessage(Message& message) {
     case BufferHubRPC::CreateBuffer::Opcode:
       DispatchRemoteMethod<BufferHubRPC::CreateBuffer>(
           *this, &BufferHubService::OnCreateBuffer, message);
-      return 0;
+      return {};
 
     case BufferHubRPC::CreatePersistentBuffer::Opcode:
       DispatchRemoteMethod<BufferHubRPC::CreatePersistentBuffer>(
           *this, &BufferHubService::OnCreatePersistentBuffer, message);
-      return 0;
+      return {};
 
     case BufferHubRPC::GetPersistentBuffer::Opcode:
       DispatchRemoteMethod<BufferHubRPC::GetPersistentBuffer>(
           *this, &BufferHubService::OnGetPersistentBuffer, message);
-      return 0;
+      return {};
 
     case BufferHubRPC::CreateProducerQueue::Opcode:
       DispatchRemoteMethod<BufferHubRPC::CreateProducerQueue>(
           *this, &BufferHubService::OnCreateProducerQueue, message);
-      return 0;
+      return {};
 
     default:
       return DefaultHandleMessage(message);
@@ -374,7 +374,7 @@ int BufferHubService::OnGetPersistentBuffer(Message& message,
   }
 }
 
-int BufferHubService::OnCreateProducerQueue(
+Status<QueueInfo> BufferHubService::OnCreateProducerQueue(
     pdx::Message& message, size_t meta_size_bytes, int usage_set_mask,
     int usage_clear_mask, int usage_deny_set_mask, int usage_deny_clear_mask) {
   // Use the producer channel id as the global queue id.
@@ -386,7 +386,7 @@ int BufferHubService::OnCreateProducerQueue(
   if (const auto channel = message.GetChannel<BufferHubChannel>()) {
     ALOGE("BufferHubService::OnCreateProducerQueue: already created: queue=%d",
           queue_id);
-    return -EALREADY;
+    return ErrorStatus(EALREADY);
   }
 
   int error;
@@ -394,10 +394,10 @@ int BufferHubService::OnCreateProducerQueue(
           this, queue_id, meta_size_bytes, usage_set_mask, usage_clear_mask,
           usage_deny_set_mask, usage_deny_clear_mask, &error)) {
     message.SetChannel(producer_channel);
-    return 0;
+    return {{meta_size_bytes, queue_id}};
   } else {
     ALOGE("BufferHubService::OnCreateBuffer: Failed to create producer!!");
-    return error;
+    return ErrorStatus(-error);
   }
 }
 
@@ -438,11 +438,11 @@ void BufferHubChannel::SignalAvailable() {
            "BufferHubChannel::SignalAvailable: channel_id=%d buffer_id=%d",
            channel_id(), buffer_id());
   if (!IsDetached()) {
-    const int ret = service_->ModifyChannelEvents(channel_id_, 0, POLLIN);
-    ALOGE_IF(ret < 0,
+    const auto status = service_->ModifyChannelEvents(channel_id_, 0, POLLIN);
+    ALOGE_IF(!status,
              "BufferHubChannel::SignalAvailable: failed to signal availability "
              "channel_id=%d: %s",
-             channel_id_, strerror(-ret));
+             channel_id_, status.GetErrorMessage().c_str());
   } else {
     ALOGD_IF(TRACE, "BufferHubChannel::SignalAvailable: detached buffer.");
   }
@@ -454,11 +454,11 @@ void BufferHubChannel::ClearAvailable() {
            "BufferHubChannel::ClearAvailable: channel_id=%d buffer_id=%d",
            channel_id(), buffer_id());
   if (!IsDetached()) {
-    const int ret = service_->ModifyChannelEvents(channel_id_, POLLIN, 0);
-    ALOGE_IF(ret < 0,
+    const auto status = service_->ModifyChannelEvents(channel_id_, POLLIN, 0);
+    ALOGE_IF(!status,
              "BufferHubChannel::ClearAvailable: failed to clear availability "
              "channel_id=%d: %s",
-             channel_id_, strerror(-ret));
+             channel_id_, status.GetErrorMessage().c_str());
   } else {
     ALOGD_IF(TRACE, "BufferHubChannel::ClearAvailable: detached buffer.");
   }
@@ -469,11 +469,11 @@ void BufferHubChannel::Hangup() {
   ALOGD_IF(TRACE, "BufferHubChannel::Hangup: channel_id=%d buffer_id=%d",
            channel_id(), buffer_id());
   if (!IsDetached()) {
-    const int ret = service_->ModifyChannelEvents(channel_id_, 0, POLLHUP);
+    const auto status = service_->ModifyChannelEvents(channel_id_, 0, POLLHUP);
     ALOGE_IF(
-        ret < 0,
+        !status,
         "BufferHubChannel::Hangup: failed to signal hangup channel_id=%d: %s",
-        channel_id_, strerror(-ret));
+        channel_id_, status.GetErrorMessage().c_str());
   } else {
     ALOGD_IF(TRACE, "BufferHubChannel::Hangup: detached buffer.");
   }

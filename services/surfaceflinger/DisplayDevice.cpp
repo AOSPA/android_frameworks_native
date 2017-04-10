@@ -80,6 +80,7 @@ inline void eglSetSwapRectangleANDROID (EGLDisplay, EGLSurface, EGLint, EGLint, 
 
 uint32_t DisplayDevice::sPrimaryDisplayOrientation = 0;
 
+// clang-format off
 DisplayDevice::DisplayDevice(
         const sp<SurfaceFlinger>& flinger,
         DisplayType type,
@@ -91,7 +92,8 @@ DisplayDevice::DisplayDevice(
         const wp<IBinder>& displayToken,
         const sp<DisplaySurface>& displaySurface,
         const sp<IGraphicBufferProducer>& producer,
-        EGLConfig config)
+        EGLConfig config,
+        bool supportWideColor)
     : lastCompositionHadVisibleLayers(false),
       mFlinger(flinger),
       mType(type),
@@ -113,12 +115,16 @@ DisplayDevice::DisplayDevice(
       mPowerMode(HWC_POWER_MODE_OFF),
       mActiveConfig(0)
 {
+    // clang-format on
     Surface* surface;
     mNativeWindow = surface = new Surface(producer, false);
     ANativeWindow* const window = mNativeWindow.get();
 
 #ifdef USE_HWC2
     mActiveColorMode = static_cast<android_color_mode_t>(-1);
+    mDisplayHasWideColor = supportWideColor;
+#else
+    (void) supportWideColor;
 #endif
     /*
      * Create our display's surface

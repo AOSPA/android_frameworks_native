@@ -629,11 +629,10 @@ int copy_dir_files(const char *srcname,
     return res;
 }
 
-int64_t data_disk_free(const std::string& data_path)
-{
+int64_t data_disk_free(const std::string& data_path) {
     struct statvfs sfs;
     if (statvfs(data_path.c_str(), &sfs) == 0) {
-        return sfs.f_bavail * sfs.f_bsize;
+        return sfs.f_bavail * sfs.f_frsize;
     } else {
         PLOG(ERROR) << "Couldn't statvfs " << data_path;
         return -1;
@@ -1030,6 +1029,10 @@ int prepare_app_cache_dir(const std::string& parent, const char* name, mode_t ta
     } else if (st.st_gid == gid && actual_mode == target_mode) {
         // Everything looks good!
         return 0;
+    } else {
+        // Mismatched GID/mode is recoverable; fall through to update
+        LOG(DEBUG) << "Mismatched cache GID/mode at " << path << ": found " << st.st_gid
+                << " but expected " << gid;
     }
 
     // Directory is owned correctly, but GID or mode mismatch means it's
@@ -1044,18 +1047,18 @@ int prepare_app_cache_dir(const std::string& parent, const char* name, mode_t ta
     while ((p = fts_read(fts)) != NULL) {
         switch (p->fts_info) {
         case FTS_DP:
-            if (chmod(p->fts_accpath, target_mode) != 0) {
+            if (chmod(p->fts_path, target_mode) != 0) {
                 PLOG(WARNING) << "Failed to chmod " << p->fts_path;
             }
             // Intentional fall through to also set GID
         case FTS_F:
-            if (chown(p->fts_accpath, -1, gid) != 0) {
+            if (chown(p->fts_path, -1, gid) != 0) {
                 PLOG(WARNING) << "Failed to chown " << p->fts_path;
             }
             break;
         case FTS_SL:
         case FTS_SLNONE:
-            if (lchown(p->fts_accpath, -1, gid) != 0) {
+            if (lchown(p->fts_path, -1, gid) != 0) {
                 PLOG(WARNING) << "Failed to chown " << p->fts_path;
             }
             break;

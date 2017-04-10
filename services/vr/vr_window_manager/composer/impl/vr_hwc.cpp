@@ -49,12 +49,6 @@ sp<GraphicBuffer> GetBufferFromHandle(const native_handle_t* handle) {
   int32_t format = 0;
 
   GraphicBufferMapper& mapper = GraphicBufferMapper::get();
-  // Need to register |handle| otherwise we can't read its properties.
-  if (mapper.registerBuffer(handle) != OK) {
-    ALOGE("Failed to register buffer");
-    return nullptr;
-  }
-
   if (mapper.getDimensions(handle, &width, &height) ||
       mapper.getStride(handle, &stride) ||
       mapper.getFormat(handle, &format) ||
@@ -69,11 +63,10 @@ sp<GraphicBuffer> GetBufferFromHandle(const native_handle_t* handle) {
   mapper.getLayerCount(handle, &layer_count);
 
   // NOTE: Can't re-use |handle| since we don't own it.
-  sp<GraphicBuffer> buffer = new GraphicBuffer(
-      width, height, format, layer_count, producer_usage, consumer_usage,
-      stride, native_handle_clone(handle), true);
-  // Need to register the cloned buffer otherwise it can't be used later on.
-  if (mapper.registerBuffer(buffer.get()) != OK) {
+  sp<GraphicBuffer> buffer = new GraphicBuffer(handle,
+      GraphicBuffer::CLONE_HANDLE, width, height, format, layer_count,
+      producer_usage, consumer_usage, stride);
+  if (buffer->initCheck() != OK) {
     ALOGE("Failed to register cloned buffer");
     return nullptr;
   }
@@ -218,17 +211,12 @@ Error HwcDisplay::GetFrame(
       queued_client_target = true;
     } else {
       if (!layer.info.buffer.get() || !layer.info.fence.get()) {
-        ALOGE("Layer requested without valid buffer");
-        return Error::BAD_LAYER;
+        ALOGV("Layer requested without valid buffer");
+        continue;
       }
 
       frame.push_back(layer.info);
     }
-  }
-
-  if (frame.empty()) {
-    ALOGE("Requested frame with no layers");
-    return Error::BAD_LAYER;
   }
 
   out_frames->swap(frame);

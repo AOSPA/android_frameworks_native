@@ -58,6 +58,8 @@ public:
     binder::Status destroyAppData(const std::unique_ptr<std::string>& uuid,
             const std::string& packageName, int32_t userId, int32_t flags, int64_t ceDataInode);
 
+    binder::Status fixupAppData(const std::unique_ptr<std::string>& uuid, int32_t flags);
+
     binder::Status getAppSize(const std::unique_ptr<std::string>& uuid,
             const std::vector<std::string>& packageNames, int32_t userId, int32_t flags,
             int32_t appId, const std::vector<int64_t>& ceDataInodes,
@@ -80,7 +82,8 @@ public:
             const std::unique_ptr<std::string>& packageName, const std::string& instructionSet,
             int32_t dexoptNeeded, const std::unique_ptr<std::string>& outputPath, int32_t dexFlags,
             const std::string& compilerFilter, const std::unique_ptr<std::string>& uuid,
-            const std::unique_ptr<std::string>& sharedLibraries);
+            const std::unique_ptr<std::string>& sharedLibraries,
+            const std::unique_ptr<std::string>& seInfo);
 
     binder::Status rmdex(const std::string& codePath, const std::string& instructionSet);
 
