@@ -206,7 +206,7 @@ void HWComposer::hotplug(const std::shared_ptr<HWC2::Display>& display,
         }
         disp = DisplayDevice::DISPLAY_EXTERNAL;
     }
-    mEventHandler->onHotplugReceived(disp,
+    mEventHandler->onHotplugReceived(this, disp,
             connected == HWC2::Connection::Connected);
 }
 
@@ -465,12 +465,7 @@ status_t HWComposer::setClientTarget(int32_t displayId, uint32_t slot,
 
     ALOGV("setClientTarget for display %d", displayId);
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
-    buffer_handle_t handle = nullptr;
-    if ((target != nullptr) && target->getNativeBuffer()) {
-        handle = target->getNativeBuffer()->handle;
-    }
-    auto error = hwcDisplay->setClientTarget(slot, handle,
-            acquireFence, dataspace);
+    auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
     if (error != HWC2::Error::None) {
         ALOGE("Failed to set client target for display %d: %s (%d)", displayId,
                 to_string(error).c_str(), static_cast<int32_t>(error));
