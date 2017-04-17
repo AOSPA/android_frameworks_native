@@ -33,9 +33,7 @@
 
 #include <gui/BufferItem.h>
 #include <gui/BufferQueueCore.h>
-#include <gui/GraphicBufferAlloc.h>
 #include <gui/IConsumerListener.h>
-#include <gui/IGraphicBufferAlloc.h>
 #include <gui/IProducerListener.h>
 #include <gui/ISurfaceComposer.h>
 #include <private/gui/ComposerService.h>
@@ -54,8 +52,7 @@ static uint64_t getUniqueId() {
     return id | counter++;
 }
 
-BufferQueueCore::BufferQueueCore(const sp<IGraphicBufferAlloc>& allocator) :
-    mAllocator(allocator),
+BufferQueueCore::BufferQueueCore() :
     mMutex(),
     mIsAbandoned(false),
     mConsumerControlledByApp(false),
@@ -97,30 +94,6 @@ BufferQueueCore::BufferQueueCore(const sp<IGraphicBufferAlloc>& allocator) :
     mLastQueuedSlot(INVALID_BUFFER_SLOT),
     mUniqueId(getUniqueId())
 {
-    if (allocator == NULL) {
-
-#ifdef HAVE_NO_SURFACE_FLINGER
-        // Without a SurfaceFlinger, allocate in-process.  This only makes
-        // sense in systems with static SELinux configurations and no
-        // applications (since applications need dynamic SELinux policy).
-        mAllocator = new GraphicBufferAlloc();
-#else
-        // Run time check for headless, where we also allocate in-process.
-        char value[PROPERTY_VALUE_MAX];
-        property_get("config.headless", value, "0");
-        if (atoi(value) == 1) {
-            mAllocator = new GraphicBufferAlloc();
-        } else {
-            sp<ISurfaceComposer> composer(ComposerService::getComposerService());
-            mAllocator = composer->createGraphicBufferAlloc();
-        }
-#endif  // HAVE_NO_SURFACE_FLINGER
-
-        if (mAllocator == NULL) {
-            BQ_LOGE("createGraphicBufferAlloc failed");
-        }
-    }
-
     int numStartingBuffers = getMaxBufferCountLocked();
     for (int s = 0; s < numStartingBuffers; s++) {
         mFreeSlots.insert(s);
@@ -133,7 +106,7 @@ BufferQueueCore::BufferQueueCore(const sp<IGraphicBufferAlloc>& allocator) :
 
 BufferQueueCore::~BufferQueueCore() {}
 
-void BufferQueueCore::dumpState(String8& result, const char* prefix) const {
+void BufferQueueCore::dumpState(const String8& prefix, String8* outResult) const {
     Mutex::Autolock lock(mMutex);
 
     String8 fifo;
@@ -148,10 +121,10 @@ void BufferQueueCore::dumpState(String8& result, const char* prefix) const {
         ++current;
     }
 
-    result.appendFormat("%s-BufferQueue mMaxAcquiredBufferCount=%d, "
+    outResult->appendFormat("%s-BufferQueue mMaxAcquiredBufferCount=%d, "
             "mMaxDequeuedBufferCount=%d, mDequeueBufferCannotBlock=%d "
             "mAsyncMode=%d, default-size=[%dx%d], default-format=%d, "
-            "transform-hint=%02x, FIFO(%zu)={%s}\n", prefix,
+            "transform-hint=%02x, FIFO(%zu)={%s}\n", prefix.string(),
             mMaxAcquiredBufferCount, mMaxDequeuedBufferCount,
             mDequeueBufferCannotBlock, mAsyncMode, mDefaultWidth,
             mDefaultHeight, mDefaultBufferFormat, mTransformHint, mQueue.size(),
@@ -161,28 +134,28 @@ void BufferQueueCore::dumpState(String8& result, const char* prefix) const {
         const sp<GraphicBuffer>& buffer(mSlots[s].mGraphicBuffer);
         // A dequeued buffer might be null if it's still being allocated
         if (buffer.get()) {
-            result.appendFormat("%s%s[%02d:%p] state=%-8s, %p "
-                    "[%4ux%4u:%4u,%3X]\n", prefix,
+            outResult->appendFormat("%s%s[%02d:%p] state=%-8s, %p "
+                    "[%4ux%4u:%4u,%3X]\n", prefix.string(),
                     (mSlots[s].mBufferState.isAcquired()) ? ">" : " ", s,
                     buffer.get(), mSlots[s].mBufferState.string(),
                     buffer->handle, buffer->width, buffer->height,
                     buffer->stride, buffer->format);
         } else {
-            result.appendFormat("%s [%02d:%p] state=%-8s\n", prefix, s,
+            outResult->appendFormat("%s [%02d:%p] state=%-8s\n", prefix.string(), s,
                     buffer.get(), mSlots[s].mBufferState.string());
         }
     }
     for (int s : mFreeBuffers) {
         const sp<GraphicBuffer>& buffer(mSlots[s].mGraphicBuffer);
-        result.appendFormat("%s [%02d:%p] state=%-8s, %p [%4ux%4u:%4u,%3X]\n",
-                prefix, s, buffer.get(), mSlots[s].mBufferState.string(),
+        outResult->appendFormat("%s [%02d:%p] state=%-8s, %p [%4ux%4u:%4u,%3X]\n",
+                prefix.string(), s, buffer.get(), mSlots[s].mBufferState.string(),
                 buffer->handle, buffer->width, buffer->height, buffer->stride,
                 buffer->format);
     }
 
     for (int s : mFreeSlots) {
         const sp<GraphicBuffer>& buffer(mSlots[s].mGraphicBuffer);
-        result.appendFormat("%s [%02d:%p] state=%-8s\n", prefix, s,
+        outResult->appendFormat("%s [%02d:%p] state=%-8s\n", prefix.string(), s,
                 buffer.get(), mSlots[s].mBufferState.string());
     }
 }

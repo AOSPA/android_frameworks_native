@@ -31,8 +31,8 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
         dvrDisplayManagerClientGetSurfaceList;
     dvr_api->display_manager_client_surface_list_destroy =
         dvrDisplayManagerClientSurfaceListDestroy;
-    dvr_api->display_manager_setup_pose_buffer =
-        dvrDisplayManagerSetupPoseBuffer;
+    dvr_api->display_manager_setup_named_buffer =
+        dvrDisplayManagerSetupNamedBuffer;
     dvr_api->display_manager_client_surface_list_get_size =
         dvrDisplayManagerClientSurfaceListGetSize;
     dvr_api->display_manager_client_surface_list_get_surface_id =
@@ -48,7 +48,6 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
 
     // dvr_buffer.h
     dvr_api->write_buffer_destroy = dvrWriteBufferDestroy;
-    dvr_api->write_buffer_get_blob_fds = dvrWriteBufferGetBlobFds;
     dvr_api->write_buffer_get_ahardwarebuffer =
         dvrWriteBufferGetAHardwareBuffer;
     dvr_api->write_buffer_post = dvrWriteBufferPost;
@@ -56,11 +55,12 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
     dvr_api->write_buffer_gain_async = dvrWriteBufferGainAsync;
 
     dvr_api->read_buffer_destroy = dvrReadBufferDestroy;
-    dvr_api->read_buffer_get_blob_fds = dvrReadBufferGetBlobFds;
     dvr_api->read_buffer_get_ahardwarebuffer = dvrReadBufferGetAHardwareBuffer;
     dvr_api->read_buffer_acquire = dvrReadBufferAcquire;
     dvr_api->read_buffer_release = dvrReadBufferRelease;
     dvr_api->read_buffer_release_async = dvrReadBufferReleaseAsync;
+    dvr_api->buffer_destroy = dvrBufferDestroy;
+    dvr_api->buffer_get_ahardwarebuffer = dvrBufferGetAHardwareBuffer;
 
     // dvr_buffer_queue.h
     dvr_api->write_buffer_queue_destroy = dvrWriteBufferQueueDestroy;
@@ -77,7 +77,7 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
     dvr_api->read_buffer_queue_dequeue = dvrReadBufferQueueDequeue;
 
     // dvr_surface.h
-    dvr_api->get_pose_buffer = dvrGetPoseBuffer;
+    dvr_api->get_named_buffer = dvrGetNamedBuffer;
     dvr_api->surface_create = dvrSurfaceCreate;
     dvr_api->surface_get_write_buffer_queue = dvrSurfaceGetWriteBufferQueue;
 
@@ -109,6 +109,11 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
     dvr_api->hwc_frame_get_display_width = dvrHwcFrameGetDisplayWidth;
     dvr_api->hwc_frame_get_display_height = dvrHwcFrameGetDisplayHeight;
     dvr_api->hwc_frame_get_display_removed = dvrHwcFrameGetDisplayRemoved;
+    dvr_api->hwc_frame_get_active_config = dvrHwcFrameGetActiveConfig;
+    dvr_api->hwc_frame_get_color_mode = dvrHwcFrameGetColorMode;
+    dvr_api->hwc_frame_get_color_transform = dvrHwcFrameGetColorTransform;
+    dvr_api->hwc_frame_get_power_mode = dvrHwcFrameGetPowerMode;
+    dvr_api->hwc_frame_get_vsync_enabled = dvrHwcFrameGetVsyncEnabled;
     dvr_api->hwc_frame_get_layer_count = dvrHwcFrameGetLayerCount;
     dvr_api->hwc_frame_get_layer_id = dvrHwcFrameGetLayerId;
     dvr_api->hwc_frame_get_layer_buffer = dvrHwcFrameGetLayerBuffer;
@@ -121,6 +126,19 @@ DVR_EXPORT int dvrGetApi(void* api, size_t struct_size, int version) {
     dvr_api->hwc_frame_get_layer_type = dvrHwcFrameGetLayerType;
     dvr_api->hwc_frame_get_layer_application_id =
         dvrHwcFrameGetLayerApplicationId;
+    dvr_api->hwc_frame_get_layer_z_order = dvrHwcFrameGetLayerZOrder;
+    dvr_api->hwc_frame_get_layer_cursor = dvrHwcFrameGetLayerCursor;
+    dvr_api->hwc_frame_get_layer_transform = dvrHwcFrameGetLayerTransform;
+    dvr_api->hwc_frame_get_layer_dataspace = dvrHwcFrameGetLayerDataspace;
+    dvr_api->hwc_frame_get_layer_color = dvrHwcFrameGetLayerColor;
+    dvr_api->hwc_frame_get_layer_num_visible_regions =
+        dvrHwcFrameGetLayerNumVisibleRegions;
+    dvr_api->hwc_frame_get_layer_visible_region =
+        dvrHwcFrameGetLayerVisibleRegion;
+    dvr_api->hwc_frame_get_layer_num_damaged_regions =
+        dvrHwcFrameGetLayerNumDamagedRegions;
+    dvr_api->hwc_frame_get_layer_damaged_region =
+        dvrHwcFrameGetLayerDamagedRegion;
 
     return 0;
   }

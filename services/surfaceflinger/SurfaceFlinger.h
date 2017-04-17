@@ -76,7 +76,6 @@ namespace android {
 class Client;
 class DisplayEventConnection;
 class EventThread;
-class IGraphicBufferAlloc;
 class Layer;
 class LayerDim;
 class Surface;
@@ -184,7 +183,7 @@ public:
     void repaintEverything();
 
     // returns the default Display
-    sp<const DisplayDevice> getDefaultDisplayDevice() {
+    sp<const DisplayDevice> getDefaultDisplayDevice() const {
         Mutex::Autolock _l(mStateLock);
         return getDefaultDisplayDeviceLocked();
     }
@@ -228,6 +227,7 @@ private:
     enum { LOG_FRAME_STATS_PERIOD =  30*60*60 };
 
     static const size_t MAX_LAYERS = 4096;
+    static constexpr const char* kTimestampProperty = "service.sf.present_timestamp";
 
     // We're reference counted, never destroy SurfaceFlinger directly
     virtual ~SurfaceFlinger();
@@ -257,7 +257,6 @@ private:
      */
     virtual sp<ISurfaceComposerClient> createConnection();
     virtual sp<ISurfaceComposerClient> createScopedConnection(const sp<IGraphicBufferProducer>& gbp);
-    virtual sp<IGraphicBufferAlloc> createGraphicBufferAlloc();
     virtual sp<IBinder> createDisplay(const String8& displayName, bool secure);
     virtual void destroyDisplay(const sp<IBinder>& display);
     virtual sp<IBinder> getBuiltInDisplay(int32_t id);
@@ -266,6 +265,8 @@ private:
     virtual void bootFinished();
     virtual bool authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const;
+    virtual status_t getSupportedFrameTimestamps(
+            std::vector<FrameEvent>* outSupported) const;
     virtual sp<IDisplayEventConnection> createDisplayEventConnection();
     virtual status_t captureScreen(const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
@@ -430,18 +431,29 @@ private:
     // Create an IBinder for a builtin display and add it to current state
     void createBuiltinDisplayLocked(DisplayDevice::DisplayType type);
 
-    // NOTE: can only be called from the main thread or with mStateLock held
+
     sp<const DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) const {
+      Mutex::Autolock _l(mStateLock);
+      return getDisplayDeviceLocked(dpy);
+    }
+
+    sp<DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) {
+      Mutex::Autolock _l(mStateLock);
+      return getDisplayDeviceLocked(dpy);
+    }
+
+    // NOTE: can only be called from the main thread or with mStateLock held
+    sp<const DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& dpy) const {
         return mDisplays.valueFor(dpy);
     }
 
     // NOTE: can only be called from the main thread or with mStateLock held
-    sp<DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) {
+    sp<DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& dpy) {
         return mDisplays.valueFor(dpy);
     }
 
     sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const {
-        return getDisplayDevice(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
+        return getDisplayDeviceLocked(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
     }
 
     void createDefaultDisplayDevice();
@@ -553,7 +565,7 @@ private:
      * VrFlinger
      */
     void clearHwcLayers(const LayerVector& layers);
-    void resetHwc();
+    void resetHwcLocked();
 
     // Check to see if we should handoff to vr flinger.
     void updateVrFlinger();

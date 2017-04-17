@@ -45,7 +45,6 @@
 #include <gui/GuiConfig.h>
 #include <gui/IDisplayEventConnection.h>
 #include <gui/Surface.h>
-#include <gui/GraphicBufferAlloc.h>
 
 #include <ui/GraphicBufferAllocator.h>
 #include <ui/PixelFormat.h>
@@ -340,12 +339,6 @@ sp<IBinder> SurfaceFlinger::getBuiltInDisplay(int32_t id) {
     return mBuiltinDisplays[id];
 }
 
-sp<IGraphicBufferAlloc> SurfaceFlinger::createGraphicBufferAlloc()
-{
-    sp<GraphicBufferAlloc> gba(new GraphicBufferAlloc());
-    return gba;
-}
-
 void SurfaceFlinger::bootFinished()
 {
     if (mStartBootAnimThread->join() != NO_ERROR) {
@@ -578,6 +571,14 @@ void SurfaceFlinger::init() {
 
     Mutex::Autolock _l(mStateLock);
 
+    // Inform native graphics APIs whether the present timestamp is supported:
+    if (getHwComposer().hasCapability(
+            HWC2::Capability::PresentFenceIsNotReliable)) {
+        property_set(kTimestampProperty, "0");
+    } else {
+        property_set(kTimestampProperty, "1");
+    }
+
     if (useVrFlinger) {
         auto vrFlingerRequestDisplayCallback = [this] (bool requestDisplay) {
             mVrFlingerRequestsDisplay = requestDisplay;
@@ -651,6 +652,25 @@ bool SurfaceFlinger::authenticateSurfaceTextureLocked(
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
 }
 
+status_t SurfaceFlinger::getSupportedFrameTimestamps(
+        std::vector<FrameEvent>* outSupported) const {
+    *outSupported = {
+        FrameEvent::REQUESTED_PRESENT,
+        FrameEvent::ACQUIRE,
+        FrameEvent::LATCH,
+        FrameEvent::FIRST_REFRESH_START,
+        FrameEvent::LAST_REFRESH_START,
+        FrameEvent::GPU_COMPOSITION_DONE,
+        FrameEvent::DEQUEUE_READY,
+        FrameEvent::RELEASE,
+    };
+    if (!getHwComposer().hasCapability(
+            HWC2::Capability::PresentFenceIsNotReliable)) {
+        outSupported->push_back(FrameEvent::DISPLAY_PRESENT);
+    }
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         Vector<DisplayInfo>* configs) {
     if ((configs == NULL) || (display.get() == NULL)) {
@@ -714,11 +734,8 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
             info.density = density;
 
             // TODO: this needs to go away (currently needed only by webkit)
-            {
-                Mutex::Autolock _l(mStateLock);
-                sp<const DisplayDevice> hw(getDefaultDisplayDeviceLocked());
-                info.orientation = hw->getOrientation();
-            }
+            sp<const DisplayDevice> hw(getDefaultDisplayDevice());
+            info.orientation = hw->getOrientation();
         } else {
             // TODO: where should this value come from?
             static const int TV_DENSITY = 213;
@@ -776,8 +793,7 @@ int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
         return BAD_VALUE;
     }
 
-    Mutex::Autolock _l(mStateLock);
-    sp<DisplayDevice> device(getDisplayDevice(display));
+    sp<const DisplayDevice> device(getDisplayDevice(display));
     if (device != NULL) {
         return device->getActiveConfig();
     }
@@ -869,8 +885,7 @@ status_t SurfaceFlinger::getDisplayColorModes(const sp<IBinder>& display,
 }
 
 android_color_mode_t SurfaceFlinger::getActiveColorMode(const sp<IBinder>& display) {
-    Mutex::Autolock _l(mStateLock);
-    sp<DisplayDevice> device(getDisplayDevice(display));
+    sp<const DisplayDevice> device(getDisplayDevice(display));
     if (device != nullptr) {
         return device->getActiveColorMode();
     }
@@ -952,7 +967,7 @@ status_t SurfaceFlinger::getHdrCapabilities(const sp<IBinder>& display,
         HdrCapabilities* outCapabilities) const {
     Mutex::Autolock _l(mStateLock);
 
-    sp<const DisplayDevice> displayDevice(getDisplayDevice(display));
+    sp<const DisplayDevice> displayDevice(getDisplayDeviceLocked(display));
     if (displayDevice == nullptr) {
         ALOGE("getHdrCapabilities: Invalid display %p", displayDevice.get());
         return BAD_VALUE;
@@ -1140,13 +1155,12 @@ void SurfaceFlinger::createDefaultDisplayDevice() {
 
     sp<IGraphicBufferProducer> producer;
     sp<IGraphicBufferConsumer> consumer;
-    BufferQueue::createBufferQueue(&producer, &consumer, new GraphicBufferAlloc());
+    BufferQueue::createBufferQueue(&producer, &consumer);
 
     sp<FramebufferSurface> fbs = new FramebufferSurface(*mHwc, type, consumer);
 
     bool hasWideColorModes = false;
-    std::vector<android_color_mode_t> modes = getHwComposer().getColorModes(
-        type);
+    std::vector<android_color_mode_t> modes = getHwComposer().getColorModes(type);
     for (android_color_mode_t colorMode : modes) {
         switch (colorMode) {
             case HAL_COLOR_MODE_DISPLAY_P3:
@@ -1227,7 +1241,7 @@ void SurfaceFlinger::clearHwcLayers(const LayerVector& layers) {
 }
 
 // Note: it is assumed the caller holds |mStateLock| when this is called
-void SurfaceFlinger::resetHwc() {
+void SurfaceFlinger::resetHwcLocked() {
     disableHardwareVsync(true);
     clearHwcLayers(mDrawingState.layersSortedByZ);
     clearHwcLayers(mCurrentState.layersSortedByZ);
@@ -1236,6 +1250,13 @@ void SurfaceFlinger::resetHwc() {
     // mCurrentState and mDrawingState and re-apply all changes when we make the
     // transition.
     mDrawingState.displays.clear();
+    // Release virtual display hwcId during vr mode transition.
+    for (size_t displayId = 0; displayId < mDisplays.size(); ++displayId) {
+        const sp<DisplayDevice>& displayDevice = mDisplays[displayId];
+        if (displayDevice->getDisplayType() == DisplayDevice::DISPLAY_VIRTUAL) {
+            displayDevice->disconnect(getHwComposer());
+        }
+    }
     mDisplays.clear();
     initializeDisplays();
 }
@@ -1248,31 +1269,30 @@ void SurfaceFlinger::updateVrFlinger() {
         return;
     }
 
-    bool vrHwcNewlyInitialized = false;
-
     if (vrFlingerRequestsDisplay && !mVrHwc) {
         // Construct new HWComposer without holding any locks.
         mVrHwc = new HWComposer(true);
-        vrHwcNewlyInitialized = true;
+
+        // Set up the event handlers. This step is neccessary to initialize the internal state of
+        // the hardware composer object properly. Our callbacks are designed such that if they are
+        // triggered between now and the point where the display is properly re-initialized, they
+        // will not have any effect, so this is safe to do here, before the lock is aquired.
+        mVrHwc->setEventHandler(static_cast<HWComposer::EventHandler*>(this));
         ALOGV("Vr HWC created");
     }
 
     Mutex::Autolock _l(mStateLock);
 
     if (vrFlingerRequestsDisplay) {
-        resetHwc();
+        resetHwcLocked();
 
         mHwc = mVrHwc;
         mVrFlinger->GrantDisplayOwnership();
 
-        if (vrHwcNewlyInitialized) {
-            mVrHwc->setEventHandler(
-                static_cast<HWComposer::EventHandler*>(this));
-        }
     } else {
         mVrFlinger->SeizeDisplayOwnership();
 
-        resetHwc();
+        resetHwcLocked();
 
         mHwc = mRealHwc;
         enableHardwareVsync();
@@ -1933,7 +1953,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         // is current.
                         const sp<const DisplayDevice> defaultDisplay(getDefaultDisplayDeviceLocked());
                         defaultDisplay->makeCurrent(mEGLDisplay, mEGLContext);
-                        sp<DisplayDevice> hw(getDisplayDevice(draw.keyAt(i)));
+                        sp<DisplayDevice> hw(getDisplayDeviceLocked(draw.keyAt(i)));
                         if (hw != NULL)
                             hw->disconnect(getHwComposer());
                         if (draw[i].type < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES)
@@ -1953,7 +1973,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         // recreating the DisplayDevice, so we just remove it
                         // from the drawing state, so that it get re-added
                         // below.
-                        sp<DisplayDevice> hw(getDisplayDevice(display));
+                        sp<DisplayDevice> hw(getDisplayDeviceLocked(display));
                         if (hw != NULL)
                             hw->disconnect(getHwComposer());
                         mDisplays.removeItem(display);
@@ -1963,7 +1983,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         continue;
                     }
 
-                    const sp<DisplayDevice> disp(getDisplayDevice(display));
+                    const sp<DisplayDevice> disp(getDisplayDeviceLocked(display));
                     if (disp != NULL) {
                         if (state.layerStack != draw[i].layerStack) {
                             disp->setLayerStack(state.layerStack);
@@ -1992,8 +2012,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                     sp<IGraphicBufferProducer> producer;
                     sp<IGraphicBufferProducer> bqProducer;
                     sp<IGraphicBufferConsumer> bqConsumer;
-                    BufferQueue::createBufferQueue(&bqProducer, &bqConsumer,
-                            new GraphicBufferAlloc());
+                    BufferQueue::createBufferQueue(&bqProducer, &bqConsumer);
 
                     int32_t hwcId = -1;
                     if (state.isVirtualDisplay()) {
@@ -2847,6 +2866,11 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                 }
             }
         }
+        if (what & layer_state_t::eRelativeLayerChanged) {
+            if (layer->setRelativeLayer(s.relativeLayerHandle, s.z)) {
+                flags |= eTransactionNeeded|eTraversalNeeded;
+            }
+        }
         if (what & layer_state_t::eSizeChanged) {
             if (layer->setSize(s.w, s.h)) {
                 flags |= eTraversalNeeded;
@@ -3660,7 +3684,7 @@ SurfaceFlinger::getLayerSortedByZForHwcDisplay(int id) {
         // Just use the primary display so we have something to return
         dpy = getBuiltInDisplay(DisplayDevice::DISPLAY_PRIMARY);
     }
-    return getDisplayDevice(dpy)->getVisibleLayersSortedByZ();
+    return getDisplayDeviceLocked(dpy)->getVisibleLayersSortedByZ();
 }
 
 bool SurfaceFlinger::startDdmConnection()
@@ -3795,8 +3819,7 @@ status_t SurfaceFlinger::onTransact(
                 reply->writeInt32(mDebugDisableHWC);
                 return NO_ERROR;
             case 1013: {
-                Mutex::Autolock _l(mStateLock);
-                sp<const DisplayDevice> hw(getDefaultDisplayDeviceLocked());
+                sp<const DisplayDevice> hw(getDefaultDisplayDevice());
                 reply->writeInt32(hw->getPageFlipCount());
                 return NO_ERROR;
             }
@@ -4082,7 +4105,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
         }
         virtual bool handler() {
             Mutex::Autolock _l(flinger->mStateLock);
-            sp<const DisplayDevice> hw(flinger->getDisplayDevice(display));
+            sp<const DisplayDevice> hw(flinger->getDisplayDeviceLocked(display));
             result = flinger->captureScreenImplLocked(hw, producer,
                     sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
                     useIdentityTransform, rotation, isLocalScreenshot);
