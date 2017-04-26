@@ -48,7 +48,7 @@ static constexpr float kDefaultNeckHorizontalOffset = 0.080f;  // meters
 static constexpr float kDefaultNeckVerticalOffset = 0.075f;    // meters
 
 static constexpr char kDisablePosePredictionProp[] =
-    "persist.dreamos.disable_predict";
+    "persist.dvr.disable_predict";
 
 // Device type property for controlling classes of behavior that differ
 // between devices. If unset, defaults to kOrientationTypeSmartphone.
@@ -182,7 +182,7 @@ PoseService::PoseService(SensorThread* sensor_thread)
     KickSensorWatchDogThread();
   }
 
-  // Read the persistent dreamos flags before using them in SetPoseMode.
+  // Read the persistent dvr flags before using them in SetPoseMode.
   enable_pose_prediction_ =
       property_get_bool(kDisablePosePredictionProp, 0) == 0;
 
@@ -467,7 +467,10 @@ void PoseService::UpdatePoseMode() {
                                               -kDefaultNeckHorizontalOffset);
 
       // Update the current latency model.
-      sensor_latency_.AddLatency(GetSystemClockNs() - pose_state.timestamp_ns);
+      if (pose_state.timestamp_ns != 0) {
+        sensor_latency_.AddLatency(GetSystemClockNs() -
+                                   pose_state.timestamp_ns);
+      }
 
       // Update the timestamp with the expected latency.
       WriteAsyncPoses(

@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "vr_hwc.h"
+#include "impl/vr_hwc.h"
 
+#include <private/dvr/display_client.h>
 #include <ui/Fence.h>
 
 #include <mutex>
-
-#include <private/dvr/display_client.h>
 
 #include "vr_composer_client.h"
 
@@ -47,7 +46,7 @@ sp<GraphicBuffer> CreateGraphicBuffer(
    sp<GraphicBuffer> buffer = new GraphicBuffer(
       handle, GraphicBuffer::CLONE_HANDLE, metadata.width, metadata.height,
       static_cast<int32_t>(metadata.format), metadata.layerCount,
-      metadata.usage, metadata.usage, metadata.stride);
+      metadata.usage, metadata.stride);
    if (buffer->initCheck() != OK) {
      ALOGE("Failed to create graphic buffer");
      return nullptr;

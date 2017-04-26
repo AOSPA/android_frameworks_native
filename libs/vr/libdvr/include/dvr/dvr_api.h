@@ -38,6 +38,8 @@ typedef struct DvrReadBufferQueue DvrReadBufferQueue;
 
 typedef struct DvrSurface DvrSurface;
 
+struct native_handle;
+
 // display_manager_client.h
 typedef int (*DvrDisplayManagerClientGetSurfaceListPtr)(
     DvrDisplayManagerClient* client,
@@ -46,7 +48,7 @@ typedef void (*DvrDisplayManagerClientSurfaceListDestroyPtr)(
     DvrDisplayManagerClientSurfaceList* surface_list);
 typedef DvrBuffer* (*DvrDisplayManagerSetupNamedBufferPtr)(
     DvrDisplayManagerClient* client, const char* name, size_t size,
-    uint64_t producer_usage, uint64_t consumer_usage);
+    uint64_t usage0, uint64_t usage1);
 typedef size_t (*DvrDisplayManagerClientSurfaceListGetSizePtr)(
     DvrDisplayManagerClientSurfaceList* surface_list);
 typedef int (*DvrDisplayManagerClientSurfaceListGetSurfaceIdPtr)(
@@ -70,6 +72,8 @@ typedef int (*DvrWriteBufferPostPtr)(DvrWriteBuffer* client, int ready_fence_fd,
 typedef int (*DvrWriteBufferGainPtr)(DvrWriteBuffer* client,
                                      int* release_fence_fd);
 typedef int (*DvrWriteBufferGainAsyncPtr)(DvrWriteBuffer* client);
+typedef const struct native_handle* (*DvrWriteBufferGetNativeHandle)(
+    DvrWriteBuffer* write_buffer);
 
 typedef void (*DvrReadBufferDestroyPtr)(DvrReadBuffer* client);
 typedef int (*DvrReadBufferGetAHardwareBufferPtr)(
@@ -80,9 +84,14 @@ typedef int (*DvrReadBufferAcquirePtr)(DvrReadBuffer* client,
 typedef int (*DvrReadBufferReleasePtr)(DvrReadBuffer* client,
                                        int release_fence_fd);
 typedef int (*DvrReadBufferReleaseAsyncPtr)(DvrReadBuffer* client);
+typedef const struct native_handle* (*DvrReadBufferGetNativeHandle)(
+    DvrReadBuffer* read_buffer);
+
 typedef void (*DvrBufferDestroy)(DvrBuffer* buffer);
 typedef int (*DvrBufferGetAHardwareBuffer)(DvrBuffer* buffer,
                                            AHardwareBuffer** hardware_buffer);
+typedef const struct native_handle* (*DvrBufferGetNativeHandle)(
+    DvrBuffer* buffer);
 
 // dvr_buffer_queue.h
 typedef void (*DvrWriteBufferQueueDestroyPtr)(DvrWriteBufferQueue* write_queue);
@@ -238,6 +247,7 @@ struct DvrApi_v1 {
   DvrWriteBufferPostPtr write_buffer_post;
   DvrWriteBufferGainPtr write_buffer_gain;
   DvrWriteBufferGainAsyncPtr write_buffer_gain_async;
+  DvrWriteBufferGetNativeHandle write_buffer_get_native_handle;
 
   // Read buffer
   DvrReadBufferDestroyPtr read_buffer_destroy;
@@ -245,8 +255,12 @@ struct DvrApi_v1 {
   DvrReadBufferAcquirePtr read_buffer_acquire;
   DvrReadBufferReleasePtr read_buffer_release;
   DvrReadBufferReleaseAsyncPtr read_buffer_release_async;
+  DvrReadBufferGetNativeHandle read_buffer_get_native_handle;
+
+  // Buffer
   DvrBufferDestroy buffer_destroy;
   DvrBufferGetAHardwareBuffer buffer_get_ahardwarebuffer;
+  DvrBufferGetNativeHandle buffer_get_native_handle;
 
   // Write buffer queue
   DvrWriteBufferQueueDestroyPtr write_buffer_queue_destroy;

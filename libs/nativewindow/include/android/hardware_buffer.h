@@ -66,14 +66,14 @@ enum {
      *   Vulkan: VK_FORMAT_R16G16B16A16_SFLOAT
      *   OpenGL ES: GL_RGBA16F
      */
-    AHARDWAREBUFFER_FORMAT_R16G16B16A16_SFLOAT      = 0x16,
+    AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT       = 0x16,
 
     /**
      * Corresponding formats:
-     *   Vulkan: VK_FORMAT_A2R10G10B10_UNORM_PACK32
+     *   Vulkan: VK_FORMAT_A2B10G10R10_UNORM_PACK32
      *   OpenGL ES: GL_RGB10_A2
      */
-    AHARDWAREBUFFER_FORMAT_A2R10G10B10_UNORM_PACK32 = 0x2b,
+    AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM        = 0x2b,
 
     /**
      * An opaque binary blob format that must have height 1, with width equal to
@@ -251,12 +251,6 @@ int AHardwareBuffer_sendHandleToUnixSocket(const AHardwareBuffer* buffer, int so
  * number of the lock fails for any reason.
  */
 int AHardwareBuffer_recvHandleFromUnixSocket(int socketFd, AHardwareBuffer** outBuffer);
-
-// ----------------------------------------------------------------------------
-// Everything below here is part of the public NDK API, but is intended only
-// for use by device-specific graphics drivers.
-struct native_handle;
-const struct native_handle* AHardwareBuffer_getNativeHandle(const AHardwareBuffer* buffer);
 
 __END_DECLS
 

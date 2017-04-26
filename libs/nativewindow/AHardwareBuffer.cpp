@@ -16,7 +16,7 @@
 
 #define LOG_TAG "AHardwareBuffer"
 
-#include <android/hardware_buffer.h>
+#include <vndk/hardware_buffer.h>
 
 #include <errno.h>
 #include <sys/socket.h>
@@ -60,9 +60,10 @@ int AHardwareBuffer_allocate(const AHardwareBuffer_Desc* desc, AHardwareBuffer**
     uint64_t consumerUsage = 0;
     AHardwareBuffer_convertToGrallocUsageBits(&producerUsage, &consumerUsage, desc->usage0,
             desc->usage1);
+    uint32_t usage = android_convertGralloc1To0Usage(producerUsage, consumerUsage);
 
     sp<GraphicBuffer> gbuffer(new GraphicBuffer(
-            desc->width, desc->height, format, desc->layers, producerUsage, consumerUsage,
+            desc->width, desc->height, format, desc->layers, usage,
             std::string("AHardwareBuffer pid [") + std::to_string(getpid()) + "]"));
 
     status_t err = gbuffer->initCheck();
@@ -261,7 +262,12 @@ int AHardwareBuffer_recvHandleFromUnixSocket(int socketFd, AHardwareBuffer** out
     return NO_ERROR;
 }
 
-const struct native_handle* AHardwareBuffer_getNativeHandle(
+
+// ----------------------------------------------------------------------------
+// VNDK functions
+// ----------------------------------------------------------------------------
+
+const native_handle_t* AHardwareBuffer_getNativeHandle(
         const AHardwareBuffer* buffer) {
     if (!buffer) return nullptr;
     const GraphicBuffer* gbuffer = AHardwareBuffer_to_GraphicBuffer(buffer);
@@ -353,8 +359,8 @@ uint32_t AHardwareBuffer_convertFromPixelFormat(uint32_t format) {
         case HAL_PIXEL_FORMAT_RGBX_8888:    return AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM;
         case HAL_PIXEL_FORMAT_RGB_565:      return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
         case HAL_PIXEL_FORMAT_RGB_888:      return AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM;
-        case HAL_PIXEL_FORMAT_RGBA_FP16:    return AHARDWAREBUFFER_FORMAT_R16G16B16A16_SFLOAT;
-        case HAL_PIXEL_FORMAT_RGBA_1010102: return AHARDWAREBUFFER_FORMAT_A2R10G10B10_UNORM_PACK32;
+        case HAL_PIXEL_FORMAT_RGBA_FP16:    return AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
+        case HAL_PIXEL_FORMAT_RGBA_1010102: return AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM;
         case HAL_PIXEL_FORMAT_BLOB:         return AHARDWAREBUFFER_FORMAT_BLOB;
         default:ALOGE("Unknown pixel format %u", format);
             return 0;
@@ -367,8 +373,8 @@ uint32_t AHardwareBuffer_convertToPixelFormat(uint32_t format) {
         case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:         return HAL_PIXEL_FORMAT_RGBX_8888;
         case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:           return HAL_PIXEL_FORMAT_RGB_565;
         case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:           return HAL_PIXEL_FORMAT_RGB_888;
-        case AHARDWAREBUFFER_FORMAT_R16G16B16A16_SFLOAT:    return HAL_PIXEL_FORMAT_RGBA_FP16;
-        case AHARDWAREBUFFER_FORMAT_A2R10G10B10_UNORM_PACK32: return HAL_PIXEL_FORMAT_RGBA_1010102;
+        case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:     return HAL_PIXEL_FORMAT_RGBA_FP16;
+        case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:      return HAL_PIXEL_FORMAT_RGBA_1010102;
         case AHARDWAREBUFFER_FORMAT_BLOB:                   return HAL_PIXEL_FORMAT_BLOB;
         default:ALOGE("Unknown AHardwareBuffer format %u", format);
             return 0;

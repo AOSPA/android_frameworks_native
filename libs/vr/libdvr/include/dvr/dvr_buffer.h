@@ -13,31 +13,40 @@ typedef struct DvrWriteBuffer DvrWriteBuffer;
 typedef struct DvrReadBuffer DvrReadBuffer;
 typedef struct DvrBuffer DvrBuffer;
 typedef struct AHardwareBuffer AHardwareBuffer;
+struct native_handle;
 
 // Write buffer
 void dvrWriteBufferDestroy(DvrWriteBuffer* write_buffer);
 int dvrWriteBufferGetId(DvrWriteBuffer* write_buffer);
+// Caller must call AHardwareBuffer_release on hardware_buffer.
 int dvrWriteBufferGetAHardwareBuffer(DvrWriteBuffer* write_buffer,
                                      AHardwareBuffer** hardware_buffer);
 int dvrWriteBufferPost(DvrWriteBuffer* write_buffer, int ready_fence_fd,
                        const void* meta, size_t meta_size_bytes);
 int dvrWriteBufferGain(DvrWriteBuffer* write_buffer, int* release_fence_fd);
 int dvrWriteBufferGainAsync(DvrWriteBuffer* write_buffer);
+const struct native_handle* dvrWriteBufferGetNativeHandle(
+    DvrWriteBuffer* write_buffer);
 
 // Read buffer
 void dvrReadBufferDestroy(DvrReadBuffer* read_buffer);
 int dvrReadBufferGetId(DvrReadBuffer* read_buffer);
+// Caller must call AHardwareBuffer_release on hardware_buffer.
 int dvrReadBufferGetAHardwareBuffer(DvrReadBuffer* read_buffer,
                                     AHardwareBuffer** hardware_buffer);
 int dvrReadBufferAcquire(DvrReadBuffer* read_buffer, int* ready_fence_fd,
                          void* meta, size_t meta_size_bytes);
 int dvrReadBufferRelease(DvrReadBuffer* read_buffer, int release_fence_fd);
 int dvrReadBufferReleaseAsync(DvrReadBuffer* read_buffer);
+const struct native_handle* dvrReadBufferGetNativeHandle(
+    DvrReadBuffer* read_buffer);
 
 // Buffer
 void dvrBufferDestroy(DvrBuffer* buffer);
+// Caller must call AHardwareBuffer_release on hardware_buffer.
 int dvrBufferGetAHardwareBuffer(DvrBuffer* buffer,
                                 AHardwareBuffer** hardware_buffer);
+const struct native_handle* dvrBufferGetNativeHandle(DvrBuffer* buffer);
 
 #ifdef __cplusplus
 }  // extern "C"

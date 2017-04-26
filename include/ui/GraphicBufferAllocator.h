@@ -25,13 +25,14 @@
 
 #include <cutils/native_handle.h>
 
+#include <system/window.h>
+
+#include <ui/PixelFormat.h>
+
 #include <utils/Errors.h>
 #include <utils/KeyedVector.h>
 #include <utils/Mutex.h>
 #include <utils/Singleton.h>
-
-#include <ui/Gralloc1.h>
-#include <ui/PixelFormat.h>
 
 namespace android {
 
@@ -45,29 +46,10 @@ class String8;
 class GraphicBufferAllocator : public Singleton<GraphicBufferAllocator>
 {
 public:
-    enum {
-        USAGE_SW_READ_NEVER     = GRALLOC1_CONSUMER_USAGE_CPU_READ_NEVER,
-        USAGE_SW_READ_RARELY    = GRALLOC1_CONSUMER_USAGE_CPU_READ,
-        USAGE_SW_READ_OFTEN     = GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN,
-        USAGE_SW_READ_MASK      = GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN,
-
-        USAGE_SW_WRITE_NEVER    = GRALLOC1_PRODUCER_USAGE_CPU_WRITE_NEVER,
-        USAGE_SW_WRITE_RARELY   = GRALLOC1_PRODUCER_USAGE_CPU_WRITE,
-        USAGE_SW_WRITE_OFTEN    = GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN,
-        USAGE_SW_WRITE_MASK     = GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN,
-
-        USAGE_SOFTWARE_MASK     = USAGE_SW_READ_MASK|USAGE_SW_WRITE_MASK,
-
-        USAGE_HW_TEXTURE        = GRALLOC1_CONSUMER_USAGE_GPU_TEXTURE,
-        USAGE_HW_RENDER         = GRALLOC1_PRODUCER_USAGE_GPU_RENDER_TARGET,
-        USAGE_HW_2D             = 0x00000400, // Deprecated
-        USAGE_HW_MASK           = 0x00071F00, // Deprecated
-    };
-
     static inline GraphicBufferAllocator& get() { return getInstance(); }
 
     status_t allocate(uint32_t w, uint32_t h, PixelFormat format,
-            uint32_t layerCount, uint64_t producerUsage, uint64_t consumerUsage,
+            uint32_t layerCount, uint64_t usage,
             buffer_handle_t* handle, uint32_t* stride, uint64_t graphicBufferId,
             std::string requestorName);
 
@@ -83,8 +65,7 @@ private:
         uint32_t stride;
         PixelFormat format;
         uint32_t layerCount;
-        uint64_t producerUsage;
-        uint64_t consumerUsage;
+        uint64_t usage;
         size_t size;
         std::string requestorName;
     };
@@ -98,9 +79,6 @@ private:
 
     GraphicBufferMapper& mMapper;
     const std::unique_ptr<const Gralloc2::Allocator> mAllocator;
-
-    std::unique_ptr<Gralloc1::Loader> mLoader;
-    std::unique_ptr<Gralloc1::Device> mDevice;
 };
 
 // ---------------------------------------------------------------------------
