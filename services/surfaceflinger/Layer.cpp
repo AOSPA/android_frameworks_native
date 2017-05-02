@@ -287,6 +287,14 @@ void Layer::onSidebandStreamChanged() {
 // the layer has been remove from the current state list (and just before
 // it's removed from the drawing state list)
 void Layer::onRemoved() {
+    if (mCurrentState.zOrderRelativeOf != nullptr) {
+        sp<Layer> strongRelative = mCurrentState.zOrderRelativeOf.promote();
+        if (strongRelative != nullptr) {
+            strongRelative->removeZOrderRelative(this);
+        }
+        mCurrentState.zOrderRelativeOf = nullptr;
+    }
+
     mSurfaceFlingerConsumer->abandon();
     for (const auto& child : mCurrentChildren) {
         child->onRemoved();
@@ -2555,11 +2563,6 @@ LayerVector Layer::makeTraversalList() {
         sp<Layer> strongRelative = weakRelative.promote();
         if (strongRelative != nullptr) {
             traverse.add(strongRelative);
-        } else {
-            // We need to erase from current state instead of drawing
-            // state so we don't overwrite when copying
-            // the current state to the drawing state.
-            mCurrentState.zOrderRelatives.remove(weakRelative);
         }
     }
 
@@ -2624,10 +2627,19 @@ Transform Layer::getTransform() const {
         // or we will break the contract where WM can treat child surfaces as
         // pixels in the parent surface.
         if (p->isFixedSize()) {
+            int bufferWidth;
+            int bufferHeight;
+            if ((p->mCurrentTransform & NATIVE_WINDOW_TRANSFORM_ROT_90) == 0) {
+                bufferWidth = p->mActiveBuffer->getWidth();
+                bufferHeight = p->mActiveBuffer->getHeight();
+            } else {
+                bufferHeight = p->mActiveBuffer->getWidth();
+                bufferWidth = p->mActiveBuffer->getHeight();
+            }
             float sx = p->getDrawingState().active.w /
-                    static_cast<float>(p->mActiveBuffer->getWidth());
+                    static_cast<float>(bufferWidth);
             float sy = p->getDrawingState().active.h /
-                    static_cast<float>(p->mActiveBuffer->getHeight());
+                    static_cast<float>(bufferHeight);
             Transform extraParentScaling;
             extraParentScaling.set(sx, 0, 0, sy);
             t = t * extraParentScaling;
