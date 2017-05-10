@@ -174,9 +174,11 @@ ifeq ($(TARGET_USES_QCOM_BSP), true)
     LOCAL_SHARED_LIBRARIES += libqdutils
     LOCAL_SHARED_LIBRARIES += libqdMetaData
     LOCAL_CFLAGS += -DQTI_BSP
-  ifeq ($(TARGET_USES_COLOR_METADATA),)
-    ifeq ($(call is-board-platform-in-list, msm8996), true)
-      TARGET_USES_COLOR_METADATA := true
+  ifneq ($(filter pa_marlin pa_sailfish,$(TARGET_DEVICE)),)
+    ifeq ($(TARGET_USES_COLOR_METADATA),)
+      ifeq ($(call is-board-platform-in-list, msm8996), true)
+        TARGET_USES_COLOR_METADATA := true
+      endif
     endif
   endif
 
