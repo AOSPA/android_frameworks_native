@@ -121,6 +121,7 @@ status_t BufferHubQueueProducer::dequeueBuffer(
     return NO_INIT;
   }
 
+  const uint32_t kLayerCount = 1;
   if (static_cast<int32_t>(core_->producer_->capacity()) <
       max_dequeued_buffer_count_ +
           BufferHubQueueCore::kDefaultUndequeuedBuffers) {
@@ -128,7 +129,7 @@ status_t BufferHubQueueProducer::dequeueBuffer(
     // |max_dequeued_buffer_count_|, allocate new buffer.
     // TODO(jwcai) To save memory, the really reasonable thing to do is to go
     // over existing slots and find first existing one to dequeue.
-    ret = core_->AllocateBuffer(width, height, format, usage, 1);
+    ret = core_->AllocateBuffer(width, height, kLayerCount, format, usage);
     if (ret < 0)
       return ret;
   }
@@ -138,12 +139,12 @@ status_t BufferHubQueueProducer::dequeueBuffer(
 
   for (size_t retry = 0; retry < BufferHubQueue::kMaxQueueCapacity; retry++) {
     LocalHandle fence;
-    auto buffer_status  =
+    auto buffer_status =
         core_->producer_->Dequeue(core_->dequeue_timeout_ms_, &slot, &fence);
-    if (!buffer_producer)
-      return NO_MEMORY;
 
     buffer_producer = buffer_status.take();
+    if (!buffer_producer)
+      return NO_MEMORY;
 
     if (width == buffer_producer->width() &&
         height == buffer_producer->height() &&
@@ -172,7 +173,7 @@ status_t BufferHubQueueProducer::dequeueBuffer(
     // there are already multiple buffers in the queue, the next one returned
     // from |core_->producer_->Dequeue| may not be the new buffer we just
     // reallocated. Retry up to BufferHubQueue::kMaxQueueCapacity times.
-    ret = core_->AllocateBuffer(width, height, format, usage, 1);
+    ret = core_->AllocateBuffer(width, height, kLayerCount, format, usage);
     if (ret < 0)
       return ret;
   }
@@ -534,7 +535,8 @@ String8 BufferHubQueueProducer::getConsumerName() const {
 
 status_t BufferHubQueueProducer::setSharedBufferMode(bool shared_buffer_mode) {
   if (shared_buffer_mode) {
-    ALOGE("BufferHubQueueProducer::setSharedBufferMode(true) is not supported.");
+    ALOGE(
+        "BufferHubQueueProducer::setSharedBufferMode(true) is not supported.");
     // TODO(b/36373181) Front buffer mode for buffer hub queue as ANativeWindow.
     return INVALID_OPERATION;
   }
