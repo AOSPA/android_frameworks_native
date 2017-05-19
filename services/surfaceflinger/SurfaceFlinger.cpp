@@ -542,19 +542,28 @@ void SurfaceFlinger::init() {
         eglInitialize(mEGLDisplay, NULL, NULL);
 
         // start the EventThread
-        sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
+         if (vsyncPhaseOffsetNs != sfVsyncPhaseOffsetNs) {
+            sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
                 vsyncPhaseOffsetNs, true, "app");
-        mEventThread = new EventThread(vsyncSrc, *this, false);
-        sp<VSyncSource> sfVsyncSrc = new DispSyncSource(&mPrimaryDispSync,
+            mEventThread = new EventThread(vsyncSrc, *this, false);
+            sp<VSyncSource> sfVsyncSrc = new DispSyncSource(&mPrimaryDispSync,
                 sfVsyncPhaseOffsetNs, true, "sf");
-        mSFEventThread = new EventThread(sfVsyncSrc, *this, true);
-        mEventQueue.setEventThread(mSFEventThread);
+            mSFEventThread = new EventThread(sfVsyncSrc, *this, true);
+            mEventQueue.setEventThread(mSFEventThread);
+         } else {
+            sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
+                                        vsyncPhaseOffsetNs, true, "sf-app");
+            mEventThread = new EventThread(vsyncSrc, *this, true);
+            mEventQueue.setEventThread(mEventThread);
+         }
 
         // set EventThread and SFEventThread to SCHED_FIFO to minimize jitter
         struct sched_param param = {0};
         param.sched_priority = 2;
-        if (sched_setscheduler(mSFEventThread->getTid(), SCHED_FIFO, &param) != 0) {
-            ALOGE("Couldn't set SCHED_FIFO for SFEventThread");
+        if (mSFEventThread != NULL) {
+           if (sched_setscheduler(mSFEventThread->getTid(), SCHED_FIFO, &param) != 0) {
+               ALOGE("Couldn't set SCHED_FIFO for SFEventThread");
+           }
         }
         if (sched_setscheduler(mEventThread->getTid(), SCHED_FIFO, &param) != 0) {
             ALOGE("Couldn't set SCHED_FIFO for EventThread");
@@ -1006,7 +1015,10 @@ status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
     } else {
         mInjectVSyncs = enable;
         ALOGV("VSync Injections disabled");
-        mEventQueue.setEventThread(mSFEventThread);
+        if (mSFEventThread != NULL)
+           mEventQueue.setEventThread(mSFEventThread);
+        else
+           mEventQueue.setEventThread(mEventThread);
         mVSyncInjector.clear();
     }
     return NO_ERROR;
@@ -3923,12 +3935,14 @@ status_t SurfaceFlinger::onTransact(
             }
             case 1018: { // Modify Choreographer's phase offset
                 n = data.readInt32();
-                mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                if (mEventThread != NULL)
+                   mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
                 return NO_ERROR;
             }
             case 1019: { // Modify SurfaceFlinger's phase offset
                 n = data.readInt32();
-                mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                if (mSFEventThread != NULL)
+                   mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
                 return NO_ERROR;
             }
             case 1020: { // Layer updates interceptor
