@@ -16,6 +16,7 @@
 
 #include <android/hardware_buffer.h>
 #include <android/native_window.h>
+#include <vndk/hardware_buffer.h>
 #include <vndk/window.h>
 
 // this checks that all these headers are C-compatible

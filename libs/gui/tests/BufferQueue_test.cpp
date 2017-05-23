@@ -1057,7 +1057,7 @@ TEST_F(BufferQueueTest, TestDiscardFreeBuffers) {
 
     // Check no free buffers in dump
     String8 dumpString;
-    mConsumer->dumpState(dumpString, nullptr);
+    mConsumer->dumpState(String8{}, &dumpString);
 
     // Parse the dump to ensure that all buffer slots that are FREE also
     // have a null GraphicBuffer
@@ -1179,6 +1179,23 @@ TEST_F(BufferQueueTest, TestStaleBufferHandleSentAfterDisconnect) {
     ASSERT_EQ(OK, mConsumer->acquireBuffer(&item, 0));
     ASSERT_EQ(slot, item.mSlot);
     ASSERT_NE(nullptr, item.mGraphicBuffer.get());
+}
+
+TEST_F(BufferQueueTest, TestProducerConnectDisconnect) {
+    createBufferQueue();
+    sp<DummyConsumer> dc(new DummyConsumer);
+    ASSERT_EQ(OK, mConsumer->consumerConnect(dc, true));
+    IGraphicBufferProducer::QueueBufferOutput output;
+    sp<IProducerListener> dummyListener(new DummyProducerListener);
+    ASSERT_EQ(NO_INIT, mProducer->disconnect(NATIVE_WINDOW_API_CPU));
+    ASSERT_EQ(OK, mProducer->connect(
+            dummyListener, NATIVE_WINDOW_API_CPU, true, &output));
+    ASSERT_EQ(BAD_VALUE, mProducer->connect(
+            dummyListener, NATIVE_WINDOW_API_MEDIA, true, &output));
+
+    ASSERT_EQ(BAD_VALUE, mProducer->disconnect(NATIVE_WINDOW_API_MEDIA));
+    ASSERT_EQ(OK, mProducer->disconnect(NATIVE_WINDOW_API_CPU));
+    ASSERT_EQ(NO_INIT, mProducer->disconnect(NATIVE_WINDOW_API_CPU));
 }
 
 } // namespace android

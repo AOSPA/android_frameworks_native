@@ -167,7 +167,7 @@ void Layer::onFirstRef() {
     // Creates a custom BufferQueue for SurfaceFlingerConsumer to use
     sp<IGraphicBufferProducer> producer;
     sp<IGraphicBufferConsumer> consumer;
-    BufferQueue::createBufferQueue(&producer, &consumer, nullptr, true);
+    BufferQueue::createBufferQueue(&producer, &consumer, true);
     mProducer = new MonitoredProducer(producer, mFlinger, this);
     mSurfaceFlingerConsumer = new SurfaceFlingerConsumer(consumer, mTextureName, this);
     mSurfaceFlingerConsumer->setConsumerUsageBits(getEffectiveUsage(0));
@@ -287,7 +287,18 @@ void Layer::onSidebandStreamChanged() {
 // the layer has been remove from the current state list (and just before
 // it's removed from the drawing state list)
 void Layer::onRemoved() {
+    if (mCurrentState.zOrderRelativeOf != nullptr) {
+        sp<Layer> strongRelative = mCurrentState.zOrderRelativeOf.promote();
+        if (strongRelative != nullptr) {
+            strongRelative->removeZOrderRelative(this);
+        }
+        mCurrentState.zOrderRelativeOf = nullptr;
+    }
+
     mSurfaceFlingerConsumer->abandon();
+
+    clearHwcLayers();
+
     for (const auto& child : mCurrentChildren) {
         child->onRemoved();
     }
@@ -363,7 +374,7 @@ Rect Layer::getContentCrop() const {
     return crop;
 }
 
-static Rect reduce(const Rect& win, const Region& exclude) {
+Rect Layer::reduce(const Rect& win, const Region& exclude) const {
     if (CC_LIKELY(exclude.isEmpty())) {
         return win;
     }
@@ -667,6 +678,7 @@ void Layer::setGeometry(
         hwcInfo.displayFrame = transformedFrame;
     }
 
+    setPosition(displayDevice, s);
     FloatRect sourceCrop = computeCrop(displayDevice);
     error = hwcLayer->setSourceCrop(sourceCrop);
     if (error != HWC2::Error::None) {
@@ -689,7 +701,16 @@ void Layer::setGeometry(
             mName.string(), z, to_string(error).c_str(),
             static_cast<int32_t>(error));
 
-    error = hwcLayer->setInfo(s.type, s.appId);
+    int type = s.type;
+    int appId = s.appId;
+    sp<Layer> parent = mParent.promote();
+    if (parent.get()) {
+        auto& parentState = parent->getDrawingState();
+        type = parentState.type;
+        appId = parentState.appId;
+    }
+
+    error = hwcLayer->setInfo(type, appId);
     ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set info (%d)",
              mName.string(), static_cast<int32_t>(error));
 #else
@@ -698,6 +719,7 @@ void Layer::setGeometry(
     }
     const Transform& tr(hw->getTransform());
     layer.setFrame(tr.transform(frame));
+    setPosition(hw, layer, s);
     layer.setCrop(computeCrop(hw));
     layer.setPlaneAlpha(getAlpha());
 #endif
@@ -1025,7 +1047,7 @@ void Layer::onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
         // figure out if there is something below us
         Region under;
         bool finished = false;
-        mFlinger->mDrawingState.layersSortedByZ.traverseInZOrder([&](Layer* layer) {
+        mFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
             if (finished || layer == static_cast<Layer const*>(this)) {
                 finished = true;
                 return;
@@ -1713,7 +1735,52 @@ bool Layer::setLayer(int32_t z) {
     mCurrentState.sequence++;
     mCurrentState.z = z;
     mCurrentState.modified = true;
+
+    // Discard all relative layering.
+    if (mCurrentState.zOrderRelativeOf != nullptr) {
+        sp<Layer> strongRelative = mCurrentState.zOrderRelativeOf.promote();
+        if (strongRelative != nullptr) {
+            strongRelative->removeZOrderRelative(this);
+        }
+        mCurrentState.zOrderRelativeOf = nullptr;
+    }
     setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+void Layer::removeZOrderRelative(const wp<Layer>& relative) {
+    mCurrentState.zOrderRelatives.remove(relative);
+    mCurrentState.sequence++;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+}
+
+void Layer::addZOrderRelative(const wp<Layer>& relative) {
+    mCurrentState.zOrderRelatives.add(relative);
+    mCurrentState.modified = true;
+    mCurrentState.sequence++;
+    setTransactionFlags(eTransactionNeeded);
+}
+
+bool Layer::setRelativeLayer(const sp<IBinder>& relativeToHandle, int32_t z) {
+    sp<Handle> handle = static_cast<Handle*>(relativeToHandle.get());
+    if (handle == nullptr) {
+        return false;
+    }
+    sp<Layer> relative = handle->owner.promote();
+    if (relative == nullptr) {
+        return false;
+    }
+
+    mCurrentState.sequence++;
+    mCurrentState.modified = true;
+    mCurrentState.z = z;
+
+    mCurrentState.zOrderRelativeOf = relative;
+    relative->addZOrderRelative(this);
+
+    setTransactionFlags(eTransactionNeeded);
+
     return true;
 }
 
@@ -2121,9 +2188,14 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime)
 
         // Remove any stale buffers that have been dropped during
         // updateTexImage
-        while (mQueueItems[0].mFrameNumber != currentFrameNumber) {
+        while ((mQueuedFrames > 0) && (mQueueItems[0].mFrameNumber != currentFrameNumber)) {
             mQueueItems.removeAt(0);
             android_atomic_dec(&mQueuedFrames);
+        }
+
+        if (mQueuedFrames == 0) {
+                ALOGE("[%s] mQueuedFrames is zero !!!", mName.string());
+                return outDirtyRegion;
         }
 
         mQueueItems.removeAt(0);
@@ -2466,7 +2538,7 @@ bool Layer::reparentChildren(const sp<IBinder>& newParentHandle) {
 }
 
 bool Layer::detachChildren() {
-    traverseInZOrder([this](Layer* child) {
+    traverseInZOrder(LayerVector::StateSet::Drawing, [this](Layer* child) {
         if (child == this) {
             return;
         }
@@ -2500,40 +2572,72 @@ int32_t Layer::getZ() const {
     return mDrawingState.z;
 }
 
-/**
- * Negatively signed children are before 'this' in Z-order.
- */
-void Layer::traverseInZOrder(const std::function<void(Layer*)>& exec) {
-    size_t i = 0;
-    for (; i < mDrawingChildren.size(); i++) {
-        const auto& child = mDrawingChildren[i];
-        if (child->getZ() >= 0)
-            break;
-        child->traverseInZOrder(exec);
+LayerVector Layer::makeTraversalList(LayerVector::StateSet stateSet) {
+    LOG_ALWAYS_FATAL_IF(stateSet == LayerVector::StateSet::Invalid,
+                        "makeTraversalList received invalid stateSet");
+    const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
+    const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
+    const State& state = useDrawing ? mDrawingState : mCurrentState;
+
+    if (state.zOrderRelatives.size() == 0) {
+        return children;
     }
-    exec(this);
-    for (; i < mDrawingChildren.size(); i++) {
-        const auto& child = mDrawingChildren[i];
-        child->traverseInZOrder(exec);
+    LayerVector traverse;
+
+    for (const wp<Layer>& weakRelative : state.zOrderRelatives) {
+        sp<Layer> strongRelative = weakRelative.promote();
+        if (strongRelative != nullptr) {
+            traverse.add(strongRelative);
+        }
+    }
+
+    for (const sp<Layer>& child : children) {
+        traverse.add(child);
+    }
+
+    return traverse;
+}
+
+/**
+ * Negatively signed relatives are before 'this' in Z-order.
+ */
+void Layer::traverseInZOrder(LayerVector::StateSet stateSet, const LayerVector::Visitor& visitor) {
+    LayerVector list = makeTraversalList(stateSet);
+
+    size_t i = 0;
+    for (; i < list.size(); i++) {
+        const auto& relative = list[i];
+        if (relative->getZ() >= 0) {
+            break;
+        }
+        relative->traverseInZOrder(stateSet, visitor);
+    }
+    visitor(this);
+    for (; i < list.size(); i++) {
+        const auto& relative = list[i];
+        relative->traverseInZOrder(stateSet, visitor);
     }
 }
 
 /**
- * Positively signed children are before 'this' in reverse Z-order.
+ * Positively signed relatives are before 'this' in reverse Z-order.
  */
-void Layer::traverseInReverseZOrder(const std::function<void(Layer*)>& exec) {
+void Layer::traverseInReverseZOrder(LayerVector::StateSet stateSet,
+                                    const LayerVector::Visitor& visitor) {
+    LayerVector list = makeTraversalList(stateSet);
+
     int32_t i = 0;
-    for (i = mDrawingChildren.size()-1; i>=0; i--) {
-        const auto& child = mDrawingChildren[i];
-        if (child->getZ() < 0) {
+    for (i = list.size()-1; i>=0; i--) {
+        const auto& relative = list[i];
+        if (relative->getZ() < 0) {
             break;
         }
-        child->traverseInReverseZOrder(exec);
+        relative->traverseInReverseZOrder(stateSet, visitor);
     }
-    exec(this);
+    visitor(this);
     for (; i>=0; i--) {
-        const auto& child = mDrawingChildren[i];
-        child->traverseInReverseZOrder(exec);
+        const auto& relative = list[i];
+        relative->traverseInReverseZOrder(stateSet, visitor);
     }
 }
 
@@ -2542,6 +2646,30 @@ Transform Layer::getTransform() const {
     const auto& p = getParent();
     if (p != nullptr) {
         t = p->getTransform();
+
+        // If the parent is not using NATIVE_WINDOW_SCALING_MODE_FREEZE (e.g.
+        // it isFixedSize) then there may be additional scaling not accounted
+        // for in the transform. We need to mirror this scaling in child surfaces
+        // or we will break the contract where WM can treat child surfaces as
+        // pixels in the parent surface.
+        if (p->isFixedSize()) {
+            int bufferWidth;
+            int bufferHeight;
+            if ((p->mCurrentTransform & NATIVE_WINDOW_TRANSFORM_ROT_90) == 0) {
+                bufferWidth = p->mActiveBuffer->getWidth();
+                bufferHeight = p->mActiveBuffer->getHeight();
+            } else {
+                bufferHeight = p->mActiveBuffer->getWidth();
+                bufferWidth = p->mActiveBuffer->getHeight();
+            }
+            float sx = p->getDrawingState().active.w /
+                    static_cast<float>(bufferWidth);
+            float sy = p->getDrawingState().active.h /
+                    static_cast<float>(bufferHeight);
+            Transform extraParentScaling;
+            extraParentScaling.set(sx, 0, 0, sy);
+            t = t * extraParentScaling;
+        }
     }
     return t * getDrawingState().active.transform;
 }

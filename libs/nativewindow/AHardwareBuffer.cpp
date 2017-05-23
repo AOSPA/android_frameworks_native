@@ -16,7 +16,7 @@
 
 #define LOG_TAG "AHardwareBuffer"
 
-#include <android/hardware_buffer.h>
+#include <vndk/hardware_buffer.h>
 
 #include <errno.h>
 #include <sys/socket.h>
@@ -27,13 +27,12 @@
 #include <utils/StrongPointer.h>
 #include <ui/GraphicBuffer.h>
 #include <system/graphics.h>
-#include <hardware/gralloc1.h>
-#include <grallocusage/GrallocUsageConversion.h>
 
 #include <private/android/AHardwareBufferHelpers.h>
+#include <android/hardware/graphics/common/1.0/types.h>
 
 
-static constexpr int kDataBufferSize = 64 * sizeof(int);  // 64 ints
+static constexpr int kFdBufferSize = 128 * sizeof(int);  // 128 ints
 
 using namespace android;
 
@@ -51,18 +50,19 @@ int AHardwareBuffer_allocate(const AHardwareBuffer_Desc* desc, AHardwareBuffer**
         return BAD_VALUE;
     }
 
+    if (desc->rfu0 != 0 || desc->rfu1 != 0) {
+        ALOGE("AHardwareBuffer_Desc::rfu fields must be 0");
+        return BAD_VALUE;
+    }
+
     if (desc->format == AHARDWAREBUFFER_FORMAT_BLOB && desc->height != 1) {
         ALOGE("Height must be 1 when using the AHARDWAREBUFFER_FORMAT_BLOB format");
         return BAD_VALUE;
     }
 
-    uint64_t producerUsage = 0;
-    uint64_t consumerUsage = 0;
-    AHardwareBuffer_convertToGrallocUsageBits(&producerUsage, &consumerUsage, desc->usage0,
-            desc->usage1);
-
+    uint64_t usage =  AHardwareBuffer_convertToGrallocUsageBits(desc->usage);
     sp<GraphicBuffer> gbuffer(new GraphicBuffer(
-            desc->width, desc->height, format, desc->layers, producerUsage, consumerUsage,
+            desc->width, desc->height, format, desc->layers, usage,
             std::string("AHardwareBuffer pid [") + std::to_string(getpid()) + "]"));
 
     status_t err = gbuffer->initCheck();
@@ -70,7 +70,7 @@ int AHardwareBuffer_allocate(const AHardwareBuffer_Desc* desc, AHardwareBuffer**
         if (err == NO_MEMORY) {
             GraphicBuffer::dumpAllocationsToSystemLog();
         }
-        ALOGE("GraphicBufferAlloc::createGraphicBuffer(w=%u, h=%u, lc=%u) failed (%s), handle=%p",
+        ALOGE("GraphicBuffer(w=%u, h=%u, lc=%u) failed (%s), handle=%p",
                 desc->width, desc->height, desc->layers, strerror(-err), gbuffer->handle);
         return err;
     }
@@ -101,30 +101,25 @@ void AHardwareBuffer_describe(const AHardwareBuffer* buffer,
     outDesc->width = gbuffer->getWidth();
     outDesc->height = gbuffer->getHeight();
     outDesc->layers = gbuffer->getLayerCount();
-
-    uint64_t producerUsage = 0;
-    uint64_t consumerUsage = 0;
-    android_convertGralloc0To1Usage(gbuffer->getUsage(), &producerUsage, &consumerUsage);
-    AHardwareBuffer_convertFromGrallocUsageBits(&outDesc->usage0, &outDesc->usage1,
-            producerUsage, consumerUsage);
-    outDesc->format = AHardwareBuffer_convertFromPixelFormat(
-            static_cast<uint32_t>(gbuffer->getPixelFormat()));
+    outDesc->format = AHardwareBuffer_convertFromPixelFormat(uint32_t(gbuffer->getPixelFormat()));
+    outDesc->usage = AHardwareBuffer_convertFromGrallocUsageBits(gbuffer->getUsage());
+    outDesc->stride = gbuffer->getStride();
+    outDesc->rfu0 = 0;
+    outDesc->rfu1 = 0;
 }
 
-int AHardwareBuffer_lock(AHardwareBuffer* buffer, uint64_t usage0,
+int AHardwareBuffer_lock(AHardwareBuffer* buffer, uint64_t usage,
         int32_t fence, const ARect* rect, void** outVirtualAddress) {
     if (!buffer) return BAD_VALUE;
 
-    if (usage0 & ~(AHARDWAREBUFFER_USAGE0_CPU_READ_OFTEN |
-                   AHARDWAREBUFFER_USAGE0_CPU_WRITE_OFTEN)) {
+    if (usage & ~(AHARDWAREBUFFER_USAGE_CPU_READ_MASK |
+                  AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK)) {
         ALOGE("Invalid usage flags passed to AHardwareBuffer_lock; only "
-                " AHARDWAREBUFFER_USAGE0_CPU_* flags are allowed");
+                " AHARDWAREBUFFER_USAGE_CPU_* flags are allowed");
         return BAD_VALUE;
     }
 
-    uint64_t producerUsage = 0;
-    uint64_t consumerUsage = 0;
-    AHardwareBuffer_convertToGrallocUsageBits(&producerUsage, &consumerUsage, usage0, 0);
+    usage = AHardwareBuffer_convertToGrallocUsageBits(usage);
     GraphicBuffer* gBuffer = AHardwareBuffer_to_GraphicBuffer(buffer);
     Rect bounds;
     if (!rect) {
@@ -132,8 +127,7 @@ int AHardwareBuffer_lock(AHardwareBuffer* buffer, uint64_t usage0,
     } else {
         bounds.set(Rect(rect->left, rect->top, rect->right, rect->bottom));
     }
-    return gBuffer->lockAsync(producerUsage, consumerUsage, bounds,
-            outVirtualAddress, fence);
+    return gBuffer->lockAsync(usage, usage, bounds, outVirtualAddress, fence);
 }
 
 int AHardwareBuffer_unlock(AHardwareBuffer* buffer, int32_t* fence) {
@@ -169,7 +163,7 @@ int AHardwareBuffer_sendHandleToUnixSocket(const AHardwareBuffer* buffer, int so
     iov[0].iov_base = data.get();
     iov[0].iov_len = flattenedSize;
 
-    char buf[CMSG_SPACE(kDataBufferSize)];
+    char buf[CMSG_SPACE(kFdBufferSize)];
     struct msghdr msg = {
             .msg_control = buf,
             .msg_controllen = sizeof(buf),
@@ -185,23 +179,30 @@ int AHardwareBuffer_sendHandleToUnixSocket(const AHardwareBuffer* buffer, int so
     memcpy(fdData, fds.get(), sizeof(int) * fdCount);
     msg.msg_controllen = cmsg->cmsg_len;
 
-    int result = sendmsg(socketFd, &msg, 0);
-    if (result <= 0) {
+    int result;
+    do {
+        result = sendmsg(socketFd, &msg, 0);
+    } while (result == -1 && errno == EINTR);
+    if (result == -1) {
+        result = errno;
         ALOGE("Error writing AHardwareBuffer to socket: error %#x (%s)",
-                result, strerror(errno));
-        return result;
+                result, strerror(result));
+        return -result;
     }
+
     return NO_ERROR;
 }
 
 int AHardwareBuffer_recvHandleFromUnixSocket(int socketFd, AHardwareBuffer** outBuffer) {
     if (!outBuffer) return BAD_VALUE;
 
-    char dataBuf[CMSG_SPACE(kDataBufferSize)];
-    char fdBuf[CMSG_SPACE(kDataBufferSize)];
+    static constexpr int kMessageBufferSize = 4096 * sizeof(int);
+
+    std::unique_ptr<char[]> dataBuf(new char[kMessageBufferSize]);
+    char fdBuf[CMSG_SPACE(kFdBufferSize)];
     struct iovec iov[1];
-    iov[0].iov_base = dataBuf;
-    iov[0].iov_len = sizeof(dataBuf);
+    iov[0].iov_base = dataBuf.get();
+    iov[0].iov_len = kMessageBufferSize;
 
     struct msghdr msg = {
             .msg_control = fdBuf,
@@ -210,11 +211,15 @@ int AHardwareBuffer_recvHandleFromUnixSocket(int socketFd, AHardwareBuffer** out
             .msg_iovlen = 1,
     };
 
-    int result = recvmsg(socketFd, &msg, 0);
-    if (result <= 0) {
+    int result;
+    do {
+        result = recvmsg(socketFd, &msg, 0);
+    } while (result == -1 && errno == EINTR);
+    if (result == -1) {
+        result = errno;
         ALOGE("Error reading AHardwareBuffer from socket: error %#x (%s)",
-                result, strerror(errno));
-        return result;
+                result, strerror(result));
+        return -result;
     }
 
     if (msg.msg_iovlen != 1) {
@@ -259,7 +264,12 @@ int AHardwareBuffer_recvHandleFromUnixSocket(int socketFd, AHardwareBuffer** out
     return NO_ERROR;
 }
 
-const struct native_handle* AHardwareBuffer_getNativeHandle(
+
+// ----------------------------------------------------------------------------
+// VNDK functions
+// ----------------------------------------------------------------------------
+
+const native_handle_t* AHardwareBuffer_getNativeHandle(
         const AHardwareBuffer* buffer) {
     if (!buffer) return nullptr;
     const GraphicBuffer* gbuffer = AHardwareBuffer_to_GraphicBuffer(buffer);
@@ -279,68 +289,6 @@ struct UsageMaskMapping {
     uint64_t grallocMask;
 };
 
-static constexpr UsageMaskMapping kUsage0ProducerMapping[] = {
-    { AHARDWAREBUFFER_USAGE0_CPU_WRITE, GRALLOC1_PRODUCER_USAGE_CPU_WRITE },
-    { AHARDWAREBUFFER_USAGE0_CPU_WRITE_OFTEN, GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN },
-    { AHARDWAREBUFFER_USAGE0_GPU_COLOR_OUTPUT, GRALLOC1_PRODUCER_USAGE_GPU_RENDER_TARGET },
-    { AHARDWAREBUFFER_USAGE0_PROTECTED_CONTENT, GRALLOC1_PRODUCER_USAGE_PROTECTED },
-    { AHARDWAREBUFFER_USAGE0_SENSOR_DIRECT_DATA, GRALLOC1_PRODUCER_USAGE_SENSOR_DIRECT_DATA },
-};
-
-static constexpr UsageMaskMapping kUsage1ProducerMapping[] = {
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_0, GRALLOC1_PRODUCER_USAGE_PRIVATE_0 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_1, GRALLOC1_PRODUCER_USAGE_PRIVATE_1 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_2, GRALLOC1_PRODUCER_USAGE_PRIVATE_2 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_3, GRALLOC1_PRODUCER_USAGE_PRIVATE_3 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_4, GRALLOC1_PRODUCER_USAGE_PRIVATE_4 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_5, GRALLOC1_PRODUCER_USAGE_PRIVATE_5 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_6, GRALLOC1_PRODUCER_USAGE_PRIVATE_6 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_7, GRALLOC1_PRODUCER_USAGE_PRIVATE_7 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_8, GRALLOC1_PRODUCER_USAGE_PRIVATE_8 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_9, GRALLOC1_PRODUCER_USAGE_PRIVATE_9 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_10, GRALLOC1_PRODUCER_USAGE_PRIVATE_10 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_11, GRALLOC1_PRODUCER_USAGE_PRIVATE_11 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_12, GRALLOC1_PRODUCER_USAGE_PRIVATE_12 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_13, GRALLOC1_PRODUCER_USAGE_PRIVATE_13 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_14, GRALLOC1_PRODUCER_USAGE_PRIVATE_14 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_15, GRALLOC1_PRODUCER_USAGE_PRIVATE_15 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_16, GRALLOC1_PRODUCER_USAGE_PRIVATE_16 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_17, GRALLOC1_PRODUCER_USAGE_PRIVATE_17 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_18, GRALLOC1_PRODUCER_USAGE_PRIVATE_18 },
-    { AHARDWAREBUFFER_USAGE1_PRODUCER_PRIVATE_19, GRALLOC1_PRODUCER_USAGE_PRIVATE_19 },
-};
-
-static constexpr UsageMaskMapping kUsage0ConsumerMapping[] = {
-    { AHARDWAREBUFFER_USAGE0_CPU_READ, GRALLOC1_CONSUMER_USAGE_CPU_READ },
-    { AHARDWAREBUFFER_USAGE0_CPU_READ_OFTEN, GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN },
-    { AHARDWAREBUFFER_USAGE0_GPU_SAMPLED_IMAGE, GRALLOC1_CONSUMER_USAGE_GPU_TEXTURE },
-    { AHARDWAREBUFFER_USAGE0_GPU_DATA_BUFFER, GRALLOC1_CONSUMER_USAGE_GPU_DATA_BUFFER },
-    { AHARDWAREBUFFER_USAGE0_VIDEO_ENCODE, GRALLOC1_CONSUMER_USAGE_VIDEO_ENCODER },
-};
-
-static constexpr UsageMaskMapping kUsage1ConsumerMapping[] = {
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_0, GRALLOC1_CONSUMER_USAGE_PRIVATE_0 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_1, GRALLOC1_CONSUMER_USAGE_PRIVATE_1 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_2, GRALLOC1_CONSUMER_USAGE_PRIVATE_2 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_3, GRALLOC1_CONSUMER_USAGE_PRIVATE_3 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_4, GRALLOC1_CONSUMER_USAGE_PRIVATE_4 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_5, GRALLOC1_CONSUMER_USAGE_PRIVATE_5 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_6, GRALLOC1_CONSUMER_USAGE_PRIVATE_6 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_7, GRALLOC1_CONSUMER_USAGE_PRIVATE_7 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_8, GRALLOC1_CONSUMER_USAGE_PRIVATE_8 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_9, GRALLOC1_CONSUMER_USAGE_PRIVATE_9 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_10, GRALLOC1_CONSUMER_USAGE_PRIVATE_10 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_11, GRALLOC1_CONSUMER_USAGE_PRIVATE_11 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_12, GRALLOC1_CONSUMER_USAGE_PRIVATE_12 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_13, GRALLOC1_CONSUMER_USAGE_PRIVATE_13 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_14, GRALLOC1_CONSUMER_USAGE_PRIVATE_14 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_15, GRALLOC1_CONSUMER_USAGE_PRIVATE_15 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_16, GRALLOC1_CONSUMER_USAGE_PRIVATE_16 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_17, GRALLOC1_CONSUMER_USAGE_PRIVATE_17 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_18, GRALLOC1_CONSUMER_USAGE_PRIVATE_18 },
-    { AHARDWAREBUFFER_USAGE1_CONSUMER_PRIVATE_19, GRALLOC1_CONSUMER_USAGE_PRIVATE_19 },
-};
-
 static inline bool containsBits(uint64_t mask, uint64_t bitsToCheck) {
     return (mask & bitsToCheck) == bitsToCheck && bitsToCheck;
 }
@@ -351,8 +299,8 @@ uint32_t AHardwareBuffer_convertFromPixelFormat(uint32_t format) {
         case HAL_PIXEL_FORMAT_RGBX_8888:    return AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM;
         case HAL_PIXEL_FORMAT_RGB_565:      return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
         case HAL_PIXEL_FORMAT_RGB_888:      return AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM;
-        case HAL_PIXEL_FORMAT_RGBA_FP16:    return AHARDWAREBUFFER_FORMAT_R16G16B16A16_SFLOAT;
-        case HAL_PIXEL_FORMAT_RGBA_1010102: return AHARDWAREBUFFER_FORMAT_A2R10G10B10_UNORM_PACK32;
+        case HAL_PIXEL_FORMAT_RGBA_FP16:    return AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
+        case HAL_PIXEL_FORMAT_RGBA_1010102: return AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM;
         case HAL_PIXEL_FORMAT_BLOB:         return AHARDWAREBUFFER_FORMAT_BLOB;
         default:ALOGE("Unknown pixel format %u", format);
             return 0;
@@ -365,64 +313,45 @@ uint32_t AHardwareBuffer_convertToPixelFormat(uint32_t format) {
         case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:         return HAL_PIXEL_FORMAT_RGBX_8888;
         case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:           return HAL_PIXEL_FORMAT_RGB_565;
         case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:           return HAL_PIXEL_FORMAT_RGB_888;
-        case AHARDWAREBUFFER_FORMAT_R16G16B16A16_SFLOAT:    return HAL_PIXEL_FORMAT_RGBA_FP16;
-        case AHARDWAREBUFFER_FORMAT_A2R10G10B10_UNORM_PACK32: return HAL_PIXEL_FORMAT_RGBA_1010102;
+        case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:     return HAL_PIXEL_FORMAT_RGBA_FP16;
+        case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:      return HAL_PIXEL_FORMAT_RGBA_1010102;
         case AHARDWAREBUFFER_FORMAT_BLOB:                   return HAL_PIXEL_FORMAT_BLOB;
         default:ALOGE("Unknown AHardwareBuffer format %u", format);
             return 0;
     }
 }
 
-void AHardwareBuffer_convertToGrallocUsageBits(uint64_t* outProducerUsage,
-    uint64_t* outConsumerUsage, uint64_t usage0, uint64_t usage1) {
-    *outProducerUsage = 0;
-    *outConsumerUsage = 0;
-    for (const UsageMaskMapping& mapping : kUsage0ProducerMapping) {
-        if (containsBits(usage0, mapping.hardwareBufferMask)) {
-            *outProducerUsage |= mapping.grallocMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage1ProducerMapping) {
-        if (containsBits(usage1, mapping.hardwareBufferMask)) {
-            *outProducerUsage |= mapping.grallocMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage0ConsumerMapping) {
-        if (containsBits(usage0, mapping.hardwareBufferMask)) {
-            *outConsumerUsage |= mapping.grallocMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage1ConsumerMapping) {
-        if (containsBits(usage1, mapping.hardwareBufferMask)) {
-            *outConsumerUsage |= mapping.grallocMask;
-        }
-    }
+uint64_t AHardwareBuffer_convertToGrallocUsageBits(uint64_t usage) {
+    using android::hardware::graphics::common::V1_0::BufferUsage;
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_READ_NEVER == (uint64_t)BufferUsage::CPU_READ_NEVER,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_READ_RARELY == (uint64_t)BufferUsage::CPU_READ_RARELY,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN == (uint64_t)BufferUsage::CPU_READ_OFTEN,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_WRITE_NEVER == (uint64_t)BufferUsage::CPU_WRITE_NEVER,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY == (uint64_t)BufferUsage::CPU_WRITE_RARELY,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN == (uint64_t)BufferUsage::CPU_WRITE_OFTEN,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE == (uint64_t)BufferUsage::GPU_TEXTURE,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT == (uint64_t)BufferUsage::GPU_RENDER_TARGET,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT == (uint64_t)BufferUsage::PROTECTED,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_VIDEO_ENCODE == (uint64_t)BufferUsage::VIDEO_ENCODER,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER == (uint64_t)BufferUsage::GPU_DATA_BUFFER,
+            "gralloc and AHardwareBuffer flags don't match");
+    static_assert(AHARDWAREBUFFER_USAGE_SENSOR_DIRECT_DATA == (uint64_t)BufferUsage::SENSOR_DIRECT_DATA,
+            "gralloc and AHardwareBuffer flags don't match");
+    return usage;
 }
 
-void AHardwareBuffer_convertFromGrallocUsageBits(uint64_t* outUsage0, uint64_t* outUsage1,
-        uint64_t producerUsage, uint64_t consumerUsage) {
-    *outUsage0 = 0;
-    *outUsage1 = 0;
-    for (const UsageMaskMapping& mapping : kUsage0ProducerMapping) {
-        if (containsBits(producerUsage, mapping.grallocMask)) {
-            *outUsage0 |= mapping.hardwareBufferMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage1ProducerMapping) {
-        if (containsBits(producerUsage, mapping.grallocMask)) {
-            *outUsage1 |= mapping.hardwareBufferMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage0ConsumerMapping) {
-        if (containsBits(consumerUsage, mapping.grallocMask)) {
-            *outUsage0 |= mapping.hardwareBufferMask;
-        }
-    }
-    for (const UsageMaskMapping& mapping : kUsage1ConsumerMapping) {
-        if (containsBits(consumerUsage, mapping.grallocMask)) {
-            *outUsage1 |= mapping.hardwareBufferMask;
-        }
-    }
+uint64_t AHardwareBuffer_convertFromGrallocUsageBits(uint64_t usage) {
+    return usage;
 }
 
 const GraphicBuffer* AHardwareBuffer_to_GraphicBuffer(const AHardwareBuffer* buffer) {

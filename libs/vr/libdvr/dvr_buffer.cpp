@@ -1,35 +1,21 @@
 #include "include/dvr/dvr_buffer.h"
 
+#include <android/hardware_buffer.h>
 #include <private/dvr/buffer_hub_client.h>
 #include <ui/GraphicBuffer.h>
 
+#include "dvr_internal.h"
+
 using namespace android;
-
-struct DvrWriteBuffer {
-  std::shared_ptr<dvr::BufferProducer> write_buffer_;
-  sp<GraphicBuffer> graphic_buffer_;
-};
-
-struct DvrReadBuffer {
-  std::shared_ptr<dvr::BufferConsumer> read_buffer_;
-  sp<GraphicBuffer> graphic_buffer_;
-};
 
 namespace android {
 namespace dvr {
 
-DvrWriteBuffer* CreateDvrWriteBufferFromBufferProducer(
-    const std::shared_ptr<dvr::BufferProducer>& buffer_producer) {
-  DvrWriteBuffer* write_buffer = new DvrWriteBuffer;
-  write_buffer->write_buffer_ = std::move(buffer_producer);
-  return write_buffer;
-}
-
-DvrReadBuffer* CreateDvrReadBufferFromBufferConsumer(
-    const std::shared_ptr<dvr::BufferConsumer>& buffer_consumer) {
-  DvrReadBuffer* read_buffer = new DvrReadBuffer;
-  read_buffer->read_buffer_ = std::move(buffer_consumer);
-  return read_buffer;
+DvrBuffer* CreateDvrBufferFromIonBuffer(
+    const std::shared_ptr<IonBuffer>& ion_buffer) {
+  if (!ion_buffer)
+    return nullptr;
+  return new DvrBuffer{std::move(ion_buffer)};
 }
 
 }  // namespace dvr
@@ -37,91 +23,180 @@ DvrReadBuffer* CreateDvrReadBufferFromBufferConsumer(
 
 namespace {
 
-void InitializeGraphicBuffer(const dvr::BufferHubBuffer* buffer,
-                             sp<GraphicBuffer>* graphic_buffer) {
-  *graphic_buffer = sp<GraphicBuffer>(new GraphicBuffer(
-      buffer->width(), buffer->height(), buffer->format(), 1, /* layer count */
-      buffer->usage(), buffer->stride(), buffer->native_handle(),
-      false /* keep ownership */));
+int ConvertToAHardwareBuffer(GraphicBuffer* graphic_buffer,
+                             AHardwareBuffer** hardware_buffer) {
+  if (!hardware_buffer || !graphic_buffer) {
+    return -EINVAL;
+  }
+  *hardware_buffer = reinterpret_cast<AHardwareBuffer*>(graphic_buffer);
+  AHardwareBuffer_acquire(*hardware_buffer);
+  return 0;
 }
 
 }  // anonymous namespace
 
 extern "C" {
 
-void dvrWriteBufferDestroy(DvrWriteBuffer* client) { delete client; }
-
-void dvrWriteBufferGetBlobFds(DvrWriteBuffer* client, int* fds,
-                              size_t* fds_count, size_t max_fds_count) {
-  client->write_buffer_->GetBlobFds(fds, fds_count, max_fds_count);
+void dvrWriteBufferCreateEmpty(DvrWriteBuffer** write_buffer) {
+  if (write_buffer)
+    *write_buffer = new DvrWriteBuffer;
 }
 
-int dvrWriteBufferGetAHardwareBuffer(DvrWriteBuffer* client,
-                                     AHardwareBuffer** hardware_buffer) {
-  if (!client->graphic_buffer_.get()) {
-    InitializeGraphicBuffer(client->write_buffer_.get(),
-                            &client->graphic_buffer_);
-  }
-  *hardware_buffer =
-      reinterpret_cast<AHardwareBuffer*>(client->graphic_buffer_.get());
+void dvrWriteBufferDestroy(DvrWriteBuffer* write_buffer) {
+  delete write_buffer;
+}
+
+int dvrWriteBufferIsValid(DvrWriteBuffer* write_buffer) {
+  return write_buffer && write_buffer->write_buffer;
+}
+
+int dvrWriteBufferClear(DvrWriteBuffer* write_buffer) {
+  if (!write_buffer)
+    return -EINVAL;
+
+  write_buffer->write_buffer = nullptr;
   return 0;
 }
 
-int dvrWriteBufferPost(DvrWriteBuffer* client, int ready_fence_fd,
+int dvrWriteBufferGetId(DvrWriteBuffer* write_buffer) {
+  if (!write_buffer || !write_buffer->write_buffer)
+    return -EINVAL;
+
+  return write_buffer->write_buffer->id();
+}
+
+int dvrWriteBufferGetAHardwareBuffer(DvrWriteBuffer* write_buffer,
+                                     AHardwareBuffer** hardware_buffer) {
+  if (!write_buffer || !write_buffer->write_buffer)
+    return -EINVAL;
+
+  return ConvertToAHardwareBuffer(
+      write_buffer->write_buffer->buffer()->buffer().get(), hardware_buffer);
+}
+
+int dvrWriteBufferPost(DvrWriteBuffer* write_buffer, int ready_fence_fd,
                        const void* meta, size_t meta_size_bytes) {
+  if (!write_buffer || !write_buffer->write_buffer)
+    return -EINVAL;
+
   pdx::LocalHandle fence(ready_fence_fd);
-  int result = client->write_buffer_->Post(fence, meta, meta_size_bytes);
-  fence.Release();
+  int result = write_buffer->write_buffer->Post(fence, meta, meta_size_bytes);
   return result;
 }
 
-int dvrWriteBufferGain(DvrWriteBuffer* client, int* release_fence_fd) {
+int dvrWriteBufferGain(DvrWriteBuffer* write_buffer, int* release_fence_fd) {
+  if (!write_buffer || !write_buffer->write_buffer || !release_fence_fd)
+    return -EINVAL;
+
   pdx::LocalHandle release_fence;
-  int result = client->write_buffer_->Gain(&release_fence);
+  int result = write_buffer->write_buffer->Gain(&release_fence);
   *release_fence_fd = release_fence.Release();
   return result;
 }
 
-int dvrWriteBufferGainAsync(DvrWriteBuffer* client) {
-  return client->write_buffer_->GainAsync();
+int dvrWriteBufferGainAsync(DvrWriteBuffer* write_buffer) {
+  if (!write_buffer || !write_buffer->write_buffer)
+    return -EINVAL;
+
+  return write_buffer->write_buffer->GainAsync();
 }
 
-void dvrReadBufferDestroy(DvrReadBuffer* client) { delete client; }
-
-void dvrReadBufferGetBlobFds(DvrReadBuffer* client, int* fds, size_t* fds_count,
-                             size_t max_fds_count) {
-  client->read_buffer_->GetBlobFds(fds, fds_count, max_fds_count);
+void dvrReadBufferCreateEmpty(DvrReadBuffer** read_buffer) {
+  if (read_buffer)
+    *read_buffer = new DvrReadBuffer;
 }
 
-int dvrReadBufferGetAHardwareBuffer(DvrReadBuffer* client,
-                                    AHardwareBuffer** hardware_buffer) {
-  if (!client->graphic_buffer_.get()) {
-    InitializeGraphicBuffer(client->read_buffer_.get(),
-                            &client->graphic_buffer_);
-  }
-  *hardware_buffer =
-      reinterpret_cast<AHardwareBuffer*>(client->graphic_buffer_.get());
+void dvrReadBufferDestroy(DvrReadBuffer* read_buffer) { delete read_buffer; }
+
+int dvrReadBufferIsValid(DvrReadBuffer* read_buffer) {
+  return read_buffer && read_buffer->read_buffer;
+}
+
+int dvrReadBufferClear(DvrReadBuffer* read_buffer) {
+  if (!read_buffer)
+    return -EINVAL;
+
+  read_buffer->read_buffer = nullptr;
   return 0;
 }
 
-int dvrReadBufferAcquire(DvrReadBuffer* client, int* ready_fence_fd, void* meta,
-                         size_t meta_size_bytes) {
+int dvrReadBufferGetId(DvrReadBuffer* read_buffer) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return -EINVAL;
+
+  return read_buffer->read_buffer->id();
+}
+
+int dvrReadBufferGetAHardwareBuffer(DvrReadBuffer* read_buffer,
+                                    AHardwareBuffer** hardware_buffer) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return -EINVAL;
+
+  return ConvertToAHardwareBuffer(
+      read_buffer->read_buffer->buffer()->buffer().get(), hardware_buffer);
+}
+
+int dvrReadBufferAcquire(DvrReadBuffer* read_buffer, int* ready_fence_fd,
+                         void* meta, size_t meta_size_bytes) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return -EINVAL;
+
   pdx::LocalHandle ready_fence;
   int result =
-      client->read_buffer_->Acquire(&ready_fence, meta, meta_size_bytes);
+      read_buffer->read_buffer->Acquire(&ready_fence, meta, meta_size_bytes);
   *ready_fence_fd = ready_fence.Release();
   return result;
 }
 
-int dvrReadBufferRelease(DvrReadBuffer* client, int release_fence_fd) {
+int dvrReadBufferRelease(DvrReadBuffer* read_buffer, int release_fence_fd) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return -EINVAL;
+
   pdx::LocalHandle fence(release_fence_fd);
-  int result = client->read_buffer_->Release(fence);
-  fence.Release();
+  int result = read_buffer->read_buffer->Release(fence);
   return result;
 }
 
-int dvrReadBufferReleaseAsync(DvrReadBuffer* client) {
-  return client->read_buffer_->ReleaseAsync();
+int dvrReadBufferReleaseAsync(DvrReadBuffer* read_buffer) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return -EINVAL;
+
+  return read_buffer->read_buffer->ReleaseAsync();
+}
+
+void dvrBufferDestroy(DvrBuffer* buffer) { delete buffer; }
+
+int dvrBufferGetAHardwareBuffer(DvrBuffer* buffer,
+                                AHardwareBuffer** hardware_buffer) {
+  if (!buffer || !buffer->buffer || !hardware_buffer) {
+    return -EINVAL;
+  }
+
+  return ConvertToAHardwareBuffer(buffer->buffer->buffer().get(),
+                                  hardware_buffer);
+}
+
+const struct native_handle* dvrWriteBufferGetNativeHandle(
+    DvrWriteBuffer* write_buffer) {
+  if (!write_buffer || !write_buffer->write_buffer)
+    return nullptr;
+
+  return write_buffer->write_buffer->native_handle();
+}
+
+const struct native_handle* dvrReadBufferGetNativeHandle(
+    DvrReadBuffer* read_buffer) {
+  if (!read_buffer || !read_buffer->read_buffer)
+    return nullptr;
+
+  return read_buffer->read_buffer->native_handle();
+}
+
+const struct native_handle* dvrBufferGetNativeHandle(DvrBuffer* buffer) {
+  if (!buffer || !buffer->buffer)
+    return nullptr;
+
+  return buffer->buffer->handle();
 }
 
 }  // extern "C"

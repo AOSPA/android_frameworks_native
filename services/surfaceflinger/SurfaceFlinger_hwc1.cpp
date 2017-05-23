@@ -42,7 +42,6 @@
 #include <gui/GuiConfig.h>
 #include <gui/IDisplayEventConnection.h>
 #include <gui/Surface.h>
-#include <gui/GraphicBufferAlloc.h>
 
 #include <ui/GraphicBufferAllocator.h>
 #include <ui/HdrCapabilities.h>
@@ -319,12 +318,6 @@ sp<IBinder> SurfaceFlinger::getBuiltInDisplay(int32_t id) {
     return mBuiltinDisplays[id];
 }
 
-sp<IGraphicBufferAlloc> SurfaceFlinger::createGraphicBufferAlloc()
-{
-    sp<GraphicBufferAlloc> gba(new GraphicBufferAlloc());
-    return gba;
-}
-
 void SurfaceFlinger::bootFinished()
 {
     if (mStartBootAnimThread->join() != NO_ERROR) {
@@ -527,13 +520,15 @@ void SurfaceFlinger::init() {
     mSFEventThread = new EventThread(sfVsyncSrc, *this, true);
     mEventQueue.setEventThread(mSFEventThread);
 
-    // set SFEventThread to SCHED_FIFO to minimize jitter
+    // set EventThread and SFEventThread to SCHED_FIFO to minimize jitter
     struct sched_param param = {0};
     param.sched_priority = 2;
     if (sched_setscheduler(mSFEventThread->getTid(), SCHED_FIFO, &param) != 0) {
         ALOGE("Couldn't set SCHED_FIFO for SFEventThread");
     }
-
+    if (sched_setscheduler(mEventThread->getTid(), SCHED_FIFO, &param) != 0) {
+        ALOGE("Couldn't set SCHED_FIFO for EventThread");
+    }
 
     // Initialize the H/W composer object.  There may or may not be an
     // actual hardware composer underneath.
@@ -549,6 +544,9 @@ void SurfaceFlinger::init() {
     LOG_ALWAYS_FATAL_IF(mEGLContext == EGL_NO_CONTEXT,
             "couldn't create EGLContext");
 
+    // Inform native graphics APIs that the present timestamp is NOT supported:
+    property_set(kTimestampProperty, "0");
+
     // initialize our non-virtual displays
     for (size_t i=0 ; i<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) {
         DisplayDevice::DisplayType type((DisplayDevice::DisplayType)i);
@@ -561,8 +559,7 @@ void SurfaceFlinger::init() {
 
             sp<IGraphicBufferProducer> producer;
             sp<IGraphicBufferConsumer> consumer;
-            BufferQueue::createBufferQueue(&producer, &consumer,
-                    new GraphicBufferAlloc());
+            BufferQueue::createBufferQueue(&producer, &consumer);
 
             sp<FramebufferSurface> fbs = new FramebufferSurface(*mHwc, i,
                     consumer);
@@ -645,6 +642,21 @@ bool SurfaceFlinger::authenticateSurfaceTextureLocked(
         const sp<IGraphicBufferProducer>& bufferProducer) const {
     sp<IBinder> surfaceTextureBinder(IInterface::asBinder(bufferProducer));
     return mGraphicBufferProducerList.indexOf(surfaceTextureBinder) >= 0;
+}
+
+status_t SurfaceFlinger::getSupportedFrameTimestamps(
+        std::vector<FrameEvent>* outSupported) const {
+    *outSupported = {
+        FrameEvent::REQUESTED_PRESENT,
+        FrameEvent::ACQUIRE,
+        FrameEvent::LATCH,
+        FrameEvent::FIRST_REFRESH_START,
+        FrameEvent::LAST_REFRESH_START,
+        FrameEvent::GPU_COMPOSITION_DONE,
+        FrameEvent::DEQUEUE_READY,
+        FrameEvent::RELEASE,
+    };
+    return NO_ERROR;
 }
 
 status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
@@ -755,7 +767,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>& /* display */,
 }
 
 int SurfaceFlinger::getActiveConfig(const sp<IBinder>& display) {
-    sp<DisplayDevice> device(getDisplayDevice(display));
+    sp<const DisplayDevice> device(getDisplayDevice(display));
     if (device != NULL) {
         return device->getActiveConfig();
     }
@@ -1626,9 +1638,9 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         // Call makeCurrent() on the primary display so we can
                         // be sure that nothing associated with this display
                         // is current.
-                        const sp<const DisplayDevice> defaultDisplay(getDefaultDisplayDevice());
+                        const sp<const DisplayDevice> defaultDisplay(getDefaultDisplayDeviceLocked());
                         defaultDisplay->makeCurrent(mEGLDisplay, mEGLContext);
-                        sp<DisplayDevice> hw(getDisplayDevice(draw.keyAt(i)));
+                        sp<DisplayDevice> hw(getDisplayDeviceLocked(draw.keyAt(i)));
                         if (hw != NULL)
                             hw->disconnect(getHwComposer());
                         if (draw[i].type < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES)
@@ -1648,7 +1660,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         // recreating the DisplayDevice, so we just remove it
                         // from the drawing state, so that it get re-added
                         // below.
-                        sp<DisplayDevice> hw(getDisplayDevice(display));
+                        sp<DisplayDevice> hw(getDisplayDeviceLocked(display));
                         if (hw != NULL)
                             hw->disconnect(getHwComposer());
                         mDisplays.removeItem(display);
@@ -1658,7 +1670,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         continue;
                     }
 
-                    const sp<DisplayDevice> disp(getDisplayDevice(display));
+                    const sp<DisplayDevice> disp(getDisplayDeviceLocked(display));
                     if (disp != NULL) {
                         if (state.layerStack != draw[i].layerStack) {
                             disp->setLayerStack(state.layerStack);
@@ -1687,8 +1699,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                     sp<IGraphicBufferProducer> producer;
                     sp<IGraphicBufferProducer> bqProducer;
                     sp<IGraphicBufferConsumer> bqConsumer;
-                    BufferQueue::createBufferQueue(&bqProducer, &bqConsumer,
-                            new GraphicBufferAlloc());
+                    BufferQueue::createBufferQueue(&bqProducer, &bqConsumer);
 
                     int32_t hwcDisplayId = -1;
                     if (state.isVirtualDisplay()) {
@@ -1814,7 +1825,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                 // could be null when this layer is using a layerStack
                 // that is not visible on any display. Also can occur at
                 // screen off/on times.
-                disp = getDefaultDisplayDevice();
+                disp = getDefaultDisplayDeviceLocked();
             }
             layer->updateTransformHint(disp);
 
@@ -3298,7 +3309,7 @@ SurfaceFlinger::getLayerSortedByZForHwcDisplay(int id) {
         // Just use the primary display so we have something to return
         dpy = getBuiltInDisplay(DisplayDevice::DISPLAY_PRIMARY);
     }
-    return getDisplayDevice(dpy)->getVisibleLayersSortedByZ();
+    return getDisplayDeviceLocked(dpy)->getVisibleLayersSortedByZ();
 }
 
 bool SurfaceFlinger::startDdmConnection()
@@ -3713,7 +3724,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
         }
         virtual bool handler() {
             Mutex::Autolock _l(flinger->mStateLock);
-            sp<const DisplayDevice> hw(flinger->getDisplayDevice(display));
+            sp<const DisplayDevice> hw(flinger->getDisplayDeviceLocked(display));
             result = flinger->captureScreenImplLocked(hw, producer,
                     sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
                     useIdentityTransform, rotation, isLocalScreenshot);
@@ -3799,7 +3810,7 @@ void SurfaceFlinger::renderScreenImplLocked(
         if (state.z < minLayerZ || state.z > maxLayerZ) {
             continue;
         }
-        layer->traverseInZOrder([&](Layer* layer) {
+        layer->traverseInZOrder(LayerVector::StateSet::Drawing, [&](Layer* layer) {
             if (!layer->isVisible()) {
                 return;
             }
@@ -3849,7 +3860,7 @@ status_t SurfaceFlinger::captureScreenImplLocked(
                 (state.z < minLayerZ || state.z > maxLayerZ)) {
             continue;
         }
-        layer->traverseInZOrder([&](Layer *layer) {
+        layer->traverseInZOrder(LayerVector::StateSet::Drawing, [&](Layer *layer) {
             secureLayerIsVisible = secureLayerIsVisible || (layer->isVisible() &&
                     layer->isSecure());
         });
@@ -3988,7 +3999,7 @@ void SurfaceFlinger::checkScreenshot(size_t w, size_t s, size_t h, void const* v
             const Layer::State& state(layer->getDrawingState());
             if (layer->getLayerStack() == hw->getLayerStack() && state.z >= minLayerZ &&
                     state.z <= maxLayerZ) {
-                layer->traverseInZOrder([&](Layer* layer) {
+                layer->traverseInZOrder(LayerVector::StateSet::Drawing, [&](Layer* layer) {
                     ALOGE("%c index=%zu, name=%s, layerStack=%d, z=%d, visible=%d, flags=%x, alpha=%x",
                             layer->isVisible() ? '+' : '-',
                             i, layer->getName().string(), layer->getLayerStack(), state.z,
@@ -4002,12 +4013,12 @@ void SurfaceFlinger::checkScreenshot(size_t w, size_t s, size_t h, void const* v
 
 // ---------------------------------------------------------------------------
 
-void SurfaceFlinger::State::traverseInZOrder(const std::function<void(Layer*)>& consume) const {
-    layersSortedByZ.traverseInZOrder(consume);
+void SurfaceFlinger::State::traverseInZOrder(const LayerVector::Visitor& visitor) const {
+    layersSortedByZ.traverseInZOrder(stateSet, visitor);
 }
 
-void SurfaceFlinger::State::traverseInReverseZOrder(const std::function<void(Layer*)>& consume) const {
-    layersSortedByZ.traverseInReverseZOrder(consume);
+void SurfaceFlinger::State::traverseInReverseZOrder(const LayerVector::Visitor& visitor) const {
+    layersSortedByZ.traverseInReverseZOrder(stateSet, visitor);
 }
 
 }; // namespace android

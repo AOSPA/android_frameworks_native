@@ -662,6 +662,49 @@ TEST_F(LayerUpdateTest, DeferredTransactionTest) {
     }
 }
 
+TEST_F(LayerUpdateTest, LayerSetRelativeLayerWorks) {
+    sp<ScreenCapture> sc;
+    {
+        SCOPED_TRACE("before adding relative surface");
+        ScreenCapture::captureScreen(&sc);
+        sc->expectBGColor(24, 24);
+        sc->expectFGColor(75, 75);
+        sc->expectBGColor(145, 145);
+    }
+
+    auto relativeSurfaceControl = mComposerClient->createSurface(
+            String8("Test Surface"), 64, 64, PIXEL_FORMAT_RGBA_8888, 0);
+    fillSurfaceRGBA8(relativeSurfaceControl, 255, 177, 177);
+    waitForPostedBuffers();
+
+    // Now we stack the surface above the foreground surface and make sure it is visible.
+    SurfaceComposerClient::openGlobalTransaction();
+    relativeSurfaceControl->setPosition(64, 64);
+    relativeSurfaceControl->show();
+    relativeSurfaceControl->setRelativeLayer(mFGSurfaceControl->getHandle(), 1);
+    SurfaceComposerClient::closeGlobalTransaction(true);
+
+
+    {
+        SCOPED_TRACE("after adding relative surface");
+        ScreenCapture::captureScreen(&sc);
+        // our relative surface should be visible now.
+        sc->checkPixel(75, 75, 255, 177, 177);
+    }
+
+    // A call to setLayer will override a call to setRelativeLayer
+    SurfaceComposerClient::openGlobalTransaction();
+    relativeSurfaceControl->setLayer(0);
+    SurfaceComposerClient::closeGlobalTransaction();
+
+    {
+        SCOPED_TRACE("after set layer");
+        ScreenCapture::captureScreen(&sc);
+        // now the FG surface should be visible again.
+        sc->expectFGColor(75, 75);
+    }
+}
+
 class ChildLayerTest : public LayerUpdateTest {
 protected:
     void SetUp() override {
@@ -864,6 +907,105 @@ TEST_F(ChildLayerTest, DetachChildren) {
         mCapture->expectChildColor(74, 74);
         mCapture->expectFGColor(84, 84);
     }
+}
+
+TEST_F(ChildLayerTest, ChildrenInheritNonTransformScalingFromParent) {
+    SurfaceComposerClient::openGlobalTransaction();
+    mChild->show();
+    mChild->setPosition(0, 0);
+    mFGSurfaceControl->setPosition(0, 0);
+    SurfaceComposerClient::closeGlobalTransaction(true);
+
+    {
+        ScreenCapture::captureScreen(&mCapture);
+        // We've positioned the child in the top left.
+        mCapture->expectChildColor(0, 0);
+        // But it's only 10x10.
+        mCapture->expectFGColor(10, 10);
+    }
+
+    SurfaceComposerClient::openGlobalTransaction();
+    mFGSurfaceControl->setOverrideScalingMode(NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+    // We cause scaling by 2.
+    mFGSurfaceControl->setSize(128, 128);
+    SurfaceComposerClient::closeGlobalTransaction();
+
+    {
+        ScreenCapture::captureScreen(&mCapture);
+        // We've positioned the child in the top left.
+        mCapture->expectChildColor(0, 0);
+        mCapture->expectChildColor(10, 10);
+        mCapture->expectChildColor(19, 19);
+        // And now it should be scaled all the way to 20x20
+        mCapture->expectFGColor(20, 20);
+    }
+}
+
+// Regression test for b/37673612
+TEST_F(ChildLayerTest, ChildrenWithParentBufferTransform) {
+    SurfaceComposerClient::openGlobalTransaction();
+    mChild->show();
+    mChild->setPosition(0, 0);
+    mFGSurfaceControl->setPosition(0, 0);
+    SurfaceComposerClient::closeGlobalTransaction(true);
+
+    {
+        ScreenCapture::captureScreen(&mCapture);
+        // We've positioned the child in the top left.
+        mCapture->expectChildColor(0, 0);
+        // But it's only 10x10.
+        mCapture->expectFGColor(10, 10);
+    }
+
+
+    // We set things up as in b/37673612 so that there is a mismatch between the buffer size and
+    // the WM specified state size.
+    mFGSurfaceControl->setSize(128, 64);
+    sp<Surface> s = mFGSurfaceControl->getSurface();
+    auto anw = static_cast<ANativeWindow*>(s.get());
+    native_window_set_buffers_transform(anw, NATIVE_WINDOW_TRANSFORM_ROT_90);
+    native_window_set_buffers_dimensions(anw, 64, 128);
+    fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
+    waitForPostedBuffers();
+
+    {
+        // The child should still be in the same place and not have any strange scaling as in
+        // b/37673612.
+        ScreenCapture::captureScreen(&mCapture);
+        mCapture->expectChildColor(0, 0);
+        mCapture->expectFGColor(10, 10);
+    }
+}
+
+TEST_F(ChildLayerTest, Bug36858924) {
+    // Destroy the child layer
+    mChild.clear();
+
+    // Now recreate it as hidden
+    mChild = mComposerClient->createSurface(String8("Child surface"), 10, 10,
+                                            PIXEL_FORMAT_RGBA_8888, ISurfaceComposerClient::eHidden,
+                                            mFGSurfaceControl.get());
+
+    // Show the child layer in a deferred transaction
+    SurfaceComposerClient::openGlobalTransaction();
+    mChild->deferTransactionUntil(mFGSurfaceControl->getHandle(),
+                                  mFGSurfaceControl->getSurface()->getNextFrameNumber());
+    mChild->show();
+    SurfaceComposerClient::closeGlobalTransaction(true);
+
+    // Render the foreground surface a few times
+    //
+    // Prior to the bugfix for b/36858924, this would usually hang while trying to fill the third
+    // frame because SurfaceFlinger would never process the deferred transaction and would therefore
+    // never acquire/release the first buffer
+    ALOGI("Filling 1");
+    fillSurfaceRGBA8(mFGSurfaceControl, 0, 255, 0);
+    ALOGI("Filling 2");
+    fillSurfaceRGBA8(mFGSurfaceControl, 0, 0, 255);
+    ALOGI("Filling 3");
+    fillSurfaceRGBA8(mFGSurfaceControl, 255, 0, 0);
+    ALOGI("Filling 4");
+    fillSurfaceRGBA8(mFGSurfaceControl, 0, 255, 0);
 }
 
 }

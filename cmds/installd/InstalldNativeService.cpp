@@ -205,15 +205,20 @@ status_t InstalldNativeService::dump(int fd, const Vector<String16> & /* args */
     out << "installd is happy!" << endl;
 
     {
-        std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
-        out << endl << "Devices with quota support:" << endl;
-        for (const auto& n : mQuotaDevices) {
+        std::lock_guard<std::recursive_mutex> lock(mMountsLock);
+        out << endl << "Storage mounts:" << endl;
+        for (const auto& n : mStorageMounts) {
+            out << "    " << n.first << " = " << n.second << endl;
+        }
+
+        out << endl << "Quota reverse mounts:" << endl;
+        for (const auto& n : mQuotaReverseMounts) {
             out << "    " << n.first << " = " << n.second << endl;
         }
     }
 
     {
-        std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
+        std::lock_guard<std::recursive_mutex> lock(mQuotasLock);
         out << endl << "Per-UID cache quotas:" << endl;
         for (const auto& n : mCacheQuotas) {
             out << "    " << n.first << " = " << n.second << endl;
@@ -395,7 +400,9 @@ binder::Status InstalldNativeService::createAppData(const std::unique_ptr<std::s
         }
 
         // Consider restorecon over contents if label changed
-        if (restorecon_app_data_lazy(path, seInfo, uid, existing)) {
+        if (restorecon_app_data_lazy(path, seInfo, uid, existing) ||
+                restorecon_app_data_lazy(path, "cache", seInfo, uid, existing) ||
+                restorecon_app_data_lazy(path, "code_cache", seInfo, uid, existing)) {
             return error("Failed to restorecon " + path);
         }
 
@@ -617,11 +624,9 @@ binder::Status InstalldNativeService::fixupAppData(const std::unique_ptr<std::st
         ATRACE_BEGIN("fixup user");
         FTS* fts;
         FTSENT* p;
-        char *argv[] = {
-                (char*) create_data_user_ce_path(uuid_, user).c_str(),
-                (char*) create_data_user_de_path(uuid_, user).c_str(),
-                nullptr
-        };
+        auto ce_path = create_data_user_ce_path(uuid_, user);
+        auto de_path = create_data_user_de_path(uuid_, user);
+        char *argv[] = { (char*) ce_path.c_str(), (char*) de_path.c_str(), nullptr };
         if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
             return error("Failed to fts_open");
         }
@@ -901,7 +906,7 @@ binder::Status InstalldNativeService::destroyUserData(const std::unique_ptr<std:
         if (delete_dir_contents_and_dir(path, true) != 0) {
             res = error("Failed to delete " + path);
         }
-        path = create_data_media_path(uuid_, userId);
+        path = findDataMediaPath(uuid, userId);
         if (delete_dir_contents_and_dir(path, true) != 0) {
             res = error("Failed to delete " + path);
         }
@@ -950,17 +955,21 @@ binder::Status InstalldNativeService::freeCache(const std::unique_ptr<std::strin
         for (auto user : get_known_users(uuid_)) {
             FTS *fts;
             FTSENT *p;
-            char *argv[] = {
-                    (char*) create_data_user_ce_path(uuid_, user).c_str(),
-                    (char*) create_data_user_de_path(uuid_, user).c_str(),
-                    nullptr
-            };
+            auto ce_path = create_data_user_ce_path(uuid_, user);
+            auto de_path = create_data_user_de_path(uuid_, user);
+            auto media_path = findDataMediaPath(uuid, user) + "/Android/data/";
+            char *argv[] = { (char*) ce_path.c_str(), (char*) de_path.c_str(),
+                    (char*) media_path.c_str(), nullptr };
             if (!(fts = fts_open(argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, NULL))) {
                 return error("Failed to fts_open");
             }
             while ((p = fts_read(fts)) != NULL) {
                 if (p->fts_info == FTS_D && p->fts_level == 1) {
                     uid_t uid = p->fts_statp->st_uid;
+                    if (multiuser_get_app_id(uid) == AID_MEDIA_RW) {
+                        uid = (multiuser_get_app_id(p->fts_statp->st_gid) - AID_EXT_GID_START)
+                                + AID_APP_START;
+                    }
                     auto search = trackers.find(uid);
                     if (search != trackers.end()) {
                         search->second->addDataPath(p->fts_path);
@@ -969,7 +978,7 @@ binder::Status InstalldNativeService::freeCache(const std::unique_ptr<std::strin
                                 multiuser_get_user_id(uid), multiuser_get_app_id(uid), device));
                         tracker->addDataPath(p->fts_path);
                         {
-                            std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
+                            std::lock_guard<std::recursive_mutex> lock(mQuotasLock);
                             tracker->cacheQuota = mCacheQuotas[uid];
                         }
                         if (tracker->cacheQuota == 0) {
@@ -1091,10 +1100,13 @@ binder::Status InstalldNativeService::rmdex(const std::string& codePath,
 
     ALOGV("unlink %s\n", dex_path);
     if (unlink(dex_path) < 0) {
-        return error(StringPrintf("Failed to unlink %s", dex_path));
-    } else {
-        return ok();
+        // It's ok if we don't have a dalvik cache path. Report error only when the path exists
+        // but could not be unlinked.
+        if (errno != ENOENT) {
+            return error(StringPrintf("Failed to unlink %s", dex_path));
+        }
     }
+    return ok();
 }
 
 struct stats {
@@ -1124,65 +1136,81 @@ static void collectQuotaStats(const std::string& device, int32_t userId,
 
     struct dqblk dq;
 
-    uid_t uid = multiuser_get_uid(userId, appId);
-    if (quotactl(QCMD(Q_GETQUOTA, USRQUOTA), device.c_str(), uid,
-            reinterpret_cast<char*>(&dq)) != 0) {
-        if (errno != ESRCH) {
-            PLOG(ERROR) << "Failed to quotactl " << device << " for UID " << uid;
-        }
-    } else {
-#if MEASURE_DEBUG
-        LOG(DEBUG) << "quotactl() for UID " << uid << " " << dq.dqb_curspace;
-#endif
-        stats->dataSize += dq.dqb_curspace;
-    }
-
-    int cacheGid = multiuser_get_cache_gid(userId, appId);
-    if (cacheGid != -1) {
-        if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), cacheGid,
+    if (stats != nullptr) {
+        uid_t uid = multiuser_get_uid(userId, appId);
+        if (quotactl(QCMD(Q_GETQUOTA, USRQUOTA), device.c_str(), uid,
                 reinterpret_cast<char*>(&dq)) != 0) {
             if (errno != ESRCH) {
-                PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << cacheGid;
+                PLOG(ERROR) << "Failed to quotactl " << device << " for UID " << uid;
             }
         } else {
 #if MEASURE_DEBUG
-            LOG(DEBUG) << "quotactl() for GID " << cacheGid << " " << dq.dqb_curspace;
+            LOG(DEBUG) << "quotactl() for UID " << uid << " " << dq.dqb_curspace;
 #endif
-            stats->cacheSize += dq.dqb_curspace;
+            stats->dataSize += dq.dqb_curspace;
+        }
+
+        int cacheGid = multiuser_get_cache_gid(userId, appId);
+        if (cacheGid != -1) {
+            if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), cacheGid,
+                    reinterpret_cast<char*>(&dq)) != 0) {
+                if (errno != ESRCH) {
+                    PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << cacheGid;
+                }
+            } else {
+#if MEASURE_DEBUG
+                LOG(DEBUG) << "quotactl() for GID " << cacheGid << " " << dq.dqb_curspace;
+#endif
+                stats->cacheSize += dq.dqb_curspace;
+            }
+        }
+
+        int sharedGid = multiuser_get_shared_gid(0, appId);
+        if (sharedGid != -1) {
+            if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), sharedGid,
+                    reinterpret_cast<char*>(&dq)) != 0) {
+                if (errno != ESRCH) {
+                    PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << sharedGid;
+                }
+            } else {
+#if MEASURE_DEBUG
+                LOG(DEBUG) << "quotactl() for GID " << sharedGid << " " << dq.dqb_curspace;
+#endif
+                stats->codeSize += dq.dqb_curspace;
+            }
         }
     }
 
-#if HACK_FOR_37193650
-    extStats->dataSize = extStats->dataSize;
-#else
-    int extGid = multiuser_get_ext_gid(userId, appId);
-    if (extGid != -1) {
-        if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), extGid,
-                reinterpret_cast<char*>(&dq)) != 0) {
-            if (errno != ESRCH) {
-                PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << extGid;
-            }
-        } else {
+    if (extStats != nullptr) {
+        int extGid = multiuser_get_ext_gid(userId, appId);
+        if (extGid != -1) {
+            if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), extGid,
+                    reinterpret_cast<char*>(&dq)) != 0) {
+                if (errno != ESRCH) {
+                    PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << extGid;
+                }
+            } else {
 #if MEASURE_DEBUG
-            LOG(DEBUG) << "quotactl() for GID " << extGid << " " << dq.dqb_curspace;
+                LOG(DEBUG) << "quotactl() for GID " << extGid << " " << dq.dqb_curspace;
 #endif
-            extStats->dataSize += dq.dqb_curspace;
+                extStats->dataSize += dq.dqb_curspace;
+            }
         }
-    }
-#endif
 
-    int sharedGid = multiuser_get_shared_gid(userId, appId);
-    if (sharedGid != -1) {
-        if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), sharedGid,
-                reinterpret_cast<char*>(&dq)) != 0) {
-            if (errno != ESRCH) {
-                PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << sharedGid;
-            }
-        } else {
+        int extCacheGid = multiuser_get_ext_cache_gid(userId, appId);
+        if (extCacheGid != -1) {
+            if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), extCacheGid,
+                    reinterpret_cast<char*>(&dq)) != 0) {
+                if (errno != ESRCH) {
+                    PLOG(ERROR) << "Failed to quotactl " << device << " for GID " << extCacheGid;
+                }
+            } else {
 #if MEASURE_DEBUG
-            LOG(DEBUG) << "quotactl() for GID " << sharedGid << " " << dq.dqb_curspace;
+                LOG(DEBUG) << "quotactl() for GID " << extCacheGid << " " << dq.dqb_curspace;
 #endif
-            stats->codeSize += dq.dqb_curspace;
+                extStats->dataSize += dq.dqb_curspace;
+                extStats->cacheSize += dq.dqb_curspace;
+            }
         }
     }
 }
@@ -1258,9 +1286,10 @@ static void collectManualStatsForUser(const std::string& path, struct stats* sta
             if (fstatat(dfd, name, &s, AT_SYMLINK_NOFOLLOW) != 0) {
                 continue;
             }
+            int32_t user_uid = multiuser_get_app_id(s.st_uid);
             if (!strcmp(name, ".") || !strcmp(name, "..")) {
                 continue;
-            } else if (exclude_apps && (s.st_uid >= AID_APP_START && s.st_uid <= AID_APP_END)) {
+            } else if (exclude_apps && (user_uid >= AID_APP_START && user_uid <= AID_APP_END)) {
                 continue;
             } else {
                 collectManualStats(StringPrintf("%s/%s", path.c_str(), name), stats);
@@ -1359,25 +1388,13 @@ binder::Status InstalldNativeService::getAppSize(const std::unique_ptr<std::stri
         ATRACE_BEGIN("code");
         for (auto codePath : codePaths) {
             calculate_tree_size(codePath, &stats.codeSize, -1,
-                    multiuser_get_shared_gid(userId, appId));
+                    multiuser_get_shared_gid(0, appId));
         }
         ATRACE_END();
 
         ATRACE_BEGIN("quota");
         collectQuotaStats(device, userId, appId, &stats, &extStats);
         ATRACE_END();
-
-#if HACK_FOR_37193650
-        ATRACE_BEGIN("external");
-        for (size_t i = 0; i < packageNames.size(); i++) {
-            const char* pkgname = packageNames[i].c_str();
-            auto extPath = create_data_media_package_path(uuid_, userId, "data", pkgname);
-            calculate_tree_size(extPath, &extStats.dataSize);
-            auto mediaPath = create_data_media_package_path(uuid_, userId, "media", pkgname);
-            calculate_tree_size(mediaPath, &extStats.dataSize);
-        }
-        ATRACE_END();
-#endif
     } else {
         ATRACE_BEGIN("code");
         for (auto codePath : codePaths) {
@@ -1395,12 +1412,16 @@ binder::Status InstalldNativeService::getAppSize(const std::unique_ptr<std::stri
             collectManualStats(dePath, &stats);
             ATRACE_END();
 
-            ATRACE_BEGIN("profiles");
-            auto userProfilePath = create_primary_current_profile_package_dir_path(userId, pkgname);
-            calculate_tree_size(userProfilePath, &stats.dataSize);
-            auto refProfilePath = create_primary_reference_profile_package_dir_path(pkgname);
-            calculate_tree_size(refProfilePath, &stats.codeSize);
-            ATRACE_END();
+            if (!uuid) {
+                ATRACE_BEGIN("profiles");
+                calculate_tree_size(
+                        create_primary_current_profile_package_dir_path(userId, pkgname),
+                        &stats.dataSize);
+                calculate_tree_size(
+                        create_primary_reference_profile_package_dir_path(pkgname),
+                        &stats.codeSize);
+                ATRACE_END();
+            }
 
             ATRACE_BEGIN("external");
             auto extPath = create_data_media_package_path(uuid_, userId, "data", pkgname);
@@ -1410,15 +1431,15 @@ binder::Status InstalldNativeService::getAppSize(const std::unique_ptr<std::stri
             ATRACE_END();
         }
 
-        ATRACE_BEGIN("dalvik");
-        int32_t sharedGid = multiuser_get_shared_gid(userId, appId);
-        if (sharedGid != -1) {
-            calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
-                    sharedGid, -1);
+        if (!uuid) {
+            ATRACE_BEGIN("dalvik");
+            int32_t sharedGid = multiuser_get_shared_gid(0, appId);
+            if (sharedGid != -1) {
+                calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
+                        sharedGid, -1);
+            }
+            ATRACE_END();
         }
-        calculate_tree_size(create_primary_cur_profile_dir_path(userId), &stats.dataSize,
-                multiuser_get_uid(userId, appId), -1);
-        ATRACE_END();
     }
 
     std::vector<int64_t> ret;
@@ -1462,12 +1483,6 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         flags &= ~FLAG_USE_QUOTA;
     }
 
-#if HACK_FOR_37193650
-    if (userId != 0) {
-        flags &= ~FLAG_USE_QUOTA;
-    }
-#endif
-
     if (flags & FLAG_USE_QUOTA) {
         struct dqblk dq;
 
@@ -1496,12 +1511,14 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         collectManualStatsForUser(dePath, &stats, true);
         ATRACE_END();
 
-        ATRACE_BEGIN("profile");
-        auto userProfilePath = create_primary_cur_profile_dir_path(userId);
-        calculate_tree_size(userProfilePath, &stats.dataSize, -1, -1, true);
-        auto refProfilePath = create_primary_ref_profile_dir_path();
-        calculate_tree_size(refProfilePath, &stats.codeSize, -1, -1, true);
-        ATRACE_END();
+        if (!uuid) {
+            ATRACE_BEGIN("profile");
+            auto userProfilePath = create_primary_cur_profile_dir_path(userId);
+            calculate_tree_size(userProfilePath, &stats.dataSize, -1, -1, true);
+            auto refProfilePath = create_primary_ref_profile_dir_path();
+            calculate_tree_size(refProfilePath, &stats.codeSize, -1, -1, true);
+            ATRACE_END();
+        }
 
         ATRACE_BEGIN("external");
         uid_t uid = multiuser_get_uid(userId, AID_MEDIA_RW);
@@ -1518,14 +1535,17 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         }
         ATRACE_END();
 
-        ATRACE_BEGIN("dalvik");
-        calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
-                -1, -1, true);
-        calculate_tree_size(create_primary_cur_profile_dir_path(userId), &stats.dataSize,
-                -1, -1, true);
-        ATRACE_END();
+        if (!uuid) {
+            ATRACE_BEGIN("dalvik");
+            calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize,
+                    -1, -1, true);
+            calculate_tree_size(create_primary_cur_profile_dir_path(userId), &stats.dataSize,
+                    -1, -1, true);
+            ATRACE_END();
+        }
 
         ATRACE_BEGIN("quota");
+        int64_t dataSize = extStats.dataSize;
         for (auto appId : appIds) {
             if (appId >= AID_APP_START) {
                 collectQuotaStats(device, userId, appId, &stats, &extStats);
@@ -1536,6 +1556,7 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
 #endif
             }
         }
+        extStats.dataSize = dataSize;
         ATRACE_END();
     } else {
         ATRACE_BEGIN("obb");
@@ -1554,12 +1575,14 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
         collectManualStatsForUser(dePath, &stats);
         ATRACE_END();
 
-        ATRACE_BEGIN("profile");
-        auto userProfilePath = create_primary_cur_profile_dir_path(userId);
-        calculate_tree_size(userProfilePath, &stats.dataSize);
-        auto refProfilePath = create_primary_ref_profile_dir_path();
-        calculate_tree_size(refProfilePath, &stats.codeSize);
-        ATRACE_END();
+        if (!uuid) {
+            ATRACE_BEGIN("profile");
+            auto userProfilePath = create_primary_cur_profile_dir_path(userId);
+            calculate_tree_size(userProfilePath, &stats.dataSize);
+            auto refProfilePath = create_primary_ref_profile_dir_path();
+            calculate_tree_size(refProfilePath, &stats.codeSize);
+            ATRACE_END();
+        }
 
         ATRACE_BEGIN("external");
         auto dataMediaPath = create_data_media_path(uuid_, userId);
@@ -1570,10 +1593,12 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
 #endif
         ATRACE_END();
 
-        ATRACE_BEGIN("dalvik");
-        calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize);
-        calculate_tree_size(create_primary_cur_profile_dir_path(userId), &stats.dataSize);
-        ATRACE_END();
+        if (!uuid) {
+            ATRACE_BEGIN("dalvik");
+            calculate_tree_size(create_data_dalvik_cache_path(), &stats.codeSize);
+            calculate_tree_size(create_primary_cur_profile_dir_path(userId), &stats.dataSize);
+            ATRACE_END();
+        }
     }
 
     std::vector<int64_t> ret;
@@ -1591,7 +1616,8 @@ binder::Status InstalldNativeService::getUserSize(const std::unique_ptr<std::str
 }
 
 binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std::string>& uuid,
-        int32_t userId, int32_t flags, std::vector<int64_t>* _aidl_return) {
+        int32_t userId, int32_t flags, const std::vector<int32_t>& appIds,
+        std::vector<int64_t>* _aidl_return) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
     // NOTE: Locking is relaxed on this method, since it's limited to
@@ -1610,6 +1636,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
     int64_t audioSize = 0;
     int64_t videoSize = 0;
     int64_t imageSize = 0;
+    int64_t appSize = 0;
 
     auto device = findQuotaDeviceForUuid(uuid);
     if (device.empty()) {
@@ -1619,6 +1646,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
     if (flags & FLAG_USE_QUOTA) {
         struct dqblk dq;
 
+        ATRACE_BEGIN("quota");
         uid_t uid = multiuser_get_uid(userId, AID_MEDIA_RW);
         if (quotactl(QCMD(Q_GETQUOTA, USRQUOTA), device.c_str(), uid,
                 reinterpret_cast<char*>(&dq)) != 0) {
@@ -1627,7 +1655,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
             }
         } else {
 #if MEASURE_DEBUG
-        LOG(DEBUG) << "quotactl() for UID " << uid << " " << dq.dqb_curspace;
+            LOG(DEBUG) << "quotactl() for UID " << uid << " " << dq.dqb_curspace;
 #endif
             totalSize = dq.dqb_curspace;
         }
@@ -1636,7 +1664,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
         if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), audioGid,
                 reinterpret_cast<char*>(&dq)) == 0) {
 #if MEASURE_DEBUG
-        LOG(DEBUG) << "quotactl() for GID " << audioGid << " " << dq.dqb_curspace;
+            LOG(DEBUG) << "quotactl() for GID " << audioGid << " " << dq.dqb_curspace;
 #endif
             audioSize = dq.dqb_curspace;
         }
@@ -1644,7 +1672,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
         if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), videoGid,
                 reinterpret_cast<char*>(&dq)) == 0) {
 #if MEASURE_DEBUG
-        LOG(DEBUG) << "quotactl() for GID " << videoGid << " " << dq.dqb_curspace;
+            LOG(DEBUG) << "quotactl() for GID " << videoGid << " " << dq.dqb_curspace;
 #endif
             videoSize = dq.dqb_curspace;
         }
@@ -1652,11 +1680,24 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
         if (quotactl(QCMD(Q_GETQUOTA, GRPQUOTA), device.c_str(), imageGid,
                 reinterpret_cast<char*>(&dq)) == 0) {
 #if MEASURE_DEBUG
-        LOG(DEBUG) << "quotactl() for GID " << imageGid << " " << dq.dqb_curspace;
+            LOG(DEBUG) << "quotactl() for GID " << imageGid << " " << dq.dqb_curspace;
 #endif
             imageSize = dq.dqb_curspace;
         }
+        ATRACE_END();
+
+        ATRACE_BEGIN("apps");
+        struct stats extStats;
+        memset(&extStats, 0, sizeof(extStats));
+        for (auto appId : appIds) {
+            if (appId >= AID_APP_START) {
+                collectQuotaStats(device, userId, appId, nullptr, &extStats);
+            }
+        }
+        appSize = extStats.dataSize + extStats.cacheSize;
+        ATRACE_END();
     } else {
+        ATRACE_BEGIN("manual");
         FTS *fts;
         FTSENT *p;
         auto path = create_data_media_path(uuid_, userId);
@@ -1690,11 +1731,15 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
             case FTS_DEFAULT:
             case FTS_SL:
             case FTS_SLNONE:
+                if (p->fts_parent->fts_number == 1) {
+                    appSize += size;
+                }
                 totalSize += size;
                 break;
             }
         }
         fts_close(fts);
+        ATRACE_END();
     }
 
     std::vector<int64_t> ret;
@@ -1702,6 +1747,7 @@ binder::Status InstalldNativeService::getExternalSize(const std::unique_ptr<std:
     ret.push_back(audioSize);
     ret.push_back(videoSize);
     ret.push_back(imageSize);
+    ret.push_back(appSize);
 #if MEASURE_DEBUG
     LOG(DEBUG) << "Final result " << toString(ret);
 #endif
@@ -1713,7 +1759,7 @@ binder::Status InstalldNativeService::setAppQuota(const std::unique_ptr<std::str
         int32_t userId, int32_t appId, int64_t cacheQuota) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
-    std::lock_guard<std::recursive_mutex> lock(mCacheQuotasLock);
+    std::lock_guard<std::recursive_mutex> lock(mQuotasLock);
 
     int32_t uid = multiuser_get_uid(userId, appId);
     mCacheQuotas[uid] = cacheQuota;
@@ -2166,9 +2212,10 @@ binder::Status InstalldNativeService::reconcileSecondaryDexFile(
 
 binder::Status InstalldNativeService::invalidateMounts() {
     ENFORCE_UID(AID_SYSTEM);
-    std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
+    std::lock_guard<std::recursive_mutex> lock(mMountsLock);
 
-    mQuotaDevices.clear();
+    mStorageMounts.clear();
+    mQuotaReverseMounts.clear();
 
     std::ifstream in("/proc/mounts");
     if (!in.is_open()) {
@@ -2178,17 +2225,25 @@ binder::Status InstalldNativeService::invalidateMounts() {
     std::string source;
     std::string target;
     std::string ignored;
-    struct dqblk dq;
     while (!in.eof()) {
         std::getline(in, source, ' ');
         std::getline(in, target, ' ');
         std::getline(in, ignored);
 
+#if !BYPASS_SDCARDFS
+        if (target.compare(0, 21, "/mnt/runtime/default/") == 0) {
+            LOG(DEBUG) << "Found storage mount " << source << " at " << target;
+            mStorageMounts[source] = target;
+        }
+#endif
+
+#if !BYPASS_QUOTA
         if (source.compare(0, 11, "/dev/block/") == 0) {
+            struct dqblk dq;
             if (quotactl(QCMD(Q_GETQUOTA, USRQUOTA), source.c_str(), 0,
                     reinterpret_cast<char*>(&dq)) == 0) {
-                LOG(DEBUG) << "Found " << source << " with quota";
-                mQuotaDevices[target] = source;
+                LOG(DEBUG) << "Found quota mount " << source << " at " << target;
+                mQuotaReverseMounts[target] = source;
 
                 // ext4 only enables DQUOT_USAGE_ENABLED by default, so we
                 // need to kick it again to enable DQUOT_LIMITS_ENABLED.
@@ -2202,15 +2257,29 @@ binder::Status InstalldNativeService::invalidateMounts() {
                 }
             }
         }
+#endif
     }
     return ok();
 }
 
+std::string InstalldNativeService::findDataMediaPath(
+        const std::unique_ptr<std::string>& uuid, userid_t userid) {
+    std::lock_guard<std::recursive_mutex> lock(mMountsLock);
+    const char* uuid_ = uuid ? uuid->c_str() : nullptr;
+    auto path = StringPrintf("%s/media", create_data_path(uuid_).c_str());
+    auto resolved = mStorageMounts[path];
+    if (resolved.empty()) {
+        LOG(WARNING) << "Failed to find storage mount for " << path;
+        resolved = path;
+    }
+    return StringPrintf("%s/%u", resolved.c_str(), userid);
+}
+
 std::string InstalldNativeService::findQuotaDeviceForUuid(
         const std::unique_ptr<std::string>& uuid) {
-    std::lock_guard<std::recursive_mutex> lock(mQuotaDevicesLock);
+    std::lock_guard<std::recursive_mutex> lock(mMountsLock);
     auto path = create_data_path(uuid ? uuid->c_str() : nullptr);
-    return mQuotaDevices[path];
+    return mQuotaReverseMounts[path];
 }
 
 binder::Status InstalldNativeService::isQuotaSupported(

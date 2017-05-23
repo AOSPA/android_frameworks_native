@@ -30,7 +30,6 @@
 #include <cutils/atomic.h>
 
 #include <gui/BufferItem.h>
-#include <gui/IGraphicBufferAlloc.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/SurfaceComposerClient.h>
 #include <gui/ConsumerBase.h>
@@ -270,7 +269,9 @@ void ConsumerBase::dumpLocked(String8& result, const char* prefix) const {
     result.appendFormat("%smAbandoned=%d\n", prefix, int(mAbandoned));
 
     if (!mAbandoned) {
-        mConsumer->dumpState(result, prefix);
+        String8 consumerState;
+        mConsumer->dumpState(String8(prefix), &consumerState);
+        result.append(consumerState);
     }
 }
 

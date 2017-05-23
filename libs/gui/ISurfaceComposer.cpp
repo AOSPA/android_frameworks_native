@@ -25,7 +25,6 @@
 #include <binder/IServiceManager.h>
 
 #include <gui/IDisplayEventConnection.h>
-#include <gui/IGraphicBufferAlloc.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/ISurfaceComposerClient.h>
@@ -70,14 +69,6 @@ public:
         data.writeStrongBinder(IInterface::asBinder(parent));
         remote()->transact(BnSurfaceComposer::CREATE_SCOPED_CONNECTION, data, &reply);
         return interface_cast<ISurfaceComposerClient>(reply.readStrongBinder());
-    }
-
-    virtual sp<IGraphicBufferAlloc> createGraphicBufferAlloc()
-    {
-        Parcel data, reply;
-        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        remote()->transact(BnSurfaceComposer::CREATE_GRAPHIC_BUFFER_ALLOC, data, &reply);
-        return interface_cast<IGraphicBufferAlloc>(reply.readStrongBinder());
     }
 
     virtual void setTransactionState(
@@ -164,6 +155,50 @@ public:
             return false;
         }
         return result != 0;
+    }
+
+    virtual status_t getSupportedFrameTimestamps(
+            std::vector<FrameEvent>* outSupported) const {
+        if (!outSupported) {
+            return UNEXPECTED_NULL;
+        }
+        outSupported->clear();
+
+        Parcel data, reply;
+
+        status_t err = data.writeInterfaceToken(
+                ISurfaceComposer::getInterfaceDescriptor());
+        if (err != NO_ERROR) {
+            return err;
+        }
+
+        err = remote()->transact(
+                BnSurfaceComposer::GET_SUPPORTED_FRAME_TIMESTAMPS,
+                data, &reply);
+        if (err != NO_ERROR) {
+            return err;
+        }
+
+        int32_t result = 0;
+        err = reply.readInt32(&result);
+        if (err != NO_ERROR) {
+            return err;
+        }
+        if (result != NO_ERROR) {
+            return result;
+        }
+
+        std::vector<int32_t> supported;
+        err = reply.readInt32Vector(&supported);
+        if (err != NO_ERROR) {
+            return err;
+        }
+
+        outSupported->reserve(supported.size());
+        for (int32_t s : supported) {
+            outSupported->push_back(static_cast<FrameEvent>(s));
+        }
+        return NO_ERROR;
     }
 
     virtual sp<IDisplayEventConnection> createDisplayEventConnection()
@@ -461,12 +496,6 @@ status_t BnSurfaceComposer::onTransact(
             reply->writeStrongBinder(b);
             return NO_ERROR;
         }
-        case CREATE_GRAPHIC_BUFFER_ALLOC: {
-            CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            sp<IBinder> b = IInterface::asBinder(createGraphicBufferAlloc());
-            reply->writeStrongBinder(b);
-            return NO_ERROR;
-        }
         case SET_TRANSACTION_STATE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
 
@@ -535,6 +564,25 @@ status_t BnSurfaceComposer::onTransact(
             int32_t result = authenticateSurfaceTexture(bufferProducer) ? 1 : 0;
             reply->writeInt32(result);
             return NO_ERROR;
+        }
+        case GET_SUPPORTED_FRAME_TIMESTAMPS: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            std::vector<FrameEvent> supportedTimestamps;
+            status_t result = getSupportedFrameTimestamps(&supportedTimestamps);
+            status_t err = reply->writeInt32(result);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            if (result != NO_ERROR) {
+                return result;
+            }
+
+            std::vector<int32_t> supported;
+            supported.reserve(supportedTimestamps.size());
+            for (FrameEvent s : supportedTimestamps) {
+                supported.push_back(static_cast<int32_t>(s));
+            }
+            return reply->writeInt32Vector(supported);
         }
         case CREATE_DISPLAY_EVENT_CONNECTION: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);

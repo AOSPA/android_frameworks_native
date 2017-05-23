@@ -51,7 +51,6 @@
 namespace android {
 
 class IConsumerListener;
-class IGraphicBufferAlloc;
 class IProducerListener;
 
 class BufferQueueCore : public virtual RefBase {
@@ -79,14 +78,13 @@ public:
     typedef Vector<BufferItem> Fifo;
 
     // BufferQueueCore manages a pool of gralloc memory slots to be used by
-    // producers and consumers. allocator is used to allocate all the needed
-    // gralloc buffers.
-    BufferQueueCore(const sp<IGraphicBufferAlloc>& allocator = NULL);
+    // producers and consumers.
+    BufferQueueCore();
     virtual ~BufferQueueCore();
 
 private:
     // Dump our state in a string
-    void dumpState(String8& result, const char* prefix) const;
+    void dumpState(const String8& prefix, String8* outResult) const;
 
     // getMinUndequeuedBufferCountLocked returns the minimum number of buffers
     // that must remain in a state other than DEQUEUED. The async parameter
@@ -143,10 +141,6 @@ private:
     void validateConsistencyLocked() const;
 #endif
 
-    // mAllocator is the connection to SurfaceFlinger that is used to allocate
-    // new GraphicBuffer objects.
-    sp<IGraphicBufferAlloc> mAllocator;
-
     // mMutex is the mutex used to prevent concurrent access to the member
     // variables of BufferQueueCore objects. It must be locked whenever any
     // member variable is accessed.
@@ -177,6 +171,10 @@ private:
     // mConsumerUsageBits contains flags that the consumer wants for
     // GraphicBuffers.
     uint32_t mConsumerUsageBits;
+
+    // mConsumerIsProtected indicates the consumer is ready to handle protected
+    // buffer.
+    bool mConsumerIsProtected;
 
     // mConnectedApi indicates the producer API that is currently connected
     // to this BufferQueue. It defaults to NO_CONNECTED_API, and gets updated

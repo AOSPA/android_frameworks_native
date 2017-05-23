@@ -34,7 +34,6 @@
 #include <gui/BufferQueueProducer.h>
 #include <gui/GLConsumer.h>
 #include <gui/IConsumerListener.h>
-#include <gui/IGraphicBufferAlloc.h>
 #include <gui/IProducerListener.h>
 
 #include <utils/Log.h>
@@ -454,8 +453,7 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
         mSlots[found].mBufferState.dequeue();
 
         if ((buffer == NULL) ||
-                buffer->needsReallocation(width, height, format, BQ_LAYER_COUNT,
-                usage))
+                buffer->needsReallocation(width, height, format, BQ_LAYER_COUNT, usage))
         {
             mSlots[found].mAcquireCalled = false;
             mSlots[found].mGraphicBuffer = NULL;
@@ -503,11 +501,13 @@ status_t BufferQueueProducer::dequeueBuffer(int *outSlot,
     } // Autolock scope
 
     if (returnFlags & BUFFER_NEEDS_REALLOCATION) {
-        status_t error;
         BQ_LOGV("dequeueBuffer: allocating a new buffer for slot %d", *outSlot);
-        sp<GraphicBuffer> graphicBuffer(mCore->mAllocator->createGraphicBuffer(
+        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(
                 width, height, format, BQ_LAYER_COUNT, usage,
-                {mConsumerName.string(), mConsumerName.size()}, &error));
+                {mConsumerName.string(), mConsumerName.size()});
+
+        status_t error = graphicBuffer->initCheck();
+
         { // Autolock scope
             Mutex::Autolock lock(mCore->mMutex);
 
@@ -732,6 +732,7 @@ status_t BufferQueueProducer::attachBuffer(int* outSlot,
     mSlots[*outSlot].mFence = Fence::NO_FENCE;
     mSlots[*outSlot].mRequestBufferCalled = true;
     mSlots[*outSlot].mAcquireCalled = false;
+    mSlots[*outSlot].mNeedsReallocation = false;
     mCore->mActiveBuffers.insert(found);
     VALIDATE_CONSISTENCY();
 
@@ -1105,6 +1106,9 @@ int BufferQueueProducer::query(int what, int *outValue) {
                 value = static_cast<int32_t>(mCore->mBufferAge);
             }
             break;
+        case NATIVE_WINDOW_CONSUMER_IS_PROTECTED:
+            value = static_cast<int32_t>(mCore->mConsumerIsProtected);
+            break;
         default:
             return BAD_VALUE;
     }
@@ -1267,7 +1271,10 @@ status_t BufferQueueProducer::disconnect(int api, DisconnectMode mode) {
                     mCore->mSidebandStream.clear();
                     mCore->mDequeueCondition.broadcast();
                     listener = mCore->mConsumerListener;
-                } else if (mCore->mConnectedApi != BufferQueueCore::NO_CONNECTED_API) {
+                } else if (mCore->mConnectedApi == BufferQueueCore::NO_CONNECTED_API) {
+                    BQ_LOGE("disconnect: not connected (req=%d)", api);
+                    status = NO_INIT;
+                } else {
                     BQ_LOGE("disconnect: still connected to another API "
                             "(cur=%d req=%d)", mCore->mConnectedApi, api);
                     status = BAD_VALUE;
@@ -1337,11 +1344,12 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
 
         Vector<sp<GraphicBuffer>> buffers;
         for (size_t i = 0; i <  newBufferCount; ++i) {
-            status_t result = NO_ERROR;
-            sp<GraphicBuffer> graphicBuffer(mCore->mAllocator->createGraphicBuffer(
+            sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(
                     allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
-                    allocUsage, {mConsumerName.string(), mConsumerName.size()},
-                    &result));
+                    allocUsage, {mConsumerName.string(), mConsumerName.size()});
+
+            status_t result = graphicBuffer->initCheck();
+
             if (result != NO_ERROR) {
                 BQ_LOGE("allocateBuffers: failed to allocate buffer (%u x %u, format"
                         " %u, usage %u)", width, height, format, usage);

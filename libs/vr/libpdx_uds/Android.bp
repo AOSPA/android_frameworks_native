@@ -24,6 +24,9 @@ cc_library_static {
         "libbase",
         "libpdx",
     ],
+    whole_static_libs: [
+        "libselinux",
+    ],
 }
 
 cc_test {
@@ -35,10 +38,13 @@ cc_test {
         "-Werror",
     ],
     srcs: [
+        "client_channel_tests.cpp",
+        "ipc_helper_tests.cpp",
         "remote_method_tests.cpp",
         "service_framework_tests.cpp",
     ],
     static_libs: [
+        "libgmock",
         "libpdx_uds",
         "libpdx",
     ],

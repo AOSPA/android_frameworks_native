@@ -76,7 +76,6 @@ namespace android {
 class Client;
 class DisplayEventConnection;
 class EventThread;
-class IGraphicBufferAlloc;
 class Layer;
 class LayerDim;
 class Surface;
@@ -157,6 +156,7 @@ public:
     // This also allows devices with wide-color displays that don't
     // want to support color management to disable color management.
     static bool hasWideColorDisplay;
+    friend class ExSurfaceFlinger;
 
     static char const* getServiceName() ANDROID_API {
         return "SurfaceFlinger";
@@ -184,7 +184,7 @@ public:
     void repaintEverything();
 
     // returns the default Display
-    sp<const DisplayDevice> getDefaultDisplayDevice() {
+    sp<const DisplayDevice> getDefaultDisplayDevice() const {
         Mutex::Autolock _l(mStateLock);
         return getDefaultDisplayDeviceLocked();
     }
@@ -228,6 +228,7 @@ private:
     enum { LOG_FRAME_STATS_PERIOD =  30*60*60 };
 
     static const size_t MAX_LAYERS = 4096;
+    static constexpr const char* kTimestampProperty = "service.sf.present_timestamp";
 
     // We're reference counted, never destroy SurfaceFlinger directly
     virtual ~SurfaceFlinger();
@@ -238,11 +239,21 @@ private:
 
     class State {
     public:
+        explicit State(LayerVector::StateSet set) : stateSet(set) {}
+        State& operator=(const State& other) {
+            // We explicitly don't copy stateSet so that, e.g., mDrawingState
+            // always uses the Drawing StateSet.
+            layersSortedByZ = other.layersSortedByZ;
+            displays = other.displays;
+            return *this;
+        }
+
+        const LayerVector::StateSet stateSet = LayerVector::StateSet::Invalid;
         LayerVector layersSortedByZ;
         DefaultKeyedVector< wp<IBinder>, DisplayDeviceState> displays;
 
-        void traverseInZOrder(const std::function<void(Layer*)>& consume) const;
-        void traverseInReverseZOrder(const std::function<void(Layer*)>& consume) const;
+        void traverseInZOrder(const LayerVector::Visitor& visitor) const;
+        void traverseInReverseZOrder(const LayerVector::Visitor& visitor) const;
     };
 
     /* ------------------------------------------------------------------------
@@ -257,7 +268,6 @@ private:
      */
     virtual sp<ISurfaceComposerClient> createConnection();
     virtual sp<ISurfaceComposerClient> createScopedConnection(const sp<IGraphicBufferProducer>& gbp);
-    virtual sp<IGraphicBufferAlloc> createGraphicBufferAlloc();
     virtual sp<IBinder> createDisplay(const String8& displayName, bool secure);
     virtual void destroyDisplay(const sp<IBinder>& display);
     virtual sp<IBinder> getBuiltInDisplay(int32_t id);
@@ -266,6 +276,8 @@ private:
     virtual void bootFinished();
     virtual bool authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const;
+    virtual status_t getSupportedFrameTimestamps(
+            std::vector<FrameEvent>* outSupported) const;
     virtual sp<IDisplayEventConnection> createDisplayEventConnection();
     virtual status_t captureScreen(const sp<IBinder>& display,
             const sp<IGraphicBufferProducer>& producer,
@@ -308,6 +320,37 @@ private:
     virtual void onHotplugReceived(HWComposer* composer, int disp, bool connected);
     virtual void onInvalidateReceived(HWComposer* composer);
 
+    /* ------------------------------------------------------------------------
+     * Extensions
+     */
+    virtual void updateExtendedMode() { }
+
+    virtual void getIndexLOI(size_t /*dpy*/,
+                     bool& /*bIgnoreLayers*/,
+                     String8& /*nameLOI*/) { }
+
+    virtual bool updateLayerVisibleNonTransparentRegion(
+                     const int& dpy, const sp<Layer>& layer,
+                     bool& bIgnoreLayers, String8& nameLOI,
+                     uint32_t layerStack);
+
+    virtual void delayDPTransactionIfNeeded(
+                     const Vector<DisplayState>& /*displays*/) { }
+
+    virtual bool canDrawLayerinScreenShot(
+                     const sp<const DisplayDevice>& hw,
+                     const sp<Layer>& layer);
+
+    virtual void isfreezeSurfacePresent(
+                     bool& freezeSurfacePresent,
+                     const sp<const DisplayDevice>& /*hw*/,
+                     const int32_t& /*id*/) { freezeSurfacePresent = false; }
+
+    virtual void setOrientationEventControl(
+                     bool& /*freezeSurfacePresent*/,
+                     const int32_t& /*id*/) { }
+
+    virtual void updateVisibleRegionsDirty() { }
     /* ------------------------------------------------------------------------
      * Message handling
      */
@@ -430,18 +473,29 @@ private:
     // Create an IBinder for a builtin display and add it to current state
     void createBuiltinDisplayLocked(DisplayDevice::DisplayType type);
 
-    // NOTE: can only be called from the main thread or with mStateLock held
+
     sp<const DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) const {
+      Mutex::Autolock _l(mStateLock);
+      return getDisplayDeviceLocked(dpy);
+    }
+
+    sp<DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) {
+      Mutex::Autolock _l(mStateLock);
+      return getDisplayDeviceLocked(dpy);
+    }
+
+    // NOTE: can only be called from the main thread or with mStateLock held
+    sp<const DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& dpy) const {
         return mDisplays.valueFor(dpy);
     }
 
     // NOTE: can only be called from the main thread or with mStateLock held
-    sp<DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) {
+    sp<DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& dpy) {
         return mDisplays.valueFor(dpy);
     }
 
     sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const {
-        return getDisplayDevice(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
+        return getDisplayDeviceLocked(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]);
     }
 
     void createDefaultDisplayDevice();
@@ -474,8 +528,9 @@ private:
      * Compositing
      */
     void invalidateHwcGeometry();
-    void computeVisibleRegions(uint32_t layerStack,
-            Region& dirtyRegion, Region& opaqueRegion);
+    void computeVisibleRegions(size_t dpy,
+            uint32_t layerStack, Region& dirtyRegion,
+            Region& opaqueRegion);
 
     void preComposition(nsecs_t refreshStartTime);
     void postComposition(nsecs_t refreshStartTime);
@@ -536,6 +591,9 @@ private:
     void logFrameStats();
 
     void dumpStaticScreenStats(String8& result) const;
+#ifdef DEBUG_CONT_DUMPSYS
+    virtual void dumpDrawCycle(bool /* prePrepare */ ) { }
+#endif
     // Not const because each Layer needs to query Fences and cache timestamps.
     void dumpFrameEventsLocked(String8& result);
 
@@ -553,7 +611,7 @@ private:
      * VrFlinger
      */
     void clearHwcLayers(const LayerVector& layers);
-    void resetHwc();
+    void resetHwcLocked();
 
     // Check to see if we should handoff to vr flinger.
     void updateVrFlinger();
@@ -565,7 +623,7 @@ private:
 
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
-    State mCurrentState;
+    State mCurrentState{LayerVector::StateSet::Current};
     volatile int32_t mTransactionFlags;
     Condition mTransactionCV;
     bool mTransactionPending;
@@ -605,7 +663,7 @@ private:
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
-    State mDrawingState;
+    State mDrawingState{LayerVector::StateSet::Drawing};
     bool mVisibleRegionsDirty;
 #ifndef USE_HWC2
     bool mHwWorkListDirty;

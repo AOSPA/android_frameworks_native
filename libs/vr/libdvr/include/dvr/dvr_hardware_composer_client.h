@@ -29,7 +29,7 @@ void dvrHwcClientDestroy(DvrHwcClient* client);
 // Called to free the frame information.
 void dvrHwcFrameDestroy(DvrHwcFrame* frame);
 
-Display dvrHwcFrameGetDisplayId(DvrHwcFrame* frame);
+DvrHwcDisplay dvrHwcFrameGetDisplayId(DvrHwcFrame* frame);
 
 int32_t dvrHwcFrameGetDisplayWidth(DvrHwcFrame* frame);
 
@@ -43,7 +43,14 @@ bool dvrHwcFrameGetDisplayRemoved(DvrHwcFrame* frame);
 // @return Number of layers in the frame.
 size_t dvrHwcFrameGetLayerCount(DvrHwcFrame* frame);
 
-Layer dvrHwcFrameGetLayerId(DvrHwcFrame* frame, size_t layer_index);
+uint32_t dvrHwcFrameGetActiveConfig(DvrHwcFrame* frame);
+uint32_t dvrHwcFrameGetColorMode(DvrHwcFrame* frame);
+void dvrHwcFrameGetColorTransform(DvrHwcFrame* frame, float* out_matrix,
+                                  int32_t* out_hint);
+uint32_t dvrHwcFrameGetPowerMode(DvrHwcFrame* frame);
+uint32_t dvrHwcFrameGetVsyncEnabled(DvrHwcFrame* frame);
+
+DvrHwcLayer dvrHwcFrameGetLayerId(DvrHwcFrame* frame, size_t layer_index);
 
 // Return the graphic buffer associated with the layer at |layer_index| in
 // |frame|.
@@ -58,11 +65,13 @@ AHardwareBuffer* dvrHwcFrameGetLayerBuffer(DvrHwcFrame* frame,
 // @return Fence FD. Caller owns the FD and is responsible for closing it.
 int dvrHwcFrameGetLayerFence(DvrHwcFrame* frame, size_t layer_index);
 
-Recti dvrHwcFrameGetLayerDisplayFrame(DvrHwcFrame* frame, size_t layer_index);
+DvrHwcRecti dvrHwcFrameGetLayerDisplayFrame(DvrHwcFrame* frame,
+                                            size_t layer_index);
 
-Rectf dvrHwcFrameGetLayerCrop(DvrHwcFrame* frame, size_t layer_index);
+DvrHwcRectf dvrHwcFrameGetLayerCrop(DvrHwcFrame* frame, size_t layer_index);
 
-BlendMode dvrHwcFrameGetLayerBlendMode(DvrHwcFrame* frame, size_t layer_index);
+DvrHwcBlendMode dvrHwcFrameGetLayerBlendMode(DvrHwcFrame* frame,
+                                             size_t layer_index);
 
 float dvrHwcFrameGetLayerAlpha(DvrHwcFrame* frame, size_t layer_index);
 
@@ -71,6 +80,26 @@ uint32_t dvrHwcFrameGetLayerType(DvrHwcFrame* frame, size_t layer_index);
 uint32_t dvrHwcFrameGetLayerApplicationId(DvrHwcFrame* frame,
                                           size_t layer_index);
 
+uint32_t dvrHwcFrameGetLayerZOrder(DvrHwcFrame* frame, size_t layer_index);
+
+void dvrHwcFrameGetLayerCursor(DvrHwcFrame* frame, size_t layer_index,
+                               int32_t* out_x, int32_t* out_y);
+
+uint32_t dvrHwcFrameGetLayerTransform(DvrHwcFrame* frame, size_t layer_index);
+
+uint32_t dvrHwcFrameGetLayerDataspace(DvrHwcFrame* frame, size_t layer_index);
+
+uint32_t dvrHwcFrameGetLayerColor(DvrHwcFrame* frame, size_t layer_index);
+
+uint32_t dvrHwcFrameGetLayerNumVisibleRegions(DvrHwcFrame* frame,
+                                              size_t layer_index);
+DvrHwcRecti dvrHwcFrameGetLayerVisibleRegion(DvrHwcFrame* frame,
+                                             size_t layer_index, size_t index);
+
+uint32_t dvrHwcFrameGetLayerNumDamagedRegions(DvrHwcFrame* frame,
+                                              size_t layer_index);
+DvrHwcRecti dvrHwcFrameGetLayerDamagedRegion(DvrHwcFrame* frame,
+                                             size_t layer_index, size_t index);
 #ifdef __cplusplus
 }  // extern "C"
 #endif

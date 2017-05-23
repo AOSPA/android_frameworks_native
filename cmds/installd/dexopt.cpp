@@ -67,14 +67,6 @@ static unique_fd invalid_unique_fd() {
     return unique_fd(-1);
 }
 
-static const char* parse_null(const char* arg) {
-    if (strcmp(arg, "!") == 0) {
-        return nullptr;
-    } else {
-        return arg;
-    }
-}
-
 static bool clear_profile(const std::string& profile) {
     unique_fd ufd(open(profile.c_str(), O_WRONLY | O_NOFOLLOW | O_CLOEXEC));
     if (ufd.get() < 0) {
@@ -185,9 +177,20 @@ static int split(char *buf, const char **argv)
   return count;
 }
 
+static const char* get_location_from_path(const char* path) {
+    static constexpr char kLocationSeparator = '/';
+    const char *location = strrchr(path, kLocationSeparator);
+    if (location == NULL) {
+        return path;
+    } else {
+        // Skip the separator character.
+        return location + 1;
+    }
+}
+
 static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vdex_fd, int image_fd,
         const char* input_file_name, const char* output_file_name, int swap_fd,
-        const char *instruction_set, const char* compiler_filter, bool vm_safe_mode,
+        const char* instruction_set, const char* compiler_filter,
         bool debuggable, bool post_bootcomplete, int profile_fd, const char* shared_libraries) {
     static const unsigned int MAX_INSTRUCTION_SET_LEN = 7;
 
@@ -196,6 +199,9 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
               instruction_set, MAX_INSTRUCTION_SET_LEN);
         return;
     }
+
+    // Get the relative path to the input file.
+    const char* relative_input_file_name = get_location_from_path(input_file_name);
 
     char dex2oat_Xms_flag[kPropertyValueMax];
     bool have_dex2oat_Xms_flag = get_property("dalvik.vm.dex2oat-Xms", dex2oat_Xms_flag, NULL) > 0;
@@ -234,7 +240,7 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
                                  dex2oat_flags, NULL) <= 0 ? 0 : split_count(dex2oat_flags);
     ALOGV("dalvik.vm.dex2oat-flags=%s\n", dex2oat_flags);
 
-    // If we booting without the real /data, don't spend time compiling.
+    // If we are booting without the real /data, don't spend time compiling.
     char vold_decrypt[kPropertyValueMax];
     bool have_vold_decrypt = get_property("vold.decrypt", vold_decrypt, "") > 0;
     bool skip_compilation = (have_vold_decrypt &&
@@ -287,7 +293,7 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
     char dex2oat_image_fd[arraysize("--app-image-fd=") + MAX_INT_LEN];
 
     sprintf(zip_fd_arg, "--zip-fd=%d", zip_fd);
-    sprintf(zip_location_arg, "--zip-location=%s", input_file_name);
+    sprintf(zip_location_arg, "--zip-location=%s", relative_input_file_name);
     sprintf(input_vdex_fd_arg, "--input-vdex-fd=%d", input_vdex_fd);
     sprintf(output_vdex_fd_arg, "--output-vdex-fd=%d", output_vdex_fd);
     sprintf(oat_fd_arg, "--oat-fd=%d", oat_fd);
@@ -313,20 +319,24 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
 
     // Compute compiler filter.
 
-    bool have_dex2oat_compiler_filter_flag;
+    bool have_dex2oat_compiler_filter_flag = false;
     if (skip_compilation) {
-        strcpy(dex2oat_compiler_filter_arg, "--compiler-filter=verify-none");
+        strcpy(dex2oat_compiler_filter_arg, "--compiler-filter=extract");
         have_dex2oat_compiler_filter_flag = true;
         have_dex2oat_relocation_skip_flag = true;
-    } else if (vm_safe_mode) {
-        strcpy(dex2oat_compiler_filter_arg, "--compiler-filter=interpret-only");
-        have_dex2oat_compiler_filter_flag = true;
-    } else if (compiler_filter != nullptr &&
-            strlen(compiler_filter) + strlen("--compiler-filter=") <
+    } else if (compiler_filter != nullptr) {
+        if (strlen(compiler_filter) + strlen("--compiler-filter=") <
                     arraysize(dex2oat_compiler_filter_arg)) {
-        sprintf(dex2oat_compiler_filter_arg, "--compiler-filter=%s", compiler_filter);
-        have_dex2oat_compiler_filter_flag = true;
-    } else {
+            sprintf(dex2oat_compiler_filter_arg, "--compiler-filter=%s", compiler_filter);
+            have_dex2oat_compiler_filter_flag = true;
+        } else {
+            ALOGW("Compiler filter name '%s' is too large (max characters is %zu)",
+                  compiler_filter,
+                  kPropertyValueMax);
+        }
+    }
+
+    if (!have_dex2oat_compiler_filter_flag) {
         char dex2oat_compiler_filter_flag[kPropertyValueMax];
         have_dex2oat_compiler_filter_flag = get_property("dalvik.vm.dex2oat-filter",
                                                          dex2oat_compiler_filter_flag, NULL) > 0;
@@ -349,8 +359,18 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
         sprintf(profile_arg, "--profile-file-fd=%d", profile_fd);
     }
 
+    // Get the directory of the apk to pass as a base classpath directory.
+    char base_dir[arraysize("--classpath-dir=") + PKG_PATH_MAX];
+    std::string apk_dir(input_file_name);
+    unsigned long dir_index = apk_dir.rfind('/');
+    bool has_base_dir = dir_index != std::string::npos;
+    if (has_base_dir) {
+        apk_dir = apk_dir.substr(0, dir_index);
+        sprintf(base_dir, "--classpath-dir=%s", apk_dir.c_str());
+    }
 
-    ALOGV("Running %s in=%s out=%s\n", DEX2OAT_BIN, input_file_name, output_file_name);
+
+    ALOGV("Running %s in=%s out=%s\n", DEX2OAT_BIN, relative_input_file_name, output_file_name);
 
     const char* argv[9  // program name, mandatory arguments and the final NULL
                      + (have_dex2oat_isa_variant ? 1 : 0)
@@ -368,6 +388,7 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
                      + dex2oat_flags_count
                      + (profile_fd == -1 ? 0 : 1)
                      + (shared_libraries != nullptr ? 4 : 0)
+                     + (has_base_dir ? 1 : 0)
                      + (have_dex2oat_large_app_threshold ? 1 : 0)];
     int i = 0;
     argv[i++] = DEX2OAT_BIN;
@@ -431,6 +452,9 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
         argv[i++] = "-classpath";
         argv[i++] = RUNTIME_ARG;
         argv[i++] = shared_libraries;
+    }
+    if (has_base_dir) {
+        argv[i++] = base_dir;
     }
     // Do not add after dex2oat_flags, they should override others for debugging.
     argv[i] = NULL;
@@ -767,17 +791,6 @@ static void run_profman_dump(const std::vector<unique_fd>& profile_fds,
     execv(PROFMAN_BIN, (char * const *)argv);
     ALOGE("execv(%s) failed: %s\n", PROFMAN_BIN, strerror(errno));
     exit(68);   /* only get here on exec failure */
-}
-
-static const char* get_location_from_path(const char* path) {
-    static constexpr char kLocationSeparator = '/';
-    const char *location = strrchr(path, kLocationSeparator);
-    if (location == NULL) {
-        return path;
-    } else {
-        // Skip the separator character.
-        return location + 1;
-    }
 }
 
 bool dump_profiles(int32_t uid, const std::string& pkgname, const char* code_paths) {
@@ -1140,8 +1153,8 @@ Dex2oatFileWrapper maybe_open_reference_profile(const std::string& pkgname,
 // Opens the vdex files and assigns the input fd to in_vdex_wrapper_fd and the output fd to
 // out_vdex_wrapper_fd. Returns true for success or false in case of errors.
 bool open_vdex_files(const char* apk_path, const char* out_oat_path, int dexopt_needed,
-        const char* instruction_set, bool is_public, bool profile_guided,
-        int uid, bool is_secondary_dex, Dex2oatFileWrapper* in_vdex_wrapper_fd,
+        const char* instruction_set, bool is_public, int uid, bool is_secondary_dex,
+        Dex2oatFileWrapper* in_vdex_wrapper_fd,
         Dex2oatFileWrapper* out_vdex_wrapper_fd) {
     CHECK(in_vdex_wrapper_fd != nullptr);
     CHECK(out_vdex_wrapper_fd != nullptr);
@@ -1151,9 +1164,7 @@ bool open_vdex_files(const char* apk_path, const char* out_oat_path, int dexopt_
     int dexopt_action = abs(dexopt_needed);
     bool is_odex_location = dexopt_needed < 0;
     std::string in_vdex_path_str;
-    // Disable passing an input vdex when the compilation is profile-guided. The dexlayout
-    // optimization in dex2oat is incompatible with it. b/35872504.
-    if (dexopt_action != DEX2OAT_FROM_SCRATCH && !profile_guided) {
+    if (dexopt_action != DEX2OAT_FROM_SCRATCH) {
         // Open the possibly existing vdex. If none exist, we pass -1 to dex2oat for input-vdex-fd.
         const char* path = nullptr;
         if (is_odex_location) {
@@ -1191,7 +1202,11 @@ bool open_vdex_files(const char* apk_path, const char* out_oat_path, int dexopt_
     if (dexopt_action == DEX2OAT_FOR_BOOT_IMAGE &&
             in_vdex_wrapper_fd->get() != -1 &&
             in_vdex_path_str == out_vdex_path_str) {
-        out_vdex_wrapper_fd->reset(in_vdex_wrapper_fd->get());
+        // We unlink the file in case the invocation of dex2oat fails, to ensure we don't
+        // have bogus stale vdex files.
+        out_vdex_wrapper_fd->reset(
+              in_vdex_wrapper_fd->get(),
+              [out_vdex_path_str]() { unlink(out_vdex_path_str.c_str()); });
         // Disable auto close for the in wrapper fd (it will be done when destructing the out
         // wrapper).
         in_vdex_wrapper_fd->DisableAutoClose();
@@ -1468,7 +1483,6 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     }
 
     bool is_public = (dexopt_flags & DEXOPT_PUBLIC) != 0;
-    bool vm_safe_mode = (dexopt_flags & DEXOPT_SAFEMODE) != 0;
     bool debuggable = (dexopt_flags & DEXOPT_DEBUGGABLE) != 0;
     bool boot_complete = (dexopt_flags & DEXOPT_BOOTCOMPLETE) != 0;
     bool profile_guided = (dexopt_flags & DEXOPT_PROFILE_GUIDED) != 0;
@@ -1514,8 +1528,8 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     // Open vdex files.
     Dex2oatFileWrapper in_vdex_fd;
     Dex2oatFileWrapper out_vdex_fd;
-    if (!open_vdex_files(dex_path, out_oat_path, dexopt_needed, instruction_set, is_public,
-            profile_guided, uid, is_secondary_dex, &in_vdex_fd, &out_vdex_fd)) {
+    if (!open_vdex_files(dex_path, out_oat_path, dexopt_needed, instruction_set, is_public, uid,
+            is_secondary_dex, &in_vdex_fd, &out_vdex_fd)) {
         return -1;
     }
 
@@ -1556,19 +1570,16 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
             _exit(67);
         }
 
-        // Pass dex2oat the relative path to the input file.
-        const char *input_file_name = get_location_from_path(dex_path);
         run_dex2oat(input_fd.get(),
                     out_oat_fd.get(),
                     in_vdex_fd.get(),
                     out_vdex_fd.get(),
                     image_fd.get(),
-                    input_file_name,
+                    dex_path,
                     out_oat_path,
                     swap_fd.get(),
                     instruction_set,
                     compiler_filter,
-                    vm_safe_mode,
                     debuggable,
                     boot_complete,
                     reference_profile_fd.get(),
@@ -1861,21 +1872,6 @@ bool delete_odex(const char* apk_path, const char* instruction_set, const char* 
 
     // Report success.
     return return_value_oat && return_value_art;
-}
-
-int dexopt(const char* const params[DEXOPT_PARAM_COUNT]) {
-    return dexopt(params[0],                    // apk_path
-                  atoi(params[1]),              // uid
-                  params[2],                    // pkgname
-                  params[3],                    // instruction_set
-                  atoi(params[4]),              // dexopt_needed
-                  params[5],                    // oat_dir
-                  atoi(params[6]),              // dexopt_flags
-                  params[7],                    // compiler_filter
-                  parse_null(params[8]),        // volume_uuid
-                  parse_null(params[9]),        // shared_libraries
-                  parse_null(params[10]));       // se_info
-    static_assert(DEXOPT_PARAM_COUNT == 11U, "Unexpected dexopt param count");
 }
 
 }  // namespace installd

@@ -352,12 +352,6 @@ public:
 private:
     // For use by Device
 
-    // Virtual displays are always connected
-    void setVirtual() {
-        mIsVirtual = true;
-        mIsConnected = true;
-    }
-
     void setConnected(bool connected) { mIsConnected = connected; }
     int32_t getAttribute(hwc2_config_t configId, Attribute attribute);
     void loadConfig(hwc2_config_t configId);
@@ -375,7 +369,7 @@ private:
     Device& mDevice;
     hwc2_display_t mId;
     bool mIsConnected;
-    bool mIsVirtual;
+    DisplayType mType;
     std::unordered_map<hwc2_layer_t, std::weak_ptr<Layer>> mLayers;
     std::unordered_map<hwc2_config_t, std::shared_ptr<const Config>> mConfigs;
 };
@@ -414,6 +408,7 @@ public:
             const android::Region& region);
     [[clang::warn_unused_result]] Error setZOrder(uint32_t z);
     [[clang::warn_unused_result]] Error setInfo(uint32_t type, uint32_t appId);
+    [[clang::warn_unused_result]] Error setAnimating(bool animating);
 
 private:
     std::weak_ptr<Display> mDisplay;
