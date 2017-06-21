@@ -422,7 +422,7 @@ public:
 
     // Updates the transform hint in our SurfaceFlingerConsumer to match
     // the current orientation of the display device.
-    void updateTransformHint(const sp<const DisplayDevice>& hw) const;
+    void updateTransformHint(const sp<const DisplayDevice>& hw);
 
     /* ------------------------------------------------------------------------
      * Extensions
@@ -539,6 +539,7 @@ public:
                                  const LayerVector::Visitor& visitor);
     void traverseInZOrder(LayerVector::StateSet stateSet, const LayerVector::Visitor& visitor);
 
+    size_t getChildrenCount() const;
     void addChild(const sp<Layer>& layer);
     // Returns index if removed, or negative value otherwise
     // for symmetry with Vector::remove
@@ -815,6 +816,9 @@ private:
 
     bool mAutoRefresh;
     bool mFreezeGeometryUpdates;
+    uint32_t mTransformHint;
+    // debug mdp and gpu crop
+    uint32_t mDebugAndRecomputeCrop;
 
     // Child list about to be committed/used for editing.
     LayerVector mCurrentChildren;

@@ -542,28 +542,19 @@ void SurfaceFlinger::init() {
         eglInitialize(mEGLDisplay, NULL, NULL);
 
         // start the EventThread
-         if (vsyncPhaseOffsetNs != sfVsyncPhaseOffsetNs) {
-            sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
+        sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
                 vsyncPhaseOffsetNs, true, "app");
-            mEventThread = new EventThread(vsyncSrc, *this, false);
-            sp<VSyncSource> sfVsyncSrc = new DispSyncSource(&mPrimaryDispSync,
+        mEventThread = new EventThread(vsyncSrc, *this, false);
+        sp<VSyncSource> sfVsyncSrc = new DispSyncSource(&mPrimaryDispSync,
                 sfVsyncPhaseOffsetNs, true, "sf");
-            mSFEventThread = new EventThread(sfVsyncSrc, *this, true);
-            mEventQueue.setEventThread(mSFEventThread);
-         } else {
-            sp<VSyncSource> vsyncSrc = new DispSyncSource(&mPrimaryDispSync,
-                                        vsyncPhaseOffsetNs, true, "sf-app");
-            mEventThread = new EventThread(vsyncSrc, *this, true);
-            mEventQueue.setEventThread(mEventThread);
-         }
+        mSFEventThread = new EventThread(sfVsyncSrc, *this, true);
+        mEventQueue.setEventThread(mSFEventThread);
 
         // set EventThread and SFEventThread to SCHED_FIFO to minimize jitter
         struct sched_param param = {0};
         param.sched_priority = 2;
-        if (mSFEventThread != NULL) {
-           if (sched_setscheduler(mSFEventThread->getTid(), SCHED_FIFO, &param) != 0) {
-               ALOGE("Couldn't set SCHED_FIFO for SFEventThread");
-           }
+        if (sched_setscheduler(mSFEventThread->getTid(), SCHED_FIFO, &param) != 0) {
+            ALOGE("Couldn't set SCHED_FIFO for SFEventThread");
         }
         if (sched_setscheduler(mEventThread->getTid(), SCHED_FIFO, &param) != 0) {
             ALOGE("Couldn't set SCHED_FIFO for EventThread");
@@ -1015,10 +1006,7 @@ status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
     } else {
         mInjectVSyncs = enable;
         ALOGV("VSync Injections disabled");
-        if (mSFEventThread != NULL)
-           mEventQueue.setEventThread(mSFEventThread);
-        else
-           mEventQueue.setEventThread(mEventThread);
+        mEventQueue.setEventThread(mSFEventThread);
         mVSyncInjector.clear();
     }
     return NO_ERROR;
@@ -1038,8 +1026,13 @@ status_t SurfaceFlinger::injectVSync(nsecs_t when) {
 
 // ----------------------------------------------------------------------------
 
-sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection() {
-    return mEventThread->createEventConnection();
+sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
+        ISurfaceComposer::VsyncSource vsyncSource) {
+    if (vsyncSource == eVsyncSourceSurfaceFlinger) {
+        return mSFEventThread->createEventConnection();
+    } else {
+        return mEventThread->createEventConnection();
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -2694,8 +2687,13 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
         if (parent == nullptr) {
             mCurrentState.layersSortedByZ.add(lbc);
         } else {
+            if (mCurrentState.layersSortedByZ.indexOf(parent) < 0) {
+                ALOGE("addClientLayer called with a removed parent");
+                return NAME_NOT_FOUND;
+            }
             parent->addChild(lbc);
         }
+
         mGraphicBufferProducerList.add(IInterface::asBinder(gbc));
         mLayersAdded = true;
         mNumLayers++;
@@ -2714,6 +2712,17 @@ status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
     const ssize_t index = (p != nullptr) ? p->removeChild(layer) :
         mCurrentState.layersSortedByZ.remove(layer);
 
+    if (p != nullptr) {
+        sp<Layer> ancestor = p;
+        while (ancestor->getParent() != nullptr) {
+            ancestor = ancestor->getParent();
+        }
+        if (mCurrentState.layersSortedByZ.indexOf(ancestor) < 0) {
+            ALOGE("removeLayer called with a layer whose parent has been removed");
+            return NAME_NOT_FOUND;
+        }
+    }
+
     // As a matter of normal operation, the LayerCleaner will produce a second
     // attempt to remove the surface. The Layer will be kept alive in mDrawingState
     // so we will succeed in promoting it, but it's already been removed
@@ -2730,7 +2739,7 @@ status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
 
     mLayersPendingRemoval.add(layer);
     mLayersRemoved = true;
-    mNumLayers--;
+    mNumLayers -= 1 + layer->getChildrenCount();
     setTransactionFlags(eTransactionNeeded);
     return NO_ERROR;
 }
@@ -3942,14 +3951,12 @@ status_t SurfaceFlinger::onTransact(
             }
             case 1018: { // Modify Choreographer's phase offset
                 n = data.readInt32();
-                if (mEventThread != NULL)
-                   mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
                 return NO_ERROR;
             }
             case 1019: { // Modify SurfaceFlinger's phase offset
                 n = data.readInt32();
-                if (mSFEventThread != NULL)
-                   mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
                 return NO_ERROR;
             }
             case 1020: { // Layer updates interceptor
