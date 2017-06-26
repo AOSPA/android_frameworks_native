@@ -695,6 +695,34 @@ Error Display::validate(uint32_t* outNumTypes, uint32_t* outNumRequests)
     return error;
 }
 
+Error Display::presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests,
+                                 sp<android::Fence>* outPresentFence, uint32_t* state) {
+
+    uint32_t numTypes = 0;
+    uint32_t numRequests = 0;
+    int32_t presentFenceFd = -1;
+    auto intError = mDevice.mComposer->presentOrValidateDisplay(mId, &numTypes, &numRequests, &presentFenceFd, state);
+    auto error = static_cast<Error>(intError);
+    if (error != Error::None && error != Error::HasChanges) {
+        return error;
+    }
+
+    if (*state == 1) {
+        *outPresentFence = new Fence(presentFenceFd);
+    }
+
+    if (*state == 0) {
+        *outNumTypes = numTypes;
+        *outNumRequests = numRequests;
+    }
+    return error;
+}
+
+void Display::discardCommands()
+{
+    mDevice.mComposer->resetCommands();
+}
+
 // For use by Device
 
 int32_t Display::getAttribute(hwc2_config_t configId, Attribute attribute)
