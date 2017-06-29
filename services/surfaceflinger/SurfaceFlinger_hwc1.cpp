@@ -2326,8 +2326,13 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
         if (parent == nullptr) {
             mCurrentState.layersSortedByZ.add(lbc);
         } else {
+            if (mCurrentState.layersSortedByZ.indexOf(parent) < 0) {
+                ALOGE("addClientLayer called with a removed parent");
+                return NAME_NOT_FOUND;
+            }
             parent->addChild(lbc);
         }
+
         mGraphicBufferProducerList.add(IInterface::asBinder(gbc));
         mLayersAdded = true;
         mNumLayers++;
@@ -2339,12 +2344,29 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
+status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer, bool topLevelOnly) {
     Mutex::Autolock _l(mStateLock);
 
     const auto& p = layer->getParent();
-    const ssize_t index = (p != nullptr) ? p->removeChild(layer) :
-             mCurrentState.layersSortedByZ.remove(layer);
+    ssize_t index;
+    if (p != nullptr) {
+        if (topLevelOnly) {
+            return NO_ERROR;
+        }
+
+        sp<Layer> ancestor = p;
+        while (ancestor->getParent() != nullptr) {
+            ancestor = ancestor->getParent();
+        }
+        if (mCurrentState.layersSortedByZ.indexOf(ancestor) < 0) {
+            ALOGE("removeLayer called with a layer whose parent has been removed");
+            return NAME_NOT_FOUND;
+        }
+
+        index = p->removeChild(layer);
+    } else {
+        index = mCurrentState.layersSortedByZ.remove(layer);
+    }
 
     // As a matter of normal operation, the LayerCleaner will produce a second
     // attempt to remove the surface. The Layer will be kept alive in mDrawingState
@@ -2362,7 +2384,7 @@ status_t SurfaceFlinger::removeLayer(const sp<Layer>& layer) {
 
     mLayersPendingRemoval.add(layer);
     mLayersRemoved = true;
-    mNumLayers--;
+    mNumLayers -= 1 + layer->getChildrenCount();
     setTransactionFlags(eTransactionNeeded);
     return NO_ERROR;
 }
@@ -2769,11 +2791,9 @@ status_t SurfaceFlinger::onLayerDestroyed(const wp<Layer>& layer)
     if (l == nullptr) {
         // The layer has already been removed, carry on
         return NO_ERROR;
-    } if (l->getParent() != nullptr) {
-        // If we have a parent, then we can continue to live as long as it does.
-        return NO_ERROR;
     }
-    return removeLayer(l);
+    // If we have a parent, then we can continue to live as long as it does.
+    return removeLayer(l, true);
 }
 
 // ---------------------------------------------------------------------------

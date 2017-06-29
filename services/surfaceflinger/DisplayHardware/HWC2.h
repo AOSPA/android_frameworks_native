@@ -35,6 +35,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <map>
 
 namespace android {
     class Fence;
@@ -254,6 +255,15 @@ public:
     [[clang::warn_unused_result]] Error setVsyncEnabled(Vsync enabled);
     [[clang::warn_unused_result]] Error validate(uint32_t* outNumTypes,
             uint32_t* outNumRequests);
+    [[clang::warn_unused_result]] Error presentOrValidate(uint32_t* outNumTypes,
+                                                 uint32_t* outNumRequests,
+                                                          android::sp<android::Fence>* outPresentFence, uint32_t* state);
+
+    // Most methods in this class write a command to a command buffer.  The
+    // command buffer is implicitly submitted in validate, present, and
+    // presentOrValidate.  This method provides a way to discard the commands,
+    // which can be used to discard stale commands.
+    void discardCommands();
 
     // Other Display methods
 
@@ -283,7 +293,9 @@ private:
     bool mIsConnected;
     DisplayType mType;
     std::unordered_map<hwc2_layer_t, std::weak_ptr<Layer>> mLayers;
-    std::unordered_map<hwc2_config_t, std::shared_ptr<const Config>> mConfigs;
+    // The ordering in this map matters, for getConfigs(), when it is
+    // converted to a vector
+    std::map<hwc2_config_t, std::shared_ptr<const Config>> mConfigs;
 };
 
 // Convenience C++ class to access hwc2_device_t Layer functions directly.
