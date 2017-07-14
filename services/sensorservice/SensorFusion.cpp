@@ -18,8 +18,6 @@
 #include "SensorFusion.h"
 #include "SensorService.h"
 
-#include <inttypes.h>
-
 namespace android {
 // ---------------------------------------------------------------------------
 
@@ -159,11 +157,6 @@ status_t SensorFusion::activate(int mode, void* ident, bool enabled) {
 }
 
 status_t SensorFusion::setDelay(int mode, void* ident, int64_t ns) {
-
-   ALOGD_IF(DEBUG_CONNECTIONS,
-            "SensorFusion::setDelay[acc=%" PRId64 ", mag=%" PRId64 ", gyro=%" PRId64 "]",
-            ns, ms2ns(20), mTargetDelayNs);
-
     // Call batch with timeout zero instead of setDelay().
     if (ns > (int64_t)5e7) {
         ns = (int64_t)(5e7);
