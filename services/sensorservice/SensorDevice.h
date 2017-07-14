@@ -27,8 +27,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#include <unordered_map>
-
 // ---------------------------------------------------------------------------
 
 namespace android {
@@ -110,8 +108,6 @@ private:
     // Use this vector to determine which client is activated or deactivated.
     SortedVector<void *> mDisabledClients;
     SensorDevice();
-
-    std::unordered_map<int, nsecs_t> minDelayMap;
 
     bool isClientDisabled(void* ident);
     bool isClientDisabledLocked(void* ident);
