@@ -27,6 +27,7 @@
  */
 
 #include "ExVirtualDisplaySurface.h"
+#include <system/window.h>
 #ifdef QTI_BSP
 #include <gralloc_priv.h>
 #endif

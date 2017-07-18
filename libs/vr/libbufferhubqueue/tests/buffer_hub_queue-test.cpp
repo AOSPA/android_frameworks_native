@@ -6,6 +6,9 @@
 
 #include <vector>
 
+// Enable/disable debug logging.
+#define TRACE 0
+
 namespace android {
 namespace dvr {
 
@@ -13,22 +16,17 @@ using pdx::LocalHandle;
 
 namespace {
 
-constexpr int kBufferWidth = 100;
-constexpr int kBufferHeight = 1;
-constexpr int kBufferLayerCount = 1;
-constexpr int kBufferFormat = HAL_PIXEL_FORMAT_BLOB;
-constexpr int kBufferUsage = GRALLOC_USAGE_SW_READ_RARELY;
+constexpr uint32_t kBufferWidth = 100;
+constexpr uint32_t kBufferHeight = 1;
+constexpr uint32_t kBufferLayerCount = 1;
+constexpr uint32_t kBufferFormat = HAL_PIXEL_FORMAT_BLOB;
+constexpr uint64_t kBufferUsage = GRALLOC_USAGE_SW_READ_RARELY;
 
 class BufferHubQueueTest : public ::testing::Test {
  public:
-  template <typename Meta>
-  bool CreateProducerQueue(uint64_t usage_set_mask = 0,
-                           uint64_t usage_clear_mask = 0,
-                           uint64_t usage_deny_set_mask = 0,
-                           uint64_t usage_deny_clear_mask = 0) {
-    producer_queue_ =
-        ProducerQueue::Create<Meta>(usage_set_mask, usage_clear_mask,
-                                    usage_deny_set_mask, usage_deny_clear_mask);
+  bool CreateProducerQueue(const ProducerQueueConfig& config,
+                           const UsagePolicy& usage) {
+    producer_queue_ = ProducerQueue::Create(config, usage);
     return producer_queue_ != nullptr;
   }
 
@@ -41,26 +39,25 @@ class BufferHubQueueTest : public ::testing::Test {
     }
   }
 
-  template <typename Meta>
-  bool CreateQueues(int usage_set_mask = 0, int usage_clear_mask = 0,
-                    int usage_deny_set_mask = 0,
-                    int usage_deny_clear_mask = 0) {
-    return CreateProducerQueue<Meta>(usage_set_mask, usage_clear_mask,
-                                     usage_deny_set_mask,
-                                     usage_deny_clear_mask) &&
-           CreateConsumerQueue();
+  bool CreateQueues(const ProducerQueueConfig& config,
+                    const UsagePolicy& usage) {
+    return CreateProducerQueue(config, usage) && CreateConsumerQueue();
   }
 
-  void AllocateBuffer() {
+  void AllocateBuffer(size_t* slot_out = nullptr) {
     // Create producer buffer.
-    size_t slot;
-    int ret = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
-                                              kBufferLayerCount, kBufferFormat,
-                                              kBufferUsage, &slot);
-    ASSERT_EQ(ret, 0);
+    auto status = producer_queue_->AllocateBuffer(
+        kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
+        kBufferUsage);
+
+    ASSERT_TRUE(status.ok());
+    size_t slot = status.take();
+    if (slot_out)
+      *slot_out = slot;
   }
 
  protected:
+  ProducerQueueConfigBuilder config_builder_;
   std::unique_ptr<ProducerQueue> producer_queue_;
   std::unique_ptr<ConsumerQueue> consumer_queue_;
 };
@@ -68,7 +65,8 @@ class BufferHubQueueTest : public ::testing::Test {
 TEST_F(BufferHubQueueTest, TestDequeue) {
   const size_t nb_dequeue_times = 16;
 
-  ASSERT_TRUE(CreateQueues<size_t>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<size_t>().Build(),
+                           UsagePolicy{}));
 
   // Allocate only one buffer.
   AllocateBuffer();
@@ -94,13 +92,14 @@ TEST_F(BufferHubQueueTest, TestDequeue) {
 }
 
 TEST_F(BufferHubQueueTest, TestProducerConsumer) {
-  const size_t nb_buffer = 16;
+  const size_t kBufferCount = 16;
   size_t slot;
   uint64_t seq;
 
-  ASSERT_TRUE(CreateQueues<uint64_t>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<uint64_t>().Build(),
+                           UsagePolicy{}));
 
-  for (size_t i = 0; i < nb_buffer; i++) {
+  for (size_t i = 0; i < kBufferCount; i++) {
     AllocateBuffer();
 
     // Producer queue has all the available buffers on initialize.
@@ -120,14 +119,23 @@ TEST_F(BufferHubQueueTest, TestProducerConsumer) {
     ASSERT_EQ(consumer_queue_->capacity(), i + 1);
   }
 
-  for (size_t i = 0; i < nb_buffer; i++) {
+  // Use /dev/zero as a stand-in for a fence. As long as BufferHub does not need
+  // to merge fences, which only happens when multiple consumers release the
+  // same buffer with release fences, the file object should simply pass
+  // through.
+  LocalHandle post_fence("/dev/zero", O_RDONLY);
+  struct stat post_fence_stat;
+  ASSERT_EQ(0, fstat(post_fence.Get(), &post_fence_stat));
+
+  for (size_t i = 0; i < kBufferCount; i++) {
     LocalHandle fence;
-    // First time, there is no buffer available to dequeue.
+
+    // First time there is no buffer available to dequeue.
     auto consumer_status = consumer_queue_->Dequeue(0, &slot, &seq, &fence);
     ASSERT_FALSE(consumer_status.ok());
     ASSERT_EQ(ETIMEDOUT, consumer_status.error());
 
-    // Make sure Producer buffer is Post()'ed so that it's ready to Accquire
+    // Make sure Producer buffer is POSTED so that it's ready to Accquire
     // in the consumer's Dequeue() function.
     auto producer_status = producer_queue_->Dequeue(0, &slot, &fence);
     ASSERT_TRUE(producer_status.ok());
@@ -135,20 +143,137 @@ TEST_F(BufferHubQueueTest, TestProducerConsumer) {
     ASSERT_NE(nullptr, producer);
 
     uint64_t seq_in = static_cast<uint64_t>(i);
-    ASSERT_EQ(producer->Post({}, &seq_in, sizeof(seq_in)), 0);
+    ASSERT_EQ(producer->Post(post_fence, &seq_in, sizeof(seq_in)), 0);
 
-    // Second time, the just |Post()|'ed buffer should be dequeued.
+    // Second time the just the POSTED buffer should be dequeued.
     uint64_t seq_out = 0;
     consumer_status = consumer_queue_->Dequeue(0, &slot, &seq_out, &fence);
     ASSERT_TRUE(consumer_status.ok());
+    EXPECT_TRUE(fence.IsValid());
+
+    struct stat acquire_fence_stat;
+    ASSERT_EQ(0, fstat(fence.Get(), &acquire_fence_stat));
+
+    // The file descriptors should refer to the same file object. Testing the
+    // device id and inode is a proxy for testing that the fds refer to the same
+    // file object.
+    EXPECT_NE(post_fence.Get(), fence.Get());
+    EXPECT_EQ(post_fence_stat.st_dev, acquire_fence_stat.st_dev);
+    EXPECT_EQ(post_fence_stat.st_ino, acquire_fence_stat.st_ino);
+
     auto consumer = consumer_status.take();
     ASSERT_NE(nullptr, consumer);
     ASSERT_EQ(seq_in, seq_out);
   }
 }
 
+TEST_F(BufferHubQueueTest, TestRemoveBuffer) {
+  ASSERT_TRUE(CreateProducerQueue(config_builder_.Build(), UsagePolicy{}));
+
+  // Allocate buffers.
+  const size_t kBufferCount = 4u;
+  for (size_t i = 0; i < kBufferCount; i++) {
+    AllocateBuffer();
+  }
+  ASSERT_EQ(kBufferCount, producer_queue_->count());
+  ASSERT_EQ(kBufferCount, producer_queue_->capacity());
+
+  consumer_queue_ = producer_queue_->CreateConsumerQueue();
+  ASSERT_NE(nullptr, consumer_queue_);
+
+  // Check that buffers are correctly imported on construction.
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+  EXPECT_EQ(0u, consumer_queue_->count());
+
+  // Dequeue all the buffers and keep track of them in an array. This prevents
+  // the producer queue ring buffer ref counts from interfering with the tests.
+  struct Entry {
+    std::shared_ptr<BufferProducer> buffer;
+    LocalHandle fence;
+    size_t slot;
+  };
+  std::array<Entry, kBufferCount> buffers;
+
+  for (size_t i = 0; i < kBufferCount; i++) {
+    Entry* entry = &buffers[i];
+    auto producer_status =
+        producer_queue_->Dequeue(0, &entry->slot, &entry->fence);
+    ASSERT_TRUE(producer_status.ok());
+    entry->buffer = producer_status.take();
+    ASSERT_NE(nullptr, entry->buffer);
+    EXPECT_EQ(i, entry->slot);
+  }
+
+  // Remove a buffer and make sure both queues reflect the change.
+  ASSERT_TRUE(producer_queue_->RemoveBuffer(buffers[0].slot));
+  EXPECT_EQ(kBufferCount - 1, producer_queue_->capacity());
+
+  // As long as the removed buffer is still alive the consumer queue won't know
+  // its gone.
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+
+  // Release the removed buffer.
+  buffers[0].buffer = nullptr;
+
+  // Now the consumer queue should know it's gone.
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount - 1, consumer_queue_->capacity());
+
+  // Allocate a new buffer. This should take the first empty slot.
+  size_t slot;
+  AllocateBuffer(&slot);
+  ALOGE_IF(TRACE, "ALLOCATE %zu", slot);
+  EXPECT_EQ(buffers[0].slot, slot);
+  EXPECT_EQ(kBufferCount, producer_queue_->capacity());
+
+  // The consumer queue should pick up the new buffer.
+  EXPECT_EQ(kBufferCount - 1, consumer_queue_->capacity());
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+
+  // Remove and allocate a buffer.
+  ASSERT_TRUE(producer_queue_->RemoveBuffer(buffers[1].slot));
+  EXPECT_EQ(kBufferCount - 1, producer_queue_->capacity());
+  buffers[1].buffer = nullptr;
+
+  AllocateBuffer(&slot);
+  ALOGE_IF(TRACE, "ALLOCATE %zu", slot);
+  EXPECT_EQ(buffers[1].slot, slot);
+  EXPECT_EQ(kBufferCount, producer_queue_->capacity());
+
+  // The consumer queue should pick up the new buffer but the count shouldn't
+  // change.
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+
+  // Remove and allocate a buffer, but don't free the buffer right away.
+  ASSERT_TRUE(producer_queue_->RemoveBuffer(buffers[2].slot));
+  EXPECT_EQ(kBufferCount - 1, producer_queue_->capacity());
+
+  AllocateBuffer(&slot);
+  ALOGE_IF(TRACE, "ALLOCATE %zu", slot);
+  EXPECT_EQ(buffers[2].slot, slot);
+  EXPECT_EQ(kBufferCount, producer_queue_->capacity());
+
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+
+  // Release the producer buffer to trigger a POLLHUP event for an already
+  // removed buffer.
+  buffers[2].buffer = nullptr;
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+  EXPECT_FALSE(consumer_queue_->HandleQueueEvents());
+  EXPECT_EQ(kBufferCount, consumer_queue_->capacity());
+}
+
 TEST_F(BufferHubQueueTest, TestMultipleConsumers) {
-  ASSERT_TRUE(CreateProducerQueue<void>());
+  // ProducerConfigureBuilder doesn't set Metadata{size}, which means there
+  // is no metadata associated with this BufferQueue's buffer.
+  ASSERT_TRUE(CreateProducerQueue(config_builder_.Build(), UsagePolicy{}));
 
   // Allocate buffers.
   const size_t kBufferCount = 4u;
@@ -226,7 +351,9 @@ struct TestMetadata {
 };
 
 TEST_F(BufferHubQueueTest, TestMetadata) {
-  ASSERT_TRUE(CreateQueues<TestMetadata>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<TestMetadata>().Build(),
+                           UsagePolicy{}));
+
   AllocateBuffer();
 
   std::vector<TestMetadata> ms = {
@@ -252,7 +379,9 @@ TEST_F(BufferHubQueueTest, TestMetadata) {
 }
 
 TEST_F(BufferHubQueueTest, TestMetadataMismatch) {
-  ASSERT_TRUE(CreateQueues<int64_t>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{}));
+
   AllocateBuffer();
 
   int64_t mi = 3;
@@ -271,7 +400,8 @@ TEST_F(BufferHubQueueTest, TestMetadataMismatch) {
 }
 
 TEST_F(BufferHubQueueTest, TestEnqueue) {
-  ASSERT_TRUE(CreateQueues<int64_t>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{}));
   AllocateBuffer();
 
   size_t slot;
@@ -288,7 +418,8 @@ TEST_F(BufferHubQueueTest, TestEnqueue) {
 }
 
 TEST_F(BufferHubQueueTest, TestAllocateBuffer) {
-  ASSERT_TRUE(CreateQueues<int64_t>());
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{}));
 
   size_t s1;
   AllocateBuffer();
@@ -343,16 +474,17 @@ TEST_F(BufferHubQueueTest, TestAllocateBuffer) {
 
 TEST_F(BufferHubQueueTest, TestUsageSetMask) {
   const uint32_t set_mask = GRALLOC_USAGE_SW_WRITE_OFTEN;
-  ASSERT_TRUE(CreateQueues<int64_t>(set_mask, 0, 0, 0));
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{set_mask, 0, 0, 0}));
 
   // When allocation, leave out |set_mask| from usage bits on purpose.
-  size_t slot;
-  int ret = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
-                                            kBufferFormat, kBufferLayerCount,
-                                            kBufferUsage & ~set_mask, &slot);
-  ASSERT_EQ(0, ret);
+  auto status = producer_queue_->AllocateBuffer(
+      kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
+      kBufferUsage & ~set_mask);
+  ASSERT_TRUE(status.ok());
 
   LocalHandle fence;
+  size_t slot;
   auto p1_status = producer_queue_->Dequeue(0, &slot, &fence);
   ASSERT_TRUE(p1_status.ok());
   auto p1 = p1_status.take();
@@ -361,16 +493,17 @@ TEST_F(BufferHubQueueTest, TestUsageSetMask) {
 
 TEST_F(BufferHubQueueTest, TestUsageClearMask) {
   const uint32_t clear_mask = GRALLOC_USAGE_SW_WRITE_OFTEN;
-  ASSERT_TRUE(CreateQueues<int64_t>(0, clear_mask, 0, 0));
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{0, clear_mask, 0, 0}));
 
   // When allocation, add |clear_mask| into usage bits on purpose.
-  size_t slot;
-  int ret = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
-                                            kBufferLayerCount, kBufferFormat,
-                                            kBufferUsage | clear_mask, &slot);
-  ASSERT_EQ(0, ret);
+  auto status = producer_queue_->AllocateBuffer(
+      kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
+      kBufferUsage | clear_mask);
+  ASSERT_TRUE(status.ok());
 
   LocalHandle fence;
+  size_t slot;
   auto p1_status = producer_queue_->Dequeue(0, &slot, &fence);
   ASSERT_TRUE(p1_status.ok());
   auto p1 = p1_status.take();
@@ -379,40 +512,62 @@ TEST_F(BufferHubQueueTest, TestUsageClearMask) {
 
 TEST_F(BufferHubQueueTest, TestUsageDenySetMask) {
   const uint32_t deny_set_mask = GRALLOC_USAGE_SW_WRITE_OFTEN;
-  ASSERT_TRUE(CreateQueues<int64_t>(0, 0, deny_set_mask, 0));
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{0, 0, deny_set_mask, 0}));
 
   // Now that |deny_set_mask| is illegal, allocation without those bits should
   // be able to succeed.
-  size_t slot;
-  int ret = producer_queue_->AllocateBuffer(
+  auto status = producer_queue_->AllocateBuffer(
       kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
-      kBufferUsage & ~deny_set_mask, &slot);
-  ASSERT_EQ(ret, 0);
+      kBufferUsage & ~deny_set_mask);
+  ASSERT_TRUE(status.ok());
 
   // While allocation with those bits should fail.
-  ret = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
-                                        kBufferLayerCount, kBufferFormat,
-                                        kBufferUsage | deny_set_mask, &slot);
-  ASSERT_EQ(ret, -EINVAL);
+  status = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
+                                           kBufferLayerCount, kBufferFormat,
+                                           kBufferUsage | deny_set_mask);
+  ASSERT_FALSE(status.ok());
+  ASSERT_EQ(EINVAL, status.error());
 }
 
 TEST_F(BufferHubQueueTest, TestUsageDenyClearMask) {
   const uint32_t deny_clear_mask = GRALLOC_USAGE_SW_WRITE_OFTEN;
-  ASSERT_TRUE(CreateQueues<int64_t>(0, 0, 0, deny_clear_mask));
+  ASSERT_TRUE(CreateQueues(config_builder_.SetMetadata<int64_t>().Build(),
+                           UsagePolicy{0, 0, 0, deny_clear_mask}));
 
   // Now that clearing |deny_clear_mask| is illegal (i.e. setting these bits are
   // mandatory), allocation with those bits should be able to succeed.
-  size_t slot;
-  int ret = producer_queue_->AllocateBuffer(
+  auto status = producer_queue_->AllocateBuffer(
       kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
-      kBufferUsage | deny_clear_mask, &slot);
-  ASSERT_EQ(ret, 0);
+      kBufferUsage | deny_clear_mask);
+  ASSERT_TRUE(status.ok());
 
   // While allocation without those bits should fail.
-  ret = producer_queue_->AllocateBuffer(kBufferWidth, kBufferHeight,
-                                        kBufferLayerCount, kBufferFormat,
-                                        kBufferUsage & ~deny_clear_mask, &slot);
-  ASSERT_EQ(ret, -EINVAL);
+  status = producer_queue_->AllocateBuffer(
+      kBufferWidth, kBufferHeight, kBufferLayerCount, kBufferFormat,
+      kBufferUsage & ~deny_clear_mask);
+  ASSERT_FALSE(status.ok());
+  ASSERT_EQ(EINVAL, status.error());
+}
+
+TEST_F(BufferHubQueueTest, TestQueueInfo) {
+  static const bool kIsAsync = true;
+  ASSERT_TRUE(CreateQueues(config_builder_.SetIsAsync(kIsAsync)
+                               .SetDefaultWidth(kBufferWidth)
+                               .SetDefaultHeight(kBufferHeight)
+                               .SetDefaultFormat(kBufferFormat)
+                               .Build(),
+                           UsagePolicy{}));
+
+  EXPECT_EQ(producer_queue_->default_width(), kBufferWidth);
+  EXPECT_EQ(producer_queue_->default_height(), kBufferHeight);
+  EXPECT_EQ(producer_queue_->default_format(), kBufferFormat);
+  EXPECT_EQ(producer_queue_->is_async(), kIsAsync);
+
+  EXPECT_EQ(consumer_queue_->default_width(), kBufferWidth);
+  EXPECT_EQ(consumer_queue_->default_height(), kBufferHeight);
+  EXPECT_EQ(consumer_queue_->default_format(), kBufferFormat);
+  EXPECT_EQ(consumer_queue_->is_async(), kIsAsync);
 }
 
 }  // namespace

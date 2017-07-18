@@ -5,6 +5,7 @@
 #include "DisplayHardware/ComposerHal.h"
 #include "hwc_types.h"
 
+#include <dvr/dvr_shared_buffers.h>
 #include <hardware/gralloc.h>
 #include <log/log.h>
 
@@ -16,10 +17,12 @@
 #include <tuple>
 #include <vector>
 
-#include <dvr/pose_client.h>
+#include <dvr/dvr_config.h>
+#include <dvr/dvr_vsync.h>
 #include <pdx/file_handle.h>
 #include <pdx/rpc/variant.h>
 #include <private/dvr/buffer_hub_client.h>
+#include <private/dvr/shared_buffer_helpers.h>
 
 #include "acquired_buffer.h"
 #include "display_surface.h"
@@ -124,9 +127,18 @@ class Layer {
     int surface_id = -1;
     pdx::rpc::IfAnyOf<SourceSurface>::Call(
         &source_, [&surface_id](const SourceSurface& surface_source) {
-          surface_id = surface_source.surface->surface_id();
+          surface_id = surface_source.GetSurfaceId();
         });
     return surface_id;
+  }
+
+  int GetBufferId() const {
+    int buffer_id = -1;
+    pdx::rpc::IfAnyOf<SourceSurface>::Call(
+        &source_, [&buffer_id](const SourceSurface& surface_source) {
+          buffer_id = surface_source.GetBufferId();
+        });
+    return buffer_id;
   }
 
  private:
@@ -189,7 +201,15 @@ class Layer {
     }
 
     // Returns the surface id of the surface.
-    int GetSurfaceId() { return surface->surface_id(); }
+    int GetSurfaceId() const { return surface->surface_id(); }
+
+    // Returns the buffer id for the current buffer.
+    int GetBufferId() const {
+      if (acquired_buffer.IsAvailable())
+        return acquired_buffer.buffer()->id();
+      else
+        return -1;
+    }
   };
 
   // State when the layer is connected to a buffer. Provides the same interface
@@ -210,6 +230,7 @@ class Layer {
     IonBuffer* GetBuffer() { return buffer.get(); }
 
     int GetSurfaceId() const { return -1; }
+    int GetBufferId() const { return -1; }
   };
 
   // The underlying hardware composer layer is supplied buffers either from a
@@ -283,6 +304,9 @@ class HardwareComposer {
   // Sets the display surfaces to compose the hardware layer stack.
   void SetDisplaySurfaces(
       std::vector<std::shared_ptr<DirectDisplaySurface>> surfaces);
+
+  int OnNewGlobalBuffer(DvrGlobalBufferKey key, IonBuffer& ion_buffer);
+  void OnDeletedGlobalBuffer(DvrGlobalBufferKey key);
 
   void OnHardwareComposerRefresh();
 
@@ -365,6 +389,13 @@ class HardwareComposer {
   // Called on the post thread when the post thread is paused or quits.
   void OnPostThreadPaused();
 
+  // Map the given shared memory buffer to our broadcast ring to track updates
+  // to the config parameters.
+  int MapConfigBuffer(IonBuffer& ion_buffer);
+  void ConfigBufferDeleted();
+  // Poll for config udpates.
+  void UpdateConfigBuffer();
+
   bool initialized_;
 
   // Hardware composer HAL device from SurfaceFlinger. VrFlinger does not own
@@ -435,9 +466,15 @@ class HardwareComposer {
   // us to detect when the display driver begins queuing frames.
   std::vector<pdx::LocalHandle> retire_fence_fds_;
 
-  // Pose client for frame count notifications. Pose client predicts poses
-  // out to display frame boundaries, so we need to tell it about vsyncs.
-  DvrPose* pose_client_ = nullptr;
+  // If we are publishing vsync data, we will put it here.
+  std::unique_ptr<CPUMappedBroadcastRing<DvrVsyncRing>> vsync_ring_;
+
+  // Broadcast ring for receiving config data from the DisplayManager.
+  DvrConfigRing shared_config_ring_;
+  uint32_t shared_config_ring_sequence_{0};
+  // Config buffer for reading from the post thread.
+  DvrConfig post_thread_config_;
+  std::mutex shared_config_mutex_;
 
   static constexpr int kPostThreadInterrupted = 1;
 

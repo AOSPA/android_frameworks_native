@@ -19,12 +19,14 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <sstream>
+#include <string>
+#include <tuple>
 
 #include <dvr/dvr_display_types.h>
 #include <dvr/performance_client_api.h>
 #include <private/dvr/clock_ns.h>
 #include <private/dvr/ion_buffer.h>
-#include <private/dvr/pose_client_internal.h>
 
 using android::pdx::LocalHandle;
 using android::pdx::rpc::EmptyVariant;
@@ -36,17 +38,6 @@ namespace android {
 namespace dvr {
 
 namespace {
-
-// If the number of pending fences goes over this count at the point when we
-// are about to submit a new frame to HWC, we will drop the frame. This should
-// be a signal that the display driver has begun queuing frames. Note that with
-// smart displays (with RAM), the fence is signaled earlier than the next vsync,
-// at the point when the DMA to the display completes. Currently we use a smart
-// display and the EDS timing coincides with zero pending fences, so this is 0.
-constexpr int kAllowedPendingFenceCount = 0;
-
-// Offset before vsync to submit frames to hardware composer.
-constexpr int64_t kFramePostOffsetNs = 4000000;  // 4ms
 
 const char kBacklightBrightnessSysFile[] =
     "/sys/class/leds/lcd-backlight/brightness";
@@ -221,10 +212,6 @@ void HardwareComposer::UpdatePostThreadState(PostThreadStateType state,
 void HardwareComposer::OnPostThreadResumed() {
   hwc2_hidl_->resetCommands();
 
-  // Connect to pose service.
-  pose_client_ = dvrPoseCreate();
-  ALOGE_IF(!pose_client_, "HardwareComposer: Failed to create pose client");
-
   // HIDL HWC seems to have an internal race condition. If we submit a frame too
   // soon after turning on VSync we don't get any VSync signals. Give poor HWC
   // implementations a chance to enable VSync before we continue.
@@ -252,11 +239,6 @@ void HardwareComposer::OnPostThreadPaused() {
     layers_[i].Reset();
   }
   active_layer_count_ = 0;
-
-  if (pose_client_) {
-    dvrPoseDestroy(pose_client_);
-    pose_client_ = nullptr;
-  }
 
   EnableVsync(false);
 
@@ -367,7 +349,36 @@ HWC::Error HardwareComposer::GetDisplayMetrics(
   return HWC::Error::None;
 }
 
-std::string HardwareComposer::Dump() { return hwc2_hidl_->dumpDebugInfo(); }
+std::string HardwareComposer::Dump() {
+  std::unique_lock<std::mutex> lock(post_thread_mutex_);
+  std::ostringstream stream;
+
+  stream << "Display metrics:     " << display_metrics_.width << "x"
+         << display_metrics_.height << " " << (display_metrics_.dpi.x / 1000.0)
+         << "x" << (display_metrics_.dpi.y / 1000.0) << " dpi @ "
+         << (1000000000.0 / display_metrics_.vsync_period_ns) << " Hz"
+         << std::endl;
+
+  stream << "Post thread resumed: " << post_thread_resumed_ << std::endl;
+  stream << "Active layers:       " << active_layer_count_ << std::endl;
+  stream << std::endl;
+
+  for (size_t i = 0; i < active_layer_count_; i++) {
+    stream << "Layer " << i << ":";
+    stream << " type=" << layers_[i].GetCompositionType().to_string();
+    stream << " surface_id=" << layers_[i].GetSurfaceId();
+    stream << " buffer_id=" << layers_[i].GetBufferId();
+    stream << std::endl;
+  }
+  stream << std::endl;
+
+  if (post_thread_resumed_) {
+    stream << "Hardware Composer Debug Info:" << std::endl;
+    stream << hwc2_hidl_->dumpDebugInfo();
+  }
+
+  return stream.str();
+}
 
 void HardwareComposer::PostLayers() {
   ATRACE_NAME("HardwareComposer::PostLayers");
@@ -397,8 +408,8 @@ void HardwareComposer::PostLayers() {
   }
 
   const bool is_frame_pending = IsFramePendingInDriver();
-  const bool is_fence_pending =
-      retire_fence_fds_.size() > kAllowedPendingFenceCount;
+  const bool is_fence_pending = static_cast<int32_t>(retire_fence_fds_.size()) >
+                                post_thread_config_.allowed_pending_fence_count;
 
   if (is_fence_pending || is_frame_pending) {
     ATRACE_INT("frame_skip_count", ++frame_skip_count_);
@@ -418,10 +429,12 @@ void HardwareComposer::PostLayers() {
     ATRACE_INT("frame_skip_count", 0);
   }
 
-#if TRACE
-  for (size_t i = 0; i < active_layer_count_; i++)
-    ALOGI("HardwareComposer::PostLayers: layer=%zu composition=%s", i,
+#if TRACE > 1
+  for (size_t i = 0; i < active_layer_count_; i++) {
+    ALOGI("HardwareComposer::PostLayers: layer=%zu buffer_id=%d composition=%s",
+          i, layers_[i].GetBufferId(),
           layers_[i].GetCompositionType().to_string().c_str());
+  }
 #endif
 
   error = Present(HWC_DISPLAY_PRIMARY);
@@ -460,19 +473,76 @@ void HardwareComposer::SetDisplaySurfaces(
     pending_surfaces_ = std::move(surfaces);
   }
 
-  // Set idle state based on whether there are any surfaces to handle.
-  UpdatePostThreadState(PostThreadState::Idle, display_idle);
-
-  // XXX: TEMPORARY
-  // Request control of the display based on whether there are any surfaces to
-  // handle. This callback sets the post thread active state once the transition
-  // is complete in SurfaceFlinger.
-  // TODO(eieio): Unify the control signal used to move SurfaceFlinger into VR
-  // mode. Currently this is hooked up to persistent VR mode, but perhaps this
-  // makes more sense to control it from VrCore, which could in turn base its
-  // decision on persistent VR mode.
   if (request_display_callback_)
     request_display_callback_(!display_idle);
+
+  // Set idle state based on whether there are any surfaces to handle.
+  UpdatePostThreadState(PostThreadState::Idle, display_idle);
+}
+
+int HardwareComposer::OnNewGlobalBuffer(DvrGlobalBufferKey key,
+                                        IonBuffer& ion_buffer) {
+  if (key == DvrGlobalBuffers::kVsyncBuffer) {
+    vsync_ring_ = std::make_unique<CPUMappedBroadcastRing<DvrVsyncRing>>(
+        &ion_buffer, CPUUsageMode::WRITE_OFTEN);
+
+    if (vsync_ring_->IsMapped() == false) {
+      return -EPERM;
+    }
+  }
+
+  if (key == DvrGlobalBuffers::kVrFlingerConfigBufferKey) {
+    return MapConfigBuffer(ion_buffer);
+  }
+
+  return 0;
+}
+
+void HardwareComposer::OnDeletedGlobalBuffer(DvrGlobalBufferKey key) {
+  if (key == DvrGlobalBuffers::kVrFlingerConfigBufferKey) {
+    ConfigBufferDeleted();
+  }
+}
+
+int HardwareComposer::MapConfigBuffer(IonBuffer& ion_buffer) {
+  std::lock_guard<std::mutex> lock(shared_config_mutex_);
+  shared_config_ring_ = DvrConfigRing();
+
+  if (ion_buffer.width() < DvrConfigRing::MemorySize()) {
+    ALOGE("HardwareComposer::MapConfigBuffer: invalid buffer size.");
+    return -EINVAL;
+  }
+
+  void* buffer_base = 0;
+  int result = ion_buffer.Lock(ion_buffer.usage(), 0, 0, ion_buffer.width(),
+                               ion_buffer.height(), &buffer_base);
+  if (result != 0) {
+    ALOGE(
+        "HardwareComposer::MapConfigBuffer: Failed to map vrflinger config "
+        "buffer.");
+    return -EPERM;
+  }
+
+  shared_config_ring_ = DvrConfigRing::Create(buffer_base, ion_buffer.width());
+  ion_buffer.Unlock();
+
+  return 0;
+}
+
+void HardwareComposer::ConfigBufferDeleted() {
+  std::lock_guard<std::mutex> lock(shared_config_mutex_);
+  shared_config_ring_ = DvrConfigRing();
+}
+
+void HardwareComposer::UpdateConfigBuffer() {
+  std::lock_guard<std::mutex> lock(shared_config_mutex_);
+  if (!shared_config_ring_.is_valid())
+    return;
+  // Copy from latest record in shared_config_ring_ to local copy.
+  DvrConfig record;
+  if (shared_config_ring_.GetNewest(&shared_config_ring_sequence_, &record)) {
+    post_thread_config_ = record;
+  }
 }
 
 int HardwareComposer::PostThreadPollInterruptible(
@@ -744,6 +814,9 @@ void HardwareComposer::PostThread() {
   while (1) {
     ATRACE_NAME("HardwareComposer::PostThread");
 
+    // Check for updated config once per vsync.
+    UpdateConfigBuffer();
+
     while (post_thread_quiescent_) {
       std::unique_lock<std::mutex> lock(post_thread_mutex_);
       ALOGI("HardwareComposer::PostThread: Entering quiescent state.");
@@ -801,15 +874,19 @@ void HardwareComposer::PostThread() {
 
     ++vsync_count_;
 
-    if (pose_client_) {
-      // Signal the pose service with vsync info.
-      // Display timestamp is in the middle of scanout.
-      privateDvrPoseNotifyVsync(pose_client_, vsync_count_,
-                                vsync_timestamp + photon_offset_ns,
-                                ns_per_frame, right_eye_photon_offset_ns);
-    }
-
     const bool layer_config_changed = UpdateLayerConfig();
+
+    // Publish the vsync event.
+    if (vsync_ring_) {
+      DvrVsync vsync;
+      vsync.vsync_count = vsync_count_;
+      vsync.vsync_timestamp_ns = vsync_timestamp;
+      vsync.vsync_left_eye_offset_ns = photon_offset_ns;
+      vsync.vsync_right_eye_offset_ns = right_eye_photon_offset_ns;
+      vsync.vsync_period_ns = ns_per_frame;
+
+      vsync_ring_->Publish(vsync);
+    }
 
     // Signal all of the vsync clients. Because absolute time is used for the
     // wakeup time below, this can take a little time if necessary.
@@ -823,9 +900,10 @@ void HardwareComposer::PostThread() {
 
       const int64_t display_time_est_ns = vsync_timestamp + ns_per_frame;
       const int64_t now_ns = GetSystemClockNs();
-      const int64_t sleep_time_ns =
-          display_time_est_ns - now_ns - kFramePostOffsetNs;
-      const int64_t wakeup_time_ns = display_time_est_ns - kFramePostOffsetNs;
+      const int64_t sleep_time_ns = display_time_est_ns - now_ns -
+                                    post_thread_config_.frame_post_offset_ns;
+      const int64_t wakeup_time_ns =
+          display_time_est_ns - post_thread_config_.frame_post_offset_ns;
 
       ATRACE_INT64("sleep_time_ns", sleep_time_ns);
       if (sleep_time_ns > 0) {

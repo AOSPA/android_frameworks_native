@@ -107,7 +107,7 @@ private:
     virtual status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers);
     virtual status_t setAsyncMode(bool async);
     virtual status_t dequeueBuffer(int* pslot, sp<Fence>* fence, uint32_t w,
-            uint32_t h, PixelFormat format, uint32_t usage,
+            uint32_t h, PixelFormat format, uint64_t usage,
             FrameEventHistoryDelta *outTimestamps);
     virtual status_t detachBuffer(int slot);
     virtual status_t detachNextBuffer(sp<GraphicBuffer>* outBuffer,
@@ -122,7 +122,7 @@ private:
     virtual status_t disconnect(int api, DisconnectMode mode);
     virtual status_t setSidebandStream(const sp<NativeHandle>& stream);
     virtual void allocateBuffers(uint32_t width, uint32_t height,
-            PixelFormat format, uint32_t usage);
+            PixelFormat format, uint64_t usage);
     virtual status_t allowAllocation(bool allow);
     virtual status_t setGenerationNumber(uint32_t generationNumber);
     virtual String8 getConsumerName() const override;
@@ -138,7 +138,7 @@ private:
     // Utility methods
     //
     static Source fbSourceForCompositionType(CompositionType type);
-    status_t dequeueBuffer(Source source, PixelFormat format, uint32_t usage,
+    status_t dequeueBuffer(Source source, PixelFormat format, uint64_t usage,
             int* sslot, sp<Fence>* fence);
     void updateQueueBufferOutput(QueueBufferOutput&& qbo);
     void resetPerFrameState();
@@ -171,7 +171,7 @@ private:
     // the composition type changes or the GLES driver starts requesting
     // different usage/format, we'll get a new buffer.
     uint32_t mOutputFormat;
-    uint32_t mOutputUsage;
+    uint64_t mOutputUsage;
 
     // Since we present a single producer interface to the GLES driver, but
     // are internally muxing between the sink and scratch producers, we have

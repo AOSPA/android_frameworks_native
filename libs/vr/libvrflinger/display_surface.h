@@ -66,7 +66,7 @@ class DisplaySurface : public pdx::Channel {
   }
 
   virtual pdx::Status<pdx::LocalChannelHandle> OnCreateQueue(
-      pdx::Message& message, size_t meta_size_bytes) = 0;
+      pdx::Message& message, const ProducerQueueConfig& config) = 0;
 
   // Registers a consumer queue with the event dispatcher in DisplayService. The
   // OnQueueEvent callback below is called to handle queue events.
@@ -129,7 +129,7 @@ class ApplicationDisplaySurface : public DisplaySurface {
 
  private:
   pdx::Status<pdx::LocalChannelHandle> OnCreateQueue(
-      pdx::Message& message, size_t meta_size_bytes) override;
+      pdx::Message& message, const ProducerQueueConfig& config) override;
   void OnQueueEvent(const std::shared_ptr<ConsumerQueue>& consumer_queue,
                     int events) override;
 
@@ -144,6 +144,7 @@ class DirectDisplaySurface : public DisplaySurface {
       : DisplaySurface(service, SurfaceType::Direct, surface_id, process_id,
                        user_id, attributes),
         acquired_buffers_(kMaxPostedBuffers) {}
+  std::vector<int32_t> GetQueueIds() const override;
   bool IsBufferAvailable();
   bool IsBufferPosted();
   AcquiredBuffer AcquireCurrentBuffer();
@@ -154,7 +155,7 @@ class DirectDisplaySurface : public DisplaySurface {
 
  private:
   pdx::Status<pdx::LocalChannelHandle> OnCreateQueue(
-      pdx::Message& message, size_t meta_size_bytes) override;
+      pdx::Message& message, const ProducerQueueConfig& config) override;
   void OnQueueEvent(const std::shared_ptr<ConsumerQueue>& consumer_queue,
                     int events) override;
 

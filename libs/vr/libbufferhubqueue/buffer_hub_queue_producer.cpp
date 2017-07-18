@@ -3,6 +3,7 @@
 #include <dvr/dvr_api.h>
 #include <inttypes.h>
 #include <log/log.h>
+#include <system/window.h>
 
 namespace android {
 namespace dvr {
@@ -10,7 +11,10 @@ namespace dvr {
 /* static */
 sp<BufferHubQueueProducer> BufferHubQueueProducer::Create() {
   sp<BufferHubQueueProducer> producer = new BufferHubQueueProducer;
-  producer->queue_ = ProducerQueue::Create<DvrNativeBufferMetadata>();
+  auto config = ProducerQueueConfigBuilder()
+                    .SetMetadata<DvrNativeBufferMetadata>()
+                    .Build();
+  producer->queue_ = ProducerQueue::Create(config, UsagePolicy{});
   return producer;
 }
 
@@ -127,9 +131,9 @@ status_t BufferHubQueueProducer::setAsyncMode(bool async) {
 
 status_t BufferHubQueueProducer::dequeueBuffer(
     int* out_slot, sp<Fence>* out_fence, uint32_t width, uint32_t height,
-    PixelFormat format, uint32_t usage,
+    PixelFormat format, uint64_t usage,
     FrameEventHistoryDelta* /* out_timestamps */) {
-  ALOGD_IF(TRACE, "dequeueBuffer: w=%u, h=%u, format=%d, usage=%u", width,
+  ALOGD_IF(TRACE, "dequeueBuffer: w=%u, h=%u, format=%d, usage=%" PRIu64, width,
            height, format, usage);
 
   status_t ret;
@@ -158,6 +162,8 @@ status_t BufferHubQueueProducer::dequeueBuffer(
   for (size_t retry = 0; retry < BufferHubQueue::kMaxQueueCapacity; retry++) {
     LocalHandle fence;
     auto buffer_status = queue_->Dequeue(dequeue_timeout_ms_, &slot, &fence);
+    if (!buffer_status)
+      return NO_MEMORY;
 
     buffer_producer = buffer_status.take();
     if (!buffer_producer)
@@ -526,7 +532,7 @@ status_t BufferHubQueueProducer::setSidebandStream(
 void BufferHubQueueProducer::allocateBuffers(uint32_t /* width */,
                                              uint32_t /* height */,
                                              PixelFormat /* format */,
-                                             uint32_t /* usage */) {
+                                             uint64_t /* usage */) {
   // TODO(jwcai) |allocateBuffers| aims to preallocate up to the maximum number
   // of buffers permitted by the current BufferQueue configuration (aka
   // |max_buffer_count_|).
@@ -606,14 +612,16 @@ status_t BufferHubQueueProducer::AllocateBuffer(uint32_t width, uint32_t height,
                                                 uint32_t layer_count,
                                                 PixelFormat format,
                                                 uint64_t usage) {
-  size_t slot;
-
-  if (queue_->AllocateBuffer(width, height, layer_count, format, usage, &slot) <
-      0) {
-    ALOGE("Failed to allocate new buffer in BufferHub.");
+  auto status =
+      queue_->AllocateBuffer(width, height, layer_count, format, usage);
+  if (!status) {
+    ALOGE(
+        "BufferHubQueueProducer::AllocateBuffer: Failed to allocate buffer: %s",
+        status.GetErrorMessage().c_str());
     return NO_MEMORY;
   }
 
+  size_t slot = status.get();
   auto buffer_producer = queue_->GetBuffer(slot);
 
   LOG_ALWAYS_FATAL_IF(buffer_producer == nullptr,
@@ -625,11 +633,11 @@ status_t BufferHubQueueProducer::AllocateBuffer(uint32_t width, uint32_t height,
 }
 
 status_t BufferHubQueueProducer::RemoveBuffer(size_t slot) {
-  int ret = queue_->DetachBuffer(slot);
-  if (ret < 0) {
-    ALOGE("BufferHubQueueProducer::RemoveBuffer failed through RPC, ret=%s",
-          strerror(-ret));
-    return ret;
+  auto status = queue_->RemoveBuffer(slot);
+  if (!status) {
+    ALOGE("BufferHubQueueProducer::RemoveBuffer: Failed to remove buffer: %s",
+          status.GetErrorMessage().c_str());
+    return INVALID_OPERATION;
   }
 
   // Reset in memory objects related the the buffer.

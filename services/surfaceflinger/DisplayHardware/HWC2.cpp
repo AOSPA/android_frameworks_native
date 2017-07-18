@@ -901,6 +901,10 @@ Error Layer::setAnimating(bool enable)
 
 Error Layer::setDataspace(android_dataspace_t dataspace)
 {
+    if (dataspace == mDataSpace) {
+        return Error::None;
+    }
+    mDataSpace = dataspace;
     auto intDataspace = static_cast<Hwc2::Dataspace>(dataspace);
     auto intError = mDevice.mComposer->setLayerDataspace(mDisplayId,
             mId, intDataspace);

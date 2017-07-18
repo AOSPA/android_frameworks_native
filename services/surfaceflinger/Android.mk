@@ -49,6 +49,7 @@ LOCAL_C_INCLUDES := \
     frameworks/native/vulkan/include \
     external/vulkan-validation-layers/libs/vkjson \
     system/libhwbinder/fast_msgq/include \
+    frameworks/native/libs/nativewindow/include \
 
 LOCAL_CFLAGS := -DLOG_TAG=\"SurfaceFlinger\"
 

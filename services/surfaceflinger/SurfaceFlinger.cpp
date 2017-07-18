@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <algorithm>
 #include <errno.h>
 #include <math.h>
 #include <mutex>
@@ -226,6 +227,9 @@ SurfaceFlinger::SurfaceFlinger()
     property_get("ro.sf.disable_triple_buffer", value, "1");
     mLayerTripleBufferingDisabled = atoi(value);
     ALOGI_IF(mLayerTripleBufferingDisabled, "Disabling Triple Buffering");
+
+    property_get("persist.sys.sf.color_saturation", value, "1.0");
+    mSaturation = atof(value);
 }
 
 void SurfaceFlinger::onFirstRef()
@@ -562,7 +566,8 @@ void SurfaceFlinger::init() {
 
         // Get a RenderEngine for the given display / config (can't fail)
         mRenderEngine = RenderEngine::create(mEGLDisplay,
-                HAL_PIXEL_FORMAT_RGBA_8888);
+                HAL_PIXEL_FORMAT_RGBA_8888,
+                hasWideColorDisplay ? RenderEngine::WIDE_COLOR_SUPPORT : 0);
     }
 
     // Drop the state lock while we initialize the hardware composer. We drop
@@ -1321,11 +1326,21 @@ void SurfaceFlinger::updateVrFlinger() {
     // parts of this class rely on the primary display always being available.
     createDefaultDisplayDevice();
 
-    // Reset the timing values to account for the period of the swapped in HWC
-    const auto& activeConfig = mHwc->getActiveConfig(HWC_DISPLAY_PRIMARY);
-    const nsecs_t period = activeConfig->getVsyncPeriod();
-    mAnimFrameTracker.setDisplayRefreshPeriod(period);
-    setCompositorTimingSnapped(0, period, 0);
+    // Re-enable default display.
+    sp<LambdaMessage> requestMessage = new LambdaMessage([&]() {
+        sp<DisplayDevice> hw(getDisplayDevice(mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY]));
+        setPowerModeInternal(hw, HWC_POWER_MODE_NORMAL);
+
+        // Reset the timing values to account for the period of the swapped in HWC
+        const auto& activeConfig = mHwc->getActiveConfig(HWC_DISPLAY_PRIMARY);
+        const nsecs_t period = activeConfig->getVsyncPeriod();
+        mAnimFrameTracker.setDisplayRefreshPeriod(period);
+
+        // Use phase of 0 since phase is not known.
+        // Use latency of 0, which will snap to the ideal latency.
+        setCompositorTimingSnapped(0, period, 0);
+    });
+    postMessageAsync(requestMessage);
 
     android_atomic_or(1, &mRepaintEverything);
     setTransactionFlags(eDisplayTransactionNeeded);
@@ -1341,7 +1356,6 @@ void SurfaceFlinger::onMessageReceived(int32_t what) {
                             Fence::SIGNAL_TIME_PENDING);
             ATRACE_INT("FrameMissed", static_cast<int>(frameMissed));
             if (mPropagateBackpressure && frameMissed) {
-                ALOGD("Backpressure trigger, skipping transaction & refresh!");
                 signalLayerUpdate();
                 break;
             }
@@ -1541,6 +1555,7 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     // |mStateLock| not needed as we are on the main thread
     const sp<const DisplayDevice> hw(getDefaultDisplayDeviceLocked());
 
+    mGlCompositionDoneTimeline.updateSignalTimes();
     std::shared_ptr<FenceTime> glCompositionDoneFenceTime;
     if (mHwc->hasClientComposition(HWC_DISPLAY_PRIMARY)) {
         glCompositionDoneFenceTime =
@@ -1549,12 +1564,11 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     } else {
         glCompositionDoneFenceTime = FenceTime::NO_FENCE;
     }
-    mGlCompositionDoneTimeline.updateSignalTimes();
 
+    mDisplayTimeline.updateSignalTimes();
     sp<Fence> presentFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
     auto presentFenceTime = std::make_shared<FenceTime>(presentFence);
     mDisplayTimeline.push(presentFenceTime);
-    mDisplayTimeline.updateSignalTimes();
 
     nsecs_t vsyncPhase = mPrimaryDispSync.computeNextRefresh(0);
     nsecs_t vsyncInterval = mPrimaryDispSync.getPeriod();
@@ -1579,8 +1593,8 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
         }
     });
 
-    if (presentFence->isValid()) {
-        if (mPrimaryDispSync.addPresentFence(presentFence)) {
+    if (presentFenceTime->isValid()) {
+        if (mPrimaryDispSync.addPresentFence(presentFenceTime)) {
             enableHardwareVsync();
         } else {
             disableHardwareVsync(false);
@@ -1688,9 +1702,25 @@ void SurfaceFlinger::rebuildLayerStacks() {
     }
 }
 
+mat4 SurfaceFlinger::computeSaturationMatrix() const {
+    if (mSaturation == 1.0f) {
+        return mat4();
+    }
+
+    // Rec.709 luma coefficients
+    float3 luminance{0.213f, 0.715f, 0.072f};
+    luminance *= 1.0f - mSaturation;
+    return mat4(
+        vec4{luminance.r + mSaturation, luminance.r, luminance.r, 0.0f},
+        vec4{luminance.g, luminance.g + mSaturation, luminance.g, 0.0f},
+        vec4{luminance.b, luminance.b, luminance.b + mSaturation, 0.0f},
+        vec4{0.0f, 0.0f, 0.0f, 1.0f}
+    );
+}
+
 // pickColorMode translates a given dataspace into the best available color mode.
 // Currently only support sRGB and Display-P3.
-android_color_mode SurfaceFlinger::pickColorMode(android_dataspace dataSpace) {
+android_color_mode SurfaceFlinger::pickColorMode(android_dataspace dataSpace) const {
     switch (dataSpace) {
         // treat Unknown as regular SRGB buffer, since that's what the rest of the
         // system expects.
@@ -1713,11 +1743,19 @@ android_color_mode SurfaceFlinger::pickColorMode(android_dataspace dataSpace) {
     }
 }
 
-android_dataspace SurfaceFlinger::bestTargetDataSpace(android_dataspace a, android_dataspace b) {
+android_dataspace SurfaceFlinger::bestTargetDataSpace(
+        android_dataspace a, android_dataspace b) const {
     // Only support sRGB and Display-P3 right now.
     if (a == HAL_DATASPACE_DISPLAY_P3 || b == HAL_DATASPACE_DISPLAY_P3) {
         return HAL_DATASPACE_DISPLAY_P3;
     }
+    if (a == HAL_DATASPACE_V0_SCRGB_LINEAR || b == HAL_DATASPACE_V0_SCRGB_LINEAR) {
+        return HAL_DATASPACE_DISPLAY_P3;
+    }
+    if (a == HAL_DATASPACE_V0_SCRGB || b == HAL_DATASPACE_V0_SCRGB) {
+        return HAL_DATASPACE_DISPLAY_P3;
+    }
+
     return HAL_DATASPACE_V0_SRGB;
 }
 
@@ -1785,7 +1823,7 @@ void SurfaceFlinger::setUpHWComposer() {
     }
 
 
-    mat4 colorMatrix = mColorMatrix * mDaltonizer();
+    mat4 colorMatrix = mColorMatrix * computeSaturationMatrix() * mDaltonizer();
 
     // Set the per-frame data
     for (size_t displayId = 0; displayId < mDisplays.size(); ++displayId) {
@@ -2444,7 +2482,7 @@ bool SurfaceFlinger::handlePageFlip()
         const Region dirty(layer->latchBuffer(visibleRegions, latchTime));
         layer->useSurfaceDamage();
         invalidateLayerStack(layer->getLayerStack(), dirty);
-        if (!dirty.isEmpty()) {
+        if (layer->isBufferLatched()) {
             newDataLatched = true;
         }
     }
@@ -2454,7 +2492,7 @@ bool SurfaceFlinger::handlePageFlip()
     // If we will need to wake up at some time in the future to deal with a
     // queued frame that shouldn't be displayed during this vsync period, wake
     // up during the next vsync period to check again.
-    if (frameQueued && mLayersWithQueuedFrames.empty()) {
+    if (frameQueued && (mLayersWithQueuedFrames.empty() || !newDataLatched)) {
         signalLayerUpdate();
     }
 
@@ -2538,8 +2576,8 @@ bool SurfaceFlinger::doComposeSurfaces(
         ALOGV("hasClientComposition");
 
 #ifdef USE_HWC2
-        mRenderEngine->setColorMode(displayDevice->getActiveColorMode());
         mRenderEngine->setWideColor(displayDevice->getWideColorSupport());
+        mRenderEngine->setColorMode(displayDevice->getActiveColorMode());
 #endif
         if (!displayDevice->makeCurrent(mEGLDisplay, mEGLContext)) {
             ALOGW("DisplayDevice::makeCurrent failed. Aborting surface composition for display %s",
@@ -2682,6 +2720,8 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client,
     {
         Mutex::Autolock _l(mStateLock);
         if (mNumLayers >= MAX_LAYERS) {
+            ALOGE("AddClientLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers,
+                  MAX_LAYERS);
             return NO_MEMORY;
         }
         if (parent == nullptr) {
@@ -3239,7 +3279,8 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
     if (currentMode == HWC_POWER_MODE_OFF) {
         // Turn on the display
         getHwComposer().setPowerMode(type, mode);
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (type == DisplayDevice::DISPLAY_PRIMARY &&
+            mode != HWC_POWER_MODE_DOZE_SUSPEND) {
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenAcquired();
             resyncToHardwareVsync(true);
@@ -3271,7 +3312,25 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
         getHwComposer().setPowerMode(type, mode);
         mVisibleRegionsDirty = true;
         // from this point on, SF will stop drawing on this display
+    } else if (mode == HWC_POWER_MODE_DOZE ||
+               mode == HWC_POWER_MODE_NORMAL) {
+        // Update display while dozing
+        getHwComposer().setPowerMode(type, mode);
+        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+            // FIXME: eventthread only knows about the main display right now
+            mEventThread->onScreenAcquired();
+            resyncToHardwareVsync(true);
+        }
+    } else if (mode == HWC_POWER_MODE_DOZE_SUSPEND) {
+        // Leave display going to doze
+        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+            disableHardwareVsync(true); // also cancels any in-progress resync
+            // FIXME: eventthread only knows about the main display right now
+            mEventThread->onScreenReleased();
+        }
+        getHwComposer().setPowerMode(type, mode);
     } else {
+        ALOGE("Attempting to set unknown power mode: %d\n", mode);
         getHwComposer().setPowerMode(type, mode);
     }
 }
@@ -3740,6 +3799,15 @@ void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
      */
     const GraphicBufferAllocator& alloc(GraphicBufferAllocator::get());
     alloc.dump(result);
+
+    /*
+     * Dump VrFlinger state if in use.
+     */
+    if (mVrFlingerRequestsDisplay && mVrFlinger) {
+        result.append("VrFlinger state:\n");
+        result.append(mVrFlinger->Dump().c_str());
+        result.append("\n");
+    }
 }
 
 const Vector< sp<Layer> >&
@@ -3838,10 +3906,11 @@ status_t SurfaceFlinger::onTransact(
     status_t err = BnSurfaceComposer::onTransact(code, data, reply, flags);
     if (err == UNKNOWN_TRANSACTION || err == PERMISSION_DENIED) {
         CHECK_INTERFACE(ISurfaceComposer, data, reply);
-        if (CC_UNLIKELY(!PermissionCache::checkCallingPermission(sHardwareTest))) {
-            IPCThreadState* ipc = IPCThreadState::self();
+        IPCThreadState* ipc = IPCThreadState::self();
+        const int uid = ipc->getCallingUid();
+        if (CC_UNLIKELY(uid != AID_SYSTEM
+                && !PermissionCache::checkCallingPermission(sHardwareTest))) {
             const int pid = ipc->getCallingPid();
-            const int uid = ipc->getCallingUid();
             ALOGE("Permission Denial: "
                     "can't access SurfaceFlinger pid=%d, uid=%d", pid, uid);
             return PERMISSION_DENIED;
@@ -3926,9 +3995,7 @@ status_t SurfaceFlinger::onTransact(
                 // apply a color matrix
                 n = data.readInt32();
                 if (n) {
-                    // color matrix is sent as mat3 matrix followed by vec3
-                    // offset, then packed into a mat4 where the last row is
-                    // the offset and extra values are 0
+                    // color matrix is sent as a column-major mat4 matrix
                     for (size_t i = 0 ; i < 4; i++) {
                         for (size_t j = 0; j < 4; j++) {
                             mColorMatrix[i][j] = data.readFloat();
@@ -3937,6 +4004,14 @@ status_t SurfaceFlinger::onTransact(
                 } else {
                     mColorMatrix = mat4();
                 }
+
+                // Check that supplied matrix's last row is {0,0,0,1} so we can avoid
+                // the division by w in the fragment shader
+                float4 lastRow(transpose(mColorMatrix)[3]);
+                if (any(greaterThan(abs(lastRow - float4{0, 0, 0, 1}), float4{1e-4f}))) {
+                    ALOGE("The color transform's last row must be (0, 0, 0, 1)");
+                }
+
                 invalidateHwcGeometry();
                 repaintEverything();
                 return NO_ERROR;
@@ -3978,6 +4053,13 @@ status_t SurfaceFlinger::onTransact(
             case 1021: { // Disable HWC virtual displays
                 n = data.readInt32();
                 mUseHwcVirtualDisplays = !n;
+                return NO_ERROR;
+            }
+            case 1022: { // Set saturation boost
+                mSaturation = std::max(0.0f, std::min(data.readFloat(), 2.0f));
+
+                invalidateHwcGeometry();
+                repaintEverything();
                 return NO_ERROR;
             }
         }
@@ -4243,6 +4325,11 @@ void SurfaceFlinger::renderScreenImplLocked(
         ALOGE("Invalid crop rect: b = %d (> %d)", sourceCrop.bottom, hw_h);
     }
 
+#ifdef USE_HWC2
+     engine.setWideColor(hw->getWideColorSupport());
+     engine.setColorMode(hw->getActiveColorMode());
+#endif
+
     // make sure to clear all GL error flags
     engine.checkErrors();
 
@@ -4381,6 +4468,14 @@ status_t SurfaceFlinger::captureScreenImplLocked(
                         renderScreenImplLocked(
                             hw, sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ, true,
                             useIdentityTransform, rotation);
+
+#ifdef USE_HWC2
+                        if (hasWideColorDisplay) {
+                            native_window_set_buffers_data_space(window,
+                                getRenderEngine().usesWideColor() ?
+                                    HAL_DATASPACE_DISPLAY_P3 : HAL_DATASPACE_V0_SRGB);
+                        }
+#endif
 
                         // Attempt to create a sync khr object that can produce a sync point. If that
                         // isn't available, create a non-dupable sync object in the fallback path and
