@@ -191,7 +191,7 @@ static const char* get_location_from_path(const char* path) {
 static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vdex_fd, int image_fd,
         const char* input_file_name, const char* output_file_name, int swap_fd,
         const char* instruction_set, const char* compiler_filter,
-        bool debuggable, bool post_bootcomplete, int profile_fd, const char* shared_libraries) {
+        bool debuggable, bool post_bootcomplete, int profile_fd, const char* class_loader_context) {
     static const unsigned int MAX_INSTRUCTION_SET_LEN = 7;
 
     if (strlen(instruction_set) >= MAX_INSTRUCTION_SET_LEN) {
@@ -291,6 +291,12 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
     char dex2oat_swap_fd[arraysize("--swap-fd=") + MAX_INT_LEN];
     bool have_dex2oat_image_fd = false;
     char dex2oat_image_fd[arraysize("--app-image-fd=") + MAX_INT_LEN];
+    size_t class_loader_context_size = arraysize("--class-loader-context=") + PKG_PATH_MAX;
+    char class_loader_context_arg[class_loader_context_size];
+    if (class_loader_context != nullptr) {
+        snprintf(class_loader_context_arg, class_loader_context_size, "--class-loader-context=%s",
+            class_loader_context);
+    }
 
     sprintf(zip_fd_arg, "--zip-fd=%d", zip_fd);
     sprintf(zip_location_arg, "--zip-location=%s", relative_input_file_name);
@@ -387,7 +393,7 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
                      + (have_app_image_format ? 1 : 0)
                      + dex2oat_flags_count
                      + (profile_fd == -1 ? 0 : 1)
-                     + (shared_libraries != nullptr ? 4 : 0)
+                     + (class_loader_context != nullptr ? 1 : 0)
                      + (has_base_dir ? 1 : 0)
                      + (have_dex2oat_large_app_threshold ? 1 : 0)];
     int i = 0;
@@ -447,15 +453,13 @@ static void run_dex2oat(int zip_fd, int oat_fd, int input_vdex_fd, int output_vd
     if (profile_fd != -1) {
         argv[i++] = profile_arg;
     }
-    if (shared_libraries != nullptr) {
-        argv[i++] = RUNTIME_ARG;
-        argv[i++] = "-classpath";
-        argv[i++] = RUNTIME_ARG;
-        argv[i++] = shared_libraries;
-    }
     if (has_base_dir) {
         argv[i++] = base_dir;
     }
+    if (class_loader_context != nullptr) {
+        argv[i++] = class_loader_context_arg;
+    }
+
     // Do not add after dex2oat_flags, they should override others for debugging.
     argv[i] = NULL;
 
@@ -1359,7 +1363,7 @@ void update_out_oat_access_times(const char* apk_path, const char* out_oat_path)
 // If this is for a profile guided compilation, profile_was_updated will tell whether or not
 // the profile has changed.
 static void exec_dexoptanalyzer(const std::string& dex_file, const std::string& instruction_set,
-        const std::string& compiler_filter, bool profile_was_updated) {
+        const std::string& compiler_filter, bool profile_was_updated, bool downgrade) {
     static const char* DEXOPTANALYZER_BIN = "/system/bin/dexoptanalyzer";
     static const unsigned int MAX_INSTRUCTION_SET_LEN = 7;
 
@@ -1373,9 +1377,13 @@ static void exec_dexoptanalyzer(const std::string& dex_file, const std::string& 
     std::string isa_arg = "--isa=" + instruction_set;
     std::string compiler_filter_arg = "--compiler-filter=" + compiler_filter;
     const char* assume_profile_changed = "--assume-profile-changed";
+    const char* downgrade_flag = "--downgrade";
 
     // program name, dex file, isa, filter, the final NULL
-    const char* argv[5 + (profile_was_updated ? 1 : 0)];
+    const int argc = 5 +
+        (profile_was_updated ? 1 : 0) +
+        (downgrade ? 1 : 0);
+    const char* argv[argc];
     int i = 0;
     argv[i++] = DEXOPTANALYZER_BIN;
     argv[i++] = dex_file_arg.c_str();
@@ -1383,6 +1391,9 @@ static void exec_dexoptanalyzer(const std::string& dex_file, const std::string& 
     argv[i++] = compiler_filter_arg.c_str();
     if (profile_was_updated) {
         argv[i++] = assume_profile_changed;
+    }
+    if (downgrade) {
+        argv[i++] = downgrade_flag;
     }
     argv[i] = NULL;
 
@@ -1464,7 +1475,7 @@ static bool process_dexoptanalyzer_result(const std::string& dex_path, int resul
 static bool process_secondary_dex_dexopt(const char* original_dex_path, const char* pkgname,
         int dexopt_flags, const char* volume_uuid, int uid, const char* instruction_set,
         const char* compiler_filter, bool* is_public_out, int* dexopt_needed_out,
-        std::string* oat_dir_out, std::string* dex_path_out) {
+        std::string* oat_dir_out, std::string* dex_path_out, bool downgrade) {
     int storage_flag;
 
     if ((dexopt_flags & DEXOPT_STORAGE_CE) != 0) {
@@ -1533,7 +1544,8 @@ static bool process_secondary_dex_dexopt(const char* original_dex_path, const ch
         // child -- drop privileges before continuing.
         drop_capabilities(uid);
         // Run dexoptanalyzer to get dexopt_needed code.
-        exec_dexoptanalyzer(dex_path, instruction_set, compiler_filter, profile_was_updated);
+        exec_dexoptanalyzer(dex_path, instruction_set, compiler_filter, profile_was_updated,
+                            downgrade);
         exit(DEXOPTANALYZER_BIN_EXEC_ERROR);
     }
 
@@ -1560,7 +1572,8 @@ static bool process_secondary_dex_dexopt(const char* original_dex_path, const ch
 
 int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* instruction_set,
         int dexopt_needed, const char* oat_dir, int dexopt_flags, const char* compiler_filter,
-        const char* volume_uuid, const char* shared_libraries, const char* se_info) {
+        const char* volume_uuid, const char* class_loader_context, const char* se_info,
+        bool downgrade) {
     CHECK(pkgname != nullptr);
     CHECK(pkgname[0] != 0);
     if ((dexopt_flags & ~DEXOPT_MASK) != 0) {
@@ -1568,7 +1581,12 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     }
 
     if (!validate_dex_path_size(dex_path)) {
-        return false;
+        return -1;
+    }
+
+    if (class_loader_context != nullptr && strlen(class_loader_context) > PKG_PATH_MAX) {
+        LOG(ERROR) << "Class loader context exceeds the allowed size: " << class_loader_context;
+        return -1;
     }
 
     bool is_public = (dexopt_flags & DEXOPT_PUBLIC) != 0;
@@ -1583,7 +1601,8 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     if (is_secondary_dex) {
         if (process_secondary_dex_dexopt(dex_path, pkgname, dexopt_flags, volume_uuid, uid,
                 instruction_set, compiler_filter, &is_public, &dexopt_needed, &oat_dir_str,
-                &dex_real_path)) {
+                &dex_real_path,
+                downgrade)) {
             oat_dir = oat_dir_str.c_str();
             dex_path = dex_real_path.c_str();
             if (dexopt_needed == NO_DEXOPT_NEEDED) {
@@ -1672,7 +1691,7 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
                     debuggable,
                     boot_complete,
                     reference_profile_fd.get(),
-                    shared_libraries);
+                    class_loader_context);
         _exit(68);   /* only get here on exec failure */
     } else {
         int res = wait_child(pid);
