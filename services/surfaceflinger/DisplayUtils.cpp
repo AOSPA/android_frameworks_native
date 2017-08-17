@@ -81,20 +81,20 @@ Layer* DisplayUtils::getLayerInstance(SurfaceFlinger* flinger,
     }
 }
 
-void DisplayUtils::initVDSInstance(HWComposer* hwc, int32_t hwcDisplayId,
+void DisplayUtils::initVDSInstance(HWComposer & hwc, int32_t hwcDisplayId,
         sp<IGraphicBufferProducer> currentStateSurface, sp<DisplaySurface> &dispSurface,
         sp<IGraphicBufferProducer> &producer, sp<IGraphicBufferProducer> bqProducer,
         sp<IGraphicBufferConsumer> bqConsumer, String8 currentStateDisplayName,
         bool currentStateIsSecure)
 {
     if (sUseExtendedImpls) {
-        VirtualDisplaySurface* vds = new ExVirtualDisplaySurface(*hwc, hwcDisplayId,
+        VirtualDisplaySurface* vds = new ExVirtualDisplaySurface(hwc, hwcDisplayId,
                 currentStateSurface, bqProducer, bqConsumer, currentStateDisplayName,
                 currentStateIsSecure);
         dispSurface = vds;
         producer = vds;
     } else {
-        VirtualDisplaySurface* vds = new VirtualDisplaySurface(*hwc, hwcDisplayId,
+        VirtualDisplaySurface* vds = new VirtualDisplaySurface(hwc, hwcDisplayId,
                 currentStateSurface, bqProducer, bqConsumer, currentStateDisplayName);
         dispSurface = vds;
         producer = vds;

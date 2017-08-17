@@ -430,6 +430,8 @@ android_dataspace GetNativeDataspace(VkColorSpaceKHR colorspace) {
             return HAL_DATASPACE_DISPLAY_P3;
         case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:
             return HAL_DATASPACE_V0_SCRGB_LINEAR;
+        case VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:
+            return HAL_DATASPACE_V0_SCRGB;
         case VK_COLOR_SPACE_DCI_P3_LINEAR_EXT:
             return HAL_DATASPACE_DCI_P3_LINEAR;
         case VK_COLOR_SPACE_DCI_P3_NONLINEAR_EXT:
@@ -1095,12 +1097,9 @@ VkResult CreateSwapchainKHR(VkDevice device,
         image_native_buffer.stride = img.buffer->stride;
         image_native_buffer.format = img.buffer->format;
         image_native_buffer.usage = int(img.buffer->usage);
-        // TODO: Adjust once ANativeWindowBuffer supports gralloc1-style usage.
-        // For now, this is the same translation Gralloc1On0Adapter does.
-        image_native_buffer.usage2.consumer =
-            static_cast<uint64_t>(img.buffer->usage);
-        image_native_buffer.usage2.producer =
-            static_cast<uint64_t>(img.buffer->usage);
+        android_convertGralloc0To1Usage(int(img.buffer->usage),
+            &image_native_buffer.usage2.producer,
+            &image_native_buffer.usage2.consumer);
 
         result =
             dispatch.CreateImage(device, &image_create, nullptr, &img.image);

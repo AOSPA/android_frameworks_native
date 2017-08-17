@@ -135,9 +135,11 @@ DisplayDevice::DisplayDevice(
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (config == EGL_NO_CONFIG) {
 #ifdef USE_HWC2
-        config = RenderEngine::chooseEglConfig(display, PIXEL_FORMAT_RGBA_8888);
+        config = RenderEngine::chooseEglConfig(display, PIXEL_FORMAT_RGBA_8888,
+                                               /*logConfig*/ false);
 #else
-        config = RenderEngine::chooseEglConfig(display, format);
+        config = RenderEngine::chooseEglConfig(display, format,
+                                               /*logConfig*/ false);
 #endif
     }
     eglSurface = eglCreateWindowSurface(display, config, window, NULL);
@@ -447,6 +449,11 @@ void DisplayDevice::setActiveColorMode(android_color_mode_t mode) {
 
 android_color_mode_t DisplayDevice::getActiveColorMode() const {
     return mActiveColorMode;
+}
+
+void DisplayDevice::setCompositionDataSpace(android_dataspace dataspace) {
+    ANativeWindow* const window = mNativeWindow.get();
+    native_window_set_buffers_data_space(window, dataspace);
 }
 #endif
 

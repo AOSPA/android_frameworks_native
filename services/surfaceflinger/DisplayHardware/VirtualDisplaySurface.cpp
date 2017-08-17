@@ -352,8 +352,9 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
                 dbgSourceStr(source), (unsigned int)usage);
     }
 
-    status_t result = mSource[source]->dequeueBuffer(sslot, fence,
-            mSinkBufferWidth, mSinkBufferHeight, format, usage, nullptr);
+    status_t result =
+            mSource[source]->dequeueBuffer(sslot, fence, mSinkBufferWidth, mSinkBufferHeight,
+                                           format, usage, nullptr, nullptr);
     if (result < 0)
         return result;
     int pslot = mapSource2ProducerSlot(source, *sslot);
@@ -391,12 +392,13 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
     return result;
 }
 
-status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence,
-        uint32_t w, uint32_t h, PixelFormat format, uint64_t usage,
-        FrameEventHistoryDelta* outTimestamps) {
+status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence, uint32_t w, uint32_t h,
+                                              PixelFormat format, uint64_t usage,
+                                              uint64_t* outBufferAge,
+                                              FrameEventHistoryDelta* outTimestamps) {
     if (mDisplayId < 0) {
-        return mSource[SOURCE_SINK]->dequeueBuffer(
-                pslot, fence, w, h, format, usage, outTimestamps);
+        return mSource[SOURCE_SINK]->dequeueBuffer(pslot, fence, w, h, format, usage, outBufferAge,
+                                                   outTimestamps);
     }
 
     VDS_LOGW_IF(mDbgState != DBG_STATE_PREPARED,
@@ -455,6 +457,9 @@ status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence,
         if (result >= 0) {
             *pslot = mapSource2ProducerSlot(source, sslot);
         }
+    }
+    if (outBufferAge) {
+        *outBufferAge = 0;
     }
     return result;
 }
@@ -627,6 +632,10 @@ status_t VirtualDisplaySurface::getLastQueuedBuffer(
 status_t VirtualDisplaySurface::getUniqueId(uint64_t* /*outId*/) const {
     ALOGE("getUniqueId not supported on VirtualDisplaySurface");
     return INVALID_OPERATION;
+}
+
+status_t VirtualDisplaySurface::getConsumerUsage(uint64_t* outUsage) const {
+    return mSource[SOURCE_SINK]->getConsumerUsage(outUsage);
 }
 
 void VirtualDisplaySurface::updateQueueBufferOutput(

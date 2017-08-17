@@ -131,7 +131,7 @@ status_t BufferHubQueueProducer::setAsyncMode(bool async) {
 
 status_t BufferHubQueueProducer::dequeueBuffer(
     int* out_slot, sp<Fence>* out_fence, uint32_t width, uint32_t height,
-    PixelFormat format, uint64_t usage,
+    PixelFormat format, uint64_t usage, uint64_t* /*outBufferAge*/,
     FrameEventHistoryDelta* /* out_timestamps */) {
   ALOGD_IF(TRACE, "dequeueBuffer: w=%u, h=%u, format=%d, usage=%" PRIu64, width,
            height, format, usage);
@@ -206,11 +206,11 @@ status_t BufferHubQueueProducer::dequeueBuffer(
   // It's either in free state (if the buffer has never been used before) or
   // in queued state (if the buffer has been dequeued and queued back to
   // BufferHubQueue).
-  // TODO(jwcai) Clean this up, make mBufferState compatible with BufferHub's
-  // model.
-  LOG_ALWAYS_FATAL_IF((!buffers_[slot].mBufferState.isFree() &&
-                       !buffers_[slot].mBufferState.isQueued()),
-                      "dequeueBuffer: slot %zu is not free or queued.", slot);
+  LOG_ALWAYS_FATAL_IF(
+      (!buffers_[slot].mBufferState.isFree() &&
+       !buffers_[slot].mBufferState.isQueued()),
+      "dequeueBuffer: slot %zu is not free or queued, actual state: %s.", slot,
+      buffers_[slot].mBufferState.string());
 
   buffers_[slot].mBufferState.freeQueued();
   buffers_[slot].mBufferState.dequeue();
@@ -514,6 +514,7 @@ status_t BufferHubQueueProducer::disconnect(int api, DisconnectMode /*mode*/) {
     return BAD_VALUE;
   }
 
+  FreeAllBuffers();
   connected_api_ = kNoConnectedApi;
   return NO_ERROR;
 }
@@ -608,6 +609,14 @@ status_t BufferHubQueueProducer::getUniqueId(uint64_t* out_id) const {
   return NO_ERROR;
 }
 
+status_t BufferHubQueueProducer::getConsumerUsage(uint64_t* out_usage) const {
+  ALOGD_IF(TRACE, __FUNCTION__);
+
+  // same value as returned by querying NATIVE_WINDOW_CONSUMER_USAGE_BITS
+  *out_usage = 0;
+  return NO_ERROR;
+}
+
 status_t BufferHubQueueProducer::AllocateBuffer(uint32_t width, uint32_t height,
                                                 uint32_t layer_count,
                                                 PixelFormat format,
@@ -644,6 +653,32 @@ status_t BufferHubQueueProducer::RemoveBuffer(size_t slot) {
   buffers_[slot].mBufferProducer = nullptr;
   buffers_[slot].mGraphicBuffer = nullptr;
   buffers_[slot].mBufferState.detachProducer();
+  return NO_ERROR;
+}
+
+status_t BufferHubQueueProducer::FreeAllBuffers() {
+  for (size_t slot = 0; slot < BufferHubQueue::kMaxQueueCapacity; slot++) {
+    // Reset in memory objects related the the buffer.
+    buffers_[slot].mGraphicBuffer = nullptr;
+    buffers_[slot].mBufferState.reset();
+    buffers_[slot].mRequestBufferCalled = false;
+    buffers_[slot].mBufferProducer = nullptr;
+    buffers_[slot].mFence = Fence::NO_FENCE;
+  }
+
+  auto status = queue_->FreeAllBuffers();
+  if (!status) {
+    ALOGE(
+        "BufferHubQueueProducer::FreeAllBuffers: Failed to free all buffers on "
+        "the queue: %s",
+        status.GetErrorMessage().c_str());
+  }
+
+  if (queue_->capacity() != 0 || queue_->count() != 0) {
+    LOG_ALWAYS_FATAL(
+        "BufferHubQueueProducer::FreeAllBuffers: Not all buffers are freed.");
+  }
+
   return NO_ERROR;
 }
 

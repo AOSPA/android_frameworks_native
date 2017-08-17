@@ -311,6 +311,7 @@ static int prepare_app_quota(const std::unique_ptr<std::string>& uuid, const std
         return -1;
     }
 
+#if APPLY_HARD_QUOTAS
     if ((dq.dqb_bhardlimit == 0) || (dq.dqb_ihardlimit == 0)) {
         auto path = create_data_path(uuid ? uuid->c_str() : nullptr);
         struct statvfs stat;
@@ -320,7 +321,8 @@ static int prepare_app_quota(const std::unique_ptr<std::string>& uuid, const std
         }
 
         dq.dqb_valid = QIF_LIMITS;
-        dq.dqb_bhardlimit = (((stat.f_blocks * stat.f_frsize) / 10) * 9) / QIF_DQBLKSIZE;
+        dq.dqb_bhardlimit =
+            (((static_cast<uint64_t>(stat.f_blocks) * stat.f_frsize) / 10) * 9) / QIF_DQBLKSIZE;
         dq.dqb_ihardlimit = (stat.f_files / 2);
         if (quotactl(QCMD(Q_SETQUOTA, USRQUOTA), device.c_str(), uid,
                 reinterpret_cast<char*>(&dq)) != 0) {
@@ -334,6 +336,10 @@ static int prepare_app_quota(const std::unique_ptr<std::string>& uuid, const std
         // Hard quota already set; assume it's reasonable
         return 0;
     }
+#else
+    // Hard quotas disabled
+    return 0;
+#endif
 }
 
 binder::Status InstalldNativeService::createAppData(const std::unique_ptr<std::string>& uuid,

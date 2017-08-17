@@ -53,7 +53,7 @@ class DisplayUtils {
     Layer* getLayerInstance(SurfaceFlinger*, const sp<Client>&,
                             const String8&, uint32_t,
                             uint32_t, uint32_t);
-    void initVDSInstance(HWComposer* hwc, int32_t hwcDisplayId,
+    void initVDSInstance(HWComposer & hwc, int32_t hwcDisplayId,
             sp<IGraphicBufferProducer> currentStateSurface, sp<DisplaySurface> &dispSurface,
             sp<IGraphicBufferProducer> &producer, sp<IGraphicBufferProducer> bqProducer,
             sp<IGraphicBufferConsumer> bqConsumer, String8 currentStateDisplayName,
