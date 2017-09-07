@@ -23,6 +23,7 @@ typedef uint64_t DvrSurfaceUpdateFlags;
 typedef struct DvrDisplayManager DvrDisplayManager;
 typedef struct DvrSurfaceState DvrSurfaceState;
 typedef struct DvrPoseClient DvrPoseClient;
+typedef struct DvrPoseDataCaptureRequest DvrPoseDataCaptureRequest;
 typedef struct DvrVSyncClient DvrVSyncClient;
 typedef struct DvrVirtualTouchpad DvrVirtualTouchpad;
 
@@ -171,6 +172,8 @@ typedef ssize_t (*DvrWriteBufferQueueGetCapacityPtr)(
 typedef int (*DvrWriteBufferQueueGetIdPtr)(DvrWriteBufferQueue* write_queue);
 typedef int (*DvrWriteBufferQueueGetExternalSurfacePtr)(
     DvrWriteBufferQueue* write_queue, ANativeWindow** out_window);
+typedef int (*DvrWriteBufferQueueGetANativeWindowPtr)(
+    DvrWriteBufferQueue* write_queue, ANativeWindow** out_window);
 typedef int (*DvrWriteBufferQueueCreateReadQueuePtr)(
     DvrWriteBufferQueue* write_queue, DvrReadBufferQueue** out_read_queue);
 typedef int (*DvrWriteBufferQueueDequeuePtr)(DvrWriteBufferQueue* write_queue,
@@ -244,6 +247,15 @@ typedef int (*DvrPoseClientGetControllerPtr)(DvrPoseClient* client,
                                              DvrPoseAsync* out_pose);
 typedef int (*DvrPoseClientSensorsEnablePtr)(DvrPoseClient* client,
                                              bool enabled);
+typedef int (*DvrPoseClientDataCapturePtr)(DvrPoseClient* client,
+    const DvrPoseDataCaptureRequest* request);
+typedef int (*DvrPoseClientDataReaderDestroyPtr)(DvrPoseClient* client,
+                                                 DvrPoseRawDataType data_type);
+
+// dvr_pose.h
+typedef int (*DvrPoseClientGetDataReaderPtr)(DvrPoseClient* client,
+                                             DvrPoseRawDataType data_type,
+                                             DvrReadBufferQueue** read_queue);
 
 // services/vr/virtual_touchpad/include/dvr/virtual_touchpad_client.h
 
