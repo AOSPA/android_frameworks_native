@@ -38,7 +38,7 @@ struct NewFrameEventsEntry;
 class ConsumerListener : public virtual RefBase {
 public:
     ConsumerListener() {}
-    virtual ~ConsumerListener();
+    ~ConsumerListener() override;
 
     // onDisconnect is called when a producer disconnects from the BufferQueue.
     virtual void onDisconnect() {} /* Asynchronous */
