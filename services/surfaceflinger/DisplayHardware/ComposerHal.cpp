@@ -744,7 +744,7 @@ Error Composer::execute()
     }
 
     Error error = kDefaultError;
-    mClient->executeCommands(commandLength, commandHandles,
+    auto ret = mClient->executeCommands(commandLength, commandHandles,
             [&](const auto& tmpError, const auto& tmpOutChanged,
                 const auto& tmpOutLength, const auto& tmpOutHandles)
             {
@@ -777,6 +777,12 @@ Error Composer::execute()
                     error = Error::NO_RESOURCES;
                 }
             });
+
+    // executeCommands can fail because of out-of-fd and we do not want to
+    // abort() in that case
+    if (!ret.isOk()) {
+        ALOGE("executeCommands failed because of %s", ret.description().c_str());
+    }
 
     if (error == Error::NONE) {
         std::vector<CommandReader::CommandError> commandErrors =
