@@ -365,14 +365,8 @@ private:
                      const sp<const DisplayDevice>& hw,
                      const sp<Layer>& layer);
 
-    virtual void isfreezeSurfacePresent(
-                     bool& freezeSurfacePresent,
-                     const sp<const DisplayDevice>& /*hw*/,
-                     const int32_t& /*id*/) { freezeSurfacePresent = false; }
-
-    virtual void setOrientationEventControl(
-                     bool& /*freezeSurfacePresent*/,
-                     const int32_t& /*id*/) { }
+    virtual void setDisplayAnimating(const sp<const DisplayDevice>& /*hw*/,
+                                     const int32_t& /*dpy*/) { }
 
     virtual void updateVisibleRegionsDirty() { }
     /* ------------------------------------------------------------------------

@@ -90,6 +90,8 @@ ExLayer::ExLayer(SurfaceFlinger* flinger, const sp<Client>& client,
            (atoi(property) == 1)) {
         mIsGPUAllowedForProtected = true;
     }
+
+    mScreenshot = (std::string(name).find("ScreenshotSurface") != std::string::npos);
 }
 
 ExLayer::~ExLayer() {
@@ -241,14 +243,6 @@ void ExLayer::setPosition(const sp<const DisplayDevice>& displayDevice,
                 r.bottom, to_string(error).c_str(), static_cast<int32_t>(error));
     }
     return;
-}
-
-void ExLayer::setLayerAnimating(int32_t hwcId) {
-    auto& hwcInfo = mHwcLayers[hwcId];
-    auto& layer = hwcInfo.layer;
-    auto error = layer->setAnimating(true);
-    ALOGE_IF(error != HWC2::Error::None, "[%s] Failed to set animating: %s err=%d",
-            mName.string(), to_string(error).c_str(), static_cast<int32_t>(error));
 }
 
 #endif // ndef USE_HWC2
