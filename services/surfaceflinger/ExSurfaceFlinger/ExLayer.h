@@ -52,19 +52,20 @@ public:
     virtual bool isSecureDisplay() const;
     virtual bool isYuvLayer() const;
     virtual bool isHDRLayer() const;
+    virtual bool isScreenshot() const { return mScreenshot; }
 #ifndef USE_HWC2
     virtual void setPosition(const sp<const DisplayDevice>& hw,
                              HWComposer::HWCLayerInterface& layer, const State& state);
 #else
     virtual void setPosition(const sp<const DisplayDevice>& hw,
             const State& state);
-    virtual void setLayerAnimating(int32_t hwcId);
 #endif
     virtual bool canAllowGPUForProtected() const;
 protected:
     bool mDebugLogs;
     bool isDebug() { return mDebugLogs; }
     bool mIsGPUAllowedForProtected;
+    bool mScreenshot;
 };
 
 }; // namespace android
