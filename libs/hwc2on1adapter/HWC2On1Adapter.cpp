@@ -2488,6 +2488,8 @@ Error HWC2On1Adapter::setAllDisplays() {
     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
 
     // Make sure we're ready to validate
+    bool allSetFailed = true;
+    Error error = Error::None;
     for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
         if (mHwc1Contents[hwc1Id] == nullptr) {
             continue;
@@ -2495,12 +2497,18 @@ Error HWC2On1Adapter::setAllDisplays() {
 
         auto displayId = mHwc1DisplayMap[hwc1Id];
         auto& display = mDisplays[displayId];
-        Error error = display->set(*mHwc1Contents[hwc1Id]);
+        error = display->set(*mHwc1Contents[hwc1Id]);
         if (error != Error::None) {
             ALOGE("setAllDisplays: Failed to set display %zd: %s", hwc1Id,
                     to_string(error).c_str());
-            return error;
+        } else {
+            allSetFailed = false;
         }
+    }
+
+    if (allSetFailed) {
+        ALOGE("setAllDisplays: Failed for all display: Returning failure");
+        return error;
     }
 
     ALOGV("Calling HWC1 set");
