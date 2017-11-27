@@ -31,6 +31,11 @@
 
 #include "SurfaceFlinger.h"
 
+#ifdef DISPLAY_CONFIG_1_1
+#include <vendor/display/config/1.1/IDisplayConfig.h>
+#endif
+
+
 namespace android {
 
 class ExSurfaceFlinger : public SurfaceFlinger
@@ -55,13 +60,8 @@ protected:
     virtual bool canDrawLayerinScreenShot(
                      const sp<const DisplayDevice>& hw,
                      const sp<Layer>& layer);
-    virtual void isfreezeSurfacePresent(
-                     bool& freezeSurfacePresent,
-                     const sp<const DisplayDevice>& hw,
-                     const int32_t& id);
-    virtual void setOrientationEventControl(
-                     bool& freezeSurfacePresent,
-                     const int32_t& id);
+    virtual void setDisplayAnimating(const sp<const DisplayDevice>& hw,
+                                     const int32_t& dpy);
     virtual void updateVisibleRegionsDirty();
     virtual bool IsHWCDisabled() { return mDebugDisableHWC; }
     virtual ~ExSurfaceFlinger();
@@ -75,6 +75,11 @@ protected:
     bool mDebugLogs;
     bool isDebug() { return mDebugLogs; }
     bool mDisableExtAnimation;
+    bool mAnimating = false;
+
+#ifdef DISPLAY_CONFIG_1_1
+    android::sp<vendor::display::config::V1_1::IDisplayConfig> mDisplayConfig;
+#endif
 
     static bool sAllowHDRFallBack;
     static bool AllowHDRFallBack() { return sAllowHDRFallBack; }
