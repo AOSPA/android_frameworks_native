@@ -358,17 +358,17 @@ private:
                      bool& bIgnoreLayers, String8& nameLOI,
                      uint32_t layerStack);
 
-    virtual void delayDPTransactionIfNeeded(
+    virtual void handleDPTransactionIfNeeded(
                      const Vector<DisplayState>& /*displays*/) { }
 
     virtual bool canDrawLayerinScreenShot(
                      const sp<const DisplayDevice>& hw,
                      const sp<Layer>& layer);
 
-    virtual void setDisplayAnimating(const sp<const DisplayDevice>& /*hw*/,
-                                     const int32_t& /*dpy*/) { }
+    virtual void setDisplayAnimating(const sp<const DisplayDevice>& /*hw*/) { }
 
     virtual void updateVisibleRegionsDirty() { }
+    virtual void handleMessageRefresh();
     /* ------------------------------------------------------------------------
      * Message handling
      */
@@ -399,8 +399,6 @@ private:
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();
-
-    void handleMessageRefresh();
 
     void handleTransaction(uint32_t transactionFlags);
     void handleTransactionLocked(uint32_t transactionFlags);

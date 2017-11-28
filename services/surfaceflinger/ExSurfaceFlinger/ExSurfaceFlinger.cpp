@@ -158,27 +158,27 @@ bool ExSurfaceFlinger::updateLayerVisibleNonTransparentRegion(
     return false;
 }
 
-void ExSurfaceFlinger::delayDPTransactionIfNeeded(
+void ExSurfaceFlinger::handleDPTransactionIfNeeded(
         const Vector<DisplayState>& displays) {
-    /* Delay the display projection transaction by 50ms only when the disable
+    /* Wait for one draw cycle before setting display projection only when the disable
      * external rotation animation feature is enabled
      */
     if (mDisableExtAnimation) {
         size_t count = displays.size();
         for (size_t i=0 ; i<count ; i++) {
             const DisplayState& s(displays[i]);
-            if ((mDisplays.indexOfKey(s.token) >= 0) && (s.token !=
-                    mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY])) {
+            if (getDisplayType(s.token) != DisplayDevice::DISPLAY_PRIMARY) {
                 const uint32_t what = s.what;
-                /* Invalidate and Delay the binder thread by 50 ms on
-                 * eDisplayProjectionChanged to trigger a draw cycle so that
+                /* Invalidate and wait on eDisplayProjectionChanged to trigger a draw cycle so that
                  * it can fix one incorrect frame on the External, when we
                  * disable external animation
                  */
                 if (what & DisplayState::eDisplayProjectionChanged) {
+                    Mutex::Autolock lock(mExtAnimationLock);
                     invalidateHwcGeometry();
-                    repaintEverything();
-                    usleep(50000);
+                    android_atomic_or(1, &mRepaintEverything);
+                    signalRefresh();
+                    mExtAnimationCond.waitRelative(mExtAnimationLock, 1000000000);
                 }
             }
         }
@@ -205,9 +205,9 @@ bool ExSurfaceFlinger::canDrawLayerinScreenShot(
     return false;
 }
 
-void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __unused,
-                                           const int32_t& dpy __unused) {
+void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __unused) {
 #ifdef DISPLAY_CONFIG_1_1
+    int32_t dpy = hw->getDisplayType();
     if (mDisplayConfig == NULL || dpy == HWC_DISPLAY_PRIMARY || !mDisableExtAnimation) {
         return;
     }
@@ -353,5 +353,13 @@ void ExSurfaceFlinger::dumpDrawCycle(bool prePrepare) {
     fs.close();
 }
 #endif
+
+void ExSurfaceFlinger::handleMessageRefresh() {
+    SurfaceFlinger::handleMessageRefresh();
+    if (mDisableExtAnimation && mAnimating) {
+        Mutex::Autolock lock(mExtAnimationLock);
+        mExtAnimationCond.signal();
+    }
+}
 
 }; // namespace android

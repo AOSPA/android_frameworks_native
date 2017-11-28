@@ -55,15 +55,15 @@ protected:
                      const int& dpy, const sp<Layer>& layer,
                      bool& bIgnoreLayers, String8& nameLOI,
                      uint32_t layerStack);
-    virtual void delayDPTransactionIfNeeded(
+    virtual void handleDPTransactionIfNeeded(
                      const Vector<DisplayState>& displays);
     virtual bool canDrawLayerinScreenShot(
                      const sp<const DisplayDevice>& hw,
                      const sp<Layer>& layer);
-    virtual void setDisplayAnimating(const sp<const DisplayDevice>& hw,
-                                     const int32_t& dpy);
+    virtual void setDisplayAnimating(const sp<const DisplayDevice>& hw);
     virtual void updateVisibleRegionsDirty();
     virtual bool IsHWCDisabled() { return mDebugDisableHWC; }
+    virtual void handleMessageRefresh();
     virtual ~ExSurfaceFlinger();
 
     /* Extended Mode
@@ -97,7 +97,8 @@ protected:
       long int position = 0;
     } mFileDump;
 #endif
-
+    Mutex mExtAnimationLock;
+    Condition mExtAnimationCond;
 };
 
 }; //namespace android
