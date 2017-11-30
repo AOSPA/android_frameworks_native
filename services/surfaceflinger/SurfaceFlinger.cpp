@@ -1858,6 +1858,9 @@ void SurfaceFlinger::setUpHWComposer() {
         }
     }
 
+    mat4 colorMatrix = mColorMatrix * computeSaturationMatrix() * mDaltonizer();
+    bool isIdentity = (colorMatrix == mat4());
+
     // build the h/w work list
     if (CC_UNLIKELY(mGeometryInvalid)) {
         mGeometryInvalid = false;
@@ -1877,16 +1880,13 @@ void SurfaceFlinger::setUpHWComposer() {
                     }
 
                     layer->setGeometry(displayDevice, i);
-                    if (mDebugDisableHWC || mDebugRegion) {
+                    if (mDebugDisableHWC || mDebugRegion || (hwcId !=0 && !isIdentity)) {
                         layer->forceClientComposition(hwcId);
                     }
                 }
             }
         }
     }
-
-
-    mat4 colorMatrix = mColorMatrix * computeSaturationMatrix() * mDaltonizer();
 
     // Set the per-frame data
     for (size_t displayId = 0; displayId < mDisplays.size(); ++displayId) {
@@ -2639,7 +2639,7 @@ bool SurfaceFlinger::doComposeSurfaces(
 
     mat4 oldColorMatrix;
     const bool applyColorMatrix = !mHwc->hasDeviceComposition(hwcId) &&
-            !mHwc->hasCapability(HWC2::Capability::SkipClientColorTransform);
+            !(mHwc->hasCapability(HWC2::Capability::SkipClientColorTransform) && hwcId == 0);
     if (applyColorMatrix) {
         mat4 colorMatrix = mColorMatrix * mDaltonizer();
         oldColorMatrix = getRenderEngine().setupColorTransform(colorMatrix);
