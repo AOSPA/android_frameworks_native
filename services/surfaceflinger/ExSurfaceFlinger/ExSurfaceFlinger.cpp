@@ -31,6 +31,7 @@
 #include <fstream>
 #include <cutils/properties.h>
 #include <ui/GraphicBufferAllocator.h>
+
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 namespace android {
@@ -65,6 +66,10 @@ ExSurfaceFlinger::ExSurfaceFlinger() {
         (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
         sAllowHDRFallBack = true;
     }
+
+#ifdef DISPLAY_CONFIG_1_1
+    mDisplayConfig = vendor::display::config::V1_1::IDisplayConfig::getService();
+#endif
 }
 
 ExSurfaceFlinger::~ExSurfaceFlinger() { }
@@ -200,64 +205,30 @@ bool ExSurfaceFlinger::canDrawLayerinScreenShot(
     return false;
 }
 
-void ExSurfaceFlinger::isfreezeSurfacePresent(bool& freezeSurfacePresent,
-                             const sp<const DisplayDevice>& hw,
-                             const int32_t& id) {
-    freezeSurfacePresent = false;
-    /* Look for ScreenShotSurface in external layer list, only when
-     * disable external rotation animation feature is enabled
-     */
-    if (mDisableExtAnimation && (id != HWC_DISPLAY_PRIMARY)) {
-    /* Get the layers in the current drawing state */
-        mDrawingState.traverseInZOrder([&](Layer* layer) {
-            static int screenShotLen = strlen("ScreenshotSurface");
-            /* check the layers associated with external display */
-            if (layer->getLayerStack() == hw->getLayerStack()) {
-                if (!strncmp(layer->getName(), "ScreenshotSurface",
-                            screenShotLen)) {
-                    /* Screenshot layer is present, and animation in
-                     * progress
-                     */
-                    freezeSurfacePresent = true;
-                    return;
-                }
-            }
-        });
-    }
-}
-
-// TODO: setOrientationEventControl will not work bcoz of setAnimating .
-#ifndef USE_HWC2
-void ExSurfaceFlinger::setOrientationEventControl(bool& freezeSurfacePresent,
-                             const int32_t& id) {
-    HWComposer& hwc(getHwComposer());
-    HWComposer::LayerListIterator cur = hwc.begin(id);
-
-    if (freezeSurfacePresent) {
-        /* If freezeSurfacePresent, set ANIMATING flag
-         * which is used to support disable animation on external
-         */
-// TODO: setAnimating will not work because of display-defs.h file is not defined .
-#if 0
-        cur->setAnimating(true);
-#endif
-    }
-}
-#else
-void ExSurfaceFlinger::setOrientationEventControl(bool& freezeSurfacePresent,
-                             const int32_t& dpy) {
-    if (!freezeSurfacePresent)
+void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __unused,
+                                           const int32_t& dpy __unused) {
+#ifdef DISPLAY_CONFIG_1_1
+    if (mDisplayConfig == NULL || dpy == HWC_DISPLAY_PRIMARY || !mDisableExtAnimation) {
         return;
-
-    sp<const DisplayDevice> displayDevice(mDisplays[dpy]);
-    const Vector<sp<Layer>>& currentLayers(
-                            displayDevice->getVisibleLayersSortedByZ());
-    const auto hwcId = displayDevice->getHwcDisplayId();
-    for (auto& layer : currentLayers) {
-        layer->setLayerAnimating(hwcId);
     }
-}
+
+    bool hasScreenshot = false;
+    mDrawingState.traverseInZOrder([&](Layer* layer) {
+      if (layer->getLayerStack() == hw->getLayerStack()) {
+          if (layer->isScreenshot()) {
+              hasScreenshot = true;
+          }
+      }
+    });
+
+    if (hasScreenshot == mAnimating) {
+        return;
+    }
+
+    mDisplayConfig->setDisplayAnimating(dpy, hasScreenshot);
+    mAnimating = hasScreenshot;
 #endif
+}
 
 void ExSurfaceFlinger::updateVisibleRegionsDirty() {
     /* If extended_mode is set, and set mVisibleRegionsDirty
