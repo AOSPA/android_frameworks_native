@@ -78,6 +78,10 @@ else
         DisplayHardware/HWComposer_hwc1.cpp
 endif
 
+ifeq ($(TARGET_USES_GRALLOC1), true)
+    LOCAL_CFLAGS += -DUSE_GRALLOC1
+endif
+
 ifneq ($(MAX_VIRTUAL_DISPLAY_DIMENSION),)
     LOCAL_CFLAGS += -DMAX_VIRTUAL_DISPLAY_DIMENSION=$(MAX_VIRTUAL_DISPLAY_DIMENSION)
 else

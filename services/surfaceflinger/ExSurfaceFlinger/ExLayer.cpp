@@ -152,7 +152,11 @@ bool ExLayer::isYuvLayer() const {
             private_handle_t* hnd = static_cast<private_handle_t*>
                 (const_cast<native_handle_t*>(buffer->handle));
             /* return true if layer is YUV */
+#ifdef USE_GRALLOC1
             return (hnd && (hnd->buffer_type == BUFFER_TYPE_VIDEO));
+#else
+            return (hnd && (hnd->bufferType == BUFFER_TYPE_VIDEO));
+#endif
         }
 #endif
     }
