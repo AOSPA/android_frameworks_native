@@ -794,6 +794,12 @@ Error Composer::execute()
         ALOGE("executeCommands failed because of %s", ret.description().c_str());
     }
 
+    // executeCommands can fail because of out-of-fd and we do not want to
+    // abort() in that case
+    if (!ret.isOk()) {
+        ALOGE("executeCommands failed because of %s", ret.description().c_str());
+    }
+
     if (error == Error::NONE) {
         std::vector<CommandReader::CommandError> commandErrors =
             mReader.takeErrors();
