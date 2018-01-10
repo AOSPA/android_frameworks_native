@@ -109,9 +109,7 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
         mLastFrameNumberReceived(0),
         mUpdateTexImageFailed(false),
         mAutoRefresh(false),
-        mFreezeGeometryUpdates(false),
-        mTransformHint(0),
-        mDebugAndRecomputeCrop(0)
+        mFreezeGeometryUpdates(false)
 {
 #ifdef USE_HWC2
     ALOGV("Creating Layer %s", name.string());
@@ -172,17 +170,6 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
     CompositorTiming compositorTiming;
     flinger->getCompositorTiming(&compositorTiming);
     mFrameEventHistory.initializeCompositorTiming(compositorTiming);
-#ifdef QTI_BSP
-    // debugging stuff...
-    // 0 for disable
-    // 1 for QTI solution
-    // 2 for print log
-    // 3 for both
-    char value[PROPERTY_VALUE_MAX];
-    if (property_get("debug.sf.recomputecrop", value, "1") > 0)
-       mDebugAndRecomputeCrop = atoi(value);
-#endif
-
 }
 
 void Layer::onFirstRef() {
@@ -757,11 +744,6 @@ void Layer::setGeometry(
                 transformedFrame.right, transformedFrame.bottom,
                 to_string(error).c_str(), static_cast<int32_t>(error));
     } else {
-        ALOGI_IF(mDebugAndRecomputeCrop & 2,
-                 "%s::%s set display frame [%d, %d, %d, %d]",
-                 __FUNCTION__, mName.string(), transformedFrame.left,
-                 transformedFrame.top, transformedFrame.right,
-                 transformedFrame.bottom);
         hwcInfo.displayFrame = transformedFrame;
     }
 
@@ -774,10 +756,6 @@ void Layer::setGeometry(
                 sourceCrop.right, sourceCrop.bottom, to_string(error).c_str(),
                 static_cast<int32_t>(error));
     } else {
-        ALOGI_IF(mDebugAndRecomputeCrop & 2,
-                 "%s::%s set source crop [%.3f, %.3f, %.3f, %.3f]",
-                 __FUNCTION__, mName.string(), sourceCrop.left, sourceCrop.top,
-                 sourceCrop.right, sourceCrop.bottom);
         hwcInfo.sourceCrop = sourceCrop;
     }
 
@@ -1251,36 +1229,19 @@ void Layer::drawWithOpenGL(const sp<const DisplayDevice>& hw,
      * like more of a hack.
      */
     Rect win(computeBounds());
-    Transform t = getTransform();
-    if (mDebugAndRecomputeCrop & 1) {
-        win = computeInitialCrop(hw);
-        const auto& p = getParent();
-        if (p != nullptr) {
-            auto parentCrop = p->computeInitialCrop(hw);
-            win.intersect(parentCrop, &win);
-        }
-        // Back to layer space to work with the content crop.
-        win = t.inverse().transform(win);
 
-        if (!win.intersect(Rect(s.active.w, s.active.h), &win)) {
+    Transform t = getTransform();
+    if (!s.finalCrop.isEmpty()) {
+        win = t.transform(win);
+        if (!win.intersect(s.finalCrop, &win)) {
             win.clear();
         }
-        win = reduce(win, s.activeTransparentRegion);
-    } else {
-        if (!s.finalCrop.isEmpty()) {
-            win = t.transform(win);
-            if (!win.intersect(s.finalCrop, &win)) {
-                win.clear();
-            }
-            win = t.inverse().transform(win);
-            if (!win.intersect(computeBounds(), &win)) {
-                win.clear();
-            }
+        win = t.inverse().transform(win);
+        if (!win.intersect(computeBounds(), &win)) {
+            win.clear();
         }
     }
-    ALOGI_IF(mDebugAndRecomputeCrop & 2, "%s::%s  win[l=%d, t=%d, r=%d,  b=%d]",
-             __FUNCTION__, mName.string(), win.left, win.top,
-             win.right, win.bottom);
+
     float left   = float(win.left)   / float(s.active.w);
     float top    = float(win.top)    / float(s.active.h);
     float right  = float(win.right)  / float(s.active.w);
@@ -1482,58 +1443,8 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
     const Layer::State& s(getDrawingState());
     const Transform hwTransform(hw->getTransform());
     const uint32_t hw_h = hw->getHeight();
-    uint32_t orientation = 0;
     Rect win = computeBounds();
-    if (mDebugAndRecomputeCrop & 1) {
-        win = Rect(s.active.w, s.active.h);
-        if (!s.crop.isEmpty()) {
-            win.intersect(s.crop, &win);
-        }
-        Transform t = getTransform();
-        win = t.transform(win);
-        win.intersect(hw->getViewport(), &win);
-        win = t.inverse().transform(win,true);
-        win.intersect(Rect(s.active.w, s.active.h), &win);
-        Rect bounds = win;
-        const auto& p = getParent();
-        if (p != nullptr) {
-            // Look in computeScreenBounds recursive call for explanation of
-            // why we pass false here.
-            bounds = p->computeScreenBounds(false /*reduceTransparentRegion*/);
-            win = t.transform(win);
-            win.intersect(bounds, &win);
-            win = t.inverse().transform(win);
-        }
-        // subtract the transparent region and snap to the bounds
-        win = reduce(win, s.activeTransparentRegion);
-        const Transform bufferOrientation(mCurrentTransform);
-        Transform transform(hwTransform * t * bufferOrientation);
-        if (mSurfaceFlingerConsumer->getTransformToDisplayInverse()) {
-            uint32_t invTransform =
-                    DisplayDevice::getPrimaryDisplayOrientationTransform();
-            if (invTransform & NATIVE_WINDOW_TRANSFORM_ROT_90) {
-                invTransform ^= NATIVE_WINDOW_TRANSFORM_FLIP_V |
-                        NATIVE_WINDOW_TRANSFORM_FLIP_H;
-            }
-            transform = Transform(invTransform) * transform;
-        }
-        orientation = transform.getOrientation();
-        if (!(orientation | mCurrentTransform | mTransformHint)) {
-            if (!useIdentityTransform) {
-                win = t.transform(win);
-                win.intersect(hw->getViewport(), &win);
-            }
-        }
-        if (!s.finalCrop.isEmpty()) {
-            if (!win.intersect(s.finalCrop, &win)) {
-                win.clear();
-            }
-        }
 
-    }
-    ALOGI_IF(mDebugAndRecomputeCrop & 2, "%s::%s  win[l=%d, t=%d, r=%d, b=%d]",
-             __FUNCTION__, mName.string(), win.left, win.top,
-             win.right, win.bottom);
     vec2 lt = vec2(win.left, win.top);
     vec2 lb = vec2(win.left, win.bottom);
     vec2 rb = vec2(win.right, win.bottom);
@@ -1541,20 +1452,12 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
 
     Transform layerTransform = getTransform();
     if (!useIdentityTransform) {
-        if (mDebugAndRecomputeCrop & 1) {
-            if (orientation | mCurrentTransform | mTransformHint) {
-                lt = layerTransform.transform(lt);
-                lb = layerTransform.transform(lb);
-                rb = layerTransform.transform(rb);
-                rt = layerTransform.transform(rt);
-            }
-        } else {
-            lt = layerTransform.transform(lt);
-            lb = layerTransform.transform(lb);
-            rb = layerTransform.transform(rb);
-            rt = layerTransform.transform(rt);
-        }
+        lt = layerTransform.transform(lt);
+        lb = layerTransform.transform(lb);
+        rb = layerTransform.transform(rb);
+        rt = layerTransform.transform(rt);
     }
+
     if (!s.finalCrop.isEmpty()) {
         boundPoint(&lt, s.finalCrop);
         boundPoint(&lb, s.finalCrop);
@@ -1567,9 +1470,6 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
     position[1] = hwTransform.transform(lb);
     position[2] = hwTransform.transform(rb);
     position[3] = hwTransform.transform(rt);
-    ALOGI_IF(mDebugAndRecomputeCrop & 2, "%s::%s lt[%.3f,%.3f] rb[%.3f,%.3f]",
-             __FUNCTION__, mName.string(), position[0].x, position[0].y,
-             position[2].x, position[2].y);
     for (size_t i=0 ; i<4 ; i++) {
         position[i].y = hw_h - position[i].y;
     }
@@ -2509,7 +2409,7 @@ uint32_t Layer::getEffectiveUsage(uint32_t usage) const
     return usage;
 }
 
-void Layer::updateTransformHint(const sp<const DisplayDevice>& hw) {
+void Layer::updateTransformHint(const sp<const DisplayDevice>& hw) const {
     uint32_t orientation = 0;
     if (!mFlinger->mDebugDisableTransformHint) {
         // The transform hint is used to improve performance, but we can
@@ -2522,7 +2422,6 @@ void Layer::updateTransformHint(const sp<const DisplayDevice>& hw) {
         }
     }
     mSurfaceFlingerConsumer->setTransformHint(orientation);
-    mTransformHint = orientation;
 }
 
 // ----------------------------------------------------------------------------
