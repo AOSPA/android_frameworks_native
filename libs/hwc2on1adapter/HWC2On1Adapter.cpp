@@ -528,8 +528,14 @@ HWC2On1Adapter::Display::Display(HWC2On1Adapter& device, HWC2::DisplayType type)
     mHwc1LayerMap(),
     mNumAvailableRects(0),
     mNextAvailableRect(nullptr),
-    mGeometryChanged(false)
-    {}
+    mGeometryChanged(false) {
+
+    if (mType == HWC2::DisplayType::Virtual) {
+        mRetireFence.initialize(1);
+    } else {
+        mRetireFence.initialize(2);
+    }
+}
 
 Error HWC2On1Adapter::Display::acceptChanges() {
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
@@ -1921,7 +1927,10 @@ HWC2On1Adapter::Layer::Layer(Display& display)
     mZ(0),
     mReleaseFence(),
     mHwc1Id(0),
-    mHasUnsupportedPlaneAlpha(false) {}
+    mHasUnsupportedPlaneAlpha(false) {
+
+    mReleaseFence.initialize(2);
+}
 
 bool HWC2On1Adapter::SortLayersByZ::operator()(
         const std::shared_ptr<Layer>& lhs, const std::shared_ptr<Layer>& rhs) {
