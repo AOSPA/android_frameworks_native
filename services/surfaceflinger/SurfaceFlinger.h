@@ -517,7 +517,7 @@ private:
     void initializeDisplays();
 
     // Create an IBinder for a builtin display and add it to current state
-    void createBuiltinDisplayLocked(DisplayDevice::DisplayType type);
+    void createBuiltinDisplayLocked(DisplayDevice::DisplayType type, int32_t hwcId);
 
 
     sp<const DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) const {
@@ -548,7 +548,7 @@ private:
 
     int32_t getDisplayType(const sp<IBinder>& display) {
         if (!display.get()) return NAME_NOT_FOUND;
-        for (int i = 0; i < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES; ++i) {
+        for (int i = 0; i < (int)mBuiltinDisplays.size(); ++i) {
             if (display == mBuiltinDisplays[i]) {
                 return i;
             }
@@ -717,7 +717,7 @@ private:
     sp<EventControlThread> mEventControlThread;
     EGLContext mEGLContext;
     EGLDisplay mEGLDisplay;
-    sp<IBinder> mBuiltinDisplays[DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES];
+    std::vector<sp<IBinder>> mBuiltinDisplays;
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
