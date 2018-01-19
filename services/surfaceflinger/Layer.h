@@ -444,6 +444,7 @@ public:
     virtual bool isSecureDisplay() const { return false; }
     virtual bool isYuvLayer() const { return false; }
     virtual bool isHDRLayer() const { return false; }
+    virtual bool isScreenshot() const { return false; }
 #ifndef USE_HWC2
     virtual void setPosition(const sp<const DisplayDevice>& /*hw*/,
                              HWComposer::HWCLayerInterface& /*layer*/,
@@ -451,7 +452,6 @@ public:
 #else
     virtual void setPosition(const sp<const DisplayDevice>& /*hw*/,
                              const State& /*state*/) { }
-    virtual void setLayerAnimating(int32_t /*hwcId*/) { }
 #endif
     virtual bool canAllowGPUForProtected() const { return false; }
 

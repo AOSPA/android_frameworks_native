@@ -31,6 +31,11 @@
 
 #include "SurfaceFlinger.h"
 
+#ifdef DISPLAY_CONFIG_1_1
+#include <vendor/display/config/1.1/IDisplayConfig.h>
+#endif
+
+
 namespace android {
 
 class ExSurfaceFlinger : public SurfaceFlinger
@@ -50,20 +55,15 @@ protected:
                      const int& dpy, const sp<Layer>& layer,
                      bool& bIgnoreLayers, String8& nameLOI,
                      uint32_t layerStack);
-    virtual void delayDPTransactionIfNeeded(
+    virtual void handleDPTransactionIfNeeded(
                      const Vector<DisplayState>& displays);
     virtual bool canDrawLayerinScreenShot(
                      const sp<const DisplayDevice>& hw,
                      const sp<Layer>& layer);
-    virtual void isfreezeSurfacePresent(
-                     bool& freezeSurfacePresent,
-                     const sp<const DisplayDevice>& hw,
-                     const int32_t& id);
-    virtual void setOrientationEventControl(
-                     bool& freezeSurfacePresent,
-                     const int32_t& id);
+    virtual void setDisplayAnimating(const sp<const DisplayDevice>& hw);
     virtual void updateVisibleRegionsDirty();
     virtual bool IsHWCDisabled() { return mDebugDisableHWC; }
+    virtual void handleMessageRefresh();
     virtual ~ExSurfaceFlinger();
 
     /* Extended Mode
@@ -75,6 +75,11 @@ protected:
     bool mDebugLogs;
     bool isDebug() { return mDebugLogs; }
     bool mDisableExtAnimation;
+    bool mAnimating = false;
+
+#ifdef DISPLAY_CONFIG_1_1
+    android::sp<vendor::display::config::V1_1::IDisplayConfig> mDisplayConfig;
+#endif
 
     static bool sAllowHDRFallBack;
     static bool AllowHDRFallBack() { return sAllowHDRFallBack; }
@@ -92,7 +97,8 @@ protected:
       long int position = 0;
     } mFileDump;
 #endif
-
+    Mutex mExtAnimationLock;
+    Condition mExtAnimationCond;
 };
 
 }; //namespace android
