@@ -51,7 +51,7 @@ void LayerDim::onDraw(const sp<const DisplayDevice>& hw,
         Mesh mesh(Mesh::TRIANGLE_FAN, 4, 2);
         computeGeometry(hw, mesh, useIdentityTransform);
         RenderEngine& engine(mFlinger->getRenderEngine());
-        engine.setupDimLayerBlending(s.alpha);
+        engine.setupDimLayerBlending(getAlpha());
         engine.drawMesh(mesh);
         engine.disableBlending();
     }
