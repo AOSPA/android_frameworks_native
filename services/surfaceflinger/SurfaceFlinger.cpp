@@ -544,7 +544,9 @@ public:
 
     virtual void onInjectSyncEvent(nsecs_t when) {
         std::lock_guard<std::mutex> lock(mCallbackMutex);
-        mCallback->onVSyncEvent(when);
+        if (mCallback != nullptr) {
+            mCallback->onVSyncEvent(when);
+        }
     }
 
     virtual void setVSyncEnabled(bool) {}
@@ -1041,13 +1043,14 @@ status_t SurfaceFlinger::getHdrCapabilities(const sp<IBinder>& display,
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
-    if (enable == mInjectVSyncs) {
-        return NO_ERROR;
+void SurfaceFlinger::enableVSyncInjectionsInternal(bool enable) {
+    Mutex::Autolock _l(mStateLock);
+
+    if (mInjectVSyncs == enable) {
+        return;
     }
 
     if (enable) {
-        mInjectVSyncs = enable;
         ALOGV("VSync Injections enabled");
         if (mVSyncInjector.get() == nullptr) {
             mVSyncInjector = new InjectVSyncSource();
@@ -1055,15 +1058,33 @@ status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
         }
         mEventQueue.setEventThread(mInjectorEventThread);
     } else {
-        mInjectVSyncs = enable;
         ALOGV("VSync Injections disabled");
         mEventQueue.setEventThread(mSFEventThread);
-        mVSyncInjector.clear();
     }
+
+    mInjectVSyncs = enable;
+}
+
+status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
+    class MessageEnableVSyncInjections : public MessageBase {
+        SurfaceFlinger* mFlinger;
+        bool mEnable;
+    public:
+        MessageEnableVSyncInjections(SurfaceFlinger* flinger, bool enable)
+            : mFlinger(flinger), mEnable(enable) { }
+        virtual bool handler() {
+            mFlinger->enableVSyncInjectionsInternal(mEnable);
+            return true;
+        }
+    };
+    sp<MessageBase> msg = new MessageEnableVSyncInjections(this, enable);
+    postMessageSync(msg);
     return NO_ERROR;
 }
 
 status_t SurfaceFlinger::injectVSync(nsecs_t when) {
+    Mutex::Autolock _l(mStateLock);
+
     if (!mInjectVSyncs) {
         ALOGE("VSync Injections not enabled");
         return BAD_VALUE;
@@ -1888,6 +1909,7 @@ void SurfaceFlinger::setUpHWComposer() {
             if (hwcId >= 0) {
                 const Vector<sp<Layer>>& currentLayers(
                         displayDevice->getVisibleLayersSortedByZ());
+                setDisplayAnimating(displayDevice);
                 for (size_t i = 0; i < currentLayers.size(); i++) {
                     const auto& layer = currentLayers[i];
                     if (!layer->hasHwcLayer(hwcId)) {
@@ -1999,13 +2021,22 @@ void SurfaceFlinger::postFramebuffer()
         displayDevice->onSwapBuffersCompleted();
         displayDevice->makeCurrent(mEGLDisplay, mEGLContext);
         for (auto& layer : displayDevice->getVisibleLayersSortedByZ()) {
-            sp<Fence> releaseFence = Fence::NO_FENCE;
+            // The layer buffer from the previous frame (if any) is released
+            // by HWC only when the release fence from this frame (if any) is
+            // signaled.  Always get the release fence from HWC first.
+            auto hwcLayer = layer->getHwcLayer(hwcId);
+            sp<Fence> releaseFence = mHwc->getLayerReleaseFence(hwcId, hwcLayer);
+
+            // If the layer was client composited in the previous frame, we
+            // need to merge with the previous client target acquire fence.
+            // Since we do not track that, always merge with the current
+            // client target acquire fence when it is available, even though
+            // this is suboptimal.
             if (layer->getCompositionType(hwcId) == HWC2::Composition::Client) {
-                releaseFence = displayDevice->getClientTargetAcquireFence();
-            } else {
-                auto hwcLayer = layer->getHwcLayer(hwcId);
-                releaseFence = mHwc->getLayerReleaseFence(hwcId, hwcLayer);
+                releaseFence = Fence::merge("LayerRelease", releaseFence,
+                        displayDevice->getClientTargetAcquireFence());
             }
+
             layer->onLayerDisplayed(releaseFence);
         }
 
@@ -2479,7 +2510,7 @@ void SurfaceFlinger::computeVisibleRegions(const sp<const DisplayDevice>& displa
 
                 // compute the opaque region
                 const int32_t layerOrientation = tr.getOrientation();
-                if (s.alpha == 1.0f && !translucent &&
+                if (layer->getAlpha() == 1.0f && !translucent &&
                         ((layerOrientation & Transform::ROT_INVALID) == false)) {
                     // the opaque region is the layer's footprint
                     opaqueRegion = visibleRegion;
@@ -2924,7 +2955,7 @@ void SurfaceFlinger::setTransactionState(
 {
     ATRACE_CALL();
 
-    delayDPTransactionIfNeeded(displays);
+    handleDPTransactionIfNeeded(displays);
     Mutex::Autolock _l(mStateLock);
     uint32_t transactionFlags = 0;
 
@@ -3978,6 +4009,8 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_ANIMATION_FRAME_STATS:
         case SET_POWER_MODE:
         case GET_HDR_CAPABILITIES:
+        case ENABLE_VSYNC_INJECTIONS:
+        case INJECT_VSYNC:
         {
             // codes that require permission check
             IPCThreadState* ipc = IPCThreadState::self();
