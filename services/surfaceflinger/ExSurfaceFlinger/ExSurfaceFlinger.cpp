@@ -31,6 +31,7 @@
 #include <fstream>
 #include <cutils/properties.h>
 #include <ui/GraphicBufferAllocator.h>
+
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 namespace android {
@@ -65,6 +66,10 @@ ExSurfaceFlinger::ExSurfaceFlinger() {
         (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
         sAllowHDRFallBack = true;
     }
+
+#ifdef DISPLAY_CONFIG_1_1
+    mDisplayConfig = vendor::display::config::V1_1::IDisplayConfig::getService();
+#endif
 }
 
 ExSurfaceFlinger::~ExSurfaceFlinger() { }
@@ -153,27 +158,27 @@ bool ExSurfaceFlinger::updateLayerVisibleNonTransparentRegion(
     return false;
 }
 
-void ExSurfaceFlinger::delayDPTransactionIfNeeded(
+void ExSurfaceFlinger::handleDPTransactionIfNeeded(
         const Vector<DisplayState>& displays) {
-    /* Delay the display projection transaction by 50ms only when the disable
+    /* Wait for one draw cycle before setting display projection only when the disable
      * external rotation animation feature is enabled
      */
     if (mDisableExtAnimation) {
         size_t count = displays.size();
         for (size_t i=0 ; i<count ; i++) {
             const DisplayState& s(displays[i]);
-            if ((mDisplays.indexOfKey(s.token) >= 0) && (s.token !=
-                    mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY])) {
+            if (getDisplayType(s.token) != DisplayDevice::DISPLAY_PRIMARY) {
                 const uint32_t what = s.what;
-                /* Invalidate and Delay the binder thread by 50 ms on
-                 * eDisplayProjectionChanged to trigger a draw cycle so that
+                /* Invalidate and wait on eDisplayProjectionChanged to trigger a draw cycle so that
                  * it can fix one incorrect frame on the External, when we
                  * disable external animation
                  */
                 if (what & DisplayState::eDisplayProjectionChanged) {
+                    Mutex::Autolock lock(mExtAnimationLock);
                     invalidateHwcGeometry();
-                    repaintEverything();
-                    usleep(50000);
+                    android_atomic_or(1, &mRepaintEverything);
+                    signalRefresh();
+                    mExtAnimationCond.waitRelative(mExtAnimationLock, 1000000000);
                 }
             }
         }
@@ -200,64 +205,30 @@ bool ExSurfaceFlinger::canDrawLayerinScreenShot(
     return false;
 }
 
-void ExSurfaceFlinger::isfreezeSurfacePresent(bool& freezeSurfacePresent,
-                             const sp<const DisplayDevice>& hw,
-                             const int32_t& id) {
-    freezeSurfacePresent = false;
-    /* Look for ScreenShotSurface in external layer list, only when
-     * disable external rotation animation feature is enabled
-     */
-    if (mDisableExtAnimation && (id != HWC_DISPLAY_PRIMARY)) {
-    /* Get the layers in the current drawing state */
-        mDrawingState.traverseInZOrder([&](Layer* layer) {
-            static int screenShotLen = strlen("ScreenshotSurface");
-            /* check the layers associated with external display */
-            if (layer->getLayerStack() == hw->getLayerStack()) {
-                if (!strncmp(layer->getName(), "ScreenshotSurface",
-                            screenShotLen)) {
-                    /* Screenshot layer is present, and animation in
-                     * progress
-                     */
-                    freezeSurfacePresent = true;
-                    return;
-                }
-            }
-        });
-    }
-}
-
-// TODO: setOrientationEventControl will not work bcoz of setAnimating .
-#ifndef USE_HWC2
-void ExSurfaceFlinger::setOrientationEventControl(bool& freezeSurfacePresent,
-                             const int32_t& id) {
-    HWComposer& hwc(getHwComposer());
-    HWComposer::LayerListIterator cur = hwc.begin(id);
-
-    if (freezeSurfacePresent) {
-        /* If freezeSurfacePresent, set ANIMATING flag
-         * which is used to support disable animation on external
-         */
-// TODO: setAnimating will not work because of display-defs.h file is not defined .
-#if 0
-        cur->setAnimating(true);
-#endif
-    }
-}
-#else
-void ExSurfaceFlinger::setOrientationEventControl(bool& freezeSurfacePresent,
-                             const int32_t& dpy) {
-    if (!freezeSurfacePresent)
+void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __unused) {
+#ifdef DISPLAY_CONFIG_1_1
+    int32_t dpy = hw->getDisplayType();
+    if (mDisplayConfig == NULL || dpy == HWC_DISPLAY_PRIMARY || !mDisableExtAnimation) {
         return;
-
-    sp<const DisplayDevice> displayDevice(mDisplays[dpy]);
-    const Vector<sp<Layer>>& currentLayers(
-                            displayDevice->getVisibleLayersSortedByZ());
-    const auto hwcId = displayDevice->getHwcDisplayId();
-    for (auto& layer : currentLayers) {
-        layer->setLayerAnimating(hwcId);
     }
-}
+
+    bool hasScreenshot = false;
+    mDrawingState.traverseInZOrder([&](Layer* layer) {
+      if (layer->getLayerStack() == hw->getLayerStack()) {
+          if (layer->isScreenshot()) {
+              hasScreenshot = true;
+          }
+      }
+    });
+
+    if (hasScreenshot == mAnimating) {
+        return;
+    }
+
+    mDisplayConfig->setDisplayAnimating(dpy, hasScreenshot);
+    mAnimating = hasScreenshot;
 #endif
+}
 
 void ExSurfaceFlinger::updateVisibleRegionsDirty() {
     /* If extended_mode is set, and set mVisibleRegionsDirty
@@ -382,5 +353,13 @@ void ExSurfaceFlinger::dumpDrawCycle(bool prePrepare) {
     fs.close();
 }
 #endif
+
+void ExSurfaceFlinger::handleMessageRefresh() {
+    SurfaceFlinger::handleMessageRefresh();
+    if (mDisableExtAnimation && mAnimating) {
+        Mutex::Autolock lock(mExtAnimationLock);
+        mExtAnimationCond.signal();
+    }
+}
 
 }; // namespace android

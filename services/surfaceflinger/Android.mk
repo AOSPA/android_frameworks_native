@@ -125,6 +125,16 @@ LOCAL_SHARED_LIBRARIES := \
     libbase \
     android.hardware.power@1.0
 
+ifeq ($(TARGET_USES_QCOM_DISPLAY_BSP), true)
+    display_config_version := $(shell \
+    if [ -d "$(TOP)/vendor/qcom/opensource/interfaces/display/config/1.1" ];\
+    then echo DISPLAY_CONFIG_1_1; fi)
+    ifeq ($(display_config_version), DISPLAY_CONFIG_1_1)
+        LOCAL_CFLAGS += -DDISPLAY_CONFIG_1_1
+        LOCAL_SHARED_LIBRARIES += vendor.display.config@1.1
+    endif
+endif
+
 LOCAL_EXPORT_SHARED_LIBRARY_HEADERS := \
     android.hardware.graphics.allocator@2.0 \
     android.hardware.graphics.composer@2.1 \
