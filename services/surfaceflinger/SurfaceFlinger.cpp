@@ -3541,6 +3541,7 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
         }
 
         bool dumpAll = true;
+        bool enableRegionDump = false;
         size_t index = 0;
         size_t numArgs = args.size();
         if (numArgs) {
@@ -3591,10 +3592,15 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
                 dumpWideColorInfo(result);
                 dumpAll = false;
             }
+            if ((index < numArgs) &&
+                    (args[index] == String16("--region-dump"))) {
+                index++;
+                enableRegionDump = true;
+            }
         }
 
         if (dumpAll) {
-            dumpAllLocked(args, index, result);
+            dumpAllLocked(args, index, result, enableRegionDump);
         }
 
         if (locked) {
@@ -3788,7 +3794,7 @@ void SurfaceFlinger::dumpWideColorInfo(String8& result) const {
 }
 
 void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
-        String8& result) const
+        String8& result, bool enableRegionDump) const
 {
     bool colorize = false;
     if (index < args.size()
@@ -3852,7 +3858,7 @@ void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
     result.appendFormat("Visible layers (count = %zu)\n", mNumLayers);
     colorizer.reset(result);
     mCurrentState.traverseInZOrder([&](Layer* layer) {
-        layer->dump(result, colorizer);
+        layer->dump(result, colorizer, enableRegionDump);
     });
 
     /*
