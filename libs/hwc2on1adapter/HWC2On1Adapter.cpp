@@ -528,8 +528,14 @@ HWC2On1Adapter::Display::Display(HWC2On1Adapter& device, HWC2::DisplayType type)
     mHwc1LayerMap(),
     mNumAvailableRects(0),
     mNextAvailableRect(nullptr),
-    mGeometryChanged(false)
-    {}
+    mGeometryChanged(false) {
+
+    if (mType == HWC2::DisplayType::Virtual) {
+        mRetireFence.initialize(1);
+    } else {
+        mRetireFence.initialize(2);
+    }
+}
 
 Error HWC2On1Adapter::Display::acceptChanges() {
     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
@@ -1921,7 +1927,10 @@ HWC2On1Adapter::Layer::Layer(Display& display)
     mZ(0),
     mReleaseFence(),
     mHwc1Id(0),
-    mHasUnsupportedPlaneAlpha(false) {}
+    mHasUnsupportedPlaneAlpha(false) {
+
+    mReleaseFence.initialize(2);
+}
 
 bool HWC2On1Adapter::SortLayersByZ::operator()(
         const std::shared_ptr<Layer>& lhs, const std::shared_ptr<Layer>& rhs) {
@@ -2098,8 +2107,7 @@ std::string HWC2On1Adapter::Layer::dump() const {
     } else if (mCompositionType == HWC2::Composition::Sideband) {
         output << "  Handle: " << mSidebandStream << '\n';
     } else {
-        output << "  Buffer: " << mBuffer.getBuffer() << "/" <<
-                mBuffer.getFence() << '\n';
+        output << "  Buffer: " << mBuffer.getBuffer() << '\n';
         output << fill << "  Display frame [LTRB]: " <<
                 rectString(mDisplayFrame) << '\n';
         output << fill << "  Source crop: " <<
@@ -2488,6 +2496,8 @@ Error HWC2On1Adapter::setAllDisplays() {
     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
 
     // Make sure we're ready to validate
+    bool allSetFailed = true;
+    Error error = Error::None;
     for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
         if (mHwc1Contents[hwc1Id] == nullptr) {
             continue;
@@ -2495,12 +2505,18 @@ Error HWC2On1Adapter::setAllDisplays() {
 
         auto displayId = mHwc1DisplayMap[hwc1Id];
         auto& display = mDisplays[displayId];
-        Error error = display->set(*mHwc1Contents[hwc1Id]);
+        error = display->set(*mHwc1Contents[hwc1Id]);
         if (error != Error::None) {
             ALOGE("setAllDisplays: Failed to set display %zd: %s", hwc1Id,
                     to_string(error).c_str());
-            return error;
+        } else {
+            allSetFailed = false;
         }
+    }
+
+    if (allSetFailed) {
+        ALOGE("setAllDisplays: Failed for all display: Returning failure");
+        return error;
     }
 
     ALOGV("Calling HWC1 set");
