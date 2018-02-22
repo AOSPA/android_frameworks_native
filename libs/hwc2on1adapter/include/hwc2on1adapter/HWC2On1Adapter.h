@@ -154,8 +154,13 @@ private:
     // returns NO_FENCE.
     class DeferredFence {
         public:
-            DeferredFence()
-              : mFences({MiniFence::NO_FENCE, MiniFence::NO_FENCE}) {}
+            DeferredFence() { }
+
+            void initialize(uint32_t size) {
+                for(uint32_t i = 0; i < size; i++) {
+                    mFences.push(MiniFence::NO_FENCE);
+                }
+            }
 
             void add(int32_t fenceFd) {
                 mFences.emplace(new MiniFence(fenceFd));
