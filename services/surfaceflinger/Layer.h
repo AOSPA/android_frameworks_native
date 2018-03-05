@@ -502,7 +502,7 @@ public:
 
 
     /* always call base class first */
-    void dump(String8& result, Colorizer& colorizer) const;
+    void dump(String8& result, Colorizer& colorizer, bool enableRegionDump) const;
 #ifdef USE_HWC2
     static void miniDumpHeader(String8& result);
     void miniDump(String8& result, int32_t hwcId) const;

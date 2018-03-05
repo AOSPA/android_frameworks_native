@@ -623,7 +623,8 @@ private:
     void listLayersLocked(const Vector<String16>& args, size_t& index, String8& result) const;
     void dumpStatsLocked(const Vector<String16>& args, size_t& index, String8& result) const;
     void clearStatsLocked(const Vector<String16>& args, size_t& index, String8& result);
-    void dumpAllLocked(const Vector<String16>& args, size_t& index, String8& result) const;
+    void dumpAllLocked(const Vector<String16>& args, size_t& index, String8& result,
+                                                     bool enableRegionDump) const;
     bool startDdmConnection();
     void appendSfConfigString(String8& result) const;
     void checkScreenshot(size_t w, size_t s, size_t h, void const* vaddr,
