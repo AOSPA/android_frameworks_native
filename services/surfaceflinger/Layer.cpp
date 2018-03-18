@@ -2441,7 +2441,7 @@ void Layer::updateTransformHint(const sp<const DisplayDevice>& hw) const {
 // debugging
 // ----------------------------------------------------------------------------
 
-void Layer::dump(String8& result, Colorizer& colorizer) const
+void Layer::dump(String8& result, Colorizer& colorizer, bool enableRegionDump) const
 {
     const Layer::State& s(getDrawingState());
 
@@ -2451,9 +2451,11 @@ void Layer::dump(String8& result, Colorizer& colorizer) const
             getTypeId(), this, getName().string());
     colorizer.reset(result);
 
-    s.activeTransparentRegion.dump(result, "transparentRegion");
-    visibleRegion.dump(result, "visibleRegion");
-    surfaceDamageRegion.dump(result, "surfaceDamageRegion");
+    if (enableRegionDump) {
+        s.activeTransparentRegion.dump(result, "transparentRegion");
+        visibleRegion.dump(result, "visibleRegion");
+        surfaceDamageRegion.dump(result, "surfaceDamageRegion");
+    }
     sp<Client> client(mClientRef.promote());
     PixelFormat pf = PIXEL_FORMAT_UNKNOWN;
     const sp<GraphicBuffer>& buffer(getActiveBuffer());
