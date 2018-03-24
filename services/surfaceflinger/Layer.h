@@ -27,6 +27,7 @@
 #include <utils/String8.h>
 #include <utils/Timers.h>
 
+#include <ui/FloatRect.h>
 #include <ui/FrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/PixelFormat.h>
@@ -258,8 +259,8 @@ public:
 
     void computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
             bool useIdentityTransform) const;
-    Rect computeBounds(const Region& activeTransparentRegion) const;
-    Rect computeBounds() const;
+    FloatRect computeBounds(const Region& activeTransparentRegion) const;
+    FloatRect computeBounds() const;
 
     int32_t getSequence() const { return sequence; }
 
@@ -434,7 +435,7 @@ public:
 
     // Updates the transform hint in our SurfaceFlingerConsumer to match
     // the current orientation of the display device.
-    void updateTransformHint(const sp<const DisplayDevice>& hw);
+    void updateTransformHint(const sp<const DisplayDevice>& hw) const;
 
     /* ------------------------------------------------------------------------
      * Extensions
@@ -501,7 +502,7 @@ public:
 
 
     /* always call base class first */
-    void dump(String8& result, Colorizer& colorizer) const;
+    void dump(String8& result, Colorizer& colorizer, bool enableRegionDump) const;
 #ifdef USE_HWC2
     static void miniDumpHeader(String8& result);
     void miniDump(String8& result, int32_t hwcId) const;
@@ -572,7 +573,7 @@ protected:
             : mFlinger(flinger), mLayer(layer) {
         }
     };
-
+    static FloatRect reduce(const FloatRect& win, const Region& exclude);
     Rect reduce(const Rect& win, const Region& exclude) const;
 
     virtual void onFirstRef();
@@ -817,9 +818,6 @@ private:
 
     bool mAutoRefresh;
     bool mFreezeGeometryUpdates;
-    uint32_t mTransformHint;
-    // debug mdp and gpu crop
-    uint32_t mDebugAndRecomputeCrop;
 
     // Child list about to be committed/used for editing.
     LayerVector mCurrentChildren;

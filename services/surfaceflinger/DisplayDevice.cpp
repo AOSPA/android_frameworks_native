@@ -663,8 +663,9 @@ void DisplayDevice::dump(String8& result) const {
 
 std::atomic<int32_t> DisplayDeviceState::nextDisplayId(1);
 
-DisplayDeviceState::DisplayDeviceState(DisplayDevice::DisplayType type, bool isSecure)
+DisplayDeviceState::DisplayDeviceState(DisplayDevice::DisplayType type, int32_t hwcId, bool isSecure)
     : type(type),
+      hwcId(hwcId),
       layerStack(DisplayDevice::NO_LAYER_STACK),
       orientation(0),
       width(0),
