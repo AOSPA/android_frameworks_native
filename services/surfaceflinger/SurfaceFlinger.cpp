@@ -1327,7 +1327,7 @@ void SurfaceFlinger::onHotplugReceived(int32_t sequenceId,
             return;
         }
         mHwc->onHotplug(display, connection);
-        auto type = DisplayDevice::DISPLAY_EXTERNAL;
+        auto type = (DisplayDevice::DisplayType) display;
         if (connection == HWC2::Connection::Connected) {
             createBuiltinDisplayLocked(type);
         } else {

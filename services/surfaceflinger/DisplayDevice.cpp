@@ -179,8 +179,11 @@ DisplayDevice::DisplayDevice(
         case DISPLAY_EXTERNAL:
             mDisplayName = "HDMI Screen";
             break;
-        default:
+        case DISPLAY_VIRTUAL:
             mDisplayName = "Virtual Screen";    // e.g. Overlay #n
+            break;
+        default:
+            mDisplayName = "Add-on Screen";
             break;
     }
 

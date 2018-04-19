@@ -61,7 +61,7 @@ namespace android {
 
 HWComposer::HWComposer(bool useVrComposer)
     : mHwcDevice(),
-      mDisplayData(2),
+      mDisplayData(HWC_NUM_PHYSICAL_DISPLAY_TYPES),
       mFreeDisplaySlots(),
       mHwcDisplaySlots(),
       mCBContext(),
@@ -133,8 +133,8 @@ void HWComposer::onHotplug(hwc2_display_t displayId,
         // Disconnect is handled through HWComposer::disconnectDisplay via
         // SurfaceFlinger's onHotplugReceived callback handling
         if (connection == HWC2::Connection::Connected) {
-            mDisplayData[1].hwcDisplay = mHwcDevice->getDisplayById(displayId);
-            mHwcDisplaySlots[displayId] = 1;
+            mDisplayData[displayId].hwcDisplay = mHwcDevice->getDisplayById(displayId);
+            mHwcDisplaySlots[displayId] = displayId;
         }
     }
 }
