@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "9deb04f9_2cface65",
+        "filename": "services/inputflinger/InputReader.h",
+        "patchSetId": 1
+      },
+      "lineNbr": 94,
+      "author": {
+        "id": 1000008
+      },
+      "writtenOn": "2018-04-19T14:48:59Z",
+      "side": 1,
+      "message": "That should be 1 \u003c\u003c 10",
+      "revId": "cd160cb87df84da7660eda153dbdcc9e4d970520",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": false
+    }
+  ]
+}
