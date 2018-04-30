@@ -208,9 +208,8 @@ private:
     mutable Mutex mDisplayLock;
 
     cb_context*                     mCBContext;
-    std::unordered_map<int32_t, size_t> mVSyncCounts;
+    size_t                          mVSyncCounts[HWC_NUM_PHYSICAL_DISPLAY_TYPES];
     uint32_t                        mRemainingHwcVirtualDisplays;
-    int32_t                         mExternalDisplayIdOffset;
 
     // protected by mLock
     mutable Mutex mLock;

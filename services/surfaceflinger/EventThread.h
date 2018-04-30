@@ -31,8 +31,6 @@
 #include "DisplayDevice.h"
 #include "DisplayHardware/PowerHAL.h"
 
-#include <vector>
-
 // ---------------------------------------------------------------------------
 namespace android {
 // ---------------------------------------------------------------------------
@@ -127,11 +125,9 @@ private:
     // protected by mLock
     SortedVector< wp<Connection> > mDisplayEventConnections;
     Vector< DisplayEventReceiver::Event > mPendingEvents;
-    std::vector<DisplayEventReceiver::Event> mVSyncEvent;
-    std::vector<DisplayEventReceiver::Event> mHotplugEvent;
+    DisplayEventReceiver::Event mVSyncEvent[DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES];
     bool mUseSoftwareVSync;
     bool mVsyncEnabled;
-    bool mFirstConnectionInited;
 
     // for debugging
     bool mDebugVsyncEnabled;

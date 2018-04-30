@@ -290,7 +290,7 @@ private:
 
 struct DisplayDeviceState {
     DisplayDeviceState() = default;
-    DisplayDeviceState(DisplayDevice::DisplayType type, int32_t hwcId, bool isSecure);
+    DisplayDeviceState(DisplayDevice::DisplayType type, bool isSecure);
 
     bool isValid() const { return type >= 0; }
     bool isMainDisplay() const { return type == DisplayDevice::DISPLAY_PRIMARY; }
@@ -299,7 +299,6 @@ struct DisplayDeviceState {
     static std::atomic<int32_t> nextDisplayId;
     int32_t displayId = nextDisplayId++;
     DisplayDevice::DisplayType type = DisplayDevice::DISPLAY_ID_INVALID;
-    int32_t hwcId;
     sp<IGraphicBufferProducer> surface;
     uint32_t layerStack = DisplayDevice::NO_LAYER_STACK;
     Rect viewport;
