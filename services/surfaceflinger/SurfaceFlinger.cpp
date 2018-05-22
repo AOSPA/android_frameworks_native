@@ -154,6 +154,8 @@ SurfaceFlinger::SurfaceFlinger()
         mVisibleRegionsDirty(false),
         mGeometryInvalid(false),
         mAnimCompositionPending(false),
+        mActiveDisplays(0),
+        mBuiltInBitmask(0),
         mDebugRegion(0),
         mDebugDDMS(0),
         mDebugDisableHWC(0),
@@ -651,6 +653,10 @@ void SurfaceFlinger::init() {
         ALOGE("Run StartPropertySetThread failed!");
     }
 
+    mBuiltInBitmask.set(HWC_DISPLAY_PRIMARY);
+    for (int disp = HWC_DISPLAY_BUILTIN_2; disp <= HWC_DISPLAY_BUILTIN_4; disp++) {
+      mBuiltInBitmask.set(disp);
+    }
     ALOGV("Done initializing");
 }
 
@@ -1651,7 +1657,19 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     }
 
     mDisplayTimeline.updateSignalTimes();
-    sp<Fence> presentFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
+
+    std::bitset<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES> activeBuiltInDisplays;
+    activeBuiltInDisplays = mActiveDisplays & mBuiltInBitmask;
+
+    size_t disp_id = HWC_DISPLAY_PRIMARY;
+    for (size_t disp = 0; disp < activeBuiltInDisplays.size(); disp++) {
+      if (mActiveDisplays.test(disp)) {
+        disp_id = disp;
+        break;
+      }
+    }
+
+    sp<Fence> presentFence = mHwc->getPresentFence(disp_id);
     auto presentFenceTime = std::make_shared<FenceTime>(presentFence);
     mDisplayTimeline.push(presentFenceTime);
 
@@ -3431,10 +3449,12 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
         mInterceptor.savePowerModeUpdate(mCurrentState.displays.valueAt(idx).displayId, mode);
     }
 
+    mActiveDisplays[type] = (mode != HWC_POWER_MODE_OFF && mode != HWC_POWER_MODE_DOZE_SUSPEND);
+
     if (currentMode == HWC_POWER_MODE_OFF) {
         // Turn on the display
         getHwComposer().setPowerMode(type, mode);
-        if (type == DisplayDevice::DISPLAY_PRIMARY &&
+        if (mActiveDisplays.any() &&
             mode != HWC_POWER_MODE_DOZE_SUSPEND) {
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenAcquired();
@@ -3457,7 +3477,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
             ALOGW("Couldn't set SCHED_OTHER on display off");
         }
 
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (mActiveDisplays.none()) {
             disableHardwareVsync(true); // also cancels any in-progress resync
 
             // FIXME: eventthread only knows about the main display right now
@@ -3471,14 +3491,14 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
                mode == HWC_POWER_MODE_NORMAL) {
         // Update display while dozing
         getHwComposer().setPowerMode(type, mode);
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (mActiveDisplays.any()) {
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenAcquired();
             resyncToHardwareVsync(true);
         }
     } else if (mode == HWC_POWER_MODE_DOZE_SUSPEND) {
         // Leave display going to doze
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (mActiveDisplays.none()) {
             disableHardwareVsync(true); // also cancels any in-progress resync
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenReleased();
