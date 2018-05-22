@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "b502136a_5b70da27",
+        "filename": "services/surfaceflinger/SurfaceFlinger.h",
+        "patchSetId": 1
+      },
+      "lineNbr": 760,
+      "author": {
+        "id": 1000011
+      },
+      "writtenOn": "2018-05-22T23:35:30Z",
+      "side": 1,
+      "message": "Let\u0027s initialize as false",
+      "revId": "38da83ae87c65bfd4964786c7cb518f368a5b247",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": false
+    }
+  ]
+}
