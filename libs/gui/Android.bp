@@ -183,13 +183,9 @@ cc_library_static {
     },
 }
 
-cc_library_shared {
-    name: "libgui",
-    vendor_available: true,
-    vndk: {
-        enabled: true,
-        private: true,
-    },
+cc_defaults {
+    name: "libgui_defaults",
+
     double_loadable: true,
 
     defaults: [
@@ -494,5 +490,21 @@ cc_defaults {
     ],
 }
 // QTI_END
+
+cc_library_shared {
+    name: "libgui",
+    vendor_available: true,
+    vndk: {
+        enabled: true,
+        private: true,
+    },
+    defaults: ["libgui_defaults"]
+}
+
+cc_library_shared {
+    name: "libgui_vendor",
+    vendor: true,
+    defaults: ["libgui_defaults"]
+}
 
 subdirs = ["tests"]
