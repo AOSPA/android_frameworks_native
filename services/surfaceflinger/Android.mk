@@ -133,6 +133,14 @@ ifeq ($(TARGET_USES_QCOM_DISPLAY_BSP), true)
         LOCAL_CFLAGS += -DDISPLAY_CONFIG_1_1
         LOCAL_SHARED_LIBRARIES += vendor.display.config@1.1
     endif
+
+    display_config_version := $(shell \
+    if [ -d "$(TOP)/vendor/qcom/opensource/interfaces/display/config/1.2" ];\
+    then echo DISPLAY_CONFIG_1_2; fi)
+    ifeq ($(display_config_version), DISPLAY_CONFIG_1_2)
+        LOCAL_CFLAGS += -DDISPLAY_CONFIG_1_2
+        LOCAL_SHARED_LIBRARIES += vendor.display.config@1.2
+    endif
 endif
 
 LOCAL_EXPORT_SHARED_LIBRARY_HEADERS := \
