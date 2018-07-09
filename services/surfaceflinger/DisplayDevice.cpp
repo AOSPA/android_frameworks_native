@@ -179,8 +179,11 @@ DisplayDevice::DisplayDevice(
         case DISPLAY_EXTERNAL:
             mDisplayName = "HDMI Screen";
             break;
-        default:
+        case DISPLAY_VIRTUAL:
             mDisplayName = "Virtual Screen";    // e.g. Overlay #n
+            break;
+        default:
+            mDisplayName = "Add-on Screen";
             break;
     }
 
@@ -663,9 +666,8 @@ void DisplayDevice::dump(String8& result) const {
 
 std::atomic<int32_t> DisplayDeviceState::nextDisplayId(1);
 
-DisplayDeviceState::DisplayDeviceState(DisplayDevice::DisplayType type, int32_t hwcId, bool isSecure)
+DisplayDeviceState::DisplayDeviceState(DisplayDevice::DisplayType type, bool isSecure)
     : type(type),
-      hwcId(hwcId),
       layerStack(DisplayDevice::NO_LAYER_STACK),
       orientation(0),
       width(0),

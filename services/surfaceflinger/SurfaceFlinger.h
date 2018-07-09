@@ -75,6 +75,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <bitset>
 
 namespace android {
 
@@ -512,7 +513,7 @@ private:
     void initializeDisplays();
 
     // Create an IBinder for a builtin display and add it to current state
-    void createBuiltinDisplayLocked(DisplayDevice::DisplayType type, int32_t hwcId);
+    void createBuiltinDisplayLocked(DisplayDevice::DisplayType type);
 
 
     sp<const DisplayDevice> getDisplayDevice(const wp<IBinder>& dpy) const {
@@ -543,7 +544,7 @@ private:
 
     int32_t getDisplayType(const sp<IBinder>& display) {
         if (!display.get()) return NAME_NOT_FOUND;
-        for (int i = 0; i < (int)mBuiltinDisplays.size(); ++i) {
+        for (int i = 0; i < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES; ++i) {
             if (display == mBuiltinDisplays[i]) {
                 return i;
             }
@@ -713,7 +714,7 @@ private:
     sp<EventControlThread> mEventControlThread;
     EGLContext mEGLContext;
     EGLDisplay mEGLDisplay;
-    std::vector<sp<IBinder>> mBuiltinDisplays;
+    sp<IBinder> mBuiltinDisplays[DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES];
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
@@ -738,6 +739,8 @@ private:
     DefaultKeyedVector< wp<IBinder>, sp<DisplayDevice> > mDisplays;
 
     // don't use a lock for these, we don't care
+    std::bitset<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES> mActiveDisplays;
+    std::bitset<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES> mBuiltInBitmask;
     int mDebugRegion;
     int mDebugDDMS;
     int mDebugDisableHWC;

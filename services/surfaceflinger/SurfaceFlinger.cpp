@@ -150,10 +150,12 @@ SurfaceFlinger::SurfaceFlinger()
         mRepaintEverything(0),
         mRenderEngine(nullptr),
         mBootTime(systemTime()),
-        mBuiltinDisplays(DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES),
+        mBuiltinDisplays(),
         mVisibleRegionsDirty(false),
         mGeometryInvalid(false),
         mAnimCompositionPending(false),
+        mActiveDisplays(0),
+        mBuiltInBitmask(0),
         mDebugRegion(0),
         mDebugDDMS(0),
         mDebugDisableHWC(0),
@@ -319,7 +321,7 @@ sp<IBinder> SurfaceFlinger::createDisplay(const String8& displayName,
     sp<BBinder> token = new DisplayToken(this);
 
     Mutex::Autolock _l(mStateLock);
-    DisplayDeviceState info(DisplayDevice::DISPLAY_VIRTUAL, -1, secure);
+    DisplayDeviceState info(DisplayDevice::DISPLAY_VIRTUAL, secure);
     info.displayName = displayName;
     mCurrentState.displays.add(token, info);
     mInterceptor.saveDisplayCreation(info);
@@ -345,19 +347,19 @@ void SurfaceFlinger::destroyDisplay(const sp<IBinder>& display) {
     setTransactionFlags(eDisplayTransactionNeeded);
 }
 
-void SurfaceFlinger::createBuiltinDisplayLocked(DisplayDevice::DisplayType type, int32_t hwcId) {
+void SurfaceFlinger::createBuiltinDisplayLocked(DisplayDevice::DisplayType type) {
     ALOGV("createBuiltinDisplayLocked(%d)", type);
-    ALOGW_IF(mBuiltinDisplays[hwcId],
-            "Overwriting display token for display type %d", hwcId);
-    mBuiltinDisplays[hwcId] = new BBinder();
+    ALOGW_IF(mBuiltinDisplays[type],
+            "Overwriting display token for display type %d", type);
+    mBuiltinDisplays[type] = new BBinder();
     // All non-virtual displays are currently considered secure.
-    DisplayDeviceState info(type, hwcId, true);
-    mCurrentState.displays.add(mBuiltinDisplays[hwcId], info);
+    DisplayDeviceState info(type, true);
+    mCurrentState.displays.add(mBuiltinDisplays[type], info);
     mInterceptor.saveDisplayCreation(info);
 }
 
 sp<IBinder> SurfaceFlinger::getBuiltInDisplay(int32_t id) {
-    if (size_t(id) >= mBuiltinDisplays.size()) {
+    if (uint32_t(id) >= DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES) {
         ALOGE("getDefaultDisplay: id=%d is not a valid default display id", id);
         return NULL;
     }
@@ -651,6 +653,10 @@ void SurfaceFlinger::init() {
         ALOGE("Run StartPropertySetThread failed!");
     }
 
+    mBuiltInBitmask.set(HWC_DISPLAY_PRIMARY);
+    for (int disp = HWC_DISPLAY_BUILTIN_2; disp <= HWC_DISPLAY_BUILTIN_4; disp++) {
+      mBuiltInBitmask.set(disp);
+    }
     ALOGV("Done initializing");
 }
 
@@ -731,7 +737,7 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
         return NAME_NOT_FOUND;
 
     int32_t type = NAME_NOT_FOUND;
-    for (int i=0 ; i<(int32_t)mBuiltinDisplays.size() ; i++) {
+    for (int i=0 ; i<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) {
         if (display == mBuiltinDisplays[i]) {
             type = i;
             break;
@@ -857,7 +863,6 @@ void SurfaceFlinger::setActiveConfigInternal(const sp<DisplayDevice>& hw, int mo
     ALOGD("Set active config mode=%d, type=%d flinger=%p", mode, hw->getDisplayType(),
           this);
     int32_t type = hw->getDisplayType();
-    int32_t hwcId = hw->getHwcDisplayId();
     int currentMode = hw->getActiveConfig();
 
     if (mode == currentMode) {
@@ -870,7 +875,7 @@ void SurfaceFlinger::setActiveConfigInternal(const sp<DisplayDevice>& hw, int mo
         return;
     }
 
-    status_t status = getHwComposer().setActiveConfig(hwcId, mode);
+    status_t status = getHwComposer().setActiveConfig(type, mode);
     if (status == NO_ERROR) {
         hw->setActiveConfig(mode);
     }
@@ -921,7 +926,7 @@ status_t SurfaceFlinger::getDisplayColorModes(const sp<IBinder>& display,
     }
 
     int32_t type = NAME_NOT_FOUND;
-    for (int i=0 ; i<(int32_t)mBuiltinDisplays.size() ; i++) {
+    for (int i=0 ; i<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) {
         if (display == mBuiltinDisplays[i]) {
             type = i;
             break;
@@ -955,7 +960,6 @@ android_color_mode_t SurfaceFlinger::getActiveColorMode(const sp<IBinder>& displ
 void SurfaceFlinger::setActiveColorModeInternal(const sp<DisplayDevice>& hw,
         android_color_mode_t mode) {
     int32_t type = hw->getDisplayType();
-    int32_t hwcId = hw->getHwcDisplayId();
     android_color_mode_t currentMode = hw->getActiveColorMode();
 
     if (mode == currentMode) {
@@ -971,7 +975,7 @@ void SurfaceFlinger::setActiveColorModeInternal(const sp<DisplayDevice>& hw,
           hw->getDisplayType());
 
     hw->setActiveColorMode(mode);
-    getHwComposer().setActiveColorMode(hwcId, mode);
+    getHwComposer().setActiveColorMode(type, mode);
 }
 
 
@@ -1291,7 +1295,7 @@ void SurfaceFlinger::createDefaultDisplayDevice() {
 
     // Add the primary display token to mDrawingState so we don't try to
     // recreate the DisplayDevice for the primary display.
-    mDrawingState.displays.add(token, DisplayDeviceState(DisplayDevice::DISPLAY_PRIMARY, type, true));
+    mDrawingState.displays.add(token, DisplayDeviceState(type, true));
 
     // make the GLContext current so that we can create textures when creating
     // Layers (which may happens before we render something)
@@ -1317,7 +1321,7 @@ void SurfaceFlinger::onHotplugReceived(int32_t sequenceId,
     if (primaryDisplay) {
         mHwc->onHotplug(display, connection);
         if (!mBuiltinDisplays[DisplayDevice::DISPLAY_PRIMARY].get()) {
-            createBuiltinDisplayLocked(DisplayDevice::DISPLAY_PRIMARY, HWC_DISPLAY_PRIMARY);
+            createBuiltinDisplayLocked(DisplayDevice::DISPLAY_PRIMARY);
         }
         createDefaultDisplayDevice();
     } else {
@@ -1329,17 +1333,12 @@ void SurfaceFlinger::onHotplugReceived(int32_t sequenceId,
             return;
         }
         mHwc->onHotplug(display, connection);
-        auto type = DisplayDevice::DISPLAY_EXTERNAL;
-
-        // Grow mBuiltinDisplays if needed
-        if ((size_t)display >= mBuiltinDisplays.size())
-            mBuiltinDisplays.resize(display + 1);
-
+        auto type = (DisplayDevice::DisplayType) display;
         if (connection == HWC2::Connection::Connected) {
-            createBuiltinDisplayLocked(type, display);
+            createBuiltinDisplayLocked(type);
         } else {
-            mCurrentState.displays.removeItem(mBuiltinDisplays[display]);
-            mBuiltinDisplays[display].clear();
+            mCurrentState.displays.removeItem(mBuiltinDisplays[type]);
+            mBuiltinDisplays[type].clear();
             updateVisibleRegionsDirty();
         }
         setTransactionFlags(eDisplayTransactionNeeded);
@@ -1658,7 +1657,19 @@ void SurfaceFlinger::postComposition(nsecs_t refreshStartTime)
     }
 
     mDisplayTimeline.updateSignalTimes();
-    sp<Fence> presentFence = mHwc->getPresentFence(HWC_DISPLAY_PRIMARY);
+
+    std::bitset<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES> activeBuiltInDisplays;
+    activeBuiltInDisplays = mActiveDisplays & mBuiltInBitmask;
+
+    size_t disp_id = HWC_DISPLAY_PRIMARY;
+    for (size_t disp = 0; disp < activeBuiltInDisplays.size(); disp++) {
+      if (mActiveDisplays.test(disp)) {
+        disp_id = disp;
+        break;
+      }
+    }
+
+    sp<Fence> presentFence = mHwc->getPresentFence(disp_id);
     auto presentFenceTime = std::make_shared<FenceTime>(presentFence);
     mDisplayTimeline.push(presentFenceTime);
 
@@ -2160,7 +2171,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         if (hw != NULL)
                             hw->disconnect(getHwComposer());
                         if (draw[i].type < DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES)
-                            mEventThread->onHotplugReceived(draw[i].hwcId, false);
+                            mEventThread->onHotplugReceived(draw[i].type, false);
                         mDisplays.removeItem(draw.keyAt(i));
                     } else {
                         ALOGW("trying to remove the main display");
@@ -2272,7 +2283,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                                 "surface is provided (%p), ignoring it",
                                 state.surface.get());
 
-                        hwcId = state.hwcId;
+                        hwcId = state.type;
                         dispSurface = new FramebufferSurface(*mHwc, hwcId, bqConsumer);
                         producer = bqProducer;
                     }
@@ -2300,7 +2311,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
                         }
                         mDisplays.add(display, hw);
                         if (!state.isVirtualDisplay()) {
-                            mEventThread->onHotplugReceived(state.hwcId, true);
+                            mEventThread->onHotplugReceived(state.type, true);
                         }
                     }
                 }
@@ -3416,7 +3427,6 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
     ALOGD("Set power mode=%d, type=%d flinger=%p", mode, hw->getDisplayType(),
             this);
     int32_t type = hw->getDisplayType();
-    int32_t hwcId = hw->getHwcDisplayId();
     int currentMode = hw->getPowerMode();
 
     if (mode == currentMode) {
@@ -3439,10 +3449,12 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
         mInterceptor.savePowerModeUpdate(mCurrentState.displays.valueAt(idx).displayId, mode);
     }
 
+    mActiveDisplays[type] = (mode != HWC_POWER_MODE_OFF && mode != HWC_POWER_MODE_DOZE_SUSPEND);
+
     if (currentMode == HWC_POWER_MODE_OFF) {
         // Turn on the display
-        getHwComposer().setPowerMode(hwcId, mode);
-        if (type == DisplayDevice::DISPLAY_PRIMARY &&
+        getHwComposer().setPowerMode(type, mode);
+        if (mActiveDisplays.any() &&
             mode != HWC_POWER_MODE_DOZE_SUSPEND) {
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenAcquired();
@@ -3465,36 +3477,36 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& hw,
             ALOGW("Couldn't set SCHED_OTHER on display off");
         }
 
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (mActiveDisplays.none()) {
             disableHardwareVsync(true); // also cancels any in-progress resync
 
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenReleased();
         }
 
-        getHwComposer().setPowerMode(hwcId, mode);
+        getHwComposer().setPowerMode(type, mode);
         mVisibleRegionsDirty = true;
         // from this point on, SF will stop drawing on this display
     } else if (mode == HWC_POWER_MODE_DOZE ||
                mode == HWC_POWER_MODE_NORMAL) {
         // Update display while dozing
-        getHwComposer().setPowerMode(hwcId, mode);
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        getHwComposer().setPowerMode(type, mode);
+        if (mActiveDisplays.any()) {
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenAcquired();
             resyncToHardwareVsync(true);
         }
     } else if (mode == HWC_POWER_MODE_DOZE_SUSPEND) {
         // Leave display going to doze
-        if (type == DisplayDevice::DISPLAY_PRIMARY) {
+        if (mActiveDisplays.none()) {
             disableHardwareVsync(true); // also cancels any in-progress resync
             // FIXME: eventthread only knows about the main display right now
             mEventThread->onScreenReleased();
         }
-        getHwComposer().setPowerMode(hwcId, mode);
+        getHwComposer().setPowerMode(type, mode);
     } else {
         ALOGE("Attempting to set unknown power mode: %d\n", mode);
-        getHwComposer().setPowerMode(hwcId, mode);
+        getHwComposer().setPowerMode(type, mode);
     }
 }
 
@@ -4272,6 +4284,13 @@ status_t SurfaceFlinger::onTransact(
                     reply->write(frameStats.actualPresentTimesNano.array(), 8*arraySize);
                 }
                 return NO_ERROR;
+            }
+            case 20000: {
+              int disp = data.readInt32();
+              int mode = data.readInt32();
+              ALOGI("Debug: Set display = %d, power mode = %d", disp, mode);
+              setPowerMode(getBuiltInDisplay(disp), mode);
+              return NO_ERROR;
             }
         }
     }

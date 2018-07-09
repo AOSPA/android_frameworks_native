@@ -170,7 +170,7 @@ public:
 
     android::Hwc2::Composer* getComposer() const { return mHwcDevice->getComposer(); }
 private:
-    static const int32_t VIRTUAL_DISPLAY_ID_BASE = 2;
+    static const int32_t VIRTUAL_DISPLAY_ID_BASE = HWC_DISPLAY_VIRTUAL;
 
     bool isValidDisplay(int32_t displayId) const;
     static void validateChange(HWC2::Composition from, HWC2::Composition to);
@@ -208,9 +208,8 @@ private:
     mutable Mutex mDisplayLock;
 
     cb_context*                     mCBContext;
-    std::unordered_map<int32_t, size_t> mVSyncCounts;
+    size_t                          mVSyncCounts[HWC_NUM_PHYSICAL_DISPLAY_TYPES];
     uint32_t                        mRemainingHwcVirtualDisplays;
-    int32_t                         mExternalDisplayIdOffset;
 
     // protected by mLock
     mutable Mutex mLock;
