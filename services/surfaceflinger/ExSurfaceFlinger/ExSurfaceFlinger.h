@@ -31,11 +31,6 @@
 
 #include "SurfaceFlinger.h"
 
-#ifdef DISPLAY_CONFIG_1_1
-#include <vendor/display/config/1.1/IDisplayConfig.h>
-#endif
-
-
 namespace android {
 
 class ExSurfaceFlinger : public SurfaceFlinger
@@ -76,10 +71,6 @@ protected:
     bool isDebug() { return mDebugLogs; }
     bool mDisableExtAnimation;
     bool mAnimating = false;
-
-#ifdef DISPLAY_CONFIG_1_1
-    android::sp<vendor::display::config::V1_1::IDisplayConfig> mDisplayConfig;
-#endif
 
     static bool sAllowHDRFallBack;
     static bool AllowHDRFallBack() { return sAllowHDRFallBack; }

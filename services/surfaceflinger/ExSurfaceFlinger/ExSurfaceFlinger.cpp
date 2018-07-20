@@ -32,6 +32,12 @@
 #include <cutils/properties.h>
 #include <ui/GraphicBufferAllocator.h>
 
+#ifdef DISPLAY_CONFIG_1_2
+#include <vendor/display/config/1.2/IDisplayConfig.h>
+#elif DISPLAY_CONFIG_1_1
+#include <vendor/display/config/1.1/IDisplayConfig.h>
+#endif
+
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 namespace android {
@@ -67,9 +73,22 @@ ExSurfaceFlinger::ExSurfaceFlinger() {
         sAllowHDRFallBack = true;
     }
 
-#ifdef DISPLAY_CONFIG_1_1
-    mDisplayConfig = vendor::display::config::V1_1::IDisplayConfig::getService();
+    mUseHwcVirtualDisplays = false;
+#ifdef DISPLAY_CONFIG_1_2
+    using vendor::display::config::V1_2::IDisplayConfig;
+    android::sp<IDisplayConfig> displayConfig = IDisplayConfig::getService();
+    if (displayConfig != NULL) {
+        if (!displayConfig->setDisplayIndex(IDisplayConfig::DisplayTypeExt::DISPLAY_BUILTIN,
+                  HWC_DISPLAY_BUILTIN_2, (HWC_DISPLAY_VIRTUAL - HWC_DISPLAY_BUILTIN_2)) &&
+              !displayConfig->setDisplayIndex(IDisplayConfig::DisplayTypeExt::DISPLAY_PLUGGABLE,
+                  HWC_DISPLAY_EXTERNAL, (HWC_DISPLAY_BUILTIN_2 - HWC_DISPLAY_EXTERNAL)) &&
+              !displayConfig->setDisplayIndex(IDisplayConfig::DisplayTypeExt::DISPLAY_VIRTUAL,
+                  HWC_DISPLAY_VIRTUAL, 1)) {
+            mUseHwcVirtualDisplays = true;
+        }
+    }
 #endif
+    ALOGI("Use HWC virtual displays = %d", mUseHwcVirtualDisplays);
 }
 
 ExSurfaceFlinger::~ExSurfaceFlinger() { }
@@ -207,8 +226,11 @@ bool ExSurfaceFlinger::canDrawLayerinScreenShot(
 
 void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __unused) {
 #ifdef DISPLAY_CONFIG_1_1
+    using vendor::display::config::V1_1::IDisplayConfig;
+    android::sp<IDisplayConfig> displayConfig = IDisplayConfig::getService();
+
     int32_t dpy = hw->getDisplayType();
-    if (mDisplayConfig == NULL || dpy == HWC_DISPLAY_PRIMARY || !mDisableExtAnimation) {
+    if (displayConfig == NULL || dpy == HWC_DISPLAY_PRIMARY || !mDisableExtAnimation) {
         return;
     }
 
@@ -225,7 +247,7 @@ void ExSurfaceFlinger::setDisplayAnimating(const sp<const DisplayDevice>& hw __u
         return;
     }
 
-    mDisplayConfig->setDisplayAnimating(dpy, hasScreenshot);
+    displayConfig->setDisplayAnimating(dpy, hasScreenshot);
     mAnimating = hasScreenshot;
 #endif
 }
