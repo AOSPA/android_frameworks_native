@@ -1933,13 +1933,20 @@ void SurfaceFlinger::computeVisibleRegions(const sp<const DisplayDevice>& displa
     Region dirty;
 
     outDirtyRegion.clear();
+    bool bIgnoreLayers = false;
+    String8 nameLOI = static_cast<String8>("unnamed");
+    getIndexLOI(displayDevice->getHwcDisplayId(), bIgnoreLayers, nameLOI);
 
     mDrawingState.traverseInReverseZOrder([&](Layer* layer) {
         // start with the whole surface at its current location
         const Layer::State& s(layer->getDrawingState());
 
         // only consider the layers on the given layer stack
-        if (layer->getLayerStack() != displayDevice->getLayerStack())
+        if (!layer->belongsToDisplay(displayDevice->getLayerStack(), displayDevice->isPrimary()))
+            return;
+
+        if (updateLayerVisibleNonTransparentRegion(displayDevice->getHwcDisplayId(), layer,
+                                    bIgnoreLayers, nameLOI, displayDevice->getLayerStack()))
             return;
 
         /*
@@ -2980,6 +2987,7 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
         }
 
         bool dumpAll = true;
+	bool enableRegionDump = false;
         size_t index = 0;
         size_t numArgs = args.size();
         if (numArgs) {
@@ -3024,10 +3032,15 @@ status_t SurfaceFlinger::dump(int fd, const Vector<String16>& args)
                 dumpFrameEventsLocked(result);
                 dumpAll = false;
             }
+	if ((index < numArgs) &&
+                    (args[index] == String16("--region-dump"))) {
+                index++;
+                enableRegionDump = true;
+            }
         }
 
         if (dumpAll) {
-            dumpAllLocked(args, index, result);
+            dumpAllLocked(args, index, result, enableRegionDump);
         }
 
         if (locked) {
@@ -3195,7 +3208,7 @@ void SurfaceFlinger::dumpBufferingStats(String8& result) const {
 }
 
 void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
-        String8& result) const
+        String8& result, bool enableRegionDump) const
 {
     bool colorize = false;
     if (index < args.size()
@@ -3254,7 +3267,7 @@ void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
     result.appendFormat("Visible layers (count = %zu)\n", mNumLayers);
     colorizer.reset(result);
     mCurrentState.traverseInZOrder([&](Layer* layer) {
-        layer->dump(result, colorizer);
+        layer->dump(result, colorizer, enableRegionDump);
     });
 
     /*
@@ -3856,7 +3869,7 @@ void SurfaceFlinger::renderScreenImplLocked(
             continue;
         }
         layer->traverseInZOrder(LayerVector::StateSet::Drawing, [&](Layer* layer) {
-            if (!layer->isVisible()) {
+            if (!canDrawLayerinScreenShot(hw,layer)) {
                 return;
             }
             if (filtering) layer->setFiltering(true);
@@ -4054,6 +4067,31 @@ void SurfaceFlinger::checkScreenshot(size_t w, size_t s, size_t h, void const* v
             }
         }
     }
+}
+
+bool SurfaceFlinger::updateLayerVisibleNonTransparentRegion(const int& /*dpy*/,
+                        const sp<Layer>& layer, bool& /*bIgnoreLayers*/, String8& /*nameLOI*/,
+                        uint32_t layerStack /*const int&*/ /*i*/) {
+
+    // only consider the layers on the given layer stack
+    if (layer->getLayerStack() != layerStack) {
+        /* set the visible region as empty since we have removed the
+         * layerstack check in rebuildLayerStack() function
+         **/
+        Region visibleNonTransRegion;
+        visibleNonTransRegion.set(Rect(0,0));
+        layer->setVisibleNonTransparentRegion(visibleNonTransRegion);
+
+        return true;
+    }
+
+    return false;
+}
+
+bool SurfaceFlinger::canDrawLayerinScreenShot(
+                        const sp<const DisplayDevice>& /*hw*/,
+                        const sp<Layer>& layer) {
+    return layer->isVisible();
 }
 
 // ---------------------------------------------------------------------------
