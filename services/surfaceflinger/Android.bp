@@ -76,6 +76,14 @@ cc_defaults {
         "libhidltransport",
         "libhwbinder",
     ],
+
+    product_variables: {
+        aospa: {
+            target_uses_color_metadata: {
+                cppflags: ["-DUSE_COLOR_METADATA"],
+            },
+        },
+    },
 }
 
 cc_library_headers {
