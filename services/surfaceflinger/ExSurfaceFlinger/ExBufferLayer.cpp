@@ -26,8 +26,6 @@
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define USE_COLOR_METADATA
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -38,7 +36,9 @@
 #include <ui/GraphicBuffer.h>
 #include <gralloc_priv.h>
 #include <qdMetaData.h>
+#ifdef USE_COLOR_METADATA
 #include <color_metadata.h>
+#endif
 
 #include "ExBufferLayer.h"
 
@@ -89,6 +89,7 @@ bool ExBufferLayer::isHDRLayer() const {
     const sp<GraphicBuffer>& activeBuffer(mActiveBuffer);
     if (!activeBuffer)
         return false;
+#ifdef USE_COLOR_METADATA
 
     ANativeWindowBuffer* buffer = activeBuffer->getNativeBuffer();
     if (!buffer)
@@ -111,6 +112,7 @@ bool ExBufferLayer::isHDRLayer() const {
                         !mFlinger->IsHWCDisabled() &&  mHasHDRCapabilities);
         }
     }
+#endif // USE_COLOR_METADATA
 
     return false;
 }
