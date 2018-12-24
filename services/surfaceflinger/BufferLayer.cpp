@@ -63,7 +63,7 @@ BufferLayer::BufferLayer(SurfaceFlinger* flinger, const sp<Client>& client, cons
         mRefreshPending(false) {
     ALOGV("Creating Layer %s", name.string());
 
-    mFlinger->getRenderEngine().genTextures(1, &mTextureName);
+    mTextureName = mFlinger->getNewTexture();
     mTexture.init(Texture::TEXTURE_EXTERNAL, mTextureName);
 
     if (flags & ISurfaceComposerClient::eNonPremultiplied) mPremultipliedAlpha = false;
@@ -389,6 +389,7 @@ Region BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime
         // replicated in LayerBE until FE/BE is ready to be synchronized
         getBE().compositionInfo.hwc.sidebandStream = mSidebandStream;
         if (getBE().compositionInfo.hwc.sidebandStream != nullptr) {
+            mCurrentState.modified = true;
             setTransactionFlags(eTransactionNeeded);
             mFlinger->setTransactionFlags(eTraversalNeeded);
         }
@@ -710,13 +711,19 @@ bool BufferLayer::isOpaque(const Layer::State& s) const {
 }
 
 void BufferLayer::onFirstRef() {
+    Layer::onFirstRef();
+
     // Creates a custom BufferQueue for SurfaceFlingerConsumer to use
     sp<IGraphicBufferProducer> producer;
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer, true);
     mProducer = new MonitoredProducer(producer, mFlinger, this);
-    mConsumer = new BufferLayerConsumer(consumer,
-            mFlinger->getRenderEngine(), mTextureName, this);
+    {
+        // Grab the SF state lock during this since it's the only safe way to access RenderEngine
+        Mutex::Autolock lock(mFlinger->mStateLock);
+        mConsumer = new BufferLayerConsumer(consumer, mFlinger->getRenderEngine(), mTextureName,
+                                            this);
+    }
     mConsumer->setConsumerUsageBits(getEffectiveUsage(0));
     mConsumer->setContentsChangedListener(this);
     mConsumer->setName(mName);
