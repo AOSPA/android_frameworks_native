@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "24001176_fecdc5b0",
+        "filename": "services/surfaceflinger/Android.bp",
+        "patchSetId": 2
+      },
+      "lineNbr": 164,
+      "author": {
+        "id": 1000140
+      },
+      "writtenOn": "2019-01-04T14:54:17Z",
+      "side": 1,
+      "message": "Unnecessary newline here",
+      "revId": "0b1aca5eebb0fb4f8b5498613608e71d7e39950f",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": true
+    }
+  ]
+}
