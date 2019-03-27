@@ -29,8 +29,6 @@ namespace android {
 
 class GraphicBuffer;
 
-struct CompositionInfo;
-
 namespace compositionengine {
 
 /**
@@ -70,20 +68,17 @@ public:
     virtual status_t beginFrame(bool mustRecompose) = 0;
 
     // Prepares the frame for rendering
-    virtual status_t prepareFrame(std::vector<CompositionInfo>& compositionData) = 0;
+    virtual status_t prepareFrame() = 0;
 
     // Allocates a buffer as scratch space for GPU composition
-    virtual sp<GraphicBuffer> dequeueBuffer() = 0;
+    virtual sp<GraphicBuffer> dequeueBuffer(base::unique_fd* bufferFence) = 0;
 
-    // Queues the drawn buffer for consumption by HWC
-    virtual void queueBuffer() = 0;
+    // Queues the drawn buffer for consumption by HWC. readyFence is the fence
+    // which will fire when the buffer is ready for consumption.
+    virtual void queueBuffer(base::unique_fd&& readyFence) = 0;
 
     // Called after the HWC calls are made to present the display
     virtual void onPresentDisplayCompleted() = 0;
-
-    // Marks the current buffer has finished, so that it can be presented and
-    // swapped out
-    virtual void finishBuffer() = 0;
 
     // Called to set the viewport and projection state for rendering into this
     // surface

@@ -54,13 +54,13 @@ public:
      */
     const std::string& getPath() const { return mPath; }
     /**
-     * Get the width of the heatmap frame
-     */
-    uint32_t getWidth() const { return mWidth; }
-    /**
      * Get the height of the heatmap frame
      */
     uint32_t getHeight() const { return mHeight; }
+    /**
+     * Get the width of the heatmap frame
+     */
+    uint32_t getWidth() const { return mWidth; }
     /**
      * Direct read of the frame. Stores the frame into internal buffer.
      * Return the number of frames that were successfully read.
@@ -73,6 +73,8 @@ public:
     size_t readAndQueueFrames();
     /**
      * Return all of the queued frames, and erase them from the local buffer.
+     * The returned frames are in the order that they were received from the
+     * v4l2 device, with the oldest frame at the index 0.
      */
     std::vector<TouchVideoFrame> consumeFrames();
     /**
@@ -85,8 +87,8 @@ private:
     std::string mName;
     std::string mPath;
 
-    uint32_t mWidth;
     uint32_t mHeight;
+    uint32_t mWidth;
 
     static constexpr int INVALID_FD = -1;
     /**
@@ -108,7 +110,7 @@ private:
      * To get a new TouchVideoDevice, use 'create' instead.
      */
     explicit TouchVideoDevice(int fd, std::string&& name, std::string&& devicePath,
-            uint32_t width, uint32_t height,
+            uint32_t height, uint32_t width,
             const std::array<const int16_t*, NUM_BUFFERS>& readLocations);
     /**
      * Read all currently available frames.

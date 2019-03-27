@@ -88,12 +88,16 @@ public:
                                       uint64_t /*frameNumber*/) override {}
 
     Rect getBufferSize(const State& s) const override;
+    FloatRect computeSourceBounds(const FloatRect& parentBounds) const override;
     // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
     // Interface implementation for BufferLayer
     // -----------------------------------------------------------------------
     bool fenceHasSignaled() const override;
+
+protected:
+    bool useCachedBufferForClientComposition() const override;
 
 private:
     nsecs_t getDesiredPresentTime() override;
@@ -114,20 +118,19 @@ private:
     bool getAutoRefresh() const override;
     bool getSidebandStreamChanged() const override;
 
-    std::optional<Region> latchSidebandStream(bool& recomputeVisibleRegions) override;
+    bool latchSidebandStream(bool& recomputeVisibleRegions) override;
 
     bool hasFrameUpdate() const override;
 
     void setFilteringEnabled(bool enabled) override;
 
     status_t bindTextureImage() override;
-    status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
-                            const sp<Fence>& releaseFence) override;
+    status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime) override;
 
     status_t updateActiveBuffer() override;
     status_t updateFrameNumber(nsecs_t latchTime) override;
 
-    void setHwcLayerBuffer(DisplayId displayId) override;
+    void setHwcLayerBuffer(const sp<const DisplayDevice>& display) override;
 
 private:
     void onFirstRef() override;

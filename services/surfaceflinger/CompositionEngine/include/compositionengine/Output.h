@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include <math/mat4.h>
@@ -24,6 +25,8 @@
 #include <ui/Region.h>
 #include <ui/Transform.h>
 #include <utils/StrongPointer.h>
+
+#include "DisplayHardware/DisplayIdentification.h"
 
 namespace android::compositionengine {
 
@@ -97,10 +100,9 @@ public:
     // TODO(lpique): Make this protected once it is only internally called.
     virtual OutputCompositionState& editState() = 0;
 
-    // Gets the physical space dirty region. If repaintEverything is true, this
-    // will be the full display bounds. Internally the dirty region is stored in
-    // logical (aka layer stack) space.
-    virtual Region getPhysicalSpaceDirtyRegion(bool repaintEverything) const = 0;
+    // Gets the dirty region in layer stack space.
+    // If repaintEverything is true, this will be the full display bounds.
+    virtual Region getDirtyRegion(bool repaintEverything) const = 0;
 
     // Tests whether a given layerStackId belongs in this output.
     // A layer belongs to the output if its layerStackId matches the of the output layerStackId,
@@ -118,7 +120,8 @@ public:
     // Gets the OutputLayer corresponding to the input Layer instance from the
     // current ordered set of output layers. If there is no such layer, a new
     // one is created and returned.
-    virtual std::unique_ptr<OutputLayer> getOrCreateOutputLayer(std::shared_ptr<Layer>,
+    virtual std::unique_ptr<OutputLayer> getOrCreateOutputLayer(std::optional<DisplayId>,
+                                                                std::shared_ptr<Layer>,
                                                                 sp<LayerFE>) = 0;
 
     // Sets the new ordered set of output layers for this output

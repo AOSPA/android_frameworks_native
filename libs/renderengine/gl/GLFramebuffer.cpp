@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
+
 #include "GLFramebuffer.h"
 
 #include <GLES/gl.h>
@@ -21,14 +23,15 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <nativebase/nativebase.h>
+#include <utils/Trace.h>
 #include "GLESRenderEngine.h"
 
 namespace android {
 namespace renderengine {
 namespace gl {
 
-GLFramebuffer::GLFramebuffer(const GLESRenderEngine& engine)
-      : mEGLDisplay(engine.getEGLDisplay()), mEGLImage(EGL_NO_IMAGE_KHR) {
+GLFramebuffer::GLFramebuffer(GLESRenderEngine& engine)
+      : mEngine(engine), mEGLDisplay(engine.getEGLDisplay()), mEGLImage(EGL_NO_IMAGE_KHR) {
     glGenTextures(1, &mTextureName);
     glGenFramebuffers(1, &mFramebufferName);
 }
@@ -36,25 +39,18 @@ GLFramebuffer::GLFramebuffer(const GLESRenderEngine& engine)
 GLFramebuffer::~GLFramebuffer() {
     glDeleteFramebuffers(1, &mFramebufferName);
     glDeleteTextures(1, &mTextureName);
-    eglDestroyImageKHR(mEGLDisplay, mEGLImage);
 }
 
 bool GLFramebuffer::setNativeWindowBuffer(ANativeWindowBuffer* nativeBuffer, bool isProtected) {
+    ATRACE_CALL();
     if (mEGLImage != EGL_NO_IMAGE_KHR) {
-        eglDestroyImageKHR(mEGLDisplay, mEGLImage);
         mEGLImage = EGL_NO_IMAGE_KHR;
         mBufferWidth = 0;
         mBufferHeight = 0;
     }
 
     if (nativeBuffer) {
-        EGLint attributes[] = {
-                isProtected ? EGL_PROTECTED_CONTENT_EXT : EGL_NONE,
-                isProtected ? EGL_TRUE : EGL_NONE,
-                EGL_NONE,
-        };
-        mEGLImage = eglCreateImageKHR(mEGLDisplay, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
-                                      nativeBuffer, attributes);
+        mEGLImage = mEngine.createFramebufferImageIfNeeded(nativeBuffer, isProtected);
         if (mEGLImage == EGL_NO_IMAGE_KHR) {
             return false;
         }

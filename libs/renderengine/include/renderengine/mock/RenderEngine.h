@@ -36,6 +36,7 @@ public:
 
     MOCK_METHOD0(createFramebuffer, std::unique_ptr<renderengine::Framebuffer>());
     MOCK_METHOD0(createImage, std::unique_ptr<renderengine::Image>());
+    MOCK_METHOD0(getFramebufferForDrawing, Framebuffer*());
     MOCK_CONST_METHOD0(primeCache, void());
     MOCK_METHOD1(dump, void(std::string&));
     MOCK_CONST_METHOD0(useNativeFenceSync, bool());
@@ -52,6 +53,7 @@ public:
     MOCK_METHOD2(genTextures, void(size_t, uint32_t*));
     MOCK_METHOD2(deleteTextures, void(size_t, uint32_t const*));
     MOCK_METHOD2(bindExternalTextureImage, void(uint32_t, const renderengine::Image&));
+    MOCK_METHOD4(bindExternalTextureBuffer, status_t(uint32_t, sp<GraphicBuffer>, sp<Fence>, bool));
     MOCK_CONST_METHOD0(checkErrors, void());
     MOCK_METHOD4(setViewportAndProjection,
                  void(size_t, size_t, Rect, ui::Transform::orientation_flags));
@@ -76,9 +78,9 @@ public:
     MOCK_CONST_METHOD0(isProtected, bool());
     MOCK_CONST_METHOD0(supportsProtectedContent, bool());
     MOCK_METHOD1(useProtectedContext, bool(bool));
-    MOCK_METHOD4(drawLayers,
+    MOCK_METHOD5(drawLayers,
                  status_t(const DisplaySettings&, const std::vector<LayerSettings>&,
-                          ANativeWindowBuffer*, base::unique_fd*));
+                          ANativeWindowBuffer*, base::unique_fd&&, base::unique_fd*));
 };
 
 } // namespace mock

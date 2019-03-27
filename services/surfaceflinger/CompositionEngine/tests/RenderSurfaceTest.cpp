@@ -22,6 +22,7 @@
 #include <compositionengine/mock/CompositionEngine.h>
 #include <compositionengine/mock/Display.h>
 #include <compositionengine/mock/DisplaySurface.h>
+#include <compositionengine/mock/OutputLayer.h>
 #include <gtest/gtest.h>
 #include <renderengine/mock/RenderEngine.h>
 #include <system/window.h>
@@ -284,64 +285,66 @@ TEST_F(RenderSurfaceTest, beginFrameAppliesChange) {
  * RenderSurface::prepareFrame()
  */
 
-TEST_F(RenderSurfaceTest, prepareFrameTakesEarlyOutOnHwcError) {
-    std::vector<CompositionInfo> data;
-
-    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(data)))
+TEST_F(RenderSurfaceTest, prepareFramePassesOutputLayersToHwc) {
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
             .WillOnce(Return(INVALID_OPERATION));
 
-    EXPECT_EQ(INVALID_OPERATION, mSurface.prepareFrame(data));
+    EXPECT_EQ(INVALID_OPERATION, mSurface.prepareFrame());
+}
+
+TEST_F(RenderSurfaceTest, prepareFrameTakesEarlyOutOnHwcError) {
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
+            .WillOnce(Return(INVALID_OPERATION));
+
+    EXPECT_EQ(INVALID_OPERATION, mSurface.prepareFrame());
 }
 
 TEST_F(RenderSurfaceTest, prepareFrameHandlesMixedComposition) {
-    std::vector<CompositionInfo> data;
-    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(data))).WillOnce(Return(NO_ERROR));
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
+            .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(mHwComposer, hasClientComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(true));
     EXPECT_CALL(mHwComposer, hasDeviceComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(true));
 
     EXPECT_CALL(*mDisplaySurface, prepareFrame(DisplaySurface::COMPOSITION_MIXED))
             .WillOnce(Return(INVALID_OPERATION));
 
-    EXPECT_EQ(INVALID_OPERATION, mSurface.prepareFrame(data));
+    EXPECT_EQ(INVALID_OPERATION, mSurface.prepareFrame());
 }
 
 TEST_F(RenderSurfaceTest, prepareFrameHandlesOnlyGlesComposition) {
-    std::vector<CompositionInfo> data;
-
-    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(data))).WillOnce(Return(NO_ERROR));
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
+            .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(mHwComposer, hasClientComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(true));
     EXPECT_CALL(mHwComposer, hasDeviceComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(false));
 
     EXPECT_CALL(*mDisplaySurface, prepareFrame(DisplaySurface::COMPOSITION_GLES))
             .WillOnce(Return(NO_ERROR));
 
-    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame(data));
+    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame());
 }
 
 TEST_F(RenderSurfaceTest, prepareFrameHandlesOnlyHwcComposition) {
-    std::vector<CompositionInfo> data;
-
-    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(data))).WillOnce(Return(NO_ERROR));
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
+            .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(mHwComposer, hasClientComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(false));
     EXPECT_CALL(mHwComposer, hasDeviceComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(true));
 
     EXPECT_CALL(*mDisplaySurface, prepareFrame(DisplaySurface::COMPOSITION_HWC))
             .WillOnce(Return(NO_ERROR));
 
-    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame(data));
+    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame());
 }
 
 TEST_F(RenderSurfaceTest, prepareFrameHandlesNoComposition) {
-    std::vector<CompositionInfo> data;
-
-    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(data))).WillOnce(Return(NO_ERROR));
+    EXPECT_CALL(mHwComposer, prepare(*DEFAULT_DISPLAY_ID, Ref(mDisplay)))
+            .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(mHwComposer, hasClientComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(false));
     EXPECT_CALL(mHwComposer, hasDeviceComposition(DEFAULT_DISPLAY_ID)).WillOnce(Return(false));
 
     EXPECT_CALL(*mDisplaySurface, prepareFrame(DisplaySurface::COMPOSITION_HWC))
             .WillOnce(Return(NO_ERROR));
 
-    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame(data));
+    EXPECT_EQ(NO_ERROR, mSurface.prepareFrame());
 }
 
 /* ------------------------------------------------------------------------
@@ -355,7 +358,8 @@ TEST_F(RenderSurfaceTest, dequeueBufferObtainsABuffer) {
             .WillOnce(
                     DoAll(SetArgPointee<0>(buffer.get()), SetArgPointee<1>(-1), Return(NO_ERROR)));
 
-    EXPECT_EQ(buffer.get(), mSurface.dequeueBuffer().get());
+    base::unique_fd fence;
+    EXPECT_EQ(buffer.get(), mSurface.dequeueBuffer(&fence).get());
 
     EXPECT_EQ(buffer.get(), mSurface.mutableGraphicBufferForTest().get());
 }
@@ -373,7 +377,7 @@ TEST_F(RenderSurfaceTest, queueBufferHandlesNoClientComposition) {
             .WillOnce(Return(false));
     EXPECT_CALL(*mDisplaySurface, advanceFrame()).Times(1);
 
-    mSurface.queueBuffer();
+    mSurface.queueBuffer(base::unique_fd());
 
     EXPECT_EQ(buffer.get(), mSurface.mutableGraphicBufferForTest().get());
 }
@@ -387,7 +391,7 @@ TEST_F(RenderSurfaceTest, queueBufferHandlesClientComposition) {
             .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(*mDisplaySurface, advanceFrame()).Times(1);
 
-    mSurface.queueBuffer();
+    mSurface.queueBuffer(base::unique_fd());
 
     EXPECT_EQ(nullptr, mSurface.mutableGraphicBufferForTest().get());
 }
@@ -402,7 +406,7 @@ TEST_F(RenderSurfaceTest, queueBufferHandlesFlipClientTargetRequest) {
             .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(*mDisplaySurface, advanceFrame()).Times(1);
 
-    mSurface.queueBuffer();
+    mSurface.queueBuffer(base::unique_fd());
 
     EXPECT_EQ(nullptr, mSurface.mutableGraphicBufferForTest().get());
 }
@@ -419,7 +423,7 @@ TEST_F(RenderSurfaceTest, queueBufferHandlesFlipClientTargetRequestWithNoBufferY
             .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(*mDisplaySurface, advanceFrame()).Times(1);
 
-    mSurface.queueBuffer();
+    mSurface.queueBuffer(base::unique_fd());
 
     EXPECT_EQ(nullptr, mSurface.mutableGraphicBufferForTest().get());
 }
@@ -436,7 +440,7 @@ TEST_F(RenderSurfaceTest, queueBufferHandlesNativeWindowQueueBufferFailureOnVirt
             .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(*mDisplaySurface, advanceFrame()).Times(1);
 
-    mSurface.queueBuffer();
+    mSurface.queueBuffer(base::unique_fd());
 
     EXPECT_EQ(nullptr, mSurface.mutableGraphicBufferForTest().get());
 }
@@ -449,29 +453,6 @@ TEST_F(RenderSurfaceTest, onPresentDisplayCompletedForwardsSignal) {
     EXPECT_CALL(*mDisplaySurface, onFrameCommitted()).Times(1);
 
     mSurface.onPresentDisplayCompleted();
-}
-
-/* ------------------------------------------------------------------------
- * RenderSurface::finishBuffer()
- */
-
-TEST_F(RenderSurfaceTest, finishBufferJustFlushesRenderEngine) {
-    int fd = dup(1);
-
-    EXPECT_CALL(mRenderEngine, flush()).WillOnce(Return(ByMove(base::unique_fd(fd))));
-
-    mSurface.finishBuffer();
-
-    EXPECT_EQ(fd, mSurface.mutableBufferReadyForTest().release());
-}
-
-TEST_F(RenderSurfaceTest, finishBufferFlushesAndFinishesRenderEngine) {
-    EXPECT_CALL(mRenderEngine, flush()).WillOnce(Return(ByMove(base::unique_fd(-2))));
-    EXPECT_CALL(mRenderEngine, finish()).Times(1);
-
-    mSurface.finishBuffer();
-
-    EXPECT_EQ(-2, mSurface.mutableBufferReadyForTest().release());
 }
 
 /* ------------------------------------------------------------------------

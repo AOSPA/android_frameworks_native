@@ -26,12 +26,20 @@ ContainerLayer::ContainerLayer(const LayerCreationArgs& args) : Layer(args) {}
 
 ContainerLayer::~ContainerLayer() = default;
 
-void ContainerLayer::onDraw(const RenderArea&, const Region& /* clip */, bool) {}
+bool ContainerLayer::prepareClientLayer(const RenderArea&, const Region&, bool, Region&, const bool,
+                                        renderengine::LayerSettings&) {
+    return false;
+}
 
 bool ContainerLayer::isVisible() const {
+    return false;
+}
+
+bool ContainerLayer::canReceiveInput() const {
     return !isHiddenByPolicy();
 }
 
-void ContainerLayer::setPerFrameData(DisplayId, const ui::Transform&, const Rect&, int32_t) {}
+void ContainerLayer::setPerFrameData(const sp<const DisplayDevice>&, const ui::Transform&,
+                                     const Rect&, int32_t) {}
 
 } // namespace android

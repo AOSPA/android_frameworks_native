@@ -17,6 +17,7 @@
 #ifndef _UI_INPUT_CLASSIFIER_H
 #define _UI_INPUT_CLASSIFIER_H
 
+#include <android-base/thread_annotations.h>
 #include <utils/RefBase.h>
 #include <unordered_map>
 #include <thread>
@@ -70,6 +71,11 @@ public:
     virtual MotionClassification classify(const NotifyMotionArgs& args) = 0;
     virtual void reset() = 0;
     virtual void reset(const NotifyDeviceResetArgs& args) = 0;
+
+    /**
+     * Dump the state of the motion classifier
+     */
+    virtual void dump(std::string& dump) = 0;
 };
 
 /**
@@ -77,6 +83,12 @@ public:
  * Provides classification to events.
  */
 class InputClassifierInterface : public virtual RefBase, public InputListenerInterface {
+public:
+    /**
+     * Dump the state of the input classifier.
+     * This method may be called on any thread (usually by the input manager).
+     */
+    virtual void dump(std::string& dump) = 0;
 protected:
     InputClassifierInterface() { }
     virtual ~InputClassifierInterface() { }
@@ -110,6 +122,8 @@ public:
     virtual void reset() override;
     virtual void reset(const NotifyDeviceResetArgs& args) override;
 
+    virtual void dump(std::string& dump) override;
+
 private:
     // The events that need to be sent to the HAL.
     BlockingQueue<ClassifierEvent> mEvents;
@@ -138,7 +152,7 @@ private:
      * getClassification / setClassification methods.
      */
     std::unordered_map<int32_t /*deviceId*/, MotionClassification>
-            mClassifications; //GUARDED_BY(mLock);
+            mClassifications GUARDED_BY(mLock);
     /**
      * Set the current classification for a given device.
      */
@@ -148,7 +162,7 @@ private:
      */
     MotionClassification getClassification(int32_t deviceId);
     void updateClassification(int32_t deviceId, nsecs_t eventTime,
-        MotionClassification classification);
+            MotionClassification classification);
     /**
      * Clear all current classifications
      */
@@ -159,8 +173,8 @@ private:
      *
      * Accessed indirectly by both InputClassifier thread and the thread that receives notifyMotion.
      */
-    std::unordered_map<int32_t /*deviceId*/, nsecs_t /*downTime*/>
-            mLastDownTimes; //GUARDED_BY(mLock);
+    std::unordered_map<int32_t /*deviceId*/, nsecs_t /*downTime*/> mLastDownTimes GUARDED_BY(mLock);
+
     void updateLastDownTime(int32_t deviceId, nsecs_t downTime);
 
     /**
@@ -185,6 +199,8 @@ public:
     virtual void notifyMotion(const NotifyMotionArgs* args) override;
     virtual void notifySwitch(const NotifySwitchArgs* args) override;
     virtual void notifyDeviceReset(const NotifyDeviceResetArgs* args) override;
+
+    virtual void dump(std::string& dump) override;
 
 private:
     std::unique_ptr<MotionClassifierInterface> mMotionClassifier = nullptr;

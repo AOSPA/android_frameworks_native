@@ -33,6 +33,7 @@
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 #include <private/gui/ComposerService.h>
+#include <private/android_filesystem_config.h>
 
 #include <ui/ColorSpace.h>
 #include <ui/DisplayInfo.h>
@@ -41,6 +42,8 @@
 
 #include <math.h>
 #include <math/vec3.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "BufferGenerator.h"
 
@@ -195,13 +198,12 @@ static void fillSurfaceRGBA8(const sp<SurfaceControl>& sc, uint8_t r, uint8_t g,
 class ScreenCapture : public RefBase {
 public:
     static void captureScreen(std::unique_ptr<ScreenCapture>* sc) {
-        sp<ISurfaceComposer> sf(ComposerService::getComposerService());
-        sp<IBinder> display(sf->getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain));
+        const auto sf = ComposerService::getComposerService();
+        const auto token = sf->getInternalDisplayToken();
         SurfaceComposerClient::Transaction().apply(true);
 
         sp<GraphicBuffer> outBuffer;
-        ASSERT_EQ(NO_ERROR,
-                  sf->captureScreen(display, &outBuffer, Rect(), 0, 0, false));
+        ASSERT_EQ(NO_ERROR, sf->captureScreen(token, &outBuffer, Rect(), 0, 0, false));
         *sc = std::make_unique<ScreenCapture>(outBuffer);
     }
 
@@ -324,7 +326,6 @@ protected:
         ASSERT_NO_FATAL_FAILURE(SetUpDisplay());
 
         sp<ISurfaceComposer> sf(ComposerService::getComposerService());
-        sp<IBinder> binder = sf->getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
         ASSERT_NO_FATAL_FAILURE(sf->getColorManagement(&mColorManagementUsed));
     }
 
@@ -502,12 +503,12 @@ protected:
 
 private:
     void SetUpDisplay() {
-        mDisplay = mClient->getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
-        ASSERT_NE(nullptr, mDisplay.get()) << "failed to get built-in display";
+        mDisplay = mClient->getInternalDisplayToken();
+        ASSERT_FALSE(mDisplay == nullptr) << "failed to get display";
 
         // get display width/height
         DisplayInfo info;
-        SurfaceComposerClient::getDisplayInfo(mDisplay, &info);
+        ASSERT_EQ(NO_ERROR, SurfaceComposerClient::getDisplayInfo(mDisplay, &info));
         mDisplayWidth = info.w;
         mDisplayHeight = info.h;
         mDisplayRect =
@@ -558,8 +559,7 @@ public:
                 return mDelegate->screenshot();
             case RenderPath::VIRTUAL_DISPLAY:
 
-                sp<IBinder> mainDisplay =
-                        SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
+                const auto mainDisplay = SurfaceComposerClient::getInternalDisplayToken();
                 DisplayInfo mainDisplayInfo;
                 SurfaceComposerClient::getDisplayInfo(mainDisplay, &mainDisplayInfo);
 
@@ -1137,7 +1137,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetRelativeZBug64572777) {
             .setRelativeLayer(layerG, layerR->getHandle(), 1)
             .apply();
 
-    layerG->clear();
+    layerG.clear();
     // layerG should have been removed
     getScreenCapture()->expectColor(Rect(0, 0, 32, 32), Color::RED);
 }
@@ -1202,6 +1202,56 @@ TEST_P(LayerTypeTransactionTest, SetFlagsSecure) {
     Transaction().setFlags(layer, 0, layer_state_t::eLayerSecure).apply(true);
     ASSERT_EQ(NO_ERROR,
               composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+}
+
+/** RAII Wrapper around get/seteuid */
+class UIDFaker {
+    uid_t oldId;
+public:
+    UIDFaker(uid_t uid) {
+        oldId = geteuid();
+        seteuid(uid);
+    }
+    ~UIDFaker() {
+        seteuid(oldId);
+    }
+};
+
+TEST_F(LayerTransactionTest, SetFlagsSecureEUidSystem) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
+    ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
+
+    sp<ISurfaceComposer> composer = ComposerService::getComposerService();
+    sp<GraphicBuffer> outBuffer;
+    Transaction()
+            .setFlags(layer, layer_state_t::eLayerSecure, layer_state_t::eLayerSecure)
+            .apply(true);
+    ASSERT_EQ(PERMISSION_DENIED,
+              composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+
+    UIDFaker f(AID_SYSTEM);
+
+    // By default the system can capture screenshots with secure layers but they
+    // will be blacked out
+    ASSERT_EQ(NO_ERROR,
+              composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+
+    {
+        SCOPED_TRACE("as system");
+        auto shot = screenshot();
+        shot->expectColor(Rect(0, 0, 32, 32), Color::BLACK);
+    }
+
+    // Here we pass captureSecureLayers = true and since we are AID_SYSTEM we should be able
+    // to receive them...we are expected to take care with the results.
+    ASSERT_EQ(NO_ERROR,
+              composer->captureScreen(mDisplay, &outBuffer,
+                      ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888,
+                      Rect(), 0, 0, false,
+                      ISurfaceComposer::eRotateNone, true));
+    ScreenCapture sc(outBuffer);
+    sc.expectColor(Rect(0, 0, 32, 32), Color::RED);
 }
 
 TEST_P(LayerRenderTypeTransactionTest, SetTransparentRegionHintBasic_BufferQueue) {
@@ -1540,7 +1590,6 @@ void LayerRenderTypeTransactionTest::setBackgroundColorHelper(uint32_t layerType
         SCOPED_TRACE("default before setting background color layer");
         screenshot()->expectColor(Rect(0, 0, width, height), expectedColor);
     }
-
     Transaction()
             .setBackgroundColor(layer, half3(0, 1.0f, 0), alpha, ui::Dataspace::UNKNOWN)
             .apply();
@@ -1625,7 +1674,7 @@ TEST_P(LayerRenderTypeTransactionTest,
     bool bufferFill = true;
     float alpha = 1.0f;
     Color finalColor = Color::RED;
-    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferQueue,
+    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferState,
                                                      priorColor, bufferFill, alpha, finalColor));
 }
 
@@ -1635,7 +1684,7 @@ TEST_P(LayerRenderTypeTransactionTest,
     bool bufferFill = false;
     float alpha = 1.0f;
     Color finalColor = Color::GREEN;
-    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferQueue,
+    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferState,
                                                      priorColor, bufferFill, alpha, finalColor));
 }
 
@@ -1645,7 +1694,7 @@ TEST_P(LayerRenderTypeTransactionTest,
     bool bufferFill = false;
     float alpha = 1.0f;
     Color finalColor = Color::GREEN;
-    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferQueue,
+    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferState,
                                                      priorColor, bufferFill, alpha, finalColor));
 }
 
@@ -1655,7 +1704,7 @@ TEST_P(LayerRenderTypeTransactionTest,
     bool bufferFill = false;
     float alpha = 0;
     Color finalColor = Color::BLACK;
-    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferQueue,
+    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferState,
                                                      priorColor, bufferFill, alpha, finalColor));
 }
 
@@ -1665,7 +1714,7 @@ TEST_P(LayerRenderTypeTransactionTest,
     bool bufferFill = false;
     float alpha = 0;
     Color finalColor = Color::BLACK;
-    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferQueue,
+    ASSERT_NO_FATAL_FAILURE(setBackgroundColorHelper(ISurfaceComposerClient::eFXSurfaceBufferState,
                                                      priorColor, bufferFill, alpha, finalColor));
 }
 
@@ -2405,6 +2454,117 @@ TEST_P(LayerRenderTypeTransactionTest, SetBufferMultipleLayers_BufferState) {
     }
 }
 
+TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_BufferState) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(
+            layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
+
+    std::array<Color, 4> colors = {Color::RED, Color::BLUE, Color::WHITE, Color::GREEN};
+
+    std::array<sp<GraphicBuffer>, 10> buffers;
+
+    size_t idx = 0;
+    for (auto& buffer : buffers) {
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
+                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
+                                           BufferUsage::COMPOSER_OVERLAY,
+                                   "test");
+        Color color = colors[idx % colors.size()];
+        fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
+        idx++;
+    }
+
+    // Set each buffer twice. The first time adds it to the cache, the second time tests that the
+    // cache is working.
+    idx = 0;
+    for (auto& buffer : buffers) {
+        for (int i = 0; i < 2; i++) {
+            Transaction().setBuffer(layer, buffer).apply();
+
+            Color color = colors[idx % colors.size()];
+            auto shot = screenshot();
+            shot->expectColor(Rect(0, 0, 32, 32), color);
+            shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
+        }
+        idx++;
+    }
+}
+
+TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_LeastRecentlyUsed_BufferState) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(
+            layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
+
+    std::array<Color, 4> colors = {Color::RED, Color::BLUE, Color::WHITE, Color::GREEN};
+
+    std::array<sp<GraphicBuffer>, 70> buffers;
+
+    size_t idx = 0;
+    for (auto& buffer : buffers) {
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
+                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
+                                           BufferUsage::COMPOSER_OVERLAY,
+                                   "test");
+        Color color = colors[idx % colors.size()];
+        fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
+        idx++;
+    }
+
+    // Set each buffer twice. The first time adds it to the cache, the second time tests that the
+    // cache is working.
+    idx = 0;
+    for (auto& buffer : buffers) {
+        for (int i = 0; i < 2; i++) {
+            Transaction().setBuffer(layer, buffer).apply();
+
+            Color color = colors[idx % colors.size()];
+            auto shot = screenshot();
+            shot->expectColor(Rect(0, 0, 32, 32), color);
+            shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
+        }
+        idx++;
+    }
+}
+
+TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_DestroyedBuffer_BufferState) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(
+            layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
+
+    std::array<Color, 4> colors = {Color::RED, Color::BLUE, Color::WHITE, Color::GREEN};
+
+    std::array<sp<GraphicBuffer>, 65> buffers;
+
+    size_t idx = 0;
+    for (auto& buffer : buffers) {
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
+                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
+                                           BufferUsage::COMPOSER_OVERLAY,
+                                   "test");
+        Color color = colors[idx % colors.size()];
+        fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
+        idx++;
+    }
+
+    // Set each buffer twice. The first time adds it to the cache, the second time tests that the
+    // cache is working.
+    idx = 0;
+    for (auto& buffer : buffers) {
+        for (int i = 0; i < 2; i++) {
+            Transaction().setBuffer(layer, buffer).apply();
+
+            Color color = colors[idx % colors.size()];
+            auto shot = screenshot();
+            shot->expectColor(Rect(0, 0, 32, 32), color);
+            shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
+        }
+        if (idx == 0) {
+            buffers[0].clear();
+        }
+        idx++;
+    }
+}
+
 TEST_P(LayerRenderTypeTransactionTest, SetTransformRotate90_BufferState) {
     sp<SurfaceControl> layer;
     ASSERT_NO_FATAL_FAILURE(
@@ -2621,143 +2781,6 @@ TEST_F(LayerTransactionTest, SetSidebandStreamNull_BufferState) {
 
     // verify this doesn't cause a crash
     Transaction().setSidebandStream(layer, nullptr).apply();
-}
-
-TEST_F(LayerTransactionTest, CacheBuffer_BufferState) {
-    sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
-
-    int32_t bufferId = -1;
-    ASSERT_EQ(NO_ERROR, mClient->cacheBuffer(buffer, &bufferId));
-    ASSERT_GE(bufferId, 0);
-
-    ASSERT_EQ(NO_ERROR, mClient->uncacheBuffer(bufferId));
-}
-
-TEST_F(LayerTransactionTest, CacheBuffers_BufferState) {
-    std::vector<int32_t> bufferIds;
-    int32_t bufferCount = 20;
-
-    for (int i = 0; i < bufferCount; i++) {
-        sp<GraphicBuffer> buffer =
-                new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                                  BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                          BufferUsage::COMPOSER_OVERLAY,
-                                  "test");
-        int32_t bufferId = -1;
-        ASSERT_EQ(NO_ERROR, mClient->cacheBuffer(buffer, &bufferId));
-        if (bufferId < 0) {
-            EXPECT_GE(bufferId, 0);
-            break;
-        }
-        bufferIds.push_back(bufferId);
-    }
-
-    for (int32_t bufferId : bufferIds) {
-        ASSERT_EQ(NO_ERROR, mClient->uncacheBuffer(bufferId));
-    }
-}
-
-TEST_F(LayerTransactionTest, CacheBufferInvalid_BufferState) {
-    sp<GraphicBuffer> buffer = nullptr;
-
-    int32_t bufferId = -1;
-    ASSERT_NE(NO_ERROR, mClient->cacheBuffer(buffer, &bufferId));
-    ASSERT_LT(bufferId, 0);
-}
-
-TEST_F(LayerTransactionTest, UncacheBufferTwice_BufferState) {
-    sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
-
-    int32_t bufferId = -1;
-    ASSERT_EQ(NO_ERROR, mClient->cacheBuffer(buffer, &bufferId));
-    ASSERT_GE(bufferId, 0);
-
-    ASSERT_EQ(NO_ERROR, mClient->uncacheBuffer(bufferId));
-    mClient->uncacheBuffer(bufferId);
-}
-
-TEST_F(LayerTransactionTest, UncacheBufferInvalidId_BufferState) {
-    mClient->uncacheBuffer(-1);
-    mClient->uncacheBuffer(0);
-    mClient->uncacheBuffer(1);
-    mClient->uncacheBuffer(5);
-    mClient->uncacheBuffer(1000);
-}
-
-TEST_F(LayerTransactionTest, SetCachedBuffer_BufferState) {
-    sp<SurfaceControl> layer;
-    ASSERT_NO_FATAL_FAILURE(
-            layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
-
-    sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
-
-    fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
-
-    int32_t bufferId = -1;
-    ASSERT_EQ(NO_ERROR, mClient->cacheBuffer(buffer, &bufferId));
-    ASSERT_GE(bufferId, 0);
-
-    Transaction().setCachedBuffer(layer, bufferId).apply();
-
-    auto shot = screenshot();
-    shot->expectColor(Rect(0, 0, 32, 32), Color::RED);
-    shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
-
-    ASSERT_EQ(NO_ERROR, mClient->uncacheBuffer(bufferId));
-}
-
-TEST_F(LayerTransactionTest, SetCachedBufferDelayed_BufferState) {
-    sp<SurfaceControl> layer;
-    ASSERT_NO_FATAL_FAILURE(
-            layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
-
-    sp<GraphicBuffer> cachedBuffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
-    int32_t bufferId = -1;
-    ASSERT_EQ(NO_ERROR, mClient->cacheBuffer(cachedBuffer, &bufferId));
-    ASSERT_GE(bufferId, 0);
-
-    sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
-    fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::BLUE);
-    Transaction().setBuffer(layer, buffer).apply();
-    {
-        SCOPED_TRACE("Uncached buffer");
-
-        auto shot = screenshot();
-        shot->expectColor(Rect(0, 0, 32, 32), Color::BLUE);
-        shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
-    }
-
-    fillGraphicBufferColor(cachedBuffer, Rect(0, 0, 32, 32), Color::RED);
-    Transaction().setCachedBuffer(layer, bufferId).apply();
-    {
-        SCOPED_TRACE("Cached buffer");
-
-        auto shot = screenshot();
-        shot->expectColor(Rect(0, 0, 32, 32), Color::RED);
-        shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
-    }
-
-    ASSERT_EQ(NO_ERROR, mClient->uncacheBuffer(bufferId));
 }
 
 TEST_F(LayerTransactionTest, ReparentToSelf) {
@@ -3155,16 +3178,25 @@ public:
     }
 
     static int fillTransaction(Transaction& transaction, CallbackHelper* callbackHelper,
-                               const sp<SurfaceControl>& layer = nullptr) {
+                               const sp<SurfaceControl>& layer = nullptr, bool setBuffer = true,
+                               bool setBackgroundColor = false) {
         if (layer) {
             sp<GraphicBuffer> buffer;
             sp<Fence> fence;
-            int err = getBuffer(&buffer, &fence);
-            if (err != NO_ERROR) {
-                return err;
+            if (setBuffer) {
+                int err = getBuffer(&buffer, &fence);
+                if (err != NO_ERROR) {
+                    return err;
+                }
+
+                transaction.setBuffer(layer, buffer);
+                transaction.setAcquireFence(layer, fence);
             }
 
-            transaction.setBuffer(layer, buffer).setAcquireFence(layer, fence);
+            if (setBackgroundColor) {
+                transaction.setBackgroundColor(layer, /*color*/ half3(1.0f, 0, 0), /*alpha*/ 1.0f,
+                                               ui::Dataspace::UNKNOWN);
+            }
         }
 
         transaction.addTransactionCompletedCallback(callbackHelper->function,
@@ -3195,13 +3227,13 @@ public:
     }
 };
 
-TEST_F(LayerCallbackTest, Basic) {
+TEST_F(LayerCallbackTest, BufferColor) {
     sp<SurfaceControl> layer;
     ASSERT_NO_FATAL_FAILURE(layer = createBufferStateLayer());
 
     Transaction transaction;
     CallbackHelper callback;
-    int err = fillTransaction(transaction, &callback, layer);
+    int err = fillTransaction(transaction, &callback, layer, true, true);
     if (err) {
         GTEST_SUCCEED() << "test not supported";
         return;
@@ -3214,13 +3246,13 @@ TEST_F(LayerCallbackTest, Basic) {
     EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
 }
 
-TEST_F(LayerCallbackTest, NoBuffer) {
+TEST_F(LayerCallbackTest, NoBufferNoColor) {
     sp<SurfaceControl> layer;
     ASSERT_NO_FATAL_FAILURE(layer = createBufferStateLayer());
 
     Transaction transaction;
     CallbackHelper callback;
-    int err = fillTransaction(transaction, &callback);
+    int err = fillTransaction(transaction, &callback, layer, false, false);
     if (err) {
         GTEST_SUCCEED() << "test not supported";
         return;
@@ -3230,6 +3262,45 @@ TEST_F(LayerCallbackTest, NoBuffer) {
 
     ExpectedResult expected;
     expected.addSurface(ExpectedResult::Transaction::NOT_PRESENTED, layer,
+                        ExpectedResult::Buffer::NOT_ACQUIRED);
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
+}
+
+TEST_F(LayerCallbackTest, BufferNoColor) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(layer = createBufferStateLayer());
+
+    Transaction transaction;
+    CallbackHelper callback;
+    int err = fillTransaction(transaction, &callback, layer, true, false);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+
+    transaction.setFrame(layer, Rect(0, 0, 32, 32)).apply();
+
+    ExpectedResult expected;
+    expected.addSurface(ExpectedResult::Transaction::PRESENTED, layer);
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
+}
+
+TEST_F(LayerCallbackTest, NoBufferColor) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(layer = createBufferStateLayer());
+
+    Transaction transaction;
+    CallbackHelper callback;
+    int err = fillTransaction(transaction, &callback, layer, false, true);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+
+    transaction.setFrame(layer, Rect(0, 0, 32, 32)).apply();
+
+    ExpectedResult expected;
+    expected.addSurface(ExpectedResult::Transaction::PRESENTED, layer,
                         ExpectedResult::Buffer::NOT_ACQUIRED);
     EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
 }
@@ -3268,7 +3339,7 @@ TEST_F(LayerCallbackTest, OffScreen) {
     EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
 }
 
-TEST_F(LayerCallbackTest, Merge) {
+TEST_F(LayerCallbackTest, MergeBufferNoColor) {
     sp<SurfaceControl> layer1, layer2;
     ASSERT_NO_FATAL_FAILURE(layer1 = createBufferStateLayer());
     ASSERT_NO_FATAL_FAILURE(layer2 = createBufferStateLayer());
@@ -3295,6 +3366,62 @@ TEST_F(LayerCallbackTest, Merge) {
     EXPECT_NO_FATAL_FAILURE(waitForCallback(callback2, expected, true));
 }
 
+TEST_F(LayerCallbackTest, MergeNoBufferColor) {
+    sp<SurfaceControl> layer1, layer2;
+    ASSERT_NO_FATAL_FAILURE(layer1 = createBufferStateLayer());
+    ASSERT_NO_FATAL_FAILURE(layer2 = createBufferStateLayer());
+
+    Transaction transaction1, transaction2;
+    CallbackHelper callback1, callback2;
+    int err = fillTransaction(transaction1, &callback1, layer1, false, true);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+    err = fillTransaction(transaction2, &callback2, layer2, false, true);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+
+    transaction1.setFrame(layer1, Rect(0, 0, 32, 32));
+    transaction2.setFrame(layer2, Rect(32, 32, 64, 64)).merge(std::move(transaction1)).apply();
+
+    ExpectedResult expected;
+    expected.addSurfaces(ExpectedResult::Transaction::PRESENTED, {layer1, layer2},
+                         ExpectedResult::Buffer::NOT_ACQUIRED);
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback1, expected, true));
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback2, expected, true));
+}
+
+TEST_F(LayerCallbackTest, MergeOneBufferOneColor) {
+    sp<SurfaceControl> layer1, layer2;
+    ASSERT_NO_FATAL_FAILURE(layer1 = createBufferStateLayer());
+    ASSERT_NO_FATAL_FAILURE(layer2 = createBufferStateLayer());
+
+    Transaction transaction1, transaction2;
+    CallbackHelper callback1, callback2;
+    int err = fillTransaction(transaction1, &callback1, layer1);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+    err = fillTransaction(transaction2, &callback2, layer2, false, true);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+
+    transaction1.setFrame(layer1, Rect(0, 0, 32, 32));
+    transaction2.setFrame(layer2, Rect(32, 32, 64, 64)).merge(std::move(transaction1)).apply();
+
+    ExpectedResult expected;
+    expected.addSurface(ExpectedResult::Transaction::PRESENTED, layer1);
+    expected.addSurface(ExpectedResult::Transaction::PRESENTED, layer2,
+                        ExpectedResult::Buffer::NOT_ACQUIRED);
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback1, expected, true));
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback2, expected, true));
+}
 TEST_F(LayerCallbackTest, Merge_SameCallback) {
     sp<SurfaceControl> layer1, layer2;
     ASSERT_NO_FATAL_FAILURE(layer1 = createBufferStateLayer());
@@ -3896,10 +4023,11 @@ protected:
         LayerTransactionTest::SetUp();
         ASSERT_EQ(NO_ERROR, mClient->initCheck());
 
-        sp<IBinder> display(
-                SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain));
+        const auto display = SurfaceComposerClient::getInternalDisplayToken();
+        ASSERT_FALSE(display == nullptr);
+
         DisplayInfo info;
-        SurfaceComposerClient::getDisplayInfo(display, &info);
+        ASSERT_EQ(NO_ERROR, SurfaceComposerClient::getDisplayInfo(display, &info));
 
         ssize_t displayWidth = info.w;
         ssize_t displayHeight = info.h;
@@ -4360,7 +4488,7 @@ TEST_F(ChildLayerTest, ChildrenSurviveParentDestruction) {
         mCapture->checkPixel(64, 64, 111, 111, 111);
     }
 
-    mChild->clear();
+    mChild.clear();
 
     {
         SCOPED_TRACE("After destroying child");
@@ -5051,23 +5179,35 @@ public:
         SurfaceComposerClient::Transaction().show(mChild).apply(true);
     }
 
-    void verify() {
+    void verify(std::function<void()> verifyStartingState) {
+        // Verify starting state before a screenshot is taken.
+        verifyStartingState();
+
+        // Verify child layer does not inherit any of the properties of its
+        // parent when its screenshot is captured.
         auto fgHandle = mFGSurfaceControl->getHandle();
         ScreenCapture::captureChildLayers(&mCapture, fgHandle);
         mCapture->checkPixel(10, 10, 0, 0, 0);
         mCapture->expectChildColor(0, 0);
+
+        // Verify all assumptions are still true after the screenshot is taken.
+        verifyStartingState();
     }
 
     std::unique_ptr<ScreenCapture> mCapture;
     sp<SurfaceControl> mChild;
 };
 
+// Regression test b/76099859
 TEST_F(ScreenCaptureChildOnlyTest, CaptureLayerIgnoresParentVisibility) {
 
     SurfaceComposerClient::Transaction().hide(mFGSurfaceControl).apply(true);
 
     // Even though the parent is hidden we should still capture the child.
-    verify();
+
+    // Before and after reparenting, verify child is properly hidden
+    // when rendering full-screen.
+    verify([&] { screenshot()->expectBGColor(64, 64); });
 }
 
 TEST_F(ScreenCaptureChildOnlyTest, CaptureLayerIgnoresParentCrop) {
@@ -5076,25 +5216,19 @@ TEST_F(ScreenCaptureChildOnlyTest, CaptureLayerIgnoresParentCrop) {
             .apply(true);
 
     // Even though the parent is cropped out we should still capture the child.
-    verify();
+
+    // Before and after reparenting, verify child is cropped by parent.
+    verify([&] { screenshot()->expectBGColor(65, 65); });
 }
 
+// Regression test b/124372894
 TEST_F(ScreenCaptureChildOnlyTest, CaptureLayerIgnoresTransform) {
-
-    SurfaceComposerClient::Transaction().setMatrix(mFGSurfaceControl, 2, 0, 0, 2);
+    SurfaceComposerClient::Transaction().setMatrix(mFGSurfaceControl, 2, 0, 0, 2).apply(true);
 
     // We should not inherit the parent scaling.
-    verify();
-}
 
-TEST_F(ScreenCaptureChildOnlyTest, RegressionTest76099859) {
-    SurfaceComposerClient::Transaction().hide(mFGSurfaceControl).apply(true);
-
-    // Even though the parent is hidden we should still capture the child.
-    verify();
-
-    // Verify everything was properly hidden when rendering the full-screen.
-    screenshot()->expectBGColor(0,0);
+    // Before and after reparenting, verify child is properly scaled.
+    verify([&] { screenshot()->expectChildColor(80, 80); });
 }
 
 
@@ -5232,7 +5366,7 @@ TEST_F(ScreenCaptureTest, CaptureInvalidLayer) {
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(redLayer, Color::RED, 60, 60));
 
     auto redLayerHandle = redLayer->getHandle();
-    redLayer->clear();
+    redLayer.clear();
     SurfaceComposerClient::Transaction().apply(true);
 
     sp<GraphicBuffer> outBuffer;

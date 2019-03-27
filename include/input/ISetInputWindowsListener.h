@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,27 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_SF_DDM_CONNECTION
-#define ANDROID_SF_DDM_CONNECTION
+#pragma once
+
+#include <binder/IInterface.h>
+#include <binder/Parcel.h>
 
 namespace android {
 
-// wrapper for dlsym
-extern "C" void DdmConnection_start(const char* name);
-
-class DdmConnection {
+class ISetInputWindowsListener : public IInterface {
 public:
-    // Creates a JVM and registers all handlers to DDMS.
-    // This allows tools relying on DDMS to find surfaceflinger
-    // (e.g: Memory Leak finder, heap analyzer, ...)
-    static void start(const char* name);
+    DECLARE_META_INTERFACE(SetInputWindowsListener)
+    virtual void onSetInputWindowsFinished() = 0;
+};
+
+class BnSetInputWindowsListener: public BnInterface<ISetInputWindowsListener> {
+public:
+    enum SetInputWindowsTag : uint32_t {
+        ON_SET_INPUT_WINDOWS_FINISHED
+    };
+
+    virtual status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply,
+                                uint32_t flags = 0) override;
 };
 
 }; // namespace android
-
-#endif /* ANDROID_SF_DDM_CONNECTION */

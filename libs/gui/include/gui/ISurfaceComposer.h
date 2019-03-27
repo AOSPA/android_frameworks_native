@@ -34,6 +34,7 @@
 #include <ui/GraphicTypes.h>
 #include <ui/PixelFormat.h>
 
+#include <optional>
 #include <vector>
 
 namespace android {
@@ -49,6 +50,7 @@ class HdrCapabilities;
 class IDisplayEventConnection;
 class IGraphicBufferProducer;
 class ISurfaceComposerClient;
+class IRegionSamplingListener;
 class Rect;
 enum class FrameEvent;
 
@@ -71,11 +73,6 @@ public:
         eEarlyWakeup = 0x04
     };
 
-    enum {
-        eDisplayIdMain = 0,
-        eDisplayIdHdmi = 1
-    };
-
     enum Rotation {
         eRotateNone = 0,
         eRotate90   = 1,
@@ -88,7 +85,7 @@ public:
         eVsyncSourceSurfaceFlinger = 1
     };
 
-    /* 
+    /*
      * Create a connection with SurfaceFlinger.
      */
     virtual sp<ISurfaceComposerClient> createConnection() = 0;
@@ -108,10 +105,26 @@ public:
      */
     virtual void destroyDisplay(const sp<IBinder>& display) = 0;
 
-    /* get the token for the existing default displays. possible values
-     * for id are eDisplayIdMain and eDisplayIdHdmi.
+    /* get stable IDs for connected physical displays.
      */
-    virtual sp<IBinder> getBuiltInDisplay(int32_t id) = 0;
+    virtual std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const = 0;
+
+    // TODO(b/74619554): Remove this stopgap once the framework is display-agnostic.
+    std::optional<PhysicalDisplayId> getInternalDisplayId() const {
+        const auto displayIds = getPhysicalDisplayIds();
+        return displayIds.empty() ? std::nullopt : std::make_optional(displayIds.front());
+    }
+
+    /* get token for a physical display given its stable ID obtained via getPhysicalDisplayIds or a
+     * DisplayEventReceiver hotplug event.
+     */
+    virtual sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const = 0;
+
+    // TODO(b/74619554): Remove this stopgap once the framework is display-agnostic.
+    sp<IBinder> getInternalDisplayToken() const {
+        const auto displayId = getInternalDisplayId();
+        return displayId ? getPhysicalDisplayToken(*displayId) : nullptr;
+    }
 
     /* open/close transactions. requires ACCESS_SURFACE_FLINGER permission */
     virtual void setTransactionState(const Vector<ComposerState>& state,
@@ -196,7 +209,8 @@ public:
                                    const ui::Dataspace reqDataspace,
                                    const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
                                    uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   Rotation rotation = eRotateNone) = 0;
+                                   Rotation rotation = eRotateNone,
+                                   bool captureSecureLayers = false) = 0;
     /**
      * Capture the specified screen. This requires READ_FRAME_BUFFER
      * permission.  This function will fail if there is a secure window on
@@ -320,17 +334,40 @@ public:
      */
     virtual status_t getProtectedContentSupport(bool* outSupported) const = 0;
 
-    virtual status_t cacheBuffer(const sp<IBinder>& token, const sp<GraphicBuffer>& buffer,
-                                 int32_t* outBufferId) = 0;
-
-    virtual status_t uncacheBuffer(const sp<IBinder>& token, int32_t bufferId) = 0;
-
     /*
      * Queries whether the given display is a wide color display.
      * Requires the ACCESS_SURFACE_FLINGER permission.
      */
     virtual status_t isWideColorDisplay(const sp<IBinder>& token,
                                         bool* outIsWideColorDisplay) const = 0;
+
+    /* Registers a listener to stream median luma updates from SurfaceFlinger.
+     *
+     * The sampling area is bounded by both samplingArea and the given stopLayerHandle
+     * (i.e., only layers behind the stop layer will be captured and sampled).
+     *
+     * Multiple listeners may be provided so long as they have independent listeners.
+     * If multiple listeners are provided, the effective sampling region for each listener will
+     * be bounded by whichever stop layer has a lower Z value.
+     *
+     * Requires the same permissions as captureLayers and captureScreen.
+     */
+    virtual status_t addRegionSamplingListener(const Rect& samplingArea,
+                                               const sp<IBinder>& stopLayerHandle,
+                                               const sp<IRegionSamplingListener>& listener) = 0;
+
+    /*
+     * Removes a listener that was streaming median luma updates from SurfaceFlinger.
+     */
+    virtual status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) = 0;
+
+    /*
+     * Sets the allowed display configurations to be used.
+     * The allowedConfigs in a vector of indexes corresponding to the configurations
+     * returned from getDisplayConfigs().
+     */
+    virtual status_t setAllowedDisplayConfigs(const sp<IBinder>& displayToken,
+                                              const std::vector<int32_t>& allowedConfigs) = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -346,7 +383,7 @@ public:
         CREATE_DISPLAY_EVENT_CONNECTION,
         CREATE_DISPLAY,
         DESTROY_DISPLAY,
-        GET_BUILT_IN_DISPLAY,
+        GET_PHYSICAL_DISPLAY_TOKEN,
         SET_TRANSACTION_STATE,
         AUTHENTICATE_SURFACE,
         GET_SUPPORTED_FRAME_TIMESTAMPS,
@@ -373,10 +410,12 @@ public:
         SET_DISPLAY_CONTENT_SAMPLING_ENABLED,
         GET_DISPLAYED_CONTENT_SAMPLE,
         GET_PROTECTED_CONTENT_SUPPORT,
-        CACHE_BUFFER,
-        UNCACHE_BUFFER,
         IS_WIDE_COLOR_DISPLAY,
         GET_DISPLAY_NATIVE_PRIMARIES,
+        GET_PHYSICAL_DISPLAY_IDS,
+        ADD_REGION_SAMPLING_LISTENER,
+        REMOVE_REGION_SAMPLING_LISTENER,
+        SET_ALLOWED_DISPLAY_CONFIGS,
         // Always append new enum to the end.
     };
 

@@ -111,6 +111,12 @@ public:
     // returned by getDisplayInfo
     static status_t setActiveConfig(const sp<IBinder>& display, int id);
 
+    // Sets the allowed display configurations to be used.
+    // The allowedConfigs in a vector of indexes corresponding to the configurations
+    // returned from getDisplayConfigs().
+    static status_t setAllowedDisplayConfigs(const sp<IBinder>& displayToken,
+                                             const std::vector<int32_t>& allowedConfigs);
+
     // Gets the list of supported color modes for the given display
     static status_t getDisplayColorModes(const sp<IBinder>& display,
             Vector<ui::ColorMode>* outColorModes);
@@ -151,12 +157,6 @@ public:
      */
     static void doDropReferenceTransaction(const sp<IBinder>& handle,
             const sp<ISurfaceComposerClient>& client);
-
-    // Caches a buffer with the ISurfaceComposer so the buffer does not need to be resent across
-    // processes
-    static status_t cacheBuffer(const sp<GraphicBuffer>& buffer, int32_t* outBufferId);
-    // Uncaches a buffer set by cacheBuffer
-    static status_t uncacheBuffer(int32_t bufferId);
 
     // Queries whether a given display is wide color display.
     static status_t isWideColorDisplay(const sp<IBinder>& display, bool* outIsWideColorDisplay);
@@ -202,9 +202,13 @@ public:
     //! Destroy a virtual display
     static void destroyDisplay(const sp<IBinder>& display);
 
-    //! Get the token for the existing default displays.
-    //! Possible values for id are eDisplayIdMain and eDisplayIdHdmi.
-    static sp<IBinder> getBuiltInDisplay(int32_t id);
+    //! Get stable IDs for connected physical displays
+    static std::vector<PhysicalDisplayId> getPhysicalDisplayIds();
+    static std::optional<PhysicalDisplayId> getInternalDisplayId();
+
+    //! Get token for a physical display given its stable ID
+    static sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId);
+    static sp<IBinder> getInternalDisplayToken();
 
     static status_t enableVSyncInjections(bool enable);
 
@@ -380,6 +384,7 @@ public:
 #ifndef NO_INPUT
         Transaction& setInputWindowInfo(const sp<SurfaceControl>& sc, const InputWindowInfo& info);
         Transaction& transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken);
+        Transaction& syncInputWindows();
 #endif
 
         // Set a color transform matrix on the given layer on the built-in display.
@@ -452,6 +457,10 @@ class ScreenshotClient {
 public:
     // if cropping isn't required, callers may pass in a default Rect, e.g.:
     //   capture(display, producer, Rect(), reqWidth, ...);
+    static status_t capture(const sp<IBinder>& display, const ui::Dataspace reqDataSpace,
+                            const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
+                            uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
+                            uint32_t rotation, bool captureSecureLayers, sp<GraphicBuffer>* outBuffer);
     static status_t capture(const sp<IBinder>& display, const ui::Dataspace reqDataSpace,
                             const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
                             uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,

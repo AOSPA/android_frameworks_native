@@ -46,13 +46,6 @@
 
 namespace android {
 
-enum {
-    // Device id of a special "virtual" keyboard that is always present.
-    VIRTUAL_KEYBOARD_ID = -1,
-    // Device id of the "built-in" keyboard if there is one.
-    BUILT_IN_KEYBOARD_ID = 0,
-};
-
 /*
  * A raw event as retrieved from the EventHub.
  */
@@ -352,7 +345,7 @@ private:
 
         std::string configurationFile;
         PropertyMap* configuration;
-        VirtualKeyMap* virtualKeyMap;
+        std::unique_ptr<VirtualKeyMap> virtualKeyMap;
         KeyMap keyMap;
 
         sp<KeyCharacterMap> overlayKeyMap;
@@ -423,7 +416,7 @@ private:
     bool hasKeycodeLocked(Device* device, int keycode) const;
 
     void loadConfigurationLocked(Device* device);
-    status_t loadVirtualKeyMapLocked(Device* device);
+    bool loadVirtualKeyMapLocked(Device* device);
     status_t loadKeyMapLocked(Device* device);
 
     bool isExternalDeviceLocked(Device* device);

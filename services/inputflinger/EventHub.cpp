@@ -202,7 +202,6 @@ EventHub::Device::Device(int fd, int32_t id, const std::string& path,
 EventHub::Device::~Device() {
     close();
     delete configuration;
-    delete virtualKeyMap;
 }
 
 void EventHub::Device::close() {
@@ -763,7 +762,7 @@ EventHub::Device* EventHub::getDeviceByDescriptorLocked(const std::string& descr
 }
 
 EventHub::Device* EventHub::getDeviceLocked(int32_t deviceId) const {
-    if (deviceId == BUILT_IN_KEYBOARD_ID) {
+    if (deviceId == ReservedInputDeviceId::BUILT_IN_KEYBOARD_ID) {
         deviceId = mBuiltInKeyboardId;
     }
     ssize_t index = mDevices.indexOfKey(deviceId);
@@ -835,7 +834,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                  device->id, device->path.c_str());
             mClosingDevices = device->next;
             event->when = now;
-            event->deviceId = device->id == mBuiltInKeyboardId ? BUILT_IN_KEYBOARD_ID : device->id;
+            event->deviceId = (device->id == mBuiltInKeyboardId) ?
+                    ReservedInputDeviceId::BUILT_IN_KEYBOARD_ID : device->id;
             event->type = DEVICE_REMOVED;
             event += 1;
             delete device;
@@ -1081,7 +1081,7 @@ void EventHub::scanDevicesLocked() {
             ALOGE("scan video dir failed for %s", VIDEO_DEVICE_PATH);
         }
     }
-    if (mDevices.indexOfKey(VIRTUAL_KEYBOARD_ID) < 0) {
+    if (mDevices.indexOfKey(ReservedInputDeviceId::VIRTUAL_KEYBOARD_ID) < 0) {
         createVirtualKeyboardLocked();
     }
 }
@@ -1363,8 +1363,8 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     if ((device->classes & INPUT_DEVICE_CLASS_TOUCH)) {
         // Load the virtual keys for the touch screen, if any.
         // We do this now so that we can make sure to load the keymap if necessary.
-        status_t status = loadVirtualKeyMapLocked(device);
-        if (!status) {
+        bool success = loadVirtualKeyMapLocked(device);
+        if (success) {
             device->classes |= INPUT_DEVICE_CLASS_KEYBOARD;
         }
     }
@@ -1580,7 +1580,8 @@ void EventHub::createVirtualKeyboardLocked() {
     identifier.uniqueId = "<virtual>";
     assignDescriptorLocked(identifier);
 
-    Device* device = new Device(-1, VIRTUAL_KEYBOARD_ID, "<virtual>", identifier);
+    Device* device = new Device(-1, ReservedInputDeviceId::VIRTUAL_KEYBOARD_ID, "<virtual>",
+            identifier);
     device->classes = INPUT_DEVICE_CLASS_KEYBOARD
             | INPUT_DEVICE_CLASS_ALPHAKEY
             | INPUT_DEVICE_CLASS_DPAD
@@ -1612,15 +1613,16 @@ void EventHub::loadConfigurationLocked(Device* device) {
     }
 }
 
-status_t EventHub::loadVirtualKeyMapLocked(Device* device) {
+bool EventHub::loadVirtualKeyMapLocked(Device* device) {
     // The virtual key map is supplied by the kernel as a system board property file.
     std::string path;
     path += "/sys/board_properties/virtualkeys.";
-    path += device->identifier.name;
+    path += device->identifier.getCanonicalName();
     if (access(path.c_str(), R_OK)) {
-        return NAME_NOT_FOUND;
+        return false;
     }
-    return VirtualKeyMap::load(path, &device->virtualKeyMap);
+    device->virtualKeyMap = VirtualKeyMap::load(path);
+    return device->virtualKeyMap != nullptr;
 }
 
 status_t EventHub::loadKeyMapLocked(Device* device) {

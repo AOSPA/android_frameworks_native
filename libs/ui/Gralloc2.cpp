@@ -48,6 +48,8 @@ uint64_t getValid10UsageBits() {
         for (const auto bit : hardware::hidl_enum_range<BufferUsage>()) {
             bits = bits | bit;
         }
+        // TODO(b/72323293, b/72703005): Remove these invalid bits from callers
+        bits = bits | ((1 << 10) | (1 << 13) | (1 << 21) | (1 << 27));
         return bits;
     }();
     return valid10UsageBits;
@@ -349,6 +351,12 @@ int Gralloc2Mapper::unlock(buffer_handle_t bufferHandle) const {
     }
 
     return releaseFence;
+}
+
+status_t Gralloc2Mapper::isSupported(uint32_t /*width*/, uint32_t /*height*/,
+                                     android::PixelFormat /*format*/, uint32_t /*layerCount*/,
+                                     uint64_t /*usage*/, bool* /*outSupported*/) const {
+    return INVALID_OPERATION;
 }
 
 Gralloc2Allocator::Gralloc2Allocator(const Gralloc2Mapper& mapper) : mMapper(mapper) {

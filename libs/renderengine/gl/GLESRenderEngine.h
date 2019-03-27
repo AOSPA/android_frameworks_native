@@ -21,16 +21,17 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <unordered_map>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <renderengine/RenderEngine.h>
 #include <renderengine/private/Description.h>
-#include <unordered_map>
 
 #define EGL_NO_CONFIG ((EGLConfig)0)
 
@@ -47,12 +48,14 @@ class GLImage;
 
 class GLESRenderEngine : public impl::RenderEngine {
 public:
-    static std::unique_ptr<GLESRenderEngine> create(int hwcFormat, uint32_t featureFlags);
+    static std::unique_ptr<GLESRenderEngine> create(int hwcFormat, uint32_t featureFlags,
+                                                    uint32_t imageCacheSize);
     static EGLConfig chooseEglConfig(EGLDisplay display, int format, bool logConfig);
 
     GLESRenderEngine(uint32_t featureFlags, // See RenderEngine::FeatureFlag
                      EGLDisplay display, EGLConfig config, EGLContext ctxt, EGLSurface dummy,
-                     EGLContext protectedContext, EGLSurface protectedDummy);
+                     EGLContext protectedContext, EGLSurface protectedDummy,
+                     uint32_t imageCacheSize);
     ~GLESRenderEngine() override;
 
     std::unique_ptr<Framebuffer> createFramebuffer() override;
@@ -71,6 +74,8 @@ public:
     void genTextures(size_t count, uint32_t* names) override;
     void deleteTextures(size_t count, uint32_t const* names) override;
     void bindExternalTextureImage(uint32_t texName, const Image& image) override;
+    status_t bindExternalTextureBuffer(uint32_t texName, sp<GraphicBuffer> buffer, sp<Fence> fence,
+                                       bool readCache);
     status_t bindFrameBuffer(Framebuffer* framebuffer) override;
     void unbindFrameBuffer(Framebuffer* framebuffer) override;
     void checkErrors() const override;
@@ -79,13 +84,17 @@ public:
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
     status_t drawLayers(const DisplaySettings& display, const std::vector<LayerSettings>& layers,
-                        ANativeWindowBuffer* buffer, base::unique_fd* drawFence) override;
+                        ANativeWindowBuffer* buffer, base::unique_fd&& bufferFence,
+                        base::unique_fd* drawFence) override;
 
     // internal to RenderEngine
     EGLDisplay getEGLDisplay() const { return mEGLDisplay; }
     EGLConfig getEGLConfig() const { return mEGLConfig; }
+    // Creates an output image for rendering to
+    EGLImageKHR createFramebufferImageIfNeeded(ANativeWindowBuffer* nativeBuffer, bool isProtected);
 
 protected:
+    Framebuffer* getFramebufferForDrawing() override;
     void dump(std::string& result) override;
     void setViewportAndProjection(size_t vpw, size_t vph, Rect sourceCrop,
                                   ui::Transform::orientation_flags rotation) override;
@@ -172,6 +181,12 @@ private:
     // If set to true, then enables tracing flush() and finish() to systrace.
     bool mTraceGpuCompletion = false;
     int32_t mFboHeight = 0;
+    // Maximum size of mFramebufferImageCache. If more images would be cached, then (approximately)
+    // the last recently used buffer should be kicked out.
+    uint32_t mFramebufferImageCacheSize = 0;
+
+    // Cache of output images, keyed by corresponding GraphicBuffer ID.
+    std::deque<std::pair<uint64_t, EGLImageKHR>> mFramebufferImageCache;
 
     // Current dataspace of layer being rendered
     ui::Dataspace mDataSpace = ui::Dataspace::UNKNOWN;
@@ -184,7 +199,12 @@ private:
     const bool mUseColorManagement = false;
 
     // Cache of GL images that we'll store per GraphicBuffer ID
+    // TODO: Layer should call back on destruction instead to clean this up,
+    // as it has better system utilization at the potential expense of a
+    // more complicated interface.
     std::unordered_map<uint64_t, std::unique_ptr<Image>> mImageCache;
+
+    std::unique_ptr<Framebuffer> mDrawingBuffer;
 
     class FlushTracer {
     public:

@@ -19,15 +19,19 @@
 #define LOG_TAG "BufferStateLayer"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
-#include "BufferStateLayer.h"
-#include "ColorLayer.h"
+#include <limits>
 
-#include "TimeStats/TimeStats.h"
-
+#include <compositionengine/Display.h>
+#include <compositionengine/Layer.h>
+#include <compositionengine/OutputLayer.h>
+#include <compositionengine/impl/LayerCompositionState.h>
+#include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <private/gui/SyncFeatures.h>
 #include <renderengine/Image.h>
 
-#include <limits>
+#include "BufferStateLayer.h"
+#include "ColorLayer.h"
+#include "TimeStats/TimeStats.h"
 
 namespace android {
 
@@ -42,6 +46,7 @@ const std::array<float, 16> BufferStateLayer::IDENTITY_MATRIX{
 
 BufferStateLayer::BufferStateLayer(const LayerCreationArgs& args) : BufferLayer(args) {
     mOverrideScalingMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
+    mCurrentState.dataspace = ui::Dataspace::V0_SRGB;
 }
 BufferStateLayer::~BufferStateLayer() = default;
 
@@ -96,7 +101,8 @@ bool BufferStateLayer::shouldPresentNow(nsecs_t /*expectedPresentTime*/) const {
 bool BufferStateLayer::willPresentCurrentTransaction() const {
     // Returns true if the most recent Transaction applied to CurrentState will be presented.
     return getSidebandStreamChanged() || getAutoRefresh() ||
-            (mCurrentState.modified && mCurrentState.buffer != nullptr);
+            (mCurrentState.modified &&
+             (mCurrentState.buffer != nullptr || mCurrentState.bgColorLayer != nullptr));
 }
 
 bool BufferStateLayer::getTransformToDisplayInverse() const {
@@ -192,7 +198,6 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer) {
         mReleasePreviousBuffer = true;
     }
 
-    mCurrentState.sequence++;
     mCurrentState.buffer = buffer;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -211,7 +216,6 @@ bool BufferStateLayer::setAcquireFence(const sp<Fence>& fence) {
 
 bool BufferStateLayer::setDataspace(ui::Dataspace dataspace) {
     if (mCurrentState.dataspace == dataspace) return false;
-    mCurrentState.sequence++;
     mCurrentState.dataspace = dataspace;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -312,7 +316,7 @@ Rect BufferStateLayer::getBufferSize(const State& s) const {
     // if the display frame is not defined, use the parent bounds as the buffer size.
     const auto& p = mDrawingParent.promote();
     if (p != nullptr) {
-        Rect parentBounds = Rect(p->computeBounds(Region()));
+        Rect parentBounds = Rect(p->getBounds(Region()));
         if (!parentBounds.isEmpty()) {
             return parentBounds;
         }
@@ -324,6 +328,18 @@ Rect BufferStateLayer::getBufferSize(const State& s) const {
     }
     return Rect::INVALID_RECT;
 }
+
+FloatRect BufferStateLayer::computeSourceBounds(const FloatRect& parentBounds) const {
+    const State& s(getDrawingState());
+    // for buffer state layers we use the display frame size as the buffer size.
+    if (getActiveWidth(s) < UINT32_MAX && getActiveHeight(s) < UINT32_MAX) {
+        return FloatRect(0, 0, getActiveWidth(s), getActiveHeight(s));
+    }
+
+    // if the display frame is not defined, use the parent bounds as the buffer size.
+    return parentBounds;
+}
+
 // -----------------------------------------------------------------------
 
 // -----------------------------------------------------------------------
@@ -420,25 +436,27 @@ bool BufferStateLayer::getSidebandStreamChanged() const {
     return mSidebandStreamChanged.load();
 }
 
-std::optional<Region> BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
+bool BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
     if (mSidebandStreamChanged.exchange(false)) {
         const State& s(getDrawingState());
         // mSidebandStreamChanged was true
-        // replicated in LayerBE until FE/BE is ready to be synchronized
-        getBE().compositionInfo.hwc.sidebandStream = s.sidebandStream;
-        if (getBE().compositionInfo.hwc.sidebandStream != nullptr) {
+        LOG_ALWAYS_FATAL_IF(!getCompositionLayer());
+        mSidebandStream = s.sidebandStream;
+        getCompositionLayer()->editState().frontEnd.sidebandStream = mSidebandStream;
+        if (mSidebandStream != nullptr) {
             setTransactionFlags(eTransactionNeeded);
             mFlinger->setTransactionFlags(eTraversalNeeded);
         }
         recomputeVisibleRegions = true;
 
-        return getTransform().transform(Region(Rect(s.active.w, s.active.h)));
+        return true;
     }
-    return {};
+    return false;
 }
 
 bool BufferStateLayer::hasFrameUpdate() const {
-    return mCurrentStateModified && getCurrentState().buffer != nullptr;
+    const State& c(getCurrentState());
+    return mCurrentStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
 void BufferStateLayer::setFilteringEnabled(bool enabled) {
@@ -450,53 +468,18 @@ status_t BufferStateLayer::bindTextureImage() {
     const State& s(getDrawingState());
     auto& engine(mFlinger->getRenderEngine());
 
-    engine.checkErrors();
-
-    // TODO(marissaw): once buffers are cached, don't create a new image everytime
-    mTextureImage = engine.createImage();
-
-    bool created =
-            mTextureImage->setNativeWindowBuffer(s.buffer->getNativeBuffer(),
-                                                 s.buffer->getUsage() & GRALLOC_USAGE_PROTECTED);
-    if (!created) {
-        ALOGE("Failed to create image. size=%ux%u st=%u usage=%#" PRIx64 " fmt=%d",
-              s.buffer->getWidth(), s.buffer->getHeight(), s.buffer->getStride(),
-              s.buffer->getUsage(), s.buffer->getPixelFormat());
-        engine.bindExternalTextureImage(mTextureName, *engine.createImage());
-        return NO_INIT;
-    }
-
-    engine.bindExternalTextureImage(mTextureName, *mTextureImage);
-
-    // Wait for the new buffer to be ready.
-    if (s.acquireFence->isValid()) {
-        if (SyncFeatures::getInstance().useWaitSync()) {
-            base::unique_fd fenceFd(s.acquireFence->dup());
-            if (fenceFd == -1) {
-                ALOGE("error dup'ing fence fd: %d", errno);
-                return -errno;
-            }
-            if (!engine.waitFence(std::move(fenceFd))) {
-                ALOGE("failed to wait on fence fd");
-                return UNKNOWN_ERROR;
-            }
-        } else {
-            status_t err = s.acquireFence->waitForever("BufferStateLayer::bindTextureImage");
-            if (err != NO_ERROR) {
-                ALOGE("error waiting for fence: %d", err);
-                return err;
-            }
-        }
-    }
-
-    return NO_ERROR;
+    return engine.bindExternalTextureBuffer(mTextureName, s.buffer, s.acquireFence, false);
 }
 
-status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
-                                          const sp<Fence>& releaseFence) {
+status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime) {
     const State& s(getDrawingState());
 
     if (!s.buffer) {
+        if (s.bgColorLayer) {
+            for (auto& handle : mDrawingState.callbackHandles) {
+                handle->latchTime = latchTime;
+            }
+        }
         return NO_ERROR;
     }
 
@@ -530,59 +513,7 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
         handle->latchTime = latchTime;
     }
 
-    // Handle sync fences
-    if (SyncFeatures::getInstance().useNativeFenceSync() && releaseFence != Fence::NO_FENCE) {
-        // TODO(alecmouri): Fail somewhere upstream if the fence is invalid.
-        if (!releaseFence->isValid()) {
-            mFlinger->mTimeStats->onDestroy(layerID);
-            return UNKNOWN_ERROR;
-        }
-
-        // Check status of fences first because merging is expensive.
-        // Merging an invalid fence with any other fence results in an
-        // invalid fence.
-        auto currentStatus = s.acquireFence->getStatus();
-        if (currentStatus == Fence::Status::Invalid) {
-            ALOGE("Existing fence has invalid state");
-            mFlinger->mTimeStats->onDestroy(layerID);
-            return BAD_VALUE;
-        }
-
-        auto incomingStatus = releaseFence->getStatus();
-        if (incomingStatus == Fence::Status::Invalid) {
-            ALOGE("New fence has invalid state");
-            mDrawingState.acquireFence = releaseFence;
-            mFlinger->mTimeStats->onDestroy(layerID);
-            return BAD_VALUE;
-        }
-
-        // If both fences are signaled or both are unsignaled, we need to merge
-        // them to get an accurate timestamp.
-        if (currentStatus == incomingStatus) {
-            char fenceName[32] = {};
-            snprintf(fenceName, 32, "%.28s:%d", mName.string(), mFrameNumber);
-            sp<Fence> mergedFence =
-                    Fence::merge(fenceName, mDrawingState.acquireFence, releaseFence);
-            if (!mergedFence.get()) {
-                ALOGE("failed to merge release fences");
-                // synchronization is broken, the best we can do is hope fences
-                // signal in order so the new fence will act like a union
-                mDrawingState.acquireFence = releaseFence;
-                mFlinger->mTimeStats->onDestroy(layerID);
-                return BAD_VALUE;
-            }
-            mDrawingState.acquireFence = mergedFence;
-        } else if (incomingStatus == Fence::Status::Unsignaled) {
-            // If one fence has signaled and the other hasn't, the unsignaled
-            // fence will approximately correspond with the correct timestamp.
-            // There's a small race if both fences signal at about the same time
-            // and their statuses are retrieved with unfortunate timing. However,
-            // by this point, they will have both signaled and only the timestamp
-            // will be slightly off; any dependencies after this point will
-            // already have been met.
-            mDrawingState.acquireFence = releaseFence;
-        }
-    } else {
+    if (!SyncFeatures::getInstance().useNativeFenceSync()) {
         // Bind the new buffer to the GL texture.
         //
         // Older devices require the "implicit" synchronization provided
@@ -612,10 +543,17 @@ status_t BufferStateLayer::updateActiveBuffer() {
     }
 
     mActiveBuffer = s.buffer;
-    getBE().compositionInfo.mBuffer = mActiveBuffer;
-    getBE().compositionInfo.mBufferSlot = 0;
+    mActiveBufferFence = s.acquireFence;
+    auto& layerCompositionState = getCompositionLayer()->editState().frontEnd;
+    layerCompositionState.buffer = mActiveBuffer;
+    layerCompositionState.bufferSlot = 0;
 
     return NO_ERROR;
+}
+
+bool BufferStateLayer::useCachedBufferForClientComposition() const {
+    // TODO: Store a proper staleness bit to support EGLImage caching.
+    return false;
 }
 
 status_t BufferStateLayer::updateFrameNumber(nsecs_t /*latchTime*/) {
@@ -624,9 +562,10 @@ status_t BufferStateLayer::updateFrameNumber(nsecs_t /*latchTime*/) {
     return NO_ERROR;
 }
 
-void BufferStateLayer::setHwcLayerBuffer(DisplayId displayId) {
-    auto& hwcInfo = getBE().mHwcLayers[displayId];
-    auto& hwcLayer = hwcInfo.layer;
+void BufferStateLayer::setHwcLayerBuffer(const sp<const DisplayDevice>& display) {
+    const auto outputLayer = findOutputLayerForDisplay(display);
+    LOG_FATAL_IF(!outputLayer || !outputLayer->getState().hwc);
+    auto& hwcLayer = (*outputLayer->getState().hwc).hwcLayer;
 
     const State& s(getDrawingState());
 

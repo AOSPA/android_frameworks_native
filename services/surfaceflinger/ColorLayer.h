@@ -31,19 +31,21 @@ public:
     std::shared_ptr<compositionengine::Layer> getCompositionLayer() const override;
 
     virtual const char* getTypeId() const { return "ColorLayer"; }
-    virtual void onDraw(const RenderArea& renderArea, const Region& clip,
-                        bool useIdentityTransform);
     bool isVisible() const override;
 
     bool setColor(const half3& color) override;
 
-    void setPerFrameData(DisplayId displayId, const ui::Transform& transform, const Rect& viewport,
-                         int32_t supportedPerFrameMetadata) override;
+    void setPerFrameData(const sp<const DisplayDevice>& display, const ui::Transform& transform,
+                         const Rect& viewport, int32_t supportedPerFrameMetadata) override;
 
     bool onPreComposition(nsecs_t /*refreshStartTime*/) override { return false; }
 
 protected:
     FloatRect computeCrop(const sp<const DisplayDevice>& /*display*/) const override { return {}; }
+    bool prepareClientLayer(const RenderArea& renderArea, const Region& clip,
+                            bool useIdentityTransform, Region& clearRegion,
+                            const bool supportProtectedContent,
+                            renderengine::LayerSettings& layer) override;
 
 private:
     std::shared_ptr<compositionengine::Layer> mCompositionLayer;
