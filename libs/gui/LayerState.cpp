@@ -86,20 +86,14 @@ status_t layer_state_t::write(Parcel& output) const
     memcpy(output.writeInplace(16 * sizeof(float)),
            colorTransform.asArray(), 16 * sizeof(float));
     output.writeFloat(cornerRadius);
-
-    if (output.writeVectorSize(listenerCallbacks) == NO_ERROR) {
-        for (const auto& [listener, callbackIds] : listenerCallbacks) {
-            output.writeStrongBinder(IInterface::asBinder(listener));
-            output.writeInt64Vector(callbackIds);
-        }
-    }
-
+    output.writeBool(hasListenerCallbacks);
     output.writeStrongBinder(cachedBuffer.token);
-    output.writeInt32(cachedBuffer.bufferId);
+    output.writeUint64(cachedBuffer.cacheId);
     output.writeParcelable(metadata);
 
     output.writeFloat(bgColorAlpha);
     output.writeUint32(static_cast<uint32_t>(bgColorDataspace));
+    output.writeBool(colorSpaceAgnostic);
 
     return NO_ERROR;
 }
@@ -162,21 +156,14 @@ status_t layer_state_t::read(const Parcel& input)
 
     colorTransform = mat4(static_cast<const float*>(input.readInplace(16 * sizeof(float))));
     cornerRadius = input.readFloat();
-
-    int32_t listenersSize = input.readInt32();
-    for (int32_t i = 0; i < listenersSize; i++) {
-        auto listener = interface_cast<ITransactionCompletedListener>(input.readStrongBinder());
-        std::vector<CallbackId> callbackIds;
-        input.readInt64Vector(&callbackIds);
-        listenerCallbacks.emplace_back(listener, callbackIds);
-    }
-
+    hasListenerCallbacks = input.readBool();
     cachedBuffer.token = input.readStrongBinder();
-    cachedBuffer.bufferId = input.readInt32();
+    cachedBuffer.cacheId = input.readUint64();
     input.readParcelable(&metadata);
 
     bgColorAlpha = input.readFloat();
     bgColorDataspace = static_cast<ui::Dataspace>(input.readUint32());
+    colorSpaceAgnostic = input.readBool();
 
     return NO_ERROR;
 }
@@ -374,9 +361,9 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eColorTransformChanged;
         colorTransform = other.colorTransform;
     }
-    if (other.what & eListenerCallbacksChanged) {
-        what |= eListenerCallbacksChanged;
-        listenerCallbacks = other.listenerCallbacks;
+    if (other.what & eHasListenerCallbacksChanged) {
+        what |= eHasListenerCallbacksChanged;
+        hasListenerCallbacks = other.hasListenerCallbacks;
     }
 
 #ifndef NO_INPUT

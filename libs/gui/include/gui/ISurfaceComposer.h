@@ -20,12 +20,9 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#include <utils/RefBase.h>
-#include <utils/Errors.h>
-#include <utils/Timers.h>
-#include <utils/Vector.h>
-
 #include <binder/IInterface.h>
+
+#include <gui/ITransactionCompletedListener.h>
 
 #include <ui/ConfigStoreTypes.h>
 #include <ui/DisplayedFrameStats.h>
@@ -34,12 +31,18 @@
 #include <ui/GraphicTypes.h>
 #include <ui/PixelFormat.h>
 
+#include <utils/Errors.h>
+#include <utils/RefBase.h>
+#include <utils/Timers.h>
+#include <utils/Vector.h>
+
 #include <optional>
 #include <vector>
 
 namespace android {
 // ----------------------------------------------------------------------------
 
+struct cached_buffer_t;
 struct ComposerState;
 struct DisplayState;
 struct DisplayInfo;
@@ -131,7 +134,9 @@ public:
                                      const Vector<DisplayState>& displays, uint32_t flags,
                                      const sp<IBinder>& applyToken,
                                      const InputWindowCommands& inputWindowCommands,
-                                     int64_t desiredPresentTime) = 0;
+                                     int64_t desiredPresentTime,
+                                     const cached_buffer_t& uncacheBuffer,
+                                     const std::vector<ListenerCallbacks>& listenerCallbacks) = 0;
 
     /* signal that we're done booting.
      * Requires ACCESS_SURFACE_FLINGER permission
@@ -194,8 +199,7 @@ public:
      * of the buffer. The caller should pick the data space and pixel format
      * that it can consume.
      *
-     * At the moment, sourceCrop is ignored and is always set to the visible
-     * region (projected display viewport) of the screen.
+     * sourceCrop is the crop on the logical display.
      *
      * reqWidth and reqHeight specifies the size of the buffer.  When either
      * of them is 0, they are set to the size of the logical display viewport.
@@ -368,6 +372,45 @@ public:
      */
     virtual status_t setAllowedDisplayConfigs(const sp<IBinder>& displayToken,
                                               const std::vector<int32_t>& allowedConfigs) = 0;
+
+    /*
+     * Returns the allowed display configurations currently set.
+     * The allowedConfigs in a vector of indexes corresponding to the configurations
+     * returned from getDisplayConfigs().
+     */
+    virtual status_t getAllowedDisplayConfigs(const sp<IBinder>& displayToken,
+                                              std::vector<int32_t>* outAllowedConfigs) = 0;
+    /*
+     * Gets whether brightness operations are supported on a display.
+     *
+     * displayToken
+     *      The token of the display.
+     * outSupport
+     *      An output parameter for whether brightness operations are supported.
+     *
+     * Returns NO_ERROR upon success. Otherwise,
+     *      NAME_NOT_FOUND if the display is invalid, or
+     *      BAD_VALUE      if the output parameter is invalid.
+     */
+    virtual status_t getDisplayBrightnessSupport(const sp<IBinder>& displayToken,
+                                                 bool* outSupport) const = 0;
+
+    /*
+     * Sets the brightness of a display.
+     *
+     * displayToken
+     *      The token of the display whose brightness is set.
+     * brightness
+     *      A number between 0.0f (minimum brightness) and 1.0 (maximum brightness), or -1.0f to
+     *      turn the backlight off.
+     *
+     * Returns NO_ERROR upon success. Otherwise,
+     *      NAME_NOT_FOUND    if the display is invalid, or
+     *      BAD_VALUE         if the brightness is invalid, or
+     *      INVALID_OPERATION if brightness operations are not supported.
+     */
+    virtual status_t setDisplayBrightness(const sp<IBinder>& displayToken,
+                                          float brightness) const = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -416,6 +459,9 @@ public:
         ADD_REGION_SAMPLING_LISTENER,
         REMOVE_REGION_SAMPLING_LISTENER,
         SET_ALLOWED_DISPLAY_CONFIGS,
+        GET_ALLOWED_DISPLAY_CONFIGS,
+        GET_DISPLAY_BRIGHTNESS_SUPPORT,
+        SET_DISPLAY_BRIGHTNESS,
         // Always append new enum to the end.
     };
 

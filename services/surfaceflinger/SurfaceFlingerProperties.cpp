@@ -1,10 +1,22 @@
-
-#include <sysprop/SurfaceFlingerProperties.sysprop.h>
+/*
+ * Copyright 2019 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
 #include <android/hardware/configstore/1.1/ISurfaceFlingerConfigs.h>
 #include <android/hardware/configstore/1.1/types.h>
-#include <android/hardware/configstore/1.2/ISurfaceFlingerConfigs.h>
 #include <configstore/Utils.h>
 
 #include <cstdlib>
@@ -16,9 +28,9 @@ namespace android {
 namespace sysprop {
 using namespace android::hardware::configstore;
 using namespace android::hardware::configstore::V1_0;
-using ::android::hardware::configstore::V1_2::DisplayPrimaries;
-using ::android::hardware::graphics::common::V1_2::Dataspace;
-using ::android::hardware::graphics::common::V1_2::PixelFormat;
+using android::hardware::graphics::common::V1_2::Dataspace;
+using android::hardware::graphics::common::V1_2::PixelFormat;
+using android::ui::DisplayPrimaries;
 
 int64_t vsync_event_phase_offset_ns(int64_t defaultValue) {
     auto temp = SurfaceFlingerProperties::vsync_event_phase_offset_ns();
@@ -167,43 +179,21 @@ bool use_color_management(bool defaultValue) {
     auto tmpuseColorManagement = SurfaceFlingerProperties::use_color_management();
     auto tmpHasHDRDisplay = SurfaceFlingerProperties::has_HDR_display();
     auto tmpHasWideColorDisplay = SurfaceFlingerProperties::has_wide_color_display();
-    if (tmpuseColorManagement.has_value() && tmpHasHDRDisplay.has_value() &&
-        tmpHasWideColorDisplay.has_value()) {
-        return *tmpuseColorManagement || *tmpHasHDRDisplay || *tmpHasWideColorDisplay;
-    }
-    auto surfaceFlingerConfigsServiceV1_2 = ISurfaceFlingerConfigs::getService();
-    if (surfaceFlingerConfigsServiceV1_2) {
-        return getBool<V1_2::ISurfaceFlingerConfigs,
-                       &V1_2::ISurfaceFlingerConfigs::useColorManagement>(defaultValue);
-    }
-    return defaultValue;
-}
 
-auto getCompositionPreference(sp<V1_2::ISurfaceFlingerConfigs> configsServiceV1_2) {
-    Dataspace defaultCompositionDataspace = Dataspace::V0_SRGB;
-    PixelFormat defaultCompositionPixelFormat = PixelFormat::RGBA_8888;
-    Dataspace wideColorGamutCompositionDataspace = Dataspace::V0_SRGB;
-    PixelFormat wideColorGamutCompositionPixelFormat = PixelFormat::RGBA_8888;
-    configsServiceV1_2->getCompositionPreference(
-            [&](auto tmpDefaultDataspace, auto tmpDefaultPixelFormat,
-                auto tmpWideColorGamutDataspace, auto tmpWideColorGamutPixelFormat) {
-                defaultCompositionDataspace = tmpDefaultDataspace;
-                defaultCompositionPixelFormat = tmpDefaultPixelFormat;
-                wideColorGamutCompositionDataspace = tmpWideColorGamutDataspace;
-                wideColorGamutCompositionPixelFormat = tmpWideColorGamutPixelFormat;
-            });
-    return std::tuple(defaultCompositionDataspace, defaultCompositionPixelFormat,
-                      wideColorGamutCompositionDataspace, wideColorGamutCompositionPixelFormat);
+    auto tmpuseColorManagementVal = tmpuseColorManagement.has_value() ? *tmpuseColorManagement :
+        defaultValue;
+    auto tmpHasHDRDisplayVal = tmpHasHDRDisplay.has_value() ? *tmpHasHDRDisplay :
+        defaultValue;
+    auto tmpHasWideColorDisplayVal = tmpHasWideColorDisplay.has_value() ? *tmpHasWideColorDisplay :
+        defaultValue;
+
+    return tmpuseColorManagementVal || tmpHasHDRDisplayVal || tmpHasWideColorDisplayVal;
 }
 
 int64_t default_composition_dataspace(Dataspace defaultValue) {
     auto temp = SurfaceFlingerProperties::default_composition_dataspace();
     if (temp.has_value()) {
         return *temp;
-    }
-    auto configsServiceV1_2 = V1_2::ISurfaceFlingerConfigs::getService();
-    if (configsServiceV1_2) {
-        return static_cast<int64_t>(get<0>(getCompositionPreference(configsServiceV1_2)));
     }
     return static_cast<int64_t>(defaultValue);
 }
@@ -213,10 +203,6 @@ int32_t default_composition_pixel_format(PixelFormat defaultValue) {
     if (temp.has_value()) {
         return *temp;
     }
-    auto configsServiceV1_2 = V1_2::ISurfaceFlingerConfigs::getService();
-    if (configsServiceV1_2) {
-        return static_cast<int32_t>(get<1>(getCompositionPreference(configsServiceV1_2)));
-    }
     return static_cast<int32_t>(defaultValue);
 }
 
@@ -224,10 +210,6 @@ int64_t wcg_composition_dataspace(Dataspace defaultValue) {
     auto temp = SurfaceFlingerProperties::wcg_composition_dataspace();
     if (temp.has_value()) {
         return *temp;
-    }
-    auto configsServiceV1_2 = V1_2::ISurfaceFlingerConfigs::getService();
-    if (configsServiceV1_2) {
-        return static_cast<int64_t>(get<2>(getCompositionPreference(configsServiceV1_2)));
     }
     return static_cast<int64_t>(defaultValue);
 }
@@ -237,11 +219,31 @@ int32_t wcg_composition_pixel_format(PixelFormat defaultValue) {
     if (temp.has_value()) {
         return *temp;
     }
-    auto configsServiceV1_2 = V1_2::ISurfaceFlingerConfigs::getService();
-    if (configsServiceV1_2) {
-        return static_cast<int32_t>(get<3>(getCompositionPreference(configsServiceV1_2)));
-    }
     return static_cast<int32_t>(defaultValue);
+}
+
+int32_t set_idle_timer_ms(int32_t defaultValue) {
+    auto temp = SurfaceFlingerProperties::set_idle_timer_ms();
+    if (temp.has_value()) {
+        return *temp;
+    }
+    return defaultValue;
+}
+
+bool use_smart_90_for_video(bool defaultValue) {
+    auto temp = SurfaceFlingerProperties::use_smart_90_for_video();
+    if (temp.has_value()) {
+        return *temp;
+    }
+    return defaultValue;
+}
+
+bool enable_protected_contents(bool defaultValue) {
+    auto temp = SurfaceFlingerProperties::enable_protected_contents();
+    if (temp.has_value()) {
+        return *temp;
+    }
+    return defaultValue;
 }
 
 #define DISPLAY_PRIMARY_SIZE 3

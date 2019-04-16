@@ -30,16 +30,21 @@
 #ifndef NO_BUFFERHUB
 #include <gui/BufferHubProducer.h>
 #endif
+
+#include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
+#include <gui/bufferqueue/2.0/H2BGraphicBufferProducer.h>
 #include <gui/BufferQueueDefs.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/IProducerListener.h>
 
-#include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
-
 namespace android {
 // ----------------------------------------------------------------------------
 
-using ::android::hardware::graphics::bufferqueue::V1_0::utils::
+using H2BGraphicBufferProducerV1_0 =
+        ::android::hardware::graphics::bufferqueue::V1_0::utils::
+        H2BGraphicBufferProducer;
+using H2BGraphicBufferProducerV2_0 =
+        ::android::hardware::graphics::bufferqueue::V2_0::utils::
         H2BGraphicBufferProducer;
 
 enum {
@@ -355,7 +360,7 @@ public:
         data.writeUint32(height);
         data.writeInt32(static_cast<int32_t>(format));
         data.writeUint64(usage);
-        status_t result = remote()->transact(ALLOCATE_BUFFERS, data, &reply, TF_ONE_WAY);
+        status_t result = remote()->transact(ALLOCATE_BUFFERS, data, &reply, IBinder::FLAG_ONEWAY);
         if (result != NO_ERROR) {
             ALOGE("allocateBuffers failed to transact: %d", result);
         }
@@ -534,7 +539,9 @@ public:
 BpGraphicBufferProducer::~BpGraphicBufferProducer() {}
 
 class HpGraphicBufferProducer : public HpInterface<
-        BpGraphicBufferProducer, H2BGraphicBufferProducer> {
+        BpGraphicBufferProducer,
+        H2BGraphicBufferProducerV1_0,
+        H2BGraphicBufferProducerV2_0> {
 public:
     explicit HpGraphicBufferProducer(const sp<IBinder>& base) : PBase(base) {}
 
@@ -774,6 +781,10 @@ status_t BnGraphicBufferProducer::onTransact(
             int result = dequeueBuffer(&buf, &fence, width, height, format, usage, &bufferAge,
                                        getTimestamps ? &frameTimestamps : nullptr);
 
+            if (fence == nullptr) {
+                ALOGE("dequeueBuffer returned a NULL fence, setting to Fence::NO_FENCE");
+                fence = Fence::NO_FENCE;
+            }
             reply->writeInt32(buf);
             reply->write(*fence);
             reply->writeUint64(bufferAge);
@@ -955,6 +966,10 @@ status_t BnGraphicBufferProducer::onTransact(
             if (result != NO_ERROR) {
                 ALOGE("getLastQueuedBuffer failed to write buffer: %d", result);
                 return result;
+            }
+            if (fence == nullptr) {
+                ALOGE("getLastQueuedBuffer returned a NULL fence, setting to Fence::NO_FENCE");
+                fence = Fence::NO_FENCE;
             }
             result = reply->write(*fence);
             if (result != NO_ERROR) {

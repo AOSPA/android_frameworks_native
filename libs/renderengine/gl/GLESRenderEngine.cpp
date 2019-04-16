@@ -248,7 +248,8 @@ std::unique_ptr<GLESRenderEngine> GLESRenderEngine::create(int hwcFormat, uint32
     bool useContextPriority = extensions.hasContextPriority() &&
             (featureFlags & RenderEngine::USE_HIGH_PRIORITY_CONTEXT);
     EGLContext protectedContext = EGL_NO_CONTEXT;
-    if (extensions.hasProtectedContent()) {
+    if ((featureFlags & RenderEngine::ENABLE_PROTECTED_CONTEXT) &&
+        extensions.hasProtectedContent()) {
         protectedContext = createEglContext(display, config, nullptr, useContextPriority,
                                             Protection::PROTECTED);
         ALOGE_IF(protectedContext == EGL_NO_CONTEXT, "Can't create protected context");
@@ -432,10 +433,15 @@ GLESRenderEngine::GLESRenderEngine(uint32_t featureFlags, EGLDisplay display, EG
 }
 
 GLESRenderEngine::~GLESRenderEngine() {
-    for (const auto& image : mFramebufferImageCache) {
-        eglDestroyImageKHR(mEGLDisplay, image.second);
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    unbindFrameBuffer(mDrawingBuffer.get());
+    mDrawingBuffer = nullptr;
+    while (!mFramebufferImageCache.empty()) {
+        EGLImageKHR expired = mFramebufferImageCache.front().second;
+        mFramebufferImageCache.pop_front();
+        eglDestroyImageKHR(mEGLDisplay, expired);
     }
-    mFramebufferImageCache.clear();
+    mImageCache.clear();
     eglMakeCurrent(mEGLDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglTerminate(mEGLDisplay);
 }
@@ -590,11 +596,7 @@ void GLESRenderEngine::fillRegionWithColor(const Region& region, float red, floa
 }
 
 void GLESRenderEngine::setScissor(const Rect& region) {
-    // Invert y-coordinate to map to GL-space.
-    int32_t canvasHeight = mFboHeight;
-    int32_t glBottom = canvasHeight - region.bottom;
-
-    glScissor(region.left, glBottom, region.getWidth(), region.getHeight());
+    glScissor(region.left, region.top, region.getWidth(), region.getHeight());
     glEnable(GL_SCISSOR_TEST);
 }
 
@@ -625,23 +627,27 @@ void GLESRenderEngine::bindExternalTextureImage(uint32_t texName, const Image& i
     }
 }
 
-status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName, sp<GraphicBuffer> buffer,
-                                                     sp<Fence> bufferFence, bool readCache) {
-    return bindExternalTextureBuffer(texName, buffer, bufferFence, readCache,
-                                     /*persistCache=*/false);
+status_t GLESRenderEngine::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) {
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    return cacheExternalTextureBufferLocked(buffer);
 }
 
-status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName, sp<GraphicBuffer> buffer,
-                                                     sp<Fence> bufferFence, bool readCache,
-                                                     bool persistCache) {
-    ATRACE_CALL();
-    if (readCache) {
-        auto cachedImage = mImageCache.find(buffer->getId());
+status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName,
+                                                     const sp<GraphicBuffer>& buffer,
+                                                     const sp<Fence>& bufferFence) {
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    return bindExternalTextureBufferLocked(texName, buffer, bufferFence);
+}
 
-        if (cachedImage != mImageCache.end()) {
-            bindExternalTextureImage(texName, *cachedImage->second);
-            return NO_ERROR;
-        }
+status_t GLESRenderEngine::cacheExternalTextureBufferLocked(const sp<GraphicBuffer>& buffer) {
+    if (buffer == nullptr) {
+        return BAD_VALUE;
+    }
+
+    ATRACE_CALL();
+
+    if (mImageCache.count(buffer->getId()) > 0) {
+        return NO_ERROR;
     }
 
     std::unique_ptr<Image> newImage = createImage();
@@ -652,11 +658,32 @@ status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName, sp<Graphi
         ALOGE("Failed to create image. size=%ux%u st=%u usage=%#" PRIx64 " fmt=%d",
               buffer->getWidth(), buffer->getHeight(), buffer->getStride(), buffer->getUsage(),
               buffer->getPixelFormat());
+        return NO_INIT;
+    }
+    mImageCache.insert(std::make_pair(buffer->getId(), std::move(newImage)));
+
+    return NO_ERROR;
+}
+
+status_t GLESRenderEngine::bindExternalTextureBufferLocked(uint32_t texName,
+                                                           const sp<GraphicBuffer>& buffer,
+                                                           const sp<Fence>& bufferFence) {
+    ATRACE_CALL();
+    status_t cacheResult = cacheExternalTextureBufferLocked(buffer);
+
+    if (cacheResult != NO_ERROR) {
+        return cacheResult;
+    }
+
+    auto cachedImage = mImageCache.find(buffer->getId());
+
+    if (cachedImage == mImageCache.end()) {
+        // We failed creating the image if we got here, so bail out.
         bindExternalTextureImage(texName, *createImage());
         return NO_INIT;
     }
 
-    bindExternalTextureImage(texName, *newImage);
+    bindExternalTextureImage(texName, *cachedImage->second);
 
     // Wait for the new buffer to be ready.
     if (bufferFence != nullptr && bufferFence->isValid()) {
@@ -679,34 +706,18 @@ status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName, sp<Graphi
         }
     }
 
-    // We don't always want to persist to the cache, e.g. on older devices we
-    // might bind for synchronization purposes, but that might leak if we never
-    // call drawLayers again, so it's just better to recreate the image again
-    // if needed when we draw.
-    if (persistCache) {
-        mImageCache.insert(std::make_pair(buffer->getId(), std::move(newImage)));
-    }
-
     return NO_ERROR;
 }
 
-void GLESRenderEngine::evictImages(const std::vector<LayerSettings>& layers) {
-    ATRACE_CALL();
-    // destroy old image references that we're not going to draw with.
-    std::unordered_set<uint64_t> bufIds;
-    for (auto layer : layers) {
-        if (layer.source.buffer.buffer != nullptr) {
-            bufIds.emplace(layer.source.buffer.buffer->getId());
-        }
+void GLESRenderEngine::unbindExternalTextureBuffer(uint64_t bufferId) {
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    const auto& cachedImage = mImageCache.find(bufferId);
+    if (cachedImage != mImageCache.end()) {
+        ALOGV("Destroying image for buffer: %" PRIu64, bufferId);
+        mImageCache.erase(bufferId);
+        return;
     }
-
-    for (auto it = mImageCache.begin(); it != mImageCache.end();) {
-        if (bufIds.count(it->first) == 0) {
-            it = mImageCache.erase(it);
-        } else {
-            it++;
-        }
-    }
+    ALOGV("Failed to find image for buffer: %" PRIu64, bufferId);
 }
 
 FloatRect GLESRenderEngine::setupLayerCropping(const LayerSettings& layer, Mesh& mesh) {
@@ -728,6 +739,59 @@ FloatRect GLESRenderEngine::setupLayerCropping(const LayerSettings& layer, Mesh&
     return cropWin;
 }
 
+void GLESRenderEngine::handleRoundedCorners(const DisplaySettings& display,
+                                            const LayerSettings& layer, const Mesh& mesh) {
+    // We separate the layer into 3 parts essentially, such that we only turn on blending for the
+    // top rectangle and the bottom rectangle, and turn off blending for the middle rectangle.
+    FloatRect bounds = layer.geometry.roundedCornersCrop;
+
+    // Firstly, we need to convert the coordination from layer native coordination space to
+    // device coordination space.
+    const auto transformMatrix = display.globalTransform * layer.geometry.positionTransform;
+    const vec4 leftTopCoordinate(bounds.left, bounds.top, 1.0, 1.0);
+    const vec4 rightBottomCoordinate(bounds.right, bounds.bottom, 1.0, 1.0);
+    const vec4 leftTopCoordinateInBuffer = transformMatrix * leftTopCoordinate;
+    const vec4 rightBottomCoordinateInBuffer = transformMatrix * rightBottomCoordinate;
+    bounds = FloatRect(leftTopCoordinateInBuffer[0], leftTopCoordinateInBuffer[1],
+                       rightBottomCoordinateInBuffer[0], rightBottomCoordinateInBuffer[1]);
+
+    // Secondly, if the display is rotated, we need to undo the rotation on coordination and
+    // align the (left, top) and (right, bottom) coordination with the device coordination
+    // space.
+    switch (display.orientation) {
+        case ui::Transform::ROT_90:
+            std::swap(bounds.left, bounds.right);
+            break;
+        case ui::Transform::ROT_180:
+            std::swap(bounds.left, bounds.right);
+            std::swap(bounds.top, bounds.bottom);
+            break;
+        case ui::Transform::ROT_270:
+            std::swap(bounds.top, bounds.bottom);
+            break;
+        default:
+            break;
+    }
+
+    // Finally, we cut the layer into 3 parts, with top and bottom parts having rounded corners
+    // and the middle part without rounded corners.
+    const int32_t radius = ceil(layer.geometry.roundedCornersRadius);
+    const Rect topRect(bounds.left, bounds.top, bounds.right, bounds.top + radius);
+    setScissor(topRect);
+    drawMesh(mesh);
+    const Rect bottomRect(bounds.left, bounds.bottom - radius, bounds.right, bounds.bottom);
+    setScissor(bottomRect);
+    drawMesh(mesh);
+
+    // The middle part of the layer can turn off blending.
+    const Rect middleRect(bounds.left, bounds.top + radius, bounds.right, bounds.bottom - radius);
+    setScissor(middleRect);
+    mState.cornerRadius = 0.0;
+    disableBlending();
+    drawMesh(mesh);
+    disableScissor();
+}
+
 status_t GLESRenderEngine::bindFrameBuffer(Framebuffer* framebuffer) {
     ATRACE_CALL();
     GLFramebuffer* glFramebuffer = static_cast<GLFramebuffer*>(framebuffer);
@@ -747,8 +811,6 @@ status_t GLESRenderEngine::bindFrameBuffer(Framebuffer* framebuffer) {
     glBindFramebuffer(GL_FRAMEBUFFER, framebufferName);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureName, 0);
 
-    mFboHeight = glFramebuffer->getBufferHeight();
-
     uint32_t glStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 
     ALOGE_IF(glStatus != GL_FRAMEBUFFER_COMPLETE_OES, "glCheckFramebufferStatusOES error %d",
@@ -759,7 +821,6 @@ status_t GLESRenderEngine::bindFrameBuffer(Framebuffer* framebuffer) {
 
 void GLESRenderEngine::unbindFrameBuffer(Framebuffer* /* framebuffer */) {
     ATRACE_CALL();
-    mFboHeight = 0;
 
     // back to main framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -794,12 +855,14 @@ bool GLESRenderEngine::useProtectedContext(bool useProtectedContext) {
     return success;
 }
 EGLImageKHR GLESRenderEngine::createFramebufferImageIfNeeded(ANativeWindowBuffer* nativeBuffer,
-                                                             bool isProtected) {
+                                                             bool isProtected,
+                                                             bool useFramebufferCache) {
     sp<GraphicBuffer> graphicBuffer = GraphicBuffer::from(nativeBuffer);
-    uint32_t bufferId = graphicBuffer->getId();
-    for (const auto& image : mFramebufferImageCache) {
-        if (image.first == bufferId) {
-            return image.second;
+    if (useFramebufferCache) {
+        for (const auto& image : mFramebufferImageCache) {
+            if (image.first == graphicBuffer->getId()) {
+                return image.second;
+            }
         }
     }
     EGLint attributes[] = {
@@ -809,13 +872,15 @@ EGLImageKHR GLESRenderEngine::createFramebufferImageIfNeeded(ANativeWindowBuffer
     };
     EGLImageKHR image = eglCreateImageKHR(mEGLDisplay, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
                                           nativeBuffer, attributes);
-    if (image != EGL_NO_IMAGE_KHR) {
-        if (mFramebufferImageCache.size() >= mFramebufferImageCacheSize) {
-            EGLImageKHR expired = mFramebufferImageCache.front().second;
-            mFramebufferImageCache.pop_front();
-            eglDestroyImageKHR(mEGLDisplay, expired);
+    if (useFramebufferCache) {
+        if (image != EGL_NO_IMAGE_KHR) {
+            if (mFramebufferImageCache.size() >= mFramebufferImageCacheSize) {
+                EGLImageKHR expired = mFramebufferImageCache.front().second;
+                mFramebufferImageCache.pop_front();
+                eglDestroyImageKHR(mEGLDisplay, expired);
+            }
+            mFramebufferImageCache.push_back({graphicBuffer->getId(), image});
         }
-        mFramebufferImageCache.push_back({bufferId, image});
     }
     return image;
 }
@@ -823,7 +888,8 @@ EGLImageKHR GLESRenderEngine::createFramebufferImageIfNeeded(ANativeWindowBuffer
 status_t GLESRenderEngine::drawLayers(const DisplaySettings& display,
                                       const std::vector<LayerSettings>& layers,
                                       ANativeWindowBuffer* const buffer,
-                                      base::unique_fd&& bufferFence, base::unique_fd* drawFence) {
+                                      const bool useFramebufferCache, base::unique_fd&& bufferFence,
+                                      base::unique_fd* drawFence) {
     ATRACE_CALL();
     if (layers.empty()) {
         ALOGV("Drawing empty layer stack");
@@ -835,118 +901,132 @@ status_t GLESRenderEngine::drawLayers(const DisplaySettings& display,
         sync_wait(bufferFence.get(), -1);
     }
 
-    BindNativeBufferAsFramebuffer fbo(*this, buffer);
-
-    if (fbo.getStatus() != NO_ERROR) {
-        ALOGE("Failed to bind framebuffer! Aborting GPU composition for buffer (%p).",
-              buffer->handle);
-        checkErrors();
-        return fbo.getStatus();
+    if (buffer == nullptr) {
+        ALOGE("No output buffer provided. Aborting GPU composition.");
+        return BAD_VALUE;
     }
 
-    evictImages(layers);
+    {
+        std::lock_guard<std::mutex> lock(mRenderingMutex);
 
-    // clear the entire buffer, sometimes when we reuse buffers we'd persist
-    // ghost images otherwise.
-    // we also require a full transparent framebuffer for overlays. This is
-    // probably not quite efficient on all GPUs, since we could filter out
-    // opaque layers.
-    clearWithColor(0.0, 0.0, 0.0, 0.0);
+        BindNativeBufferAsFramebuffer fbo(*this, buffer, useFramebufferCache);
 
-    setViewportAndProjection(display.physicalDisplay, display.clip);
-
-    setOutputDataSpace(display.outputDataspace);
-    setDisplayMaxLuminance(display.maxLuminance);
-
-    mat4 projectionMatrix = mState.projectionMatrix * display.globalTransform;
-    mState.projectionMatrix = projectionMatrix;
-    if (!display.clearRegion.isEmpty()) {
-        glDisable(GL_BLEND);
-        fillRegionWithColor(display.clearRegion, 0.0, 0.0, 0.0, 1.0);
-    }
-
-    Mesh mesh(Mesh::TRIANGLE_FAN, 4, 2, 2);
-    for (auto layer : layers) {
-        mState.projectionMatrix = projectionMatrix * layer.geometry.positionTransform;
-
-        const FloatRect bounds = layer.geometry.boundaries;
-        Mesh::VertexArray<vec2> position(mesh.getPositionArray<vec2>());
-        position[0] = vec2(bounds.left, bounds.top);
-        position[1] = vec2(bounds.left, bounds.bottom);
-        position[2] = vec2(bounds.right, bounds.bottom);
-        position[3] = vec2(bounds.right, bounds.top);
-
-        setupLayerCropping(layer, mesh);
-        setColorTransform(display.colorTransform * layer.colorTransform);
-
-        bool usePremultipliedAlpha = true;
-        bool disableTexture = true;
-        bool isOpaque = false;
-
-        if (layer.source.buffer.buffer != nullptr) {
-            disableTexture = false;
-            isOpaque = layer.source.buffer.isOpaque;
-
-            sp<GraphicBuffer> gBuf = layer.source.buffer.buffer;
-
-            bool readCache = layer.source.buffer.cacheHint == Buffer::CachingHint::USE_CACHE;
-            bindExternalTextureBuffer(layer.source.buffer.textureName, gBuf,
-                                      layer.source.buffer.fence, readCache, /*persistCache=*/true);
-
-            usePremultipliedAlpha = layer.source.buffer.usePremultipliedAlpha;
-            Texture texture(Texture::TEXTURE_EXTERNAL, layer.source.buffer.textureName);
-            mat4 texMatrix = layer.source.buffer.textureTransform;
-
-            texture.setMatrix(texMatrix.asArray());
-            texture.setFiltering(layer.source.buffer.useTextureFiltering);
-
-            texture.setDimensions(gBuf->getWidth(), gBuf->getHeight());
-            setSourceY410BT2020(layer.source.buffer.isY410BT2020);
-
-            renderengine::Mesh::VertexArray<vec2> texCoords(mesh.getTexCoordArray<vec2>());
-            texCoords[0] = vec2(0.0, 0.0);
-            texCoords[1] = vec2(0.0, 1.0);
-            texCoords[2] = vec2(1.0, 1.0);
-            texCoords[3] = vec2(1.0, 0.0);
-            setupLayerTexturing(texture);
-        }
-
-        const half3 solidColor = layer.source.solidColor;
-        const half4 color = half4(solidColor.r, solidColor.g, solidColor.b, layer.alpha);
-        // Buffer sources will have a black solid color ignored in the shader,
-        // so in that scenario the solid color passed here is arbitrary.
-        setupLayerBlending(usePremultipliedAlpha, isOpaque, disableTexture, color,
-                           layer.geometry.roundedCornersRadius);
-        if (layer.disableBlending) {
-            glDisable(GL_BLEND);
-        }
-        setSourceDataSpace(layer.sourceDataspace);
-
-        drawMesh(mesh);
-
-        // Cleanup if there's a buffer source
-        if (layer.source.buffer.buffer != nullptr) {
-            disableBlending();
-            setSourceY410BT2020(false);
-            disableTexturing();
-        }
-    }
-
-    *drawFence = flush();
-    // If flush failed or we don't support native fences, we need to force the
-    // gl command stream to be executed.
-    if (drawFence->get() < 0) {
-        bool success = finish();
-        if (!success) {
-            ALOGE("Failed to flush RenderEngine commands");
+        if (fbo.getStatus() != NO_ERROR) {
+            ALOGE("Failed to bind framebuffer! Aborting GPU composition for buffer (%p).",
+                  buffer->handle);
             checkErrors();
-            // Chances are, something illegal happened (either the caller passed
-            // us bad parameters, or we messed up our shader generation).
-            return INVALID_OPERATION;
+            return fbo.getStatus();
         }
-    }
 
-    checkErrors();
+        // clear the entire buffer, sometimes when we reuse buffers we'd persist
+        // ghost images otherwise.
+        // we also require a full transparent framebuffer for overlays. This is
+        // probably not quite efficient on all GPUs, since we could filter out
+        // opaque layers.
+        clearWithColor(0.0, 0.0, 0.0, 0.0);
+
+        setViewportAndProjection(display.physicalDisplay, display.clip);
+
+        setOutputDataSpace(display.outputDataspace);
+        setDisplayMaxLuminance(display.maxLuminance);
+
+        mat4 projectionMatrix = mState.projectionMatrix * display.globalTransform;
+        mState.projectionMatrix = projectionMatrix;
+        if (!display.clearRegion.isEmpty()) {
+            glDisable(GL_BLEND);
+            fillRegionWithColor(display.clearRegion, 0.0, 0.0, 0.0, 1.0);
+        }
+
+        Mesh mesh(Mesh::TRIANGLE_FAN, 4, 2, 2);
+        for (auto layer : layers) {
+            mState.projectionMatrix = projectionMatrix * layer.geometry.positionTransform;
+
+            const FloatRect bounds = layer.geometry.boundaries;
+            Mesh::VertexArray<vec2> position(mesh.getPositionArray<vec2>());
+            position[0] = vec2(bounds.left, bounds.top);
+            position[1] = vec2(bounds.left, bounds.bottom);
+            position[2] = vec2(bounds.right, bounds.bottom);
+            position[3] = vec2(bounds.right, bounds.top);
+
+            setupLayerCropping(layer, mesh);
+            setColorTransform(display.colorTransform * layer.colorTransform);
+
+            bool usePremultipliedAlpha = true;
+            bool disableTexture = true;
+            bool isOpaque = false;
+
+            if (layer.source.buffer.buffer != nullptr) {
+                disableTexture = false;
+                isOpaque = layer.source.buffer.isOpaque;
+
+                sp<GraphicBuffer> gBuf = layer.source.buffer.buffer;
+                bindExternalTextureBufferLocked(layer.source.buffer.textureName, gBuf,
+                                                layer.source.buffer.fence);
+
+                usePremultipliedAlpha = layer.source.buffer.usePremultipliedAlpha;
+                Texture texture(Texture::TEXTURE_EXTERNAL, layer.source.buffer.textureName);
+                mat4 texMatrix = layer.source.buffer.textureTransform;
+
+                texture.setMatrix(texMatrix.asArray());
+                texture.setFiltering(layer.source.buffer.useTextureFiltering);
+
+                texture.setDimensions(gBuf->getWidth(), gBuf->getHeight());
+                setSourceY410BT2020(layer.source.buffer.isY410BT2020);
+
+                renderengine::Mesh::VertexArray<vec2> texCoords(mesh.getTexCoordArray<vec2>());
+                texCoords[0] = vec2(0.0, 0.0);
+                texCoords[1] = vec2(0.0, 1.0);
+                texCoords[2] = vec2(1.0, 1.0);
+                texCoords[3] = vec2(1.0, 0.0);
+                setupLayerTexturing(texture);
+            }
+
+            const half3 solidColor = layer.source.solidColor;
+            const half4 color = half4(solidColor.r, solidColor.g, solidColor.b, layer.alpha);
+            // Buffer sources will have a black solid color ignored in the shader,
+            // so in that scenario the solid color passed here is arbitrary.
+            setupLayerBlending(usePremultipliedAlpha, isOpaque, disableTexture, color,
+                               layer.geometry.roundedCornersRadius);
+            if (layer.disableBlending) {
+                glDisable(GL_BLEND);
+            }
+            setSourceDataSpace(layer.sourceDataspace);
+
+            // We only want to do a special handling for rounded corners when having rounded corners
+            // is the only reason it needs to turn on blending, otherwise, we handle it like the
+            // usual way since it needs to turn on blending anyway.
+            if (layer.geometry.roundedCornersRadius > 0.0 && color.a >= 1.0f && isOpaque) {
+                handleRoundedCorners(display, layer, mesh);
+            } else {
+                drawMesh(mesh);
+            }
+
+            // Cleanup if there's a buffer source
+            if (layer.source.buffer.buffer != nullptr) {
+                disableBlending();
+                setSourceY410BT2020(false);
+                disableTexturing();
+            }
+        }
+
+        if (drawFence != nullptr) {
+            *drawFence = flush();
+        }
+        // If flush failed or we don't support native fences, we need to force the
+        // gl command stream to be executed.
+        if (drawFence == nullptr || drawFence->get() < 0) {
+            bool success = finish();
+            if (!success) {
+                ALOGE("Failed to flush RenderEngine commands");
+                checkErrors();
+                // Chances are, something illegal happened (either the caller passed
+                // us bad parameters, or we messed up our shader generation).
+                return INVALID_OPERATION;
+            }
+        }
+
+        checkErrors();
+    }
     return NO_ERROR;
 }
 
@@ -1358,6 +1438,20 @@ bool GLESRenderEngine::needsXYZTransformMatrix() const {
             static_cast<Dataspace>(mOutputDataSpace & Dataspace::TRANSFER_MASK);
 
     return (isInputHdrDataSpace || isOutputHdrDataSpace) && inputTransfer != outputTransfer;
+}
+
+bool GLESRenderEngine::isImageCachedForTesting(uint64_t bufferId) {
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    const auto& cachedImage = mImageCache.find(bufferId);
+    return cachedImage != mImageCache.end();
+}
+
+bool GLESRenderEngine::isFramebufferImageCachedForTesting(uint64_t bufferId) {
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    return std::any_of(mFramebufferImageCache.cbegin(), mFramebufferImageCache.cend(),
+                       [=](std::pair<uint64_t, EGLImageKHR> image) {
+                           return image.first == bufferId;
+                       });
 }
 
 // FlushTracer implementation

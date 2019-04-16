@@ -22,6 +22,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <gui/IProducerListener.h>
+#include <gui/LayerMetadata.h>
 #include <log/log.h>
 #include <renderengine/mock/Framebuffer.h>
 #include <renderengine/mock/Image.h>
@@ -174,7 +175,6 @@ public:
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
     mock::MessageQueue* mMessageQueue = new mock::MessageQueue();
     mock::DispSync* mPrimaryDispSync = new mock::DispSync();
-    renderengine::mock::Framebuffer* mReFrameBuffer = new renderengine::mock::Framebuffer();
 
     sp<Fence> mClientTargetAcquireFence = Fence::NO_FENCE;
 
@@ -311,8 +311,8 @@ struct BaseDisplayVariant {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillRepeatedly(
                         [](const renderengine::DisplaySettings& displaySettings,
-                           const std::vector<renderengine::LayerSettings>& /*layerSettings*/,
-                           ANativeWindowBuffer*, base::unique_fd&&, base::unique_fd*) -> status_t {
+                           const std::vector<renderengine::LayerSettings>&, ANativeWindowBuffer*,
+                           const bool, base::unique_fd&&, base::unique_fd*) -> status_t {
                             EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                             EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
                                       displaySettings.physicalDisplay);
@@ -350,8 +350,8 @@ struct BaseDisplayVariant {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillRepeatedly(
                         [](const renderengine::DisplaySettings& displaySettings,
-                           const std::vector<renderengine::LayerSettings>& /*layerSettings*/,
-                           ANativeWindowBuffer*, base::unique_fd&&, base::unique_fd*) -> status_t {
+                           const std::vector<renderengine::LayerSettings>&, ANativeWindowBuffer*,
+                           const bool, base::unique_fd&&, base::unique_fd*) -> status_t {
                             EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                             EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
                                       displaySettings.physicalDisplay);
@@ -580,7 +580,7 @@ struct BaseLayerProperties {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<renderengine::LayerSettings>& layerSettings,
-                             ANativeWindowBuffer*, base::unique_fd&&,
+                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -592,8 +592,6 @@ struct BaseLayerProperties {
                     renderengine::LayerSettings layer = layerSettings.back();
                     EXPECT_THAT(layer.source.buffer.buffer, Not(IsNull()));
                     EXPECT_THAT(layer.source.buffer.fence, Not(IsNull()));
-                    EXPECT_EQ(renderengine::Buffer::CachingHint::NO_CACHE,
-                              layer.source.buffer.cacheHint);
                     EXPECT_EQ(DEFAULT_TEXTURE_ID, layer.source.buffer.textureName);
                     EXPECT_EQ(false, layer.source.buffer.isY410BT2020);
                     EXPECT_EQ(true, layer.source.buffer.usePremultipliedAlpha);
@@ -625,7 +623,7 @@ struct BaseLayerProperties {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<renderengine::LayerSettings>& layerSettings,
-                             ANativeWindowBuffer*, base::unique_fd&&,
+                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -695,7 +693,7 @@ struct SecureLayerProperties : public BaseLayerProperties<SecureLayerProperties>
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<renderengine::LayerSettings>& layerSettings,
-                             ANativeWindowBuffer*, base::unique_fd&&,
+                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -808,7 +806,7 @@ struct ColorLayerVariant : public BaseLayerVariant<LayerProperties> {
             return new ColorLayer(LayerCreationArgs(test->mFlinger.mFlinger.get(), sp<Client>(),
                                                     String8("test-layer"), LayerProperties::WIDTH,
                                                     LayerProperties::HEIGHT,
-                                                    LayerProperties::LAYER_FLAGS));
+                                                    LayerProperties::LAYER_FLAGS, LayerMetadata()));
         });
 
         auto& layerDrawingState = test->mFlinger.mutableLayerDrawingState(layer);
@@ -849,7 +847,7 @@ struct BufferLayerVariant : public BaseLayerVariant<LayerProperties> {
                             LayerCreationArgs(test->mFlinger.mFlinger.get(), sp<Client>(),
                                               String8("test-layer"), LayerProperties::WIDTH,
                                               LayerProperties::HEIGHT,
-                                              LayerProperties::LAYER_FLAGS));
+                                              LayerProperties::LAYER_FLAGS, LayerMetadata()));
                 });
 
         LayerProperties::setupLayerState(test, layer);

@@ -14,29 +14,25 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include <string>
-#include <vector>
+#include <binder/IPCThreadState.h>
+#include <hwbinder/IPCThreadState.h>
+#include <private/gui/BufferQueueThreadState.h>
+#include <unistd.h>
 
 namespace android {
 
-struct GpuStatsGlobalAtom {
-    std::string driverPackageName = "";
-    std::string driverVersionName = "";
-    uint64_t driverVersionCode = 0;
-    int64_t driverBuildTime = 0;
-    int32_t glLoadingCount = 0;
-    int32_t glLoadingFailureCount = 0;
-    int32_t vkLoadingCount = 0;
-    int32_t vkLoadingFailureCount = 0;
-};
+uid_t BufferQueueThreadState::getCallingUid() {
+    if (hardware::IPCThreadState::self()->isServingCall()) {
+        return hardware::IPCThreadState::self()->getCallingUid();
+    }
+    return IPCThreadState::self()->getCallingUid();
+}
 
-struct GpuStatsAppAtom {
-    std::string appPackageName = "";
-    uint64_t driverVersionCode = 0;
-    std::vector<int64_t> glDriverLoadingTime = {};
-    std::vector<int64_t> vkDriverLoadingTime = {};
-};
+pid_t BufferQueueThreadState::getCallingPid() {
+    if (hardware::IPCThreadState::self()->isServingCall()) {
+        return hardware::IPCThreadState::self()->getCallingPid();
+    }
+    return IPCThreadState::self()->getCallingPid();
+}
 
 } // namespace android

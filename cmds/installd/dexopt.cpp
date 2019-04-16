@@ -58,6 +58,7 @@
 using android::base::EndsWith;
 using android::base::GetBoolProperty;
 using android::base::GetProperty;
+using android::base::ReadFdToString;
 using android::base::ReadFully;
 using android::base::StringPrintf;
 using android::base::WriteFully;
@@ -261,6 +262,40 @@ static std::string MapPropertyToArg(const std::string& property,
   return "";
 }
 
+// Determines which binary we should use for execution (the debug or non-debug version).
+// e.g. dex2oatd vs dex2oat
+static const char* select_execution_binary(const char* binary, const char* debug_binary,
+        bool background_job_compile) {
+    return select_execution_binary(
+        binary,
+        debug_binary,
+        background_job_compile,
+        is_debug_runtime(),
+        (android::base::GetProperty("ro.build.version.codename", "") == "REL"),
+        is_debuggable_build());
+}
+
+// Determines which binary we should use for execution (the debug or non-debug version).
+// e.g. dex2oatd vs dex2oat
+// This is convenient method which is much easier to test because it doesn't read
+// system properties.
+const char* select_execution_binary(
+        const char* binary,
+        const char* debug_binary,
+        bool background_job_compile,
+        bool is_debug_runtime,
+        bool is_release,
+        bool is_debuggable_build) {
+    // Do not use debug binaries for release candidates (to give more soak time).
+    bool is_debug_bg_job = background_job_compile && is_debuggable_build && !is_release;
+
+    // If the runtime was requested to use libartd.so, we'll run the debug version - assuming
+    // the file is present (it may not be on images with very little space available).
+    bool useDebug = (is_debug_runtime || is_debug_bg_job) && (access(debug_binary, X_OK) == 0);
+
+    return useDebug ? debug_binary : binary;
+}
+
 // Namespace for Android Runtime flags applied during boot time.
 static const char* RUNTIME_NATIVE_BOOT_NAMESPACE = "runtime_native_boot";
 // Feature flag name for running the JIT in Zygote experiment, b/119800099.
@@ -285,6 +320,7 @@ class RunDex2Oat : public ExecVHelper {
                bool background_job_compile,
                int profile_fd,
                const char* class_loader_context,
+               const std::string& class_loader_context_fds,
                int target_sdk_version,
                bool enable_hidden_api_checks,
                bool generate_compact_dex,
@@ -354,16 +390,9 @@ class RunDex2Oat : public ExecVHelper {
         std::string dex2oat_large_app_threshold_arg =
             MapPropertyToArg("dalvik.vm.dex2oat-very-large", "--very-large-app-threshold=%s");
 
-        // If the runtime was requested to use libartd.so, we'll run dex2oatd, otherwise dex2oat.
-        const char* dex2oat_bin = kDex2oatPath;
-        // Do not use dex2oatd for release candidates (give dex2oat more soak time).
-        bool is_release = android::base::GetProperty("ro.build.version.codename", "") == "REL";
-        if (is_debug_runtime() ||
-                (background_job_compile && is_debuggable_build() && !is_release)) {
-            if (access(kDex2oatDebugPath, X_OK) == 0) {
-                dex2oat_bin = kDex2oatDebugPath;
-            }
-        }
+
+        const char* dex2oat_bin = select_execution_binary(
+            kDex2oatPath, kDex2oatDebugPath, background_job_compile);
 
         bool generate_minidebug_info = kEnableMinidebugInfo &&
                 GetBoolProperty(kMinidebugInfoSystemProperty, kMinidebugInfoSystemPropertyDefault);
@@ -396,9 +425,14 @@ class RunDex2Oat : public ExecVHelper {
             target_sdk_version_arg = StringPrintf("-Xtarget-sdk-version:%d", target_sdk_version);
         }
         std::string class_loader_context_arg;
+        std::string class_loader_context_fds_arg;
         if (class_loader_context != nullptr) {
             class_loader_context_arg = StringPrintf("--class-loader-context=%s",
                                                     class_loader_context);
+            if (!class_loader_context_fds.empty()) {
+                class_loader_context_fds_arg = StringPrintf("--class-loader-context-fds=%s",
+                                                            class_loader_context_fds.c_str());
+            }
         }
 
         if (swap_fd >= 0) {
@@ -491,6 +525,7 @@ class RunDex2Oat : public ExecVHelper {
         AddArg(profile_arg);
         AddArg(base_dir);
         AddArg(class_loader_context_arg);
+        AddArg(class_loader_context_fds_arg);
         if (generate_minidebug_info) {
             AddArg(kMinidebugDex2oatFlag);
         }
@@ -581,7 +616,7 @@ static unique_fd create_profile(uid_t uid, const std::string& profile, int32_t f
     // the app uid. If we cannot do that, there's no point in returning the fd
     // since dex2oat/profman will fail with SElinux denials.
     if (fchown(fd.get(), uid, uid) < 0) {
-        PLOG(ERROR) << "Could not chwon profile " << profile;
+        PLOG(ERROR) << "Could not chown profile " << profile;
         return invalid_unique_fd();
     }
     return fd;
@@ -676,7 +711,12 @@ class RunProfman : public ExecVHelper {
                   const std::vector<std::string>& dex_locations,
                   bool copy_and_update,
                   bool store_aggregation_counters) {
-        const char* profman_bin = is_debug_runtime() ? kProfmanDebugPath: kProfmanPath;
+
+        // TODO(calin): Assume for now we run in the bg compile job (which is in
+        // most of the invocation). With the current data flow, is not very easy or
+        // clean to discover this in RunProfman (it will require quite a messy refactoring).
+        const char* profman_bin = select_execution_binary(
+            kProfmanPath, kProfmanDebugPath, /*background_job_compile=*/ true);
 
         if (copy_and_update) {
             CHECK_EQ(1u, profile_fds.size());
@@ -1482,17 +1522,20 @@ void update_out_oat_access_times(const char* apk_path, const char* out_oat_path)
 class RunDexoptAnalyzer : public ExecVHelper {
  public:
     RunDexoptAnalyzer(const std::string& dex_file,
-                    int vdex_fd,
-                    int oat_fd,
-                    int zip_fd,
-                    const std::string& instruction_set,
-                    const std::string& compiler_filter,
-                    bool profile_was_updated,
-                    bool downgrade,
-                    const char* class_loader_context) {
+                      int vdex_fd,
+                      int oat_fd,
+                      int zip_fd,
+                      const std::string& instruction_set,
+                      const std::string& compiler_filter,
+                      bool profile_was_updated,
+                      bool downgrade,
+                      const char* class_loader_context,
+                      const std::string& class_loader_context_fds) {
         CHECK_GE(zip_fd, 0);
-        const char* dexoptanalyzer_bin =
-            is_debug_runtime() ? kDexoptanalyzerDebugPath : kDexoptanalyzerPath;
+
+        // We always run the analyzer in the background job.
+        const char* dexoptanalyzer_bin = select_execution_binary(
+             kDexoptanalyzerPath, kDexoptanalyzerDebugPath, /*background_job_compile=*/ true);
 
         std::string dex_file_arg = "--dex-file=" + dex_file;
         std::string oat_fd_arg = "--oat-fd=" + std::to_string(oat_fd);
@@ -1506,6 +1549,10 @@ class RunDexoptAnalyzer : public ExecVHelper {
         if (class_loader_context != nullptr) {
             class_loader_context_arg += class_loader_context;
         }
+        std::string class_loader_context_fds_arg = "--class-loader-context-fds=";
+        if (!class_loader_context_fds.empty()) {
+            class_loader_context_fds_arg += class_loader_context_fds;
+        }
 
         // program name, dex file, isa, filter
         AddArg(dex_file_arg);
@@ -1517,7 +1564,7 @@ class RunDexoptAnalyzer : public ExecVHelper {
         if (vdex_fd >= 0) {
             AddArg(vdex_fd_arg);
         }
-        AddArg(zip_fd_arg.c_str());
+        AddArg(zip_fd_arg);
         if (profile_was_updated) {
             AddArg(assume_profile_changed);
         }
@@ -1525,9 +1572,26 @@ class RunDexoptAnalyzer : public ExecVHelper {
             AddArg(downgrade_flag);
         }
         if (class_loader_context != nullptr) {
-            AddArg(class_loader_context_arg.c_str());
+            AddArg(class_loader_context_arg);
+            if (!class_loader_context_fds.empty()) {
+                AddArg(class_loader_context_fds_arg);
+            }
         }
 
+        PrepareArgs(dexoptanalyzer_bin);
+    }
+
+    // Dexoptanalyzer mode which flattens the given class loader context and
+    // prints a list of its dex files in that flattened order.
+    RunDexoptAnalyzer(const char* class_loader_context) {
+        CHECK(class_loader_context != nullptr);
+
+        // We always run the analyzer in the background job.
+        const char* dexoptanalyzer_bin = select_execution_binary(
+             kDexoptanalyzerPath, kDexoptanalyzerDebugPath, /*background_job_compile=*/ true);
+
+        AddArg("--flatten-class-loader-context");
+        AddArg(std::string("--class-loader-context=") + class_loader_context);
         PrepareArgs(dexoptanalyzer_bin);
     }
 };
@@ -1709,6 +1773,95 @@ static bool validate_dexopt_storage_flags(int dexopt_flags,
     return true;
 }
 
+static bool get_class_loader_context_dex_paths(const char* class_loader_context, int uid,
+        /* out */ std::vector<std::string>* context_dex_paths) {
+    if (class_loader_context == nullptr) {
+      return true;
+    }
+
+    LOG(DEBUG) << "Getting dex paths for context " << class_loader_context;
+
+    // Pipe to get the hash result back from our child process.
+    unique_fd pipe_read, pipe_write;
+    if (!Pipe(&pipe_read, &pipe_write)) {
+        PLOG(ERROR) << "Failed to create pipe";
+        return false;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        // child -- drop privileges before continuing.
+        drop_capabilities(uid);
+
+        // Route stdout to `pipe_write`
+        while ((dup2(pipe_write, STDOUT_FILENO) == -1) && (errno == EINTR)) {}
+        pipe_write.reset();
+        pipe_read.reset();
+
+        RunDexoptAnalyzer run_dexopt_analyzer(class_loader_context);
+        run_dexopt_analyzer.Exec(kSecondaryDexDexoptAnalyzerSkippedFailExec);
+    }
+
+    /* parent */
+    pipe_write.reset();
+
+    std::string str_dex_paths;
+    if (!ReadFdToString(pipe_read, &str_dex_paths)) {
+        PLOG(ERROR) << "Failed to read from pipe";
+        return false;
+    }
+    pipe_read.reset();
+
+    int return_code = wait_child(pid);
+    if (!WIFEXITED(return_code)) {
+        PLOG(ERROR) << "Error waiting for child dexoptanalyzer process";
+        return false;
+    }
+
+    constexpr int kFlattenClassLoaderContextSuccess = 50;
+    return_code = WEXITSTATUS(return_code);
+    if (return_code != kFlattenClassLoaderContextSuccess) {
+        LOG(ERROR) << "Dexoptanalyzer could not flatten class loader context, code=" << return_code;
+        return false;
+    }
+
+    if (!str_dex_paths.empty()) {
+        *context_dex_paths = android::base::Split(str_dex_paths, ":");
+    }
+    return true;
+}
+
+static int open_dex_paths(const std::vector<std::string>& dex_paths,
+        /* out */ std::vector<unique_fd>* zip_fds, /* out */ std::string* error_msg) {
+    for (const std::string& dex_path : dex_paths) {
+        zip_fds->emplace_back(open(dex_path.c_str(), O_RDONLY));
+        if (zip_fds->back().get() < 0) {
+            *error_msg = StringPrintf(
+                    "installd cannot open '%s' for input during dexopt", dex_path.c_str());
+            if (errno == ENOENT) {
+                return kSecondaryDexDexoptAnalyzerSkippedNoFile;
+            } else {
+                return kSecondaryDexDexoptAnalyzerSkippedOpenZip;
+            }
+        }
+    }
+    return 0;
+}
+
+static std::string join_fds(const std::vector<unique_fd>& fds) {
+    std::stringstream ss;
+    bool is_first = true;
+    for (const unique_fd& fd : fds) {
+        if (is_first) {
+            is_first = false;
+        } else {
+            ss << ":";
+        }
+        ss << fd.get();
+    }
+    return ss.str();
+}
+
 // Processes the dex_path as a secondary dex files and return true if the path dex file should
 // be compiled. Returns false for errors (logged) or true if the secondary dex path was process
 // successfully.
@@ -1720,7 +1873,7 @@ static bool process_secondary_dex_dexopt(const std::string& dex_path, const char
         int dexopt_flags, const char* volume_uuid, int uid, const char* instruction_set,
         const char* compiler_filter, bool* is_public_out, int* dexopt_needed_out,
         std::string* oat_dir_out, bool downgrade, const char* class_loader_context,
-        /* out */ std::string* error_msg) {
+        const std::vector<std::string>& context_dex_paths, /* out */ std::string* error_msg) {
     LOG(DEBUG) << "Processing secondary dex path " << dex_path;
     int storage_flag;
     if (!validate_dexopt_storage_flags(dexopt_flags, &storage_flag, error_msg)) {
@@ -1760,6 +1913,13 @@ static bool process_secondary_dex_dexopt(const std::string& dex_path, const char
             }
         }
 
+        // Open class loader context dex files.
+        std::vector<unique_fd> context_zip_fds;
+        int open_dex_paths_rc = open_dex_paths(context_dex_paths, &context_zip_fds, error_msg);
+        if (open_dex_paths_rc != 0) {
+            _exit(open_dex_paths_rc);
+        }
+
         // Prepare the oat directories.
         if (!prepare_secondary_dex_oat_dir(dex_path, uid, instruction_set)) {
             _exit(kSecondaryDexDexoptAnalyzerSkippedPrepareDir);
@@ -1791,7 +1951,8 @@ static bool process_secondary_dex_dexopt(const std::string& dex_path, const char
                                               instruction_set,
                                               compiler_filter, profile_was_updated,
                                               downgrade,
-                                              class_loader_context);
+                                              class_loader_context,
+                                              join_fds(context_zip_fds));
         run_dexopt_analyzer.Exec(kSecondaryDexDexoptAnalyzerSkippedFailExec);
     }
 
@@ -1879,10 +2040,16 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
 
     // Check if we're dealing with a secondary dex file and if we need to compile it.
     std::string oat_dir_str;
+    std::vector<std::string> context_dex_paths;
     if (is_secondary_dex) {
+        if (!get_class_loader_context_dex_paths(class_loader_context, uid, &context_dex_paths)) {
+            *error_msg = "Failed acquiring context dex paths";
+            return -1;  // We had an error, logged in the process method.
+        }
+
         if (process_secondary_dex_dexopt(dex_path, pkgname, dexopt_flags, volume_uuid, uid,
                 instruction_set, compiler_filter, &is_public, &dexopt_needed, &oat_dir_str,
-                downgrade, class_loader_context, error_msg)) {
+                downgrade, class_loader_context, context_dex_paths, error_msg)) {
             oat_dir = oat_dir_str.c_str();
             if (dexopt_needed == NO_DEXOPT_NEEDED) {
                 return 0;  // Nothing to do, report success.
@@ -1894,7 +2061,7 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
             return -1;  // We had an error, logged in the process method.
         }
     } else {
-        // Currently these flags are only use for secondary dex files.
+        // Currently these flags are only used for secondary dex files.
         // Verify that they are not set for primary apks.
         CHECK((dexopt_flags & DEXOPT_STORAGE_CE) == 0);
         CHECK((dexopt_flags & DEXOPT_STORAGE_DE) == 0);
@@ -1904,6 +2071,13 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     unique_fd input_fd(open(dex_path, O_RDONLY, 0));
     if (input_fd.get() < 0) {
         *error_msg = StringPrintf("installd cannot open '%s' for input during dexopt", dex_path);
+        LOG(ERROR) << *error_msg;
+        return -1;
+    }
+
+    // Open class loader context dex files.
+    std::vector<unique_fd> context_input_fds;
+    if (open_dex_paths(context_dex_paths, &context_input_fds, error_msg) != 0) {
         LOG(ERROR) << *error_msg;
         return -1;
     }
@@ -1976,6 +2150,7 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
                       background_job_compile,
                       reference_profile_fd.get(),
                       class_loader_context,
+                      join_fds(context_input_fds),
                       target_sdk_version,
                       enable_hidden_api_checks,
                       generate_compact_dex,
@@ -2084,7 +2259,7 @@ bool reconcile_secondary_dex_file(const std::string& dex_path,
         drop_capabilities(uid);
 
         const char* volume_uuid_cstr = volume_uuid == nullptr ? nullptr : volume_uuid->c_str();
-        if (!validate_secondary_dex_path(pkgname.c_str(), dex_path.c_str(), volume_uuid_cstr,
+        if (!validate_secondary_dex_path(pkgname, dex_path, volume_uuid_cstr,
                 uid, storage_flag)) {
             LOG(ERROR) << "Could not validate secondary dex path " << dex_path;
             _exit(kReconcileSecondaryDexValidationError);

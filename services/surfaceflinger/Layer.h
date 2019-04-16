@@ -70,6 +70,7 @@ class LayerDebugInfo;
 namespace compositionengine {
 class Layer;
 class OutputLayer;
+struct LayerFECompositionState;
 }
 
 namespace impl {
@@ -80,8 +81,9 @@ class SurfaceInterceptor;
 
 struct LayerCreationArgs {
     LayerCreationArgs(SurfaceFlinger* flinger, const sp<Client>& client, const String8& name,
-                      uint32_t w, uint32_t h, uint32_t flags)
-          : flinger(flinger), client(client), name(name), w(w), h(h), flags(flags) {}
+                      uint32_t w, uint32_t h, uint32_t flags, LayerMetadata metadata)
+          : flinger(flinger), client(client), name(name), w(w), h(h), flags(flags),
+            metadata(std::move(metadata)) {}
 
     SurfaceFlinger* flinger;
     const sp<Client>& client;
@@ -89,6 +91,7 @@ struct LayerCreationArgs {
     uint32_t w;
     uint32_t h;
     uint32_t flags;
+    LayerMetadata metadata;
 };
 
 class Layer : public virtual compositionengine::LayerFE {
@@ -181,6 +184,10 @@ public:
 
         bool inputInfoChanged;
         InputWindowInfo inputInfo;
+        wp<Layer> touchableRegionCrop;
+
+        // dataspace is only used by BufferStateLayer and ColorLayer
+        ui::Dataspace dataspace;
 
         // The fields below this point are only used by BufferStateLayer
         Geometry active;
@@ -193,7 +200,6 @@ public:
 
         sp<GraphicBuffer> buffer;
         sp<Fence> acquireFence;
-        ui::Dataspace dataspace;
         HdrMetadata hdrMetadata;
         Region surfaceDamageRegion;
         int32_t api;
@@ -210,6 +216,7 @@ public:
         // The deque of callback handles for this frame. The back of the deque contains the most
         // recent callback handle.
         std::deque<sp<CallbackHandle>> callbackHandles;
+        bool colorSpaceAgnostic;
     };
 
     explicit Layer(const LayerCreationArgs& args);
@@ -297,6 +304,7 @@ public:
     virtual bool setColorTransform(const mat4& matrix);
     virtual mat4 getColorTransform() const;
     virtual bool hasColorTransform() const;
+    virtual bool isColorSpaceAgnostic() const { return mDrawingState.colorSpaceAgnostic; }
 
     // Used only to set BufferStateLayer state
     virtual bool setTransform(uint32_t /*transform*/) { return false; };
@@ -315,6 +323,7 @@ public:
         return false;
     };
     virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace);
+    virtual bool setColorSpaceAgnostic(const bool agnostic);
 
     ui::Dataspace getDataSpace() const { return mCurrentDataSpace; }
 
@@ -352,9 +361,15 @@ public:
     // Compute bounds for the layer and cache the results.
     void computeBounds(FloatRect parentBounds, ui::Transform parentTransform);
 
+    // Returns the buffer scale transform if a scaling mode is set.
+    ui::Transform getBufferScaleTransform() const;
+
     // Get effective layer transform, taking into account all its parent transform with any
     // scaling if the parent scaling more is not NATIVE_WINDOW_SCALING_MODE_FREEZE.
-    ui::Transform getTransformWithScale() const;
+    ui::Transform getTransformWithScale(const ui::Transform& bufferScaleTransform) const;
+
+    // Returns the bounds of the layer without any buffer scaling.
+    FloatRect getBoundsPreScaling(const ui::Transform& bufferScaleTransform) const;
 
     int32_t getSequence() const { return sequence; }
 
@@ -411,6 +426,11 @@ public:
      */
     virtual bool isFixedSize() const { return true; }
 
+    /*
+     * usesSourceCrop - true if content should use a source crop
+     */
+    virtual bool usesSourceCrop() const { return false; }
+
     // Most layers aren't created from the main thread, and therefore need to
     // grab the SF state lock to access HWC, but ContainerLayer does, so we need
     // to avoid grabbing the lock again to avoid deadlock
@@ -418,10 +438,11 @@ public:
 
     bool isRemovedFromCurrentState() const;
 
-    void writeToProto(LayerProto* layerInfo,
-                      LayerVector::StateSet stateSet = LayerVector::StateSet::Drawing);
+    void writeToProto(LayerProto* layerInfo, LayerVector::StateSet stateSet,
+                      uint32_t traceFlags = SurfaceTracing::TRACE_ALL);
 
-    void writeToProto(LayerProto* layerInfo, const sp<DisplayDevice>& displayDevice);
+    void writeToProto(LayerProto* layerInfo, const sp<DisplayDevice>& displayDevice,
+                      uint32_t traceFlags = SurfaceTracing::TRACE_ALL);
 
     virtual Geometry getActiveGeometry(const Layer::State& s) const { return s.active_legacy; }
     virtual uint32_t getActiveWidth(const Layer::State& s) const { return s.active_legacy.w; }
@@ -434,6 +455,9 @@ public:
     }
     virtual Rect getCrop(const Layer::State& s) const { return s.crop_legacy; }
 
+    virtual void setPostTime(nsecs_t /*postTime*/) {}
+    virtual void setDesiredPresentTime(nsecs_t /*desiredPresentTime*/) {}
+
 protected:
     virtual bool prepareClientLayer(const RenderArea& renderArea, const Region& clip,
                                     bool useIdentityTransform, Region& clearRegion,
@@ -444,18 +468,25 @@ public:
     /*
      * compositionengine::LayerFE overrides
      */
+    void latchCompositionState(compositionengine::LayerFECompositionState&,
+                               bool includeGeometry) const override;
     void onLayerDisplayed(const sp<Fence>& releaseFence) override;
+    const char* getDebugName() const override;
 
+protected:
+    void latchGeometry(compositionengine::LayerFECompositionState& outState) const;
+
+public:
     virtual void setDefaultBufferSize(uint32_t /*w*/, uint32_t /*h*/) {}
 
     virtual bool isHdrY410() const { return false; }
 
-    void setGeometry(const sp<const DisplayDevice>& display, uint32_t z);
     void forceClientComposition(const sp<DisplayDevice>& display);
     bool getForceClientComposition(const sp<DisplayDevice>& display);
     virtual void setPerFrameData(const sp<const DisplayDevice>& display,
                                  const ui::Transform& transform, const Rect& viewport,
-                                 int32_t supportedPerFrameMetadata) = 0;
+                                 int32_t supportedPerFrameMetadata,
+                                 const ui::Dataspace targetDataspace) = 0;
 
     // callIntoHwc exists so we can update our local state and call
     // acceptDisplayChanges without unnecessarily updating the device's state
@@ -692,16 +723,10 @@ protected:
     // For unit tests
     friend class TestableSurfaceFlinger;
 
-    void commitTransaction(const State& stateToCommit);
+    virtual void commitTransaction(const State& stateToCommit);
 
     uint32_t getEffectiveUsage(uint32_t usage) const;
 
-    virtual FloatRect computeCrop(const sp<const DisplayDevice>& display) const;
-    // Compute the initial crop as specified by parent layers and the
-    // SurfaceControl for this layer. Does not include buffer crop from the
-    // IGraphicBufferProducer client, as that should not affect child clipping.
-    // Returns in screen space.
-    Rect computeInitialCrop(const sp<const DisplayDevice>& display) const;
     /**
      * Setup rounded corners coordinates of this layer, taking into account the layer bounds and
      * crop coordinates, transforming them into layer space.
@@ -754,8 +779,6 @@ protected:
     void popPendingState(State* stateToCommit);
     virtual bool applyPendingStates(State* stateToCommit);
     virtual uint32_t doTransactionResize(uint32_t flags, Layer::State* stateToCommit);
-
-    void clearSyncPoints();
 
     // Returns mCurrentScaling mode (originating from the
     // Client) or mOverrideScalingMode mode (originating from
@@ -904,6 +927,8 @@ private:
 
     // Layer bounds in screen space.
     FloatRect mScreenBounds;
+
+    void setZOrderRelativeOf(const wp<Layer>& relativeOf);
 };
 
 } // namespace android

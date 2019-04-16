@@ -26,7 +26,6 @@
 #include <ui/Fence.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicBuffer.h>
-#include <ui/Region.h>
 
 #include <android/configuration.h>
 
@@ -143,12 +142,11 @@ Error Device::createVirtualDisplay(uint32_t width, uint32_t height,
         return error;
     }
 
-    auto display = std::make_unique<impl::Display>(*mComposer.get(), mPowerAdvisor, mCapabilities,
-                                                   displayId, DisplayType::Virtual);
+    auto display = std::make_unique<impl::Display>(*mComposer.get(), mCapabilities, displayId,
+                                                   DisplayType::Virtual);
     display->setConnected(true);
     *outDisplay = display.get();
     mDisplays.emplace(displayId, std::move(display));
-    mComposer->setClientTargetSlotCount((*outDisplay)->getId());
     ALOGI("Created virtual display");
     return Error::None;
 }
@@ -183,8 +181,8 @@ void Device::onHotplug(hwc2_display_t displayId, Connection connection) {
             return;
         }
 
-        auto newDisplay = std::make_unique<impl::Display>(*mComposer.get(), mPowerAdvisor,
-                                                          mCapabilities, displayId, displayType);
+        auto newDisplay = std::make_unique<impl::Display>(*mComposer.get(), mCapabilities,
+                                                          displayId, displayType);
         newDisplay->setConnected(true);
         mDisplays.emplace(displayId, std::move(newDisplay));
     } else if (connection == Connection::Disconnected) {
@@ -255,11 +253,10 @@ float Display::Config::Builder::getDefaultDensity() {
 }
 
 namespace impl {
-Display::Display(android::Hwc2::Composer& composer, android::Hwc2::PowerAdvisor& advisor,
+Display::Display(android::Hwc2::Composer& composer,
                  const std::unordered_set<Capability>& capabilities, hwc2_display_t id,
                  DisplayType type)
       : mComposer(composer),
-        mPowerAdvisor(advisor),
         mCapabilities(capabilities),
         mId(id),
         mIsConnected(false),
@@ -278,6 +275,11 @@ Display::Display(android::Hwc2::Composer& composer, android::Hwc2::PowerAdvisor&
         error = static_cast<Error>(mComposer.getDozeSupport(mId, &dozeSupport));
         if (error == Error::None && dozeSupport) {
             mDisplayCapabilities.emplace(DisplayCapability::Doze);
+        }
+        bool brightnessSupport = false;
+        error = static_cast<Error>(mComposer.getDisplayBrightnessSupport(mId, &brightnessSupport));
+        if (error == Error::None && brightnessSupport) {
+            mDisplayCapabilities.emplace(DisplayCapability::Brightness);
         }
     }
     ALOGV("Created display %" PRIu64, id);
@@ -637,12 +639,6 @@ Error Display::setClientTarget(uint32_t slot, const sp<GraphicBuffer>& target,
 
 Error Display::setColorMode(ColorMode mode, RenderIntent renderIntent)
 {
-    // When the color mode is switched to DISPLAY_P3, we want to boost the GPU frequency
-    // so that GPU composition can finish in time. When color mode is switched from
-    // DISPLAY_P3, we want to reset GPU frequency.
-    const bool expensiveRenderingExpected = (mode == ColorMode::DISPLAY_P3);
-    mPowerAdvisor.setExpensiveRenderingExpected(mId, expensiveRenderingExpected);
-
     auto intError = mComposer.setColorMode(mId, mode, renderIntent);
     return static_cast<Error>(intError);
 }
@@ -716,6 +712,11 @@ Error Display::presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests
         *outNumRequests = numRequests;
     }
     return error;
+}
+
+Error Display::setDisplayBrightness(float brightness) const {
+    auto intError = mComposer.setDisplayBrightness(mId, brightness);
+    return static_cast<Error>(intError);
 }
 
 // For use by Device
@@ -824,6 +825,11 @@ Error Layer::setCursorPosition(int32_t x, int32_t y)
 Error Layer::setBuffer(uint32_t slot, const sp<GraphicBuffer>& buffer,
         const sp<Fence>& acquireFence)
 {
+    if (buffer == nullptr && mBufferSlot == slot) {
+        return Error::None;
+    }
+    mBufferSlot = slot;
+
     int32_t fenceFd = acquireFence->dup();
     auto intError = mComposer.setLayerBuffer(mDisplayId, mId, slot, buffer,
                                              fenceFd);
@@ -832,6 +838,12 @@ Error Layer::setBuffer(uint32_t slot, const sp<GraphicBuffer>& buffer,
 
 Error Layer::setSurfaceDamage(const Region& damage)
 {
+    if (damage.isRect() && mDamageRegion.isRect() &&
+        (damage.getBounds() == mDamageRegion.getBounds())) {
+        return Error::None;
+    }
+    mDamageRegion = damage;
+
     // We encode default full-screen damage as INVALID_RECT upstream, but as 0
     // rects for HWC
     Hwc2::Error intError = Hwc2::Error::NONE;
@@ -986,6 +998,12 @@ Error Layer::setTransform(Transform transform)
 
 Error Layer::setVisibleRegion(const Region& region)
 {
+    if (region.isRect() && mVisibleRegion.isRect() &&
+        (region.getBounds() == mVisibleRegion.getBounds())) {
+        return Error::None;
+    }
+    mVisibleRegion = region;
+
     size_t rectCount = 0;
     auto rectArray = region.getArray(&rectCount);
 

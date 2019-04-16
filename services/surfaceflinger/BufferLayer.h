@@ -78,10 +78,13 @@ public:
     // isFixedSize - true if content has a fixed size
     bool isFixedSize() const override;
 
+    bool usesSourceCrop() const override;
+
     bool isHdrY410() const override;
 
     void setPerFrameData(const sp<const DisplayDevice>& display, const ui::Transform& transform,
-                         const Rect& viewport, int32_t supportedPerFrameMetadata) override;
+                         const Rect& viewport, int32_t supportedPerFrameMetadata,
+                         const ui::Dataspace targetDataspace) override;
 
     bool onPreComposition(nsecs_t refreshStartTime) override;
     bool onPostComposition(const std::optional<DisplayId>& displayId,
@@ -161,10 +164,6 @@ protected:
 
     bool mRefreshPending{false};
 
-    // Returns true if, when drawing the active buffer during gpu compositon, we
-    // should use a cached buffer or not.
-    virtual bool useCachedBufferForClientComposition() const = 0;
-
     // prepareClientLayer - constructs a RenderEngine layer for GPU composition.
     bool prepareClientLayer(const RenderArea& renderArea, const Region& clip,
                             bool useIdentityTransform, Region& clearRegion,
@@ -184,6 +183,8 @@ private:
     // main thread.
     bool mBufferLatched{false}; // TODO: Use mActiveBuffer?
 
+    // BufferStateLayers can return Rect::INVALID_RECT if the layer does not have a display frame
+    // and its parent layer is not bounded
     Rect getBufferSize(const State& s) const override;
 
     std::shared_ptr<compositionengine::Layer> mCompositionLayer;
