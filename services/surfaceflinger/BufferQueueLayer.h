@@ -61,9 +61,7 @@ public:
     // -----------------------------------------------------------------------
 public:
     bool fenceHasSignaled() const override;
-
-protected:
-    bool useCachedBufferForClientComposition() const override;
+    bool framePresentTimeIsCurrent() const override;
 
 private:
     nsecs_t getDesiredPresentTime() override;

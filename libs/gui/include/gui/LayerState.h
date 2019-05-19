@@ -23,7 +23,6 @@
 #include <utils/Errors.h>
 
 #include <gui/IGraphicBufferProducer.h>
-#include <gui/ITransactionCompletedListener.h>
 #include <math/mat4.h>
 
 #ifndef NO_INPUT
@@ -40,6 +39,15 @@ namespace android {
 
 class Parcel;
 class ISurfaceComposerClient;
+
+struct client_cache_t {
+    wp<IBinder> token = nullptr;
+    uint64_t id;
+
+    bool operator==(const client_cache_t& other) const { return id == other.id; }
+
+    bool isValid() const { return token != nullptr; }
+};
 
 /*
  * Used to communicate layer information between SurfaceFlinger and its clients.
@@ -81,13 +89,14 @@ struct layer_state_t {
         eApiChanged = 0x04000000,
         eSidebandStreamChanged = 0x08000000,
         eColorTransformChanged = 0x10000000,
-        eListenerCallbacksChanged = 0x20000000,
+        eHasListenerCallbacksChanged = 0x20000000,
         eInputInfoChanged = 0x40000000,
         eCornerRadiusChanged = 0x80000000,
         eFrameChanged = 0x1'00000000,
         eCachedBufferChanged = 0x2'00000000,
         eBackgroundColorChanged = 0x4'00000000,
         eMetadataChanged = 0x8'00000000,
+        eColorSpaceAgnosticChanged = 0x10'00000000,
     };
 
     layer_state_t()
@@ -114,8 +123,10 @@ struct layer_state_t {
             surfaceDamageRegion(),
             api(-1),
             colorTransform(mat4()),
+            hasListenerCallbacks(false),
             bgColorAlpha(0),
-            bgColorDataspace(ui::Dataspace::UNKNOWN) {
+            bgColorDataspace(ui::Dataspace::UNKNOWN),
+            colorSpaceAgnostic(false) {
         matrix.dsdx = matrix.dtdy = 1.0f;
         matrix.dsdy = matrix.dtdx = 0.0f;
         hdrMetadata.validTypes = 0;
@@ -130,10 +141,6 @@ struct layer_state_t {
         float dtdx{0};
         float dtdy{0};
         float dsdy{0};
-    };
-    struct cached_buffer_t {
-        sp<IBinder> token = nullptr;
-        int32_t bufferId = -1;
     };
     sp<IBinder> surface;
     uint64_t what;
@@ -179,12 +186,12 @@ struct layer_state_t {
     sp<NativeHandle> sidebandStream;
     mat4 colorTransform;
 
-    std::vector<ListenerCallbacks> listenerCallbacks;
+    bool hasListenerCallbacks;
 #ifndef NO_INPUT
     InputWindowInfo inputInfo;
 #endif
 
-    cached_buffer_t cachedBuffer;
+    client_cache_t cachedBuffer;
 
     LayerMetadata metadata;
 
@@ -192,6 +199,10 @@ struct layer_state_t {
     // the background color layer
     float bgColorAlpha;
     ui::Dataspace bgColorDataspace;
+
+    // A color space agnostic layer means the color of this layer can be
+    // interpreted in any color space.
+    bool colorSpaceAgnostic;
 };
 
 struct ComposerState {

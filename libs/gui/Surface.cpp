@@ -20,6 +20,11 @@
 
 #include <gui/Surface.h>
 
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+
 #include <inttypes.h>
 
 #include <android/native_window.h>
@@ -450,6 +455,82 @@ int Surface::setSwapInterval(int interval) {
     return NO_ERROR;
 }
 
+class FenceMonitor {
+public:
+    explicit FenceMonitor(const char* name) : mName(name), mFencesQueued(0), mFencesSignaled(0) {
+        std::thread thread(&FenceMonitor::loop, this);
+        pthread_setname_np(thread.native_handle(), mName);
+        thread.detach();
+    }
+
+    void queueFence(const sp<Fence>& fence) {
+        char message[64];
+
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (fence->getSignalTime() != Fence::SIGNAL_TIME_PENDING) {
+            snprintf(message, sizeof(message), "%s fence %u has signaled", mName, mFencesQueued);
+            ATRACE_NAME(message);
+            // Need an increment on both to make the trace number correct.
+            mFencesQueued++;
+            mFencesSignaled++;
+            return;
+        }
+        snprintf(message, sizeof(message), "Trace %s fence %u", mName, mFencesQueued);
+        ATRACE_NAME(message);
+
+        mQueue.push_back(fence);
+        mCondition.notify_one();
+        mFencesQueued++;
+        ATRACE_INT(mName, int32_t(mQueue.size()));
+    }
+
+private:
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
+    void loop() {
+        while (true) {
+            threadLoop();
+        }
+    }
+#pragma clang diagnostic pop
+
+    void threadLoop() {
+        sp<Fence> fence;
+        uint32_t fenceNum;
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            while (mQueue.empty()) {
+                mCondition.wait(lock);
+            }
+            fence = mQueue[0];
+            fenceNum = mFencesSignaled;
+        }
+        {
+            char message[64];
+            snprintf(message, sizeof(message), "waiting for %s %u", mName, fenceNum);
+            ATRACE_NAME(message);
+
+            status_t result = fence->waitForever(message);
+            if (result != OK) {
+                ALOGE("Error waiting for fence: %d", result);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            mQueue.pop_front();
+            mFencesSignaled++;
+            ATRACE_INT(mName, int32_t(mQueue.size()));
+        }
+    }
+
+    const char* mName;
+    uint32_t mFencesQueued;
+    uint32_t mFencesSignaled;
+    std::deque<sp<Fence>> mQueue;
+    std::condition_variable mCondition;
+    std::mutex mMutex;
+};
+
 int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     ATRACE_CALL();
     ALOGV("Surface::dequeueBuffer");
@@ -518,6 +599,11 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
 
     // this should never happen
     ALOGE_IF(fence == nullptr, "Surface::dequeueBuffer: received null Fence! buf=%d", buf);
+
+    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))) {
+        static FenceMonitor hwcReleaseThread("HWC release");
+        hwcReleaseThread.queueFence(fence);
+    }
 
     if (result & IGraphicBufferProducer::RELEASE_ALL_BUFFERS) {
         freeAllBuffers();
@@ -730,7 +816,7 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
         // The consumer doesn't send it back to prevent us from having two
         // file descriptors of the same fence.
         mFrameEventHistory->updateAcquireFence(mNextFrameNumber,
-                std::make_shared<FenceTime>(std::move(fence)));
+                std::make_shared<FenceTime>(fence));
 
         // Cache timestamps of signaled fences so we can close their file
         // descriptors.
@@ -743,8 +829,9 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     mDefaultHeight = output.height;
     mNextFrameNumber = output.nextFrameNumber;
 
-    // Disable transform hint if sticky transform is set.
-    if (mStickyTransform == 0) {
+    // Ignore transform hint if sticky transform is set or transform to display inverse flag is
+    // set.
+    if (mStickyTransform == 0 && !transformToDisplayInverse()) {
         mTransformHint = output.transformHint;
     }
 
@@ -760,6 +847,11 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     }
 
     mQueueBufferCondition.broadcast();
+
+    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))) {
+        static FenceMonitor gpuCompletionThread("GPU completion");
+        gpuCompletionThread.queueFence(fence);
+    }
 
     return err;
 }
@@ -1180,6 +1272,11 @@ int Surface::dispatchGetConsumerUsage64(va_list args) {
     return getConsumerUsage(usage);
 }
 
+bool Surface::transformToDisplayInverse() {
+    return (mTransform & NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY) ==
+            NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY;
+}
+
 int Surface::connect(int api) {
     static sp<IProducerListener> listener = new DummyProducerListener();
     return connect(api, listener);
@@ -1202,8 +1299,10 @@ int Surface::connect(
         mDefaultHeight = output.height;
         mNextFrameNumber = output.nextFrameNumber;
 
-        // Disable transform hint if sticky transform is set.
-        if (mStickyTransform == 0) {
+        // Ignore transform hint if sticky transform is set or transform to display inverse flag is
+        // set. Transform hint should be ignored if the client is expected to always submit buffers
+        // in the same orientation.
+        if (mStickyTransform == 0 && !transformToDisplayInverse()) {
             mTransformHint = output.transformHint;
         }
 
@@ -1500,6 +1599,13 @@ int Surface::setBuffersTransform(uint32_t transform)
     ATRACE_CALL();
     ALOGV("Surface::setBuffersTransform");
     Mutex::Autolock lock(mMutex);
+    // Ensure NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY is sticky. If the client sets the flag, do not
+    // override it until the surface is disconnected. This is a temporary workaround for camera
+    // until they switch to using Buffer State Layers. Currently if client sets the buffer transform
+    // it may be overriden by the buffer producer when the producer sets the buffer transform.
+    if (transformToDisplayInverse()) {
+        transform |= NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY;
+    }
     mTransform = transform;
     return NO_ERROR;
 }

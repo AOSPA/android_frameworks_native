@@ -105,6 +105,10 @@ bool BufferLayer::isFixedSize() const {
     return getEffectiveScalingMode() != NATIVE_WINDOW_SCALING_MODE_FREEZE;
 }
 
+bool BufferLayer::usesSourceCrop() const {
+    return true;
+}
+
 static constexpr mat4 inverseOrientation(uint32_t transform) {
     const mat4 flipH(-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1);
     const mat4 flipV(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1);
@@ -163,9 +167,6 @@ bool BufferLayer::prepareClientLayer(const RenderArea& renderArea, const Region&
         layer.source.buffer.buffer = mActiveBuffer;
         layer.source.buffer.isOpaque = isOpaque(s);
         layer.source.buffer.fence = mActiveBufferFence;
-        layer.source.buffer.cacheHint = useCachedBufferForClientComposition()
-                ? renderengine::Buffer::CachingHint::USE_CACHE
-                : renderengine::Buffer::CachingHint::NO_CACHE;
         layer.source.buffer.textureName = mTextureName;
         layer.source.buffer.usePremultipliedAlpha = getPremultipledAlpha();
         layer.source.buffer.isY410BT2020 = isHdrY410();
@@ -207,8 +208,16 @@ bool BufferLayer::prepareClientLayer(const RenderArea& renderArea, const Region&
         }
 
         const Rect win{getBounds()};
-        const float bufferWidth = getBufferSize(s).getWidth();
-        const float bufferHeight = getBufferSize(s).getHeight();
+        float bufferWidth = getBufferSize(s).getWidth();
+        float bufferHeight = getBufferSize(s).getHeight();
+
+        // BufferStateLayers can have a "buffer size" of [0, 0, -1, -1] when no display frame has
+        // been set and there is no parent layer bounds. In that case, the scale is meaningless so
+        // ignore them.
+        if (!getBufferSize(s).isValid()) {
+            bufferWidth = float(win.right) - float(win.left);
+            bufferHeight = float(win.bottom) - float(win.top);
+        }
 
         const float scaleHeight = (float(win.bottom) - float(win.top)) / bufferHeight;
         const float scaleWidth = (float(win.right) - float(win.left)) / bufferWidth;
@@ -242,7 +251,8 @@ bool BufferLayer::isHdrY410() const {
 
 void BufferLayer::setPerFrameData(const sp<const DisplayDevice>& displayDevice,
                                   const ui::Transform& transform, const Rect& viewport,
-                                  int32_t supportedPerFrameMetadata) {
+                                  int32_t supportedPerFrameMetadata,
+                                  const ui::Dataspace targetDataspace) {
     RETURN_IF_NO_HWC_LAYER(displayDevice);
 
     // Apply this display's projection's viewport to the visible region
@@ -294,10 +304,12 @@ void BufferLayer::setPerFrameData(const sp<const DisplayDevice>& displayDevice,
         setCompositionType(displayDevice, Hwc2::IComposerClient::Composition::DEVICE);
     }
 
-    ALOGV("setPerFrameData: dataspace = %d", mCurrentDataSpace);
-    error = hwcLayer->setDataspace(mCurrentDataSpace);
+    ui::Dataspace dataspace = isColorSpaceAgnostic() && targetDataspace != ui::Dataspace::UNKNOWN
+            ? targetDataspace
+            : mCurrentDataSpace;
+    error = hwcLayer->setDataspace(dataspace);
     if (error != HWC2::Error::None) {
-        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", mName.string(), mCurrentDataSpace,
+        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", mName.string(), dataspace,
               to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
@@ -309,7 +321,10 @@ void BufferLayer::setPerFrameData(const sp<const DisplayDevice>& displayDevice,
     }
 
     error = hwcLayer->setColorTransform(getColorTransform());
-    if (error != HWC2::Error::None) {
+    if (error == HWC2::Error::Unsupported) {
+        // If per layer color transform is not supported, we use GPU composition.
+        setCompositionType(displayDevice, Hwc2::IComposerClient::Composition::CLIENT);
+    } else if (error != HWC2::Error::None) {
         ALOGE("[%s] Failed to setColorTransform: %s (%d)", mName.string(),
                 to_string(error).c_str(), static_cast<int32_t>(error));
     }
@@ -401,6 +416,7 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) 
     // If the head buffer's acquire fence hasn't signaled yet, return and
     // try again later
     if (!fenceHasSignaled()) {
+        ATRACE_NAME("!fenceHasSignaled()");
         mFlinger->signalLayerUpdate();
         return false;
     }
@@ -518,11 +534,13 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) 
 
 // transaction
 void BufferLayer::notifyAvailableFrames() {
-    auto headFrameNumber = getHeadFrameNumber();
-    bool headFenceSignaled = fenceHasSignaled();
+    const auto headFrameNumber = getHeadFrameNumber();
+    const bool headFenceSignaled = fenceHasSignaled();
+    const bool presentTimeIsCurrent = framePresentTimeIsCurrent();
     Mutex::Autolock lock(mLocalSyncPointMutex);
     for (auto& point : mLocalSyncPoints) {
-        if (headFrameNumber >= point->getFrameNumber() && headFenceSignaled) {
+        if (headFrameNumber >= point->getFrameNumber() && headFenceSignaled &&
+            presentTimeIsCurrent) {
             point->setFrameAvailable();
         }
     }

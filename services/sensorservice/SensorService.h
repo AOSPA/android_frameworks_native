@@ -23,6 +23,7 @@
 #include <binder/BinderService.h>
 #include <binder/IUidObserver.h>
 #include <cutils/compiler.h>
+#include <cutils/multiuser.h>
 #include <sensor/ISensorServer.h>
 #include <sensor/ISensorEventConnection.h>
 #include <sensor/Sensor.h>
@@ -272,7 +273,7 @@ private:
     // allowed to register for or call flush on sensors. Typically only cts test packages are
     // allowed.
     bool isWhiteListedPackage(const String8& packageName);
-    bool isOperationRestricted(const String16& opPackageName);
+    bool isOperationPermitted(const String16& opPackageName);
 
     // Reset the state of SensorService to NORMAL mode.
     status_t resetToNormalMode();

@@ -73,6 +73,8 @@ BufferQueueCore::BufferQueueCore() :
     mActiveBuffers(),
     mDequeueCondition(),
     mDequeueBufferCannotBlock(false),
+    mQueueBufferCanDrop(false),
+    mLegacyBufferDrop(true),
     mDefaultBufferFormat(PIXEL_FORMAT_RGBA_8888),
     mDefaultWidth(1),
     mDefaultHeight(1),
@@ -110,13 +112,15 @@ BufferQueueCore::BufferQueueCore() :
 BufferQueueCore::~BufferQueueCore() {}
 
 void BufferQueueCore::dumpState(const String8& prefix, String8* outResult) const {
-    Mutex::Autolock lock(mMutex);
+    std::lock_guard<std::mutex> lock(mMutex);
 
     outResult->appendFormat("%s- BufferQueue ", prefix.string());
     outResult->appendFormat("mMaxAcquiredBufferCount=%d mMaxDequeuedBufferCount=%d\n",
                             mMaxAcquiredBufferCount, mMaxDequeuedBufferCount);
     outResult->appendFormat("%s  mDequeueBufferCannotBlock=%d mAsyncMode=%d\n", prefix.string(),
                             mDequeueBufferCannotBlock, mAsyncMode);
+    outResult->appendFormat("%s  mQueueBufferCanDrop=%d mLegacyBufferDrop=%d\n", prefix.string(),
+                            mQueueBufferCanDrop, mLegacyBufferDrop);
     outResult->appendFormat("%s  default-size=[%dx%d] default-format=%d ", prefix.string(),
                             mDefaultWidth, mDefaultHeight, mDefaultBufferFormat);
     outResult->appendFormat("transform-hint=%02x frame-counter=%" PRIu64, mTransformHint,
@@ -306,10 +310,10 @@ bool BufferQueueCore::adjustAvailableSlotsLocked(int delta) {
     return true;
 }
 
-void BufferQueueCore::waitWhileAllocatingLocked() const {
+void BufferQueueCore::waitWhileAllocatingLocked(std::unique_lock<std::mutex>& lock) const {
     ATRACE_CALL();
     while (mIsAllocating) {
-        mIsAllocatingCondition.wait(mMutex);
+        mIsAllocatingCondition.wait(lock);
     }
 }
 

@@ -27,6 +27,7 @@
 #include <math/mat4.h>
 #include <ui/GraphicTypes.h>
 #include <ui/HdrCapabilities.h>
+#include <ui/Region.h>
 #include <utils/Log.h>
 #include <utils/StrongPointer.h>
 #include <utils/Timers.h>
@@ -37,15 +38,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include "PowerAdvisor.h"
-
 namespace android {
     struct DisplayedFrameStats;
     class Fence;
     class FloatRect;
     class GraphicBuffer;
-    class Rect;
-    class Region;
     namespace Hwc2 {
         class Composer;
     }
@@ -125,7 +122,6 @@ private:
     std::unique_ptr<android::Hwc2::Composer> mComposer;
     std::unordered_set<Capability> mCapabilities;
     std::unordered_map<hwc2_display_t, std::unique_ptr<Display>> mDisplays;
-    android::Hwc2::impl::PowerAdvisor mPowerAdvisor;
     bool mRegisteredCallback = false;
 };
 
@@ -267,15 +263,15 @@ public:
     [[clang::warn_unused_result]] virtual Error presentOrValidate(
             uint32_t* outNumTypes, uint32_t* outNumRequests,
             android::sp<android::Fence>* outPresentFence, uint32_t* state) = 0;
+    [[clang::warn_unused_result]] virtual Error setDisplayBrightness(float brightness) const = 0;
 };
 
 namespace impl {
 
 class Display : public HWC2::Display {
 public:
-    Display(android::Hwc2::Composer& composer, android::Hwc2::PowerAdvisor& advisor,
-            const std::unordered_set<Capability>& capabilities, hwc2_display_t id,
-            DisplayType type);
+    Display(android::Hwc2::Composer& composer, const std::unordered_set<Capability>& capabilities,
+            hwc2_display_t id, DisplayType type);
     ~Display() override;
 
     // Required by HWC2
@@ -326,6 +322,7 @@ public:
     Error validate(uint32_t* outNumTypes, uint32_t* outNumRequests) override;
     Error presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests,
                             android::sp<android::Fence>* outPresentFence, uint32_t* state) override;
+    Error setDisplayBrightness(float brightness) const override;
 
     // Other Display methods
     hwc2_display_t getId() const override { return mId; }
@@ -352,7 +349,6 @@ private:
     // this HWC2::Display, so these references are guaranteed to be valid for
     // the lifetime of this object.
     android::Hwc2::Composer& mComposer;
-    android::Hwc2::PowerAdvisor& mPowerAdvisor;
     const std::unordered_set<Capability>& mCapabilities;
 
     hwc2_display_t mId;
@@ -441,9 +437,15 @@ private:
 
     hwc2_display_t mDisplayId;
     hwc2_layer_t mId;
+
+    // Cached HWC2 data, to ensure the same commands aren't sent to the HWC
+    // multiple times.
+    android::Region mVisibleRegion = android::Region::INVALID_REGION;
+    android::Region mDamageRegion = android::Region::INVALID_REGION;
     android::ui::Dataspace mDataSpace = android::ui::Dataspace::UNKNOWN;
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;
+    uint32_t mBufferSlot;
 };
 
 } // namespace impl

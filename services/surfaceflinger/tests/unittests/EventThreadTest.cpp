@@ -38,6 +38,7 @@ namespace {
 
 constexpr PhysicalDisplayId INTERNAL_DISPLAY_ID = 111;
 constexpr PhysicalDisplayId EXTERNAL_DISPLAY_ID = 222;
+constexpr PhysicalDisplayId DISPLAY_ID_64BIT = 0xabcd12349876fedcULL;
 
 class MockVSyncSource : public VSyncSource {
 public:
@@ -72,7 +73,6 @@ protected:
 
     void expectVSyncSetEnabledCallReceived(bool expectedState);
     void expectVSyncSetPhaseOffsetCallReceived(nsecs_t expectedPhaseOffset);
-    void expectVSyncPauseVsyncCallbackCallReceived(bool expectedPause);
     VSyncSource::Callback* expectVSyncSetCallbackCallReceived();
     void expectInterceptCallReceived(nsecs_t expectedTimestamp);
     void expectVsyncEventReceivedByConnection(const char* name,
@@ -87,7 +87,6 @@ protected:
     AsyncCallRecorder<void (*)(bool)> mVSyncSetEnabledCallRecorder;
     AsyncCallRecorder<void (*)(VSyncSource::Callback*)> mVSyncSetCallbackCallRecorder;
     AsyncCallRecorder<void (*)(nsecs_t)> mVSyncSetPhaseOffsetCallRecorder;
-    AsyncCallRecorder<void (*)(bool)> mVSyncPauseVsyncCallbackCallRecorder;
     AsyncCallRecorder<void (*)()> mResyncCallRecorder;
     AsyncCallRecorder<void (*)()> mResetIdleTimerCallRecorder;
     AsyncCallRecorder<void (*)(nsecs_t)> mInterceptVSyncCallRecorder;
@@ -112,9 +111,6 @@ EventThreadTest::EventThreadTest() {
 
     EXPECT_CALL(mVSyncSource, setPhaseOffset(_))
             .WillRepeatedly(Invoke(mVSyncSetPhaseOffsetCallRecorder.getInvocable()));
-
-    EXPECT_CALL(mVSyncSource, pauseVsyncCallback(_))
-            .WillRepeatedly(Invoke(mVSyncPauseVsyncCallbackCallRecorder.getInvocable()));
 
     createThread();
     mConnection = createConnection(mConnectionEventCallRecorder);
@@ -163,12 +159,6 @@ void EventThreadTest::expectVSyncSetPhaseOffsetCallReceived(nsecs_t expectedPhas
     auto args = mVSyncSetPhaseOffsetCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value());
     EXPECT_EQ(expectedPhaseOffset, std::get<0>(args.value()));
-}
-
-void EventThreadTest::expectVSyncPauseVsyncCallbackCallReceived(bool expectedPause) {
-    auto args = mVSyncPauseVsyncCallbackCallRecorder.waitForCall();
-    ASSERT_TRUE(args.has_value());
-    EXPECT_EQ(expectedPause, std::get<0>(args.value()));
 }
 
 VSyncSource::Callback* EventThreadTest::expectVSyncSetCallbackCallReceived() {
@@ -430,16 +420,6 @@ TEST_F(EventThreadTest, setPhaseOffsetForwardsToVSyncSource) {
     expectVSyncSetPhaseOffsetCallReceived(321);
 }
 
-TEST_F(EventThreadTest, pauseVsyncCallbackForwardsToVSyncSource) {
-    mThread->pauseVsyncCallback(true);
-    expectVSyncPauseVsyncCallbackCallReceived(true);
-}
-
-TEST_F(EventThreadTest, resumeVsyncCallbackForwardsToVSyncSource) {
-    mThread->pauseVsyncCallback(false);
-    expectVSyncPauseVsyncCallbackCallReceived(false);
-}
-
 TEST_F(EventThreadTest, postHotplugInternalDisconnect) {
     mThread->onHotplugReceived(INTERNAL_DISPLAY_ID, false);
     expectHotplugEventReceivedByConnection(INTERNAL_DISPLAY_ID, false);
@@ -468,6 +448,11 @@ TEST_F(EventThreadTest, postConfigChangedPrimary) {
 TEST_F(EventThreadTest, postConfigChangedExternal) {
     mThread->onConfigChanged(EXTERNAL_DISPLAY_ID, 5);
     expectConfigChangedEventReceivedByConnection(EXTERNAL_DISPLAY_ID, 5);
+}
+
+TEST_F(EventThreadTest, postConfigChangedPrimary64bit) {
+    mThread->onConfigChanged(DISPLAY_ID_64BIT, 7);
+    expectConfigChangedEventReceivedByConnection(DISPLAY_ID_64BIT, 7);
 }
 
 } // namespace

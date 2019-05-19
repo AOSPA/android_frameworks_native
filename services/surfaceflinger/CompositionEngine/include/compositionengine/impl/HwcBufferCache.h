@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <gui/BufferQueue.h>
 #include <utils/StrongPointer.h>
 
 namespace android {
@@ -39,8 +40,7 @@ namespace compositionengine::impl {
 class HwcBufferCache {
 public:
     HwcBufferCache();
-
-    // Given a buffer queue slot and buffer, return the HWC cache slot and
+    // Given a buffer, return the HWC cache slot and
     // buffer to be sent to HWC.
     //
     // outBuffer is set to buffer when buffer is not in the HWC cache;
@@ -49,9 +49,10 @@ public:
                       sp<GraphicBuffer>* outBuffer);
 
 private:
-    // a vector as we expect "slot" to be in the range of [0, 63] (that is,
-    // less than BufferQueue::NUM_BUFFER_SLOTS).
-    std::vector<sp<GraphicBuffer>> mBuffers;
+    // an array where the index corresponds to a slot and the value corresponds to a (counter,
+    // buffer) pair. "counter" is a unique value that indicates the last time this slot was updated
+    // or used and allows us to keep track of the least-recently used buffer.
+    wp<GraphicBuffer> mBuffers[BufferQueue::NUM_BUFFER_SLOTS];
 };
 
 } // namespace compositionengine::impl

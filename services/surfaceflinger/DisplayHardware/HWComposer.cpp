@@ -573,6 +573,7 @@ status_t HWComposer::presentAndGetReleaseFences(DisplayId displayId) {
         return NO_ERROR;
     }
 
+    displayData.lastPresentFence = Fence::NO_FENCE;
     auto error = hwcDisplay->present(&displayData.lastPresentFence);
     RETURN_IF_HWC_ERROR_FOR("present", error, displayId, UNKNOWN_ERROR);
 
@@ -595,9 +596,6 @@ status_t HWComposer::setPowerMode(DisplayId displayId, int32_t intMode) {
     }
 
     auto mode = static_cast<HWC2::PowerMode>(intMode);
-    if (mode == HWC2::PowerMode::Off) {
-        setVsyncEnabled(displayId, HWC2::Vsync::Disable);
-    }
 
     auto& hwcDisplay = displayData.hwcDisplay;
     switch (mode) {
@@ -780,6 +778,19 @@ status_t HWComposer::getDisplayedContentSample(DisplayId displayId, uint64_t max
     const auto error =
             mDisplayData[displayId].hwcDisplay->getDisplayedContentSample(maxFrames, timestamp,
                                                                           outStats);
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
+status_t HWComposer::setDisplayBrightness(DisplayId displayId, float brightness) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->setDisplayBrightness(brightness);
+    if (error == HWC2::Error::Unsupported) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == HWC2::Error::BadParameter) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
     RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
     return NO_ERROR;
 }
