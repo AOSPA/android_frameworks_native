@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <graphicsenv/GpuStatsAtoms.h>
+#include <graphicsenv/GpuStatsInfo.h>
 #include <graphicsenv/GraphicsEnv.h>
 #include <utils/String16.h>
 #include <utils/Vector.h>
@@ -39,6 +39,13 @@ public:
                 int64_t driverLoadingTime);
     // dumpsys interface
     void dump(const Vector<String16>& args, std::string* result);
+    // Pull gpu global stats
+    void pullGlobalStats(std::vector<GpuStatsGlobalInfo>* outStats);
+    // Pull gpu app stats
+    void pullAppStats(std::vector<GpuStatsAppInfo>* outStats);
+
+    // This limits the worst case number of loading times tracked.
+    static const size_t MAX_NUM_LOADING_TIMES = 50;
 
 private:
     // Dump global stats
@@ -46,15 +53,15 @@ private:
     // Dump app stats
     void dumpAppLocked(std::string* result);
 
-    // This limits the memory usage of GpuStats to be less than 30KB. This is
-    // the maximum atom size statsd could afford.
-    static const size_t MAX_NUM_APP_RECORDS = 300;
+    // Below limits the memory usage of GpuStats to be less than 10KB. This is
+    // the preferred number for statsd while maintaining nice data quality.
+    static const size_t MAX_NUM_APP_RECORDS = 100;
     // GpuStats access should be guarded by mLock.
     std::mutex mLock;
     // Key is driver version code.
-    std::unordered_map<uint64_t, GpuStatsGlobalAtom> mGlobalStats;
+    std::unordered_map<uint64_t, GpuStatsGlobalInfo> mGlobalStats;
     // Key is <app package name>+<driver version code>.
-    std::unordered_map<std::string, GpuStatsAppAtom> mAppStats;
+    std::unordered_map<std::string, GpuStatsAppInfo> mAppStats;
 };
 
 } // namespace android

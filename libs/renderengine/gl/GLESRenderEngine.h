@@ -56,7 +56,7 @@ public:
                      EGLDisplay display, EGLConfig config, EGLContext ctxt, EGLSurface dummy,
                      EGLContext protectedContext, EGLSurface protectedDummy,
                      uint32_t imageCacheSize);
-    ~GLESRenderEngine() override;
+    ~GLESRenderEngine() override EXCLUDES(mRenderingMutex);
 
     std::unique_ptr<Framebuffer> createFramebuffer() override;
     std::unique_ptr<Image> createImage() override;
@@ -69,13 +69,13 @@ public:
     void clearWithColor(float red, float green, float blue, float alpha) override;
     void fillRegionWithColor(const Region& region, float red, float green, float blue,
                              float alpha) override;
-    void setScissor(const Rect& region) override;
-    void disableScissor() override;
     void genTextures(size_t count, uint32_t* names) override;
     void deleteTextures(size_t count, uint32_t const* names) override;
     void bindExternalTextureImage(uint32_t texName, const Image& image) override;
-    status_t bindExternalTextureBuffer(uint32_t texName, sp<GraphicBuffer> buffer, sp<Fence> fence,
-                                       bool readCache);
+    status_t bindExternalTextureBuffer(uint32_t texName, const sp<GraphicBuffer>& buffer,
+                                       const sp<Fence>& fence) EXCLUDES(mRenderingMutex);
+    status_t cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) EXCLUDES(mRenderingMutex);
+    void unbindExternalTextureBuffer(uint64_t bufferId) EXCLUDES(mRenderingMutex);
     status_t bindFrameBuffer(Framebuffer* framebuffer) override;
     void unbindFrameBuffer(Framebuffer* framebuffer) override;
     void checkErrors() const override;
@@ -84,14 +84,22 @@ public:
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
     status_t drawLayers(const DisplaySettings& display, const std::vector<LayerSettings>& layers,
-                        ANativeWindowBuffer* buffer, base::unique_fd&& bufferFence,
-                        base::unique_fd* drawFence) override;
+                        ANativeWindowBuffer* buffer, const bool useFramebufferCache,
+                        base::unique_fd&& bufferFence, base::unique_fd* drawFence)
+            EXCLUDES(mRenderingMutex) override;
 
     // internal to RenderEngine
     EGLDisplay getEGLDisplay() const { return mEGLDisplay; }
     EGLConfig getEGLConfig() const { return mEGLConfig; }
     // Creates an output image for rendering to
-    EGLImageKHR createFramebufferImageIfNeeded(ANativeWindowBuffer* nativeBuffer, bool isProtected);
+    EGLImageKHR createFramebufferImageIfNeeded(ANativeWindowBuffer* nativeBuffer, bool isProtected,
+                                               bool useFramebufferCache);
+
+    // Test-only methods
+    // Returns true iff mImageCache contains an image keyed by bufferId
+    bool isImageCachedForTesting(uint64_t bufferId) EXCLUDES(mRenderingMutex);
+    // Returns true iff mFramebufferImageCache contains an image keyed by bufferId
+    bool isFramebufferImageCachedForTesting(uint64_t bufferId) EXCLUDES(mRenderingMutex);
 
 protected:
     Framebuffer* getFramebufferForDrawing() override;
@@ -134,6 +142,8 @@ private:
                                        Protection protection);
     static EGLSurface createDummyEglPbufferSurface(EGLDisplay display, EGLConfig config,
                                                    int hwcFormat, Protection protection);
+    void setScissor(const Rect& region);
+    void disableScissor();
     bool waitSync(EGLSyncKHR sync, EGLint flags);
 
     // A data space is considered HDR data space if it has BT2020 color space
@@ -143,13 +153,18 @@ private:
     // Defines the viewport, and sets the projection matrix to the projection
     // defined by the clip.
     void setViewportAndProjection(Rect viewport, Rect clip);
-    status_t bindExternalTextureBuffer(uint32_t texName, sp<GraphicBuffer> buffer, sp<Fence> fence,
-                                       bool readCache, bool persistCache);
     // Evicts stale images from the buffer cache.
     void evictImages(const std::vector<LayerSettings>& layers);
     // Computes the cropping window for the layer and sets up cropping
     // coordinates for the mesh.
     FloatRect setupLayerCropping(const LayerSettings& layer, Mesh& mesh);
+
+    // We do a special handling for rounded corners when it's possible to turn off blending
+    // for the majority of the layer. The rounded corners needs to turn on blending such that
+    // we can set the alpha value correctly, however, only the corners need this, and since
+    // blending is an expensive operation, we want to turn off blending when it's not necessary.
+    void handleRoundedCorners(const DisplaySettings& display, const LayerSettings& layer,
+                              const Mesh& mesh);
 
     EGLDisplay mEGLDisplay;
     EGLConfig mEGLConfig;
@@ -180,7 +195,6 @@ private:
     bool mInProtectedContext = false;
     // If set to true, then enables tracing flush() and finish() to systrace.
     bool mTraceGpuCompletion = false;
-    int32_t mFboHeight = 0;
     // Maximum size of mFramebufferImageCache. If more images would be cached, then (approximately)
     // the last recently used buffer should be kicked out.
     uint32_t mFramebufferImageCacheSize = 0;
@@ -199,10 +213,21 @@ private:
     const bool mUseColorManagement = false;
 
     // Cache of GL images that we'll store per GraphicBuffer ID
-    // TODO: Layer should call back on destruction instead to clean this up,
-    // as it has better system utilization at the potential expense of a
-    // more complicated interface.
-    std::unordered_map<uint64_t, std::unique_ptr<Image>> mImageCache;
+    std::unordered_map<uint64_t, std::unique_ptr<Image>> mImageCache GUARDED_BY(mRenderingMutex);
+    // Mutex guarding rendering operations, so that:
+    // 1. GL operations aren't interleaved, and
+    // 2. Internal state related to rendering that is potentially modified by
+    // multiple threads is guaranteed thread-safe.
+    std::mutex mRenderingMutex;
+
+    // See bindExternalTextureBuffer above, but requiring that mRenderingMutex
+    // is held.
+    status_t bindExternalTextureBufferLocked(uint32_t texName, const sp<GraphicBuffer>& buffer,
+                                             const sp<Fence>& fence) REQUIRES(mRenderingMutex);
+    // See cacheExternalTextureBuffer above, but requiring that mRenderingMutex
+    // is held.
+    status_t cacheExternalTextureBufferLocked(const sp<GraphicBuffer>& buffer)
+            REQUIRES(mRenderingMutex);
 
     std::unique_ptr<Framebuffer> mDrawingBuffer;
 

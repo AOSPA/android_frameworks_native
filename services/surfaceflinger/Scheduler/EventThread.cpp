@@ -97,7 +97,7 @@ DisplayEventReceiver::Event makeVSync(PhysicalDisplayId displayId, nsecs_t times
     return event;
 }
 
-DisplayEventReceiver::Event makeConfigChanged(uint32_t displayId, int32_t configId) {
+DisplayEventReceiver::Event makeConfigChanged(PhysicalDisplayId displayId, int32_t configId) {
     DisplayEventReceiver::Event event;
     event.header = {DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED, displayId, systemTime()};
     event.config.configId = configId;
@@ -208,12 +208,6 @@ EventThread::~EventThread() {
 void EventThread::setPhaseOffset(nsecs_t phaseOffset) {
     std::lock_guard<std::mutex> lock(mMutex);
     mVSyncSource->setPhaseOffset(phaseOffset);
-}
-
-void EventThread::pauseVsyncCallback(bool pause) {
-    std::lock_guard<std::mutex> lock(mMutex);
-    ATRACE_INT("vsyncPaused", pause);
-    mVSyncSource->pauseVsyncCallback(pause);
 }
 
 sp<EventThreadConnection> EventThread::createEventConnection(

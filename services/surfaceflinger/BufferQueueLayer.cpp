@@ -19,10 +19,12 @@
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/impl/LayerCompositionState.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
+#include <gui/BufferQueueConsumer.h>
 #include <system/window.h>
 
 #include "BufferQueueLayer.h"
 #include "LayerRejecter.h"
+#include "SurfaceInterceptor.h"
 
 #include "TimeStats/TimeStats.h"
 
@@ -132,6 +134,15 @@ bool BufferQueueLayer::fenceHasSignaled() const {
     return mQueueItems[0].mFenceTime->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
 }
 
+bool BufferQueueLayer::framePresentTimeIsCurrent() const {
+    if (!hasFrameUpdate() || isRemovedFromCurrentState()) {
+        return true;
+    }
+
+    Mutex::Autolock lock(mQueueItemLock);
+    return mQueueItems[0].mTimestamp <= mFlinger->mScheduler->expectedPresentTime();
+}
+
 nsecs_t BufferQueueLayer::getDesiredPresentTime() {
     return mConsumer->getTimestamp();
 }
@@ -184,7 +195,37 @@ PixelFormat BufferQueueLayer::getPixelFormat() const {
 
 uint64_t BufferQueueLayer::getFrameNumber() const {
     Mutex::Autolock lock(mQueueItemLock);
-    return mQueueItems[0].mFrameNumber;
+    uint64_t frameNumber = mQueueItems[0].mFrameNumber;
+
+    // The head of the queue will be dropped if there are signaled and timely frames behind it
+    nsecs_t expectedPresentTime = mFlinger->mScheduler->expectedPresentTime();
+
+    if (isRemovedFromCurrentState()) {
+        expectedPresentTime = 0;
+    }
+
+    for (int i = 1; i < mQueueItems.size(); i++) {
+        const bool fenceSignaled =
+                mQueueItems[i].mFenceTime->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
+        if (!fenceSignaled) {
+            break;
+        }
+
+        // We don't drop frames without explicit timestamps
+        if (mQueueItems[i].mIsAutoTimestamp) {
+            break;
+        }
+
+        const nsecs_t desiredPresent = mQueueItems[i].mTimestamp;
+        if (desiredPresent < expectedPresentTime - BufferQueueConsumer::MAX_REASONABLE_NSEC ||
+            desiredPresent > expectedPresentTime) {
+            break;
+        }
+
+        frameNumber = mQueueItems[i].mFrameNumber;
+    }
+
+    return frameNumber;
 }
 
 bool BufferQueueLayer::getAutoRefresh() const {
@@ -342,10 +383,6 @@ status_t BufferQueueLayer::updateActiveBuffer() {
     return NO_ERROR;
 }
 
-bool BufferQueueLayer::useCachedBufferForClientComposition() const {
-    return mConsumer->getAndSetCurrentBufferCacheHint();
-}
-
 status_t BufferQueueLayer::updateFrameNumber(nsecs_t latchTime) {
     mPreviousFrameNumber = mCurrentFrameNumber;
     mCurrentFrameNumber = mConsumer->getFrameNumber();
@@ -365,8 +402,12 @@ void BufferQueueLayer::setHwcLayerBuffer(const sp<const DisplayDevice>& display)
 
     uint32_t hwcSlot = 0;
     sp<GraphicBuffer> hwcBuffer;
+
+    // INVALID_BUFFER_SLOT is used to identify BufferStateLayers.  Default to 0
+    // for BufferQueueLayers
+    int slot = (mActiveBufferSlot == BufferQueue::INVALID_BUFFER_SLOT) ? 0 : mActiveBufferSlot;
     (*outputLayer->editState().hwc)
-            .hwcBufferCache.getHwcBuffer(mActiveBufferSlot, mActiveBuffer, &hwcSlot, &hwcBuffer);
+            .hwcBufferCache.getHwcBuffer(slot, mActiveBuffer, &hwcSlot, &hwcBuffer);
 
     auto acquireFence = mConsumer->getCurrentFence();
     auto error = hwcLayer->setBuffer(hwcSlot, hwcBuffer, acquireFence);
@@ -396,10 +437,9 @@ void BufferQueueLayer::fakeVsync() {
 void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
     // Add this buffer from our internal queue tracker
     { // Autolock scope
-        if (mFlinger->mUse90Hz && mFlinger->mUseSmart90ForVideo) {
-            // Report the requested present time to the Scheduler, if the feature is turned on.
-            mFlinger->mScheduler->addFramePresentTimeForLayer(item.mTimestamp,
-                                                              item.mIsAutoTimestamp, mName.c_str());
+        if (mFlinger->mUseSmart90ForVideo) {
+            const nsecs_t presentTime = item.mIsAutoTimestamp ? 0 : item.mTimestamp;
+            mFlinger->mScheduler->addLayerPresentTime(mSchedulerLayerHandle, presentTime);
         }
 
         Mutex::Autolock lock(mQueueItemLock);
@@ -427,6 +467,21 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
 
     mFlinger->mInterceptor->saveBufferUpdate(this, item.mGraphicBuffer->getWidth(),
                                              item.mGraphicBuffer->getHeight(), item.mFrameNumber);
+
+    if (mFlinger->mDolphinFuncsEnabled) {
+        Mutex::Autolock lock(mFlinger->mDolphinStateLock);
+        const auto displayId = mFlinger->getInternalDisplayIdLocked();
+        const Vector< sp<Layer> >& visibleLayersSortedByZ =
+            mFlinger->getLayerSortedByZForHwcDisplay(*displayId);
+        bool isTransparentRegion = this->visibleNonTransparentRegion.isEmpty();
+        int visibleLayerNum = visibleLayersSortedByZ.size();
+        Rect crop = this->getContentCrop();
+        int32_t width = crop.getWidth();
+        int32_t height = crop.getHeight();
+        String8 name = this->getName();
+        mFlinger->mDolphinOnFrameAvailable(isTransparentRegion, visibleLayerNum,
+                                           width, height, name);
+    }
 
     // If this layer is orphaned, then we run a fake vsync pulse so that
     // dequeueBuffer doesn't block indefinitely.

@@ -37,6 +37,7 @@
 #include <ui/PixelFormat.h>
 
 #include <gui/CpuConsumer.h>
+#include <gui/ISurfaceComposer.h>
 #include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerState.h>
 #include <gui/SurfaceControl.h>
@@ -50,6 +51,7 @@ struct DisplayInfo;
 class HdrCapabilities;
 class ISurfaceComposerClient;
 class IGraphicBufferProducer;
+class IRegionSamplingListener;
 class Region;
 
 // ---------------------------------------------------------------------------
@@ -117,6 +119,12 @@ public:
     static status_t setAllowedDisplayConfigs(const sp<IBinder>& displayToken,
                                              const std::vector<int32_t>& allowedConfigs);
 
+    // Returns the allowed display configurations currently set.
+    // The allowedConfigs in a vector of indexes corresponding to the configurations
+    // returned from getDisplayConfigs().
+    static status_t getAllowedDisplayConfigs(const sp<IBinder>& displayToken,
+                                             std::vector<int32_t>* outAllowedConfigs);
+
     // Gets the list of supported color modes for the given display
     static status_t getDisplayColorModes(const sp<IBinder>& display,
             Vector<ui::ColorMode>* outColorModes);
@@ -158,8 +166,40 @@ public:
     static void doDropReferenceTransaction(const sp<IBinder>& handle,
             const sp<ISurfaceComposerClient>& client);
 
+    /**
+     * Uncaches a buffer in ISurfaceComposer. It must be uncached via a transaction so that it is
+     * in order with other transactions that use buffers.
+     */
+    static void doUncacheBufferTransaction(uint64_t cacheId);
+
     // Queries whether a given display is wide color display.
     static status_t isWideColorDisplay(const sp<IBinder>& display, bool* outIsWideColorDisplay);
+
+    /*
+     * Returns whether brightness operations are supported on a display.
+     *
+     * displayToken
+     *      The token of the display.
+     *
+     * Returns whether brightness operations are supported on a display or not.
+     */
+    static bool getDisplayBrightnessSupport(const sp<IBinder>& displayToken);
+
+    /*
+     * Sets the brightness of a display.
+     *
+     * displayToken
+     *      The token of the display whose brightness is set.
+     * brightness
+     *      A number between 0.0 (minimum brightness) and 1.0 (maximum brightness), or -1.0f to
+     *      turn the backlight off.
+     *
+     * Returns NO_ERROR upon success. Otherwise,
+     *      NAME_NOT_FOUND    if the display handle is invalid, or
+     *      BAD_VALUE         if the brightness value is invalid, or
+     *      INVALID_OPERATION if brightness operaetions are not supported.
+     */
+    static status_t setDisplayBrightness(const sp<IBinder>& displayToken, float brightness);
 
     // ------------------------------------------------------------------------
     // surface creation / destruction
@@ -246,6 +286,9 @@ public:
         bool                        mAnimation = false;
         bool                        mEarlyWakeup = false;
 
+        // Indicates that the Transaction contains a buffer that should be cached
+        bool mContainsBuffer = false;
+
         // mDesiredPresentTime is the time in nanoseconds that the client would like the transaction
         // to be presented. When it is not possible to present at exactly that time, it will be
         // presented after the time has passed.
@@ -264,6 +307,7 @@ public:
         layer_state_t* getLayerState(const sp<SurfaceControl>& sc);
         DisplayState& getDisplayState(const sp<IBinder>& token);
 
+        void cacheBuffers();
         void registerSurfaceControlForCallback(const sp<SurfaceControl>& sc);
 
     public:
@@ -354,6 +398,7 @@ public:
         Transaction& setSidebandStream(const sp<SurfaceControl>& sc,
                                        const sp<NativeHandle>& sidebandStream);
         Transaction& setDesiredPresentTime(nsecs_t desiredPresentTime);
+        Transaction& setColorSpaceAgnostic(const sp<SurfaceControl>& sc, const bool agnostic);
 
         Transaction& addTransactionCompletedCallback(
                 TransactionCompletedCallbackTakesContext callback, void* callbackContext);
@@ -442,6 +487,10 @@ public:
 
     static status_t getDisplayedContentSample(const sp<IBinder>& display, uint64_t maxFrames,
                                               uint64_t timestamp, DisplayedFrameStats* outStats);
+    static status_t addRegionSamplingListener(const Rect& samplingArea,
+                                              const sp<IBinder>& stopLayerHandle,
+                                              const sp<IRegionSamplingListener>& listener);
+    static status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener);
 
 private:
     virtual void onFirstRef();
@@ -460,7 +509,8 @@ public:
     static status_t capture(const sp<IBinder>& display, const ui::Dataspace reqDataSpace,
                             const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
                             uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                            uint32_t rotation, bool captureSecureLayers, sp<GraphicBuffer>* outBuffer);
+                            uint32_t rotation, bool captureSecureLayers,
+                            sp<GraphicBuffer>* outBuffer, bool& outCapturedSecureLayers);
     static status_t capture(const sp<IBinder>& display, const ui::Dataspace reqDataSpace,
                             const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
                             uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
@@ -468,10 +518,12 @@ public:
     static status_t captureLayers(const sp<IBinder>& layerHandle, const ui::Dataspace reqDataSpace,
                                   const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
                                   float frameScale, sp<GraphicBuffer>* outBuffer);
-    static status_t captureChildLayers(const sp<IBinder>& layerHandle,
-                                       const ui::Dataspace reqDataSpace,
-                                       const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
-                                       float frameScale, sp<GraphicBuffer>* outBuffer);
+    static status_t captureChildLayers(
+            const sp<IBinder>& layerHandle, const ui::Dataspace reqDataSpace,
+            const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
+            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
+                    excludeHandles,
+            float frameScale, sp<GraphicBuffer>* outBuffer);
 };
 
 // ---------------------------------------------------------------------------

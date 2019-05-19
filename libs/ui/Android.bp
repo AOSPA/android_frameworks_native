@@ -45,6 +45,8 @@ cc_library_shared {
 
         // Don't warn about struct padding
         "-Wno-padded",
+
+        "-Wno-switch-enum",
     ],
 
     sanitize: {
@@ -68,6 +70,7 @@ cc_library_shared {
         "GraphicBufferMapper.cpp",
         "HdrCapabilities.cpp",
         "PixelFormat.cpp",
+        "PublicFormat.cpp",
         "Rect.cpp",
         "Region.cpp",
         "Size.cpp",
@@ -79,6 +82,9 @@ cc_library_shared {
         "frameworks/native/include",
     ],
 
+    // Uncomment the following line to enable VALIDATE_REGIONS traces
+    //defaults: ["libui-validate-regions-defaults"],
+
     shared_libs: [
         "android.frameworks.bufferhub@1.0",
         "android.hardware.graphics.allocator@2.0",
@@ -87,8 +93,6 @@ cc_library_shared {
         "android.hardware.graphics.mapper@2.0",
         "android.hardware.graphics.mapper@2.1",
         "android.hardware.graphics.mapper@3.0",
-        "android.hardware.configstore@1.2",
-        "android.hardware.configstore-utils",
         "libbase",
         "libcutils",
         "libhardware",
@@ -97,12 +101,10 @@ cc_library_shared {
         "libhwbinder",
         "libsync",
         "libutils",
-        "libutilscallstack",
         "liblog",
     ],
 
     export_shared_lib_headers: [
-        "android.hardware.configstore@1.2",
         "android.hardware.graphics.common@1.2",
     ],
 
@@ -124,7 +126,6 @@ cc_library_shared {
             exclude_header_libs: [
                 "libbufferhub_headers",
                 "libdvr_headers",
-                "libnativewindow_headers",
             ],
             exclude_shared_libs: [
                 "android.frameworks.bufferhub@1.0",
@@ -152,6 +153,7 @@ cc_library_shared {
     export_header_lib_headers: [
         "libbase_headers",
         "libnativebase_headers",
+        "libnativewindow_headers",
         "libhardware_headers",
         "libui_headers",
     ],
@@ -167,6 +169,19 @@ cc_library_headers {
             override_export_include_dirs: ["include_vndk"],
         },
     },
+    header_libs: [
+        "libnativewindow_headers",
+    ],
+    export_header_lib_headers: [
+        "libnativewindow_headers",
+    ],
+}
+
+// defaults to enable VALIDATE_REGIONS traces
+cc_defaults {
+    name: "libui-validate-regions-defaults",
+    shared_libs: ["libutilscallstack"],
+    cflags: ["-DVALIDATE_REGIONS"],
 }
 
 subdirs = [

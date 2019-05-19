@@ -16,12 +16,16 @@
 
 #pragma once
 
+#include <chrono>
 #include <cinttypes>
 #include <numeric>
+#include <unordered_map>
 #include <vector>
 
 namespace android {
 namespace scheduler {
+using namespace std::chrono_literals;
+
 // This number is used to set the size of the arrays in scheduler that hold information
 // about layers.
 static constexpr size_t ARRAY_SIZE = 30;
@@ -30,13 +34,22 @@ static constexpr size_t ARRAY_SIZE = 30;
 // the config is not visible to SF, and is completely maintained by HWC. However, we would
 // still like to keep track of time when the device is in this config.
 static constexpr int SCREEN_OFF_CONFIG_ID = -1;
+static constexpr uint32_t HWC2_SCREEN_OFF_CONFIG_ID = 0xffffffff;
+
+// This number is used when we try to determine how long does a given layer stay relevant.
+// Currently it is set to 100ms, because that would indicate 10Hz rendering.
+static constexpr std::chrono::nanoseconds TIME_EPSILON_NS = 100ms;
+
+// This number is used when we try to determine how long do we keep layer information around
+// before we remove it. Currently it is set to 100ms.
+static constexpr std::chrono::nanoseconds OBSOLETE_TIME_EPSILON_NS = 100ms;
 
 // Calculates the statistical mean (average) in the data structure (array, vector). The
 // function does not modify the contents of the array.
 template <typename T>
 auto calculate_mean(const T& v) {
     using V = typename T::value_type;
-    V sum = std::accumulate(v.begin(), v.end(), 0);
+    V sum = std::accumulate(v.begin(), v.end(), static_cast<V>(0));
     return sum / static_cast<V>(v.size());
 }
 
@@ -45,7 +58,24 @@ auto calculate_mean(const T& v) {
 int64_t calculate_median(std::vector<int64_t>* v);
 
 // Calculates the statistical mode in the vector. Return 0 if the vector is empty.
-int64_t calculate_mode(const std::vector<int64_t>& v);
+template <typename T>
+auto calculate_mode(const T& v) {
+    if (v.empty()) {
+        return 0;
+    }
+
+    // Create a map with all the counts for the indivicual values in the vector.
+    std::unordered_map<int64_t, int> counts;
+    for (int64_t value : v) {
+        counts[value]++;
+    }
+
+    // Sort the map, and return the number with the highest count. If two numbers have
+    // the same count, first one is returned.
+    using ValueType = const decltype(counts)::value_type&;
+    const auto compareCounts = [](ValueType l, ValueType r) { return l.second <= r.second; };
+    return static_cast<int>(std::max_element(counts.begin(), counts.end(), compareCounts)->first);
+}
 
 } // namespace scheduler
 } // namespace android

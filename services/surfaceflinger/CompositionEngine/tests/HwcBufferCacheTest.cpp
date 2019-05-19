@@ -22,6 +22,14 @@
 namespace android::compositionengine {
 namespace {
 
+class TestableHwcBufferCache : public impl::HwcBufferCache {
+public:
+    void getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer, uint32_t* outSlot,
+                      sp<GraphicBuffer>* outBuffer) {
+        HwcBufferCache::getHwcBuffer(slot, buffer, outSlot, outBuffer);
+    }
+};
+
 class HwcBufferCacheTest : public testing::Test {
 public:
     ~HwcBufferCacheTest() override = default;
@@ -72,10 +80,6 @@ TEST_F(HwcBufferCacheTest, cacheWorksForMaxSlot) {
 
 TEST_F(HwcBufferCacheTest, cacheMapsNegativeSlotToZero) {
     testSlot(-123, 0);
-}
-
-TEST_F(HwcBufferCacheTest, cacheMapsInvalidBufferSlotToZero) {
-    testSlot(BufferQueue::INVALID_BUFFER_SLOT, 0);
 }
 
 } // namespace

@@ -28,7 +28,7 @@ namespace android {
 namespace scheduler {
 
 /**
- * This class is used to encapsulate configuration for refresh rates. It holds infomation
+ * This class is used to encapsulate configuration for refresh rates. It holds information
  * about available refresh rates on the device, and the mapping between the numbers and human
  * readable names.
  */
@@ -40,8 +40,6 @@ public:
     enum class RefreshRateType { POWER_SAVING, DEFAULT, PERFORMANCE };
 
     struct RefreshRate {
-        // Type of the refresh rate.
-        RefreshRateType type;
         // This config ID corresponds to the position of the config in the vector that is stored
         // on the device.
         int configId;
@@ -49,23 +47,41 @@ public:
         std::string name;
         // Refresh rate in frames per second, rounded to the nearest integer.
         uint32_t fps = 0;
+        // config Id (returned from HWC2::Display::Config::getId())
+        hwc2_config_t id;
     };
 
     // TODO(b/122916473): Get this information from configs prepared by vendors, instead of
     // baking them in.
-    explicit RefreshRateConfigs(
-            const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
-        init(configs);
+    const std::map<RefreshRateType, std::shared_ptr<RefreshRate>>& getRefreshRates() const {
+        return mRefreshRates;
     }
-    ~RefreshRateConfigs() = default;
+    std::shared_ptr<RefreshRate> getRefreshRate(RefreshRateType type) const {
+        const auto& refreshRate = mRefreshRates.find(type);
+        if (refreshRate != mRefreshRates.end()) {
+            return refreshRate->second;
+        }
+        return nullptr;
+    }
 
-    const std::vector<RefreshRate>& getRefreshRates() { return mRefreshRates; }
+    RefreshRateType getRefreshRateType(hwc2_config_t id) const {
+        for (const auto& [type, refreshRate] : mRefreshRates) {
+            if (refreshRate->id == id) {
+                return type;
+            }
+        }
 
-private:
-    void init(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        return RefreshRateType::DEFAULT;
+    }
+
+    void populate(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        mRefreshRates.clear();
+
         // This is the rate that HWC encapsulates right now when the device is in DOZE mode.
-        mRefreshRates.push_back(
-                RefreshRate{RefreshRateType::POWER_SAVING, SCREEN_OFF_CONFIG_ID, "ScreenOff", 0});
+        mRefreshRates.emplace(RefreshRateType::POWER_SAVING,
+                              std::make_shared<RefreshRate>(
+                                      RefreshRate{SCREEN_OFF_CONFIG_ID, "ScreenOff", 0,
+                                                  HWC2_SCREEN_OFF_CONFIG_ID}));
 
         if (configs.size() < 1) {
             ALOGE("Device does not have valid configs. Config size is 0.");
@@ -88,9 +104,12 @@ private:
         nsecs_t vsyncPeriod = configIdToVsyncPeriod[0].second;
         if (vsyncPeriod != 0) {
             const float fps = 1e9 / vsyncPeriod;
-            mRefreshRates.push_back(
-                    RefreshRate{RefreshRateType::DEFAULT, configIdToVsyncPeriod[0].first,
-                                base::StringPrintf("%2.ffps", fps), static_cast<uint32_t>(fps)});
+            const int configId = configIdToVsyncPeriod[0].first;
+            mRefreshRates.emplace(RefreshRateType::DEFAULT,
+                                  std::make_shared<RefreshRate>(
+                                          RefreshRate{configId, base::StringPrintf("%2.ffps", fps),
+                                                      static_cast<uint32_t>(fps),
+                                                      configs.at(configId)->getId()}));
         }
 
         if (configs.size() < 2) {
@@ -102,13 +121,17 @@ private:
         vsyncPeriod = configIdToVsyncPeriod[1].second;
         if (vsyncPeriod != 0) {
             const float fps = 1e9 / vsyncPeriod;
-            mRefreshRates.push_back(
-                    RefreshRate{RefreshRateType::PERFORMANCE, configIdToVsyncPeriod[1].first,
-                                base::StringPrintf("%2.ffps", fps), static_cast<uint32_t>(fps)});
+            const int configId = configIdToVsyncPeriod[1].first;
+            mRefreshRates.emplace(RefreshRateType::PERFORMANCE,
+                                  std::make_shared<RefreshRate>(
+                                          RefreshRate{configId, base::StringPrintf("%2.ffps", fps),
+                                                      static_cast<uint32_t>(fps),
+                                                      configs.at(configId)->getId()}));
         }
     }
 
-    std::vector<RefreshRate> mRefreshRates;
+private:
+    std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates;
 };
 
 } // namespace scheduler

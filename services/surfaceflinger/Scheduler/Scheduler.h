@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <ui/DisplayStatInfo.h>
@@ -28,6 +29,7 @@
 #include "IdleTimer.h"
 #include "InjectVSyncSource.h"
 #include "LayerHistory.h"
+#include "RefreshRateConfigs.h"
 #include "SchedulerUtils.h"
 
 namespace android {
@@ -36,9 +38,19 @@ class EventControlThread;
 
 class Scheduler {
 public:
-    using ExpiredIdleTimerCallback = std::function<void()>;
+    // Enum to keep track of whether we trigger event to notify choreographer of config changes.
+    enum class ConfigEvent { None, Changed };
+
+    // logical or operator with the semantics of at least one of the events is Changed
+    friend ConfigEvent operator|(const ConfigEvent& first, const ConfigEvent& second) {
+        if (first == ConfigEvent::Changed) return ConfigEvent::Changed;
+        if (second == ConfigEvent::Changed) return ConfigEvent::Changed;
+        return ConfigEvent::None;
+    }
+
+    using RefreshRateType = scheduler::RefreshRateConfigs::RefreshRateType;
+    using ChangeRefreshRateCallback = std::function<void(RefreshRateType, ConfigEvent)>;
     using GetVsyncPeriod = std::function<nsecs_t()>;
-    using ResetIdleTimerCallback = std::function<void()>;
 
     // Enum to indicate whether to start the transaction early, or at vsync time.
     enum class TransactionStart { EARLY, NORMAL };
@@ -78,7 +90,8 @@ public:
         std::atomic<nsecs_t> lastResyncTime = 0;
     };
 
-    explicit Scheduler(impl::EventControlThread::SetVSyncEnabledFunction function);
+    explicit Scheduler(impl::EventControlThread::SetVSyncEnabledFunction function,
+                       const scheduler::RefreshRateConfigs& refreshRateConfig);
 
     virtual ~Scheduler();
 
@@ -92,6 +105,9 @@ public:
 
     // Getter methods.
     EventThread* getEventThread(const sp<ConnectionHandle>& handle);
+
+    // Provides access to the DispSync object for the primary display.
+    void withPrimaryDispSync(std::function<void(DispSync&)> const& fn);
 
     sp<EventThreadConnection> getEventConnection(const sp<ConnectionHandle>& handle);
 
@@ -115,9 +131,6 @@ public:
     // Offers ability to modify phase offset in the event thread.
     void setPhaseOffset(const sp<ConnectionHandle>& handle, nsecs_t phaseOffset);
 
-    // pause/resume vsync callback generation to avoid sending vsync callbacks during config switch
-    void pauseVsyncCallback(const sp<ConnectionHandle>& handle, bool pause);
-
     void getDisplayStatInfo(DisplayStatInfo* stats);
 
     void enableHardwareVsync();
@@ -126,19 +139,28 @@ public:
     // Creates a callback for resyncing.
     ResyncCallback makeResyncCallback(GetVsyncPeriod&& getVsyncPeriod);
     void setRefreshSkipCount(int count);
-    void addResyncSample(const nsecs_t timestamp);
+    // Passes a vsync sample to DispSync. periodChange will be true if DipSync
+    // detected that the vsync period changed, and false otherwise.
+    void addResyncSample(const nsecs_t timestamp, bool* periodChanged);
     void addPresentFence(const std::shared_ptr<FenceTime>& fenceTime);
     void setIgnorePresentFences(bool ignore);
     nsecs_t expectedPresentTime();
-    // Adds the present time for given layer to the history of present times.
-    void addFramePresentTimeForLayer(const nsecs_t framePresentTime, bool isAutoTimestamp,
-                                     const std::string layerName);
-    // Increments counter in the layer history to indicate that SF has started a new frame.
-    void incrementFrameCounter();
-    // Callback that gets invoked once the idle timer expires.
-    void setExpiredIdleTimerCallback(const ExpiredIdleTimerCallback& expiredTimerCallback);
-    // Callback that gets invoked once the idle timer is reset.
-    void setResetIdleTimerCallback(const ResetIdleTimerCallback& resetTimerCallback);
+    // Registers the layer in the scheduler, and returns the handle for future references.
+    std::unique_ptr<scheduler::LayerHistory::LayerHandle> registerLayer(std::string const& name,
+                                                                        int windowType);
+
+    // Stores present time for a layer.
+    void addLayerPresentTime(
+            const std::unique_ptr<scheduler::LayerHistory::LayerHandle>& layerHandle,
+            nsecs_t presentTime);
+    // Updates FPS based on the most content presented.
+    void updateFpsBasedOnContent();
+    // Callback that gets invoked when Scheduler wants to change the refresh rate.
+    void setChangeRefreshRateCallback(const ChangeRefreshRateCallback& changeRefreshRateCallback);
+
+    // Returns whether idle timer is enabled or not
+    bool isIdleTimerEnabled() { return mSetIdleTimerMs > 0; }
+
     // Returns relevant information about Scheduler for dumpsys purposes.
     std::string doDump();
 
@@ -153,17 +175,16 @@ protected:
 private:
     friend class TestableScheduler;
 
+    // In order to make sure that the features don't override themselves, we need a state machine
+    // to keep track which feature requested the config change.
+    enum class ContentFeatureState { CONTENT_DETECTION_ON, CONTENT_DETECTION_OFF };
+    enum class IdleTimerState { EXPIRED, RESET };
+
     // Creates a connection on the given EventThread and forwards the given callbacks.
     sp<EventThreadConnection> createConnectionInternal(EventThread*, ResyncCallback&&);
 
     nsecs_t calculateAverage() const;
     void updateFrameSkipping(const int64_t skipCount);
-    // Collects the statistical mean (average) and median between timestamp
-    // intervals for each frame for each layer.
-    void determineLayerTimestampStats(const std::string layerName, const nsecs_t framePresentTime);
-    // Collects the average difference between timestamps for each frame regardless
-    // of which layer the timestamp came from.
-    void determineTimestampAverage(bool isAutoTimestamp, const nsecs_t framePresentTime);
     // Function that resets the idle timer.
     void resetIdleTimer();
     // Function that is called when the timer resets.
@@ -172,6 +193,15 @@ private:
     void expiredTimerCallback();
     // Sets vsync period.
     void setVsyncPeriod(const nsecs_t period);
+    // Idle timer feature's function to change the refresh rate.
+    void timerChangeRefreshRate(IdleTimerState idleTimerState);
+    // Calculate the new refresh rate type
+    RefreshRateType calculateRefreshRateType() REQUIRES(mFeatureStateLock);
+    // Acquires a lock and calls the ChangeRefreshRateCallback() with given parameters.
+    void changeRefreshRate(RefreshRateType refreshRateType, ConfigEvent configEvent);
+
+    // Helper function to calculate error frames
+    float getErrorFrames(float contentFps, float configFps);
 
     // If fences from sync Framework are supported.
     const bool mHasSyncFramework;
@@ -205,10 +235,8 @@ private:
     std::array<int64_t, scheduler::ARRAY_SIZE> mTimeDifferences{};
     size_t mCounter = 0;
 
-    // DetermineLayerTimestampStats is called from BufferQueueLayer::onFrameAvailable which
-    // can run on any thread, and cause failure.
-    std::mutex mLayerHistoryLock;
-    LayerHistory mLayerHistory GUARDED_BY(mLayerHistoryLock);
+    // Historical information about individual layers. Used for predicting the refresh rate.
+    scheduler::LayerHistory mLayerHistory;
 
     // Timer that records time between requests for next vsync. If the time is higher than a given
     // interval, a callback is fired. Set this variable to >0 to use this feature.
@@ -216,8 +244,18 @@ private:
     std::unique_ptr<scheduler::IdleTimer> mIdleTimer;
 
     std::mutex mCallbackLock;
-    ExpiredIdleTimerCallback mExpiredTimerCallback GUARDED_BY(mCallbackLock);
-    ExpiredIdleTimerCallback mResetTimerCallback GUARDED_BY(mCallbackLock);
+    ChangeRefreshRateCallback mChangeRefreshRateCallback GUARDED_BY(mCallbackLock);
+
+    // In order to make sure that the features don't override themselves, we need a state machine
+    // to keep track which feature requested the config change.
+    std::mutex mFeatureStateLock;
+    ContentFeatureState mCurrentContentFeatureState GUARDED_BY(mFeatureStateLock) =
+            ContentFeatureState::CONTENT_DETECTION_OFF;
+    IdleTimerState mCurrentIdleTimerState GUARDED_BY(mFeatureStateLock) = IdleTimerState::RESET;
+    uint32_t mContentRefreshRate GUARDED_BY(mFeatureStateLock);
+    RefreshRateType mRefreshRateType GUARDED_BY(mFeatureStateLock);
+
+    const scheduler::RefreshRateConfigs& mRefreshRateConfigs;
 };
 
 } // namespace android

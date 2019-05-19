@@ -79,9 +79,22 @@ bool ColorLayer::setColor(const half3& color) {
     return true;
 }
 
+bool ColorLayer::setDataspace(ui::Dataspace dataspace) {
+    if (mCurrentState.dataspace == dataspace) {
+        return false;
+    }
+
+    mCurrentState.sequence++;
+    mCurrentState.dataspace = dataspace;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
 void ColorLayer::setPerFrameData(const sp<const DisplayDevice>& display,
                                  const ui::Transform& transform, const Rect& viewport,
-                                 int32_t /* supportedPerFrameMetadata */) {
+                                 int32_t /* supportedPerFrameMetadata */,
+                                 const ui::Dataspace targetDataspace) {
     RETURN_IF_NO_HWC_LAYER(display);
 
     Region visible = transform.transform(visibleRegion.intersect(viewport));
@@ -101,9 +114,12 @@ void ColorLayer::setPerFrameData(const sp<const DisplayDevice>& display,
 
     setCompositionType(display, Hwc2::IComposerClient::Composition::SOLID_COLOR);
 
-    error = hwcLayer->setDataspace(mCurrentDataSpace);
+    const ui::Dataspace dataspace =
+            isColorSpaceAgnostic() && targetDataspace != ui::Dataspace::UNKNOWN ? targetDataspace
+                                                                                : mCurrentDataSpace;
+    error = hwcLayer->setDataspace(dataspace);
     if (error != HWC2::Error::None) {
-        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", mName.string(), mCurrentDataSpace,
+        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", mName.string(), dataspace,
               to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
@@ -144,6 +160,11 @@ void ColorLayer::setPerFrameData(const sp<const DisplayDevice>& display,
         surfaceDamageRegion.dump(LOG_TAG);
     }
     layerCompositionState.surfaceDamage = surfaceDamageRegion;
+}
+
+void ColorLayer::commitTransaction(const State& stateToCommit) {
+    Layer::commitTransaction(stateToCommit);
+    mCurrentDataSpace = mDrawingState.dataspace;
 }
 
 std::shared_ptr<compositionengine::Layer> ColorLayer::getCompositionLayer() const {

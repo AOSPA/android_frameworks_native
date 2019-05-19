@@ -120,6 +120,8 @@ public:
         return mReconnecting;
     }
 
+    bool isSensorActive(int handle) const;
+
     // Dumpable
     virtual std::string dump() const;
 private:
@@ -162,6 +164,9 @@ private:
         // Key is the unique identifier(ident) for each client, value is the batch parameters
         // requested by the client.
         KeyedVector<void*, BatchParams> batchParams;
+
+        // Flag to track if the sensor is active
+        bool isActive = false;
 
         // Sets batch parameters for this ident. Returns error if this ident is not already present
         // in the KeyedVector above.

@@ -89,15 +89,16 @@ void Output::setLayerStackFilter(uint32_t layerStackId, bool isInternal) {
 }
 
 void Output::setColorTransform(const mat4& transform) {
+    if (mState.colorTransformMat == transform) {
+        return;
+    }
+
     const bool isIdentity = (transform == mat4());
     const auto newColorTransform =
             isIdentity ? HAL_COLOR_TRANSFORM_IDENTITY : HAL_COLOR_TRANSFORM_ARBITRARY_MATRIX;
 
-    if (mState.colorTransform == newColorTransform) {
-        return;
-    }
-
     mState.colorTransform = newColorTransform;
+    mState.colorTransformMat = transform;
 
     dirtyEntireOutput();
 }
@@ -147,7 +148,7 @@ void Output::dumpBase(std::string& out) const {
         out.append("    No render surface!\n");
     }
 
-    out.append("\n   %d Layers", mOutputLayersOrderedByZ.size());
+    android::base::StringAppendF(&out, "\n   %zu Layers\b", mOutputLayersOrderedByZ.size());
     for (const auto& outputLayer : mOutputLayersOrderedByZ) {
         if (!outputLayer) {
             continue;

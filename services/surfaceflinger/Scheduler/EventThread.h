@@ -66,9 +66,6 @@ public:
     virtual void setVSyncEnabled(bool enable) = 0;
     virtual void setCallback(Callback* callback) = 0;
     virtual void setPhaseOffset(nsecs_t phaseOffset) = 0;
-
-    // pause/resume vsync callback generation
-    virtual void pauseVsyncCallback(bool pause) = 0;
 };
 
 class EventThreadConnection : public BnDisplayEventConnection {
@@ -125,8 +122,6 @@ public:
     // Requests the next vsync. If resetIdleTimer is set to true, it resets the idle timer.
     virtual void requestNextVsync(const sp<EventThreadConnection>& connection,
                                   bool resetIdleTimer) = 0;
-
-    virtual void pauseVsyncCallback(bool pause) = 0;
 };
 
 namespace impl {
@@ -135,7 +130,7 @@ class EventThread : public android::EventThread, private VSyncSource::Callback {
 public:
     using InterceptVSyncsCallback = std::function<void(nsecs_t)>;
 
-    // TODO(b/113612090): Once the Scheduler is complete this constructor will become obsolete.
+    // TODO(b/128863962): Once the Scheduler is complete this constructor will become obsolete.
     EventThread(VSyncSource*, InterceptVSyncsCallback, const char* threadName);
     EventThread(std::unique_ptr<VSyncSource>, InterceptVSyncsCallback, const char* threadName);
     ~EventThread();
@@ -162,14 +157,12 @@ public:
 
     void setPhaseOffset(nsecs_t phaseOffset) override;
 
-    void pauseVsyncCallback(bool pause) override;
-
 private:
     friend EventThreadTest;
 
     using DisplayEventConsumers = std::vector<sp<EventThreadConnection>>;
 
-    // TODO(b/113612090): Once the Scheduler is complete this constructor will become obsolete.
+    // TODO(b/128863962): Once the Scheduler is complete this constructor will become obsolete.
     EventThread(VSyncSource* src, std::unique_ptr<VSyncSource> uniqueSrc,
                 InterceptVSyncsCallback interceptVSyncsCallback, const char* threadName);
 
@@ -186,10 +179,7 @@ private:
     // Implements VSyncSource::Callback
     void onVSyncEvent(nsecs_t timestamp) override;
 
-    // Acquires mutex and requests next vsync.
-    void requestNextVsyncInternal(const sp<EventThreadConnection>& connection) EXCLUDES(mMutex);
-
-    // TODO(b/113612090): Once the Scheduler is complete this pointer will become obsolete.
+    // TODO(b/128863962): Once the Scheduler is complete this pointer will become obsolete.
     VSyncSource* mVSyncSource GUARDED_BY(mMutex) = nullptr;
     std::unique_ptr<VSyncSource> mVSyncSourceUnique GUARDED_BY(mMutex) = nullptr;
 

@@ -17,6 +17,7 @@
 #ifndef ANDROID_BUFFERLAYERCONSUMER_H
 #define ANDROID_BUFFERLAYERCONSUMER_H
 
+#include <android-base/thread_annotations.h>
 #include <gui/BufferQueueDefs.h>
 #include <gui/ConsumerBase.h>
 #include <gui/HdrMetadata.h>
@@ -149,11 +150,6 @@ public:
     // for use with bilinear filtering.
     void setFilteringEnabled(bool enabled);
 
-    // Sets mCurrentTextureBufferStaleForGpu to true to indicate that the
-    // buffer is now "stale" for GPU composition, and returns the old staleness
-    // bit as a caching hint.
-    bool getAndSetCurrentBufferCacheHint();
-
     // getCurrentBuffer returns the buffer associated with the current image.
     // When outSlot is not nullptr, the current buffer slot index is also
     // returned. Simiarly, when outFence is not nullptr, the current output
@@ -184,7 +180,7 @@ public:
 protected:
     // abandonLocked overrides the ConsumerBase method to clear
     // mCurrentTextureImage in addition to the ConsumerBase behavior.
-    virtual void abandonLocked();
+    virtual void abandonLocked() EXCLUDES(mImagesMutex);
 
     // dumpLocked overrides the ConsumerBase method to dump BufferLayerConsumer-
     // specific info in addition to the ConsumerBase behavior.
@@ -192,7 +188,8 @@ protected:
 
     // See ConsumerBase::acquireBufferLocked
     virtual status_t acquireBufferLocked(BufferItem* item, nsecs_t presentWhen,
-                                         uint64_t maxFrameNumber = 0) override;
+                                         uint64_t maxFrameNumber = 0) override
+            EXCLUDES(mImagesMutex);
 
     bool canUseImageCrop(const Rect& crop) const;
 
@@ -211,22 +208,40 @@ protected:
     // completion of the method will instead be returned to the caller, so that
     // it may call releaseBufferLocked itself later.
     status_t updateAndReleaseLocked(const BufferItem& item,
-                                    PendingRelease* pendingRelease = nullptr);
+                                    PendingRelease* pendingRelease = nullptr)
+            EXCLUDES(mImagesMutex);
 
     // Binds mTexName and the current buffer to TEXTURE_EXTERNAL target.
     // If the bind succeeds, this calls doFenceWait.
     status_t bindTextureImageLocked();
 
 private:
+    // Utility class for managing GraphicBuffer references into renderengine
+    class Image {
+    public:
+        Image(sp<GraphicBuffer> graphicBuffer, renderengine::RenderEngine& engine)
+              : mGraphicBuffer(graphicBuffer), mRE(engine) {}
+        virtual ~Image();
+        const sp<GraphicBuffer>& graphicBuffer() { return mGraphicBuffer; }
+
+    private:
+        // mGraphicBuffer is the buffer that was used to create this image.
+        sp<GraphicBuffer> mGraphicBuffer;
+        // Back-reference into renderengine to initiate cleanup.
+        renderengine::RenderEngine& mRE;
+        DISALLOW_COPY_AND_ASSIGN(Image);
+    };
+
     // freeBufferLocked frees up the given buffer slot. If the slot has been
     // initialized this will release the reference to the GraphicBuffer in
     // that slot.  Otherwise it has no effect.
     //
     // This method must be called with mMutex locked.
-    virtual void freeBufferLocked(int slotIndex);
+    virtual void freeBufferLocked(int slotIndex) EXCLUDES(mImagesMutex);
 
     // IConsumerListener interface
     void onDisconnect() override;
+    void onBufferAllocated(const BufferItem& item) override EXCLUDES(mImagesMutex);
     void onSidebandStreamChanged() override;
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                   FrameEventHistoryDelta* outDelta) override;
@@ -242,20 +257,19 @@ private:
     // access the current texture buffer.
     status_t doFenceWaitLocked() const;
 
+    // getCurrentCropLocked returns the cropping rectangle of the current buffer.
+    Rect getCurrentCropLocked() const;
+
     // The default consumer usage flags that BufferLayerConsumer always sets on its
     // BufferQueue instance; these will be OR:d with any additional flags passed
     // from the BufferLayerConsumer user. In particular, BufferLayerConsumer will always
     // consume buffers as hardware textures.
     static const uint64_t DEFAULT_USAGE_FLAGS = GraphicBuffer::USAGE_HW_TEXTURE;
 
-    // mCurrentTextureImage is the buffer containing the current texture. It's
+    // mCurrentTextureBuffer is the buffer containing the current texture. It's
     // possible that this buffer is not associated with any buffer slot, so we
     // must track it separately in order to support the getCurrentBuffer method.
-    sp<GraphicBuffer> mCurrentTextureBuffer;
-
-    // True if the buffer was used for the previous client composition frame,
-    // and false otherwise.
-    bool mCurrentTextureBufferStaleForGpu;
+    std::shared_ptr<Image> mCurrentTextureBuffer;
 
     // mCurrentCrop is the crop rectangle that applies to the current texture.
     // It gets set each time updateTexImage is called.
@@ -333,16 +347,13 @@ private:
     // reset mCurrentTexture to INVALID_BUFFER_SLOT.
     int mCurrentTexture;
 
-    // Cached image used for rendering the current texture through GPU
-    // composition, which contains the cached image after freeBufferLocked is
-    // called on the current buffer. Whenever latchBuffer is called, this is
-    // expected to be cleared. Then, if bindTexImage is called before the next
-    // buffer is acquired, then this image is bound.
-    std::unique_ptr<renderengine::Image> mCurrentTextureImageFreed;
+    // Shadow buffer cache for cleaning up renderengine references.
+    std::shared_ptr<Image> mImages[BufferQueueDefs::NUM_BUFFER_SLOTS] GUARDED_BY(mImagesMutex);
 
-    // Cached images used for rendering the current texture through GPU
-    // composition.
-    std::unique_ptr<renderengine::Image> mImages[BufferQueueDefs::NUM_BUFFER_SLOTS];
+    // Separate mutex guarding the shadow buffer cache.
+    // mImagesMutex can be manipulated with binder threads (e.g. onBuffersAllocated)
+    // which is contentious enough that we can't just use mMutex.
+    mutable std::mutex mImagesMutex;
 
     // A release that is pending on the receipt of a new release fence from
     // presentDisplay

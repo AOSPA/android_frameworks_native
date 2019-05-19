@@ -21,30 +21,29 @@
 namespace android::compositionengine::impl {
 
 HwcBufferCache::HwcBufferCache() {
-    mBuffers.reserve(BufferQueue::NUM_BUFFER_SLOTS);
+    std::fill(std::begin(mBuffers), std::end(mBuffers), wp<GraphicBuffer>(nullptr));
 }
 
 void HwcBufferCache::getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer, uint32_t* outSlot,
                                   sp<GraphicBuffer>* outBuffer) {
-    if (slot == BufferQueue::INVALID_BUFFER_SLOT || slot < 0) {
-        // default to slot 0
-        slot = 0;
+    // default is 0
+    if (slot == BufferQueue::INVALID_BUFFER_SLOT || slot < 0 ||
+        slot >= BufferQueue::NUM_BUFFER_SLOTS) {
+        *outSlot = 0;
+    } else {
+        *outSlot = slot;
     }
 
-    if (static_cast<size_t>(slot) >= mBuffers.size()) {
-        mBuffers.resize(slot + 1);
-    }
-
-    *outSlot = slot;
-
-    if (mBuffers[slot] == buffer) {
+    auto& currentBuffer = mBuffers[*outSlot];
+    wp<GraphicBuffer> weakCopy(buffer);
+    if (currentBuffer == weakCopy) {
         // already cached in HWC, skip sending the buffer
         *outBuffer = nullptr;
     } else {
         *outBuffer = buffer;
 
         // update cache
-        mBuffers[slot] = buffer;
+        currentBuffer = buffer;
     }
 }
 
