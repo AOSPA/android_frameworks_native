@@ -101,8 +101,9 @@ public:
                                           ResyncCallback,
                                           impl::EventThread::InterceptVSyncsCallback);
 
-    sp<IDisplayEventConnection> createDisplayEventConnection(const sp<ConnectionHandle>& handle,
-                                                             ResyncCallback);
+    sp<IDisplayEventConnection> createDisplayEventConnection(
+            const sp<ConnectionHandle>& handle, ResyncCallback,
+            ISurfaceComposer::ConfigChanged configChanged);
 
     // Getter methods.
     EventThread* getEventThread(const sp<ConnectionHandle>& handle);
@@ -200,7 +201,8 @@ private:
     enum class TouchState { INACTIVE, ACTIVE };
 
     // Creates a connection on the given EventThread and forwards the given callbacks.
-    sp<EventThreadConnection> createConnectionInternal(EventThread*, ResyncCallback&&);
+    sp<EventThreadConnection> createConnectionInternal(EventThread*, ResyncCallback&&,
+                                                       ISurfaceComposer::ConfigChanged);
 
     nsecs_t calculateAverage() const;
     void updateFrameSkipping(const int64_t skipCount);
