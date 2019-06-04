@@ -307,6 +307,9 @@ public:
     // TODO: this should be made accessible only to EventThread
     void setVsyncEnabled(bool enabled);
 
+    // main thread function to enable/disable h/w composer event
+    void setVsyncEnabledInternal(bool enabled);
+
     // called on the main thread by MessageQueue when an internal message
     // is received
     // TODO: this should be made accessible only to MessageQueue
@@ -1243,6 +1246,9 @@ private:
     // The Layer pointer is removed from the set when the destructor is called so there shouldn't
     // be any issues with a raw pointer referencing an invalid object.
     std::unordered_set<Layer*> mOffscreenLayers;
+
+    // Flag to indicate whether to re-enable HWVsync when screen is on
+    bool mEnableHWVsyncScreenOn = false;
 
 public:
     nsecs_t mVsyncTimeStamp = -1;
