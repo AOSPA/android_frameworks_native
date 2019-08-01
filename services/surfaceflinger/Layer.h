@@ -522,6 +522,9 @@ public:
     // If a buffer was replaced this frame, release the former buffer
     virtual void releasePendingBuffer(nsecs_t /*dequeueReadyTime*/) { }
 
+    // For Animation Hint
+    virtual bool isScreenshot() const { return false; }
+
     /*
      * prepareClientLayer - populates a renderengine::LayerSettings to passed to
      * RenderEngine::drawLayers. Returns true if the layer can be used, and
@@ -829,7 +832,7 @@ public:
 
 protected:
     // -----------------------------------------------------------------------
-    bool usingRelativeZ(LayerVector::StateSet stateSet);
+    bool usingRelativeZ(LayerVector::StateSet stateSet) const;
 
     bool mPremultipliedAlpha{true};
     String8 mName;
