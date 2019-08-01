@@ -2022,21 +2022,37 @@ void SurfaceFlinger::onRefreshReceived(int sequenceId, hal::HWDisplayId /*hwcDis
 void SurfaceFlinger::setVsyncEnabled(bool enabled) {
     ATRACE_CALL();
 
-    // On main thread to avoid race conditions with display power state.
-    static_cast<void>(schedule([=]() MAIN_THREAD {
-        mHWCVsyncPendingState = enabled ? hal::Vsync::ENABLE : hal::Vsync::DISABLE;
+    // Enable / Disable HWVsync from the main thread to avoid race conditions with
+    // display power state.
+    static_cast<void>(schedule([=]() MAIN_THREAD { setVsyncEnabledInternal(enabled); }));
+}
 
-        if (const auto display = getDefaultDisplayDeviceLocked();
-            display && display->isPoweredOn()) {
-            getHwComposer().setVsyncEnabled(display->getPhysicalId(), mHWCVsyncPendingState);
+void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
+    ATRACE_CALL();
+    Mutex::Autolock lockVsync(mVsyncLock);
+    Mutex::Autolock lock(mStateLock);
+
+    mHWCVsyncPendingState = enabled ? hal::Vsync::ENABLE : hal::Vsync::DISABLE;
+
+    auto displayId = getInternalDisplayIdLocked();
+
+    if (mNextVsyncSource) {
+        // Disable current vsync source before enabling the next source
+        if (mActiveVsyncSource) {
+            *displayId = mActiveVsyncSource->getPhysicalId();
+            getHwComposer().setVsyncEnabled(*displayId, hal::Vsync::DISABLE);
         }
-
-        if (mNextVsyncSource) {
-            mActiveVsyncSource = mNextVsyncSource;
-            mNextVsyncSource = NULL;
-        }
-
-    }));
+        *displayId = mNextVsyncSource->getPhysicalId();
+    } else if (mActiveVsyncSource) {
+        *displayId = mActiveVsyncSource->getPhysicalId();
+    }
+    if (displayId) {
+        getHwComposer().setVsyncEnabled(*displayId, mHWCVsyncPendingState);
+    }
+    if (mNextVsyncSource) {
+        mActiveVsyncSource = mNextVsyncSource;
+        mNextVsyncSource = NULL;
+    }
 }
 
 SurfaceFlinger::FenceWithFenceTime SurfaceFlinger::previousFrameFence() {
@@ -5205,7 +5221,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
                 mScheduler->onScreenAcquired(mAppConnectionHandle);
                 mScheduler->resyncToHardwareVsync(true, vsyncPeriod);
             }
-        } else {
+        } else if (displayId == getInternalDisplayIdLocked()) {
             updateVsyncSource();
         }
 
