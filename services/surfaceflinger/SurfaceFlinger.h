@@ -1459,6 +1459,7 @@ private:
     // don't use a lock for these, we don't care
     int mDebugRegion = 0;
     bool mVsyncSourceReliableOnDoze = false;
+    bool mPluggableVsyncPrioritized = false;
     bool mDebugDisableHWC = false;
     bool mDebugDisableTransformHint = false;
     bool mLayerCachingEnabled = false;
