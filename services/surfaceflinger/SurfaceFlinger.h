@@ -86,6 +86,11 @@ class SmomoIntf;
 
 using smomo::SmomoIntf;
 
+namespace composer {
+class FrameExtnIntf;
+}
+using composer::FrameExtnIntf;
+
 namespace android {
 
 class Client;
@@ -316,10 +321,18 @@ public:
     bool authenticateSurfaceTextureLocked(
         const sp<IGraphicBufferProducer>& bufferProducer) const;
 
-    inline void onLayerCreated() { mNumLayers++; }
+    inline void onLayerCreated() {
+         {
+           Mutex::Autolock lock(mLayerCountLock);
+           mNumLayers++;
+         }
+    }
     inline void onLayerDestroyed(Layer* layer) {
-        mNumLayers--;
-        mOffscreenLayers.erase(layer);
+          {
+            Mutex::Autolock lock(mLayerCountLock);
+            mNumLayers--;
+          }
+          mOffscreenLayers.erase(layer);
     }
 
     TransactionCompletedThread& getTransactionCompletedThread() {
@@ -963,6 +976,8 @@ private:
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
     mutable Mutex mDolphinStateLock;
+    mutable Mutex mLayerCountLock;
+    mutable Mutex mVsyncLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     Condition mTransactionCV;
@@ -1049,6 +1064,7 @@ private:
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
     bool mPropagateBackpressure = true;
+    bool mPropagateBackpressureClientComposition = false;
     std::unique_ptr<SurfaceInterceptor> mInterceptor;
     SurfaceTracing mTracing{*this};
     bool mTracingEnabled = false;
@@ -1217,12 +1233,19 @@ private:
     // be any issues with a raw pointer referencing an invalid object.
     std::unordered_set<Layer*> mOffscreenLayers;
 
+public:
+    nsecs_t mVsyncTimeStamp = -1;
+    nsecs_t mRefreshTimeStamp = -1;
+    String8 mNameLayerMax;
+    int mMaxQueuedFrames = -1;
+    int mNumIdle = -1;
+
+private:
     bool mDolphinFuncsEnabled = false;
     void *mDolphinHandle = nullptr;
-    void (*mDolphinOnFrameAvailable)(bool isTransparent, int num, int32_t width, int32_t height,
-                                     String8 name) = nullptr;
     bool (*mDolphinInit)() = nullptr;
-    bool (*mDolphinMonitor)(int number) = nullptr;
+    bool (*mDolphinMonitor)(int number, nsecs_t vsyncPeriod) = nullptr;
+    void (*mDolphinScaling)(int numIdle, int maxQueuedFrames) = nullptr;
     void (*mDolphinRefresh)() = nullptr;
 
     bool mUseSmoMo = false;
@@ -1233,6 +1256,11 @@ private:
     using DestroySmoMoFuncPtr = std::add_pointer<void(SmomoIntf*)>::type;
     CreateSmoMoFuncPtr mSmoMoCreateFunc;
     DestroySmoMoFuncPtr mSmoMoDestroyFunc;
+
+    FrameExtnIntf* mFrameExtn = nullptr;
+    void *mFrameExtnLibHandle = nullptr;
+    bool (*mCreateFrameExtnFunc)(FrameExtnIntf **interface) = nullptr;
+    bool (*mDestroyFrameExtnFunc)(FrameExtnIntf *interface) = nullptr;
 };
 
 } // namespace android
