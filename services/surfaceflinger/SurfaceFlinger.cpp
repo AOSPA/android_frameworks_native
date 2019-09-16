@@ -126,6 +126,7 @@
 #include <layerproto/LayerProtoParser.h>
 #include "SurfaceFlingerProperties.h"
 #include "gralloc_priv.h"
+#include "frame_extn_intf.h"
 #include "smomo_interface.h"
 
 namespace android {
@@ -398,6 +399,14 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         mVsyncSourceReliableOnDoze = true;
     }
 
+    // If mPluggableVsyncPrioritized is true then the order of priority of V-syncs is Pluggable
+    // followed by Primary and Secondary built-ins.
+    if((property_get("vendor.display.pluggable_vsync_prioritized", property, "0") > 0) &&
+        (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
+        (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
+        mPluggableVsyncPrioritized = true;
+    }
+
     const auto [early, gl, late] = mPhaseOffsets->getCurrentOffsets();
     mVsyncModulator.setPhaseOffsets(early, gl, late);
 
@@ -426,16 +435,36 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         ALOGW("Unable to open libdolphin.so: %s.", dlerror());
     } else {
         mDolphinInit = (bool (*) ())dlsym(mDolphinHandle, "dolphinInit");
-        mDolphinOnFrameAvailable =
-            (void (*) (bool, int, int32_t, int32_t, String8))dlsym(mDolphinHandle,
-                                                                   "dolphinOnFrameAvailable");
-        mDolphinMonitor = (bool (*) (int))dlsym(mDolphinHandle, "dolphinMonitor");
+        mDolphinMonitor = (bool (*) (int, nsecs_t))dlsym(mDolphinHandle, "dolphinMonitor");
+        mDolphinScaling = (void (*)(int, int))dlsym(mDolphinHandle, "dolphinScaling");
         mDolphinRefresh = (void (*) ())dlsym(mDolphinHandle, "dolphinRefresh");
-        if (mDolphinInit != nullptr && mDolphinOnFrameAvailable != nullptr &&
-            mDolphinMonitor != nullptr && mDolphinRefresh != nullptr) {
+        if (mDolphinInit && mDolphinMonitor && mDolphinScaling && mDolphinRefresh) {
             if (mDolphinInit()) mDolphinFuncsEnabled = true;
         }
         if (!mDolphinFuncsEnabled) dlclose(mDolphinHandle);
+    }
+
+
+    mFrameExtnLibHandle = dlopen(EXTENSION_LIBRARY_NAME, RTLD_NOW);
+    if (!mFrameExtnLibHandle) {
+        ALOGE("Unable to open libframeextension.so: %s.", dlerror());
+    } else {
+        mCreateFrameExtnFunc =
+            (bool (*) (composer::FrameExtnIntf**))(dlsym(mFrameExtnLibHandle,
+                                                                CREATE_FRAME_EXTN_INTERFACE));
+        mDestroyFrameExtnFunc =
+            (bool (*) (composer::FrameExtnIntf*))(dlsym(mFrameExtnLibHandle,
+                                                                 DESTROY_FRAME_EXTN_INTERFACE));
+        if (mCreateFrameExtnFunc && mDestroyFrameExtnFunc) {
+            mCreateFrameExtnFunc(&mFrameExtn);
+            if (!mFrameExtn) {
+                ALOGE("Frame Extension Object create failed.");
+                dlclose(mFrameExtnLibHandle);
+            }
+        } else {
+            ALOGE("Can't load libframeextension symbols: %s", dlerror());
+            dlclose(mFrameExtnLibHandle);
+        }
     }
 }
 
@@ -447,6 +476,7 @@ void SurfaceFlinger::onFirstRef()
 SurfaceFlinger::~SurfaceFlinger()
 {
     if (mDolphinFuncsEnabled) dlclose(mDolphinHandle);
+    if (mFrameExtn) dlclose(mFrameExtnLibHandle);
 
     if(mUseSmoMo) {
         mSmoMoDestroyFunc(mSmoMo);
@@ -1673,6 +1703,7 @@ void SurfaceFlinger::onRefreshReceived(int sequenceId, hwc2_display_t /*hwcDispl
 void SurfaceFlinger::setVsyncEnabled(bool enabled) {
     ATRACE_CALL();
     Mutex::Autolock lock(mStateLock);
+    Mutex::Autolock lockVsync(mVsyncLock);
     auto displayId = getInternalDisplayIdLocked();
     if (mNextVsyncSource) {
         // Disable current vsync source before enabling the next source
@@ -1850,13 +1881,23 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                             if (maxQueuedFrames < layerQueuedFrames &&
                                     !layer->visibleNonTransparentRegion.isEmpty()) {
                                 maxQueuedFrames = layerQueuedFrames;
+                                mNameLayerMax = layer->getName();
                             }
                         }
                     }
                 });
-                if(mDolphinMonitor(maxQueuedFrames)) {
+                mMaxQueuedFrames = maxQueuedFrames;
+                DisplayStatInfo stats;
+                mScheduler->getDisplayStatInfo(&stats);
+                if(mDolphinMonitor(maxQueuedFrames, stats.vsyncPeriod)) {
                     signalLayerUpdate();
+                    if (mFrameExtn) {
+                        mNumIdle++;
+                    }
                     break;
+                }
+                if (mFrameExtn) {
+                    mNumIdle++;
                 }
             }
 
@@ -1878,13 +1919,24 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                 // repaint
                 signalRefresh();
             }
+            if (mFrameExtn && mDolphinFuncsEnabled) {
+                if (!refreshNeeded) {
+                    mDolphinScaling(mNumIdle, mMaxQueuedFrames);
+                }
+            }
             break;
         }
         case MessageQueue::REFRESH: {
+            if (mFrameExtn) {
+                mRefreshTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
+            }
             if (mDolphinFuncsEnabled) {
                 mDolphinRefresh();
             }
             handleMessageRefresh();
+            if (mFrameExtn) {
+                mNumIdle = 0;
+            }
             break;
         }
     }
@@ -2494,10 +2546,12 @@ void SurfaceFlinger::rebuildLayerStacks() {
 }
 
 sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
-    // Return the vsync source from the active displays based on
-    // the order in which they are connected. Normally the order
-    // of priority is Primary (Built-in/Pluggable) followed by
-    // Secondary built-ins followed by pluggable.
+    // Return the vsync source from the active displays based on the order in which they are
+    // connected.
+    // Normally the order of priority is Primary (Built-in/Pluggable) followed by Secondary
+    // built-ins followed by Pluggable. But if mPluggableVsyncPrioritized is true then the
+    // order of priority is Pluggables followed by Primary and Secondary built-ins.
+
     for (const auto& display : mDisplaysList) {
         int mode = display->getPowerMode();
         if (display->isVirtual() || (mode == HWC_POWER_MODE_OFF) ||
@@ -2536,7 +2590,9 @@ sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
 
 void SurfaceFlinger::updateVsyncSource()
             NO_THREAD_SAFETY_ANALYSIS {
+    Mutex::Autolock lock(mVsyncLock);
     nsecs_t vsync = getVsyncPeriod();
+    mNextVsyncSource = getVsyncSource();
 
     if (mNextVsyncSource == NULL) {
         // Switch off vsync for the last enabled source
@@ -2631,10 +2687,20 @@ void SurfaceFlinger::pickColorMode(const sp<DisplayDevice>& display, ColorMode* 
     }
 
     // respect hdrDataSpace only when there is no legacy HDR support
-    const bool isHdr = hdrDataSpace != Dataspace::UNKNOWN &&
+    bool isHdr = hdrDataSpace != Dataspace::UNKNOWN &&
             !profile->hasLegacyHdrSupport(hdrDataSpace) && !isHdrClientComposition;
     if (isHdr) {
         bestDataSpace = hdrDataSpace;
+    }
+
+    for (const auto& layer : display->getVisibleLayersSortedByZ()) {
+        // Secure display layers are always rendered in sRGB and needs sRGB
+        // Color Mode.
+        if (layer->isSecureDisplay()) {
+            bestDataSpace = Dataspace::V0_SRGB;
+            isHdr = false;
+            break;
+        }
     }
 
     RenderIntent intent;
@@ -2850,7 +2916,6 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
                 mCurrentState.displays.removeItemsAt(index);
             }
             mDisplaysList.remove(getDisplayDeviceLocked(mPhysicalDisplayTokens[info->id]));
-            mNextVsyncSource = getVsyncSource();
             updateVsyncSource();
             mPhysicalDisplayTokens.erase(info->id);
         }
@@ -3112,7 +3177,20 @@ void SurfaceFlinger::processDisplayChangesLocked() {
                         }
                     }
                     if (!state.isVirtual()) {
-                        mDisplaysList.push_back(getDisplayDeviceLocked(displayToken));
+                        sp<DisplayDevice> display = getDisplayDeviceLocked(displayToken);
+                        if (mPluggableVsyncPrioritized && !display->getIsDisplayBuiltInType()) {
+                            // Insert the pluggable display just before the first built-in display
+                            // so that the earlier pluggable display remains the V-sync source.
+                            auto it = mDisplaysList.begin();
+                            for (; it != mDisplaysList.end(); it++ ) {
+                                if((*it)->getIsDisplayBuiltInType()) {
+                                    break;
+                                }
+                            }
+                            mDisplaysList.insert(it, display);
+                        } else {
+                            mDisplaysList.push_back(display);
+                        }
                         LOG_ALWAYS_FATAL_IF(!displayId);
                         dispatchDisplayHotplugEvent(displayId->value, true);
                     }
@@ -4798,8 +4876,6 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, int 
     mActiveVsyncSource = getVsyncSource();
 
     display->setPowerMode(mode);
-
-    mNextVsyncSource = getVsyncSource();
 
     // Dummy display created by LibSurfaceFlinger unit test
     // for setPowerModeInternal test cases.
