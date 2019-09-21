@@ -821,6 +821,8 @@ private:
             const sp<compositionengine::DisplaySurface>& dispSurface,
             const sp<IGraphicBufferProducer>& producer);
     void processDisplayChangesLocked();
+    void setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
+                                      const DisplayDeviceState& state);
     void processDisplayHotplugEventsLocked();
 
     void dispatchDisplayHotplugEvent(PhysicalDisplayId displayId, bool connected);
@@ -1074,6 +1076,7 @@ private:
     LayerStats mLayerStats;
     const std::shared_ptr<TimeStats> mTimeStats;
     bool mUseHwcVirtualDisplays = false;
+    bool mUseFbScaling = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
