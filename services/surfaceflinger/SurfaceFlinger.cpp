@@ -2054,10 +2054,10 @@ void SurfaceFlinger::setDisplayAnimating(const sp<DisplayDevice>& hw) {
     hw->setAnimating(hasScreenshot);
 }
 
-void SurfaceFlinger::setLayerAsMask(const sp<DisplayDevice>& hw, const uint64_t& layerId) {
-    using vendor::display::config::V1_7::IDisplayConfig;
-    android::sp<IDisplayConfig> disp_config_v1_7 = IDisplayConfig::getService();
 
+void SurfaceFlinger::setLayerAsMask(const sp<const DisplayDevice>& hw, const uint64_t& layerId) {
+    static android::sp<vendor::display::config::V1_7::IDisplayConfig> disp_config_v1_7 =
+                                        vendor::display::config::V1_7::IDisplayConfig::getService();
     const std::optional<DisplayId>& displayId = hw->getId();
     const auto dpy = getHwComposer().fromPhysicalDisplayId(*displayId);
     if (!disp_config_v1_7) {
@@ -2148,9 +2148,6 @@ void SurfaceFlinger::calculateWorkingSet() {
             }
 
             const auto& displayState = display->getState();
-            if (layer->getPrimaryDisplayOnly() && layer->hasHwcLayer(displayDevice)) {
-                setLayerAsMask(displayDevice, (layer->getHwcLayer(displayDevice))->getId());
-            }
             layer->setPerFrameData(displayDevice, displayState.transform, displayState.viewport,
                                    displayDevice->getSupportedPerFrameMetadata(),
                                    isHdrColorMode(displayState.colorMode) ? Dataspace::UNKNOWN
