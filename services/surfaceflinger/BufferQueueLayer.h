@@ -132,7 +132,6 @@ private:
     std::atomic<uint64_t> mLastFrameNumberReceived{0};
 
     bool mAutoRefresh{false};
-    bool mSetLayerAsMask{false};
     int mActiveBufferSlot{BufferQueue::INVALID_BUFFER_SLOT};
 
     // thread-safe
