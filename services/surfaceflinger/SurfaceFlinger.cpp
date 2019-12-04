@@ -817,19 +817,24 @@ void SurfaceFlinger::init() {
     mRefreshRateStats.setConfigMode(active_config);
 
     if (mUseSmoMo) {
-        mSmoMoLibHandle = dlopen("libsmomo.qti.so", RTLD_NOW);
+        mSmoMoLibHandle = dlopen(SMOMO_LIBRARY_NAME, RTLD_NOW);
         if (!mSmoMoLibHandle) {
-            ALOGE("Unable to open libsmomo: %s", dlerror());
+            ALOGE("Unable to open SmoMo lib: %s", dlerror());
         } else {
-             mSmoMoCreateFunc =
-                    reinterpret_cast<CreateSmoMoFuncPtr>(dlsym(mSmoMoLibHandle, "CreateSmomo"));
-             mSmoMoDestroyFunc =
-                    reinterpret_cast<DestroySmoMoFuncPtr>(dlsym(mSmoMoLibHandle, "DestroySmomo"));
-             if (mSmoMoCreateFunc && mSmoMoDestroyFunc) {
-                mSmoMo = mSmoMoCreateFunc();
-             } else {
-                ALOGE("Can't load libsmomo symbols: %s", dlerror());
-             }
+            mSmoMoCreateFunc =
+                reinterpret_cast<CreateSmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
+                    CREATE_SMOMO_INTERFACE_NAME));
+            mSmoMoDestroyFunc =
+                reinterpret_cast<DestroySmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
+                    DESTROY_SMOMO_INTERFACE_NAME));
+
+            if (mSmoMoCreateFunc && mSmoMoDestroyFunc) {
+                if (!mSmoMoCreateFunc(SMOMO_VERSION_TAG, &mSmoMo)) {
+                    ALOGE("Unable to create SmoMo interface");
+                }
+            } else {
+                ALOGE("Can't load SmoMo symbols: %s", dlerror());
+            }
         }
 
         if (mSmoMo) {
@@ -852,6 +857,9 @@ void SurfaceFlinger::init() {
             ALOGI("SmoMo is enabled");
         } else {
             mUseSmoMo = false;
+            if (mSmoMoLibHandle) {
+                dlclose(mSmoMoLibHandle);
+            }
         }
     }
 
@@ -1678,6 +1686,18 @@ void SurfaceFlinger::onRefreshReceived(int sequenceId, hwc2_display_t /*hwcDispl
         return;
     }
     repaintEverythingForHWC();
+
+    if (mDisplaysList.size() != 1) {
+        // Revisit this for multi displays.
+        return;
+    }
+
+    {
+        // Track Vsync Period before and after refresh.
+        std::lock_guard lock(mVsyncPeriodMutex);
+        mVsyncPeriod = {};
+        mVsyncPeriod.push_back(getVsyncPeriod());
+    }
 }
 
 void SurfaceFlinger::setVsyncEnabled(bool enabled) {
@@ -2030,6 +2050,16 @@ void SurfaceFlinger::setDisplayAnimating(const sp<DisplayDevice>& hw) {
     hw->setAnimating(hasScreenshot);
 }
 
+void SurfaceFlinger::setLayerAsMask(const sp<const DisplayDevice>& hw, const uint64_t& layerId) {
+    static android::sp<vendor::display::config::V1_7::IDisplayConfig> disp_config_v1_7 =
+                                        vendor::display::config::V1_7::IDisplayConfig::getService();
+    const std::optional<DisplayId>& displayId = hw->getId();
+    const auto dpy = getHwComposer().fromPhysicalDisplayId(*displayId);
+    if (!disp_config_v1_7) {
+      return;
+    }
+    disp_config_v1_7->setLayerAsMask(*dpy, layerId);
+}
 
 void SurfaceFlinger::calculateWorkingSet() {
     ATRACE_CALL();
@@ -2312,6 +2342,8 @@ void SurfaceFlinger::postComposition()
         mScheduler->addPresentFence(presentFenceTime);
     }
 
+    forceResyncModel();
+
     if (!hasSyncFramework) {
         if (displayDevice && getHwComposer().isConnected(*displayDevice->getId()) &&
             displayDevice->isPoweredOn()) {
@@ -2436,6 +2468,29 @@ void SurfaceFlinger::postComposition()
     // side-effect of getTotalSize(), so we check that again here
     if (ATRACE_ENABLED()) {
         ATRACE_INT64("Total Buffer Size", GraphicBufferAllocator::get().getTotalSize());
+    }
+}
+
+void SurfaceFlinger::forceResyncModel() NO_THREAD_SAFETY_ANALYSIS {
+    std::lock_guard lock(mVsyncPeriodMutex);
+    if (!mVsyncPeriod.size()) {
+        return;
+    }
+
+    const nsecs_t period = getVsyncPeriod();
+    // Model resync should happen at every fps change.
+    // Upon increase/decrease in vsync period start resync immediately.
+    // Initial set of vsync wakeups happen at ref_time + N * period where N = 1, 2, 3 ..
+    // Since if doesnt make use of timestamp to compute period, resync can be triggered
+    // as soon as change is fps(period) is observed.
+
+    if (period > mVsyncPeriod.at(mVsyncPeriod.size() - 1)) {
+        mScheduler->resyncToHardwareVsync(true, period);
+        mVsyncPeriod.push_back(period);
+    } else if (period < mVsyncPeriod.at(mVsyncPeriod.size() - 1)) {
+        // Vsync period changed. Trigger resync.
+        mScheduler->resyncToHardwareVsync(true, period);
+        mVsyncPeriod = {};
     }
 }
 
@@ -3797,7 +3852,16 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<DisplayDevice>& displayDevice,
     const auto& displayState = display->getState();
     const auto displayId = display->getId();
     auto& renderEngine = getRenderEngine();
-    const bool supportProtectedContent = renderEngine.supportsProtectedContent();
+    bool isSecureDisplay = false;
+    for (const auto& layer : displayDevice->getVisibleLayersSortedByZ()) {
+        if (layer->isSecureDisplay()) {
+            isSecureDisplay = true;
+            break;
+        }
+    }
+
+    const bool supportProtectedContent =
+            renderEngine.supportsProtectedContent() && !isSecureDisplay;
 
     const Region bounds(displayState.bounds);
     const DisplayRenderArea renderArea(displayDevice);
@@ -3814,7 +3878,7 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<DisplayDevice>& displayDevice,
     if (hasClientComposition) {
         ALOGV("hasClientComposition");
 
-        if (displayDevice->isPrimary() && supportProtectedContent) {
+        if (displayDevice->getId() && supportProtectedContent) {
             bool needsProtected = false;
             for (auto& layer : displayDevice->getVisibleLayersSortedByZ()) {
                 // If the layer is a protected layer, mark protected context is needed.
@@ -4925,7 +4989,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, int 
                 mScheduler->onScreenAcquired(mAppConnectionHandle);
                 mScheduler->resyncToHardwareVsync(true, getVsyncPeriod());
             }
-        } else {
+        } else if (displayId == getInternalDisplayIdLocked()) {
             updateVsyncSource();
         }
 
@@ -5134,7 +5198,12 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args,
                 LayersProto layersProto = dumpProtoInfo(LayerVector::StateSet::Current);
                 result.append(layersProto.SerializeAsString().c_str(), layersProto.ByteSize());
             } else {
-                dumpAllLocked(args, result);
+                // selection of mini dumpsys (Format: adb shell dumpsys SurfaceFlinger --mini)
+                if (numArgs && ((args[0] == String16("--mini")))) {
+                    dumpMini(result);
+                } else {
+                    dumpAllLocked(args, result);
+                }
             }
         }
 
@@ -5172,6 +5241,12 @@ status_t SurfaceFlinger::doDumpContinuous(int fd, const DumpArgs& args) {
 
     // Same command is used to start and end dump.
     mFileDump.running = !mFileDump.running;
+
+    // selection of full dumpsys or not (defualt, dumpsys will be minimum required)
+    // Format: adb shell dumpsys SurfaceFlinger --file --no-limit --full-dump
+    if (numArgs >= 3 && (args[2] == String16("--full-dump"))) {
+        mFileDump.fullDump = true;
+    }
 
     if (mFileDump.running) {
         std::ofstream ofs;
@@ -5342,7 +5417,11 @@ void SurfaceFlinger::dumpDrawCycle(bool prePrepare) {
 
     {
         Mutex::Autolock lock(mStateLock);
-        dumpAllLocked(args, dumpsys);
+        if (mFileDump.fullDump) {
+            dumpAllLocked(args, dumpsys);
+        } else {
+            dumpMini(dumpsys);
+        }
     }
 
     char timeStamp[32];
@@ -5648,6 +5727,42 @@ LayersProto SurfaceFlinger::dumpVisibleLayersProtoInfo(
     });
 
     return layersProto;
+}
+
+void SurfaceFlinger::dumpMini(std::string& result) const {
+    /*
+     * Dump Display state
+     */
+    StringAppendF(&result, "Displays (%zu entries)\n", mDisplays.size());
+    for (const auto& [token, display] : mDisplays) {
+        display->dump(result);
+    }
+    result.append("\n");
+
+    /*
+     * HWC layer minidump
+     */
+    for (const auto& [token, display] : mDisplays) {
+        const auto displayId = display->getId();
+        if (!displayId) {
+            continue;
+        }
+
+        StringAppendF(&result, "Display %s HWC layers:\n", to_string(*displayId).c_str());
+        Layer::miniDumpHeader(result);
+        const sp<DisplayDevice> displayDevice = display;
+        mCurrentState.traverseInZOrder(
+                [&](Layer* layer) { layer->miniDump(result, displayDevice); });
+        result.append("\n");
+    }
+
+    /*
+     * Dump HWComposer state
+     */
+    result.append("h/w composer state:\n");
+    bool hwcDisabled = mDebugDisableHWC || mDebugRegion;
+    StringAppendF(&result, "  h/w composer %s\n", hwcDisabled ? "disabled" : "enabled");
+    getHwComposer().dump(result);
 }
 
 void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, std::string& result) const {
