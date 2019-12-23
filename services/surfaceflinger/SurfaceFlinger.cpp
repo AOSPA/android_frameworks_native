@@ -844,19 +844,24 @@ void SurfaceFlinger::init() {
     mRefreshRateStats.setConfigMode(active_config);
 
     if (mUseSmoMo) {
-        mSmoMoLibHandle = dlopen("libsmomo.qti.so", RTLD_NOW);
+        mSmoMoLibHandle = dlopen(SMOMO_LIBRARY_NAME, RTLD_NOW);
         if (!mSmoMoLibHandle) {
-            ALOGE("Unable to open libsmomo: %s", dlerror());
+            ALOGE("Unable to open SmoMo lib: %s", dlerror());
         } else {
-             mSmoMoCreateFunc =
-                    reinterpret_cast<CreateSmoMoFuncPtr>(dlsym(mSmoMoLibHandle, "CreateSmomo"));
-             mSmoMoDestroyFunc =
-                    reinterpret_cast<DestroySmoMoFuncPtr>(dlsym(mSmoMoLibHandle, "DestroySmomo"));
-             if (mSmoMoCreateFunc && mSmoMoDestroyFunc) {
-                mSmoMo = mSmoMoCreateFunc();
-             } else {
-                ALOGE("Can't load libsmomo symbols: %s", dlerror());
-             }
+            mSmoMoCreateFunc =
+                reinterpret_cast<CreateSmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
+                    CREATE_SMOMO_INTERFACE_NAME));
+            mSmoMoDestroyFunc =
+                reinterpret_cast<DestroySmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
+                    DESTROY_SMOMO_INTERFACE_NAME));
+
+            if (mSmoMoCreateFunc && mSmoMoDestroyFunc) {
+                if (!mSmoMoCreateFunc(SMOMO_VERSION_TAG, &mSmoMo)) {
+                    ALOGE("Unable to create SmoMo interface");
+                }
+            } else {
+                ALOGE("Can't load SmoMo symbols: %s", dlerror());
+            }
         }
 
         if (mSmoMo) {
@@ -879,6 +884,9 @@ void SurfaceFlinger::init() {
             ALOGI("SmoMo is enabled");
         } else {
             mUseSmoMo = false;
+            if (mSmoMoLibHandle) {
+                dlclose(mSmoMoLibHandle);
+            }
         }
     }
 
@@ -2516,10 +2524,9 @@ void SurfaceFlinger::postComposition()
         // Disable SmoMo by passing empty layer stack in multiple display case
         if (mDisplays.size() == 1) {
             for (const auto& layer : displayDevice->getVisibleLayersSortedByZ()) {
-                smomo::SmomoLayerStats layerStats = {
-                    layer->getName().string(),
-                    layer->getSequence(),
-                };
+                smomo::SmomoLayerStats layerStats;
+                layerStats.id = layer->getSequence();
+                layerStats.name = layer->getName().string();
                 layers.push_back(layerStats);
             }
 
@@ -3143,15 +3150,23 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
                                                   const DisplayDeviceState& state) {
     base::unique_fd fd;
     auto display = displayDevice->getCompositionDisplay();
+    int newWidth = state.viewport.width();
+    int newHeight = state.viewport.height();
 
-    if (displayDevice->getWidth() == state.viewport.width() &&
-        displayDevice->getHeight() == state.viewport.height()) {
+    if (state.orientation == DISPLAY_ORIENTATION_90 || state.orientation ==
+        DISPLAY_ORIENTATION_270) {
+        std::swap(newWidth, newHeight);
+    }
+
+    if (displayDevice->getWidth() == newWidth &&
+        displayDevice->getHeight() == newHeight) {
+        displayDevice->setProjection(state.orientation, state.viewport, state.viewport);
         return;
     }
 
     if (mBootStage == BootStage::FINISHED) {
+        displayDevice->setDisplaySize(newWidth, newHeight);
         displayDevice->setProjection(state.orientation, state.viewport, state.viewport);
-        displayDevice->setDisplaySize(state.viewport.width(), state.viewport.height());
         display->getRenderSurface()->setViewportAndProjection();
         display->getRenderSurface()->flipClientTarget(true);
         // queue a scratch buffer to flip Client Target with updated size
@@ -4006,7 +4021,8 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<DisplayDevice>& displayDevice,
                                               HWC2::DisplayCapability::SkipClientColorTransform);
 
         // Compute the global color transform matrix.
-        applyColorMatrix = !hasDeviceComposition && !skipClientColorTransform;
+        applyColorMatrix = !hasDeviceComposition && !skipClientColorTransform &&
+                           (displayDevice->isPrimary() || displayDevice->getIsDisplayBuiltInType());
         if (applyColorMatrix) {
             clientCompositionDisplay.colorTransform = displayState.colorTransformMat;
         }
@@ -5386,12 +5402,11 @@ void SurfaceFlinger::dumpMemoryAllocations(bool dump)
         return;
     }
 
-    {
-       Mutex::Autolock lock(mLayerCountLock);
-       if (mNumLayers < 50) {
-           return;
-       }
+    if (mMemoryDump.mMemoryDumpCount--) {
+        return;
     }
+    mMemoryDump.mMemoryDumpCount = 300;
+
     std::string dumpsys;
     GraphicBufferAllocator& alloc(GraphicBufferAllocator::get());
     alloc.dump(dumpsys);
@@ -7129,6 +7144,7 @@ void SurfaceFlinger::setPreferredDisplayConfig() {
         for (auto iter = refreshRates.crbegin(); iter != refreshRates.crend(); ++iter) {
             if (iter->second && isDisplayConfigAllowed(iter->second->configId)) {
                 ALOGV("switching to allowed config %d", iter->second->configId);
+                mRefreshRateConfigs.setActiveConfig(iter->second->configId);
                 setDesiredActiveConfig({iter->first, iter->second->configId,
                         Scheduler::ConfigEvent::Changed});
             }
@@ -7142,8 +7158,17 @@ void SurfaceFlinger::setAllowedDisplayConfigsInternal(const sp<DisplayDevice>& d
         return;
     }
 
-    const auto allowedDisplayConfigs = DisplayConfigs(allowedConfigs.begin(),
-                                                      allowedConfigs.end());
+    std::vector<int32_t> displayConfigs;
+    for (int i = 0; i < allowedConfigs.size(); i++) {
+        displayConfigs.push_back(allowedConfigs.at(i));
+    }
+
+    // Update the allowed Display Configs.
+    mRefreshRateConfigs.getAllowedConfigs(getHwComposer().getConfigs(*display->getId()),
+                                          &displayConfigs);
+
+    const auto allowedDisplayConfigs = DisplayConfigs(displayConfigs.begin(), displayConfigs.end());
+
     if (allowedDisplayConfigs == mAllowedDisplayConfigs) {
         return;
     }
