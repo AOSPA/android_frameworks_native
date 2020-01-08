@@ -334,6 +334,7 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
 
     // Exclude video encoder usage flag from scratch buffer usage flags.
     if (source == SOURCE_SCRATCH) {
+        usage |= GRALLOC_USAGE_HW_FB;
         usage &= ~(GRALLOC_USAGE_HW_VIDEO_ENCODER);
         VDS_LOGV("dequeueBuffer(%s): updated scratch buffer usage flags=%#" PRIx64,
                 dbgSourceStr(source), usage);
@@ -364,11 +365,11 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
         }
     }
     if (result & BUFFER_NEEDS_REALLOCATION) {
-        result = mSource[source]->requestBuffer(*sslot, &mProducerBuffers[pslot]);
-        if (result < 0) {
+        auto status = mSource[source]->requestBuffer(*sslot, &mProducerBuffers[pslot]);
+        if (status < 0) {
             mProducerBuffers[pslot].clear();
             mSource[source]->cancelBuffer(*sslot, *fence);
-            return result;
+            return status;
         }
         VDS_LOGV("dequeueBuffer(%s): buffers[%d]=%p fmt=%d usage=%#" PRIx64,
                 dbgSourceStr(source), pslot, mProducerBuffers[pslot].get(),
