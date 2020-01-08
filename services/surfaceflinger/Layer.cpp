@@ -70,6 +70,7 @@
 namespace android {
 
 using base::StringAppendF;
+using android::hardware::graphics::common::V1_0::BufferUsage;
 
 std::atomic<int32_t> Layer::sSequence{1};
 
@@ -655,6 +656,13 @@ bool Layer::isSecure() const {
 bool Layer::isSecureDisplay() const {
     const sp<GraphicBuffer>& activeBuffer(mActiveBuffer);
     return activeBuffer && (activeBuffer->getUsage() & GRALLOC_USAGE_PRIVATE_SECURE_DISPLAY);
+}
+
+bool Layer::isSecureCamera() const {
+    const sp<GraphicBuffer>& activeBuffer(mActiveBuffer);
+    bool protected_buffer = activeBuffer && (activeBuffer->getUsage() & BufferUsage::PROTECTED);
+    bool camera_output = activeBuffer && (activeBuffer->getUsage() & BufferUsage::CAMERA_OUTPUT);
+    return protected_buffer && camera_output;
 }
 
 void Layer::setVisibleRegion(const Region& visibleRegion) {
@@ -2044,11 +2052,18 @@ bool Layer::isRemovedFromCurrentState() const  {
     return mRemovedFromCurrentState;
 }
 
+// Debug helper for b/137560795
+#define INT32_MIGHT_OVERFLOW(n) (((n) >= INT32_MAX / 2) || ((n) <= INT32_MIN / 2))
+
+#define RECT_BOUNDS_INVALID(rect)                                               \
+    (INT32_MIGHT_OVERFLOW((rect).left) || INT32_MIGHT_OVERFLOW((rect).right) || \
+     INT32_MIGHT_OVERFLOW((rect).bottom) || INT32_MIGHT_OVERFLOW((rect).top))
+
 InputWindowInfo Layer::fillInputInfo() {
     InputWindowInfo info = mDrawingState.inputInfo;
 
     if (info.displayId == ADISPLAY_ID_NONE) {
-        info.displayId = mDrawingState.layerStack;
+        info.displayId = getLayerStack();
     }
 
     ui::Transform t = getTransform();
@@ -2073,6 +2088,26 @@ InputWindowInfo Layer::fillInputInfo() {
         layerBounds = getCroppedBufferSize(getDrawingState());
     }
     layerBounds = t.transform(layerBounds);
+
+    // debug check for b/137560795
+    {
+        if (RECT_BOUNDS_INVALID(layerBounds)) {
+            ALOGE("layer %s bounds are invalid (%" PRIi32 ", %" PRIi32 ", %" PRIi32 ", %" PRIi32
+                  ")",
+                  mName.c_str(), layerBounds.left, layerBounds.top, layerBounds.right,
+                  layerBounds.bottom);
+            std::string out;
+            getTransform().dump(out, "Transform");
+            ALOGE("%s", out.c_str());
+            layerBounds.left = layerBounds.top = layerBounds.right = layerBounds.bottom = 0;
+        }
+
+        if (INT32_MIGHT_OVERFLOW(xSurfaceInset) || INT32_MIGHT_OVERFLOW(ySurfaceInset)) {
+            ALOGE("layer %s surface inset are invalid (%" PRIi32 ", %" PRIi32 ")", mName.c_str(),
+                  int32_t(xSurfaceInset), int32_t(ySurfaceInset));
+            xSurfaceInset = ySurfaceInset = 0;
+        }
+    }
     layerBounds.inset(xSurfaceInset, ySurfaceInset, xSurfaceInset, ySurfaceInset);
 
     // Input coordinate should match the layer bounds.

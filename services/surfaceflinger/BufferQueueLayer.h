@@ -132,6 +132,7 @@ private:
     std::atomic<uint64_t> mLastFrameNumberReceived{0};
 
     bool mAutoRefresh{false};
+    hwc2_layer_t mPreviousLayerId = 0;
     int mActiveBufferSlot{BufferQueue::INVALID_BUFFER_SLOT};
 
     // thread-safe
