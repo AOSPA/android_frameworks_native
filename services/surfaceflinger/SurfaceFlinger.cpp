@@ -439,6 +439,10 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mUseFbScaling = atoi(value);
     ALOGI_IF(mUseFbScaling, "Enable FrameBuffer Scaling");
 
+    property_get("debug.sf.enable_advanced_sf_phase_offset", value, "0");
+    mUseAdvanceSfOffset = atoi(value);
+    ALOGI_IF(mUseAdvanceSfOffset, "Enable Advance SF Phase Offset");
+
     const size_t defaultListSize = MAX_LAYERS;
     auto listSize = property_get_int32("debug.sf.max_igbp_list_size", int32_t(defaultListSize));
     mMaxGraphicBufferProducerListSize = (listSize > 0) ? size_t(listSize) : defaultListSize;
@@ -901,6 +905,15 @@ void SurfaceFlinger::init() {
     mRefreshRateConfigs.setActiveConfig(active_config);
     mRefreshRateConfigs.populate(getHwComposer().getConfigs(*display->getId()));
     mRefreshRateStats.setConfigMode(active_config);
+
+    // Set Phase Offsets type for the Default Refresh Rate config.
+    RefreshRateType type = mRefreshRateConfigs.getDefaultRefreshRateType();
+    if (type != RefreshRateType::DEFAULT) {
+        mPhaseOffsets->setDefaultRefreshRateType(type);
+        const auto [early, gl, late] = mPhaseOffsets->getCurrentOffsets();
+        mVsyncModulator.setPhaseOffsets(early, gl, late,
+                                        mPhaseOffsets->getOffsetThresholdForNextVsync());
+    }
 
     if (mUseLayerExt) {
         mLayerExt = LayerExtWrapper::Create();
@@ -1447,6 +1460,21 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
                                                             componentMask, maxFrames);
 }
 
+status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
+    if (!mUseAdvanceSfOffset && mPhaseOffsets->getCurrentSfOffset() >= 0) {
+        return OK;
+    }
+
+    if (mDisplaysList.size() != 1) {
+        // Revisit this for multi displays.
+        return OK;
+    }
+
+    uint64_t timeStamp = static_cast<uint64_t>(mVsyncTimeStamp +
+                         (mPhaseOffsets->getCurrentSfOffset() * -1));
+    return getHwComposer().setDisplayElapseTime(*display->getId(), timeStamp);
+}
+
 status_t SurfaceFlinger::getDisplayedContentSample(const sp<IBinder>& displayToken,
                                                    uint64_t maxFrames, uint64_t timestamp,
                                                    DisplayedFrameStats* outStats) const {
@@ -1950,7 +1978,8 @@ bool SurfaceFlinger::previousFrameMissed(int graceTimeMs) NO_THREAD_SAFETY_ANALY
     // woken up before the actual vsync but targeting the next vsync, we need to check
     // fence N-2
     const sp<Fence>& fence =
-            mVsyncModulator.getOffsets().sf < mPhaseOffsets->getOffsetThresholdForNextVsync()
+            (mVsyncModulator.getOffsets().sf < mPhaseOffsets->getOffsetThresholdForNextVsync() &&
+             mVsyncModulator.getOffsets().sf >= 0)
             ? mPreviousPresentFences[0]
             : mPreviousPresentFences[1];
 
@@ -2135,6 +2164,7 @@ void SurfaceFlinger::handleMessageRefresh() {
     rebuildLayerStacks();
     calculateWorkingSet();
     for (const auto& [token, display] : mDisplays) {
+        setDisplayElapseTime(display);
         beginFrame(display);
         prepareFrame(display);
         doDebugFlashRegions(display, repaintEverything);
@@ -7223,6 +7253,7 @@ void SurfaceFlinger::setPreferredDisplayConfig() {
     const auto& config = mRefreshRateConfigs.getRefreshRate(type);
     if (config && isDisplayConfigAllowed(config->configId)) {
         ALOGV("switching to Scheduler preferred config %d", config->configId);
+        mRefreshRateConfigs.setActiveConfig(config->configId);
         setDesiredActiveConfig({type, config->configId, Scheduler::ConfigEvent::Changed});
     } else {
         // Set the highest allowed config by iterating backwards on available refresh rates
@@ -7233,6 +7264,7 @@ void SurfaceFlinger::setPreferredDisplayConfig() {
                 mRefreshRateConfigs.setActiveConfig(iter->second->configId);
                 setDesiredActiveConfig({iter->first, iter->second->configId,
                         Scheduler::ConfigEvent::Changed});
+                break;
             }
         }
     }
@@ -7243,6 +7275,10 @@ void SurfaceFlinger::setAllowedDisplayConfigsInternal(const sp<DisplayDevice>& d
     if (!display->isPrimary()) {
         return;
     }
+
+    // Set Phase Offsets type for the Default Refresh Rate config.
+    RefreshRateType type = mRefreshRateConfigs.getDefaultRefreshRateType();
+    mPhaseOffsets->setDefaultRefreshRateType(type);
 
     std::vector<int32_t> displayConfigs;
     for (int i = 0; i < allowedConfigs.size(); i++) {
