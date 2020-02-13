@@ -130,6 +130,7 @@
 #include "gralloc_priv.h"
 #include "frame_extn_intf.h"
 #include "smomo_interface.h"
+#include "layer_extn_intf.h"
 
 namespace android {
 
@@ -285,6 +286,58 @@ std::string decodeDisplayColorSetting(DisplayColorSetting displayColorSetting) {
 
 SurfaceFlingerBE::SurfaceFlingerBE() : mHwcServiceName(getHwcServiceName()) {}
 
+bool LayerExtWrapper::Init() {
+    mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
+    if (!mLayerExtLibHandle) {
+        ALOGE("Unable to open layer ext lib: %s", dlerror());
+        return false;
+    }
+
+    mLayerExtCreateFunc =
+        reinterpret_cast<CreateLayerExtnFuncPtr>(dlsym(mLayerExtLibHandle,
+            CREATE_LAYER_EXTN_INTERFACE));
+    mLayerExtDestroyFunc =
+        reinterpret_cast<DestroyLayerExtnFuncPtr>(dlsym(mLayerExtLibHandle,
+            DESTROY_LAYER_EXTN_INTERFACE));
+
+    if (!mLayerExtCreateFunc || !mLayerExtDestroyFunc) {
+        ALOGE("Can't load layer ext symbols: %s", dlerror());
+        dlclose(mLayerExtLibHandle);
+        return false;
+    }
+
+    if (!mLayerExtCreateFunc(LAYER_EXTN_VERSION_TAG, &mInst)) {
+        ALOGE("Unable to create layer ext interface");
+        dlclose(mLayerExtLibHandle);
+        return false;
+    }
+
+    return true;
+}
+
+std::unique_ptr<LayerExtWrapper> LayerExtWrapper::Create() {
+    std::unique_ptr<LayerExtWrapper> layerExt(new LayerExtWrapper);
+    if (layerExt->Init()) {
+        return layerExt;
+    } else {
+        return nullptr;
+    }
+}
+
+int LayerExtWrapper::getLayerClass(const std::string &name) {
+  return mInst->GetLayerClass(name);
+}
+
+LayerExtWrapper::~LayerExtWrapper() {
+    if (mInst) {
+        mLayerExtDestroyFunc(mInst);
+    }
+
+    if (mLayerExtLibHandle) {
+      dlclose(mLayerExtLibHandle);
+    }
+}
+
 SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
       : mFactory(factory),
         mPhaseOffsets(mFactory.createPhaseOffsets()),
@@ -386,6 +439,10 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mUseFbScaling = atoi(value);
     ALOGI_IF(mUseFbScaling, "Enable FrameBuffer Scaling");
 
+    property_get("debug.sf.enable_advanced_sf_phase_offset", value, "0");
+    mUseAdvanceSfOffset = atoi(value);
+    ALOGI_IF(mUseAdvanceSfOffset, "Enable Advance SF Phase Offset");
+
     const size_t defaultListSize = MAX_LAYERS;
     auto listSize = property_get_int32("debug.sf.max_igbp_list_size", int32_t(defaultListSize));
     mMaxGraphicBufferProducerListSize = (listSize > 0) ? size_t(listSize) : defaultListSize;
@@ -432,6 +489,12 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         // would be brittle if the name that's not 'default' is used
         // for production purposes later on.
         setenv("TREBLE_TESTING_OVERRIDE", "true", true);
+    }
+
+    property_get("vendor.display.use_layer_ext", value, "0");
+    int_value = atoi(value);
+    if (int_value) {
+        mUseLayerExt = true;
     }
 
     property_get("vendor.display.use_smooth_motion", value, "0");
@@ -662,7 +725,7 @@ void SurfaceFlinger::bootFinished()
         }
 
         // set the refresh rate according to the policy
-        int maxSupportedType = (int)RefreshRateType::PERF2;
+        int maxSupportedType = (int)RefreshRateType::HIGH2;
         int minSupportedType = (int)RefreshRateType::LOW0;
 
         for (int type = maxSupportedType; type >= minSupportedType; type--) {
@@ -842,6 +905,22 @@ void SurfaceFlinger::init() {
     mRefreshRateConfigs.setActiveConfig(active_config);
     mRefreshRateConfigs.populate(getHwComposer().getConfigs(*display->getId()));
     mRefreshRateStats.setConfigMode(active_config);
+
+    // Set Phase Offsets type for the Default Refresh Rate config.
+    RefreshRateType type = mRefreshRateConfigs.getDefaultRefreshRateType();
+    if (type != RefreshRateType::DEFAULT) {
+        mPhaseOffsets->setDefaultRefreshRateType(type);
+        const auto [early, gl, late] = mPhaseOffsets->getCurrentOffsets();
+        mVsyncModulator.setPhaseOffsets(early, gl, late,
+                                        mPhaseOffsets->getOffsetThresholdForNextVsync());
+    }
+
+    if (mUseLayerExt) {
+        mLayerExt = LayerExtWrapper::Create();
+        if (!mLayerExt) {
+            ALOGE("Failed to create layer extension");
+        }
+    }
 
     if (mUseSmoMo) {
         mSmoMoLibHandle = dlopen(SMOMO_LIBRARY_NAME, RTLD_NOW);
@@ -1381,6 +1460,21 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
                                                             componentMask, maxFrames);
 }
 
+status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
+    if (!mUseAdvanceSfOffset && mPhaseOffsets->getCurrentSfOffset() >= 0) {
+        return OK;
+    }
+
+    if (mDisplaysList.size() != 1) {
+        // Revisit this for multi displays.
+        return OK;
+    }
+
+    uint64_t timeStamp = static_cast<uint64_t>(mVsyncTimeStamp +
+                         (mPhaseOffsets->getCurrentSfOffset() * -1));
+    return getHwComposer().setDisplayElapseTime(*display->getId(), timeStamp);
+}
+
 status_t SurfaceFlinger::getDisplayedContentSample(const sp<IBinder>& displayToken,
                                                    uint64_t maxFrames, uint64_t timestamp,
                                                    DisplayedFrameStats* outStats) const {
@@ -1884,7 +1978,8 @@ bool SurfaceFlinger::previousFrameMissed(int graceTimeMs) NO_THREAD_SAFETY_ANALY
     // woken up before the actual vsync but targeting the next vsync, we need to check
     // fence N-2
     const sp<Fence>& fence =
-            mVsyncModulator.getOffsets().sf < mPhaseOffsets->getOffsetThresholdForNextVsync()
+            (mVsyncModulator.getOffsets().sf < mPhaseOffsets->getOffsetThresholdForNextVsync() &&
+             mVsyncModulator.getOffsets().sf >= 0)
             ? mPreviousPresentFences[0]
             : mPreviousPresentFences[1];
 
@@ -1972,6 +2067,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                         expectedPresentTime = mScheduler->getDispSyncExpectedPresentTime();
                         if (layer->shouldPresentNow(expectedPresentTime)) {
                             int layerQueuedFrames = layer->getQueuedFrameCount();
+                            Mutex::Autolock lock(mDolphinStateLock);
                             if (maxQueuedFrames < layerQueuedFrames &&
                                     !layer->visibleNonTransparentRegion.isEmpty()) {
                                 maxQueuedFrames = layerQueuedFrames;
@@ -2068,6 +2164,7 @@ void SurfaceFlinger::handleMessageRefresh() {
     rebuildLayerStacks();
     calculateWorkingSet();
     for (const auto& [token, display] : mDisplays) {
+        setDisplayElapseTime(display);
         beginFrame(display);
         prepareFrame(display);
         doDebugFlashRegions(display, repaintEverything);
@@ -7166,6 +7263,7 @@ void SurfaceFlinger::setPreferredDisplayConfig() {
                 mRefreshRateConfigs.setActiveConfig(iter->second->configId);
                 setDesiredActiveConfig({iter->first, iter->second->configId,
                         Scheduler::ConfigEvent::Changed});
+                break;
             }
         }
     }
@@ -7176,6 +7274,10 @@ void SurfaceFlinger::setAllowedDisplayConfigsInternal(const sp<DisplayDevice>& d
     if (!display->isPrimary()) {
         return;
     }
+
+    // Set Phase Offsets type for the Default Refresh Rate config.
+    RefreshRateType type = mRefreshRateConfigs.getDefaultRefreshRateType();
+    mPhaseOffsets->setDefaultRefreshRateType(type);
 
     std::vector<int32_t> displayConfigs;
     for (int i = 0; i < allowedConfigs.size(); i++) {
