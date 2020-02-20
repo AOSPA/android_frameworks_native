@@ -39,7 +39,7 @@ public:
     // Enum to indicate which vsync rate to run at. Power saving is intended to be the lowest
     // (eg. when the screen is in AOD mode or off), default is the old 60Hz, and performance
     // is the new 90Hz. Eventually we want to have a way for vendors to map these in the configs.
-    enum class RefreshRateType {POWER_SAVING, LOW0, LOW1, LOW2, DEFAULT, PERFORMANCE, PERF1, PERF2};
+    enum class RefreshRateType {POWER_SAVING, LOW0, LOW1, LOW2, DEFAULT, PERFORMANCE, HIGH1, HIGH2};
 
     struct RefreshRate {
         // This config ID corresponds to the position of the config in the vector that is stored
@@ -75,10 +75,35 @@ public:
         return nullptr;
     }
 
+    std::shared_ptr<RefreshRate> getRefreshRate(int configId) const {
+        for (const auto& [type, refreshRate] : mRefreshRates) {
+            if (refreshRate->configId == configId) {
+                return refreshRate;
+            }
+        }
+        return nullptr;
+    }
+
     RefreshRateType getRefreshRateType(hwc2_config_t id) const {
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->id == id) {
                 return type;
+            }
+        }
+
+        return RefreshRateType::DEFAULT;
+    }
+
+    RefreshRateType getDefaultRefreshRateType() const {
+        const auto& refreshRate = mRefreshRates.find(RefreshRateType::DEFAULT);
+        if (refreshRate != mRefreshRates.end()) {
+            uint32_t fps = refreshRate->second->fps;
+            if (fps <= DEFAULT_FPS) {
+                return RefreshRateType::DEFAULT;
+            } else if (fps < (2 * DEFAULT_FPS)) {
+                return RefreshRateType::PERFORMANCE;
+            } else if (fps >= (2 * DEFAULT_FPS)) {
+                return RefreshRateType::HIGH1;
             }
         }
 
@@ -123,7 +148,7 @@ public:
                       return a.second > b.second;
                   });
 
-        int maxRefreshType = (int)RefreshRateType::PERF2;
+        int maxRefreshType = (int)RefreshRateType::HIGH2;
         int lowRefreshType = (int)RefreshRateType::LOW0;
         int defaultType = (int)RefreshRateType::DEFAULT;
         int type = (int)RefreshRateType::DEFAULT;
@@ -131,7 +156,7 @@ public:
         // When the configs are sorted by refresh rate. For configs with refresh rate lower than
         // DEFAULT_FPS, they are supported with LOW0, LOW1 and LOW2 refresh rate types. For the
         // configs with refresh rate higher than DEFAULT_FPS, they are supported with PERFORMANCE,
-        // PERF1 and PERF2 refresh rate types.
+        // HIGH1 and HIGH2 refresh rate types.
 
         for (int j = 0; j < configIdToVsyncPeriod.size(); j++) {
             nsecs_t vsyncPeriod = configIdToVsyncPeriod[j].second;
@@ -164,6 +189,8 @@ public:
 
     void setActiveConfig(int config) { mActiveConfig = config; }
 
+    RefreshRateType getMaxPerfRefreshRateType() const { return mMaxPerfRefreshRateType; }
+
     // Update the allowed Display Config(s) based on Smart Panel attribute.
     void getAllowedConfigs(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs,
                            std::vector<int32_t> *allowedConfigs) {
@@ -188,11 +215,26 @@ public:
                 allowedConfigs->at(i) = refreshRateConfig->configId;
             }
         }
+
+        // Set the Max Allowed Perf RefreshRateType for Content Detection.
+        mMaxPerfRefreshRateType = RefreshRateType::PERFORMANCE;
+        uint32_t maxAllowedPerfRefreshRate = DEFAULT_FPS;
+
+        for (int j = 0; j < allowedConfigs->size(); j++) {
+            auto refreshRateConfig = getRefreshRate(allowedConfigs->at(j));
+            if (refreshRateConfig != nullptr) {
+                if (refreshRateConfig->fps > maxAllowedPerfRefreshRate) {
+                    maxAllowedPerfRefreshRate = refreshRateConfig->fps;
+                    mMaxPerfRefreshRateType = getRefreshRateType(refreshRateConfig->id);
+                }
+            }
+        }
     }
 
 private:
     std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates;
     int mActiveConfig = 0;
+    RefreshRateType mMaxPerfRefreshRateType = RefreshRateType::PERFORMANCE;
 };
 
 } // namespace scheduler
