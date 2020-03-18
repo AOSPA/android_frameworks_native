@@ -37,6 +37,7 @@ public:
 
     virtual void setInputWindows(const std::vector<InputWindowInfo>& inputHandles,
             const sp<ISetInputWindowsListener>& setInputWindowsListener) = 0;
+    virtual void transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken) = 0;
     virtual void registerInputChannel(const sp<InputChannel>& channel) = 0;
     virtual void unregisterInputChannel(const sp<InputChannel>& channel) = 0;
 };
@@ -50,7 +51,8 @@ public:
     enum {
         SET_INPUT_WINDOWS_TRANSACTION = IBinder::FIRST_CALL_TRANSACTION,
         REGISTER_INPUT_CHANNEL_TRANSACTION,
-        UNREGISTER_INPUT_CHANNEL_TRANSACTION
+        UNREGISTER_INPUT_CHANNEL_TRANSACTION,
+        TRANSFER_TOUCH_FOCUS
     };
 
     virtual status_t onTransact(uint32_t code, const Parcel& data,
