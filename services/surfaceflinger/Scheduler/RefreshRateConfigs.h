@@ -56,9 +56,11 @@ public:
     // TODO(b/122916473): Get this information from configs prepared by vendors, instead of
     // baking them in.
     const std::map<RefreshRateType, std::shared_ptr<RefreshRate>>& getRefreshRates() const {
+        std::lock_guard lock(mLock);
         return mRefreshRates;
     }
     std::shared_ptr<RefreshRate> getRefreshRate(RefreshRateType type) const {
+        std::lock_guard lock(mLock);
         const auto& refreshRate = mRefreshRates.find(type);
         if (refreshRate != mRefreshRates.end()) {
             return refreshRate->second;
@@ -67,6 +69,7 @@ public:
     }
 
     std::shared_ptr<RefreshRate> getRefreshRate(uint32_t fps) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->fps == fps) {
                 return refreshRate;
@@ -76,6 +79,7 @@ public:
     }
 
     std::shared_ptr<RefreshRate> getRefreshRate(int configId) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->configId == configId) {
                 return refreshRate;
@@ -85,6 +89,7 @@ public:
     }
 
     RefreshRateType getRefreshRateType(hwc2_config_t id) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->id == id) {
                 return type;
@@ -94,7 +99,17 @@ public:
         return RefreshRateType::DEFAULT;
     }
 
+    uint32_t getRefreshRateFps(RefreshRateType type) const {
+        std::lock_guard lock(mLock);
+        const auto& refreshRate = mRefreshRates.find(type);
+        if (refreshRate != mRefreshRates.end()) {
+            return refreshRate->second->fps;
+        }
+        return 0;
+    }
+
     RefreshRateType getDefaultRefreshRateType() const {
+        std::lock_guard lock(mLock);
         const auto& refreshRate = mRefreshRates.find(RefreshRateType::DEFAULT);
         if (refreshRate != mRefreshRates.end()) {
             uint32_t fps = refreshRate->second->fps;
@@ -111,6 +126,7 @@ public:
     }
 
     void populate(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        std::lock_guard lock(mLock);
         mRefreshRates.clear();
 
         // This is the rate that HWC encapsulates right now when the device is in DOZE mode.
@@ -232,7 +248,8 @@ public:
     }
 
 private:
-    std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates;
+    mutable std::mutex mLock;
+    std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates GUARDED_BY(mLock);
     int mActiveConfig = 0;
     RefreshRateType mMaxPerfRefreshRateType = RefreshRateType::PERFORMANCE;
 };
