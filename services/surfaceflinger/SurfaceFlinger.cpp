@@ -1305,6 +1305,8 @@ bool SurfaceFlinger::performSetActiveConfig() {
         desiredActiveConfig = mDesiredActiveConfig;
     }
 
+    mUpcomingActiveConfig = desiredActiveConfig;
+
     const auto display = getDefaultDisplayDeviceLocked();
     if (!display || display->getActiveConfig() == desiredActiveConfig.configId) {
         // display is not valid or we are already in the requested mode
@@ -1321,7 +1323,6 @@ bool SurfaceFlinger::performSetActiveConfig() {
         return false;
     }
 
-    mUpcomingActiveConfig = desiredActiveConfig;
     const auto displayId = display->getId();
     LOG_ALWAYS_FATAL_IF(!displayId);
 
