@@ -927,11 +927,16 @@ void SurfaceFlinger::init() {
 
     mComposerExtnIntf = composer::ComposerExtnLib::GetInstance();
     if (!mComposerExtnIntf) {
-        ALOGE("Failed to create composer extension");
+        ALOGE("Unable to get composer extension");
     } else {
         int ret = mComposerExtnIntf->CreateFrameScheduler(&mFrameSchedulerExtnIntf);
-        if (ret == -1 || !mFrameSchedulerExtnIntf) {
-            ALOGI("Failed to create frame scheduler extension");
+        if (ret) {
+            ALOGI("Unable to create frame scheduler extension");
+        }
+
+        ret = mComposerExtnIntf->CreateDisplayExtn(&mDisplayExtnIntf);
+        if (ret) {
+            ALOGI("Unable to create display extension");
         }
     }
 
@@ -1216,6 +1221,11 @@ void SurfaceFlinger::setDesiredActiveConfig(const ActiveConfigInfo& info) {
 
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->changeRefreshRate(mDesiredActiveConfig.type);
+    }
+
+    if (mDisplayExtnIntf && !mCheckPendingFence) {
+      const auto& refreshRate = mRefreshRateConfigs.getRefreshRate(mDesiredActiveConfig.configId);
+      mDisplayExtnIntf->SetContentFps(refreshRate->fps);
     }
 }
 
