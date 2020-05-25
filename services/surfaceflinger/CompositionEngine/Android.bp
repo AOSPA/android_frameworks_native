@@ -86,6 +86,7 @@ filegroup {
         "src/OutputLayer.cpp",
         "src/OutputLayerCompositionState.cpp",
         "src/RenderSurface.cpp",
+        "src/UdfpsExtension.cpp",
     ],
 }
 
@@ -95,6 +96,7 @@ cc_library {
         "libcompositionengine_defaults",
         "libsurfaceflinger_common_deps",
         "libqtisurfaceflingerextension_defaults",
+        "surfaceflinger_udfps_lib_defaults",
     ],
     static_libs: [
         "libqticompositionengineextension",
@@ -133,6 +135,14 @@ cc_library {
         "server_configurable_flags",
     ],
     local_include_dirs: ["include"],
+    export_include_dirs: ["include"],
+}
+
+cc_library_static {
+    name: "surfaceflinger_udfps_lib",
+    srcs: [
+        "src/UdfpsExtension.cpp",
+    ],
     export_include_dirs: ["include"],
 }
 
