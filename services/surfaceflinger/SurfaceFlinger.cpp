@@ -2830,6 +2830,11 @@ void SurfaceFlinger::updateLayerGeometry() {
         visibleReg.set(layer->getScreenBounds());
         invalidateLayerStack(layer->getOutputFilter(), visibleReg);
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayAnimating();
+    /* QTI_END */
+
     mLayersPendingRefresh.clear();
 }
 
