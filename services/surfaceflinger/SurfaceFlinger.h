@@ -193,6 +193,7 @@ public:
 
     static std::unique_ptr<LayerExtWrapper> Create();
     int getLayerClass(const std::string &name);
+    void updateLayerState(const std::vector<std::string>&layers, int numLayers);
 
     LayerExtWrapper(const LayerExtWrapper&) = delete;
     LayerExtWrapper& operator=(const LayerExtWrapper&) = delete;
@@ -1332,6 +1333,7 @@ private:
     bool (*mDestroyFrameExtnFunc)(FrameExtnIntf *interface) = nullptr;
 
     bool mUseLayerExt = false;
+    bool mSplitLayerExt = false;
     std::unique_ptr<LayerExtWrapper> mLayerExt;
 };
 
