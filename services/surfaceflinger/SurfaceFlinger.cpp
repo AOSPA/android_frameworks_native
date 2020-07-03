@@ -2129,8 +2129,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what) NO_THREAD_SAFETY_ANALYSIS {
                 int maxQueuedFrames = 0;
                 mDrawingState.traverseInZOrder([&](Layer* layer) {
                     if (layer->hasReadyFrame()) {
-                        nsecs_t expectedPresentTime;
-                        expectedPresentTime = mScheduler->getDispSyncExpectedPresentTime();
+                        nsecs_t expectedPresentTime = getExpectedPresentTime();
                         if (layer->shouldPresentNow(expectedPresentTime)) {
                             int layerQueuedFrames = layer->getQueuedFrameCount();
                             Mutex::Autolock lock(mDolphinStateLock);
