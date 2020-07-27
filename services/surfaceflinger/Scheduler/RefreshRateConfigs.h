@@ -34,6 +34,7 @@ namespace scheduler {
  */
 class RefreshRateConfigs {
     static const int DEFAULT_FPS = 60;
+    static const int HIGH2_FPS = 144;
 
 public:
     // Enum to indicate which vsync rate to run at. Power saving is intended to be the lowest
@@ -102,8 +103,10 @@ public:
                 return RefreshRateType::DEFAULT;
             } else if (fps < (2 * DEFAULT_FPS)) {
                 return RefreshRateType::PERFORMANCE;
-            } else if (fps >= (2 * DEFAULT_FPS)) {
+            } else if (fps < HIGH2_FPS) {
                 return RefreshRateType::HIGH1;
+            } else if (fps >= HIGH2_FPS) {
+                return RefreshRateType::HIGH2;
             }
         }
 
