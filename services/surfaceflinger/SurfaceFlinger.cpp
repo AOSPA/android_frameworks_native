@@ -1239,7 +1239,7 @@ status_t SurfaceFlinger::setActiveConfig(const sp<IBinder>& displayToken, int mo
     // RefreshRateConfigs are only supported on Primary display.
     if (display && display->isPrimary()) {
         mRefreshRateConfigs.setActiveConfig(mode);
-        mRefreshRateConfigs.populate(getHwComposer().getConfigs(*display->getId()));
+        mRefreshRateConfigs.repopulate(getHwComposer().getConfigs(*display->getId()));
     }
 
     return setAllowedDisplayConfigs(displayToken, allowedConfig);
@@ -6746,7 +6746,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     // RefreshRateConfigs are only supported on Primary display.
                     if (display && display->isPrimary()) {
                         mRefreshRateConfigs.setActiveConfig(n);
-                        mRefreshRateConfigs.populate(getHwComposer().getConfigs(*display->getId()));
+                        mRefreshRateConfigs.repopulate(getHwComposer().getConfigs(*display->getId()));
                     }
                     status_t result = setAllowedDisplayConfigs(displayToken, {n});
                     if (result != NO_ERROR) {

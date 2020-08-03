@@ -206,7 +206,29 @@ public:
         }
     }
 
-    void setActiveConfig(int config) { mActiveConfig = config; }
+    void repopulate(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        if ((mLastActiveConfig < 0) || (mActiveConfig == mLastActiveConfig)) {
+            return;
+        }
+
+        // There is no need to re-populate if Config Group of current & last active config is same.
+        int32_t activeWidth = configs.at(mActiveConfig)->getWidth();
+        int32_t activeHeight = configs.at(mActiveConfig)->getHeight();
+        bool hasSmartPanel = configs.at(mActiveConfig)->hasSmartPanel();
+
+        if ((activeWidth == configs.at(mLastActiveConfig)->getWidth()) &&
+            (activeHeight == configs.at(mLastActiveConfig)->getHeight()) &&
+            (hasSmartPanel == configs.at(mLastActiveConfig)->hasSmartPanel())) {
+            return;
+        }
+
+        populate(configs);
+    }
+
+    void setActiveConfig(int config) {
+        mLastActiveConfig = mActiveConfig;
+        mActiveConfig = config;
+    }
 
     RefreshRateType getMaxPerfRefreshRateType() const { return mMaxPerfRefreshRateType; }
 
@@ -254,6 +276,7 @@ private:
     mutable std::mutex mLock;
     std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates GUARDED_BY(mLock);
     int mActiveConfig = 0;
+    int mLastActiveConfig = -1;
     RefreshRateType mMaxPerfRefreshRateType = RefreshRateType::PERFORMANCE;
 };
 
