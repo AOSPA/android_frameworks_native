@@ -34,6 +34,7 @@ namespace scheduler {
  */
 class RefreshRateConfigs {
     static const int DEFAULT_FPS = 60;
+    static const int HIGH2_FPS = 144;
 
 public:
     // Enum to indicate which vsync rate to run at. Power saving is intended to be the lowest
@@ -56,9 +57,11 @@ public:
     // TODO(b/122916473): Get this information from configs prepared by vendors, instead of
     // baking them in.
     const std::map<RefreshRateType, std::shared_ptr<RefreshRate>>& getRefreshRates() const {
+        std::lock_guard lock(mLock);
         return mRefreshRates;
     }
     std::shared_ptr<RefreshRate> getRefreshRate(RefreshRateType type) const {
+        std::lock_guard lock(mLock);
         const auto& refreshRate = mRefreshRates.find(type);
         if (refreshRate != mRefreshRates.end()) {
             return refreshRate->second;
@@ -67,6 +70,7 @@ public:
     }
 
     std::shared_ptr<RefreshRate> getRefreshRate(uint32_t fps) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->fps == fps) {
                 return refreshRate;
@@ -76,6 +80,7 @@ public:
     }
 
     std::shared_ptr<RefreshRate> getRefreshRate(int configId) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->configId == configId) {
                 return refreshRate;
@@ -85,6 +90,7 @@ public:
     }
 
     RefreshRateType getRefreshRateType(hwc2_config_t id) const {
+        std::lock_guard lock(mLock);
         for (const auto& [type, refreshRate] : mRefreshRates) {
             if (refreshRate->id == id) {
                 return type;
@@ -94,7 +100,17 @@ public:
         return RefreshRateType::DEFAULT;
     }
 
+    uint32_t getRefreshRateFps(RefreshRateType type) const {
+        std::lock_guard lock(mLock);
+        const auto& refreshRate = mRefreshRates.find(type);
+        if (refreshRate != mRefreshRates.end()) {
+            return refreshRate->second->fps;
+        }
+        return 0;
+    }
+
     RefreshRateType getDefaultRefreshRateType() const {
+        std::lock_guard lock(mLock);
         const auto& refreshRate = mRefreshRates.find(RefreshRateType::DEFAULT);
         if (refreshRate != mRefreshRates.end()) {
             uint32_t fps = refreshRate->second->fps;
@@ -102,8 +118,10 @@ public:
                 return RefreshRateType::DEFAULT;
             } else if (fps < (2 * DEFAULT_FPS)) {
                 return RefreshRateType::PERFORMANCE;
-            } else if (fps >= (2 * DEFAULT_FPS)) {
+            } else if (fps < HIGH2_FPS) {
                 return RefreshRateType::HIGH1;
+            } else if (fps >= HIGH2_FPS) {
+                return RefreshRateType::HIGH2;
             }
         }
 
@@ -111,6 +129,7 @@ public:
     }
 
     void populate(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        std::lock_guard lock(mLock);
         mRefreshRates.clear();
 
         // This is the rate that HWC encapsulates right now when the device is in DOZE mode.
@@ -187,7 +206,29 @@ public:
         }
     }
 
-    void setActiveConfig(int config) { mActiveConfig = config; }
+    void repopulate(const std::vector<std::shared_ptr<const HWC2::Display::Config>>& configs) {
+        if ((mLastActiveConfig < 0) || (mActiveConfig == mLastActiveConfig)) {
+            return;
+        }
+
+        // There is no need to re-populate if Config Group of current & last active config is same.
+        int32_t activeWidth = configs.at(mActiveConfig)->getWidth();
+        int32_t activeHeight = configs.at(mActiveConfig)->getHeight();
+        bool hasSmartPanel = configs.at(mActiveConfig)->hasSmartPanel();
+
+        if ((activeWidth == configs.at(mLastActiveConfig)->getWidth()) &&
+            (activeHeight == configs.at(mLastActiveConfig)->getHeight()) &&
+            (hasSmartPanel == configs.at(mLastActiveConfig)->hasSmartPanel())) {
+            return;
+        }
+
+        populate(configs);
+    }
+
+    void setActiveConfig(int config) {
+        mLastActiveConfig = mActiveConfig;
+        mActiveConfig = config;
+    }
 
     RefreshRateType getMaxPerfRefreshRateType() const { return mMaxPerfRefreshRateType; }
 
@@ -232,8 +273,10 @@ public:
     }
 
 private:
-    std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates;
+    mutable std::mutex mLock;
+    std::map<RefreshRateType, std::shared_ptr<RefreshRate>> mRefreshRates GUARDED_BY(mLock);
     int mActiveConfig = 0;
+    int mLastActiveConfig = -1;
     RefreshRateType mMaxPerfRefreshRateType = RefreshRateType::PERFORMANCE;
 };
 
