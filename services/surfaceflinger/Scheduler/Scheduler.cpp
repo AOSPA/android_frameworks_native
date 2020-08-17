@@ -347,11 +347,9 @@ std::unique_ptr<scheduler::LayerHistory::LayerHandle> Scheduler::registerLayer(
             ? RefreshRateType::DEFAULT
             : mRefreshRateConfigs.getMaxPerfRefreshRateType();
 
-    const auto refreshRate = mRefreshRateConfigs.getRefreshRate(refreshRateType);
-    const uint32_t performanceFps = (refreshRate) ? refreshRate->fps : 0;
+    const uint32_t performanceFps = mRefreshRateConfigs.getRefreshRateFps(refreshRateType);
 
-    const auto defaultRefreshRate = mRefreshRateConfigs.getRefreshRate(RefreshRateType::DEFAULT);
-    const uint32_t defaultFps = (defaultRefreshRate) ? defaultRefreshRate->fps : 0;
+    const uint32_t defaultFps = mRefreshRateConfigs.getRefreshRateFps(RefreshRateType::DEFAULT);
     return mLayerHistory.createLayer(name, defaultFps, performanceFps);
 }
 
