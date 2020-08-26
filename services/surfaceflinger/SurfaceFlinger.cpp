@@ -1492,7 +1492,7 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
 }
 
 status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
-    if (!mUseAdvanceSfOffset && mPhaseOffsets->getCurrentSfOffset() >= 0) {
+    if (!mUseAdvanceSfOffset || mPhaseOffsets->getCurrentSfOffset() >= 0) {
         return OK;
     }
 
