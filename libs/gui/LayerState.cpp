@@ -55,7 +55,7 @@ status_t layer_state_t::write(Parcel& output) const
     output.writeFloat(color.g);
     output.writeFloat(color.b);
 #ifndef NO_INPUT
-    inputInfo.write(output);
+    inputHandle->writeToParcel(&output);
 #endif
     output.write(transparentRegion);
     output.writeUint32(transform);
@@ -152,7 +152,7 @@ status_t layer_state_t::read(const Parcel& input)
     color.b = input.readFloat();
 
 #ifndef NO_INPUT
-    inputInfo = InputWindowInfo::read(input);
+    inputHandle->readFromParcel(&input);
 #endif
 
     input.read(transparentRegion);
@@ -404,7 +404,7 @@ void layer_state_t::merge(const layer_state_t& other) {
 #ifndef NO_INPUT
     if (other.what & eInputInfoChanged) {
         what |= eInputInfoChanged;
-        inputInfo = other.inputInfo;
+        inputHandle = new InputWindowHandle(*other.inputHandle);
     }
 #endif
 
@@ -448,19 +448,36 @@ void layer_state_t::merge(const layer_state_t& other) {
 
 // ------------------------------- InputWindowCommands ----------------------------------------
 
-void InputWindowCommands::merge(const InputWindowCommands& other) {
+bool InputWindowCommands::merge(const InputWindowCommands& other) {
+    bool changes = false;
+#ifndef NO_INPUT
+    changes |= !other.focusRequests.empty();
+    focusRequests.insert(focusRequests.end(), std::make_move_iterator(other.focusRequests.begin()),
+                         std::make_move_iterator(other.focusRequests.end()));
+#endif
+    changes |= other.syncInputWindows && !syncInputWindows;
     syncInputWindows |= other.syncInputWindows;
+    return changes;
 }
 
 void InputWindowCommands::clear() {
+#ifndef NO_INPUT
+    focusRequests.clear();
+#endif
     syncInputWindows = false;
 }
 
 void InputWindowCommands::write(Parcel& output) const {
+#ifndef NO_INPUT
+    output.writeParcelableVector(focusRequests);
+#endif
     output.writeBool(syncInputWindows);
 }
 
 void InputWindowCommands::read(const Parcel& input) {
+#ifndef NO_INPUT
+    input.readParcelableVector(&focusRequests);
+#endif
     syncInputWindows = input.readBool();
 }
 

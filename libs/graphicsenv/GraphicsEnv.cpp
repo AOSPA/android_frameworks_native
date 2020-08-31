@@ -29,7 +29,6 @@
 #include <android-base/strings.h>
 #include <android/dlext.h>
 #include <binder/IServiceManager.h>
-#include <cutils/properties.h>
 #include <graphicsenv/IGpuService.h>
 #include <log/log.h>
 #include <nativeloader/dlext_namespaces.h>
@@ -74,7 +73,7 @@ static constexpr const char* kNativeLibrariesSystemConfigPath[] =
 
 static std::string vndkVersionStr() {
 #ifdef __BIONIC__
-    return android::base::GetProperty("ro.vndk.version", "");
+    return base::GetProperty("ro.vndk.version", "");
 #endif
     return "";
 }
@@ -345,10 +344,8 @@ void* GraphicsEnv::loadLibrary(std::string name) {
 }
 
 bool GraphicsEnv::checkAngleRules(void* so) {
-    char manufacturer[PROPERTY_VALUE_MAX];
-    char model[PROPERTY_VALUE_MAX];
-    property_get("ro.product.manufacturer", manufacturer, "UNSET");
-    property_get("ro.product.model", model, "UNSET");
+    auto manufacturer = base::GetProperty("ro.product.manufacturer", "UNSET");
+    auto model = base::GetProperty("ro.product.model", "UNSET");
 
     auto ANGLEGetFeatureSupportUtilAPIVersion =
             (fpANGLEGetFeatureSupportUtilAPIVersion)dlsym(so,
@@ -401,7 +398,8 @@ bool GraphicsEnv::checkAngleRules(void* so) {
                 ALOGW("ANGLE feature-support library cannot obtain SystemInfo");
                 break;
             }
-            if (!(ANGLEAddDeviceInfoToSystemInfo)(manufacturer, model, systemInfoHandle)) {
+            if (!(ANGLEAddDeviceInfoToSystemInfo)(manufacturer.c_str(), model.c_str(),
+                                                  systemInfoHandle)) {
                 ALOGW("ANGLE feature-support library cannot add device info to SystemInfo");
                 break;
             }
@@ -653,8 +651,7 @@ android_namespace_t* GraphicsEnv::getAngleNamespace() {
     mAngleNamespace = android_create_namespace("ANGLE",
                                                nullptr,            // ld_library_path
                                                mAnglePath.c_str(), // default_library_path
-                                               ANDROID_NAMESPACE_TYPE_SHARED |
-                                                       ANDROID_NAMESPACE_TYPE_ISOLATED,
+                                               ANDROID_NAMESPACE_TYPE_SHARED_ISOLATED,
                                                nullptr, // permitted_when_isolated_path
                                                nullptr);
 

@@ -93,16 +93,15 @@ sp<InputDispatcherInterface> InputManager::getDispatcher() {
 
 class BinderWindowHandle : public InputWindowHandle {
 public:
-    BinderWindowHandle(const InputWindowInfo& info) {
-        mInfo = info;
-    }
+    BinderWindowHandle(const InputWindowInfo& info) { mInfo = info; }
 
     bool updateInfo() override {
         return true;
     }
 };
 
-void InputManager::setInputWindows(const std::vector<InputWindowInfo>& infos,
+binder::Status InputManager::setInputWindows(
+        const std::vector<InputWindowInfo>& infos,
         const sp<ISetInputWindowsListener>& setInputWindowsListener) {
     std::unordered_map<int32_t, std::vector<sp<InputWindowHandle>>> handlesPerDisplay;
 
@@ -116,26 +115,40 @@ void InputManager::setInputWindows(const std::vector<InputWindowInfo>& infos,
     if (setInputWindowsListener) {
         setInputWindowsListener->onSetInputWindowsFinished();
     }
+    return binder::Status::ok();
 }
 
 // Used by tests only.
-void InputManager::registerInputChannel(const sp<InputChannel>& channel) {
+binder::Status InputManager::registerInputChannel(const InputChannel& channel) {
     IPCThreadState* ipc = IPCThreadState::self();
     const int uid = ipc->getCallingUid();
     if (uid != AID_SHELL && uid != AID_ROOT) {
         ALOGE("Invalid attempt to register input channel over IPC"
                 "from non shell/root entity (PID: %d)", ipc->getCallingPid());
-        return;
+        return binder::Status::ok();
     }
-    mDispatcher->registerInputChannel(channel);
+
+    mDispatcher->registerInputChannel(channel.dup());
+    return binder::Status::ok();
 }
 
-void InputManager::unregisterInputChannel(const sp<InputChannel>& channel) {
+binder::Status InputManager::unregisterInputChannel(const InputChannel& channel) {
     mDispatcher->unregisterInputChannel(channel);
+    return binder::Status::ok();
 }
 
-void InputManager::setMotionClassifierEnabled(bool enabled) {
-    mClassifier->setMotionClassifierEnabled(enabled);
+status_t InputManager::dump(int fd, const Vector<String16>& args) {
+    std::string dump;
+
+    dump += " InputFlinger dump\n";
+
+    ::write(fd, dump.c_str(), dump.size());
+    return NO_ERROR;
+}
+
+binder::Status InputManager::setFocusedWindow(const FocusRequest& request) {
+    mDispatcher->setFocusedWindow(request);
+    return binder::Status::ok();
 }
 
 } // namespace android

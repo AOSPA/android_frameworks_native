@@ -44,7 +44,11 @@ using scheduler::LayerHistory;
 class DispSync;
 class FenceTime;
 class InjectVSyncSource;
-struct DisplayStateInfo;
+
+namespace scheduler {
+class VSyncDispatch;
+class VSyncTracker;
+} // namespace scheduler
 
 class ISchedulerCallback {
 public:
@@ -174,8 +178,11 @@ private:
 
     // Used by tests to inject mocks.
     Scheduler(std::unique_ptr<DispSync>, std::unique_ptr<EventControlThread>,
-              const scheduler::RefreshRateConfigs&, ISchedulerCallback& schedulerCallback,
-              bool useContentDetectionV2, bool useContentDetection);
+              const scheduler::RefreshRateConfigs&, ISchedulerCallback&,
+              std::unique_ptr<LayerHistory>, bool useContentDetectionV2, bool useContentDetection);
+
+    static std::unique_ptr<LayerHistory> createLayerHistory(const scheduler::RefreshRateConfigs&,
+                                                            bool useContentDetectionV2);
 
     std::unique_ptr<VSyncSource> makePrimaryDispSyncSource(const char* name, nsecs_t phaseOffsetNs);
 
@@ -227,11 +234,14 @@ private:
     // Whether to use idle timer callbacks that support the kernel timer.
     const bool mSupportKernelTimer;
 
+    const bool mUseVsyncPredictor;
+    const std::unique_ptr<scheduler::VSyncTracker> mVSyncTracker;
+    const std::unique_ptr<scheduler::VSyncDispatch> mVSyncDispatch;
     std::unique_ptr<DispSync> mPrimaryDispSync;
     std::unique_ptr<EventControlThread> mEventControlThread;
 
     // Used to choose refresh rate if content detection is enabled.
-    std::unique_ptr<LayerHistory> mLayerHistory;
+    const std::unique_ptr<LayerHistory> mLayerHistory;
 
     // Timer that records time between requests for next vsync.
     std::optional<scheduler::OneShotTimer> mIdleTimer;

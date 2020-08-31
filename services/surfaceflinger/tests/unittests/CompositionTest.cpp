@@ -35,6 +35,7 @@
 #include <utils/String8.h>
 
 #include "BufferQueueLayer.h"
+#include "DisplayRenderArea.h"
 #include "EffectLayer.h"
 #include "Layer.h"
 #include "TestableSurfaceFlinger.h"
@@ -149,9 +150,14 @@ public:
                 .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_REFRESH_RATE));
         EXPECT_CALL(*primaryDispSync, expectedPresentTime(_)).WillRepeatedly(Return(0));
 
+        constexpr bool kHasMultipleConfigs = true;
         mFlinger.setupScheduler(std::move(primaryDispSync),
                                 std::make_unique<mock::EventControlThread>(),
-                                std::move(eventThread), std::move(sfEventThread));
+                                std::move(eventThread), std::move(sfEventThread),
+                                kHasMultipleConfigs);
+
+        // Layer history should be created if there are multiple configs.
+        ASSERT_TRUE(mFlinger.scheduler()->hasLayerHistory());
     }
 
     void setupForceGeometryDirty() {
@@ -233,24 +239,24 @@ void CompositionTest::captureScreenComposition() {
     constexpr bool forSystem = true;
     constexpr bool regionSampling = false;
 
-    DisplayRenderArea renderArea(mDisplay, sourceCrop, DEFAULT_DISPLAY_WIDTH,
-                                 DEFAULT_DISPLAY_HEIGHT, ui::Dataspace::V0_SRGB,
-                                 ui::Transform::ROT_0);
+    auto renderArea = DisplayRenderArea::create(mDisplay, sourceCrop, sourceCrop.getSize(),
+                                                ui::Dataspace::V0_SRGB, ui::Transform::ROT_0);
 
     auto traverseLayers = [this](const LayerVector::Visitor& visitor) {
-        return mFlinger.traverseLayersInDisplay(mDisplay, visitor);
+        return mFlinger.traverseLayersInLayerStack(mDisplay->getLayerStack(), visitor);
     };
 
     // TODO: Eliminate expensive/real allocation if possible.
     const uint32_t usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN |
             GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
-    mCaptureScreenBuffer = new GraphicBuffer(renderArea.getReqWidth(), renderArea.getReqHeight(),
+    mCaptureScreenBuffer = new GraphicBuffer(renderArea->getReqWidth(), renderArea->getReqHeight(),
                                              HAL_PIXEL_FORMAT_RGBA_8888, 1, usage, "screenshot");
 
     int fd = -1;
     status_t result =
-            mFlinger.captureScreenImplLocked(renderArea, traverseLayers, mCaptureScreenBuffer.get(),
-                                             useIdentityTransform, forSystem, &fd, regionSampling);
+            mFlinger.captureScreenImplLocked(*renderArea, traverseLayers,
+                                             mCaptureScreenBuffer.get(), useIdentityTransform,
+                                             forSystem, &fd, regionSampling);
     if (fd >= 0) {
         close(fd);
     }
@@ -348,7 +354,7 @@ struct BaseDisplayVariant {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillRepeatedly([](const renderengine::DisplaySettings& displaySettings,
                                    const std::vector<const renderengine::LayerSettings*>&,
-                                   ANativeWindowBuffer*, const bool, base::unique_fd&&,
+                                   const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                                    base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -397,7 +403,7 @@ struct BaseDisplayVariant {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillRepeatedly([](const renderengine::DisplaySettings& displaySettings,
                                    const std::vector<const renderengine::LayerSettings*>&,
-                                   ANativeWindowBuffer*, const bool, base::unique_fd&&,
+                                   const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                                    base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -648,7 +654,7 @@ struct BaseLayerProperties {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<const renderengine::LayerSettings*>& layerSettings,
-                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
+                             const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -697,7 +703,7 @@ struct BaseLayerProperties {
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<const renderengine::LayerSettings*>& layerSettings,
-                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
+                             const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
@@ -775,7 +781,7 @@ struct SecureLayerProperties : public BaseLayerProperties<SecureLayerProperties>
         EXPECT_CALL(*test->mRenderEngine, drawLayers)
                 .WillOnce([](const renderengine::DisplaySettings& displaySettings,
                              const std::vector<const renderengine::LayerSettings*>& layerSettings,
-                             ANativeWindowBuffer*, const bool, base::unique_fd&&,
+                             const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                              base::unique_fd*) -> status_t {
                     EXPECT_EQ(DEFAULT_DISPLAY_MAX_LUMINANCE, displaySettings.maxLuminance);
                     EXPECT_EQ(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),

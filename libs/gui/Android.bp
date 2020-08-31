@@ -88,6 +88,7 @@ cc_defaults {
 
     export_shared_lib_headers: [
         "libbinder",
+        "libinput",
     ],
 
     // bufferhub is not used when building libgui for vendors

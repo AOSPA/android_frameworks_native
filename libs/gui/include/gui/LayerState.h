@@ -26,6 +26,7 @@
 #include <math/mat4.h>
 
 #ifndef NO_INPUT
+#include <android/FocusRequest.h>
 #include <input/InputWindow.h>
 #endif
 
@@ -201,7 +202,7 @@ struct layer_state_t {
     mat4 colorTransform;
 
 #ifndef NO_INPUT
-    InputWindowInfo inputInfo;
+    sp<InputWindowHandle> inputHandle = new InputWindowHandle();
 #endif
 
     client_cache_t cachedBuffer;
@@ -283,9 +284,13 @@ struct DisplayState {
 };
 
 struct InputWindowCommands {
+#ifndef NO_INPUT
+    std::vector<FocusRequest> focusRequests;
+#endif
     bool syncInputWindows{false};
 
-    void merge(const InputWindowCommands& other);
+    // Merges the passed in commands and returns true if there were any changes.
+    bool merge(const InputWindowCommands& other);
     void clear();
     void write(Parcel& output) const;
     void read(const Parcel& input);

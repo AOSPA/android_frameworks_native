@@ -18,10 +18,10 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <array>
 #include <ostream>
 #include <string>
 
-#include <hardware/hardware.h>
 #include <math/mat4.h>
 #include <math/vec2.h>
 #include <math/vec3.h>
@@ -44,9 +44,9 @@ public:
 
     enum RotationFlags : uint32_t {
         ROT_0 = 0,
-        FLIP_H = HAL_TRANSFORM_FLIP_H,
-        FLIP_V = HAL_TRANSFORM_FLIP_V,
-        ROT_90 = HAL_TRANSFORM_ROT_90,
+        FLIP_H = 1, // HAL_TRANSFORM_FLIP_H
+        FLIP_V = 2, // HAL_TRANSFORM_FLIP_V
+        ROT_90 = 4, // HAL_TRANSFORM_ROT_90
         ROT_180 = FLIP_H | FLIP_V,
         ROT_270 = ROT_180 | ROT_90,
         ROT_INVALID = 0x80
@@ -69,24 +69,31 @@ public:
     const vec3& operator [] (size_t i) const;  // returns column i
     float   tx() const;
     float   ty() const;
-    float   sx() const;
-    float   sy() const;
+    float dsdx() const;
+    float dtdx() const;
+    float dtdy() const;
+    float dsdy() const;
+
+    float getScaleX() const;
+    float getScaleY() const;
 
     // modify the transform
     void        reset();
     void        set(float tx, float ty);
     void        set(float a, float b, float c, float d);
     status_t    set(uint32_t flags, float w, float h);
+    void        set(const std::array<float, 9>& matrix);
 
     // transform data
     Rect    makeBounds(int w, int h) const;
-    vec2    transform(int x, int y) const;
+    vec2    transform(float x, float y) const;
     Region  transform(const Region& reg) const;
     Rect    transform(const Rect& bounds,
                       bool roundOutwards = false) const;
     FloatRect transform(const FloatRect& bounds) const;
     Transform& operator = (const Transform& other);
     Transform operator * (const Transform& rhs) const;
+    Transform operator * (float value) const;
     // assumes the last row is < 0 , 0 , 1 >
     vec2 transform(const vec2& v) const;
     vec3 transform(const vec3& v) const;

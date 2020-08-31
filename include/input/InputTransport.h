@@ -34,12 +34,13 @@
 #include <android-base/chrono_utils.h>
 
 #include <binder/IBinder.h>
+#include <binder/Parcelable.h>
 #include <input/Input.h>
+#include <sys/stat.h>
 #include <utils/BitSet.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
-#include <utils/Vector.h>
 
 #include <android-base/unique_fd.h>
 
@@ -69,10 +70,7 @@ struct InputMessage {
 
     struct Header {
         Type type; // 4 bytes
-        // We don't need this field in order to align the body below but we
-        // leave it here because InputMessage::size() and other functions
-        // compute the size of this structure as sizeof(Header) + sizeof(Body).
-        uint32_t padding;
+        uint32_t seq;
     } header;
 
     // Body *must* be 8 byte aligned.
@@ -81,8 +79,8 @@ struct InputMessage {
     static_assert(sizeof(std::array<uint8_t, 32>) == 32);
     union Body {
         struct Key {
-            uint32_t seq;
             int32_t eventId;
+            uint32_t empty1;
             nsecs_t eventTime __attribute__((aligned(8)));
             int32_t deviceId;
             int32_t source;
@@ -101,8 +99,8 @@ struct InputMessage {
         } key;
 
         struct Motion {
-            uint32_t seq;
             int32_t eventId;
+            uint32_t empty1;
             nsecs_t eventTime __attribute__((aligned(8)));
             int32_t deviceId;
             int32_t source;
@@ -151,16 +149,14 @@ struct InputMessage {
         } motion;
 
         struct Finished {
-            uint32_t seq;
+            uint32_t empty1;
             uint32_t handled; // actually a bool, but we must maintain 8-byte alignment
 
             inline size_t size() const { return sizeof(Finished); }
         } finished;
 
         struct Focus {
-            uint32_t seq;
             int32_t eventId;
-            uint32_t empty1;
             // The following two fields take up 4 bytes total
             uint16_t hasFocus;    // actually a bool
             uint16_t inTouchMode; // actually a bool, but we must maintain 8-byte alignment
@@ -172,6 +168,19 @@ struct InputMessage {
     bool isValid(size_t actualSize) const;
     size_t size() const;
     void getSanitizedCopy(InputMessage* msg) const;
+
+    static const char* typeToString(Type type) {
+        switch (type) {
+            case Type::KEY:
+                return "KEY";
+            case Type::MOTION:
+                return "MOTION";
+            case Type::FINISHED:
+                return "FINISHED";
+            case Type::FOCUS:
+                return "FOCUS";
+        }
+    }
 };
 
 /*
@@ -182,14 +191,15 @@ struct InputMessage {
  *
  * The input channel is closed when all references to it are released.
  */
-class InputChannel : public RefBase {
-protected:
-    virtual ~InputChannel();
-
+class InputChannel : public Parcelable {
 public:
-    static sp<InputChannel> create(const std::string& name, android::base::unique_fd fd,
-                                   sp<IBinder> token);
-
+    static std::unique_ptr<InputChannel> create(const std::string& name,
+                                                android::base::unique_fd fd, sp<IBinder> token);
+    InputChannel() = default;
+    InputChannel(const InputChannel& other)
+          : mName(other.mName), mFd(::dup(other.mFd)), mToken(other.mToken){};
+    InputChannel(const std::string name, android::base::unique_fd fd, sp<IBinder> token);
+    virtual ~InputChannel();
     /**
      * Create a pair of input channels.
      * The two returned input channels are equivalent, and are labeled as "server" and "client"
@@ -198,10 +208,12 @@ public:
      * Return OK on success.
      */
     static status_t openInputChannelPair(const std::string& name,
-            sp<InputChannel>& outServerChannel, sp<InputChannel>& outClientChannel);
+                                         std::unique_ptr<InputChannel>& outServerChannel,
+                                         std::unique_ptr<InputChannel>& outClientChannel);
 
     inline std::string getName() const { return mName; }
-    inline int getFd() const { return mFd.get(); }
+    inline const android::base::unique_fd& getFd() const { return mFd; }
+    inline sp<IBinder> getToken() const { return mToken; }
 
     /* Send a message to the other endpoint.
      *
@@ -229,10 +241,10 @@ public:
     status_t receiveMessage(InputMessage* msg);
 
     /* Return a new object that has a duplicate of this channel's fd. */
-    sp<InputChannel> dup() const;
+    std::unique_ptr<InputChannel> dup() const;
 
-    status_t write(Parcel& out) const;
-    static sp<InputChannel> read(const Parcel& from);
+    status_t readFromParcel(const android::Parcel* parcel) override;
+    status_t writeToParcel(android::Parcel* parcel) const override;
 
     /**
      * The connection token is used to identify the input connection, i.e.
@@ -248,8 +260,20 @@ public:
      */
     sp<IBinder> getConnectionToken() const;
 
+    bool operator==(const InputChannel& inputChannel) const {
+        struct stat lhs, rhs;
+        if (fstat(mFd.get(), &lhs) != 0) {
+            return false;
+        }
+        if (fstat(inputChannel.getFd(), &rhs) != 0) {
+            return false;
+        }
+        // If file descriptors are pointing to same inode they are duplicated fds.
+        return inputChannel.getName() == getName() && inputChannel.getConnectionToken() == mToken &&
+                lhs.st_ino == rhs.st_ino;
+    }
+
 private:
-    InputChannel(const std::string& name, android::base::unique_fd fd, sp<IBinder> token);
     std::string mName;
     android::base::unique_fd mFd;
 
@@ -262,13 +286,13 @@ private:
 class InputPublisher {
 public:
     /* Creates a publisher associated with an input channel. */
-    explicit InputPublisher(const sp<InputChannel>& channel);
+    explicit InputPublisher(const std::shared_ptr<InputChannel>& channel);
 
     /* Destroys the publisher and releases its input channel. */
     ~InputPublisher();
 
     /* Gets the underlying input channel. */
-    inline sp<InputChannel> getChannel() { return mChannel; }
+    inline std::shared_ptr<InputChannel> getChannel() { return mChannel; }
 
     /* Publishes a key event to the input channel.
      *
@@ -325,8 +349,7 @@ public:
     status_t receiveFinishedSignal(uint32_t* outSeq, bool* outHandled);
 
 private:
-
-    sp<InputChannel> mChannel;
+    std::shared_ptr<InputChannel> mChannel;
 };
 
 /*
@@ -335,13 +358,13 @@ private:
 class InputConsumer {
 public:
     /* Creates a consumer associated with an input channel. */
-    explicit InputConsumer(const sp<InputChannel>& channel);
+    explicit InputConsumer(const std::shared_ptr<InputChannel>& channel);
 
     /* Destroys the consumer and releases its input channel. */
     ~InputConsumer();
 
     /* Gets the underlying input channel. */
-    inline sp<InputChannel> getChannel() { return mChannel; }
+    inline std::shared_ptr<InputChannel> getChannel() { return mChannel; }
 
     /* Consumes an input event from the input channel and copies its contents into
      * an InputEvent object created using the specified factory.
@@ -412,14 +435,15 @@ public:
      */
     int32_t getPendingBatchSource() const;
 
+    std::string dump() const;
+
 private:
     int mTouchMoveCounter = 0;
 
     // True if touch resampling is enabled.
     const bool mResampleTouch;
 
-    // The input channel.
-    sp<InputChannel> mChannel;
+    std::shared_ptr<InputChannel> mChannel;
 
     // The current input message.
     InputMessage mMsg;
@@ -430,9 +454,9 @@ private:
 
     // Batched motion events per device and source.
     struct Batch {
-        Vector<InputMessage> samples;
+        std::vector<InputMessage> samples;
     };
-    Vector<Batch> mBatches;
+    std::vector<Batch> mBatches;
 
     // Touch state per device and source, only for sources of class pointer.
     struct History {
@@ -519,7 +543,7 @@ private:
             return false;
         }
     };
-    Vector<TouchState> mTouchStates;
+    std::vector<TouchState> mTouchStates;
 
     // Chain of batched sequence numbers.  When multiple input messages are combined into
     // a batch, we append a record here that associates the last sequence number in the
@@ -529,7 +553,7 @@ private:
         uint32_t seq;   // sequence number of batched input message
         uint32_t chain; // sequence number of previous batched input message
     };
-    Vector<SeqChain> mSeqChains;
+    std::vector<SeqChain> mSeqChains;
 
     status_t consumeBatch(InputEventFactoryInterface* factory,
             nsecs_t frameTime, uint32_t* outSeq, InputEvent** outEvent,

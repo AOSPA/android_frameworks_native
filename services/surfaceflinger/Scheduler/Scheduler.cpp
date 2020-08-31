@@ -62,34 +62,45 @@
 
 namespace android {
 
-std::unique_ptr<DispSync> createDispSync(bool supportKernelTimer) {
-    // TODO (140302863) remove this and use the vsync_reactor system.
-    if (property_get_bool("debug.sf.vsync_reactor", true)) {
+namespace {
+
+std::unique_ptr<scheduler::VSyncTracker> createVSyncTracker() {
+    // TODO (144707443) tune Predictor tunables.
+    static constexpr int default_rate = 60;
+    static constexpr auto initial_period =
+            std::chrono::duration<nsecs_t, std::ratio<1, default_rate>>(1);
+    static constexpr size_t vsyncTimestampHistorySize = 20;
+    static constexpr size_t minimumSamplesForPrediction = 6;
+    static constexpr uint32_t discardOutlierPercent = 20;
+    return std::make_unique<
+            scheduler::VSyncPredictor>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               initial_period)
+                                               .count(),
+                                       vsyncTimestampHistorySize, minimumSamplesForPrediction,
+                                       discardOutlierPercent);
+}
+
+std::unique_ptr<scheduler::VSyncDispatch> createVSyncDispatch(
+        const std::unique_ptr<scheduler::VSyncTracker>& vSyncTracker) {
+    if (!vSyncTracker) return {};
+
+    // TODO (144707443) tune Predictor tunables.
+    static constexpr auto vsyncMoveThreshold =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(3ms);
+    static constexpr auto timerSlack = std::chrono::duration_cast<std::chrono::nanoseconds>(500us);
+    return std::make_unique<
+            scheduler::VSyncDispatchTimerQueue>(std::make_unique<scheduler::Timer>(), *vSyncTracker,
+                                                timerSlack.count(), vsyncMoveThreshold.count());
+}
+
+std::unique_ptr<DispSync> createDispSync(
+        const std::unique_ptr<scheduler::VSyncTracker>& vSyncTracker,
+        const std::unique_ptr<scheduler::VSyncDispatch>& vSyncDispatch, bool supportKernelTimer) {
+    if (vSyncTracker && vSyncDispatch) {
         // TODO (144707443) tune Predictor tunables.
-        static constexpr int defaultRate = 60;
-        static constexpr auto initialPeriod =
-                std::chrono::duration<nsecs_t, std::ratio<1, defaultRate>>(1);
-        static constexpr size_t vsyncTimestampHistorySize = 20;
-        static constexpr size_t minimumSamplesForPrediction = 6;
-        static constexpr uint32_t discardOutlierPercent = 20;
-        auto tracker = std::make_unique<
-                scheduler::VSyncPredictor>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                                   initialPeriod)
-                                                   .count(),
-                                           vsyncTimestampHistorySize, minimumSamplesForPrediction,
-                                           discardOutlierPercent);
-
-        static constexpr auto vsyncMoveThreshold =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(3ms);
-        static constexpr auto timerSlack =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(500us);
-        auto dispatch = std::make_unique<
-                scheduler::VSyncDispatchTimerQueue>(std::make_unique<scheduler::Timer>(), *tracker,
-                                                    timerSlack.count(), vsyncMoveThreshold.count());
-
         static constexpr size_t pendingFenceLimit = 20;
         return std::make_unique<scheduler::VSyncReactor>(std::make_unique<scheduler::SystemClock>(),
-                                                         std::move(dispatch), std::move(tracker),
+                                                         *vSyncDispatch, *vSyncTracker,
                                                          pendingFenceLimit, supportKernelTimer);
     } else {
         return std::make_unique<impl::DispSync>("SchedulerDispSync",
@@ -97,24 +108,30 @@ std::unique_ptr<DispSync> createDispSync(bool supportKernelTimer) {
     }
 }
 
+const char* toContentDetectionString(bool useContentDetection, bool useContentDetectionV2) {
+    if (!useContentDetection) return "off";
+    return useContentDetectionV2 ? "V2" : "V1";
+}
+
+} // namespace
+
 Scheduler::Scheduler(impl::EventControlThread::SetVSyncEnabledFunction function,
-                     const scheduler::RefreshRateConfigs& refreshRateConfig,
+                     const scheduler::RefreshRateConfigs& refreshRateConfigs,
                      ISchedulerCallback& schedulerCallback, bool useContentDetectionV2,
                      bool useContentDetection)
       : mSupportKernelTimer(sysprop::support_kernel_idle_timer(false)),
-        mPrimaryDispSync(createDispSync(mSupportKernelTimer)),
+        // TODO (140302863) remove this and use the vsync_reactor system.
+        mUseVsyncPredictor(property_get_bool("debug.sf.vsync_reactor", true)),
+        mVSyncTracker(mUseVsyncPredictor ? createVSyncTracker() : nullptr),
+        mVSyncDispatch(createVSyncDispatch(mVSyncTracker)),
+        mPrimaryDispSync(createDispSync(mVSyncTracker, mVSyncDispatch, mSupportKernelTimer)),
         mEventControlThread(new impl::EventControlThread(std::move(function))),
+        mLayerHistory(createLayerHistory(refreshRateConfigs, useContentDetectionV2)),
         mSchedulerCallback(schedulerCallback),
-        mRefreshRateConfigs(refreshRateConfig),
+        mRefreshRateConfigs(refreshRateConfigs),
         mUseContentDetection(useContentDetection),
         mUseContentDetectionV2(useContentDetectionV2) {
     using namespace sysprop;
-
-    if (mUseContentDetectionV2) {
-        mLayerHistory = std::make_unique<scheduler::impl::LayerHistoryV2>(refreshRateConfig);
-    } else {
-        mLayerHistory = std::make_unique<scheduler::impl::LayerHistory>();
-    }
 
     const int setIdleTimerMs = property_get_int32("debug.sf.set_idle_timer_ms", 0);
 
@@ -149,11 +166,14 @@ Scheduler::Scheduler(impl::EventControlThread::SetVSyncEnabledFunction function,
 Scheduler::Scheduler(std::unique_ptr<DispSync> primaryDispSync,
                      std::unique_ptr<EventControlThread> eventControlThread,
                      const scheduler::RefreshRateConfigs& configs,
-                     ISchedulerCallback& schedulerCallback, bool useContentDetectionV2,
+                     ISchedulerCallback& schedulerCallback,
+                     std::unique_ptr<LayerHistory> layerHistory, bool useContentDetectionV2,
                      bool useContentDetection)
       : mSupportKernelTimer(false),
+        mUseVsyncPredictor(true),
         mPrimaryDispSync(std::move(primaryDispSync)),
         mEventControlThread(std::move(eventControlThread)),
+        mLayerHistory(std::move(layerHistory)),
         mSchedulerCallback(schedulerCallback),
         mRefreshRateConfigs(configs),
         mUseContentDetection(useContentDetection),
@@ -164,6 +184,17 @@ Scheduler::~Scheduler() {
     mDisplayPowerTimer.reset();
     mTouchTimer.reset();
     mIdleTimer.reset();
+}
+
+std::unique_ptr<LayerHistory> Scheduler::createLayerHistory(
+        const scheduler::RefreshRateConfigs& configs, bool useContentDetectionV2) {
+    if (!configs.canSwitch()) return nullptr;
+
+    if (useContentDetectionV2) {
+        return std::make_unique<scheduler::impl::LayerHistoryV2>(configs);
+    }
+
+    return std::make_unique<scheduler::impl::LayerHistory>();
 }
 
 DispSync& Scheduler::getPrimaryDispSync() {
@@ -416,7 +447,7 @@ void Scheduler::registerLayer(Layer* layer) {
     const auto minFps = mRefreshRateConfigs.getMinRefreshRate().getFps();
     const auto maxFps = mRefreshRateConfigs.getMaxRefreshRate().getFps();
 
-    if (layer->getWindowType() == InputWindowInfo::TYPE_STATUS_BAR) {
+    if (layer->getWindowType() == InputWindowInfo::Type::STATUS_BAR) {
         mLayerHistory->registerLayer(layer, minFps, maxFps,
                                      scheduler::LayerHistory::LayerVoteType::NoVote);
     } else if (!mUseContentDetection) {
@@ -429,12 +460,12 @@ void Scheduler::registerLayer(Layer* layer) {
         // In V1 of content detection, all layers are registered as Heuristic (unless it's
         // wallpaper).
         const auto highFps =
-                layer->getWindowType() == InputWindowInfo::TYPE_WALLPAPER ? minFps : maxFps;
+                layer->getWindowType() == InputWindowInfo::Type::WALLPAPER ? minFps : maxFps;
 
         mLayerHistory->registerLayer(layer, minFps, highFps,
                                      scheduler::LayerHistory::LayerVoteType::Heuristic);
     } else {
-        if (layer->getWindowType() == InputWindowInfo::TYPE_WALLPAPER) {
+        if (layer->getWindowType() == InputWindowInfo::Type::WALLPAPER) {
             // Running Wallpaper at Min is considered as part of content detection.
             mLayerHistory->registerLayer(layer, minFps, maxFps,
                                          scheduler::LayerHistory::LayerVoteType::Min);
@@ -499,16 +530,7 @@ void Scheduler::resetIdleTimer() {
 }
 
 void Scheduler::notifyTouchEvent() {
-    if (!mTouchTimer) return;
-
-    // Touch event will boost the refresh rate to performance.
-    // Clear Layer History to get fresh FPS detection.
-    // NOTE: Instead of checking all the layers, we should be checking the layer
-    // that is currently on top. b/142507166 will give us this capability.
-    std::lock_guard<std::mutex> lock(mFeatureStateLock);
-    if (mLayerHistory) {
-        // Layer History will be cleared based on RefreshRateConfigs::getBestRefreshRate
-
+    if (mTouchTimer) {
         mTouchTimer->reset();
 
         if (mSupportKernelTimer && mIdleTimer) {
@@ -564,8 +586,14 @@ void Scheduler::idleTimerCallback(TimerState state) {
 
 void Scheduler::touchTimerCallback(TimerState state) {
     const TouchState touch = state == TimerState::Reset ? TouchState::Active : TouchState::Inactive;
+    // Touch event will boost the refresh rate to performance.
+    // Clear layer history to get fresh FPS detection.
+    // NOTE: Instead of checking all the layers, we should be checking the layer
+    // that is currently on top. b/142507166 will give us this capability.
     if (handleTimerStateChanged(&mFeatures.touch, touch)) {
-        mLayerHistory->clear();
+        if (mLayerHistory) {
+            mLayerHistory->clear();
+        }
     }
     ATRACE_INT("TouchState", static_cast<int>(touch));
 }
@@ -577,14 +605,13 @@ void Scheduler::displayPowerTimerCallback(TimerState state) {
 
 void Scheduler::dump(std::string& result) const {
     using base::StringAppendF;
-    const char* const states[] = {"off", "on"};
 
-    StringAppendF(&result, "+  Idle timer: %s\n",
-                  mIdleTimer ? mIdleTimer->dump().c_str() : states[0]);
+    StringAppendF(&result, "+  Idle timer: %s\n", mIdleTimer ? mIdleTimer->dump().c_str() : "off");
     StringAppendF(&result, "+  Touch timer: %s\n",
-                  mTouchTimer ? mTouchTimer->dump().c_str() : states[0]);
-    StringAppendF(&result, "+  Use content detection: %s\n\n",
-                  sysprop::use_content_detection_for_refresh_rate(false) ? "on" : "off");
+                  mTouchTimer ? mTouchTimer->dump().c_str() : "off");
+    StringAppendF(&result, "+  Content detection: %s %s\n\n",
+                  toContentDetectionString(mUseContentDetection, mUseContentDetectionV2),
+                  mLayerHistory ? mLayerHistory->dump().c_str() : "(no layer history)");
 }
 
 template <class T>

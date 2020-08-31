@@ -21,6 +21,7 @@ cc_defaults {
         "-Werror",
         "-Wno-unused-parameter",
         "-Wthread-safety",
+        "-Wshadow",
     ],
 }
 
@@ -99,6 +100,7 @@ filegroup {
         "InputListener.cpp",
         "InputReaderBase.cpp",
         "InputThread.cpp",
+        "VibrationElement.cpp"
     ],
 }
 
@@ -110,6 +112,7 @@ cc_defaults {
         "libcutils",
         "libinput",
         "liblog",
+        "libui",
         "libutils",
     ],
     header_libs: [

@@ -34,23 +34,35 @@ cc_library {
 
     clang: true,
 
+    header_libs: ["jni_headers"],
+    export_header_lib_headers: ["jni_headers"],
+
     shared_libs: [
         "libbase",
         "liblog",
         "libcutils",
     ],
 
+    static_libs: [
+        "libui-types",
+    ],
+
+    export_static_lib_headers: [
+        "libui-types",
+    ],
+
     target: {
         android: {
             srcs: [
-                "IInputFlinger.cpp",
                 "InputApplication.cpp",
                 "InputTransport.cpp",
                 "InputWindow.cpp",
-                "ISetInputWindowsListener.cpp",
                 "LatencyStatistics.cpp",
                 "VelocityControl.cpp",
                 "VelocityTracker.cpp",
+                "android/FocusRequest.aidl",
+                "android/os/IInputFlinger.aidl",
+                "android/os/ISetInputWindowsListener.aidl",
             ],
 
             shared_libs: [
@@ -68,6 +80,11 @@ cc_library {
                 enabled: false,
             },
         },
+    },
+
+    aidl: {
+        local_include_dirs: ["."],
+        export_aidl_headers: true
     },
 }
 

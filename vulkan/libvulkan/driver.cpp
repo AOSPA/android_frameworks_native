@@ -95,15 +95,15 @@ class Hal {
 class CreateInfoWrapper {
    public:
     CreateInfoWrapper(const VkInstanceCreateInfo& create_info,
+                      uint32_t icd_api_version,
                       const VkAllocationCallbacks& allocator);
     CreateInfoWrapper(VkPhysicalDevice physical_dev,
                       const VkDeviceCreateInfo& create_info,
+                      uint32_t icd_api_version,
                       const VkAllocationCallbacks& allocator);
     ~CreateInfoWrapper();
 
     VkResult Validate();
-    void DowngradeApiVersion();
-    void UpgradeDeviceCoreApiVersion(uint32_t api_version);
 
     const std::bitset<ProcHook::EXTENSION_COUNT>& GetHookExtensions() const;
     const std::bitset<ProcHook::EXTENSION_COUNT>& GetHalExtensions() const;
@@ -120,8 +120,8 @@ class CreateInfoWrapper {
         uint32_t name_count;
     };
 
+    VkResult SanitizeApiVersion();
     VkResult SanitizePNext();
-
     VkResult SanitizeLayers();
     VkResult SanitizeExtensions();
 
@@ -133,6 +133,8 @@ class CreateInfoWrapper {
 
     const bool is_instance_;
     const VkAllocationCallbacks& allocator_;
+    const uint32_t loader_api_version_;
+    const uint32_t icd_api_version_;
 
     VkPhysicalDevice physical_dev_;
 
@@ -161,7 +163,7 @@ void* LoadLibrary(const android_dlextinfo& dlextinfo,
 }
 
 const std::array<const char*, 2> HAL_SUBNAME_KEY_PROPERTIES = {{
-    "ro.hardware." HWVULKAN_HARDWARE_MODULE_ID,
+    "ro.hardware.vulkan",
     "ro.board.platform",
 }};
 
@@ -324,32 +326,27 @@ bool Hal::InitDebugReportIndex() {
 }
 
 CreateInfoWrapper::CreateInfoWrapper(const VkInstanceCreateInfo& create_info,
+                                     uint32_t icd_api_version,
                                      const VkAllocationCallbacks& allocator)
     : is_instance_(true),
       allocator_(allocator),
+      loader_api_version_(VK_API_VERSION_1_1),
+      icd_api_version_(icd_api_version),
       physical_dev_(VK_NULL_HANDLE),
       instance_info_(create_info),
-      extension_filter_() {
-    // instance core versions need to match the loader api version
-    for (uint32_t i = ProcHook::EXTENSION_CORE_1_0;
-         i != ProcHook::EXTENSION_COUNT; ++i) {
-        hook_extensions_.set(i);
-        hal_extensions_.set(i);
-    }
-}
+      extension_filter_() {}
 
 CreateInfoWrapper::CreateInfoWrapper(VkPhysicalDevice physical_dev,
                                      const VkDeviceCreateInfo& create_info,
+                                     uint32_t icd_api_version,
                                      const VkAllocationCallbacks& allocator)
     : is_instance_(false),
       allocator_(allocator),
+      loader_api_version_(VK_API_VERSION_1_1),
+      icd_api_version_(icd_api_version),
       physical_dev_(physical_dev),
       dev_info_(create_info),
-      extension_filter_() {
-    // initialize with baseline core API version
-    hook_extensions_.set(ProcHook::EXTENSION_CORE_1_0);
-    hal_extensions_.set(ProcHook::EXTENSION_CORE_1_0);
-}
+      extension_filter_() {}
 
 CreateInfoWrapper::~CreateInfoWrapper() {
     allocator_.pfnFree(allocator_.pUserData, extension_filter_.exts);
@@ -357,7 +354,9 @@ CreateInfoWrapper::~CreateInfoWrapper() {
 }
 
 VkResult CreateInfoWrapper::Validate() {
-    VkResult result = SanitizePNext();
+    VkResult result = SanitizeApiVersion();
+    if (result == VK_SUCCESS)
+        result = SanitizePNext();
     if (result == VK_SUCCESS)
         result = SanitizeLayers();
     if (result == VK_SUCCESS)
@@ -382,6 +381,22 @@ CreateInfoWrapper::operator const VkInstanceCreateInfo*() const {
 
 CreateInfoWrapper::operator const VkDeviceCreateInfo*() const {
     return &dev_info_;
+}
+
+VkResult CreateInfoWrapper::SanitizeApiVersion() {
+    if (!is_instance_ || !instance_info_.pApplicationInfo)
+        return VK_SUCCESS;
+
+    if (icd_api_version_ > VK_API_VERSION_1_0 ||
+        instance_info_.pApplicationInfo->apiVersion < VK_API_VERSION_1_1)
+        return VK_SUCCESS;
+
+    // override apiVersion to avoid error return from 1.0 icd
+    application_info_ = *instance_info_.pApplicationInfo;
+    application_info_.apiVersion = VK_API_VERSION_1_0;
+    instance_info_.pApplicationInfo = &application_info_;
+
+    return VK_SUCCESS;
 }
 
 VkResult CreateInfoWrapper::SanitizePNext() {
@@ -431,20 +446,55 @@ VkResult CreateInfoWrapper::SanitizeExtensions() {
                                      : dev_info_.ppEnabledExtensionNames;
     auto& ext_count = (is_instance_) ? instance_info_.enabledExtensionCount
                                      : dev_info_.enabledExtensionCount;
-    if (!ext_count)
-        return VK_SUCCESS;
 
     VkResult result = InitExtensionFilter();
     if (result != VK_SUCCESS)
         return result;
 
-    for (uint32_t i = 0; i < ext_count; i++)
-        FilterExtension(ext_names[i]);
+    if (is_instance_ && icd_api_version_ < loader_api_version_) {
+        for (uint32_t i = 0; i < ext_count; i++) {
+            // Upon api downgrade, skip the promoted instance extensions in the
+            // first pass to avoid duplicate extensions.
+            const std::optional<uint32_t> version =
+                GetInstanceExtensionPromotedVersion(ext_names[i]);
+            if (version && *version > icd_api_version_ &&
+                *version <= loader_api_version_)
+                continue;
+
+            FilterExtension(ext_names[i]);
+        }
+
+        // Enable the required extensions to support core functionalities.
+        const auto promoted_extensions = GetPromotedInstanceExtensions(
+            icd_api_version_, loader_api_version_);
+        for (const auto& promoted_extension : promoted_extensions)
+            FilterExtension(promoted_extension);
+    } else {
+        for (uint32_t i = 0; i < ext_count; i++)
+            FilterExtension(ext_names[i]);
+    }
 
     // Enable device extensions that contain physical-device commands, so that
     // vkGetInstanceProcAddr will return those physical-device commands.
     if (is_instance_) {
         hook_extensions_.set(ProcHook::KHR_swapchain);
+    }
+
+    const uint32_t api_version =
+        is_instance_ ? loader_api_version_
+                     : std::min(icd_api_version_, loader_api_version_);
+    switch (api_version) {
+        case VK_API_VERSION_1_1:
+            hook_extensions_.set(ProcHook::EXTENSION_CORE_1_1);
+            hal_extensions_.set(ProcHook::EXTENSION_CORE_1_1);
+            [[clang::fallthrough]];
+        case VK_API_VERSION_1_0:
+            hook_extensions_.set(ProcHook::EXTENSION_CORE_1_0);
+            hal_extensions_.set(ProcHook::EXTENSION_CORE_1_0);
+            break;
+        default:
+            ALOGE("Unknown API version[%u]", api_version);
+            break;
     }
 
     ext_names = extension_filter_.names;
@@ -504,10 +554,20 @@ VkResult CreateInfoWrapper::InitExtensionFilter() {
     filter.ext_count = count;
 
     // allocate name array
-    uint32_t enabled_ext_count = (is_instance_)
-                                     ? instance_info_.enabledExtensionCount
-                                     : dev_info_.enabledExtensionCount;
-    count = std::min(filter.ext_count, enabled_ext_count);
+    if (is_instance_) {
+        uint32_t enabled_ext_count = instance_info_.enabledExtensionCount;
+
+        // It requires enabling additional promoted extensions to downgrade api,
+        // so we reserve enough space here.
+        if (icd_api_version_ < loader_api_version_) {
+            enabled_ext_count += CountPromotedInstanceExtensions(
+                icd_api_version_, loader_api_version_);
+        }
+
+        count = std::min(filter.ext_count, enabled_ext_count);
+    } else {
+        count = std::min(filter.ext_count, dev_info_.enabledExtensionCount);
+    }
     filter.names = reinterpret_cast<const char**>(allocator_.pfnAllocation(
         allocator_.pUserData, sizeof(const char*) * count, alignof(const char*),
         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND));
@@ -535,6 +595,10 @@ void CreateInfoWrapper::FilterExtension(const char* name) {
                 hook_extensions_.set(ext_bit);
                 break;
             case ProcHook::KHR_get_physical_device_properties2:
+            case ProcHook::KHR_device_group_creation:
+            case ProcHook::KHR_external_memory_capabilities:
+            case ProcHook::KHR_external_semaphore_capabilities:
+            case ProcHook::KHR_external_fence_capabilities:
             case ProcHook::EXTENSION_UNKNOWN:
                 // Extensions we don't need to do anything about at this level
                 break;
@@ -591,6 +655,10 @@ void CreateInfoWrapper::FilterExtension(const char* name) {
 
             case ProcHook::KHR_android_surface:
             case ProcHook::KHR_get_physical_device_properties2:
+            case ProcHook::KHR_device_group_creation:
+            case ProcHook::KHR_external_memory_capabilities:
+            case ProcHook::KHR_external_semaphore_capabilities:
+            case ProcHook::KHR_external_fence_capabilities:
             case ProcHook::KHR_get_surface_capabilities2:
             case ProcHook::KHR_surface:
             case ProcHook::EXT_debug_report:
@@ -633,40 +701,6 @@ void CreateInfoWrapper::FilterExtension(const char* name) {
         }
 
         break;
-    }
-}
-
-void CreateInfoWrapper::DowngradeApiVersion() {
-    // If pApplicationInfo is NULL, apiVersion is assumed to be 1.0:
-    if (instance_info_.pApplicationInfo) {
-        application_info_ = *instance_info_.pApplicationInfo;
-        instance_info_.pApplicationInfo = &application_info_;
-        application_info_.apiVersion = VK_API_VERSION_1_0;
-    }
-}
-
-void CreateInfoWrapper::UpgradeDeviceCoreApiVersion(uint32_t api_version) {
-    ALOG_ASSERT(!is_instance_, "Device only API called by instance wrapper.");
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wold-style-cast"
-    api_version ^= VK_VERSION_PATCH(api_version);
-#pragma clang diagnostic pop
-
-    // cap the API version to the loader supported highest version
-    if (api_version > VK_API_VERSION_1_1)
-        api_version = VK_API_VERSION_1_1;
-
-    switch (api_version) {
-        case VK_API_VERSION_1_1:
-            hook_extensions_.set(ProcHook::EXTENSION_CORE_1_1);
-            hal_extensions_.set(ProcHook::EXTENSION_CORE_1_1);
-            [[clang::fallthrough]];
-        case VK_API_VERSION_1_0:
-            break;
-        default:
-            ALOGD("Unknown upgrade API version[%u]", api_version);
-            break;
     }
 }
 
@@ -901,21 +935,14 @@ VkResult EnumerateInstanceExtensionProperties(
     return result;
 }
 
-bool QueryPresentationProperties(
+void QueryPresentationProperties(
     VkPhysicalDevice physicalDevice,
-    VkPhysicalDevicePresentationPropertiesANDROID *presentation_properties) {
-    const InstanceData& data = GetData(physicalDevice);
-
-    // GPDP2 must be present and enabled on the instance.
-    if (!data.driver.GetPhysicalDeviceProperties2KHR &&
-        !data.driver.GetPhysicalDeviceProperties2)
-        return false;
-
+    VkPhysicalDevicePresentationPropertiesANDROID* presentation_properties) {
     // Request the android-specific presentation properties via GPDP2
-    VkPhysicalDeviceProperties2KHR properties = {
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR,
+    VkPhysicalDeviceProperties2 properties = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
         presentation_properties,
-        {}
+        {},
     };
 
 #pragma clang diagnostic push
@@ -926,14 +953,7 @@ bool QueryPresentationProperties(
     presentation_properties->pNext = nullptr;
     presentation_properties->sharedImage = VK_FALSE;
 
-    if (data.driver.GetPhysicalDeviceProperties2KHR) {
-        data.driver.GetPhysicalDeviceProperties2KHR(physicalDevice,
-                                                    &properties);
-    } else {
-        data.driver.GetPhysicalDeviceProperties2(physicalDevice, &properties);
-    }
-
-    return true;
+    GetPhysicalDeviceProperties2(physicalDevice, &properties);
 }
 
 VkResult EnumerateDeviceExtensionProperties(
@@ -955,8 +975,8 @@ VkResult EnumerateDeviceExtensionProperties(
     }
 
     VkPhysicalDevicePresentationPropertiesANDROID presentation_properties;
-    if (QueryPresentationProperties(physicalDevice, &presentation_properties) &&
-        presentation_properties.sharedImage) {
+    QueryPresentationProperties(physicalDevice, &presentation_properties);
+    if (presentation_properties.sharedImage) {
         loader_extensions.push_back({
             VK_KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME,
             VK_KHR_SHARED_PRESENTABLE_IMAGE_SPEC_VERSION});
@@ -1027,49 +1047,32 @@ VkResult CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     const VkAllocationCallbacks& data_allocator =
         (pAllocator) ? *pAllocator : GetDefaultAllocator();
 
-    CreateInfoWrapper wrapper(*pCreateInfo, data_allocator);
-    VkResult result = wrapper.Validate();
-    if (result != VK_SUCCESS)
-        return result;
-
-    ATRACE_BEGIN("AllocateInstanceData");
-    InstanceData* data = AllocateInstanceData(data_allocator);
-    ATRACE_END();
-    if (!data)
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-
-    data->hook_extensions |= wrapper.GetHookExtensions();
-
-    ATRACE_BEGIN("autoDowngradeApiVersion");
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wold-style-cast"
-    uint32_t api_version = ((pCreateInfo->pApplicationInfo)
-                                ? pCreateInfo->pApplicationInfo->apiVersion
-                                : VK_API_VERSION_1_0);
-    uint32_t api_major_version = VK_VERSION_MAJOR(api_version);
-    uint32_t api_minor_version = VK_VERSION_MINOR(api_version);
-    uint32_t icd_api_version;
+    VkResult result = VK_SUCCESS;
+    uint32_t icd_api_version = VK_API_VERSION_1_0;
     PFN_vkEnumerateInstanceVersion pfn_enumerate_instance_version =
         reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
             Hal::Device().GetInstanceProcAddr(nullptr,
                                               "vkEnumerateInstanceVersion"));
-    if (!pfn_enumerate_instance_version) {
-        icd_api_version = VK_API_VERSION_1_0;
-    } else {
+    if (pfn_enumerate_instance_version) {
         ATRACE_BEGIN("pfn_enumerate_instance_version");
         result = (*pfn_enumerate_instance_version)(&icd_api_version);
         ATRACE_END();
-    }
-    uint32_t icd_api_major_version = VK_VERSION_MAJOR(icd_api_version);
-    uint32_t icd_api_minor_version = VK_VERSION_MINOR(icd_api_version);
+        if (result != VK_SUCCESS)
+            return result;
 
-    if ((icd_api_major_version == 1) && (icd_api_minor_version == 0) &&
-        ((api_major_version > 1) || (api_minor_version > 0))) {
-        api_version = VK_API_VERSION_1_0;
-        wrapper.DowngradeApiVersion();
+        icd_api_version ^= VK_VERSION_PATCH(icd_api_version);
     }
-#pragma clang diagnostic pop
-    ATRACE_END();
+
+    CreateInfoWrapper wrapper(*pCreateInfo, icd_api_version, data_allocator);
+    result = wrapper.Validate();
+    if (result != VK_SUCCESS)
+        return result;
+
+    InstanceData* data = AllocateInstanceData(data_allocator);
+    if (!data)
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+    data->hook_extensions |= wrapper.GetHookExtensions();
 
     // call into the driver
     VkInstance instance;
@@ -1133,7 +1136,16 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
     const VkAllocationCallbacks& data_allocator =
         (pAllocator) ? *pAllocator : instance_data.allocator;
 
-    CreateInfoWrapper wrapper(physicalDevice, *pCreateInfo, data_allocator);
+    VkPhysicalDeviceProperties properties;
+    ATRACE_BEGIN("driver.GetPhysicalDeviceProperties");
+    instance_data.driver.GetPhysicalDeviceProperties(physicalDevice,
+                                                     &properties);
+    ATRACE_END();
+
+    CreateInfoWrapper wrapper(
+        physicalDevice, *pCreateInfo,
+        properties.apiVersion ^ VK_VERSION_PATCH(properties.apiVersion),
+        data_allocator);
     VkResult result = wrapper.Validate();
     if (result != VK_SUCCESS)
         return result;
@@ -1145,13 +1157,6 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
     if (!data)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-    VkPhysicalDeviceProperties properties;
-    ATRACE_BEGIN("driver.GetPhysicalDeviceProperties");
-    instance_data.driver.GetPhysicalDeviceProperties(physicalDevice,
-                                                     &properties);
-    ATRACE_END();
-
-    wrapper.UpgradeDeviceCoreApiVersion(properties.apiVersion);
     data->hook_extensions |= wrapper.GetHookExtensions();
 
     // call into the driver
@@ -1248,7 +1253,8 @@ VkResult EnumeratePhysicalDeviceGroups(
     VkResult result = VK_SUCCESS;
     const auto& data = GetData(instance);
 
-    if (!data.driver.EnumeratePhysicalDeviceGroups) {
+    if (!data.driver.EnumeratePhysicalDeviceGroups &&
+        !data.driver.EnumeratePhysicalDeviceGroupsKHR) {
         uint32_t device_count = 0;
         result = EnumeratePhysicalDevices(instance, &device_count, nullptr);
         if (result < 0)
@@ -1280,9 +1286,15 @@ VkResult EnumeratePhysicalDeviceGroups(
             pPhysicalDeviceGroupProperties[i].subsetAllocation = 0;
         }
     } else {
-        result = data.driver.EnumeratePhysicalDeviceGroups(
-            instance, pPhysicalDeviceGroupCount,
-            pPhysicalDeviceGroupProperties);
+        if (data.driver.EnumeratePhysicalDeviceGroups) {
+            result = data.driver.EnumeratePhysicalDeviceGroups(
+                instance, pPhysicalDeviceGroupCount,
+                pPhysicalDeviceGroupProperties);
+        } else {
+            result = data.driver.EnumeratePhysicalDeviceGroupsKHR(
+                instance, pPhysicalDeviceGroupCount,
+                pPhysicalDeviceGroupProperties);
+        }
         if ((result == VK_SUCCESS || result == VK_INCOMPLETE) &&
             *pPhysicalDeviceGroupCount && pPhysicalDeviceGroupProperties) {
             for (uint32_t i = 0; i < *pPhysicalDeviceGroupCount; i++) {
@@ -1323,10 +1335,10 @@ void GetDeviceQueue2(VkDevice device,
     if (*pQueue != VK_NULL_HANDLE) SetData(*pQueue, data);
 }
 
-VKAPI_ATTR VkResult
-AllocateCommandBuffers(VkDevice device,
-                       const VkCommandBufferAllocateInfo* pAllocateInfo,
-                       VkCommandBuffer* pCommandBuffers) {
+VkResult AllocateCommandBuffers(
+    VkDevice device,
+    const VkCommandBufferAllocateInfo* pAllocateInfo,
+    VkCommandBuffer* pCommandBuffers) {
     ATRACE_CALL();
 
     const auto& data = GetData(device);
@@ -1341,15 +1353,208 @@ AllocateCommandBuffers(VkDevice device,
     return result;
 }
 
-VKAPI_ATTR VkResult QueueSubmit(VkQueue queue,
-                                uint32_t submitCount,
-                                const VkSubmitInfo* pSubmits,
-                                VkFence fence) {
+VkResult QueueSubmit(VkQueue queue,
+                     uint32_t submitCount,
+                     const VkSubmitInfo* pSubmits,
+                     VkFence fence) {
     ATRACE_CALL();
 
     const auto& data = GetData(queue);
 
     return data.driver.QueueSubmit(queue, submitCount, pSubmits, fence);
+}
+
+void GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
+                                VkPhysicalDeviceFeatures2* pFeatures) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceFeatures2) {
+        driver.GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+        return;
+    }
+
+    driver.GetPhysicalDeviceFeatures2KHR(physicalDevice, pFeatures);
+}
+
+void GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
+                                  VkPhysicalDeviceProperties2* pProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceProperties2) {
+        driver.GetPhysicalDeviceProperties2(physicalDevice, pProperties);
+        return;
+    }
+
+    driver.GetPhysicalDeviceProperties2KHR(physicalDevice, pProperties);
+}
+
+void GetPhysicalDeviceFormatProperties2(
+    VkPhysicalDevice physicalDevice,
+    VkFormat format,
+    VkFormatProperties2* pFormatProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceFormatProperties2) {
+        driver.GetPhysicalDeviceFormatProperties2(physicalDevice, format,
+                                                  pFormatProperties);
+        return;
+    }
+
+    driver.GetPhysicalDeviceFormatProperties2KHR(physicalDevice, format,
+                                                 pFormatProperties);
+}
+
+VkResult GetPhysicalDeviceImageFormatProperties2(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
+    VkImageFormatProperties2* pImageFormatProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceImageFormatProperties2) {
+        return driver.GetPhysicalDeviceImageFormatProperties2(
+            physicalDevice, pImageFormatInfo, pImageFormatProperties);
+    }
+
+    return driver.GetPhysicalDeviceImageFormatProperties2KHR(
+        physicalDevice, pImageFormatInfo, pImageFormatProperties);
+}
+
+void GetPhysicalDeviceQueueFamilyProperties2(
+    VkPhysicalDevice physicalDevice,
+    uint32_t* pQueueFamilyPropertyCount,
+    VkQueueFamilyProperties2* pQueueFamilyProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceQueueFamilyProperties2) {
+        driver.GetPhysicalDeviceQueueFamilyProperties2(
+            physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+        return;
+    }
+
+    driver.GetPhysicalDeviceQueueFamilyProperties2KHR(
+        physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+}
+
+void GetPhysicalDeviceMemoryProperties2(
+    VkPhysicalDevice physicalDevice,
+    VkPhysicalDeviceMemoryProperties2* pMemoryProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceMemoryProperties2) {
+        driver.GetPhysicalDeviceMemoryProperties2(physicalDevice,
+                                                  pMemoryProperties);
+        return;
+    }
+
+    driver.GetPhysicalDeviceMemoryProperties2KHR(physicalDevice,
+                                                 pMemoryProperties);
+}
+
+void GetPhysicalDeviceSparseImageFormatProperties2(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo,
+    uint32_t* pPropertyCount,
+    VkSparseImageFormatProperties2* pProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceSparseImageFormatProperties2) {
+        driver.GetPhysicalDeviceSparseImageFormatProperties2(
+            physicalDevice, pFormatInfo, pPropertyCount, pProperties);
+        return;
+    }
+
+    driver.GetPhysicalDeviceSparseImageFormatProperties2KHR(
+        physicalDevice, pFormatInfo, pPropertyCount, pProperties);
+}
+
+void GetPhysicalDeviceExternalBufferProperties(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo,
+    VkExternalBufferProperties* pExternalBufferProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceExternalBufferProperties) {
+        driver.GetPhysicalDeviceExternalBufferProperties(
+            physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+        return;
+    }
+
+    if (driver.GetPhysicalDeviceExternalBufferPropertiesKHR) {
+        driver.GetPhysicalDeviceExternalBufferPropertiesKHR(
+            physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+        return;
+    }
+
+    memset(&pExternalBufferProperties->externalMemoryProperties, 0,
+           sizeof(VkExternalMemoryProperties));
+}
+
+void GetPhysicalDeviceExternalSemaphoreProperties(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo,
+    VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceExternalSemaphoreProperties) {
+        driver.GetPhysicalDeviceExternalSemaphoreProperties(
+            physicalDevice, pExternalSemaphoreInfo,
+            pExternalSemaphoreProperties);
+        return;
+    }
+
+    if (driver.GetPhysicalDeviceExternalSemaphorePropertiesKHR) {
+        driver.GetPhysicalDeviceExternalSemaphorePropertiesKHR(
+            physicalDevice, pExternalSemaphoreInfo,
+            pExternalSemaphoreProperties);
+        return;
+    }
+
+    pExternalSemaphoreProperties->exportFromImportedHandleTypes = 0;
+    pExternalSemaphoreProperties->compatibleHandleTypes = 0;
+    pExternalSemaphoreProperties->externalSemaphoreFeatures = 0;
+}
+
+void GetPhysicalDeviceExternalFenceProperties(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo,
+    VkExternalFenceProperties* pExternalFenceProperties) {
+    ATRACE_CALL();
+
+    const auto& driver = GetData(physicalDevice).driver;
+
+    if (driver.GetPhysicalDeviceExternalFenceProperties) {
+        driver.GetPhysicalDeviceExternalFenceProperties(
+            physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
+        return;
+    }
+
+    if (driver.GetPhysicalDeviceExternalFencePropertiesKHR) {
+        driver.GetPhysicalDeviceExternalFencePropertiesKHR(
+            physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
+        return;
+    }
+
+    pExternalFenceProperties->exportFromImportedHandleTypes = 0;
+    pExternalFenceProperties->compatibleHandleTypes = 0;
+    pExternalFenceProperties->externalFenceFeatures = 0;
 }
 
 }  // namespace driver

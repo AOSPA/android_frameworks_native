@@ -371,10 +371,8 @@ public:
         data.writeStrongBinder(display);
         remote()->transact(BnSurfaceComposer::GET_DISPLAY_INFO, data, &reply);
         const status_t result = reply.readInt32();
-        if (result == NO_ERROR) {
-            memcpy(info, reply.readInplace(sizeof(DisplayInfo)), sizeof(DisplayInfo));
-        }
-        return result;
+        if (result != NO_ERROR) return result;
+        return reply.read(*info);
     }
 
     virtual status_t getDisplayConfigs(const sp<IBinder>& display, Vector<DisplayConfig>* configs) {
@@ -1093,22 +1091,22 @@ public:
         return NO_ERROR;
     }
 
-    virtual status_t notifyPowerHint(int32_t hintId) {
+    virtual status_t notifyPowerBoost(int32_t boostId) {
         Parcel data, reply;
         status_t error = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         if (error != NO_ERROR) {
-            ALOGE("notifyPowerHint: failed to write interface token: %d", error);
+            ALOGE("notifyPowerBoost: failed to write interface token: %d", error);
             return error;
         }
-        error = data.writeInt32(hintId);
+        error = data.writeInt32(boostId);
         if (error != NO_ERROR) {
-            ALOGE("notifyPowerHint: failed to write hintId: %d", error);
+            ALOGE("notifyPowerBoost: failed to write boostId: %d", error);
             return error;
         }
-        error = remote()->transact(BnSurfaceComposer::NOTIFY_POWER_HINT, data, &reply,
+        error = remote()->transact(BnSurfaceComposer::NOTIFY_POWER_BOOST, data, &reply,
                                    IBinder::FLAG_ONEWAY);
         if (error != NO_ERROR) {
-            ALOGE("notifyPowerHint: failed to transact: %d", error);
+            ALOGE("notifyPowerBoost: failed to transact: %d", error);
             return error;
         }
         return NO_ERROR;
@@ -1442,10 +1440,8 @@ status_t BnSurfaceComposer::onTransact(
             const sp<IBinder> display = data.readStrongBinder();
             const status_t result = getDisplayInfo(display, &info);
             reply->writeInt32(result);
-            if (result == NO_ERROR) {
-                memcpy(reply->writeInplace(sizeof(DisplayInfo)), &info, sizeof(DisplayInfo));
-            }
-            return NO_ERROR;
+            if (result != NO_ERROR) return result;
+            return reply->write(info);
         }
         case GET_DISPLAY_CONFIGS: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
@@ -1989,15 +1985,15 @@ status_t BnSurfaceComposer::onTransact(
             }
             return setDisplayBrightness(displayToken, brightness);
         }
-        case NOTIFY_POWER_HINT: {
+        case NOTIFY_POWER_BOOST: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            int32_t hintId;
-            status_t error = data.readInt32(&hintId);
+            int32_t boostId;
+            status_t error = data.readInt32(&boostId);
             if (error != NO_ERROR) {
-                ALOGE("notifyPowerHint: failed to read hintId: %d", error);
+                ALOGE("notifyPowerBoost: failed to read boostId: %d", error);
                 return error;
             }
-            return notifyPowerHint(hintId);
+            return notifyPowerBoost(boostId);
         }
         case SET_GLOBAL_SHADOW_SETTINGS: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
