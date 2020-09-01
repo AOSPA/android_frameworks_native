@@ -944,11 +944,16 @@ void SurfaceFlinger::init() {
 
     mComposerExtnIntf = composer::ComposerExtnLib::GetInstance();
     if (!mComposerExtnIntf) {
-        ALOGE("Failed to create composer extension");
+        ALOGE("Unable to get composer extension");
     } else {
         int ret = mComposerExtnIntf->CreateFrameScheduler(&mFrameSchedulerExtnIntf);
-        if (ret == -1 || !mFrameSchedulerExtnIntf) {
-            ALOGI("Failed to create frame scheduler extension");
+        if (ret) {
+            ALOGI("Unable to create frame scheduler extension");
+        }
+
+        ret = mComposerExtnIntf->CreateDisplayExtn(&mDisplayExtnIntf);
+        if (ret) {
+            ALOGI("Unable to create display extension");
         }
     }
 
@@ -1233,6 +1238,11 @@ void SurfaceFlinger::setDesiredActiveConfig(const ActiveConfigInfo& info) {
 
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->changeRefreshRate(mDesiredActiveConfig.type);
+    }
+
+    if (mDisplayExtnIntf && !mCheckPendingFence) {
+      const auto& refreshRate = mRefreshRateConfigs.getRefreshRate(mDesiredActiveConfig.configId);
+      mDisplayExtnIntf->SetContentFps(refreshRate->fps);
     }
 }
 
@@ -5306,8 +5316,9 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, int 
                 mScheduler->onScreenAcquired(mAppConnectionHandle);
                 mScheduler->resyncToHardwareVsync(true, getVsyncPeriod());
             }
-        } else if ((mPluggableVsyncPrioritized && (displayId != getInternalDisplayIdLocked())) ||
-                    displayId == getInternalDisplayIdLocked()) {
+        } else if ((mPluggableVsyncPrioritized && !display->getIsDisplayBuiltInType()) ||
+                   (displayId == getInternalDisplayIdLocked()) ||
+                   display->getIsDisplayBuiltInType()) {
             updateVsyncSource();
         }
 
