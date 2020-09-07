@@ -414,6 +414,7 @@ public:
     void setInputWindowsFinished();
 
     nsecs_t mVsyncTimeStamp = -1;
+    void NotifyIdleStatus();
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
