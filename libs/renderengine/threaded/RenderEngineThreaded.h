@@ -62,6 +62,7 @@ public:
     bool isProtected() const override;
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
+    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
     bool cleanupPostRender() override;
 
     status_t drawLayers(const DisplaySettings& display,
