@@ -745,7 +745,9 @@ void Scheduler::kernelIdleTimerCallback(TimerState state) {
 }
 
 void Scheduler::idleTimerCallback(TimerState state) {
-    handleTimerStateChanged(&mFeatures.idleTimer, state);
+    if (mHandleIdleTimeout) {
+        handleTimerStateChanged(&mFeatures.idleTimer, state);
+    }
     ATRACE_INT("ExpiredIdleTimer", static_cast<int>(state));
 }
 

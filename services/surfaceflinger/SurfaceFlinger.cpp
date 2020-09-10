@@ -878,7 +878,7 @@ void SurfaceFlinger::bootFinished() {
 
     }));
 
-    setupEarlyWakeUpFeature();
+    setupDisplayExtnFeatures();
 }
 
 uint32_t SurfaceFlinger::getNewTexture() {
@@ -1949,7 +1949,7 @@ void SurfaceFlinger::changeRefreshRateLocked(const RefreshRate& refreshRate,
     setDesiredActiveMode({refreshRate.getModeId(), event});
 
     uint32_t hwcDisplayId;
-    if (getHwcDisplayId(display, &hwcDisplayId)) {
+    if (isDisplayExtnEnabled() && getHwcDisplayId(display, &hwcDisplayId)) {
         setDisplayExtnActiveConfig(hwcDisplayId, refreshRate.getModeId().value());
     }
 }
@@ -3144,7 +3144,7 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
             }
         }
 
-        if (mEarlyWakeUpEnabled && isInternalDisplay) {
+        if (isDisplayExtnEnabled() && isInternalDisplay) {
             uint32_t hwcDisplayId = static_cast<uint32_t>(event.hwcDisplayId);
             bool isConnected = (event.connection == hal::Connection::CONNECTED);
             auto activeConfigId = getHwComposer().getActiveMode(displayId);
@@ -7498,7 +7498,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                                                    policy->defaultMode, vsyncPeriod);
 
         uint32_t hwcDisplayId;
-        if (getHwcDisplayId(display, &hwcDisplayId)) {
+        if (isDisplayExtnEnabled() && getHwcDisplayId(display, &hwcDisplayId)) {
             setDisplayExtnActiveConfig(hwcDisplayId, policy->defaultMode.value());
         }
 
@@ -7540,8 +7540,11 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
               preferredRefreshRate.getModeId().value());
         setDesiredActiveMode({preferredRefreshRate.getModeId(), Scheduler::ModeEvent::Changed});
         uint32_t hwcDisplayId;
-        if (getHwcDisplayId(display, &hwcDisplayId)) {
+        if (isDisplayExtnEnabled() && getHwcDisplayId(display, &hwcDisplayId)) {
             setDisplayExtnActiveConfig(hwcDisplayId, preferredRefreshRate.getModeId().value());
+            if (mDynamicSfIdleEnabled) {
+                setupIdleTimeoutHandling(hwcDisplayId);
+            }
         }
     } else {
         LOG_ALWAYS_FATAL("Desired display mode not allowed: %d",
@@ -8037,11 +8040,8 @@ void SurfaceFlinger::updateDisplayExtension(uint32_t displayId, uint32_t configI
 }
 
 void SurfaceFlinger::setDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) {
-    if (!mEarlyWakeUpEnabled) {
-        return;
-    }
-
     ALOGV("setDisplayExtnActiveConfig: Display:%d, ActiveConfig:%d", displayId, activeConfigId);
+
 #ifdef EARLY_WAKEUP_FEATURE
     mDisplayExtnIntf->SetActiveConfig(displayId, activeConfigId);
 #endif
@@ -8139,12 +8139,22 @@ void SurfaceFlinger::NotifyIdleStatus() {
   mScheduler->setIdleState();
 }
 
-void SurfaceFlinger::setupEarlyWakeUpFeature() {
+void SurfaceFlinger::setupDisplayExtnFeatures() {
 #ifdef EARLY_WAKEUP_FEATURE
     mEarlyWakeUpEnabled = false;
+    mDynamicSfIdleEnabled = false;
+    if (!mDisplayExtnIntf) {
+        return;
+    }
+
     char propValue[PROPERTY_VALUE_MAX];
     property_get("vendor.display.enable_early_wakeup", propValue, "0");
-    if (mDisplayExtnIntf && (atoi(propValue) == 1)) {
+    bool enableEarlyWakeUp = (atoi(propValue) == 1);
+
+    property_get("vendor.display.disable_dynamic_sf_idle", propValue, "0");
+    bool enableDynamicSfIdle = mScheduler->isIdleTimerEnabled() && (atoi(propValue) == 0);
+
+    if (enableEarlyWakeUp || enableDynamicSfIdle) {
         for (const auto& display : mDisplaysList) {
             // Register Internal Physical Displays
             if (isInternalDisplay(display)) {
@@ -8155,12 +8165,16 @@ void SurfaceFlinger::setupEarlyWakeUpFeature() {
                         PhysicalDisplayId(displayId.value));
                     LOG_ALWAYS_FATAL_IF(!configId, "HWC returned no active config");
                     updateDisplayExtension(hwcDisplayId, *configId, true);
+                    if (enableDynamicSfIdle && display->isPrimary()) {
+                        setupIdleTimeoutHandling(hwcDisplayId);
+                    }
                 }
             }
         }
-        mEarlyWakeUpEnabled = true;
+        mEarlyWakeUpEnabled = enableEarlyWakeUp;
+        mDynamicSfIdleEnabled = enableDynamicSfIdle;
     }
-    ALOGI("Early Wakeup Feature enabled: %d", mEarlyWakeUpEnabled);
+    ALOGI("Early Wakeup: %d, Dynamic SF Idle: %d", mEarlyWakeUpEnabled, mDynamicSfIdleEnabled);
 #endif
 }
 
@@ -8176,6 +8190,13 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
 #endif
         }
     }
+}
+
+void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
+#ifdef SMART_DISPLAY_CONFIG
+    bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
+    mScheduler->handleIdleTimeout(isSmartConfig);
+#endif
 }
 
 } // namespace android
