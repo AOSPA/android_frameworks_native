@@ -49,6 +49,7 @@
 #include <deque>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <InputListener.h>
 #include <InputReporterInterface.h>
@@ -123,10 +124,12 @@ public:
     virtual bool transferTouchFocus(const sp<IBinder>& fromToken,
                                     const sp<IBinder>& toToken) override;
 
-    virtual status_t registerInputChannel(const sp<InputChannel>& inputChannel) override;
-    virtual status_t registerInputMonitor(const sp<InputChannel>& inputChannel, int32_t displayId,
-                                          bool isGestureMonitor) override;
-    virtual status_t unregisterInputChannel(const sp<InputChannel>& inputChannel) override;
+    virtual status_t registerInputChannel(
+            const std::shared_ptr<InputChannel>& inputChannel) override;
+    virtual void setFocusedWindow(const FocusRequest&) override;
+    virtual status_t registerInputMonitor(const std::shared_ptr<InputChannel>& inputChannel,
+                                          int32_t displayId, bool isGestureMonitor) override;
+    virtual status_t unregisterInputChannel(const InputChannel& inputChannel) override;
     virtual status_t pilferPointers(const sp<IBinder>& token) override;
 
 private:
@@ -209,8 +212,8 @@ private:
             return std::hash<IBinder*>{}(b.get());
         }
     };
-    std::unordered_map<sp<IBinder>, sp<InputChannel>, IBinderHash> mInputChannelsByToken
-            GUARDED_BY(mLock);
+    std::unordered_map<sp<IBinder>, std::shared_ptr<InputChannel>, IBinderHash>
+            mInputChannelsByToken GUARDED_BY(mLock);
 
     // Finds the display ID of the gesture monitor identified by the provided token.
     std::optional<int32_t> findGestureMonitorDisplayByTokenLocked(const sp<IBinder>& token)
@@ -300,7 +303,8 @@ private:
             REQUIRES(mLock);
     sp<InputWindowHandle> getWindowHandleLocked(const sp<IBinder>& windowHandleToken) const
             REQUIRES(mLock);
-    sp<InputChannel> getInputChannelLocked(const sp<IBinder>& windowToken) const REQUIRES(mLock);
+    std::shared_ptr<InputChannel> getInputChannelLocked(const sp<IBinder>& windowToken) const
+            REQUIRES(mLock);
     bool hasWindowHandleLocked(const sp<InputWindowHandle>& windowHandle) const REQUIRES(mLock);
 
     /*
@@ -325,6 +329,11 @@ private:
 
     // Dispatcher state at time of last ANR.
     std::string mLastAnrState GUARDED_BY(mLock);
+
+    // The connection tokens of the channels that the user last interacted, for debugging
+    std::unordered_set<sp<IBinder>, IBinderHash> mInteractionConnectionTokens GUARDED_BY(mLock);
+    void updateInteractionTokensLocked(const EventEntry& entry,
+                                       const std::vector<InputTarget>& targets) REQUIRES(mLock);
 
     // Dispatch inbound events.
     bool dispatchConfigurationChangedLocked(nsecs_t currentTime, ConfigurationChangedEntry* entry)
@@ -374,8 +383,8 @@ private:
     // prevent unneeded wakeups.
     AnrTracker mAnrTracker GUARDED_BY(mLock);
     void extendAnrTimeoutsLocked(const sp<InputApplicationHandle>& application,
-                                 const sp<IBinder>& connectionToken, nsecs_t timeoutExtension)
-            REQUIRES(mLock);
+                                 const sp<IBinder>& connectionToken,
+                                 std::chrono::nanoseconds timeoutExtension) REQUIRES(mLock);
 
     // Contains the last window which received a hover event.
     sp<InputWindowHandle> mLastHoverWindowHandle GUARDED_BY(mLock);
@@ -453,8 +462,8 @@ private:
     void synthesizeCancelationEventsForMonitorsLocked(
             const CancelationOptions& options,
             std::unordered_map<int32_t, std::vector<Monitor>>& monitorsByDisplay) REQUIRES(mLock);
-    void synthesizeCancelationEventsForInputChannelLocked(const sp<InputChannel>& channel,
-                                                          const CancelationOptions& options)
+    void synthesizeCancelationEventsForInputChannelLocked(
+            const std::shared_ptr<InputChannel>& channel, const CancelationOptions& options)
             REQUIRES(mLock);
     void synthesizeCancelationEventsForConnectionLocked(const sp<Connection>& connection,
                                                         const CancelationOptions& options)
@@ -475,11 +484,11 @@ private:
     void logDispatchStateLocked() REQUIRES(mLock);
 
     // Registration.
-    void removeMonitorChannelLocked(const sp<InputChannel>& inputChannel) REQUIRES(mLock);
+    void removeMonitorChannelLocked(const InputChannel& inputChannel) REQUIRES(mLock);
     void removeMonitorChannelLocked(
-            const sp<InputChannel>& inputChannel,
+            const InputChannel& inputChannel,
             std::unordered_map<int32_t, std::vector<Monitor>>& monitorsByDisplay) REQUIRES(mLock);
-    status_t unregisterInputChannelLocked(const sp<InputChannel>& inputChannel, bool notify)
+    status_t unregisterInputChannelLocked(const InputChannel& inputChannel, bool notify)
             REQUIRES(mLock);
 
     // Interesting events that we might like to log or tell the framework about.

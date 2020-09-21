@@ -22,12 +22,13 @@
 #include <condition_variable>
 #include <fstream>
 
-#include <gtest/gtest.h>
 #include <cutils/properties.h>
+#include <gtest/gtest.h>
 #include <renderengine/RenderEngine.h>
 #include <sync/sync.h>
 #include <ui/PixelFormat.h>
 #include "../gl/GLESRenderEngine.h"
+#include "../threaded/RenderEngineThreaded.h"
 
 constexpr int DEFAULT_DISPLAY_WIDTH = 128;
 constexpr int DEFAULT_DISPLAY_HEIGHT = 256;
@@ -40,14 +41,15 @@ struct RenderEngineTest : public ::testing::Test {
     static void SetUpTestSuite() {
         sRE = renderengine::gl::GLESRenderEngine::create(
                 renderengine::RenderEngineCreationArgs::Builder()
-                    .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
-                    .setImageCacheSize(1)
-                    .setUseColorManagerment(false)
-                    .setEnableProtectedContext(false)
-                    .setPrecacheToneMapperShaderOnly(false)
-                    .setSupportsBackgroundBlur(true)
-                    .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
-        .build());
+                        .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
+                        .setImageCacheSize(1)
+                        .setUseColorManagerment(false)
+                        .setEnableProtectedContext(false)
+                        .setPrecacheToneMapperShaderOnly(false)
+                        .setSupportsBackgroundBlur(true)
+                        .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
+                        .setRenderEngineType(renderengine::RenderEngine::RenderEngineType::GLES)
+                        .build());
     }
 
     static void TearDownTestSuite() {
@@ -252,8 +254,8 @@ struct RenderEngineTest : public ::testing::Test {
                     std::vector<const renderengine::LayerSettings*> layers,
                     sp<GraphicBuffer> buffer) {
         base::unique_fd fence;
-        status_t status = sRE->drawLayers(settings, layers, buffer->getNativeBuffer(), true,
-                                          base::unique_fd(), &fence);
+        status_t status =
+                sRE->drawLayers(settings, layers, buffer, true, base::unique_fd(), &fence);
         sCurrentBuffer = buffer;
 
         int fd = fence.release();
@@ -1004,8 +1006,7 @@ TEST_F(RenderEngineTest, drawLayers_nullOutputFence) {
     layer.alpha = 1.0;
     layers.push_back(&layer);
 
-    status_t status = sRE->drawLayers(settings, layers, mBuffer->getNativeBuffer(), true,
-                                      base::unique_fd(), nullptr);
+    status_t status = sRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd(), nullptr);
     sCurrentBuffer = mBuffer;
     ASSERT_EQ(NO_ERROR, status);
     expectBufferColor(fullscreenRect(), 255, 0, 0, 255);
@@ -1023,8 +1024,7 @@ TEST_F(RenderEngineTest, drawLayers_doesNotCacheFramebuffer) {
     layer.alpha = 1.0;
     layers.push_back(&layer);
 
-    status_t status = sRE->drawLayers(settings, layers, mBuffer->getNativeBuffer(), false,
-                                      base::unique_fd(), nullptr);
+    status_t status = sRE->drawLayers(settings, layers, mBuffer, false, base::unique_fd(), nullptr);
     sCurrentBuffer = mBuffer;
     ASSERT_EQ(NO_ERROR, status);
     ASSERT_FALSE(sRE->isFramebufferImageCachedForTesting(mBuffer->getId()));
@@ -1414,11 +1414,9 @@ TEST_F(RenderEngineTest, cleanupPostRender_cleansUpOnce) {
     layers.push_back(&layer);
 
     base::unique_fd fenceOne;
-    sRE->drawLayers(settings, layers, mBuffer->getNativeBuffer(), true, base::unique_fd(),
-                    &fenceOne);
+    sRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd(), &fenceOne);
     base::unique_fd fenceTwo;
-    sRE->drawLayers(settings, layers, mBuffer->getNativeBuffer(), true, std::move(fenceOne),
-                    &fenceTwo);
+    sRE->drawLayers(settings, layers, mBuffer, true, std::move(fenceOne), &fenceTwo);
 
     const int fd = fenceTwo.get();
     if (fd >= 0) {

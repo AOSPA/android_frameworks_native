@@ -390,8 +390,9 @@ bool InputReader::shouldDropVirtualKeyLocked(nsecs_t now, int32_t keyCode, int32
     }
 }
 
-sp<PointerControllerInterface> InputReader::getPointerControllerLocked(int32_t deviceId) {
-    sp<PointerControllerInterface> controller = mPointerController.promote();
+std::shared_ptr<PointerControllerInterface> InputReader::getPointerControllerLocked(
+        int32_t deviceId) {
+    std::shared_ptr<PointerControllerInterface> controller = mPointerController.lock();
     if (controller == nullptr) {
         controller = mPolicy->obtainPointerController(deviceId);
         mPointerController = controller;
@@ -401,7 +402,7 @@ sp<PointerControllerInterface> InputReader::getPointerControllerLocked(int32_t d
 }
 
 void InputReader::updatePointerDisplayLocked() {
-    sp<PointerControllerInterface> controller = mPointerController.promote();
+    std::shared_ptr<PointerControllerInterface> controller = mPointerController.lock();
     if (controller == nullptr) {
         return;
     }
@@ -424,9 +425,9 @@ void InputReader::updatePointerDisplayLocked() {
 }
 
 void InputReader::fadePointerLocked() {
-    sp<PointerControllerInterface> controller = mPointerController.promote();
+    std::shared_ptr<PointerControllerInterface> controller = mPointerController.lock();
     if (controller != nullptr) {
-        controller->fade(PointerControllerInterface::TRANSITION_GRADUAL);
+        controller->fade(PointerControllerInterface::Transition::GRADUAL);
     }
 }
 
@@ -558,12 +559,12 @@ void InputReader::requestRefreshConfiguration(uint32_t changes) {
     }
 }
 
-void InputReader::vibrate(int32_t deviceId, const nsecs_t* pattern, size_t patternSize,
+void InputReader::vibrate(int32_t deviceId, const std::vector<VibrationElement>& pattern,
                           ssize_t repeat, int32_t token) {
     AutoMutex _l(mLock);
     InputDevice* device = findInputDevice(deviceId);
     if (device) {
-        device->vibrate(pattern, patternSize, repeat, token);
+        device->vibrate(pattern, repeat, token);
     }
 }
 
@@ -725,7 +726,8 @@ void InputReader::ContextImpl::fadePointer() {
     mReader->fadePointerLocked();
 }
 
-sp<PointerControllerInterface> InputReader::ContextImpl::getPointerController(int32_t deviceId) {
+std::shared_ptr<PointerControllerInterface> InputReader::ContextImpl::getPointerController(
+        int32_t deviceId) {
     // lock is already held by the input loop
     return mReader->getPointerControllerLocked(deviceId);
 }

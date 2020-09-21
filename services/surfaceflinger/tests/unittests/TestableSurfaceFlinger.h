@@ -202,12 +202,19 @@ public:
                         std::unique_ptr<EventControlThread> eventControlThread,
                         std::unique_ptr<EventThread> appEventThread,
                         std::unique_ptr<EventThread> sfEventThread,
-                        bool useContentDetectionV2 = false) {
+                        bool hasMultipleConfigs = false) {
         std::vector<std::shared_ptr<const HWC2::Display::Config>> configs{
                 HWC2::Display::Config::Builder(mDisplay, 0)
-                        .setVsyncPeriod(int32_t(16666667))
+                        .setVsyncPeriod(16'666'667)
                         .setConfigGroup(0)
                         .build()};
+
+        if (hasMultipleConfigs) {
+            configs.emplace_back(HWC2::Display::Config::Builder(mDisplay, 1)
+                                         .setVsyncPeriod(11'111'111)
+                                         .setConfigGroup(0)
+                                         .build());
+        }
 
         mFlinger->mRefreshRateConfigs = std::make_unique<
                 scheduler::RefreshRateConfigs>(configs, /*currentConfig=*/HwcConfigIndexType(0));
@@ -218,9 +225,10 @@ public:
         mFlinger->mPhaseConfiguration =
                 mFactory.createPhaseConfiguration(*mFlinger->mRefreshRateConfigs);
 
+        constexpr bool kUseContentDetectionV2 = false;
         mScheduler =
                 new TestableScheduler(std::move(primaryDispSync), std::move(eventControlThread),
-                                      *mFlinger->mRefreshRateConfigs, useContentDetectionV2);
+                                      *mFlinger->mRefreshRateConfigs, kUseContentDetectionV2);
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
         mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));
@@ -321,6 +329,8 @@ public:
         return mFlinger->onInitializeDisplays();
     }
 
+    auto notifyPowerBoost(int32_t boostId) { return mFlinger->notifyPowerBoost(boostId); }
+
     // Allow reading display state without locking, as if called on the SF main thread.
     auto setPowerModeInternal(const sp<DisplayDevice>& display,
                               hal::PowerMode mode) NO_THREAD_SAFETY_ANALYSIS {
@@ -331,7 +341,7 @@ public:
 
     auto captureScreenImplLocked(const RenderArea& renderArea,
                                  SurfaceFlinger::TraverseLayersFunction traverseLayers,
-                                 ANativeWindowBuffer* buffer, bool useIdentityTransform,
+                                 const sp<GraphicBuffer>& buffer, bool useIdentityTransform,
                                  bool forSystem, int* outSyncFd, bool regionSampling) {
         bool ignored;
         return mFlinger->captureScreenImplLocked(renderArea, traverseLayers, buffer,
@@ -339,9 +349,9 @@ public:
                                                  regionSampling, ignored);
     }
 
-    auto traverseLayersInDisplay(const sp<const DisplayDevice>& display,
-                                 const LayerVector::Visitor& visitor) {
-        return mFlinger->SurfaceFlinger::traverseLayersInDisplay(display, visitor);
+    auto traverseLayersInLayerStack(ui::LayerStack layerStack,
+                                    const LayerVector::Visitor& visitor) {
+        return mFlinger->SurfaceFlinger::traverseLayersInLayerStack(layerStack, visitor);
     }
 
     auto getDisplayNativePrimaries(const sp<IBinder>& displayToken,
@@ -633,7 +643,7 @@ public:
             if (const auto type = mCreationArgs.connectionType) {
                 LOG_ALWAYS_FATAL_IF(!displayId);
                 LOG_ALWAYS_FATAL_IF(!mHwcDisplayId);
-                state.physical = {*displayId, *type, *mHwcDisplayId};
+                state.physical = {.id = *displayId, .type = *type, .hwcDisplayId = *mHwcDisplayId};
             }
 
             state.isSecure = mCreationArgs.isSecure;

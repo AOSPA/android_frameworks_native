@@ -23,6 +23,7 @@
 
 #include <type_traits>
 
+#include <android/hardware/power/Boost.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplayColorProfile.h>
 #include <compositionengine/impl/Display.h>
@@ -56,6 +57,8 @@ namespace android {
 namespace {
 
 namespace hal = android::hardware::graphics::composer::hal;
+
+using android::hardware::power::Boost;
 
 using testing::_;
 using testing::AnyNumber;
@@ -1347,6 +1350,30 @@ TEST_F(DisplayTransactionTest, resetDisplayStateClearsState) {
 }
 
 /* ------------------------------------------------------------------------
+ * SurfaceFlinger::notifyPowerBoost
+ */
+
+TEST_F(DisplayTransactionTest, notifyPowerBoostNotifiesTouchEvent) {
+    mFlinger.scheduler()->replaceTouchTimer(100);
+    std::this_thread::sleep_for(10ms);                  // wait for callback to be triggered
+    EXPECT_TRUE(mFlinger.scheduler()->isTouchActive()); // Starting timer activates touch
+
+    std::this_thread::sleep_for(110ms); // wait for reset touch timer to expire and trigger callback
+    EXPECT_FALSE(mFlinger.scheduler()->isTouchActive());
+
+    EXPECT_EQ(NO_ERROR, mFlinger.notifyPowerBoost(static_cast<int32_t>(Boost::CAMERA_SHOT)));
+    std::this_thread::sleep_for(10ms); // wait for callback to maybe be triggered
+    EXPECT_FALSE(mFlinger.scheduler()->isTouchActive());
+
+    std::this_thread::sleep_for(110ms); // wait for reset touch timer to expire and trigger callback
+    EXPECT_FALSE(mFlinger.scheduler()->isTouchActive());
+
+    EXPECT_EQ(NO_ERROR, mFlinger.notifyPowerBoost(static_cast<int32_t>(Boost::INTERACTION)));
+    std::this_thread::sleep_for(10ms); // wait for callback to be triggered.
+    EXPECT_TRUE(mFlinger.scheduler()->isTouchActive());
+}
+
+/* ------------------------------------------------------------------------
  * DisplayDevice::GetBestColorMode
  */
 class GetBestColorModeTest : public DisplayTransactionTest {
@@ -1794,7 +1821,7 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
         ASSERT_TRUE(displayId);
         const auto hwcDisplayId = Case::Display::HWC_DISPLAY_ID_OPT::value;
         ASSERT_TRUE(hwcDisplayId);
-        state.physical = {*displayId, *connectionType, *hwcDisplayId};
+        state.physical = {.id = *displayId, .type = *connectionType, .hwcDisplayId = *hwcDisplayId};
     }
 
     state.isSecure = static_cast<bool>(Case::Display::SECURE);
@@ -1970,7 +1997,9 @@ void HandleTransactionLockedTest::verifyDisplayIsConnected(const sp<IBinder>& di
         ASSERT_TRUE(displayId);
         const auto hwcDisplayId = Case::Display::HWC_DISPLAY_ID_OPT::value;
         ASSERT_TRUE(hwcDisplayId);
-        expectedPhysical = {*displayId, *connectionType, *hwcDisplayId};
+        expectedPhysical = {.id = *displayId,
+                            .type = *connectionType,
+                            .hwcDisplayId = *hwcDisplayId};
     }
 
     // The display should have been set up in the current display state

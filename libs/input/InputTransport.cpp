@@ -133,12 +133,11 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
 
     // Write the header
     msg->header.type = header.type;
+    msg->header.seq = header.seq;
 
     // Write the body
     switch(header.type) {
         case InputMessage::Type::KEY: {
-            // uint32_t seq
-            msg->body.key.seq = body.key.seq;
             // int32_t eventId
             msg->body.key.eventId = body.key.eventId;
             // nsecs_t eventTime
@@ -168,8 +167,6 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             break;
         }
         case InputMessage::Type::MOTION: {
-            // uint32_t seq
-            msg->body.motion.seq = body.motion.seq;
             // int32_t eventId
             msg->body.motion.eventId = body.motion.eventId;
             // nsecs_t eventTime
@@ -232,12 +229,10 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             break;
         }
         case InputMessage::Type::FINISHED: {
-            msg->body.finished.seq = body.finished.seq;
             msg->body.finished.handled = body.finished.handled;
             break;
         }
         case InputMessage::Type::FOCUS: {
-            msg->body.focus.seq = body.focus.seq;
             msg->body.focus.eventId = body.focus.eventId;
             msg->body.focus.hasFocus = body.focus.hasFocus;
             msg->body.focus.inTouchMode = body.focus.inTouchMode;
@@ -248,39 +243,40 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
 
 // --- InputChannel ---
 
-sp<InputChannel> InputChannel::create(const std::string& name, android::base::unique_fd fd,
-                                      sp<IBinder> token) {
+std::unique_ptr<InputChannel> InputChannel::create(const std::string& name,
+                                                   android::base::unique_fd fd, sp<IBinder> token) {
     const int result = fcntl(fd, F_SETFL, O_NONBLOCK);
     if (result != 0) {
         LOG_ALWAYS_FATAL("channel '%s' ~ Could not make socket non-blocking: %s", name.c_str(),
                          strerror(errno));
         return nullptr;
     }
-    return new InputChannel(name, std::move(fd), token);
+    // using 'new' to access a non-public constructor
+    return std::unique_ptr<InputChannel>(new InputChannel(name, std::move(fd), token));
 }
 
-InputChannel::InputChannel(const std::string& name, android::base::unique_fd fd, sp<IBinder> token)
-      : mName(name), mFd(std::move(fd)), mToken(token) {
+InputChannel::InputChannel(const std::string name, android::base::unique_fd fd, sp<IBinder> token)
+      : mName(std::move(name)), mFd(std::move(fd)), mToken(std::move(token)) {
     if (DEBUG_CHANNEL_LIFECYCLE) {
-        ALOGD("Input channel constructed: name='%s', fd=%d", mName.c_str(), mFd.get());
+        ALOGD("Input channel constructed: name='%s', fd=%d", getName().c_str(), getFd().get());
     }
 }
 
 InputChannel::~InputChannel() {
     if (DEBUG_CHANNEL_LIFECYCLE) {
-        ALOGD("Input channel destroyed: name='%s', fd=%d", mName.c_str(), mFd.get());
+        ALOGD("Input channel destroyed: name='%s', fd=%d", getName().c_str(), getFd().get());
     }
 }
 
 status_t InputChannel::openInputChannelPair(const std::string& name,
-        sp<InputChannel>& outServerChannel, sp<InputChannel>& outClientChannel) {
+                                            std::unique_ptr<InputChannel>& outServerChannel,
+                                            std::unique_ptr<InputChannel>& outClientChannel) {
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets)) {
         status_t result = -errno;
-        ALOGE("channel '%s' ~ Could not create socket pair.  errno=%d",
-                name.c_str(), errno);
-        outServerChannel.clear();
-        outClientChannel.clear();
+        ALOGE("channel '%s' ~ Could not create socket pair.  errno=%d", name.c_str(), errno);
+        outServerChannel.reset();
+        outClientChannel.reset();
         return result;
     }
 
@@ -308,7 +304,7 @@ status_t InputChannel::sendMessage(const InputMessage* msg) {
     msg->getSanitizedCopy(&cleanMsg);
     ssize_t nWrite;
     do {
-        nWrite = ::send(mFd.get(), &cleanMsg, msgLength, MSG_DONTWAIT | MSG_NOSIGNAL);
+        nWrite = ::send(getFd(), &cleanMsg, msgLength, MSG_DONTWAIT | MSG_NOSIGNAL);
     } while (nWrite == -1 && errno == EINTR);
 
     if (nWrite < 0) {
@@ -343,7 +339,7 @@ status_t InputChannel::sendMessage(const InputMessage* msg) {
 status_t InputChannel::receiveMessage(InputMessage* msg) {
     ssize_t nRead;
     do {
-        nRead = ::recv(mFd.get(), msg, sizeof(InputMessage), MSG_DONTWAIT);
+        nRead = ::recv(getFd(), msg, sizeof(InputMessage), MSG_DONTWAIT);
     } while (nRead == -1 && errno == EINTR);
 
     if (nRead < 0) {
@@ -380,10 +376,10 @@ status_t InputChannel::receiveMessage(InputMessage* msg) {
     return OK;
 }
 
-sp<InputChannel> InputChannel::dup() const {
+std::unique_ptr<InputChannel> InputChannel::dup() const {
     android::base::unique_fd newFd(::dup(getFd()));
     if (!newFd.ok()) {
-        ALOGE("Could not duplicate fd %i for channel %s: %s", getFd(), mName.c_str(),
+        ALOGE("Could not duplicate fd %i for channel %s: %s", getFd().get(), getName().c_str(),
               strerror(errno));
         const bool hitFdLimit = errno == EMFILE || errno == ENFILE;
         // If this process is out of file descriptors, then throwing that might end up exploding
@@ -394,34 +390,25 @@ sp<InputChannel> InputChannel::dup() const {
                             getName().c_str());
         return nullptr;
     }
-    return InputChannel::create(mName, std::move(newFd), mToken);
+    return InputChannel::create(getName(), std::move(newFd), getConnectionToken());
 }
 
-status_t InputChannel::write(Parcel& out) const {
-    status_t s = out.writeCString(getName().c_str());
-    if (s != OK) {
-        return s;
+status_t InputChannel::writeToParcel(android::Parcel* parcel) const {
+    if (parcel == nullptr) {
+        ALOGE("%s: Null parcel", __func__);
+        return BAD_VALUE;
     }
-
-    s = out.writeStrongBinder(mToken);
-    if (s != OK) {
-        return s;
-    }
-
-    s = out.writeUniqueFileDescriptor(mFd);
-    return s;
+    return parcel->writeStrongBinder(mToken)
+            ?: parcel->writeUtf8AsUtf16(mName) ?: parcel->writeUniqueFileDescriptor(mFd);
 }
 
-sp<InputChannel> InputChannel::read(const Parcel& from) {
-    std::string name = from.readCString();
-    sp<IBinder> token = from.readStrongBinder();
-    android::base::unique_fd rawFd;
-    status_t fdResult = from.readUniqueFileDescriptor(&rawFd);
-    if (fdResult != OK) {
-        return nullptr;
+status_t InputChannel::readFromParcel(const android::Parcel* parcel) {
+    if (parcel == nullptr) {
+        ALOGE("%s: Null parcel", __func__);
+        return BAD_VALUE;
     }
-
-    return InputChannel::create(name, std::move(rawFd), token);
+    mToken = parcel->readStrongBinder();
+    return parcel->readUtf8FromUtf16(&mName) ?: parcel->readUniqueFileDescriptor(&mFd);
 }
 
 sp<IBinder> InputChannel::getConnectionToken() const {
@@ -430,9 +417,7 @@ sp<IBinder> InputChannel::getConnectionToken() const {
 
 // --- InputPublisher ---
 
-InputPublisher::InputPublisher(const sp<InputChannel>& channel) :
-        mChannel(channel) {
-}
+InputPublisher::InputPublisher(const std::shared_ptr<InputChannel>& channel) : mChannel(channel) {}
 
 InputPublisher::~InputPublisher() {
 }
@@ -463,7 +448,7 @@ status_t InputPublisher::publishKeyEvent(uint32_t seq, int32_t eventId, int32_t 
 
     InputMessage msg;
     msg.header.type = InputMessage::Type::KEY;
-    msg.body.key.seq = seq;
+    msg.header.seq = seq;
     msg.body.key.eventId = eventId;
     msg.body.key.deviceId = deviceId;
     msg.body.key.source = source;
@@ -521,7 +506,7 @@ status_t InputPublisher::publishMotionEvent(
 
     InputMessage msg;
     msg.header.type = InputMessage::Type::MOTION;
-    msg.body.motion.seq = seq;
+    msg.header.seq = seq;
     msg.body.motion.eventId = eventId;
     msg.body.motion.deviceId = deviceId;
     msg.body.motion.source = source;
@@ -565,7 +550,7 @@ status_t InputPublisher::publishFocusEvent(uint32_t seq, int32_t eventId, bool h
 
     InputMessage msg;
     msg.header.type = InputMessage::Type::FOCUS;
-    msg.body.focus.seq = seq;
+    msg.header.seq = seq;
     msg.body.focus.eventId = eventId;
     msg.body.focus.hasFocus = hasFocus ? 1 : 0;
     msg.body.focus.inTouchMode = inTouchMode ? 1 : 0;
@@ -589,17 +574,15 @@ status_t InputPublisher::receiveFinishedSignal(uint32_t* outSeq, bool* outHandle
                 mChannel->getName().c_str(), msg.header.type);
         return UNKNOWN_ERROR;
     }
-    *outSeq = msg.body.finished.seq;
+    *outSeq = msg.header.seq;
     *outHandled = msg.body.finished.handled == 1;
     return OK;
 }
 
 // --- InputConsumer ---
 
-InputConsumer::InputConsumer(const sp<InputChannel>& channel) :
-        mResampleTouch(isTouchResamplingEnabled()),
-        mChannel(channel), mMsgDeferred(false) {
-}
+InputConsumer::InputConsumer(const std::shared_ptr<InputChannel>& channel)
+      : mResampleTouch(isTouchResamplingEnabled()), mChannel(channel), mMsgDeferred(false) {}
 
 InputConsumer::~InputConsumer() {
 }
@@ -661,7 +644,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 if (!keyEvent) return NO_MEMORY;
 
                 initializeKeyEvent(keyEvent, &mMsg);
-                *outSeq = mMsg.body.key.seq;
+                *outSeq = mMsg.header.seq;
                 *outEvent = keyEvent;
                 if (DEBUG_TRANSPORT_ACTIONS) {
                     ALOGD("channel '%s' consumer ~ consumed key event, seq=%u",
@@ -673,9 +656,9 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
             case InputMessage::Type::MOTION: {
                 ssize_t batchIndex = findBatch(mMsg.body.motion.deviceId, mMsg.body.motion.source);
                 if (batchIndex >= 0) {
-                    Batch& batch = mBatches.editItemAt(batchIndex);
+                    Batch& batch = mBatches[batchIndex];
                     if (canAddSample(batch, &mMsg)) {
-                        batch.samples.push(mMsg);
+                        batch.samples.push_back(mMsg);
                         if (DEBUG_TRANSPORT_ACTIONS) {
                             ALOGD("channel '%s' consumer ~ appended to batch event",
                                   mChannel->getName().c_str());
@@ -686,18 +669,18 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                         // No need to process events that we are going to cancel anyways
                         const size_t count = batch.samples.size();
                         for (size_t i = 0; i < count; i++) {
-                            const InputMessage& msg = batch.samples.itemAt(i);
-                            sendFinishedSignal(msg.body.motion.seq, false);
+                            const InputMessage& msg = batch.samples[i];
+                            sendFinishedSignal(msg.header.seq, false);
                         }
-                        batch.samples.removeItemsAt(0, count);
-                        mBatches.removeAt(batchIndex);
+                        batch.samples.erase(batch.samples.begin(), batch.samples.begin() + count);
+                        mBatches.erase(mBatches.begin() + batchIndex);
                     } else {
                         // We cannot append to the batch in progress, so we need to consume
                         // the previous batch right now and defer the new message until later.
                         mMsgDeferred = true;
                         status_t result = consumeSamples(factory, batch, batch.samples.size(),
                                                          outSeq, outEvent);
-                        mBatches.removeAt(batchIndex);
+                        mBatches.erase(mBatches.begin() + batchIndex);
                         if (result) {
                             return result;
                         }
@@ -713,9 +696,9 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 // Start a new batch if needed.
                 if (mMsg.body.motion.action == AMOTION_EVENT_ACTION_MOVE ||
                     mMsg.body.motion.action == AMOTION_EVENT_ACTION_HOVER_MOVE) {
-                    mBatches.push();
-                    Batch& batch = mBatches.editTop();
-                    batch.samples.push(mMsg);
+                    Batch batch;
+                    batch.samples.push_back(mMsg);
+                    mBatches.push_back(batch);
                     if (DEBUG_TRANSPORT_ACTIONS) {
                         ALOGD("channel '%s' consumer ~ started batch event",
                               mChannel->getName().c_str());
@@ -728,7 +711,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
 
                 updateTouchState(mMsg);
                 initializeMotionEvent(motionEvent, &mMsg);
-                *outSeq = mMsg.body.motion.seq;
+                *outSeq = mMsg.header.seq;
                 *outEvent = motionEvent;
 
                 if (DEBUG_TRANSPORT_ACTIONS) {
@@ -749,7 +732,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 if (!focusEvent) return NO_MEMORY;
 
                 initializeFocusEvent(focusEvent, &mMsg);
-                *outSeq = mMsg.body.focus.seq;
+                *outSeq = mMsg.header.seq;
                 *outEvent = focusEvent;
                 break;
             }
@@ -763,10 +746,10 @@ status_t InputConsumer::consumeBatch(InputEventFactoryInterface* factory,
     status_t result;
     for (size_t i = mBatches.size(); i > 0; ) {
         i--;
-        Batch& batch = mBatches.editItemAt(i);
+        Batch& batch = mBatches[i];
         if (frameTime < 0) {
             result = consumeSamples(factory, batch, batch.samples.size(), outSeq, outEvent);
-            mBatches.removeAt(i);
+            mBatches.erase(mBatches.begin() + i);
             return result;
         }
 
@@ -781,11 +764,11 @@ status_t InputConsumer::consumeBatch(InputEventFactoryInterface* factory,
 
         result = consumeSamples(factory, batch, split + 1, outSeq, outEvent);
         const InputMessage* next;
-        if (batch.samples.isEmpty()) {
-            mBatches.removeAt(i);
+        if (batch.samples.empty()) {
+            mBatches.erase(mBatches.begin() + i);
             next = nullptr;
         } else {
-            next = &batch.samples.itemAt(0);
+            next = &batch.samples[0];
         }
         if (!result && mResampleTouch) {
             resampleTouchState(sampleTime, static_cast<MotionEvent*>(*outEvent), next);
@@ -803,20 +786,20 @@ status_t InputConsumer::consumeSamples(InputEventFactoryInterface* factory,
 
     uint32_t chain = 0;
     for (size_t i = 0; i < count; i++) {
-        InputMessage& msg = batch.samples.editItemAt(i);
+        InputMessage& msg = batch.samples[i];
         updateTouchState(msg);
         if (i) {
             SeqChain seqChain;
-            seqChain.seq = msg.body.motion.seq;
+            seqChain.seq = msg.header.seq;
             seqChain.chain = chain;
-            mSeqChains.push(seqChain);
+            mSeqChains.push_back(seqChain);
             addSample(motionEvent, &msg);
         } else {
             initializeMotionEvent(motionEvent, &msg);
         }
-        chain = msg.body.motion.seq;
+        chain = msg.header.seq;
     }
-    batch.samples.removeItemsAt(0, count);
+    batch.samples.erase(batch.samples.begin(), batch.samples.begin() + count);
 
     *outSeq = chain;
     *outEvent = motionEvent;
@@ -838,10 +821,10 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_DOWN: {
         ssize_t index = findTouchState(deviceId, source);
         if (index < 0) {
-            mTouchStates.push();
+            mTouchStates.push_back({});
             index = mTouchStates.size() - 1;
         }
-        TouchState& touchState = mTouchStates.editItemAt(index);
+        TouchState& touchState = mTouchStates[index];
         touchState.initialize(deviceId, source);
         touchState.addHistory(msg);
         break;
@@ -850,7 +833,7 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_MOVE: {
         ssize_t index = findTouchState(deviceId, source);
         if (index >= 0) {
-            TouchState& touchState = mTouchStates.editItemAt(index);
+            TouchState& touchState = mTouchStates[index];
             touchState.addHistory(msg);
             rewriteMessage(touchState, msg);
         }
@@ -860,7 +843,7 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_POINTER_DOWN: {
         ssize_t index = findTouchState(deviceId, source);
         if (index >= 0) {
-            TouchState& touchState = mTouchStates.editItemAt(index);
+            TouchState& touchState = mTouchStates[index];
             touchState.lastResample.idBits.clearBit(msg.body.motion.getActionId());
             rewriteMessage(touchState, msg);
         }
@@ -870,7 +853,7 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_POINTER_UP: {
         ssize_t index = findTouchState(deviceId, source);
         if (index >= 0) {
-            TouchState& touchState = mTouchStates.editItemAt(index);
+            TouchState& touchState = mTouchStates[index];
             rewriteMessage(touchState, msg);
             touchState.lastResample.idBits.clearBit(msg.body.motion.getActionId());
         }
@@ -880,7 +863,7 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_SCROLL: {
         ssize_t index = findTouchState(deviceId, source);
         if (index >= 0) {
-            TouchState& touchState = mTouchStates.editItemAt(index);
+            TouchState& touchState = mTouchStates[index];
             rewriteMessage(touchState, msg);
         }
         break;
@@ -890,9 +873,9 @@ void InputConsumer::updateTouchState(InputMessage& msg) {
     case AMOTION_EVENT_ACTION_CANCEL: {
         ssize_t index = findTouchState(deviceId, source);
         if (index >= 0) {
-            TouchState& touchState = mTouchStates.editItemAt(index);
+            TouchState& touchState = mTouchStates[index];
             rewriteMessage(touchState, msg);
-            mTouchStates.removeAt(index);
+            mTouchStates.erase(mTouchStates.begin() + index);
         }
         break;
     }
@@ -949,7 +932,7 @@ void InputConsumer::resampleTouchState(nsecs_t sampleTime, MotionEvent* event,
         return;
     }
 
-    TouchState& touchState = mTouchStates.editItemAt(index);
+    TouchState& touchState = mTouchStates[index];
     if (touchState.historySize < 1) {
 #if DEBUG_RESAMPLING
         ALOGD("Not resampled, no history for device.");
@@ -1095,11 +1078,11 @@ status_t InputConsumer::sendFinishedSignal(uint32_t seq, bool handled) {
         size_t chainIndex = 0;
         for (size_t i = seqChainCount; i > 0; ) {
              i--;
-             const SeqChain& seqChain = mSeqChains.itemAt(i);
+             const SeqChain& seqChain = mSeqChains[i];
              if (seqChain.seq == currentSeq) {
                  currentSeq = seqChain.chain;
                  chainSeqs[chainIndex++] = currentSeq;
-                 mSeqChains.removeAt(i);
+                 mSeqChains.erase(mSeqChains.begin() + i);
              }
         }
         status_t status = OK;
@@ -1113,7 +1096,7 @@ status_t InputConsumer::sendFinishedSignal(uint32_t seq, bool handled) {
                 SeqChain seqChain;
                 seqChain.seq = chainIndex != 0 ? chainSeqs[chainIndex - 1] : seq;
                 seqChain.chain = chainSeqs[chainIndex];
-                mSeqChains.push(seqChain);
+                mSeqChains.push_back(seqChain);
                 if (!chainIndex) break;
                 chainIndex--;
             }
@@ -1128,7 +1111,7 @@ status_t InputConsumer::sendFinishedSignal(uint32_t seq, bool handled) {
 status_t InputConsumer::sendUnchainedFinishedSignal(uint32_t seq, bool handled) {
     InputMessage msg;
     msg.header.type = InputMessage::Type::FINISHED;
-    msg.body.finished.seq = seq;
+    msg.header.seq = seq;
     msg.body.finished.handled = handled ? 1 : 0;
     return mChannel->sendMessage(&msg);
 }
@@ -1138,23 +1121,23 @@ bool InputConsumer::hasDeferredEvent() const {
 }
 
 bool InputConsumer::hasPendingBatch() const {
-    return !mBatches.isEmpty();
+    return !mBatches.empty();
 }
 
 int32_t InputConsumer::getPendingBatchSource() const {
-    if (mBatches.isEmpty()) {
+    if (mBatches.empty()) {
         return AINPUT_SOURCE_CLASS_NONE;
     }
 
-    const Batch& batch = mBatches.itemAt(0);
-    const InputMessage& head = batch.samples.itemAt(0);
+    const Batch& batch = mBatches[0];
+    const InputMessage& head = batch.samples[0];
     return head.body.motion.source;
 }
 
 ssize_t InputConsumer::findBatch(int32_t deviceId, int32_t source) const {
     for (size_t i = 0; i < mBatches.size(); i++) {
-        const Batch& batch = mBatches.itemAt(i);
-        const InputMessage& head = batch.samples.itemAt(0);
+        const Batch& batch = mBatches[i];
+        const InputMessage& head = batch.samples[0];
         if (head.body.motion.deviceId == deviceId && head.body.motion.source == source) {
             return i;
         }
@@ -1164,7 +1147,7 @@ ssize_t InputConsumer::findBatch(int32_t deviceId, int32_t source) const {
 
 ssize_t InputConsumer::findTouchState(int32_t deviceId, int32_t source) const {
     for (size_t i = 0; i < mTouchStates.size(); i++) {
-        const TouchState& touchState = mTouchStates.itemAt(i);
+        const TouchState& touchState = mTouchStates[i];
         if (touchState.deviceId == deviceId && touchState.source == source) {
             return i;
         }
@@ -1218,7 +1201,7 @@ void InputConsumer::addSample(MotionEvent* event, const InputMessage* msg) {
 }
 
 bool InputConsumer::canAddSample(const Batch& batch, const InputMessage *msg) {
-    const InputMessage& head = batch.samples.itemAt(0);
+    const InputMessage& head = batch.samples[0];
     uint32_t pointerCount = msg->body.motion.pointerCount;
     if (head.body.motion.pointerCount != pointerCount
             || head.body.motion.action != msg->body.motion.action) {
@@ -1236,11 +1219,72 @@ bool InputConsumer::canAddSample(const Batch& batch, const InputMessage *msg) {
 ssize_t InputConsumer::findSampleNoLaterThan(const Batch& batch, nsecs_t time) {
     size_t numSamples = batch.samples.size();
     size_t index = 0;
-    while (index < numSamples
-            && batch.samples.itemAt(index).body.motion.eventTime <= time) {
+    while (index < numSamples && batch.samples[index].body.motion.eventTime <= time) {
         index += 1;
     }
     return ssize_t(index) - 1;
+}
+
+std::string InputConsumer::dump() const {
+    std::string out;
+    out = out + "mResampleTouch = " + toString(mResampleTouch) + "\n";
+    out = out + "mChannel = " + mChannel->getName() + "\n";
+    out = out + "mMsgDeferred: " + toString(mMsgDeferred) + "\n";
+    if (mMsgDeferred) {
+        out = out + "mMsg : " + InputMessage::typeToString(mMsg.header.type) + "\n";
+    }
+    out += "Batches:\n";
+    for (const Batch& batch : mBatches) {
+        out += "    Batch:\n";
+        for (const InputMessage& msg : batch.samples) {
+            out += android::base::StringPrintf("        Message %" PRIu32 ": %s ", msg.header.seq,
+                                               InputMessage::typeToString(msg.header.type));
+            switch (msg.header.type) {
+                case InputMessage::Type::KEY: {
+                    out += android::base::StringPrintf("action=%s keycode=%" PRId32,
+                                                       KeyEvent::actionToString(
+                                                               msg.body.key.action),
+                                                       msg.body.key.keyCode);
+                    break;
+                }
+                case InputMessage::Type::MOTION: {
+                    out = out + "action=" + MotionEvent::actionToString(msg.body.motion.action);
+                    for (uint32_t i = 0; i < msg.body.motion.pointerCount; i++) {
+                        const float x = msg.body.motion.pointers[i].coords.getX();
+                        const float y = msg.body.motion.pointers[i].coords.getY();
+                        out += android::base::StringPrintf("\n            Pointer %" PRIu32
+                                                           " : x=%.1f y=%.1f",
+                                                           i, x, y);
+                    }
+                    break;
+                }
+                case InputMessage::Type::FINISHED: {
+                    out += android::base::StringPrintf("handled=%s",
+                                                       toString(msg.body.finished.handled));
+                    break;
+                }
+                case InputMessage::Type::FOCUS: {
+                    out += android::base::StringPrintf("hasFocus=%s inTouchMode=%s",
+                                                       toString(msg.body.focus.hasFocus),
+                                                       toString(msg.body.focus.inTouchMode));
+                    break;
+                }
+            }
+            out += "\n";
+        }
+    }
+    if (mBatches.empty()) {
+        out += "    <empty>\n";
+    }
+    out += "mSeqChains:\n";
+    for (const SeqChain& chain : mSeqChains) {
+        out += android::base::StringPrintf("    chain: seq = %" PRIu32 " chain=%" PRIu32, chain.seq,
+                                           chain.chain);
+    }
+    if (mSeqChains.empty()) {
+        out += "    <empty>\n";
+    }
+    return out;
 }
 
 } // namespace android

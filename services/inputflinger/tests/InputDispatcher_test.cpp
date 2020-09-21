@@ -29,6 +29,7 @@
 #include <vector>
 
 using android::base::StringPrintf;
+using namespace android::flag_operators;
 
 namespace android::inputdispatcher {
 
@@ -198,13 +199,14 @@ private:
         mConfigurationChangedTime = when;
     }
 
-    virtual nsecs_t notifyAnr(const sp<InputApplicationHandle>& application,
-                              const sp<IBinder>& windowToken, const std::string&) override {
+    std::chrono::nanoseconds notifyAnr(const sp<InputApplicationHandle>& application,
+                                       const sp<IBinder>& windowToken,
+                                       const std::string&) override {
         std::scoped_lock lock(mLock);
         mAnrApplications.push(application);
         mAnrWindowTokens.push(windowToken);
         mNotifyAnr.notify_all();
-        return mAnrTimeout.count();
+        return mAnrTimeout;
     }
 
     virtual void notifyInputChannelBroken(const sp<IBinder>&) override {}
@@ -585,7 +587,7 @@ public:
     FakeApplicationHandle() {
         mInfo.name = "Fake Application";
         mInfo.token = new BBinder();
-        mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT.count();
+        mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
     }
     virtual ~FakeApplicationHandle() {}
 
@@ -594,13 +596,14 @@ public:
     }
 
     void setDispatchingTimeout(std::chrono::nanoseconds timeout) {
-        mInfo.dispatchingTimeout = timeout.count();
+        mInfo.dispatchingTimeout = timeout;
     }
 };
 
 class FakeInputReceiver {
 public:
-    explicit FakeInputReceiver(const sp<InputChannel>& clientChannel, const std::string name)
+    explicit FakeInputReceiver(const std::shared_ptr<InputChannel>& clientChannel,
+                               const std::string name)
           : mName(name) {
         mConsumer = std::make_unique<InputConsumer>(clientChannel);
     }
@@ -755,11 +758,11 @@ public:
                      int32_t displayId, sp<IBinder> token = nullptr)
           : mName(name) {
         if (token == nullptr) {
-            sp<InputChannel> serverChannel, clientChannel;
+            std::unique_ptr<InputChannel> serverChannel, clientChannel;
             InputChannel::openInputChannelPair(name, serverChannel, clientChannel);
-            mInputReceiver = std::make_unique<FakeInputReceiver>(clientChannel, name);
-            dispatcher->registerInputChannel(serverChannel);
+            mInputReceiver = std::make_unique<FakeInputReceiver>(std::move(clientChannel), name);
             token = serverChannel->getConnectionToken();
+            dispatcher->registerInputChannel(std::move(serverChannel));
         }
 
         inputApplicationHandle->updateInfo();
@@ -768,13 +771,13 @@ public:
         mInfo.token = token;
         mInfo.id = sId++;
         mInfo.name = name;
-        mInfo.layoutParamsFlags = 0;
-        mInfo.layoutParamsType = InputWindowInfo::TYPE_APPLICATION;
-        mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT.count();
+        mInfo.type = InputWindowInfo::Type::APPLICATION;
+        mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
         mInfo.frameLeft = 0;
         mInfo.frameTop = 0;
         mInfo.frameRight = WIDTH;
         mInfo.frameBottom = HEIGHT;
+        mInfo.transform.set(0, 0);
         mInfo.globalScaleFactor = 1.0;
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(Rect(0, 0, WIDTH, HEIGHT));
@@ -785,7 +788,6 @@ public:
         mInfo.paused = false;
         mInfo.ownerPid = INJECTOR_PID;
         mInfo.ownerUid = INJECTOR_UID;
-        mInfo.inputFeatures = 0;
         mInfo.displayId = displayId;
     }
 
@@ -794,7 +796,7 @@ public:
     void setFocus(bool hasFocus) { mInfo.hasFocus = hasFocus; }
 
     void setDispatchingTimeout(std::chrono::nanoseconds timeout) {
-        mInfo.dispatchingTimeout = timeout.count();
+        mInfo.dispatchingTimeout = timeout;
     }
 
     void setPaused(bool paused) { mInfo.paused = paused; }
@@ -804,16 +806,14 @@ public:
         mInfo.frameTop = frame.top;
         mInfo.frameRight = frame.right;
         mInfo.frameBottom = frame.bottom;
+        mInfo.transform.set(frame.left, frame.top);
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(frame);
     }
 
-    void setLayoutParamFlags(int32_t flags) { mInfo.layoutParamsFlags = flags; }
+    void setFlags(Flags<InputWindowInfo::Flag> flags) { mInfo.flags = flags; }
 
-    void setWindowScale(float xScale, float yScale) {
-        mInfo.windowXScale = xScale;
-        mInfo.windowYScale = yScale;
-    }
+    void setWindowScale(float xScale, float yScale) { mInfo.transform.set(xScale, 0, 0, yScale); }
 
     void consumeKeyDown(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
         consumeEvent(AINPUT_EVENT_TYPE_KEY, AKEY_EVENT_ACTION_DOWN, expectedDisplayId,
@@ -941,6 +941,126 @@ static int32_t injectKeyUp(const sp<InputDispatcher>& dispatcher,
     return injectKey(dispatcher, AKEY_EVENT_ACTION_UP, /* repeatCount */ 0, displayId);
 }
 
+class PointerBuilder {
+public:
+    PointerBuilder(int32_t id, int32_t toolType) {
+        mProperties.clear();
+        mProperties.id = id;
+        mProperties.toolType = toolType;
+        mCoords.clear();
+    }
+
+    PointerBuilder& x(float x) { return axis(AMOTION_EVENT_AXIS_X, x); }
+
+    PointerBuilder& y(float y) { return axis(AMOTION_EVENT_AXIS_Y, y); }
+
+    PointerBuilder& axis(int32_t axis, float value) {
+        mCoords.setAxisValue(axis, value);
+        return *this;
+    }
+
+    PointerProperties buildProperties() const { return mProperties; }
+
+    PointerCoords buildCoords() const { return mCoords; }
+
+private:
+    PointerProperties mProperties;
+    PointerCoords mCoords;
+};
+
+class MotionEventBuilder {
+public:
+    MotionEventBuilder(int32_t action, int32_t source) {
+        mAction = action;
+        mSource = source;
+        mEventTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    }
+
+    MotionEventBuilder& eventTime(nsecs_t eventTime) {
+        mEventTime = eventTime;
+        return *this;
+    }
+
+    MotionEventBuilder& displayId(int32_t displayId) {
+        mDisplayId = displayId;
+        return *this;
+    }
+
+    MotionEventBuilder& actionButton(int32_t actionButton) {
+        mActionButton = actionButton;
+        return *this;
+    }
+
+    MotionEventBuilder& buttonState(int32_t actionButton) {
+        mActionButton = actionButton;
+        return *this;
+    }
+
+    MotionEventBuilder& rawXCursorPosition(float rawXCursorPosition) {
+        mRawXCursorPosition = rawXCursorPosition;
+        return *this;
+    }
+
+    MotionEventBuilder& rawYCursorPosition(float rawYCursorPosition) {
+        mRawYCursorPosition = rawYCursorPosition;
+        return *this;
+    }
+
+    MotionEventBuilder& pointer(PointerBuilder pointer) {
+        mPointers.push_back(pointer);
+        return *this;
+    }
+
+    MotionEvent build() {
+        std::vector<PointerProperties> pointerProperties;
+        std::vector<PointerCoords> pointerCoords;
+        for (const PointerBuilder& pointer : mPointers) {
+            pointerProperties.push_back(pointer.buildProperties());
+            pointerCoords.push_back(pointer.buildCoords());
+        }
+
+        // Set mouse cursor position for the most common cases to avoid boilerplate.
+        if (mSource == AINPUT_SOURCE_MOUSE &&
+            !MotionEvent::isValidCursorPosition(mRawXCursorPosition, mRawYCursorPosition) &&
+            mPointers.size() == 1) {
+            mRawXCursorPosition = pointerCoords[0].getX();
+            mRawYCursorPosition = pointerCoords[0].getY();
+        }
+
+        MotionEvent event;
+        event.initialize(InputEvent::nextId(), DEVICE_ID, mSource, mDisplayId, INVALID_HMAC,
+                         mAction, mActionButton, /* flags */ 0, /* edgeFlags */ 0, AMETA_NONE,
+                         mButtonState, MotionClassification::NONE, /* xScale */ 1, /* yScale */ 1,
+                         /* xOffset */ 0,
+                         /* yOffset */ 0, /* xPrecision */ 0, /* yPrecision */ 0,
+                         mRawXCursorPosition, mRawYCursorPosition, mEventTime, mEventTime,
+                         mPointers.size(), pointerProperties.data(), pointerCoords.data());
+
+        return event;
+    }
+
+private:
+    int32_t mAction;
+    int32_t mSource;
+    nsecs_t mEventTime;
+    int32_t mDisplayId{ADISPLAY_ID_DEFAULT};
+    int32_t mActionButton{0};
+    int32_t mButtonState{0};
+    float mRawXCursorPosition{AMOTION_EVENT_INVALID_CURSOR_POSITION};
+    float mRawYCursorPosition{AMOTION_EVENT_INVALID_CURSOR_POSITION};
+
+    std::vector<PointerBuilder> mPointers;
+};
+
+static int32_t injectMotionEvent(
+        const sp<InputDispatcher>& dispatcher, const MotionEvent& event,
+        std::chrono::milliseconds injectionTimeout = INJECT_EVENT_TIMEOUT,
+        int32_t injectionMode = INPUT_EVENT_INJECTION_SYNC_WAIT_FOR_RESULT) {
+    return dispatcher->injectInputEvent(&event, INJECTOR_PID, INJECTOR_UID, injectionMode,
+                                        injectionTimeout,
+                                        POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER);
+}
+
 static int32_t injectMotionEvent(
         const sp<InputDispatcher>& dispatcher, int32_t action, int32_t source, int32_t displayId,
         const PointF& position,
@@ -949,32 +1069,18 @@ static int32_t injectMotionEvent(
         std::chrono::milliseconds injectionTimeout = INJECT_EVENT_TIMEOUT,
         int32_t injectionMode = INPUT_EVENT_INJECTION_SYNC_WAIT_FOR_RESULT,
         nsecs_t eventTime = systemTime(SYSTEM_TIME_MONOTONIC)) {
-    MotionEvent event;
-    PointerProperties pointerProperties[1];
-    PointerCoords pointerCoords[1];
-
-    pointerProperties[0].clear();
-    pointerProperties[0].id = 0;
-    pointerProperties[0].toolType = AMOTION_EVENT_TOOL_TYPE_FINGER;
-
-    pointerCoords[0].clear();
-    pointerCoords[0].setAxisValue(AMOTION_EVENT_AXIS_X, position.x);
-    pointerCoords[0].setAxisValue(AMOTION_EVENT_AXIS_Y, position.y);
-
-    // Define a valid motion down event.
-    event.initialize(InputEvent::nextId(), DEVICE_ID, source, displayId, INVALID_HMAC, action,
-                     /* actionButton */ 0,
-                     /* flags */ 0,
-                     /* edgeFlags */ 0, AMETA_NONE, /* buttonState */ 0, MotionClassification::NONE,
-                     /* xScale */ 1, /* yScale */ 1, /* xOffset */ 0, /* yOffset */ 0,
-                     /* xPrecision */ 0, /* yPrecision */ 0, cursorPosition.x, cursorPosition.y,
-                     eventTime, eventTime,
-                     /*pointerCount*/ 1, pointerProperties, pointerCoords);
+    MotionEvent event = MotionEventBuilder(action, source)
+                                .displayId(displayId)
+                                .eventTime(eventTime)
+                                .rawXCursorPosition(cursorPosition.x)
+                                .rawYCursorPosition(cursorPosition.y)
+                                .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                                 .x(position.x)
+                                                 .y(position.y))
+                                .build();
 
     // Inject event until dispatch out.
-    return dispatcher->injectInputEvent(&event, INJECTOR_PID, INJECTOR_UID, injectionMode,
-                                        injectionTimeout,
-                                        POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER);
+    return injectMotionEvent(dispatcher, event);
 }
 
 static int32_t injectMotionDown(const sp<InputDispatcher>& dispatcher, int32_t source,
@@ -1061,7 +1167,7 @@ TEST_F(InputDispatcherTest, SetInputWindowOnce_SingleWindowTouch) {
     sp<FakeWindowHandle> window =
             new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFrame(Rect(0, 0, 100, 100));
-    window->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+    window->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
@@ -1084,7 +1190,7 @@ TEST_F(InputDispatcherTest, SetInputWindowTwice_SingleWindowTouch) {
     sp<FakeWindowHandle> window =
             new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFrame(Rect(0, 0, 100, 100));
-    window->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+    window->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -1189,17 +1295,209 @@ TEST_F(InputDispatcherTest, SetInputWindow_InputWindowInfo) {
     windowSecond->consumeKeyDown(ADISPLAY_ID_NONE);
 }
 
+TEST_F(InputDispatcherTest, HoverMoveEnterMouseClickAndHoverMoveExit) {
+    sp<FakeApplicationHandle> application = new FakeApplicationHandle();
+    sp<FakeWindowHandle> windowLeft =
+            new FakeWindowHandle(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
+    windowLeft->setFrame(Rect(0, 0, 600, 800));
+    windowLeft->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
+    sp<FakeWindowHandle> windowRight =
+            new FakeWindowHandle(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
+    windowRight->setFrame(Rect(600, 0, 1200, 800));
+    windowRight->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
+
+    mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {windowLeft, windowRight}}});
+
+    // Start cursor position in right window so that we can move the cursor to left window.
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(900)
+                                                         .y(400))
+                                        .build()));
+    windowRight->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_ENTER,
+                              ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowRight->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_MOVE,
+                              ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    // Move cursor into left window
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    windowRight->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_EXIT,
+                              ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowLeft->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_ENTER,
+                             ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowLeft->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_MOVE,
+                             ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    // Inject a series of mouse events for a mouse click
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    windowLeft->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_BUTTON_PRESS,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    windowLeft->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_BUTTON_PRESS,
+                             ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_BUTTON_RELEASE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .buttonState(0)
+                                        .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    windowLeft->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_BUTTON_RELEASE,
+                             ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(0)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    windowLeft->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+
+    // Move mouse cursor back to right window
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(900)
+                                                         .y(400))
+                                        .build()));
+    windowLeft->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_EXIT,
+                             ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowRight->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_ENTER,
+                              ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowRight->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_MOVE,
+                              ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+}
+
+// This test is different from the test above that HOVER_ENTER and HOVER_EXIT events are injected
+// directly in this test.
+TEST_F(InputDispatcherTest, HoverEnterMouseClickAndHoverExit) {
+    sp<FakeApplicationHandle> application = new FakeApplicationHandle();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 1200, 800));
+    window->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
+
+    mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_ENTER,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_ENTER,
+                         ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    // Inject a series of mouse events for a mouse click
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_BUTTON_PRESS,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_BUTTON_PRESS,
+                         ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_BUTTON_RELEASE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .buttonState(0)
+                                        .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_BUTTON_RELEASE,
+                         ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(0)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+
+    ASSERT_EQ(INPUT_EVENT_INJECTION_SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_EXIT,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(400))
+                                        .build()));
+    window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_EXIT,
+                         ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+}
+
 TEST_F(InputDispatcherTest, DispatchMouseEventsUnderCursor) {
     sp<FakeApplicationHandle> application = new FakeApplicationHandle();
 
     sp<FakeWindowHandle> windowLeft =
             new FakeWindowHandle(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
     windowLeft->setFrame(Rect(0, 0, 600, 800));
-    windowLeft->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+    windowLeft->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
     sp<FakeWindowHandle> windowRight =
             new FakeWindowHandle(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
     windowRight->setFrame(Rect(600, 0, 1200, 800));
-    windowRight->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+    windowRight->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
@@ -1358,15 +1656,15 @@ TEST_F(InputDispatcherTest, TransferTouchFocus_TwoPointersSplitTouch) {
     sp<FakeWindowHandle> firstWindow = new FakeWindowHandle(application, mDispatcher,
             "First Window", ADISPLAY_ID_DEFAULT);
     firstWindow->setFrame(Rect(0, 0, 600, 400));
-    firstWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL
-            | InputWindowInfo::FLAG_SPLIT_TOUCH);
+    firstWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                          InputWindowInfo::Flag::SPLIT_TOUCH);
 
     // Create a non touch modal window that supports split touch
     sp<FakeWindowHandle> secondWindow = new FakeWindowHandle(application, mDispatcher,
             "Second Window", ADISPLAY_ID_DEFAULT);
     secondWindow->setFrame(Rect(0, 400, 600, 800));
-    secondWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL
-            | InputWindowInfo::FLAG_SPLIT_TOUCH);
+    secondWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                           InputWindowInfo::Flag::SPLIT_TOUCH);
 
     // Add the windows to the dispatcher
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {firstWindow, secondWindow}}});
@@ -1472,10 +1770,10 @@ class FakeMonitorReceiver {
 public:
     FakeMonitorReceiver(const sp<InputDispatcher>& dispatcher, const std::string name,
                         int32_t displayId, bool isGestureMonitor = false) {
-        sp<InputChannel> serverChannel, clientChannel;
+        std::unique_ptr<InputChannel> serverChannel, clientChannel;
         InputChannel::openInputChannelPair(name, serverChannel, clientChannel);
-        mInputReceiver = std::make_unique<FakeInputReceiver>(clientChannel, name);
-        dispatcher->registerInputMonitor(serverChannel, displayId, isGestureMonitor);
+        mInputReceiver = std::make_unique<FakeInputReceiver>(std::move(clientChannel), name);
+        dispatcher->registerInputMonitor(std::move(serverChannel), displayId, isGestureMonitor);
     }
 
     sp<IBinder> getToken() { return mInputReceiver->getToken(); }
@@ -2051,12 +2349,12 @@ class InputDispatcherOnPointerDownOutsideFocus : public InputDispatcherTest {
         mUnfocusedWindow->setFrame(Rect(0, 0, 30, 30));
         // Adding FLAG_NOT_TOUCH_MODAL to ensure taps outside this window are not sent to this
         // window.
-        mUnfocusedWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+        mUnfocusedWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
         mFocusedWindow =
                 new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
         mFocusedWindow->setFrame(Rect(50, 50, 100, 100));
-        mFocusedWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+        mFocusedWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
         // Set focused application.
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -2144,14 +2442,14 @@ class InputDispatcherMultiWindowSameTokenTests : public InputDispatcherTest {
                                         ADISPLAY_ID_DEFAULT);
         // Adding FLAG_NOT_TOUCH_MODAL otherwise all taps will go to the top most window.
         // We also need FLAG_SPLIT_TOUCH or we won't be able to get touches for both windows.
-        mWindow1->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL |
-                                      InputWindowInfo::FLAG_SPLIT_TOUCH);
+        mWindow1->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                           InputWindowInfo::Flag::SPLIT_TOUCH);
         mWindow1->setFrame(Rect(0, 0, 100, 100));
 
         mWindow2 = new FakeWindowHandle(application, mDispatcher, "Fake Window 2",
                                         ADISPLAY_ID_DEFAULT, mWindow1->getToken());
-        mWindow2->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL |
-                                      InputWindowInfo::FLAG_SPLIT_TOUCH);
+        mWindow2->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                           InputWindowInfo::Flag::SPLIT_TOUCH);
         mWindow2->setFrame(Rect(100, 100, 200, 200));
 
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow1, mWindow2}}});
@@ -2163,9 +2461,8 @@ protected:
 
     // Helper function to convert the point from screen coordinates into the window's space
     static PointF getPointInWindow(const InputWindowInfo* windowInfo, const PointF& point) {
-        float x = windowInfo->windowXScale * (point.x - windowInfo->frameLeft);
-        float y = windowInfo->windowYScale * (point.y - windowInfo->frameTop);
-        return {x, y};
+        vec2 vals = windowInfo->transform.transform(point.x, point.y);
+        return {vals.x, vals.y};
     }
 
     void consumeMotionEvent(const sp<FakeWindowHandle>& window, int32_t expectedAction,
@@ -2371,11 +2668,11 @@ class InputDispatcherSingleWindowAnr : public InputDispatcherTest {
         mWindow =
                 new FakeWindowHandle(mApplication, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
         mWindow->setFrame(Rect(0, 0, 30, 30));
-        mWindow->setDispatchingTimeout(10ms);
+        mWindow->setDispatchingTimeout(30ms);
         mWindow->setFocus(true);
         // Adding FLAG_NOT_TOUCH_MODAL to ensure taps outside this window are not sent to this
         // window.
-        mWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL);
+        mWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
 
         // Set focused application.
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApplication);
@@ -2757,16 +3054,16 @@ class InputDispatcherMultiWindowAnr : public InputDispatcherTest {
         // Adding FLAG_NOT_TOUCH_MODAL to ensure taps outside this window are not sent to this
         // window.
         // Adding FLAG_WATCH_OUTSIDE_TOUCH to receive ACTION_OUTSIDE when another window is tapped
-        mUnfocusedWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL |
-                                              InputWindowInfo::FLAG_WATCH_OUTSIDE_TOUCH |
-                                              InputWindowInfo::FLAG_SPLIT_TOUCH);
+        mUnfocusedWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                                   InputWindowInfo::Flag::WATCH_OUTSIDE_TOUCH |
+                                   InputWindowInfo::Flag::SPLIT_TOUCH);
 
         mFocusedWindow =
                 new FakeWindowHandle(mApplication, mDispatcher, "Focused", ADISPLAY_ID_DEFAULT);
-        mFocusedWindow->setDispatchingTimeout(10ms);
+        mFocusedWindow->setDispatchingTimeout(30ms);
         mFocusedWindow->setFrame(Rect(50, 50, 100, 100));
-        mFocusedWindow->setLayoutParamFlags(InputWindowInfo::FLAG_NOT_TOUCH_MODAL |
-                                            InputWindowInfo::FLAG_SPLIT_TOUCH);
+        mFocusedWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL |
+                                 InputWindowInfo::Flag::SPLIT_TOUCH);
 
         // Set focused application.
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApplication);

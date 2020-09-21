@@ -131,8 +131,12 @@ void LayerProtoHelper::writeToProto(
     }
 
     InputWindowInfoProto* proto = getInputWindowInfoProto();
-    proto->set_layout_params_flags(inputInfo.layoutParamsFlags);
-    proto->set_layout_params_type(inputInfo.layoutParamsType);
+    proto->set_layout_params_flags(inputInfo.flags.get());
+    using U = std::underlying_type_t<InputWindowInfo::Type>;
+    // TODO(b/129481165): This static assert can be safely removed once conversion warnings
+    // are re-enabled.
+    static_assert(std::is_same_v<U, int32_t>);
+    proto->set_layout_params_type(static_cast<U>(inputInfo.type));
 
     LayerProtoHelper::writeToProto({inputInfo.frameLeft, inputInfo.frameTop, inputInfo.frameRight,
                                     inputInfo.frameBottom},
@@ -147,8 +151,7 @@ void LayerProtoHelper::writeToProto(
     proto->set_has_wallpaper(inputInfo.hasWallpaper);
 
     proto->set_global_scale_factor(inputInfo.globalScaleFactor);
-    proto->set_window_x_scale(inputInfo.windowXScale);
-    proto->set_window_y_scale(inputInfo.windowYScale);
+    LayerProtoHelper::writeToProto(inputInfo.transform, proto->mutable_transform());
     proto->set_replace_touchable_region_with_crop(inputInfo.replaceTouchableRegionWithCrop);
     auto cropLayer = touchableRegionBounds.promote();
     if (cropLayer != nullptr) {

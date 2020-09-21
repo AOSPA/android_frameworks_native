@@ -36,15 +36,16 @@
 #include <gui/SurfaceComposerClient.h>
 #include <gui/SurfaceControl.h>
 
-#include <input/InputWindow.h>
-#include <input/IInputFlinger.h>
-#include <input/InputTransport.h>
+#include <android/os/IInputFlinger.h>
 #include <input/Input.h>
+#include <input/InputTransport.h>
+#include <input/InputWindow.h>
 
 #include <ui/DisplayConfig.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 
+using android::os::IInputFlinger;
 
 namespace android {
 namespace test {
@@ -67,11 +68,12 @@ class InputSurface {
 public:
     InputSurface(const sp<SurfaceControl> &sc, int width, int height) {
         mSurfaceControl = sc;
-
-        InputChannel::openInputChannelPair("testchannels", mServerChannel, mClientChannel);
+        std::unique_ptr<InputChannel> clientChannel;
+        InputChannel::openInputChannelPair("testchannels", mServerChannel, clientChannel);
+        mClientChannel = std::move(clientChannel);
 
         mInputFlinger = getInputFlinger();
-        mInputFlinger->registerInputChannel(mServerChannel);
+        mInputFlinger->registerInputChannel(*mServerChannel);
 
         populateInputInfo(width, height);
 
@@ -157,9 +159,7 @@ public:
         EXPECT_EQ(0, mev->getFlags() & VERIFIED_MOTION_EVENT_FLAGS);
     }
 
-    ~InputSurface() {
-        mInputFlinger->unregisterInputChannel(mServerChannel);
-    }
+    ~InputSurface() { mInputFlinger->unregisterInputChannel(*mServerChannel); }
 
     void doTransaction(std::function<void(SurfaceComposerClient::Transaction&,
                     const sp<SurfaceControl>&)> transactionBody) {
@@ -191,9 +191,9 @@ private:
     void populateInputInfo(int width, int height) {
         mInputInfo.token = mServerChannel->getConnectionToken();
         mInputInfo.name = "Test info";
-        mInputInfo.layoutParamsFlags = InputWindowInfo::FLAG_NOT_TOUCH_MODAL;
-        mInputInfo.layoutParamsType = InputWindowInfo::TYPE_BASE_APPLICATION;
-        mInputInfo.dispatchingTimeout = seconds_to_nanoseconds(5);
+        mInputInfo.flags = InputWindowInfo::Flag::NOT_TOUCH_MODAL;
+        mInputInfo.type = InputWindowInfo::Type::BASE_APPLICATION;
+        mInputInfo.dispatchingTimeout = 5s;
         mInputInfo.globalScaleFactor = 1.0;
         mInputInfo.canReceiveKeys = true;
         mInputInfo.hasFocus = true;
@@ -205,19 +205,19 @@ private:
         // TODO: Fill in from SF?
         mInputInfo.ownerPid = 11111;
         mInputInfo.ownerUid = 11111;
-        mInputInfo.inputFeatures = 0;
         mInputInfo.displayId = 0;
 
         InputApplicationInfo aInfo;
         aInfo.token = new BBinder();
         aInfo.name = "Test app info";
-        aInfo.dispatchingTimeout = seconds_to_nanoseconds(5);
+        aInfo.dispatchingTimeout = 5s;
 
         mInputInfo.applicationInfo = aInfo;
     }
 public:
     sp<SurfaceControl> mSurfaceControl;
-    sp<InputChannel> mServerChannel, mClientChannel;
+    std::unique_ptr<InputChannel> mServerChannel;
+    std::shared_ptr<InputChannel> mClientChannel;
     sp<IInputFlinger> mInputFlinger;
 
     InputWindowInfo mInputInfo;

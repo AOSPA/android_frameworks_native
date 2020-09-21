@@ -67,6 +67,7 @@
 #include "MonitoredProducer.h"
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
+#include "input/InputWindow.h"
 #include "QtiGralloc.h"
 
 #define DEBUG_RESIZE 0
@@ -75,6 +76,7 @@ using android::hardware::graphics::common::V1_0::BufferUsage;
 namespace android {
 
 using base::StringAppendF;
+using namespace android::flag_operators;
 
 std::atomic<int32_t> Layer::sSequence{1};
 
@@ -82,7 +84,8 @@ Layer::Layer(const LayerCreationArgs& args)
       : mFlinger(args.flinger),
         mName(args.name),
         mClientRef(args.client),
-        mWindowType(args.metadata.getInt32(METADATA_WINDOW_TYPE, 0)) {
+        mWindowType(static_cast<InputWindowInfo::Type>(
+                args.metadata.getInt32(METADATA_WINDOW_TYPE, 0))) {
     uint32_t layerFlags = 0;
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
@@ -1845,7 +1848,7 @@ bool Layer::reparent(const sp<IBinder>& newParentHandle) {
         onRemovedFromCurrentState();
     }
 
-    if (callSetTransactionFlags || attachChildren()) {
+    if (attachChildren() || callSetTransactionFlags) {
         setTransactionFlags(eTransactionNeeded);
     }
     return true;
@@ -1873,9 +1876,9 @@ bool Layer::attachChildren() {
         if (client != nullptr && parentClient != client) {
             if (child->mLayerDetached) {
                 child->mLayerDetached = false;
+                child->attachChildren();
                 changed = true;
             }
-            changed |= child->attachChildren();
         }
     }
 
@@ -2220,7 +2223,7 @@ void Layer::setInputInfo(const InputWindowInfo& info) {
 }
 
 LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
-                                const DisplayDevice* display) const {
+                                const DisplayDevice* display) {
     LayerProto* layerProto = layersProto.add_layers();
     writeToProtoDrawingState(layerProto, traceFlags, display);
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
@@ -2241,7 +2244,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
 }
 
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
-                                     const DisplayDevice* display) const {
+                                     const DisplayDevice* display) {
     ui::Transform transform = getTransform();
 
     if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
@@ -2270,6 +2273,7 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
         layerInfo->set_effective_scaling_mode(getEffectiveScalingMode());
 
         layerInfo->set_corner_radius(getRoundedCornerState().radius);
+        layerInfo->set_background_blur_radius(getBackgroundBlurRadius());
         LayerProtoHelper::writeToProto(transform, layerInfo->mutable_transform());
         LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
                                                [&]() { return layerInfo->mutable_position(); });
@@ -2297,7 +2301,7 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
 }
 
 void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet stateSet,
-                                    uint32_t traceFlags) const {
+                                    uint32_t traceFlags) {
     const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
     const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
     const State& state = useDrawing ? mDrawingState : mCurrentState;
@@ -2367,7 +2371,14 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     }
 
     if (traceFlags & SurfaceTracing::TRACE_INPUT) {
-        LayerProtoHelper::writeToProto(state.inputInfo, state.touchableRegionCrop,
+        InputWindowInfo info;
+        if (useDrawing) {
+            info = fillInputInfo();
+        } else {
+            info = state.inputInfo;
+        }
+
+        LayerProtoHelper::writeToProto(info, state.touchableRegionCrop,
                                        [&]() { return layerInfo->mutable_input_window_info(); });
     }
 
@@ -2388,9 +2399,8 @@ InputWindowInfo Layer::fillInputInfo() {
         mDrawingState.inputInfo.name = getName();
         mDrawingState.inputInfo.ownerUid = mCallingUid;
         mDrawingState.inputInfo.ownerPid = mCallingPid;
-        mDrawingState.inputInfo.inputFeatures =
-            InputWindowInfo::INPUT_FEATURE_NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.layoutParamsFlags = InputWindowInfo::FLAG_NOT_TOUCH_MODAL;
+        mDrawingState.inputInfo.inputFeatures = InputWindowInfo::Feature::NO_INPUT_CHANNEL;
+        mDrawingState.inputInfo.flags = InputWindowInfo::Flag::NOT_TOUCH_MODAL;
         mDrawingState.inputInfo.displayId = getLayerStack();
     }
 
@@ -2402,17 +2412,8 @@ InputWindowInfo Layer::fillInputInfo() {
     }
 
     ui::Transform t = getTransform();
-    const float xScale = t.sx();
-    const float yScale = t.sy();
     int32_t xSurfaceInset = info.surfaceInset;
     int32_t ySurfaceInset = info.surfaceInset;
-    if (xScale != 1.0f || yScale != 1.0f) {
-        info.windowXScale *= (xScale != 0.0f) ? 1.0f / xScale : 0.0f;
-        info.windowYScale *= (yScale != 0.0f) ? 1.0f / yScale : 0.0f;
-        info.touchableRegion.scaleSelf(xScale, yScale);
-        xSurfaceInset = std::round(xSurfaceInset * xScale);
-        ySurfaceInset = std::round(ySurfaceInset * yScale);
-    }
 
     // Transform layer size to screen space and inset it by surface insets.
     // If this is a portal window, set the touchableRegion to the layerBounds.
@@ -2422,6 +2423,15 @@ InputWindowInfo Layer::fillInputInfo() {
     if (!layerBounds.isValid()) {
         layerBounds = getCroppedBufferSize(getDrawingState());
     }
+
+    const float xScale = t.getScaleX();
+    const float yScale = t.getScaleY();
+    if (xScale != 1.0f || yScale != 1.0f) {
+        info.touchableRegion.scaleSelf(xScale, yScale);
+        xSurfaceInset = std::round(xSurfaceInset * xScale);
+        ySurfaceInset = std::round(ySurfaceInset * yScale);
+    }
+
     layerBounds = t.transform(layerBounds);
 
     // clamp inset to layer bounds
@@ -2435,6 +2445,10 @@ InputWindowInfo Layer::fillInputInfo() {
     info.frameTop = layerBounds.top;
     info.frameRight = layerBounds.right;
     info.frameBottom = layerBounds.bottom;
+
+    ui::Transform inputTransform(t);
+    inputTransform.set(layerBounds.left, layerBounds.top);
+    info.transform = inputTransform.inverse();
 
     // Position the touchable region relative to frame screen location and restrict it to frame
     // bounds.
@@ -2592,7 +2606,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
     }
     // Cloned layers shouldn't handle watch outside since their z order is not determined by
     // WM or the client.
-    mDrawingState.inputInfo.layoutParamsFlags &= ~InputWindowInfo::FLAG_WATCH_OUTSIDE_TOUCH;
+    mDrawingState.inputInfo.flags &= ~InputWindowInfo::Flag::WATCH_OUTSIDE_TOUCH;
 }
 
 void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {

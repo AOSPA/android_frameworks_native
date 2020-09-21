@@ -129,9 +129,19 @@ void AChoreographer_postFrameCallbackDelayed64(AChoreographer* choreographer,
  *
  * This api is thread-safe. Any thread is allowed to register a new refresh
  * rate callback for the choreographer instance.
+ *
+ * Note that in API level 30, this api is not guaranteed to be atomic with
+ * DisplayManager. That is, calling Display#getRefreshRate very soon after
+ * a refresh rate callback is invoked may return a stale refresh rate. If any
+ * Display properties would be required by this callback, then it is recommended
+ * to listen directly to DisplayManager.DisplayListener#onDisplayChanged events
+ * instead.
+ *
+ * Available since API level 30.
  */
 void AChoreographer_registerRefreshRateCallback(AChoreographer* choreographer,
-                                                AChoreographer_refreshRateCallback, void* data);
+                                                AChoreographer_refreshRateCallback, void* data)
+        __INTRODUCED_IN(30);
 
 /**
  * Unregisters a callback to be run when the display refresh rate changes, along
@@ -144,9 +154,12 @@ void AChoreographer_registerRefreshRateCallback(AChoreographer* choreographer,
  * callback and associated data pointer are unregistered, then there is a
  * guarantee that when the unregistration completes that that callback will not
  * be run with the data pointer passed.
+ *
+ * Available since API level 30.
  */
 void AChoreographer_unregisterRefreshRateCallback(AChoreographer* choreographer,
-                                                  AChoreographer_refreshRateCallback, void* data);
+                                                  AChoreographer_refreshRateCallback, void* data)
+        __INTRODUCED_IN(30);
 #endif /* __ANDROID_API__ >= 30 */
 
 __END_DECLS

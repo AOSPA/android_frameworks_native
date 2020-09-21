@@ -21,11 +21,11 @@
 
 #include <binder/IBinder.h>
 #include <input/Input.h>
+#include <input/InputApplication.h>
 #include <utils/RefBase.h>
 
 namespace android {
 
-class InputApplicationHandle;
 
 /*
  * Input dispatcher policy interface.
@@ -47,8 +47,9 @@ public:
 
     /* Notifies the system that an application is not responding.
      * Returns a new timeout to continue waiting, or 0 to abort dispatch. */
-    virtual nsecs_t notifyAnr(const sp<InputApplicationHandle>& inputApplicationHandle,
-                              const sp<IBinder>& token, const std::string& reason) = 0;
+    virtual std::chrono::nanoseconds notifyAnr(
+            const sp<InputApplicationHandle>& inputApplicationHandle, const sp<IBinder>& token,
+            const std::string& reason) = 0;
 
     /* Notifies the system that an input channel is unrecoverably broken. */
     virtual void notifyInputChannelBroken(const sp<IBinder>& token) = 0;

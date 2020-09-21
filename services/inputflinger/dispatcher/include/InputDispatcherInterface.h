@@ -18,14 +18,14 @@
 #define _UI_INPUT_INPUTDISPATCHER_INPUTDISPATCHERINTERFACE_H
 
 #include <InputListener.h>
-#include <input/ISetInputWindowsListener.h>
+#include <android/FocusRequest.h>
+#include <android/os/ISetInputWindowsListener.h>
+#include <input/InputApplication.h>
+#include <input/InputTransport.h>
+#include <input/InputWindow.h>
 #include <unordered_map>
 
 namespace android {
-
-class InputApplicationHandle;
-class InputChannel;
-class InputWindowHandle;
 
 /*
  * Constants used to report the outcome of input event injection.
@@ -149,11 +149,16 @@ public:
      */
     virtual bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken) = 0;
 
+    /**
+     * Sets focus on the specified window.
+     */
+    virtual void setFocusedWindow(const FocusRequest&) = 0;
+
     /* Registers input channels that may be used as targets for input events.
      *
      * This method may be called on any thread (usually by the input manager).
      */
-    virtual status_t registerInputChannel(const sp<InputChannel>& inputChannel) = 0;
+    virtual status_t registerInputChannel(const std::shared_ptr<InputChannel>& inputChannel) = 0;
 
     /* Registers input channels to be used to monitor input events.
      *
@@ -163,14 +168,14 @@ public:
      *
      * This method may be called on any thread (usually by the input manager).
      */
-    virtual status_t registerInputMonitor(const sp<InputChannel>& inputChannel, int32_t displayId,
-                                          bool gestureMonitor) = 0;
+    virtual status_t registerInputMonitor(const std::shared_ptr<InputChannel>& inputChannel,
+                                          int32_t displayId, bool gestureMonitor) = 0;
 
     /* Unregister input channels that will no longer receive input events.
      *
      * This method may be called on any thread (usually by the input manager).
      */
-    virtual status_t unregisterInputChannel(const sp<InputChannel>& inputChannel) = 0;
+    virtual status_t unregisterInputChannel(const InputChannel& inputChannel) = 0;
 
     /* Allows an input monitor steal the current pointer stream away from normal input windows.
      *

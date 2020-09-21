@@ -56,6 +56,10 @@ static const char* hal_interfaces_to_dump[] {
         "android.hardware.audio@4.0::IDevicesFactory",
         "android.hardware.audio@5.0::IDevicesFactory",
         "android.hardware.audio@6.0::IDevicesFactory",
+        "android.hardware.automotive.audiocontrol@1.0::IAudioControl",
+        "android.hardware.automotive.audiocontrol@2.0::IAudioControl",
+        "android.hardware.automotive.evs@1.0::IEvsCamera",
+        "android.hardware.automotive.vehicle@2.0::IVehicle",
         "android.hardware.biometrics.face@1.0::IBiometricsFace",
         "android.hardware.biometrics.fingerprint@2.1::IBiometricsFingerprint",
         "android.hardware.bluetooth@1.0::IBluetoothHci",
@@ -67,16 +71,12 @@ static const char* hal_interfaces_to_dump[] {
         "android.hardware.media.c2@1.0::IComponentStore",
         "android.hardware.media.omx@1.0::IOmx",
         "android.hardware.media.omx@1.0::IOmxStore",
+        "android.hardware.neuralnetworks@1.0::IDevice",
         "android.hardware.power@1.3::IPower",
         "android.hardware.power.stats@1.0::IPowerStats",
         "android.hardware.sensors@1.0::ISensors",
         "android.hardware.thermal@2.0::IThermal",
         "android.hardware.vr@1.0::IVr",
-        "android.hardware.automotive.audiocontrol@1.0::IAudioControl",
-        "android.hardware.automotive.audiocontrol@2.0::IAudioControl",
-        "android.hardware.automotive.vehicle@2.0::IVehicle",
-        "android.hardware.automotive.evs@1.0::IEvsCamera",
-        "android.hardware.neuralnetworks@1.0::IDevice",
         NULL,
 };
 
@@ -86,7 +86,7 @@ static std::set<const std::string> extra_hal_interfaces_to_dump;
 
 static void read_extra_hals_to_dump_from_property() {
     // extra hals to dump are already filled
-    if (extra_hal_interfaces_to_dump.size() > 0) {
+    if (!extra_hal_interfaces_to_dump.empty()) {
         return;
     }
     std::string value = android::base::GetProperty("ro.dump.hals.extra", "");

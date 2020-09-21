@@ -1359,8 +1359,23 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setInput
         mStatus = BAD_INDEX;
         return *this;
     }
-    s->inputInfo = info;
+    s->inputHandle = new InputWindowHandle(info);
     s->what |= layer_state_t::eInputInfoChanged;
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFocusedWindow(
+        const sp<IBinder>& token, const sp<IBinder>& focusedToken, nsecs_t timestampNanos) {
+    FocusRequest request;
+    request.token = token;
+    request.focusedToken = focusedToken;
+    request.timestamp = timestampNanos;
+    return setFocusedWindow(request);
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFocusedWindow(
+        const FocusRequest& request) {
+    mInputWindowCommands.focusRequests.push_back(request);
     return *this;
 }
 
@@ -1893,8 +1908,8 @@ status_t SurfaceComposerClient::setDisplayBrightness(const sp<IBinder>& displayT
     return ComposerService::getComposerService()->setDisplayBrightness(displayToken, brightness);
 }
 
-status_t SurfaceComposerClient::notifyPowerHint(int32_t hintId) {
-    return ComposerService::getComposerService()->notifyPowerHint(hintId);
+status_t SurfaceComposerClient::notifyPowerBoost(int32_t boostId) {
+    return ComposerService::getComposerService()->notifyPowerBoost(boostId);
 }
 
 status_t SurfaceComposerClient::setGlobalShadowSettings(const half4& ambientColor,

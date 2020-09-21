@@ -33,7 +33,6 @@
 #include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerState.h>
 #include <gui/OccupancyTracker.h>
-#include <input/ISetInputWindowsListener.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/mat4.h>
 #include <renderengine/LayerSettings.h>
@@ -114,14 +113,19 @@ namespace android {
 class Client;
 class EventThread;
 class HWComposer;
+struct SetInputWindowsListener;
 class IGraphicBufferProducer;
-class IInputFlinger;
 class Layer;
 class MessageBase;
 class RefreshRateOverlay;
 class RegionSamplingThread;
+class RenderArea;
 class TimeStats;
 class FrameTracer;
+
+namespace os {
+    class IInputFlinger;
+}
 
 namespace compositionengine {
 class DisplaySurface;
@@ -408,6 +412,7 @@ public:
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
     bool mDisableClientCompositionCache = false;
+    void setInputWindowsFinished();
 
     nsecs_t mVsyncTimeStamp = -1;
 
@@ -573,7 +578,7 @@ private:
     status_t getDisplayBrightnessSupport(const sp<IBinder>& displayToken,
                                          bool* outSupport) const override;
     status_t setDisplayBrightness(const sp<IBinder>& displayToken, float brightness) override;
-    status_t notifyPowerHint(int32_t hintId) override;
+    status_t notifyPowerBoost(int32_t boostId) override;
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
@@ -620,6 +625,8 @@ private:
     bool mKernelIdleTimerEnabled = false;
     // Keeps track of whether the kernel timer is supported on the SF side.
     bool mSupportKernelIdleTimer = false;
+    // Show spinner with refresh rate overlay
+    bool mRefreshRateOverlaySpinner = false;
     /* ------------------------------------------------------------------------
      * Message handling
      */
@@ -683,7 +690,6 @@ private:
     void updateInputFlinger();
     void updateInputWindowInfo();
     void commitInputWindowCommands() REQUIRES(mStateLock);
-    void setInputWindowsFinished();
     void updateCursorAsync();
     void updateFrameScheduler();
     void initScheduler(DisplayId primaryDisplayId);
@@ -797,25 +803,25 @@ private:
     void startBootAnim();
 
     using TraverseLayersFunction = std::function<void(const LayerVector::Visitor&)>;
+    using RenderAreaFuture = std::future<std::unique_ptr<RenderArea>>;
 
     void renderScreenImplLocked(const RenderArea& renderArea, TraverseLayersFunction traverseLayers,
-                                ANativeWindowBuffer* buffer, bool useIdentityTransform,
+                                const sp<GraphicBuffer>& buffer, bool useIdentityTransform,
                                 bool regionSampling, int* outSyncFd);
-    status_t captureScreenCommon(RenderArea& renderArea, TraverseLayersFunction traverseLayers,
-                                 sp<GraphicBuffer>* outBuffer, const ui::PixelFormat reqPixelFormat,
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
+                                 sp<GraphicBuffer>* outBuffer, ui::PixelFormat,
                                  bool useIdentityTransform, bool& outCapturedSecureLayers);
-    status_t captureScreenCommon(RenderArea& renderArea, TraverseLayersFunction traverseLayers,
-                                 const sp<GraphicBuffer>& buffer, bool useIdentityTransform,
-                                 bool regionSampling, bool& outCapturedSecureLayers);
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, const sp<GraphicBuffer>&,
+                                 bool useIdentityTransform, bool regionSampling,
+                                 bool& outCapturedSecureLayers);
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayByLayerStack(uint64_t layerStack) REQUIRES(mStateLock);
     status_t captureScreenImplLocked(const RenderArea& renderArea,
                                      TraverseLayersFunction traverseLayers,
-                                     ANativeWindowBuffer* buffer, bool useIdentityTransform,
+                                     const sp<GraphicBuffer>& buffer, bool useIdentityTransform,
                                      bool forSystem, int* outSyncFd, bool regionSampling,
                                      bool& outCapturedSecureLayers);
-    void traverseLayersInDisplay(const sp<const DisplayDevice>& display,
-                                 const LayerVector::Visitor& visitor);
+    void traverseLayersInLayerStack(ui::LayerStack, const LayerVector::Visitor&);
 
 
     bool canAllocateHwcDisplayIdForVDS(uint64_t usage);
@@ -864,8 +870,6 @@ private:
         Mutex::Autolock lock(mStateLock);
         return getDefaultDisplayDeviceLocked();
     }
-
-    std::optional<DeviceProductInfo> getDeviceProductInfoLocked(const DisplayDevice&) const;
 
     // mark a region of a layer stack dirty. this updates the dirty
     // region of all screens presenting this layer stack.
@@ -1127,6 +1131,10 @@ private:
     // Can't be unordered_set because wp<> isn't hashable
     std::set<wp<IBinder>> mGraphicBufferProducerList;
     size_t mMaxGraphicBufferProducerListSize = ISurfaceComposer::MAX_LAYERS;
+    // If there are more GraphicBufferProducers tracked by SurfaceFlinger than
+    // this threshold, then begin logging.
+    size_t mGraphicBufferProducerListSizeLogThreshold =
+            static_cast<size_t>(0.95 * static_cast<double>(MAX_LAYERS));
 
     void removeGraphicBufferProducerAsync(const wp<IBinder>&);
 
@@ -1191,7 +1199,6 @@ private:
     bool mDebugDisableTransformHint = false;
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
-    bool mPropagateBackpressure = true;
     bool mPropagateBackpressureClientComposition = false;
     std::unique_ptr<SurfaceInterceptor> mInterceptor;
 
@@ -1369,21 +1376,12 @@ private:
     const float mInternalDisplayDensity;
     const float mEmulatedDisplayDensity;
 
-    sp<IInputFlinger> mInputFlinger;
+    sp<os::IInputFlinger> mInputFlinger;
     InputWindowCommands mPendingInputWindowCommands GUARDED_BY(mStateLock);
     // Should only be accessed by the main thread.
     InputWindowCommands mInputWindowCommands;
 
-    struct SetInputWindowsListener : BnSetInputWindowsListener {
-        explicit SetInputWindowsListener(sp<SurfaceFlinger> flinger)
-              : mFlinger(std::move(flinger)) {}
-
-        void onSetInputWindowsFinished() override;
-
-        const sp<SurfaceFlinger> mFlinger;
-    };
-
-    const sp<SetInputWindowsListener> mSetInputWindowsListener = new SetInputWindowsListener(this);
+    sp<SetInputWindowsListener> mSetInputWindowsListener;
 
     bool mPendingSyncInputWindows GUARDED_BY(mStateLock) = false;
     Hwc2::impl::PowerAdvisor mPowerAdvisor;

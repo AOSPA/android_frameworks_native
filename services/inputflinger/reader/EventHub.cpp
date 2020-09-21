@@ -34,30 +34,19 @@
 #define LOG_TAG "EventHub"
 
 // #define LOG_NDEBUG 0
-
-#include "EventHub.h"
-
 #include <android-base/stringprintf.h>
 #include <cutils/properties.h>
+#include <input/KeyCharacterMap.h>
+#include <input/KeyLayoutMap.h>
+#include <input/VirtualKeyMap.h>
 #include <openssl/sha.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/Timers.h>
-#include <utils/threads.h>
 
-#include <input/KeyCharacterMap.h>
-#include <input/KeyLayoutMap.h>
-#include <input/VirtualKeyMap.h>
+#include <filesystem>
 
-/* this macro is used to tell if "bit" is set in "array"
- * it selects a byte from the array, and does a boolean AND
- * operation with a byte that only has the relevant bit set.
- * eg. to check for the 12th bit, we do (array[1] & 1<<4)
- */
-#define test_bit(bit, array) ((array)[(bit) / 8] & (1 << ((bit) % 8)))
-
-/* this macro computes the number of bytes needed to represent a bit array of the specified size */
-#define sizeof_bit_array(bits) (((bits) + 7) / 8)
+#include "EventHub.h"
 
 #define INDENT "  "
 #define INDENT2 "    "
@@ -94,8 +83,8 @@ static std::string sha1(const std::string& in) {
 /**
  * Return true if name matches "v4l-touch*"
  */
-static bool isV4lTouchNode(const char* name) {
-    return strstr(name, "v4l-touch") == name;
+static bool isV4lTouchNode(std::string name) {
+    return name.find("v4l-touch") != std::string::npos;
 }
 
 /**
@@ -193,15 +182,7 @@ EventHub::Device::Device(int fd, int32_t id, const std::string& path,
         ffEffectId(-1),
         controllerNumber(0),
         enabled(true),
-        isVirtual(fd < 0) {
-    memset(keyBitmask, 0, sizeof(keyBitmask));
-    memset(absBitmask, 0, sizeof(absBitmask));
-    memset(relBitmask, 0, sizeof(relBitmask));
-    memset(swBitmask, 0, sizeof(swBitmask));
-    memset(ledBitmask, 0, sizeof(ledBitmask));
-    memset(ffBitmask, 0, sizeof(ffBitmask));
-    memset(propBitmask, 0, sizeof(propBitmask));
-}
+        isVirtual(fd < 0) {}
 
 EventHub::Device::~Device() {
     close();
@@ -391,7 +372,7 @@ status_t EventHub::getAbsoluteAxisInfo(int32_t deviceId, int axis,
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device && device->hasValidFd() && test_bit(axis, device->absBitmask)) {
+        if (device != nullptr && device->hasValidFd() && device->absBitmask.test(axis)) {
             struct input_absinfo info;
             if (ioctl(device->fd, EVIOCGABS(axis), &info)) {
                 ALOGW("Error reading absolute controller %d for device %s fd %d, errno=%d", axis,
@@ -418,9 +399,7 @@ bool EventHub::hasRelativeAxis(int32_t deviceId, int axis) const {
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device) {
-            return test_bit(axis, device->relBitmask);
-        }
+        return device != nullptr ? device->relBitmask.test(axis) : false;
     }
     return false;
 }
@@ -430,9 +409,7 @@ bool EventHub::hasInputProperty(int32_t deviceId, int property) const {
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device) {
-            return test_bit(property, device->propBitmask);
-        }
+        return device != nullptr ? device->propBitmask.test(property) : false;
     }
     return false;
 }
@@ -442,11 +419,9 @@ int32_t EventHub::getScanCodeState(int32_t deviceId, int32_t scanCode) const {
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device && device->hasValidFd() && test_bit(scanCode, device->keyBitmask)) {
-            uint8_t keyState[sizeof_bit_array(KEY_MAX + 1)];
-            memset(keyState, 0, sizeof(keyState));
-            if (ioctl(device->fd, EVIOCGKEY(sizeof(keyState)), keyState) >= 0) {
-                return test_bit(scanCode, keyState) ? AKEY_STATE_DOWN : AKEY_STATE_UP;
+        if (device != nullptr && device->hasValidFd() && device->keyBitmask.test(scanCode)) {
+            if (device->readDeviceBitMask(EVIOCGKEY(0), device->keyState) >= 0) {
+                return device->keyState.test(scanCode) ? AKEY_STATE_DOWN : AKEY_STATE_UP;
             }
         }
     }
@@ -457,16 +432,14 @@ int32_t EventHub::getKeyCodeState(int32_t deviceId, int32_t keyCode) const {
     AutoMutex _l(mLock);
 
     Device* device = getDeviceLocked(deviceId);
-    if (device && device->hasValidFd() && device->keyMap.haveKeyLayout()) {
+    if (device != nullptr && device->hasValidFd() && device->keyMap.haveKeyLayout()) {
         std::vector<int32_t> scanCodes;
         device->keyMap.keyLayoutMap->findScanCodesForKey(keyCode, &scanCodes);
         if (scanCodes.size() != 0) {
-            uint8_t keyState[sizeof_bit_array(KEY_MAX + 1)];
-            memset(keyState, 0, sizeof(keyState));
-            if (ioctl(device->fd, EVIOCGKEY(sizeof(keyState)), keyState) >= 0) {
+            if (device->readDeviceBitMask(EVIOCGKEY(0), device->keyState) >= 0) {
                 for (size_t i = 0; i < scanCodes.size(); i++) {
                     int32_t sc = scanCodes[i];
-                    if (sc >= 0 && sc <= KEY_MAX && test_bit(sc, keyState)) {
+                    if (sc >= 0 && sc <= KEY_MAX && device->keyState.test(sc)) {
                         return AKEY_STATE_DOWN;
                     }
                 }
@@ -482,11 +455,9 @@ int32_t EventHub::getSwitchState(int32_t deviceId, int32_t sw) const {
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device && device->hasValidFd() && test_bit(sw, device->swBitmask)) {
-            uint8_t swState[sizeof_bit_array(SW_MAX + 1)];
-            memset(swState, 0, sizeof(swState));
-            if (ioctl(device->fd, EVIOCGSW(sizeof(swState)), swState) >= 0) {
-                return test_bit(sw, swState) ? AKEY_STATE_DOWN : AKEY_STATE_UP;
+        if (device != nullptr && device->hasValidFd() && device->swBitmask.test(sw)) {
+            if (device->readDeviceBitMask(EVIOCGSW(0), device->swState) >= 0) {
+                return device->swState.test(sw) ? AKEY_STATE_DOWN : AKEY_STATE_UP;
             }
         }
     }
@@ -500,7 +471,7 @@ status_t EventHub::getAbsoluteAxisValue(int32_t deviceId, int32_t axis, int32_t*
         AutoMutex _l(mLock);
 
         Device* device = getDeviceLocked(deviceId);
-        if (device && device->hasValidFd() && test_bit(axis, device->absBitmask)) {
+        if (device != nullptr && device->hasValidFd() && device->absBitmask.test(axis)) {
             struct input_absinfo info;
             if (ioctl(device->fd, EVIOCGABS(axis), &info)) {
                 ALOGW("Error reading absolute controller %d for device %s fd %d, errno=%d", axis,
@@ -520,7 +491,7 @@ bool EventHub::markSupportedKeyCodes(int32_t deviceId, size_t numCodes, const in
     AutoMutex _l(mLock);
 
     Device* device = getDeviceLocked(deviceId);
-    if (device && device->keyMap.haveKeyLayout()) {
+    if (device != nullptr && device->keyMap.haveKeyLayout()) {
         std::vector<int32_t> scanCodes;
         for (size_t codeIndex = 0; codeIndex < numCodes; codeIndex++) {
             scanCodes.clear();
@@ -531,7 +502,7 @@ bool EventHub::markSupportedKeyCodes(int32_t deviceId, size_t numCodes, const in
                 // check the possible scan codes identified by the layout map against the
                 // map of codes actually emitted by the driver
                 for (size_t sc = 0; sc < scanCodes.size(); sc++) {
-                    if (test_bit(scanCodes[sc], device->keyBitmask)) {
+                    if (device->keyBitmask.test(scanCodes[sc])) {
                         outFlags[codeIndex] = 1;
                         break;
                     }
@@ -549,7 +520,7 @@ status_t EventHub::mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode,
     Device* device = getDeviceLocked(deviceId);
     status_t status = NAME_NOT_FOUND;
 
-    if (device) {
+    if (device != nullptr) {
         // Check the key character map first.
         sp<KeyCharacterMap> kcm = device->getKeyCharacterMap();
         if (kcm != nullptr) {
@@ -588,7 +559,7 @@ status_t EventHub::mapAxis(int32_t deviceId, int32_t scanCode, AxisInfo* outAxis
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
 
-    if (device && device->keyMap.haveKeyLayout()) {
+    if (device != nullptr && device->keyMap.haveKeyLayout()) {
         status_t err = device->keyMap.keyLayoutMap->mapAxis(scanCode, outAxisInfo);
         if (err == NO_ERROR) {
             return NO_ERROR;
@@ -607,10 +578,8 @@ void EventHub::setExcludedDevices(const std::vector<std::string>& devices) {
 bool EventHub::hasScanCode(int32_t deviceId, int32_t scanCode) const {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device && scanCode >= 0 && scanCode <= KEY_MAX) {
-        if (test_bit(scanCode, device->keyBitmask)) {
-            return true;
-        }
+    if (device != nullptr && scanCode >= 0 && scanCode <= KEY_MAX) {
+        return device->keyBitmask.test(scanCode);
     }
     return false;
 }
@@ -619,10 +588,8 @@ bool EventHub::hasLed(int32_t deviceId, int32_t led) const {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
     int32_t sc;
-    if (device && mapLed(device, led, &sc) == NO_ERROR) {
-        if (test_bit(sc, device->ledBitmask)) {
-            return true;
-        }
+    if (device != nullptr && mapLed(device, led, &sc) == NO_ERROR) {
+        return device->ledBitmask.test(sc);
     }
     return false;
 }
@@ -635,7 +602,7 @@ void EventHub::setLedState(int32_t deviceId, int32_t led, bool on) {
 
 void EventHub::setLedStateLocked(Device* device, int32_t led, bool on) {
     int32_t sc;
-    if (device && device->hasValidFd() && mapLed(device, led, &sc) != NAME_NOT_FOUND) {
+    if (device != nullptr && device->hasValidFd() && mapLed(device, led, &sc) != NAME_NOT_FOUND) {
         struct input_event ev;
         ev.time.tv_sec = 0;
         ev.time.tv_usec = 0;
@@ -656,7 +623,7 @@ void EventHub::getVirtualKeyDefinitions(int32_t deviceId,
 
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device && device->virtualKeyMap) {
+    if (device != nullptr && device->virtualKeyMap) {
         const std::vector<VirtualKeyDefinition> virtualKeys =
                 device->virtualKeyMap->getVirtualKeys();
         outVirtualKeys.insert(outVirtualKeys.end(), virtualKeys.begin(), virtualKeys.end());
@@ -666,7 +633,7 @@ void EventHub::getVirtualKeyDefinitions(int32_t deviceId,
 sp<KeyCharacterMap> EventHub::getKeyCharacterMap(int32_t deviceId) const {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device) {
+    if (device != nullptr) {
         return device->getKeyCharacterMap();
     }
     return nullptr;
@@ -675,7 +642,7 @@ sp<KeyCharacterMap> EventHub::getKeyCharacterMap(int32_t deviceId) const {
 bool EventHub::setKeyboardLayoutOverlay(int32_t deviceId, const sp<KeyCharacterMap>& map) {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device) {
+    if (device != nullptr) {
         if (map != device->overlayKeyMap) {
             device->overlayKeyMap = map;
             device->combinedKeyMap = KeyCharacterMap::combine(device->keyMap.keyCharacterMap, map);
@@ -735,17 +702,18 @@ void EventHub::assignDescriptorLocked(InputDeviceIdentifier& identifier) {
           identifier.descriptor.c_str());
 }
 
-void EventHub::vibrate(int32_t deviceId, nsecs_t duration) {
+void EventHub::vibrate(int32_t deviceId, const VibrationElement& element) {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device && device->hasValidFd()) {
+    if (device != nullptr && device->hasValidFd()) {
         ff_effect effect;
         memset(&effect, 0, sizeof(effect));
         effect.type = FF_RUMBLE;
         effect.id = device->ffEffectId;
-        effect.u.rumble.strong_magnitude = 0xc000;
-        effect.u.rumble.weak_magnitude = 0xc000;
-        effect.replay.length = (duration + 999999LL) / 1000000LL;
+        // evdev FF_RUMBLE effect only supports two channels of vibration.
+        effect.u.rumble.strong_magnitude = element.getChannel(0);
+        effect.u.rumble.weak_magnitude = element.getChannel(1);
+        effect.replay.length = element.duration.count();
         effect.replay.delay = 0;
         if (ioctl(device->fd, EVIOCSFF, &effect)) {
             ALOGW("Could not upload force feedback effect to device %s due to error %d.",
@@ -772,7 +740,7 @@ void EventHub::vibrate(int32_t deviceId, nsecs_t duration) {
 void EventHub::cancelVibrate(int32_t deviceId) {
     AutoMutex _l(mLock);
     Device* device = getDeviceLocked(deviceId);
-    if (device && device->hasValidFd()) {
+    if (device != nullptr && device->hasValidFd()) {
         if (device->ffEffectPlaying) {
             device->ffEffectPlaying = false;
 
@@ -810,7 +778,7 @@ EventHub::Device* EventHub::getDeviceLocked(int32_t deviceId) const {
     return index >= 0 ? mDevices.valueAt(index) : NULL;
 }
 
-EventHub::Device* EventHub::getDeviceByPathLocked(const char* devicePath) const {
+EventHub::Device* EventHub::getDeviceByPathLocked(const std::string& devicePath) const {
     for (size_t i = 0; i < mDevices.size(); i++) {
         Device* device = mDevices.valueAt(i);
         if (device->path == devicePath) {
@@ -933,11 +901,11 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                 if (eventItem.events & EPOLLIN) {
                     ALOGV("awoken after wake()");
                     awoken = true;
-                    char buffer[16];
+                    char wakeReadBuffer[16];
                     ssize_t nRead;
                     do {
-                        nRead = read(mWakeReadPipeFd, buffer, sizeof(buffer));
-                    } while ((nRead == -1 && errno == EINTR) || nRead == sizeof(buffer));
+                        nRead = read(mWakeReadPipeFd, wakeReadBuffer, sizeof(wakeReadBuffer));
+                    } while ((nRead == -1 && errno == EINTR) || nRead == sizeof(wakeReadBuffer));
                 } else {
                     ALOGW("Received unexpected epoll event 0x%08x for wake read pipe.",
                           eventItem.events);
@@ -1089,7 +1057,7 @@ std::vector<TouchVideoFrame> EventHub::getVideoFrames(int32_t deviceId) {
     AutoMutex _l(mLock);
 
     Device* device = getDeviceLocked(deviceId);
-    if (!device || !device->videoDevice) {
+    if (device == nullptr || !device->videoDevice) {
         return {};
     }
     return device->videoDevice->consumeFrames();
@@ -1125,17 +1093,6 @@ void EventHub::scanDevicesLocked() {
 }
 
 // ----------------------------------------------------------------------------
-
-static bool containsNonZeroByte(const uint8_t* array, uint32_t startIndex, uint32_t endIndex) {
-    const uint8_t* end = array + endIndex;
-    array += startIndex;
-    while (array != end) {
-        if (*(array++) != 0) {
-            return true;
-        }
-    }
-    return false;
-}
 
 static const int32_t GAMEPAD_KEYCODES[] = {
         AKEYCODE_BUTTON_A,      AKEYCODE_BUTTON_B,      AKEYCODE_BUTTON_C,    //
@@ -1215,14 +1172,14 @@ void EventHub::unregisterVideoDeviceFromEpollLocked(const TouchVideoDevice& vide
     }
 }
 
-status_t EventHub::openDeviceLocked(const char* devicePath) {
+status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     char buffer[80];
 
-    ALOGV("Opening device: %s", devicePath);
+    ALOGV("Opening device: %s", devicePath.c_str());
 
-    int fd = open(devicePath, O_RDWR | O_CLOEXEC | O_NONBLOCK);
+    int fd = open(devicePath.c_str(), O_RDWR | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) {
-        ALOGE("could not open %s, %s\n", devicePath, strerror(errno));
+        ALOGE("could not open %s, %s\n", devicePath.c_str(), strerror(errno));
         return -1;
     }
 
@@ -1230,7 +1187,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
 
     // Get device name.
     if (ioctl(fd, EVIOCGNAME(sizeof(buffer) - 1), &buffer) < 1) {
-        ALOGE("Could not get device name for %s: %s", devicePath, strerror(errno));
+        ALOGE("Could not get device name for %s: %s", devicePath.c_str(), strerror(errno));
     } else {
         buffer[sizeof(buffer) - 1] = '\0';
         identifier.name = buffer;
@@ -1240,7 +1197,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     for (size_t i = 0; i < mExcludedDevices.size(); i++) {
         const std::string& item = mExcludedDevices[i];
         if (identifier.name == item) {
-            ALOGI("ignoring event id %s driver %s\n", devicePath, item.c_str());
+            ALOGI("ignoring event id %s driver %s\n", devicePath.c_str(), item.c_str());
             close(fd);
             return -1;
         }
@@ -1249,7 +1206,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     // Get device driver version.
     int driverVersion;
     if (ioctl(fd, EVIOCGVERSION, &driverVersion)) {
-        ALOGE("could not get driver version for %s, %s\n", devicePath, strerror(errno));
+        ALOGE("could not get driver version for %s, %s\n", devicePath.c_str(), strerror(errno));
         close(fd);
         return -1;
     }
@@ -1257,7 +1214,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     // Get device identifier.
     struct input_id inputId;
     if (ioctl(fd, EVIOCGID, &inputId)) {
-        ALOGE("could not get device input id for %s, %s\n", devicePath, strerror(errno));
+        ALOGE("could not get device input id for %s, %s\n", devicePath.c_str(), strerror(errno));
         close(fd);
         return -1;
     }
@@ -1289,7 +1246,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     int32_t deviceId = mNextDeviceId++;
     Device* device = new Device(fd, deviceId, devicePath, identifier);
 
-    ALOGV("add device %d: %s\n", deviceId, devicePath);
+    ALOGV("add device %d: %s\n", deviceId, devicePath.c_str());
     ALOGV("  bus:        %04x\n"
           "  vendor      %04x\n"
           "  product     %04x\n"
@@ -1306,31 +1263,27 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     loadConfigurationLocked(device);
 
     // Figure out the kinds of events the device reports.
-    ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(device->keyBitmask)), device->keyBitmask);
-    ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(device->absBitmask)), device->absBitmask);
-    ioctl(fd, EVIOCGBIT(EV_REL, sizeof(device->relBitmask)), device->relBitmask);
-    ioctl(fd, EVIOCGBIT(EV_SW, sizeof(device->swBitmask)), device->swBitmask);
-    ioctl(fd, EVIOCGBIT(EV_LED, sizeof(device->ledBitmask)), device->ledBitmask);
-    ioctl(fd, EVIOCGBIT(EV_FF, sizeof(device->ffBitmask)), device->ffBitmask);
-    ioctl(fd, EVIOCGPROP(sizeof(device->propBitmask)), device->propBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_KEY, 0), device->keyBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_ABS, 0), device->absBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_REL, 0), device->relBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_SW, 0), device->swBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_LED, 0), device->ledBitmask);
+    device->readDeviceBitMask(EVIOCGBIT(EV_FF, 0), device->ffBitmask);
+    device->readDeviceBitMask(EVIOCGPROP(0), device->propBitmask);
 
     // See if this is a keyboard.  Ignore everything in the button range except for
     // joystick and gamepad buttons which are handled like keyboards for the most part.
     bool haveKeyboardKeys =
-            containsNonZeroByte(device->keyBitmask, 0, sizeof_bit_array(BTN_MISC)) ||
-            containsNonZeroByte(device->keyBitmask, sizeof_bit_array(BTN_WHEEL),
-                                sizeof_bit_array(KEY_MAX + 1));
-    bool haveGamepadButtons = containsNonZeroByte(device->keyBitmask, sizeof_bit_array(BTN_MISC),
-                                                  sizeof_bit_array(BTN_MOUSE)) ||
-            containsNonZeroByte(device->keyBitmask, sizeof_bit_array(BTN_JOYSTICK),
-                                sizeof_bit_array(BTN_DIGI));
+            device->keyBitmask.any(0, BTN_MISC) || device->keyBitmask.any(BTN_WHEEL, KEY_MAX + 1);
+    bool haveGamepadButtons = device->keyBitmask.any(BTN_MISC, BTN_MOUSE) ||
+            device->keyBitmask.any(BTN_JOYSTICK, BTN_DIGI);
     if (haveKeyboardKeys || haveGamepadButtons) {
         device->classes |= INPUT_DEVICE_CLASS_KEYBOARD;
     }
 
     // See if this is a cursor device such as a trackball or mouse.
-    if (test_bit(BTN_MOUSE, device->keyBitmask) && test_bit(REL_X, device->relBitmask) &&
-        test_bit(REL_Y, device->relBitmask)) {
+    if (device->keyBitmask.test(BTN_MOUSE) && device->relBitmask.test(REL_X) &&
+        device->relBitmask.test(REL_Y)) {
         device->classes |= INPUT_DEVICE_CLASS_CURSOR;
     }
 
@@ -1345,22 +1298,20 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
 
     // See if this is a touch pad.
     // Is this a new modern multi-touch driver?
-    if (test_bit(ABS_MT_POSITION_X, device->absBitmask) &&
-        test_bit(ABS_MT_POSITION_Y, device->absBitmask)) {
+    if (device->absBitmask.test(ABS_MT_POSITION_X) && device->absBitmask.test(ABS_MT_POSITION_Y)) {
         // Some joysticks such as the PS3 controller report axes that conflict
         // with the ABS_MT range.  Try to confirm that the device really is
         // a touch screen.
-        if (test_bit(BTN_TOUCH, device->keyBitmask) || !haveGamepadButtons) {
+        if (device->keyBitmask.test(BTN_TOUCH) || !haveGamepadButtons) {
             device->classes |= INPUT_DEVICE_CLASS_TOUCH | INPUT_DEVICE_CLASS_TOUCH_MT;
         }
         // Is this an old style single-touch driver?
-    } else if (test_bit(BTN_TOUCH, device->keyBitmask) && test_bit(ABS_X, device->absBitmask) &&
-               test_bit(ABS_Y, device->absBitmask)) {
+    } else if (device->keyBitmask.test(BTN_TOUCH) && device->absBitmask.test(ABS_X) &&
+               device->absBitmask.test(ABS_Y)) {
         device->classes |= INPUT_DEVICE_CLASS_TOUCH;
         // Is this a BT stylus?
-    } else if ((test_bit(ABS_PRESSURE, device->absBitmask) ||
-                test_bit(BTN_TOUCH, device->keyBitmask)) &&
-               !test_bit(ABS_X, device->absBitmask) && !test_bit(ABS_Y, device->absBitmask)) {
+    } else if ((device->absBitmask.test(ABS_PRESSURE) || device->keyBitmask.test(BTN_TOUCH)) &&
+               !device->absBitmask.test(ABS_X) && !device->absBitmask.test(ABS_Y)) {
         device->classes |= INPUT_DEVICE_CLASS_EXTERNAL_STYLUS;
         // Keyboard will try to claim some of the buttons but we really want to reserve those so we
         // can fuse it with the touch screen data, so just take them back. Note this means an
@@ -1374,7 +1325,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
     if (haveGamepadButtons) {
         uint32_t assumedClasses = device->classes | INPUT_DEVICE_CLASS_JOYSTICK;
         for (int i = 0; i <= ABS_MAX; i++) {
-            if (test_bit(i, device->absBitmask) &&
+            if (device->absBitmask.test(i) &&
                 (getAbsAxisUsage(i, assumedClasses) & INPUT_DEVICE_CLASS_JOYSTICK)) {
                 device->classes = assumedClasses;
                 break;
@@ -1384,14 +1335,14 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
 
     // Check whether this device has switches.
     for (int i = 0; i <= SW_MAX; i++) {
-        if (test_bit(i, device->swBitmask)) {
+        if (device->swBitmask.test(i)) {
             device->classes |= INPUT_DEVICE_CLASS_SWITCH;
             break;
         }
     }
 
     // Check whether this device supports the vibrator.
-    if (test_bit(FF_RUMBLE, device->ffBitmask)) {
+    if (device->ffBitmask.test(FF_RUMBLE)) {
         device->classes |= INPUT_DEVICE_CLASS_VIBRATOR;
     }
 
@@ -1446,7 +1397,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
 
     // If the device isn't recognized as something we handle, don't monitor it.
     if (device->classes == 0) {
-        ALOGV("Dropping device: id=%d, path='%s', name='%s'", deviceId, devicePath,
+        ALOGV("Dropping device: id=%d, path='%s', name='%s'", deviceId, devicePath.c_str(),
               device->identifier.name.c_str());
         delete device;
         return -1;
@@ -1492,7 +1443,7 @@ status_t EventHub::openDeviceLocked(const char* devicePath) {
 
     ALOGI("New device: id=%d, fd=%d, path='%s', name='%s', classes=0x%x, "
           "configuration='%s', keyLayout='%s', keyCharacterMap='%s', builtinKeyboard=%s, ",
-          deviceId, fd, devicePath, device->identifier.name.c_str(), device->classes,
+          deviceId, fd, devicePath.c_str(), device->identifier.name.c_str(), device->classes,
           device->configurationFile.c_str(), device->keyMap.keyLayoutFile.c_str(),
           device->keyMap.keyCharacterMapFile.c_str(), toString(mBuiltInKeyboardId == deviceId));
 
@@ -1613,8 +1564,10 @@ void EventHub::addDeviceLocked(Device* device) {
 }
 
 void EventHub::loadConfigurationLocked(Device* device) {
-    device->configurationFile = getInputDeviceConfigurationFilePathByDeviceIdentifier(
-            device->identifier, INPUT_DEVICE_CONFIGURATION_FILE_TYPE_CONFIGURATION);
+    device->configurationFile =
+            getInputDeviceConfigurationFilePathByDeviceIdentifier(device->identifier,
+                                                                  InputDeviceConfigurationFileType::
+                                                                          CONFIGURATION);
     if (device->configurationFile.empty()) {
         ALOGD("No input device configuration file found for device '%s'.",
               device->identifier.name.c_str());
@@ -1701,7 +1654,7 @@ bool EventHub::hasKeycodeLocked(Device* device, int keycode) const {
     const size_t N = scanCodes.size();
     for (size_t i = 0; i < N && i <= KEY_MAX; i++) {
         int32_t sc = scanCodes[i];
-        if (sc >= 0 && sc <= KEY_MAX && test_bit(sc, device->keyBitmask)) {
+        if (sc >= 0 && sc <= KEY_MAX && device->keyBitmask.test(sc)) {
             return true;
         }
     }
@@ -1716,7 +1669,7 @@ status_t EventHub::mapLed(Device* device, int32_t led, int32_t* outScanCode) con
 
     int32_t scanCode;
     if (device->keyMap.keyLayoutMap->findScanCodeForLed(led, &scanCode) != NAME_NOT_FOUND) {
-        if (scanCode >= 0 && scanCode <= LED_MAX && test_bit(scanCode, device->ledBitmask)) {
+        if (scanCode >= 0 && scanCode <= LED_MAX && device->ledBitmask.test(scanCode)) {
             *outScanCode = scanCode;
             return NO_ERROR;
         }
@@ -1724,13 +1677,13 @@ status_t EventHub::mapLed(Device* device, int32_t led, int32_t* outScanCode) con
     return NAME_NOT_FOUND;
 }
 
-void EventHub::closeDeviceByPathLocked(const char* devicePath) {
+void EventHub::closeDeviceByPathLocked(const std::string& devicePath) {
     Device* device = getDeviceByPathLocked(devicePath);
     if (device) {
         closeDeviceLocked(device);
         return;
     }
-    ALOGV("Remove device: %s not found, device may already have been removed.", devicePath);
+    ALOGV("Remove device: %s not found, device may already have been removed.", devicePath.c_str());
 }
 
 /**
@@ -1835,16 +1788,16 @@ status_t EventHub::readNotifyLocked() {
         event = (struct inotify_event*)(event_buf + event_pos);
         if (event->len) {
             if (event->wd == mInputWd) {
-                std::string filename = StringPrintf("%s/%s", DEVICE_PATH, event->name);
+                std::string filename = std::string(DEVICE_PATH) + "/" + event->name;
                 if (event->mask & IN_CREATE) {
-                    openDeviceLocked(filename.c_str());
+                    openDeviceLocked(filename);
                 } else {
                     ALOGI("Removing device '%s' due to inotify event\n", filename.c_str());
-                    closeDeviceByPathLocked(filename.c_str());
+                    closeDeviceByPathLocked(filename);
                 }
             } else if (event->wd == mVideoWd) {
                 if (isV4lTouchNode(event->name)) {
-                    std::string filename = StringPrintf("%s/%s", VIDEO_DEVICE_PATH, event->name);
+                    std::string filename = std::string(VIDEO_DEVICE_PATH) + "/" + event->name;
                     if (event->mask & IN_CREATE) {
                         openVideoDeviceLocked(filename);
                     } else {
@@ -1863,24 +1816,10 @@ status_t EventHub::readNotifyLocked() {
     return 0;
 }
 
-status_t EventHub::scanDirLocked(const char* dirname) {
-    char devname[PATH_MAX];
-    char* filename;
-    DIR* dir;
-    struct dirent* de;
-    dir = opendir(dirname);
-    if (dir == nullptr) return -1;
-    strcpy(devname, dirname);
-    filename = devname + strlen(devname);
-    *filename++ = '/';
-    while ((de = readdir(dir))) {
-        if (de->d_name[0] == '.' &&
-            (de->d_name[1] == '\0' || (de->d_name[1] == '.' && de->d_name[2] == '\0')))
-            continue;
-        strcpy(filename, de->d_name);
-        openDeviceLocked(devname);
+status_t EventHub::scanDirLocked(const std::string& dirname) {
+    for (const auto& entry : std::filesystem::directory_iterator(dirname)) {
+        openDeviceLocked(entry.path());
     }
-    closedir(dir);
     return 0;
 }
 
@@ -1888,22 +1827,12 @@ status_t EventHub::scanDirLocked(const char* dirname) {
  * Look for all dirname/v4l-touch* devices, and open them.
  */
 status_t EventHub::scanVideoDirLocked(const std::string& dirname) {
-    DIR* dir;
-    struct dirent* de;
-    dir = opendir(dirname.c_str());
-    if (!dir) {
-        ALOGE("Could not open video directory %s", dirname.c_str());
-        return BAD_VALUE;
-    }
-
-    while ((de = readdir(dir))) {
-        const char* name = de->d_name;
-        if (isV4lTouchNode(name)) {
-            ALOGI("Found touch video device %s", name);
-            openVideoDeviceLocked(dirname + "/" + name);
+    for (const auto& entry : std::filesystem::directory_iterator(dirname)) {
+        if (isV4lTouchNode(entry.path())) {
+            ALOGI("Found touch video device %s", entry.path().c_str());
+            openVideoDeviceLocked(entry.path());
         }
     }
-    closedir(dir);
     return OK;
 }
 

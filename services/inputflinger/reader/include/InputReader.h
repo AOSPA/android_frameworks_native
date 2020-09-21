@@ -17,18 +17,19 @@
 #ifndef _UI_INPUTREADER_INPUT_READER_H
 #define _UI_INPUTREADER_INPUT_READER_H
 
+#include <PointerControllerInterface.h>
+#include <utils/Condition.h>
+#include <utils/Mutex.h>
+
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
 #include "EventHub.h"
 #include "InputListener.h"
 #include "InputReaderBase.h"
 #include "InputReaderContext.h"
 #include "InputThread.h"
-
-#include <PointerControllerInterface.h>
-#include <utils/Condition.h>
-#include <utils/Mutex.h>
-
-#include <unordered_map>
-#include <vector>
 
 namespace android {
 
@@ -77,7 +78,7 @@ public:
 
     virtual void requestRefreshConfiguration(uint32_t changes) override;
 
-    virtual void vibrate(int32_t deviceId, const nsecs_t* pattern, size_t patternSize,
+    virtual void vibrate(int32_t deviceId, const std::vector<VibrationElement>& pattern,
                          ssize_t repeat, int32_t token) override;
     virtual void cancelVibrate(int32_t deviceId, int32_t token) override;
 
@@ -104,7 +105,8 @@ protected:
         virtual void disableVirtualKeysUntil(nsecs_t time) override;
         virtual bool shouldDropVirtualKey(nsecs_t now, int32_t keyCode, int32_t scanCode) override;
         virtual void fadePointer() override;
-        virtual sp<PointerControllerInterface> getPointerController(int32_t deviceId) override;
+        virtual std::shared_ptr<PointerControllerInterface> getPointerController(
+                int32_t deviceId) override;
         virtual void requestTimeoutAtTime(nsecs_t when) override;
         virtual int32_t bumpGeneration() override;
         virtual void getExternalStylusDevices(std::vector<InputDeviceInfo>& outDevices) override;
@@ -160,8 +162,8 @@ private:
     void dispatchExternalStylusState(const StylusState& state);
 
     // The PointerController that is shared among all the input devices that need it.
-    wp<PointerControllerInterface> mPointerController;
-    sp<PointerControllerInterface> getPointerControllerLocked(int32_t deviceId);
+    std::weak_ptr<PointerControllerInterface> mPointerController;
+    std::shared_ptr<PointerControllerInterface> getPointerControllerLocked(int32_t deviceId);
     void updatePointerDisplayLocked();
     void fadePointerLocked();
 
