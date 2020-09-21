@@ -35,8 +35,10 @@ template <typename T>
 class HalResult {
 public:
     static HalResult<T> ok(T value) { return HalResult(value); }
-    static HalResult<T> failed() { return HalResult(/* unsupported= */ false); }
-    static HalResult<T> unsupported() { return HalResult(/* unsupported= */ true); }
+    static HalResult<T> failed(std::string msg) {
+        return HalResult(std::move(msg), /* unsupported= */ false);
+    }
+    static HalResult<T> unsupported() { return HalResult("", /* unsupported= */ true); }
 
     static HalResult<T> fromStatus(binder::Status status, T data);
     static HalResult<T> fromStatus(hardware::vibrator::V1_0::Status status, T data);
@@ -53,13 +55,17 @@ public:
     bool isOk() const { return !mUnsupported && mValue.has_value(); }
     bool isFailed() const { return !mUnsupported && !mValue.has_value(); }
     bool isUnsupported() const { return mUnsupported; }
+    const char* errorMessage() const { return mErrorMessage.c_str(); }
 
 private:
     std::optional<T> mValue;
+    std::string mErrorMessage;
     bool mUnsupported;
 
-    explicit HalResult(T value) : mValue(std::make_optional(value)), mUnsupported(false) {}
-    explicit HalResult(bool unsupported) : mValue(), mUnsupported(unsupported) {}
+    explicit HalResult(T value)
+          : mValue(std::make_optional(value)), mErrorMessage(), mUnsupported(false) {}
+    explicit HalResult(std::string errorMessage, bool unsupported)
+          : mValue(), mErrorMessage(std::move(errorMessage)), mUnsupported(unsupported) {}
 };
 
 // Empty result of a call to the Vibrator HAL wrapper.
@@ -67,11 +73,10 @@ template <>
 class HalResult<void> {
 public:
     static HalResult<void> ok() { return HalResult(); }
-    static HalResult<void> failed() { return HalResult(/* failed= */ true); }
-    static HalResult<void> unsupported() {
-        return HalResult(/* failed= */ false, /* unsupported= */ true);
-    }
+    static HalResult<void> failed(std::string msg) { return HalResult(std::move(msg)); }
+    static HalResult<void> unsupported() { return HalResult(/* unsupported= */ true); }
 
+    static HalResult<void> fromStatus(status_t status);
     static HalResult<void> fromStatus(binder::Status status);
     static HalResult<void> fromStatus(hardware::vibrator::V1_0::Status status);
 
@@ -81,13 +86,17 @@ public:
     bool isOk() const { return !mUnsupported && !mFailed; }
     bool isFailed() const { return !mUnsupported && mFailed; }
     bool isUnsupported() const { return mUnsupported; }
+    const char* errorMessage() const { return mErrorMessage.c_str(); }
 
 private:
+    std::string mErrorMessage;
     bool mFailed;
     bool mUnsupported;
 
-    explicit HalResult(bool failed = false, bool unsupported = false)
-          : mFailed(failed), mUnsupported(unsupported) {}
+    explicit HalResult(bool unsupported = false)
+          : mErrorMessage(), mFailed(false), mUnsupported(unsupported) {}
+    explicit HalResult(std::string errorMessage)
+          : mErrorMessage(std::move(errorMessage)), mFailed(true), mUnsupported(false) {}
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -147,6 +156,8 @@ public:
 
     virtual HalResult<Capabilities> getCapabilities() = 0;
     virtual HalResult<std::vector<hardware::vibrator::Effect>> getSupportedEffects() = 0;
+    virtual HalResult<std::vector<hardware::vibrator::CompositePrimitive>>
+    getSupportedPrimitives() = 0;
 
     virtual HalResult<std::chrono::milliseconds> performEffect(
             hardware::vibrator::Effect effect, hardware::vibrator::EffectStrength strength,
@@ -185,6 +196,8 @@ public:
 
     HalResult<Capabilities> getCapabilities() override final;
     HalResult<std::vector<hardware::vibrator::Effect>> getSupportedEffects() override final;
+    HalResult<std::vector<hardware::vibrator::CompositePrimitive>> getSupportedPrimitives()
+            override final;
 
     HalResult<std::chrono::milliseconds> performEffect(
             hardware::vibrator::Effect effect, hardware::vibrator::EffectStrength strength,
@@ -198,14 +211,18 @@ private:
     std::mutex mHandleMutex;
     std::mutex mCapabilitiesMutex;
     std::mutex mSupportedEffectsMutex;
+    std::mutex mSupportedPrimitivesMutex;
     sp<hardware::vibrator::IVibrator> mHandle GUARDED_BY(mHandleMutex);
     std::optional<Capabilities> mCapabilities GUARDED_BY(mCapabilitiesMutex);
     std::optional<std::vector<hardware::vibrator::Effect>> mSupportedEffects
             GUARDED_BY(mSupportedEffectsMutex);
+    std::optional<std::vector<hardware::vibrator::CompositePrimitive>> mSupportedPrimitives
+            GUARDED_BY(mSupportedPrimitivesMutex);
 
     // Loads directly from IVibrator handle, skipping caches.
     HalResult<Capabilities> getCapabilitiesInternal();
     HalResult<std::vector<hardware::vibrator::Effect>> getSupportedEffectsInternal();
+    HalResult<std::vector<hardware::vibrator::CompositePrimitive>> getSupportedPrimitivesInternal();
     sp<hardware::vibrator::IVibrator> getHal();
 };
 
@@ -233,6 +250,8 @@ public:
 
     HalResult<Capabilities> getCapabilities() override final;
     HalResult<std::vector<hardware::vibrator::Effect>> getSupportedEffects() override final;
+    HalResult<std::vector<hardware::vibrator::CompositePrimitive>> getSupportedPrimitives()
+            override final;
 
     HalResult<void> performComposedEffect(
             const std::vector<hardware::vibrator::CompositeEffect>& primitiveEffects,

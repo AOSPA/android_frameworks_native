@@ -51,8 +51,6 @@
 #include "ProgramCache.h"
 #include "filters/BlurFilter.h"
 
-extern "C" EGLAPI const char* eglQueryStringImplementationANDROID(EGLDisplay dpy, EGLint name);
-
 bool checkGlError(const char* op, int lineNumber) {
     bool errorFound = false;
     GLint error = glGetError();
@@ -115,6 +113,28 @@ void writePPM(const char* basename, GLuint width, GLuint height) {
 namespace android {
 namespace renderengine {
 namespace gl {
+
+class BindNativeBufferAsFramebuffer {
+public:
+    BindNativeBufferAsFramebuffer(GLESRenderEngine& engine, ANativeWindowBuffer* buffer,
+                                  const bool useFramebufferCache)
+          : mEngine(engine), mFramebuffer(mEngine.getFramebufferForDrawing()), mStatus(NO_ERROR) {
+        mStatus = mFramebuffer->setNativeWindowBuffer(buffer, mEngine.isProtected(),
+                                                      useFramebufferCache)
+                ? mEngine.bindFrameBuffer(mFramebuffer)
+                : NO_MEMORY;
+    }
+    ~BindNativeBufferAsFramebuffer() {
+        mFramebuffer->setNativeWindowBuffer(nullptr, false, /*arbitrary*/ true);
+        mEngine.unbindFrameBuffer(mFramebuffer);
+    }
+    status_t getStatus() const { return mStatus; }
+
+private:
+    GLESRenderEngine& mEngine;
+    Framebuffer* mFramebuffer;
+    status_t mStatus;
+};
 
 using base::StringAppendF;
 using ui::Dataspace;
@@ -208,16 +228,16 @@ std::unique_ptr<GLESRenderEngine> GLESRenderEngine::create(const RenderEngineCre
         LOG_ALWAYS_FATAL("failed to initialize EGL");
     }
 
-    const auto eglVersion = eglQueryStringImplementationANDROID(display, EGL_VERSION);
+    const auto eglVersion = eglQueryString(display, EGL_VERSION);
     if (!eglVersion) {
         checkGlError(__FUNCTION__, __LINE__);
-        LOG_ALWAYS_FATAL("eglQueryStringImplementationANDROID(EGL_VERSION) failed");
+        LOG_ALWAYS_FATAL("eglQueryString(EGL_VERSION) failed");
     }
 
-    const auto eglExtensions = eglQueryStringImplementationANDROID(display, EGL_EXTENSIONS);
+    const auto eglExtensions = eglQueryString(display, EGL_EXTENSIONS);
     if (!eglExtensions) {
         checkGlError(__FUNCTION__, __LINE__);
-        LOG_ALWAYS_FATAL("eglQueryStringImplementationANDROID(EGL_EXTENSIONS) failed");
+        LOG_ALWAYS_FATAL("eglQueryString(EGL_EXTENSIONS) failed");
     }
 
     GLExtensions& extensions = GLExtensions::getInstance();
@@ -245,22 +265,22 @@ std::unique_ptr<GLESRenderEngine> GLESRenderEngine::create(const RenderEngineCre
     // if can't create a GL context, we can only abort.
     LOG_ALWAYS_FATAL_IF(ctxt == EGL_NO_CONTEXT, "EGLContext creation failed");
 
-    EGLSurface dummy = EGL_NO_SURFACE;
+    EGLSurface stub = EGL_NO_SURFACE;
     if (!extensions.hasSurfacelessContext()) {
-        dummy = createDummyEglPbufferSurface(display, config, args.pixelFormat,
-                                             Protection::UNPROTECTED);
-        LOG_ALWAYS_FATAL_IF(dummy == EGL_NO_SURFACE, "can't create dummy pbuffer");
+        stub = createStubEglPbufferSurface(display, config, args.pixelFormat,
+                                           Protection::UNPROTECTED);
+        LOG_ALWAYS_FATAL_IF(stub == EGL_NO_SURFACE, "can't create stub pbuffer");
     }
-    EGLBoolean success = eglMakeCurrent(display, dummy, dummy, ctxt);
-    LOG_ALWAYS_FATAL_IF(!success, "can't make dummy pbuffer current");
+    EGLBoolean success = eglMakeCurrent(display, stub, stub, ctxt);
+    LOG_ALWAYS_FATAL_IF(!success, "can't make stub pbuffer current");
     extensions.initWithGLStrings(glGetString(GL_VENDOR), glGetString(GL_RENDERER),
                                  glGetString(GL_VERSION), glGetString(GL_EXTENSIONS));
 
-    EGLSurface protectedDummy = EGL_NO_SURFACE;
+    EGLSurface protectedStub = EGL_NO_SURFACE;
     if (protectedContext != EGL_NO_CONTEXT && !extensions.hasSurfacelessContext()) {
-        protectedDummy = createDummyEglPbufferSurface(display, config, args.pixelFormat,
-                                                      Protection::PROTECTED);
-        ALOGE_IF(protectedDummy == EGL_NO_SURFACE, "can't create protected dummy pbuffer");
+        protectedStub = createStubEglPbufferSurface(display, config, args.pixelFormat,
+                                                    Protection::PROTECTED);
+        ALOGE_IF(protectedStub == EGL_NO_SURFACE, "can't create protected stub pbuffer");
     }
 
     // now figure out what version of GL did we actually get
@@ -278,8 +298,8 @@ std::unique_ptr<GLESRenderEngine> GLESRenderEngine::create(const RenderEngineCre
             break;
         case GLES_VERSION_2_0:
         case GLES_VERSION_3_0:
-            engine = std::make_unique<GLESRenderEngine>(args, display, config, ctxt, dummy,
-                                                        protectedContext, protectedDummy);
+            engine = std::make_unique<GLESRenderEngine>(args, display, config, ctxt, stub,
+                                                        protectedContext, protectedStub);
             break;
     }
 
@@ -334,19 +354,19 @@ EGLConfig GLESRenderEngine::chooseEglConfig(EGLDisplay display, int format, bool
 }
 
 GLESRenderEngine::GLESRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
-                                   EGLConfig config, EGLContext ctxt, EGLSurface dummy,
-                                   EGLContext protectedContext, EGLSurface protectedDummy)
-      : renderengine::impl::RenderEngine(args),
-        mEGLDisplay(display),
+                                   EGLConfig config, EGLContext ctxt, EGLSurface stub,
+                                   EGLContext protectedContext, EGLSurface protectedStub)
+      : mEGLDisplay(display),
         mEGLConfig(config),
         mEGLContext(ctxt),
-        mDummySurface(dummy),
+        mStubSurface(stub),
         mProtectedEGLContext(protectedContext),
-        mProtectedDummySurface(protectedDummy),
+        mProtectedStubSurface(protectedStub),
         mVpWidth(0),
         mVpHeight(0),
         mFramebufferImageCacheSize(args.imageCacheSize),
-        mUseColorManagement(args.useColorManagement) {
+        mUseColorManagement(args.useColorManagement),
+        mPrecacheToneMapperShaderOnly(args.precacheToneMapperShaderOnly) {
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
     glGetIntegerv(GL_MAX_VIEWPORT_DIMS, mMaxViewportDims);
 
@@ -355,12 +375,12 @@ GLESRenderEngine::GLESRenderEngine(const RenderEngineCreationArgs& args, EGLDisp
 
     // Initialize protected EGL Context.
     if (mProtectedEGLContext != EGL_NO_CONTEXT) {
-        EGLBoolean success = eglMakeCurrent(display, mProtectedDummySurface, mProtectedDummySurface,
+        EGLBoolean success = eglMakeCurrent(display, mProtectedStubSurface, mProtectedStubSurface,
                                             mProtectedEGLContext);
         ALOGE_IF(!success, "can't make protected context current");
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        success = eglMakeCurrent(display, mDummySurface, mDummySurface, mEGLContext);
+        success = eglMakeCurrent(display, mStubSurface, mStubSurface, mEGLContext);
         LOG_ALWAYS_FATAL_IF(!success, "can't make default context current");
     }
 
@@ -409,20 +429,33 @@ GLESRenderEngine::GLESRenderEngine(const RenderEngineCreationArgs& args, EGLDisp
     mImageManager = std::make_unique<ImageManager>(this);
     mImageManager->initThread();
     mDrawingBuffer = createFramebuffer();
+    sp<GraphicBuffer> buf =
+            new GraphicBuffer(1, 1, PIXEL_FORMAT_RGBA_8888, 1,
+                              GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE, "placeholder");
+
+    const status_t err = buf->initCheck();
+    if (err != OK) {
+        ALOGE("Error allocating placeholder buffer: %d", err);
+        return;
+    }
+    mPlaceholderBuffer = buf.get();
+    EGLint attributes[] = {
+            EGL_NONE,
+    };
+    mPlaceholderImage = eglCreateImageKHR(mEGLDisplay, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
+                                          mPlaceholderBuffer, attributes);
+    ALOGE_IF(mPlaceholderImage == EGL_NO_IMAGE_KHR, "Failed to create placeholder image: %#x",
+             eglGetError());
 }
 
 GLESRenderEngine::~GLESRenderEngine() {
     // Destroy the image manager first.
     mImageManager = nullptr;
+    cleanFramebufferCache();
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     unbindFrameBuffer(mDrawingBuffer.get());
     mDrawingBuffer = nullptr;
-    while (!mFramebufferImageCache.empty()) {
-        EGLImageKHR expired = mFramebufferImageCache.front().second;
-        mFramebufferImageCache.pop_front();
-        eglDestroyImageKHR(mEGLDisplay, expired);
-        DEBUG_EGL_IMAGE_TRACKER_DESTROY();
-    }
+    eglDestroyImageKHR(mEGLDisplay, mPlaceholderImage);
     mImageCache.clear();
     eglMakeCurrent(mEGLDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglTerminate(mEGLDisplay);
@@ -442,8 +475,7 @@ Framebuffer* GLESRenderEngine::getFramebufferForDrawing() {
 
 void GLESRenderEngine::primeCache() const {
     ProgramCache::getInstance().primeCache(mInProtectedContext ? mProtectedEGLContext : mEGLContext,
-                                           mArgs.useColorManagement,
-                                           mArgs.precacheToneMapperShaderOnly);
+                                           mUseColorManagement, mPrecacheToneMapperShaderOnly);
 }
 
 base::unique_fd GLESRenderEngine::flush() {
@@ -589,6 +621,9 @@ void GLESRenderEngine::genTextures(size_t count, uint32_t* names) {
 }
 
 void GLESRenderEngine::deleteTextures(size_t count, uint32_t const* names) {
+    for (int i = 0; i < count; ++i) {
+        mTextureView.erase(names[i]);
+    }
     glDeleteTextures(count, names);
 }
 
@@ -603,13 +638,8 @@ void GLESRenderEngine::bindExternalTextureImage(uint32_t texName, const Image& i
     }
 }
 
-status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName,
-                                                     const sp<GraphicBuffer>& buffer,
-                                                     const sp<Fence>& bufferFence) {
-    if (buffer == nullptr) {
-        return BAD_VALUE;
-    }
-
+void GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName, const sp<GraphicBuffer>& buffer,
+                                                 const sp<Fence>& bufferFence) {
     ATRACE_CALL();
 
     bool found = false;
@@ -625,7 +655,8 @@ status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName,
     if (!found) {
         status_t cacheResult = mImageManager->cache(buffer);
         if (cacheResult != NO_ERROR) {
-            return cacheResult;
+            ALOGE("Error with caching buffer: %d", cacheResult);
+            return;
         }
     }
 
@@ -642,10 +673,11 @@ status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName,
             // We failed creating the image if we got here, so bail out.
             ALOGE("Failed to create an EGLImage when rendering");
             bindExternalTextureImage(texName, *createImage());
-            return NO_INIT;
+            return;
         }
 
         bindExternalTextureImage(texName, *cachedImage->second);
+        mTextureView.insert_or_assign(texName, buffer->getId());
     }
 
     // Wait for the new buffer to be ready.
@@ -654,22 +686,22 @@ status_t GLESRenderEngine::bindExternalTextureBuffer(uint32_t texName,
             base::unique_fd fenceFd(bufferFence->dup());
             if (fenceFd == -1) {
                 ALOGE("error dup'ing fence fd: %d", errno);
-                return -errno;
+                return;
             }
             if (!waitFence(std::move(fenceFd))) {
                 ALOGE("failed to wait on fence fd");
-                return UNKNOWN_ERROR;
+                return;
             }
         } else {
             status_t err = bufferFence->waitForever("RenderEngine::bindExternalTextureBuffer");
             if (err != NO_ERROR) {
                 ALOGE("error waiting for fence: %d", err);
-                return err;
+                return;
             }
         }
     }
 
-    return NO_ERROR;
+    return;
 }
 
 void GLESRenderEngine::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) {
@@ -887,7 +919,7 @@ void GLESRenderEngine::unbindFrameBuffer(Framebuffer* /*framebuffer*/) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-bool GLESRenderEngine::cleanupPostRender() {
+bool GLESRenderEngine::cleanupPostRender(CleanupMode mode) {
     ATRACE_CALL();
 
     if (mPriorResourcesCleaned ||
@@ -896,14 +928,53 @@ bool GLESRenderEngine::cleanupPostRender() {
         return false;
     }
 
-    // Bind the texture to dummy data so that backing image data can be freed.
+    // This is a bit of a band-aid fix for FrameCaptureProcessor, as we should
+    // not need to keep memory around if we don't need to do so.
+    if (mode == CleanupMode::CLEAN_ALL) {
+        // TODO: SurfaceFlinger memory utilization may benefit from resetting
+        // texture bindings as well. Assess if it does and there's no performance regression
+        // when rebinding the same image data to the same texture, and if so then its mode
+        // behavior can be tweaked.
+        if (mPlaceholderImage != EGL_NO_IMAGE_KHR) {
+            for (auto [textureName, bufferId] : mTextureView) {
+                if (bufferId && mPlaceholderImage != EGL_NO_IMAGE_KHR) {
+                    glBindTexture(GL_TEXTURE_EXTERNAL_OES, textureName);
+                    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES,
+                                                 static_cast<GLeglImageOES>(mPlaceholderImage));
+                    mTextureView[textureName] = std::nullopt;
+                    checkErrors();
+                }
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(mRenderingMutex);
+            mImageCache.clear();
+        }
+    }
+
+    // Bind the texture to placeholder so that backing image data can be freed.
     GLFramebuffer* glFramebuffer = static_cast<GLFramebuffer*>(getFramebufferForDrawing());
     glFramebuffer->allocateBuffers(1, 1, mPlaceholderDrawBuffer);
+
     // Release the cached fence here, so that we don't churn reallocations when
     // we could no-op repeated calls of this method instead.
     mLastDrawFence = nullptr;
     mPriorResourcesCleaned = true;
     return true;
+}
+
+void GLESRenderEngine::cleanFramebufferCache() {
+    std::lock_guard<std::mutex> lock(mFramebufferImageCacheMutex);
+    // Bind the texture to placeholder so that backing image data can be freed.
+    GLFramebuffer* glFramebuffer = static_cast<GLFramebuffer*>(getFramebufferForDrawing());
+    glFramebuffer->allocateBuffers(1, 1, mPlaceholderDrawBuffer);
+
+    while (!mFramebufferImageCache.empty()) {
+        EGLImageKHR expired = mFramebufferImageCache.front().second;
+        mFramebufferImageCache.pop_front();
+        eglDestroyImageKHR(mEGLDisplay, expired);
+        DEBUG_EGL_IMAGE_TRACKER_DESTROY();
+    }
 }
 
 void GLESRenderEngine::checkErrors() const {
@@ -934,7 +1005,7 @@ bool GLESRenderEngine::useProtectedContext(bool useProtectedContext) {
     if (useProtectedContext && mProtectedEGLContext == EGL_NO_CONTEXT) {
         return false;
     }
-    const EGLSurface surface = useProtectedContext ? mProtectedDummySurface : mDummySurface;
+    const EGLSurface surface = useProtectedContext ? mProtectedStubSurface : mStubSurface;
     const EGLContext context = useProtectedContext ? mProtectedEGLContext : mEGLContext;
     const bool success = eglMakeCurrent(mEGLDisplay, surface, surface, context) == EGL_TRUE;
     if (success) {
@@ -1232,7 +1303,8 @@ void GLESRenderEngine::setupLayerBlending(bool premultipliedAlpha, bool opaque, 
 
     if (color.a < 1.0f || !opaque || cornerRadius > 0.0f) {
         glEnable(GL_BLEND);
-        glBlendFunc(premultipliedAlpha ? GL_ONE : GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBlendFuncSeparate(premultipliedAlpha ? GL_ONE : GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     } else {
         glDisable(GL_BLEND);
     }
@@ -1566,11 +1638,11 @@ EGLContext GLESRenderEngine::createEglContext(EGLDisplay display, EGLConfig conf
     return context;
 }
 
-EGLSurface GLESRenderEngine::createDummyEglPbufferSurface(EGLDisplay display, EGLConfig config,
-                                                          int hwcFormat, Protection protection) {
-    EGLConfig dummyConfig = config;
-    if (dummyConfig == EGL_NO_CONFIG) {
-        dummyConfig = chooseEglConfig(display, hwcFormat, /*logConfig*/ true);
+EGLSurface GLESRenderEngine::createStubEglPbufferSurface(EGLDisplay display, EGLConfig config,
+                                                         int hwcFormat, Protection protection) {
+    EGLConfig stubConfig = config;
+    if (stubConfig == EGL_NO_CONFIG) {
+        stubConfig = chooseEglConfig(display, hwcFormat, /*logConfig*/ true);
     }
     std::vector<EGLint> attributes;
     attributes.reserve(7);
@@ -1584,7 +1656,7 @@ EGLSurface GLESRenderEngine::createDummyEglPbufferSurface(EGLDisplay display, EG
     }
     attributes.push_back(EGL_NONE);
 
-    return eglCreatePbufferSurface(display, dummyConfig, attributes.data());
+    return eglCreatePbufferSurface(display, stubConfig, attributes.data());
 }
 
 bool GLESRenderEngine::isHdrDataSpace(const Dataspace dataSpace) const {
@@ -1618,6 +1690,16 @@ bool GLESRenderEngine::isImageCachedForTesting(uint64_t bufferId) {
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     const auto& cachedImage = mImageCache.find(bufferId);
     return cachedImage != mImageCache.end();
+}
+
+bool GLESRenderEngine::isTextureNameKnownForTesting(uint32_t texName) {
+    const auto& entry = mTextureView.find(texName);
+    return entry != mTextureView.end();
+}
+
+std::optional<uint64_t> GLESRenderEngine::getBufferIdForTextureNameForTesting(uint32_t texName) {
+    const auto& entry = mTextureView.find(texName);
+    return entry != mTextureView.end() ? entry->second : std::nullopt;
 }
 
 bool GLESRenderEngine::isFramebufferImageCachedForTesting(uint64_t bufferId) {

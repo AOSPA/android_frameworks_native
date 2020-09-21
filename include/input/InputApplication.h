@@ -19,6 +19,8 @@
 
 #include <string>
 
+#include <android/InputApplicationInfo.h>
+
 #include <binder/IBinder.h>
 #include <binder/Parcel.h>
 #include <binder/Parcelable.h>
@@ -28,29 +30,13 @@
 #include <utils/Timers.h>
 
 namespace android {
-
-/*
- * Describes the properties of an application that can receive input.
- */
-struct InputApplicationInfo : public Parcelable {
-    sp<IBinder> token;
-    std::string name;
-    std::chrono::nanoseconds dispatchingTimeout;
-
-    InputApplicationInfo() = default;
-
-    status_t readFromParcel(const android::Parcel* parcel) override;
-
-    status_t writeToParcel(android::Parcel* parcel) const override;
-};
-
 /*
  * Handle for an application that can receive input.
  *
  * Used by the native input dispatcher as a handle for the window manager objects
  * that describe an application.
  */
-class InputApplicationHandle : public RefBase {
+class InputApplicationHandle {
 public:
     inline const InputApplicationInfo* getInfo() const {
         return &mInfo;
@@ -62,12 +48,19 @@ public:
 
     inline std::chrono::nanoseconds getDispatchingTimeout(
             std::chrono::nanoseconds defaultValue) const {
-        return mInfo.token ? std::chrono::nanoseconds(mInfo.dispatchingTimeout) : defaultValue;
+        return mInfo.token ? std::chrono::milliseconds(mInfo.dispatchingTimeoutMillis)
+                           : defaultValue;
     }
 
     inline sp<IBinder> getApplicationToken() const {
         return mInfo.token;
     }
+
+    bool operator==(const InputApplicationHandle& other) const {
+        return getName() == other.getName() && getApplicationToken() == other.getApplicationToken();
+    }
+
+    bool operator!=(const InputApplicationHandle& other) const { return !(*this == other); }
 
     /**
      * Requests that the state of this object be updated to reflect
@@ -81,8 +74,8 @@ public:
     virtual bool updateInfo() = 0;
 
 protected:
-    InputApplicationHandle();
-    virtual ~InputApplicationHandle();
+    InputApplicationHandle() = default;
+    virtual ~InputApplicationHandle() = default;
 
     InputApplicationInfo mInfo;
 };

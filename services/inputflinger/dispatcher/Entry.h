@@ -112,8 +112,10 @@ protected:
 struct FocusEntry : EventEntry {
     sp<IBinder> connectionToken;
     bool hasFocus;
+    std::string_view reason;
 
-    FocusEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool hasFocus);
+    FocusEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool hasFocus,
+               std::string_view reason);
     virtual void appendDescription(std::string& msg) const;
 
 protected:
@@ -154,7 +156,6 @@ protected:
 };
 
 struct MotionEntry : EventEntry {
-    nsecs_t eventTime;
     int32_t deviceId;
     uint32_t source;
     int32_t displayId;
@@ -254,7 +255,7 @@ struct CommandEntry {
     sp<Connection> connection;
     nsecs_t eventTime;
     KeyEntry* keyEntry;
-    sp<InputApplicationHandle> inputApplicationHandle;
+    std::shared_ptr<InputApplicationHandle> inputApplicationHandle;
     std::string reason;
     int32_t userActivityEventType;
     uint32_t seq;

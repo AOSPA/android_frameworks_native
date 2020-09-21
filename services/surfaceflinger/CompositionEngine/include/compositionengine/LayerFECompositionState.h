@@ -116,7 +116,7 @@ struct LayerFECompositionState {
     FloatRect geomLayerBounds;
 
     // length of the shadow in screen space
-    float shadowRadius;
+    float shadowRadius{0.f};
 
     /*
      * Geometry state
@@ -129,16 +129,6 @@ struct LayerFECompositionState {
     Rect geomBufferSize;
     Rect geomContentCrop;
     Rect geomCrop;
-
-    /*
-     * Extra metadata
-     */
-
-    // The type for this layer
-    int type{0};
-
-    // The appId for this layer
-    int appId{0};
 
     GenericLayerMetadataMap metadata;
 

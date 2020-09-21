@@ -31,6 +31,7 @@
 #include "TouchState.h"
 #include "TouchedWindow.h"
 
+#include <attestation/HmacKeyManager.h>
 #include <input/Input.h>
 #include <input/InputApplication.h>
 #include <input/InputTransport.h>
@@ -57,16 +58,6 @@
 namespace android::inputdispatcher {
 
 class Connection;
-
-class HmacKeyManager {
-public:
-    HmacKeyManager();
-    std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
-
-private:
-    std::array<uint8_t, 32> sign(const uint8_t* data, size_t size) const;
-    const std::array<uint8_t, 128> mHmacKey;
-};
 
 /* Dispatches events to input targets.  Some functions of the input dispatcher, such as
  * identifying input targets, are controlled by a separate policy object.
@@ -115,7 +106,8 @@ public:
             const std::unordered_map<int32_t, std::vector<sp<InputWindowHandle>>>&
                     handlesPerDisplay) override;
     virtual void setFocusedApplication(
-            int32_t displayId, const sp<InputApplicationHandle>& inputApplicationHandle) override;
+            int32_t displayId,
+            const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle) override;
     virtual void setFocusedDisplay(int32_t displayId) override;
     virtual void setInputDispatchMode(bool enabled, bool frozen) override;
     virtual void setInputFilterEnabled(bool enabled) override;
@@ -129,8 +121,10 @@ public:
     virtual void setFocusedWindow(const FocusRequest&) override;
     virtual status_t registerInputMonitor(const std::shared_ptr<InputChannel>& inputChannel,
                                           int32_t displayId, bool isGestureMonitor) override;
-    virtual status_t unregisterInputChannel(const InputChannel& inputChannel) override;
+    virtual status_t unregisterInputChannel(const sp<IBinder>& connectionToken) override;
     virtual status_t pilferPointers(const sp<IBinder>& token) override;
+
+    std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
 
 private:
     enum class DropReason {
@@ -141,6 +135,14 @@ private:
         BLOCKED,
         STALE,
     };
+
+    enum class FocusResult {
+        OK,
+        NO_WINDOW,
+        NOT_FOCUSABLE,
+        NOT_VISIBLE,
+    };
+    static const char* typeToString(FocusResult result);
 
     std::unique_ptr<InputThread> mThread;
 
@@ -177,7 +179,8 @@ private:
     void dropInboundEventLocked(const EventEntry& entry, DropReason dropReason) REQUIRES(mLock);
 
     // Enqueues a focus event.
-    void enqueueFocusEventLocked(const InputWindowHandle& window, bool hasFocus) REQUIRES(mLock);
+    void enqueueFocusEventLocked(const sp<IBinder>& windowToken, bool hasFocus,
+                                 std::string_view reason) REQUIRES(mLock);
 
     // Adds an event to a queue of recent events for debugging purposes.
     void addRecentEventLocked(EventEntry* entry) REQUIRES(mLock);
@@ -277,7 +280,7 @@ private:
     void postCommandLocked(std::unique_ptr<CommandEntry> commandEntry) REQUIRES(mLock);
 
     nsecs_t processAnrsLocked() REQUIRES(mLock);
-    nsecs_t getDispatchingTimeoutLocked(const sp<IBinder>& token) REQUIRES(mLock);
+    std::chrono::nanoseconds getDispatchingTimeoutLocked(const sp<IBinder>& token) REQUIRES(mLock);
 
     // Input filter processing.
     bool shouldSendKeyToInputFilterLocked(const NotifyKeyArgs* args) REQUIRES(mLock);
@@ -298,14 +301,24 @@ private:
             GUARDED_BY(mLock);
     void setInputWindowsLocked(const std::vector<sp<InputWindowHandle>>& inputWindowHandles,
                                int32_t displayId) REQUIRES(mLock);
-    // Get window handles by display, return an empty vector if not found.
-    std::vector<sp<InputWindowHandle>> getWindowHandlesLocked(int32_t displayId) const
+    // Get a reference to window handles by display, return an empty vector if not found.
+    const std::vector<sp<InputWindowHandle>>& getWindowHandlesLocked(int32_t displayId) const
             REQUIRES(mLock);
     sp<InputWindowHandle> getWindowHandleLocked(const sp<IBinder>& windowHandleToken) const
             REQUIRES(mLock);
+
+    // Same function as above, but faster. Since displayId is provided, this avoids the need
+    // to loop through all displays.
+    sp<InputWindowHandle> getWindowHandleLocked(const sp<IBinder>& windowHandleToken,
+                                                int displayId) const REQUIRES(mLock);
     std::shared_ptr<InputChannel> getInputChannelLocked(const sp<IBinder>& windowToken) const
             REQUIRES(mLock);
+    sp<InputWindowHandle> getFocusedWindowHandleLocked(int displayId) const REQUIRES(mLock);
     bool hasWindowHandleLocked(const sp<InputWindowHandle>& windowHandle) const REQUIRES(mLock);
+    bool hasResponsiveConnectionLocked(InputWindowHandle& windowHandle) const REQUIRES(mLock);
+    FocusResult handleFocusRequestLocked(const FocusRequest&) REQUIRES(mLock);
+    FocusResult checkTokenFocusableLocked(const sp<IBinder>& token, int32_t displayId) const
+            REQUIRES(mLock);
 
     /*
      * Validate and update InputWindowHandles for a given display.
@@ -314,15 +327,17 @@ private:
             const std::vector<sp<InputWindowHandle>>& inputWindowHandles, int32_t displayId)
             REQUIRES(mLock);
 
-    // Focus tracking for keys, trackball, etc.
-    std::unordered_map<int32_t, sp<InputWindowHandle>> mFocusedWindowHandlesByDisplay
-            GUARDED_BY(mLock);
+    // Focus tracking for keys, trackball, etc. A window token can be associated with one or more
+    // InputWindowHandles. If a window is mirrored, the window and its mirror will share the same
+    // token. Focus is tracked by the token per display and the events are dispatched to the
+    // channel associated by this token.
+    std::unordered_map<int32_t, sp<IBinder>> mFocusedWindowTokenByDisplay GUARDED_BY(mLock);
 
     std::unordered_map<int32_t, TouchState> mTouchStatesByDisplay GUARDED_BY(mLock);
 
     // Focused applications.
-    std::unordered_map<int32_t, sp<InputApplicationHandle>> mFocusedApplicationHandlesByDisplay
-            GUARDED_BY(mLock);
+    std::unordered_map<int32_t, std::shared_ptr<InputApplicationHandle>>
+            mFocusedApplicationHandlesByDisplay GUARDED_BY(mLock);
 
     // Top focused display.
     int32_t mFocusedDisplayId GUARDED_BY(mLock);
@@ -374,7 +389,15 @@ private:
      * The focused application at the time when no focused window was present.
      * Used to raise an ANR when we have no focused window.
      */
-    sp<InputApplicationHandle> mAwaitedFocusedApplication GUARDED_BY(mLock);
+    std::shared_ptr<InputApplicationHandle> mAwaitedFocusedApplication GUARDED_BY(mLock);
+
+    /**
+     * This map will store the pending focus requests that cannot be currently processed. This can
+     * happen if the window requested to be focused is not currently visible. Such a window might
+     * become visible later, and these requests would be processed at that time.
+     */
+    std::unordered_map<int32_t /* displayId */, FocusRequest> mPendingFocusRequests
+            GUARDED_BY(mLock);
 
     // Optimization: AnrTracker is used to quickly find which connection is due for a timeout next.
     // AnrTracker must be kept in-sync with all responsive connection.waitQueues.
@@ -382,7 +405,7 @@ private:
     // Once a connection becomes unresponsive, its entries are removed from AnrTracker to
     // prevent unneeded wakeups.
     AnrTracker mAnrTracker GUARDED_BY(mLock);
-    void extendAnrTimeoutsLocked(const sp<InputApplicationHandle>& application,
+    void extendAnrTimeoutsLocked(const std::shared_ptr<InputApplicationHandle>& application,
                                  const sp<IBinder>& connectionToken,
                                  std::chrono::nanoseconds timeoutExtension) REQUIRES(mLock);
 
@@ -426,8 +449,9 @@ private:
     bool isWindowObscuredAtPointLocked(const sp<InputWindowHandle>& windowHandle, int32_t x,
                                        int32_t y) const REQUIRES(mLock);
     bool isWindowObscuredLocked(const sp<InputWindowHandle>& windowHandle) const REQUIRES(mLock);
-    std::string getApplicationWindowLabel(const sp<InputApplicationHandle>& applicationHandle,
-                                          const sp<InputWindowHandle>& windowHandle);
+    std::string getApplicationWindowLabel(
+            const std::shared_ptr<InputApplicationHandle>& applicationHandle,
+            const sp<InputWindowHandle>& windowHandle);
 
     // Manage the dispatch cycle for a single connection.
     // These methods are deliberately not Interruptible because doing all of the work
@@ -482,13 +506,14 @@ private:
     void dumpDispatchStateLocked(std::string& dump) REQUIRES(mLock);
     void dumpMonitors(std::string& dump, const std::vector<Monitor>& monitors);
     void logDispatchStateLocked() REQUIRES(mLock);
+    std::string dumpFocusedWindowsLocked() REQUIRES(mLock);
 
     // Registration.
-    void removeMonitorChannelLocked(const InputChannel& inputChannel) REQUIRES(mLock);
+    void removeMonitorChannelLocked(const sp<IBinder>& connectionToken) REQUIRES(mLock);
     void removeMonitorChannelLocked(
-            const InputChannel& inputChannel,
+            const sp<IBinder>& connectionToken,
             std::unordered_map<int32_t, std::vector<Monitor>>& monitorsByDisplay) REQUIRES(mLock);
-    status_t unregisterInputChannelLocked(const InputChannel& inputChannel, bool notify)
+    status_t unregisterInputChannelLocked(const sp<IBinder>& connectionToken, bool notify)
             REQUIRES(mLock);
 
     // Interesting events that we might like to log or tell the framework about.
@@ -496,13 +521,15 @@ private:
                                        uint32_t seq, bool handled) REQUIRES(mLock);
     void onDispatchCycleBrokenLocked(nsecs_t currentTime, const sp<Connection>& connection)
             REQUIRES(mLock);
-    void onFocusChangedLocked(const sp<InputWindowHandle>& oldFocus,
-                              const sp<InputWindowHandle>& newFocus) REQUIRES(mLock);
+    void onFocusChangedLocked(const sp<IBinder>& oldFocus, const sp<IBinder>& newFocus,
+                              int32_t displayId, std::string_view reason) REQUIRES(mLock);
+    void notifyFocusChangedLocked(const sp<IBinder>& oldFocus, const sp<IBinder>& newFocus)
+            REQUIRES(mLock);
     void onAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
-    void onAnrLocked(const sp<InputApplicationHandle>& application) REQUIRES(mLock);
+    void onAnrLocked(const std::shared_ptr<InputApplicationHandle>& application) REQUIRES(mLock);
     void updateLastAnrStateLocked(const sp<InputWindowHandle>& window, const std::string& reason)
             REQUIRES(mLock);
-    void updateLastAnrStateLocked(const sp<InputApplicationHandle>& application,
+    void updateLastAnrStateLocked(const std::shared_ptr<InputApplicationHandle>& application,
                                   const std::string& reason) REQUIRES(mLock);
     void updateLastAnrStateLocked(const std::string& windowLabel, const std::string& reason)
             REQUIRES(mLock);

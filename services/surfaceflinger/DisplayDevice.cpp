@@ -29,6 +29,7 @@
 #include <compositionengine/DisplayColorProfileCreationArgs.h>
 #include <compositionengine/DisplayCreationArgs.h>
 #include <compositionengine/DisplaySurface.h>
+#include <compositionengine/ProjectionSpace.h>
 #include <compositionengine/RenderSurface.h>
 #include <compositionengine/RenderSurfaceCreationArgs.h>
 #include <compositionengine/impl/OutputCompositionState.h>
@@ -102,11 +103,11 @@ void DisplayDevice::disconnect() {
 }
 
 int DisplayDevice::getWidth() const {
-    return mCompositionDisplay->getState().bounds.getWidth();
+    return mCompositionDisplay->getState().displaySpace.bounds.getWidth();
 }
 
 int DisplayDevice::getHeight() const {
-    return mCompositionDisplay->getState().bounds.getHeight();
+    return mCompositionDisplay->getState().displaySpace.bounds.getHeight();
 }
 
 void DisplayDevice::setDisplayName(const std::string& displayName) {
@@ -164,96 +165,80 @@ void DisplayDevice::setLayerStack(ui::LayerStack stack) {
 }
 
 void DisplayDevice::setDisplaySize(int width, int height) {
-    mCompositionDisplay->setBounds(ui::Size(width, height));
+    mCompositionDisplay->setDisplaySpaceSize(ui::Size(width, height));
 }
 
-void DisplayDevice::setProjection(ui::Rotation orientation, Rect viewport, Rect frame) {
+void DisplayDevice::setProjection(ui::Rotation orientation, Rect layerStackSpaceRect,
+                                  Rect orientedDisplaySpaceRect) {
     mOrientation = orientation;
 
-    const Rect& displayBounds = getCompositionDisplay()->getState().bounds;
+    const Rect& displayBounds = getCompositionDisplay()->getState().displaySpace.bounds;
     const int displayWidth = displayBounds.width();
     const int displayHeight = displayBounds.height();
 
-    ui::Transform rotation;
-    if (const auto flags = ui::Transform::toRotationFlags(orientation);
-        flags != ui::Transform::ROT_INVALID) {
-        rotation.set(flags, displayWidth, displayHeight);
-    }
-
-    if (!frame.isValid()) {
+    if (!orientedDisplaySpaceRect.isValid()) {
         // the destination frame can be invalid if it has never been set,
         // in that case we assume the whole display frame.
-        frame = Rect(displayWidth, displayHeight);
+        orientedDisplaySpaceRect = Rect(displayWidth, displayHeight);
     }
 
-    if (viewport.isEmpty()) {
-        // viewport can be invalid if it has never been set, in that case
+    if (layerStackSpaceRect.isEmpty()) {
+        // layerStackSpaceRect can be invalid if it has never been set, in that case
         // we assume the whole display size.
-        // it's also invalid to have an empty viewport, so we handle that
+        // It's also invalid to have an empty layerStackSpaceRect, so we handle that
         // case in the same way.
-        viewport = Rect(displayWidth, displayHeight);
-        if (rotation.getOrientation() & ui::Transform::ROT_90) {
-            // viewport is always specified in the logical orientation
-            // of the display (ie: post-rotation).
-            std::swap(viewport.right, viewport.bottom);
+        layerStackSpaceRect = Rect(displayWidth, displayHeight);
+        if (orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270) {
+            std::swap(layerStackSpaceRect.right, layerStackSpaceRect.bottom);
         }
     }
 
     ui::Transform logicalTranslation, physicalTranslation, scale;
-    const float sourceWidth = viewport.width();
-    const float sourceHeight = viewport.height();
-    const float destWidth = frame.width();
-    const float destHeight = frame.height();
+    const float sourceWidth = layerStackSpaceRect.width();
+    const float sourceHeight = layerStackSpaceRect.height();
+    const float destWidth = orientedDisplaySpaceRect.width();
+    const float destHeight = orientedDisplaySpaceRect.height();
     if (sourceWidth != destWidth || sourceHeight != destHeight) {
         const float scaleX = destWidth / sourceWidth;
         const float scaleY = destHeight / sourceHeight;
         scale.set(scaleX, 0, 0, scaleY);
     }
 
-    const float sourceX = viewport.left;
-    const float sourceY = viewport.top;
-    const float destX = frame.left;
-    const float destY = frame.top;
+    const float sourceX = layerStackSpaceRect.left;
+    const float sourceY = layerStackSpaceRect.top;
+    const float destX = orientedDisplaySpaceRect.left;
+    const float destY = orientedDisplaySpaceRect.top;
     logicalTranslation.set(-sourceX, -sourceY);
     physicalTranslation.set(destX, destY);
 
-    // need to take care of primary display rotation for globalTransform
-    // for case if the panel is not installed aligned with device orientation
-    if (isPrimary()) {
-        if (const auto flags = ui::Transform::toRotationFlags(orientation + mPhysicalOrientation);
-            flags != ui::Transform::ROT_INVALID) {
-            rotation.set(flags, displayWidth, displayHeight);
-        }
+    // We need to take care of display rotation for globalTransform for case if the panel is not
+    // installed aligned with device orientation.
+    const auto transformOrientation = orientation + mPhysicalOrientation;
+    const uint32_t transformOrientationFlags = ui::Transform::toRotationFlags(transformOrientation);
+    ui::Transform rotation;
+    if (transformOrientationFlags != ui::Transform::ROT_INVALID) {
+        rotation.set(transformOrientationFlags, displayWidth, displayHeight);
     }
 
-    // The viewport and frame are both in the logical orientation.
+    // The layerStackSpaceRect and orientedDisplaySpaceRect are both in the logical orientation.
     // Apply the logical translation, scale to physical size, apply the
     // physical translation and finally rotate to the physical orientation.
     ui::Transform globalTransform = rotation * physicalTranslation * scale * logicalTranslation;
 
-    const uint8_t type = globalTransform.getType();
-    const bool needsFiltering =
-            (!globalTransform.preserveRects() || (type >= ui::Transform::SCALE));
-
-    const Rect& sourceClip = viewport;
-    Rect destinationClip = globalTransform.transform(viewport);
-    if (destinationClip.isEmpty()) {
-        destinationClip = displayBounds;
+    Rect displaySpaceRect = globalTransform.transform(layerStackSpaceRect);
+    if (displaySpaceRect.isEmpty()) {
+        displaySpaceRect = displayBounds;
     }
-    // Make sure the destination clip is contained in the display bounds
-    destinationClip.intersect(displayBounds, &destinationClip);
-
-    uint32_t transformOrientation;
+    // Make sure the displaySpaceRect is contained in the display bounds
+    displaySpaceRect.intersect(displayBounds, &displaySpaceRect);
 
     if (isPrimary()) {
         sPrimaryDisplayRotationFlags = ui::Transform::toRotationFlags(orientation);
-        transformOrientation = ui::Transform::toRotationFlags(orientation + mPhysicalOrientation);
-    } else {
-        transformOrientation = ui::Transform::toRotationFlags(orientation);
     }
 
-    getCompositionDisplay()->setProjection(globalTransform, transformOrientation, frame, viewport,
-                                           sourceClip, destinationClip, needsFiltering);
+    getCompositionDisplay()->setProjection(globalTransform, transformOrientationFlags,
+                                           orientedDisplaySpaceRect, layerStackSpaceRect,
+                                           displaySpaceRect);
 }
 
 ui::Transform::RotationFlags DisplayDevice::getPrimaryDisplayRotationFlags() {
@@ -306,7 +291,7 @@ bool DisplayDevice::isSecure() const {
 }
 
 const Rect& DisplayDevice::getBounds() const {
-    return mCompositionDisplay->getState().bounds;
+    return mCompositionDisplay->getState().displaySpace.bounds;
 }
 
 const Region& DisplayDevice::getUndefinedRegion() const {
@@ -325,16 +310,12 @@ const ui::Transform& DisplayDevice::getTransform() const {
     return mCompositionDisplay->getState().transform;
 }
 
-const Rect& DisplayDevice::getViewport() const {
-    return mCompositionDisplay->getState().viewport;
+const Rect& DisplayDevice::getLayerStackSpaceRect() const {
+    return mCompositionDisplay->getState().layerStackSpace.content;
 }
 
-const Rect& DisplayDevice::getFrame() const {
-    return mCompositionDisplay->getState().frame;
-}
-
-const Rect& DisplayDevice::getSourceClip() const {
-    return mCompositionDisplay->getState().sourceClip;
+const Rect& DisplayDevice::getOrientedDisplaySpaceRect() const {
+    return mCompositionDisplay->getState().orientedDisplaySpace.content;
 }
 
 bool DisplayDevice::hasWideColorGamut() const {

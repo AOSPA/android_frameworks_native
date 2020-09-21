@@ -29,7 +29,7 @@
 #include "ContainerLayer.h"
 #include "DisplayDevice.h"
 #include "EffectLayer.h"
-#include "FakePhaseOffsets.h"
+#include "FakeVsyncConfiguration.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "Scheduler/MessageQueue.h"
@@ -65,15 +65,6 @@ class Factory final : public surfaceflinger::Factory {
 public:
     ~Factory() = default;
 
-    std::unique_ptr<DispSync> createDispSync(const char*, bool) override {
-        return nullptr;
-    }
-
-    std::unique_ptr<EventControlThread> createEventControlThread(
-            std::function<void(bool)>) override {
-        return nullptr;
-    }
-
     std::unique_ptr<HWComposer> createHWComposer(const std::string&) override {
         return nullptr;
     }
@@ -82,13 +73,12 @@ public:
         return std::make_unique<android::impl::MessageQueue>();
     }
 
-    std::unique_ptr<scheduler::PhaseConfiguration> createPhaseConfiguration(
+    std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
             const scheduler::RefreshRateConfigs& /*refreshRateConfigs*/) override {
         return std::make_unique<scheduler::FakePhaseOffsets>();
     }
 
-    std::unique_ptr<Scheduler> createScheduler(std::function<void(bool)>,
-                                               const scheduler::RefreshRateConfigs&,
+    std::unique_ptr<Scheduler> createScheduler(const scheduler::RefreshRateConfigs&,
                                                ISchedulerCallback&) override {
         return nullptr;
     }
@@ -175,7 +165,7 @@ public:
 
 } // namespace surfaceflinger::test
 
-class TestableSurfaceFlinger {
+class TestableSurfaceFlinger final : private ISchedulerCallback {
 public:
     using HotplugEvent = SurfaceFlinger::HotplugEvent;
 
@@ -198,11 +188,12 @@ public:
         mFlinger->mCompositionEngine->setTimeStats(timeStats);
     }
 
-    void setupScheduler(std::unique_ptr<DispSync> primaryDispSync,
-                        std::unique_ptr<EventControlThread> eventControlThread,
+    // The ISchedulerCallback argument can be nullptr for a no-op implementation.
+    void setupScheduler(std::unique_ptr<scheduler::VsyncController> vsyncController,
+                        std::unique_ptr<scheduler::VSyncTracker> vsyncTracker,
                         std::unique_ptr<EventThread> appEventThread,
                         std::unique_ptr<EventThread> sfEventThread,
-                        bool hasMultipleConfigs = false) {
+                        ISchedulerCallback* callback = nullptr, bool hasMultipleConfigs = false) {
         std::vector<std::shared_ptr<const HWC2::Display::Config>> configs{
                 HWC2::Display::Config::Builder(mDisplay, 0)
                         .setVsyncPeriod(16'666'667)
@@ -222,21 +213,18 @@ public:
                 scheduler::RefreshRateStats>(*mFlinger->mRefreshRateConfigs, *mFlinger->mTimeStats,
                                              /*currentConfig=*/HwcConfigIndexType(0),
                                              /*powerMode=*/hal::PowerMode::OFF);
-        mFlinger->mPhaseConfiguration =
-                mFactory.createPhaseConfiguration(*mFlinger->mRefreshRateConfigs);
+        mFlinger->mVsyncConfiguration =
+                mFactory.createVsyncConfiguration(*mFlinger->mRefreshRateConfigs);
+        mFlinger->mVsyncModulator.emplace(mFlinger->mVsyncConfiguration->getCurrentConfigs());
 
         constexpr bool kUseContentDetectionV2 = false;
-        mScheduler =
-                new TestableScheduler(std::move(primaryDispSync), std::move(eventControlThread),
-                                      *mFlinger->mRefreshRateConfigs, kUseContentDetectionV2);
+        mScheduler = new TestableScheduler(std::move(vsyncController), std::move(vsyncTracker),
+                                           *mFlinger->mRefreshRateConfigs, *(callback ?: this),
+                                           kUseContentDetectionV2);
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
         mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));
         resetScheduler(mScheduler);
-
-        mFlinger->mVSyncModulator.emplace(*mScheduler, mFlinger->mAppConnectionHandle,
-                                          mFlinger->mSfConnectionHandle,
-                                          mFlinger->mPhaseConfiguration->getCurrentOffsets());
     }
 
     void resetScheduler(Scheduler* scheduler) { mFlinger->mScheduler.reset(scheduler); }
@@ -297,8 +285,6 @@ public:
         return mFlinger->destroyDisplay(displayToken);
     }
 
-    auto resetDisplayState() NO_THREAD_SAFETY_ANALYSIS { return mFlinger->resetDisplayState(); }
-
     auto setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
             std::shared_ptr<compositionengine::Display> compositionDisplay,
@@ -337,21 +323,22 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto onMessageReceived(int32_t what) { return mFlinger->onMessageReceived(what, systemTime()); }
-
-    auto captureScreenImplLocked(const RenderArea& renderArea,
-                                 SurfaceFlinger::TraverseLayersFunction traverseLayers,
-                                 const sp<GraphicBuffer>& buffer, bool useIdentityTransform,
-                                 bool forSystem, int* outSyncFd, bool regionSampling) {
-        bool ignored;
-        return mFlinger->captureScreenImplLocked(renderArea, traverseLayers, buffer,
-                                                 useIdentityTransform, forSystem, outSyncFd,
-                                                 regionSampling, ignored);
+    auto onMessageReceived(int32_t what) {
+        return mFlinger->onMessageReceived(what, /*vsyncId=*/0, systemTime());
     }
 
-    auto traverseLayersInLayerStack(ui::LayerStack layerStack,
+    auto renderScreenImplLocked(const RenderArea& renderArea,
+                                SurfaceFlinger::TraverseLayersFunction traverseLayers,
+                                const sp<GraphicBuffer>& buffer, bool forSystem, int* outSyncFd,
+                                bool regionSampling) {
+        ScreenCaptureResults captureResults;
+        return mFlinger->renderScreenImplLocked(renderArea, traverseLayers, buffer, forSystem,
+                                                outSyncFd, regionSampling, captureResults);
+    }
+
+    auto traverseLayersInLayerStack(ui::LayerStack layerStack, int32_t uid,
                                     const LayerVector::Visitor& visitor) {
-        return mFlinger->SurfaceFlinger::traverseLayersInLayerStack(layerStack, visitor);
+        return mFlinger->SurfaceFlinger::traverseLayersInLayerStack(layerStack, uid, visitor);
     }
 
     auto getDisplayNativePrimaries(const sp<IBinder>& displayToken,
@@ -374,6 +361,10 @@ public:
     }
 
     auto flushTransactionQueues() { return mFlinger->flushTransactionQueues(); };
+
+    auto onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) {
+        return mFlinger->onTransact(code, data, reply, flags);
+    }
 
     /* ------------------------------------------------------------------------
      * Read-only access to private data to assert post-conditions.
@@ -643,7 +634,9 @@ public:
             if (const auto type = mCreationArgs.connectionType) {
                 LOG_ALWAYS_FATAL_IF(!displayId);
                 LOG_ALWAYS_FATAL_IF(!mHwcDisplayId);
-                state.physical = {.id = *displayId, .type = *type, .hwcDisplayId = *mHwcDisplayId};
+                state.physical = {.id = static_cast<PhysicalDisplayId>(*displayId),
+                                  .type = *type,
+                                  .hwcDisplayId = *mHwcDisplayId};
             }
 
             state.isSecure = mCreationArgs.isSecure;
@@ -666,6 +659,12 @@ public:
         DisplayDeviceCreationArgs mCreationArgs;
         const std::optional<hal::HWDisplayId> mHwcDisplayId;
     };
+
+private:
+    void setVsyncEnabled(bool) override {}
+    void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ConfigEvent) override {}
+    void repaintEverythingForHWC() override {}
+    void kernelTimerChanged(bool) override {}
 
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);

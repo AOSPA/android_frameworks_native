@@ -16,6 +16,23 @@
 
 #ifndef ANDROID_SF_LAYER_STATE_H
 #define ANDROID_SF_LAYER_STATE_H
+#define SAFE_PARCEL(FUNC, ...)                                                            \
+    {                                                                                     \
+        status_t error = FUNC(__VA_ARGS__);                                               \
+        if (error) {                                                                      \
+            ALOGE("ERROR(%d). Failed to call parcel %s(%s)", error, #FUNC, #__VA_ARGS__); \
+            return error;                                                                 \
+        }                                                                                 \
+    }
+
+#define SAFE_PARCEL_READ_SIZE(FUNC, COUNT, SIZE)                             \
+    {                                                                        \
+        SAFE_PARCEL(FUNC, COUNT);                                            \
+        if (static_cast<unsigned int>(*COUNT) > SIZE) {                      \
+            ALOGE("ERROR(BAD_VALUE). %s was greater than dataSize", #COUNT); \
+            return BAD_VALUE;                                                \
+        }                                                                    \
+    }
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -30,6 +47,7 @@
 #include <input/InputWindow.h>
 #endif
 
+#include <gui/ISurfaceComposer.h>
 #include <gui/LayerMetadata.h>
 #include <math/vec3.h>
 #include <ui/GraphicTypes.h>
@@ -128,7 +146,7 @@ struct layer_state_t {
             transform(0),
             transformToDisplayInverse(false),
             crop(Rect::INVALID_RECT),
-            frame(Rect::INVALID_RECT),
+            orientedDisplaySpaceRect(Rect::INVALID_RECT),
             dataspace(ui::Dataspace::UNKNOWN),
             surfaceDamageRegion(),
             api(-1),
@@ -155,6 +173,8 @@ struct layer_state_t {
         float dtdx{0};
         float dtdy{0};
         float dsdy{0};
+        status_t write(Parcel& output) const;
+        status_t read(const Parcel& input);
     };
     sp<IBinder> surface;
     uint64_t what;
@@ -191,7 +211,7 @@ struct layer_state_t {
     uint32_t transform;
     bool transformToDisplayInverse;
     Rect crop;
-    Rect frame;
+    Rect orientedDisplaySpaceRect;
     sp<GraphicBuffer> buffer;
     sp<Fence> acquireFence;
     ui::Dataspace dataspace;
@@ -264,18 +284,18 @@ struct DisplayState {
 
     // These states define how layers are projected onto the physical display.
     //
-    // Layers are first clipped to `viewport'.  They are then translated and
-    // scaled from `viewport' to `frame'.  Finally, they are rotated according
-    // to `orientation', `width', and `height'.
+    // Layers are first clipped to `layerStackSpaceRect'.  They are then translated and
+    // scaled from `layerStackSpaceRect' to `orientedDisplaySpaceRect'.  Finally, they are rotated
+    // according to `orientation', `width', and `height'.
     //
-    // For example, assume viewport is Rect(0, 0, 200, 100), frame is Rect(20,
-    // 10, 420, 210), and the size of the display is WxH.  When orientation is
-    // 0, layers will be scaled by a factor of 2 and translated by (20, 10).
-    // When orientation is 1, layers will be additionally rotated by 90
-    // degrees around the origin clockwise and translated by (W, 0).
+    // For example, assume layerStackSpaceRect is Rect(0, 0, 200, 100), orientedDisplaySpaceRect is
+    // Rect(20, 10, 420, 210), and the size of the display is WxH.  When orientation is 0, layers
+    // will be scaled by a factor of 2 and translated by (20, 10). When orientation is 1, layers
+    // will be additionally rotated by 90 degrees around the origin clockwise and translated by (W,
+    // 0).
     ui::Rotation orientation = ui::ROTATION_0;
-    Rect viewport;
-    Rect frame;
+    Rect layerStackSpaceRect;
+    Rect orientedDisplaySpaceRect;
 
     uint32_t width, height;
 
@@ -291,9 +311,10 @@ struct InputWindowCommands {
 
     // Merges the passed in commands and returns true if there were any changes.
     bool merge(const InputWindowCommands& other);
+    bool empty() const;
     void clear();
-    void write(Parcel& output) const;
-    void read(const Parcel& input);
+    status_t write(Parcel& output) const;
+    status_t read(const Parcel& input);
 };
 
 static inline int compare_type(const ComposerState& lhs, const ComposerState& rhs) {
@@ -311,6 +332,55 @@ static inline int compare_type(const DisplayState& lhs, const DisplayState& rhs)
 // functionName is added to the log to indicate which function call failed.
 // functionName can be null.
 bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* functionName);
+
+struct CaptureArgs {
+    const static int32_t UNSET_UID = -1;
+    virtual ~CaptureArgs() = default;
+
+    ui::PixelFormat pixelFormat{ui::PixelFormat::RGBA_8888};
+    Rect sourceCrop;
+    float frameScale{1};
+    bool captureSecureLayers{false};
+    int32_t uid{UNSET_UID};
+    // True to force using RGB color as the capture result.
+    // The display may use non-RGB dataspace (ex. displayP3) that could cause pixel data could be
+    // different from RGB (byte per color), and failed when checking colors.
+    // NOTE: This should only be used for testing since in normal cases, we want the screen
+    // capture's colorspace to match the display's colorspace
+    bool useRGBColorSpace{false};
+
+    virtual status_t write(Parcel& output) const;
+    virtual status_t read(const Parcel& input);
+};
+
+struct DisplayCaptureArgs : CaptureArgs {
+    sp<IBinder> displayToken;
+    uint32_t width{0};
+    uint32_t height{0};
+    bool useIdentityTransform{false};
+
+    status_t write(Parcel& output) const override;
+    status_t read(const Parcel& input) override;
+};
+
+struct LayerCaptureArgs : CaptureArgs {
+    sp<IBinder> layerHandle;
+    std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>> excludeHandles;
+    bool childrenOnly{false};
+
+    status_t write(Parcel& output) const override;
+    status_t read(const Parcel& input) override;
+};
+
+struct ScreenCaptureResults {
+    sp<GraphicBuffer> buffer;
+    bool capturedSecureLayers{false};
+    ui::Dataspace capturedDataspace{ui::Dataspace::V0_SRGB};
+    status_t result = NO_ERROR;
+
+    status_t write(Parcel& output) const;
+    status_t read(const Parcel& input);
+};
 
 }; // namespace android
 

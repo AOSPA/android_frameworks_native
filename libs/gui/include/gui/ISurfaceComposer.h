@@ -22,16 +22,17 @@
 #include <binder/IBinder.h>
 #include <binder/IInterface.h>
 
+#include <gui/IScreenCaptureListener.h>
 #include <gui/ITransactionCompletedListener.h>
 
 #include <math/vec4.h>
 
 #include <ui/ConfigStoreTypes.h>
+#include <ui/DisplayId.h>
 #include <ui/DisplayedFrameStats.h>
 #include <ui/FrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/GraphicTypes.h>
-#include <ui/PhysicalDisplayId.h>
 #include <ui/PixelFormat.h>
 #include <ui/Rotation.h>
 
@@ -48,11 +49,14 @@ namespace android {
 
 struct client_cache_t;
 struct ComposerState;
+struct DisplayCaptureArgs;
 struct DisplayConfig;
 struct DisplayInfo;
 struct DisplayStatInfo;
 struct DisplayState;
 struct InputWindowCommands;
+struct LayerCaptureArgs;
+struct ScreenCaptureResults;
 class LayerDebugInfo;
 class HdrCapabilities;
 class IDisplayEventConnection;
@@ -147,13 +151,12 @@ public:
     }
 
     /* open/close transactions. requires ACCESS_SURFACE_FLINGER permission */
-    virtual void setTransactionState(const Vector<ComposerState>& state,
-                                     const Vector<DisplayState>& displays, uint32_t flags,
-                                     const sp<IBinder>& applyToken,
-                                     const InputWindowCommands& inputWindowCommands,
-                                     int64_t desiredPresentTime,
-                                     const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
-                                     const std::vector<ListenerCallbacks>& listenerCallbacks) = 0;
+    virtual status_t setTransactionState(
+            const Vector<ComposerState>& state, const Vector<DisplayState>& displays,
+            uint32_t flags, const sp<IBinder>& applyToken,
+            const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
+            const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
+            const std::vector<ListenerCallbacks>& listenerCallbacks) = 0;
 
     /* signal that we're done booting.
      * Requires ACCESS_SURFACE_FLINGER permission
@@ -246,65 +249,17 @@ public:
     /**
      * Capture the specified screen. This requires READ_FRAME_BUFFER
      * permission.  This function will fail if there is a secure window on
-     * screen.
+     * screen and DisplayCaptureArgs.captureSecureLayers is false.
      *
      * This function can capture a subregion (the source crop) of the screen.
      * The subregion can be optionally rotated.  It will also be scaled to
      * match the size of the output buffer.
-     *
-     * reqDataspace and reqPixelFormat specify the data space and pixel format
-     * of the buffer. The caller should pick the data space and pixel format
-     * that it can consume.
-     *
-     * sourceCrop is the crop on the logical display.
-     *
-     * reqWidth and reqHeight specifies the size of the buffer.  When either
-     * of them is 0, they are set to the size of the logical display viewport.
-     *
-     * When useIdentityTransform is true, layer transformations are disabled.
-     *
-     * rotation specifies the rotation of the source crop (and the pixels in
-     * it) around its center.
      */
-    virtual status_t captureScreen(const sp<IBinder>& display, sp<GraphicBuffer>* outBuffer,
-                                   bool& outCapturedSecureLayers, ui::Dataspace reqDataspace,
-                                   ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                   uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   ui::Rotation rotation = ui::ROTATION_0,
-                                   bool captureSecureLayers = false) = 0;
-    /**
-     * Capture the specified screen. This requires READ_FRAME_BUFFER
-     * permission.  This function will fail if there is a secure window on
-     * screen.
-     *
-     * This function can capture a subregion (the source crop) of the screen
-     * into an sRGB buffer with RGBA_8888 pixel format.
-     * The subregion can be optionally rotated.  It will also be scaled to
-     * match the size of the output buffer.
-     *
-     * At the moment, sourceCrop is ignored and is always set to the visible
-     * region (projected display viewport) of the screen.
-     *
-     * reqWidth and reqHeight specifies the size of the buffer.  When either
-     * of them is 0, they are set to the size of the logical display viewport.
-     *
-     * When useIdentityTransform is true, layer transformations are disabled.
-     *
-     * rotation specifies the rotation of the source crop (and the pixels in
-     * it) around its center.
-     */
-    virtual status_t captureScreen(const sp<IBinder>& display, sp<GraphicBuffer>* outBuffer,
-                                   const Rect& sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-                                   bool useIdentityTransform,
-                                   ui::Rotation rotation = ui::ROTATION_0) {
-        bool outIgnored;
-        return captureScreen(display, outBuffer, outIgnored, ui::Dataspace::V0_SRGB,
-                             ui::PixelFormat::RGBA_8888, sourceCrop, reqWidth, reqHeight,
-                             useIdentityTransform, rotation);
-    }
+    virtual status_t captureDisplay(const DisplayCaptureArgs& args,
+                                    const sp<IScreenCaptureListener>& captureListener) = 0;
 
-    virtual status_t captureScreen(uint64_t displayOrLayerStack, ui::Dataspace* outDataspace,
-                                   sp<GraphicBuffer>* outBuffer) = 0;
+    virtual status_t captureDisplay(uint64_t displayOrLayerStack,
+                                    const sp<IScreenCaptureListener>& captureListener) = 0;
 
     template <class AA>
     struct SpHash {
@@ -313,27 +268,11 @@ public:
 
     /**
      * Capture a subtree of the layer hierarchy, potentially ignoring the root node.
-     *
-     * reqDataspace and reqPixelFormat specify the data space and pixel format
-     * of the buffer. The caller should pick the data space and pixel format
-     * that it can consume.
+     * This requires READ_FRAME_BUFFER permission. This function will fail if there
+     * is a secure window on screen
      */
-    virtual status_t captureLayers(
-            const sp<IBinder>& layerHandleBinder, sp<GraphicBuffer>* outBuffer,
-            ui::Dataspace reqDataspace, ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-            const std::unordered_set<sp<IBinder>, SpHash<IBinder>>& excludeHandles,
-            float frameScale = 1.0, bool childrenOnly = false) = 0;
-
-    /**
-     * Capture a subtree of the layer hierarchy into an sRGB buffer with RGBA_8888 pixel format,
-     * potentially ignoring the root node.
-     */
-    status_t captureLayers(const sp<IBinder>& layerHandleBinder, sp<GraphicBuffer>* outBuffer,
-                           const Rect& sourceCrop, float frameScale = 1.0,
-                           bool childrenOnly = false) {
-        return captureLayers(layerHandleBinder, outBuffer, ui::Dataspace::V0_SRGB,
-                             ui::PixelFormat::RGBA_8888, sourceCrop, {}, frameScale, childrenOnly);
-    }
+    virtual status_t captureLayers(const LayerCaptureArgs& args,
+                                   const sp<IScreenCaptureListener>& captureListener) = 0;
 
     /* Clears the frame statistics for animations.
      *
@@ -540,6 +479,13 @@ public:
      * for tests. Release the token by releasing the returned IBinder reference.
      */
     virtual status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) = 0;
+
+    /*
+     * Sets the frame timeline vsync id received from choreographer that corresponds to next
+     * buffer submitted on that surface.
+     */
+    virtual status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& surface,
+                                           int64_t frameTimelineVsyncId) = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -562,7 +508,7 @@ public:
         GET_DISPLAY_CONFIGS,
         GET_ACTIVE_CONFIG,
         GET_DISPLAY_STATE,
-        CAPTURE_SCREEN,
+        CAPTURE_DISPLAY,
         CAPTURE_LAYERS,
         CLEAR_ANIMATION_FRAME_STATS,
         GET_ANIMATION_FRAME_STATS,
@@ -590,7 +536,7 @@ public:
         GET_DESIRED_DISPLAY_CONFIG_SPECS,
         GET_DISPLAY_BRIGHTNESS_SUPPORT,
         SET_DISPLAY_BRIGHTNESS,
-        CAPTURE_SCREEN_BY_ID,
+        CAPTURE_DISPLAY_BY_ID,
         NOTIFY_POWER_BOOST,
         SET_GLOBAL_SHADOW_SETTINGS,
         GET_AUTO_LOW_LATENCY_MODE_SUPPORT,
@@ -599,6 +545,7 @@ public:
         SET_GAME_CONTENT_TYPE,
         SET_FRAME_RATE,
         ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN,
+        SET_FRAME_TIMELINE_VSYNC,
         // Always append new enum to the end.
     };
 

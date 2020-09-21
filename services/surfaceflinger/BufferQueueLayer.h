@@ -22,6 +22,10 @@
 
 namespace android {
 
+namespace frametimeline {
+class SurfaceFrame;
+}
+
 /*
  * A new BufferQueue and a new BufferLayerConsumer are created when the
  * BufferLayer is first referenced.
@@ -35,10 +39,7 @@ public:
     explicit BufferQueueLayer(const LayerCreationArgs&);
     ~BufferQueueLayer() override;
 
-    // -----------------------------------------------------------------------
-    // Interface implementation for Layer
-    // -----------------------------------------------------------------------
-public:
+    // Implements Layer.
     const char* getType() const override { return "BufferQueueLayer"; }
 
     void onLayerDisplayed(const sp<Fence>& releaseFence) override;
@@ -54,41 +55,12 @@ public:
 
     bool shouldPresentNow(nsecs_t expectedPresentTime) const override;
 
-    // -----------------------------------------------------------------------
-
-    // -----------------------------------------------------------------------
-    // Interface implementation for BufferLayer
-    // -----------------------------------------------------------------------
-public:
+    // Implements BufferLayer.
     bool fenceHasSignaled() const override;
     bool framePresentTimeIsCurrent(nsecs_t expectedPresentTime) const override;
 
-private:
-    uint64_t getFrameNumber(nsecs_t expectedPresentTime) const override;
-
-    bool getAutoRefresh() const override;
-    bool getSidebandStreamChanged() const override;
-
-    bool latchSidebandStream(bool& recomputeVisibleRegions) override;
-    void setTransformHint(ui::Transform::RotationFlags displayTransformHint) override;
-
-    bool hasFrameUpdate() const override;
-
-    status_t bindTextureImage() override;
-    status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
-                            nsecs_t expectedPresentTime) override;
-
-    status_t updateActiveBuffer() override;
-    status_t updateFrameNumber(nsecs_t latchTime) override;
-
-    sp<Layer> createClone() override;
-
-    void onFrameAvailable(const BufferItem& item);
-    void onFrameReplaced(const BufferItem& item);
-    void onSidebandStreamChanged();
-    void onFrameDequeued(const uint64_t bufferId);
-    void onFrameDetached(const uint64_t bufferId);
-    void onFrameCancelled(const uint64_t bufferId);
+    status_t setDefaultBufferProperties(uint32_t w, uint32_t h, PixelFormat format);
+    sp<IGraphicBufferProducer> getProducer() const;
 
 protected:
     void gatherBufferInfo() override;
@@ -114,18 +86,37 @@ protected:
         BufferQueueLayer* mBufferQueueLayer = nullptr;
         Mutex mMutex;
     };
-    // -----------------------------------------------------------------------
-
-public:
-    status_t setDefaultBufferProperties(uint32_t w, uint32_t h, PixelFormat format);
-
-    sp<IGraphicBufferProducer> getProducer() const;
 
 private:
-    // Temporary - Used only for LEGACY camera mode.
-    uint32_t getProducerStickyTransform() const;
+    uint64_t getFrameNumber(nsecs_t expectedPresentTime) const override;
+
+    bool getAutoRefresh() const override;
+    bool getSidebandStreamChanged() const override;
+
+    bool latchSidebandStream(bool& recomputeVisibleRegions) override;
+    void setTransformHint(ui::Transform::RotationFlags displayTransformHint) override;
+
+    bool hasFrameUpdate() const override;
+
+    status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
+                            nsecs_t expectedPresentTime) override;
+
+    status_t updateActiveBuffer() override;
+    status_t updateFrameNumber(nsecs_t latchTime) override;
+
+    sp<Layer> createClone() override;
 
     void onFirstRef() override;
+
+    void onFrameAvailable(const BufferItem& item);
+    void onFrameReplaced(const BufferItem& item);
+    void onSidebandStreamChanged();
+    void onFrameDequeued(const uint64_t bufferId);
+    void onFrameDetached(const uint64_t bufferId);
+    void onFrameCancelled(const uint64_t bufferId);
+
+    // Temporary - Used only for LEGACY camera mode.
+    uint32_t getProducerStickyTransform() const;
 
     sp<BufferLayerConsumer> mConsumer;
     sp<IGraphicBufferProducer> mProducer;
@@ -138,7 +129,14 @@ private:
     // Local copy of the queued contents of the incoming BufferQueue
     mutable Mutex mQueueItemLock;
     Condition mQueueItemCondition;
-    Vector<BufferItem> mQueueItems;
+
+    struct BufferData {
+        BufferData(BufferItem item, std::unique_ptr<frametimeline::SurfaceFrame> surfaceFrame)
+              : item(item), surfaceFrame(std::move(surfaceFrame)) {}
+        BufferItem item;
+        std::unique_ptr<frametimeline::SurfaceFrame> surfaceFrame;
+    };
+    std::vector<BufferData> mQueueItems;
     std::atomic<uint64_t> mLastFrameNumberReceived{0};
 
     bool mAutoRefresh{false};

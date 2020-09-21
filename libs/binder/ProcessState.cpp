@@ -144,11 +144,9 @@ void ProcessState::startThreadPool()
     }
 }
 
-bool ProcessState::becomeContextManager(context_check_func checkFunc, void* userData)
+bool ProcessState::becomeContextManager()
 {
     AutoMutex _l(mLock);
-    mBinderContextCheckFunc = checkFunc;
-    mBinderContextUserData = userData;
 
     flat_binder_object obj {
         .flags = FLAT_BINDER_FLAG_TXN_SECURITY_CTX,
@@ -160,13 +158,11 @@ bool ProcessState::becomeContextManager(context_check_func checkFunc, void* user
     if (result != 0) {
         android_errorWriteLog(0x534e4554, "121035042");
 
-        int dummy = 0;
-        result = ioctl(mDriverFD, BINDER_SET_CONTEXT_MGR, &dummy);
+        int unused = 0;
+        result = ioctl(mDriverFD, BINDER_SET_CONTEXT_MGR, &unused);
     }
 
     if (result == -1) {
-        mBinderContextCheckFunc = nullptr;
-        mBinderContextUserData = nullptr;
         ALOGE("Binder ioctl to become context manager failed: %s\n", strerror(errno));
     }
 
@@ -286,9 +282,17 @@ sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
                 // a driver API to get a handle to the context manager with
                 // proper reference counting.
 
+                IPCThreadState* ipc = IPCThreadState::self();
+
+                CallRestriction originalCallRestriction = ipc->getCallRestriction();
+                ipc->setCallRestriction(CallRestriction::NONE);
+
                 Parcel data;
-                status_t status = IPCThreadState::self()->transact(
+                status_t status = ipc->transact(
                         0, IBinder::PING_TRANSACTION, data, nullptr, 0);
+
+                ipc->setCallRestriction(originalCallRestriction);
+
                 if (status == DEAD_OBJECT)
                    return nullptr;
             }
@@ -397,14 +401,12 @@ ProcessState::ProcessState(const char *driver)
     , mExecutingThreadsCount(0)
     , mMaxThreads(DEFAULT_MAX_BINDER_THREADS)
     , mStarvationStartTimeMs(0)
-    , mBinderContextCheckFunc(nullptr)
-    , mBinderContextUserData(nullptr)
     , mThreadPoolStarted(false)
     , mThreadPoolSeq(1)
     , mCallRestriction(CallRestriction::NONE)
 {
 
-// TODO(b/139016109): enforce in build system
+// TODO(b/166468760): enforce in build system
 #if defined(__ANDROID_APEX__)
     LOG_ALWAYS_FATAL("Cannot use libbinder in APEX (only system.img libbinder) since it is not stable.");
 #endif

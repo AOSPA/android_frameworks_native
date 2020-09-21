@@ -983,12 +983,6 @@ Error Layer::setZOrder(uint32_t z)
     return static_cast<Error>(intError);
 }
 
-Error Layer::setInfo(uint32_t type, uint32_t appId)
-{
-  auto intError = mComposer.setLayerInfo(mDisplayId, mId, type, appId);
-  return static_cast<Error>(intError);
-}
-
 Error Layer::setType(uint32_t type)
 {
     if (type == mType) {

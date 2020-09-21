@@ -84,6 +84,8 @@ class Hal {
     Hal(const Hal&) = delete;
     Hal& operator=(const Hal&) = delete;
 
+    bool ShouldUnloadBuiltinDriver();
+    void UnloadBuiltinDriver();
     bool InitDebugReportIndex();
 
     static Hal hal_;
@@ -118,6 +120,8 @@ class CreateInfoWrapper {
 
         const char** names;
         uint32_t name_count;
+        ExtensionFilter()
+            : exts(nullptr), ext_count(0), names(nullptr), name_count(0) {}
     };
 
     VkResult SanitizeApiVersion();
@@ -243,7 +247,12 @@ bool Hal::Open() {
 
     const nsecs_t openTime = systemTime();
 
-    ALOG_ASSERT(!hal_.dev_, "OpenHAL called more than once");
+    if (hal_.ShouldUnloadBuiltinDriver()) {
+        hal_.UnloadBuiltinDriver();
+    }
+
+    if (hal_.dev_)
+        return true;
 
     // Use a stub device unless we successfully open a real HAL device.
     hal_.dev_ = &stubhal::kDevice;
@@ -286,6 +295,38 @@ bool Hal::Open() {
         android::GpuStatsInfo::Api::API_VK, true, systemTime() - openTime);
 
     return true;
+}
+
+bool Hal::ShouldUnloadBuiltinDriver() {
+    // Should not unload since the driver was not loaded
+    if (!hal_.dev_)
+        return false;
+
+    // Should not unload if stubhal is used on the device
+    if (hal_.dev_ == &stubhal::kDevice)
+        return false;
+
+    // Unload the driver if updated driver is chosen
+    if (android::GraphicsEnv::getInstance().getDriverNamespace())
+        return true;
+
+    return false;
+}
+
+void Hal::UnloadBuiltinDriver() {
+    ATRACE_CALL();
+
+    ALOGD("Unload builtin Vulkan driver.");
+
+    // Close the opened device
+    ALOG_ASSERT(!hal_.dev_->common.close(hal_.dev_->common),
+                "hw_device_t::close() failed.");
+
+    // Close the opened shared library in the hw_module_t
+    dlclose(hal_.dev_->common.module->dso);
+
+    hal_.dev_ = nullptr;
+    hal_.debug_report_index_ = -1;
 }
 
 bool Hal::InitDebugReportIndex() {
@@ -568,6 +609,10 @@ VkResult CreateInfoWrapper::InitExtensionFilter() {
     } else {
         count = std::min(filter.ext_count, dev_info_.enabledExtensionCount);
     }
+
+    if (!count)
+        return VK_SUCCESS;
+
     filter.names = reinterpret_cast<const char**>(allocator_.pfnAllocation(
         allocator_.pUserData, sizeof(const char*) * count, alignof(const char*),
         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND));
@@ -984,9 +1029,7 @@ VkResult EnumerateDeviceExtensionProperties(
 
     // conditionally add VK_GOOGLE_display_timing if present timestamps are
     // supported by the driver:
-    const std::string timestamp_property("service.sf.present_timestamp");
-    android::base::WaitForPropertyCreation(timestamp_property);
-    if (android::base::GetBoolProperty(timestamp_property, true)) {
+    if (android::base::GetBoolProperty("service.sf.present_timestamp", false)) {
         loader_extensions.push_back({
                 VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
                 VK_GOOGLE_DISPLAY_TIMING_SPEC_VERSION});

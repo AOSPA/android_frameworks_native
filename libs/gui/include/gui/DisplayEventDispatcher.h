@@ -31,7 +31,7 @@ public:
     status_t initialize();
     void dispose();
     status_t scheduleVsync();
-    void requestLatestConfig();
+    void injectEvent(const DisplayEventReceiver::Event& event);
     int getFd() const;
     virtual int handleEvent(int receiveFd, int events, void* data);
 
@@ -43,13 +43,17 @@ private:
     DisplayEventReceiver mReceiver;
     bool mWaitingForVsync;
 
-    virtual void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count) = 0;
+    virtual void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count,
+                               int64_t vsyncId) = 0;
     virtual void dispatchHotplug(nsecs_t timestamp, PhysicalDisplayId displayId,
                                  bool connected) = 0;
     virtual void dispatchConfigChanged(nsecs_t timestamp, PhysicalDisplayId displayId,
                                        int32_t configId, nsecs_t vsyncPeriod) = 0;
+    // AChoreographer-specific hook for processing null-events so that looper
+    // can be properly poked.
+    virtual void dispatchNullEvent(nsecs_t timestamp, PhysicalDisplayId displayId) = 0;
 
     bool processPendingEvents(nsecs_t* outTimestamp, PhysicalDisplayId* outDisplayId,
-                              uint32_t* outCount);
+                              uint32_t* outCount, int64_t* outVsyncId);
 };
 } // namespace android

@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include <android/hardware/power/Boost.h>
+#include <binder/IPCThreadState.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplayColorProfile.h>
 #include <compositionengine/impl/Display.h>
@@ -37,6 +38,7 @@
 #include <gui/mock/GraphicBufferConsumer.h>
 #include <gui/mock/GraphicBufferProducer.h>
 #include <log/log.h>
+#include <private/android_filesystem_config.h>
 #include <renderengine/mock/RenderEngine.h>
 #include <ui/DebugUtils.h>
 
@@ -45,12 +47,12 @@
 #include "TestableSurfaceFlinger.h"
 #include "mock/DisplayHardware/MockComposer.h"
 #include "mock/DisplayHardware/MockPowerAdvisor.h"
-#include "mock/MockDispSync.h"
-#include "mock/MockEventControlThread.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockMessageQueue.h"
 #include "mock/MockNativeWindowSurface.h"
+#include "mock/MockSchedulerCallback.h"
 #include "mock/MockSurfaceInterceptor.h"
+#include "mock/MockVsyncController.h"
 #include "mock/system/window/MockNativeWindow.h"
 
 namespace android {
@@ -88,7 +90,7 @@ using FakeHwcDisplayInjector = TestableSurfaceFlinger::FakeHwcDisplayInjector;
 using HotplugEvent = TestableSurfaceFlinger::HotplugEvent;
 using HWC2Display = TestableSurfaceFlinger::HWC2Display;
 
-constexpr int32_t DEFAULT_REFRESH_RATE = 16'666'666;
+constexpr int32_t DEFAULT_REFRESH_RATE = 16'666'667;
 constexpr int32_t DEFAULT_DPI = 320;
 constexpr int DEFAULT_VIRTUAL_DISPLAY_SURFACE_FORMAT = HAL_PIXEL_FORMAT_RGB_565;
 
@@ -155,8 +157,9 @@ public:
     mock::MessageQueue* mMessageQueue = new mock::MessageQueue();
     mock::SurfaceInterceptor* mSurfaceInterceptor = new mock::SurfaceInterceptor();
 
-    mock::DispSync* mPrimaryDispSync = new mock::DispSync;
-    mock::EventControlThread* mEventControlThread = new mock::EventControlThread;
+    mock::VsyncController* mVsyncController = new mock::VsyncController;
+    mock::VSyncTracker* mVSyncTracker = new mock::VSyncTracker;
+    mock::SchedulerCallback mSchedulerCallback;
     mock::EventThread* mEventThread = new mock::EventThread;
     mock::EventThread* mSFEventThread = new mock::EventThread;
 
@@ -213,10 +216,10 @@ void DisplayTransactionTest::injectMockScheduler() {
             .WillOnce(Return(new EventThreadConnection(mSFEventThread, ResyncCallback(),
                                                        ISurfaceComposer::eConfigChangedSuppress)));
 
-    mFlinger.setupScheduler(std::unique_ptr<DispSync>(mPrimaryDispSync),
-                            std::unique_ptr<EventControlThread>(mEventControlThread),
+    mFlinger.setupScheduler(std::unique_ptr<scheduler::VsyncController>(mVsyncController),
+                            std::unique_ptr<scheduler::VSyncTracker>(mVSyncTracker),
                             std::unique_ptr<EventThread>(mEventThread),
-                            std::unique_ptr<EventThread>(mSFEventThread));
+                            std::unique_ptr<EventThread>(mSFEventThread), &mSchedulerCallback);
 }
 
 void DisplayTransactionTest::injectMockComposer(int virtualDisplayCount) {
@@ -253,7 +256,7 @@ void DisplayTransactionTest::injectFakeNativeWindowSurfaceFactory() {
 
 sp<DisplayDevice> DisplayTransactionTest::injectDefaultInternalDisplay(
         std::function<void(FakeDisplayDeviceInjector&)> injectExtra) {
-    constexpr DisplayId DEFAULT_DISPLAY_ID = DisplayId{777};
+    constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID(777);
     constexpr int DEFAULT_DISPLAY_WIDTH = 1080;
     constexpr int DEFAULT_DISPLAY_HEIGHT = 1920;
     constexpr HWDisplayId DEFAULT_DISPLAY_HWC_DISPLAY_ID = 0;
@@ -332,10 +335,10 @@ const DisplayDeviceState& DisplayTransactionTest::getDrawingDisplayState(sp<IBin
  */
 
 template <typename PhysicalDisplay>
-struct PhysicalDisplayId {};
+struct PhysicalDisplayIdType {};
 
-template <DisplayId::Type displayId>
-using VirtualDisplayId = std::integral_constant<DisplayId::Type, displayId>;
+template <uint64_t displayId>
+using VirtualDisplayIdType = std::integral_constant<uint64_t, displayId>;
 
 struct NoDisplayId {};
 
@@ -343,18 +346,18 @@ template <typename>
 struct IsPhysicalDisplayId : std::bool_constant<false> {};
 
 template <typename PhysicalDisplay>
-struct IsPhysicalDisplayId<PhysicalDisplayId<PhysicalDisplay>> : std::bool_constant<true> {};
+struct IsPhysicalDisplayId<PhysicalDisplayIdType<PhysicalDisplay>> : std::bool_constant<true> {};
 
 template <typename>
 struct DisplayIdGetter;
 
 template <typename PhysicalDisplay>
-struct DisplayIdGetter<PhysicalDisplayId<PhysicalDisplay>> {
-    static std::optional<DisplayId> get() {
+struct DisplayIdGetter<PhysicalDisplayIdType<PhysicalDisplay>> {
+    static std::optional<PhysicalDisplayId> get() {
         if (!PhysicalDisplay::HAS_IDENTIFICATION_DATA) {
-            return getFallbackDisplayId(static_cast<bool>(PhysicalDisplay::PRIMARY)
-                                                ? LEGACY_DISPLAY_TYPE_PRIMARY
-                                                : LEGACY_DISPLAY_TYPE_EXTERNAL);
+            return PhysicalDisplayId::fromPort(static_cast<bool>(PhysicalDisplay::PRIMARY)
+                                                       ? LEGACY_DISPLAY_TYPE_PRIMARY
+                                                       : LEGACY_DISPLAY_TYPE_EXTERNAL);
         }
 
         const auto info =
@@ -364,9 +367,10 @@ struct DisplayIdGetter<PhysicalDisplayId<PhysicalDisplay>> {
     }
 };
 
-template <DisplayId::Type displayId>
-struct DisplayIdGetter<VirtualDisplayId<displayId>> {
-    static std::optional<DisplayId> get() { return DisplayId{displayId}; }
+template <uint64_t displayId>
+struct DisplayIdGetter<VirtualDisplayIdType<displayId>> {
+    // TODO(b/160679868) Use VirtualDisplayId
+    static std::optional<PhysicalDisplayId> get() { return PhysicalDisplayId{displayId}; }
 };
 
 template <>
@@ -380,7 +384,7 @@ struct DisplayConnectionTypeGetter {
 };
 
 template <typename PhysicalDisplay>
-struct DisplayConnectionTypeGetter<PhysicalDisplayId<PhysicalDisplay>> {
+struct DisplayConnectionTypeGetter<PhysicalDisplayIdType<PhysicalDisplay>> {
     static constexpr std::optional<DisplayConnectionType> value = PhysicalDisplay::CONNECTION_TYPE;
 };
 
@@ -391,19 +395,19 @@ struct HwcDisplayIdGetter {
 
 constexpr HWDisplayId HWC_VIRTUAL_DISPLAY_HWC_DISPLAY_ID = 1010;
 
-template <DisplayId::Type displayId>
-struct HwcDisplayIdGetter<VirtualDisplayId<displayId>> {
+template <uint64_t displayId>
+struct HwcDisplayIdGetter<VirtualDisplayIdType<displayId>> {
     static constexpr std::optional<HWDisplayId> value = HWC_VIRTUAL_DISPLAY_HWC_DISPLAY_ID;
 };
 
 template <typename PhysicalDisplay>
-struct HwcDisplayIdGetter<PhysicalDisplayId<PhysicalDisplay>> {
+struct HwcDisplayIdGetter<PhysicalDisplayIdType<PhysicalDisplay>> {
     static constexpr std::optional<HWDisplayId> value = PhysicalDisplay::HWC_DISPLAY_ID;
 };
 
 // DisplayIdType can be:
-//     1) PhysicalDisplayId<...> for generated ID of physical display backed by HWC.
-//     2) VirtualDisplayId<...> for hard-coded ID of virtual display backed by HWC.
+//     1) PhysicalDisplayIdType<...> for generated ID of physical display backed by HWC.
+//     2) VirtualDisplayIdType<...> for hard-coded ID of virtual display backed by HWC.
 //     3) NoDisplayId for virtual display without HWC backing.
 template <typename DisplayIdType, int width, int height, Critical critical, Async async,
           Secure secure, Primary primary, int grallocUsage>
@@ -631,10 +635,11 @@ constexpr uint32_t GRALLOC_USAGE_PHYSICAL_DISPLAY =
 
 template <typename PhysicalDisplay, int width, int height, Critical critical>
 struct PhysicalDisplayVariant
-      : DisplayVariant<PhysicalDisplayId<PhysicalDisplay>, width, height, critical, Async::FALSE,
-                       Secure::TRUE, PhysicalDisplay::PRIMARY, GRALLOC_USAGE_PHYSICAL_DISPLAY>,
+      : DisplayVariant<PhysicalDisplayIdType<PhysicalDisplay>, width, height, critical,
+                       Async::FALSE, Secure::TRUE, PhysicalDisplay::PRIMARY,
+                       GRALLOC_USAGE_PHYSICAL_DISPLAY>,
         HwcDisplayVariant<PhysicalDisplay::HWC_DISPLAY_ID, DisplayType::PHYSICAL,
-                          DisplayVariant<PhysicalDisplayId<PhysicalDisplay>, width, height,
+                          DisplayVariant<PhysicalDisplayIdType<PhysicalDisplay>, width, height,
                                          critical, Async::FALSE, Secure::TRUE,
                                          PhysicalDisplay::PRIMARY, GRALLOC_USAGE_PHYSICAL_DISPLAY>,
                           PhysicalDisplay> {};
@@ -720,14 +725,14 @@ constexpr uint32_t GRALLOC_USAGE_HWC_VIRTUAL_DISPLAY = GRALLOC_USAGE_HW_COMPOSER
 
 template <int width, int height, Secure secure>
 struct HwcVirtualDisplayVariant
-      : DisplayVariant<VirtualDisplayId<42>, width, height, Critical::FALSE, Async::TRUE, secure,
-                       Primary::FALSE, GRALLOC_USAGE_HWC_VIRTUAL_DISPLAY>,
-        HwcDisplayVariant<
-                HWC_VIRTUAL_DISPLAY_HWC_DISPLAY_ID, DisplayType::VIRTUAL,
-                DisplayVariant<VirtualDisplayId<42>, width, height, Critical::FALSE, Async::TRUE,
-                               secure, Primary::FALSE, GRALLOC_USAGE_HWC_VIRTUAL_DISPLAY>> {
-    using Base = DisplayVariant<VirtualDisplayId<42>, width, height, Critical::FALSE, Async::TRUE,
-                                secure, Primary::FALSE, GRALLOC_USAGE_HW_COMPOSER>;
+      : DisplayVariant<VirtualDisplayIdType<42>, width, height, Critical::FALSE, Async::TRUE,
+                       secure, Primary::FALSE, GRALLOC_USAGE_HWC_VIRTUAL_DISPLAY>,
+        HwcDisplayVariant<HWC_VIRTUAL_DISPLAY_HWC_DISPLAY_ID, DisplayType::VIRTUAL,
+                          DisplayVariant<VirtualDisplayIdType<42>, width, height, Critical::FALSE,
+                                         Async::TRUE, secure, Primary::FALSE,
+                                         GRALLOC_USAGE_HWC_VIRTUAL_DISPLAY>> {
+    using Base = DisplayVariant<VirtualDisplayIdType<42>, width, height, Critical::FALSE,
+                                Async::TRUE, secure, Primary::FALSE, GRALLOC_USAGE_HW_COMPOSER>;
     using Self = HwcVirtualDisplayVariant<width, height, secure>;
 
     static std::shared_ptr<compositionengine::Display> injectCompositionDisplay(
@@ -1227,8 +1232,12 @@ TEST_F(DisplayTransactionTest, createDisplaySetsCurrentStateForSecureDisplay) {
 
     // --------------------------------------------------------------------
     // Invocation
-
+    int64_t oldId = IPCThreadState::self()->clearCallingIdentity();
+    // Set the calling identity to graphics so captureDisplay with secure is allowed.
+    IPCThreadState::self()->restoreCallingIdentity(static_cast<int64_t>(AID_GRAPHICS) << 32 |
+                                                   AID_GRAPHICS);
     sp<IBinder> displayToken = mFlinger.createDisplay(name, true);
+    IPCThreadState::self()->restoreCallingIdentity(oldId);
 
     // --------------------------------------------------------------------
     // Postconditions
@@ -1298,55 +1307,6 @@ TEST_F(DisplayTransactionTest, destroyDisplayHandlesUnknownDisplay) {
     // Invocation
 
     mFlinger.destroyDisplay(displayToken);
-}
-
-/* ------------------------------------------------------------------------
- * SurfaceFlinger::resetDisplayState
- */
-
-TEST_F(DisplayTransactionTest, resetDisplayStateClearsState) {
-    using Case = NonHwcVirtualDisplayCase;
-
-    // --------------------------------------------------------------------
-    // Preconditions
-
-    // vsync is enabled and available
-    mFlinger.scheduler()->mutablePrimaryHWVsyncEnabled() = true;
-    mFlinger.scheduler()->mutableHWVsyncAvailable() = true;
-
-    // A display exists
-    auto existing = Case::Display::makeFakeExistingDisplayInjector(this);
-    existing.inject();
-
-    // --------------------------------------------------------------------
-    // Call Expectations
-
-    // The call disable vsyncs
-    EXPECT_CALL(*mEventControlThread, setVsyncEnabled(false)).Times(1);
-
-    // The call ends any display resyncs
-    EXPECT_CALL(*mPrimaryDispSync, endResync()).Times(1);
-
-    // --------------------------------------------------------------------
-    // Invocation
-
-    mFlinger.resetDisplayState();
-
-    // --------------------------------------------------------------------
-    // Postconditions
-
-    // vsyncs should be off and not available.
-    EXPECT_FALSE(mFlinger.scheduler()->mutablePrimaryHWVsyncEnabled());
-    EXPECT_FALSE(mFlinger.scheduler()->mutableHWVsyncAvailable());
-
-    // The display should have been removed from the display map.
-    EXPECT_FALSE(hasDisplayDevice(existing.token()));
-
-    // The display should still exist in the current state
-    EXPECT_TRUE(hasCurrentDisplayState(existing.token()));
-
-    // The display should have been removed from the drawing state
-    EXPECT_FALSE(hasDrawingDisplayState(existing.token()));
 }
 
 /* ------------------------------------------------------------------------
@@ -1522,10 +1482,9 @@ public:
                                 mHardwareDisplaySize.height),
                   compositionState.transform);
         EXPECT_EQ(TRANSFORM_FLAGS_ROT_0, compositionState.orientation);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.sourceClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.destinationClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.frame);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.viewport);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.displaySpace.content);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.orientedDisplaySpace.content);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.layerStackSpace.content);
         EXPECT_EQ(false, compositionState.needsFiltering);
     }
 
@@ -1535,11 +1494,12 @@ public:
                                 mHardwareDisplaySize.height),
                   compositionState.transform);
         EXPECT_EQ(TRANSFORM_FLAGS_ROT_90, compositionState.orientation);
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.sourceClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.destinationClip);
-        // For 90, the frame and viewport have the hardware display size width and height swapped
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.frame);
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.viewport);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.displaySpace.content);
+        // For 90, the orientedDisplaySpaceRect and layerStackSpaceRect have the hardware display
+        // size width and height swapped
+        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)),
+                  compositionState.orientedDisplaySpace.content);
+        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.layerStackSpace.content);
         EXPECT_EQ(false, compositionState.needsFiltering);
     }
 
@@ -1549,10 +1509,8 @@ public:
                                 mHardwareDisplaySize.height),
                   compositionState.transform);
         EXPECT_EQ(TRANSFORM_FLAGS_ROT_180, compositionState.orientation);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.sourceClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.destinationClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.frame);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.viewport);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.orientedDisplaySpace.content);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.layerStackSpace.content);
         EXPECT_EQ(false, compositionState.needsFiltering);
     }
 
@@ -1562,11 +1520,12 @@ public:
                                 mHardwareDisplaySize.height),
                   compositionState.transform);
         EXPECT_EQ(TRANSFORM_FLAGS_ROT_270, compositionState.orientation);
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.sourceClip);
-        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.destinationClip);
-        // For 270, the frame and viewport have the hardware display size width and height swapped
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.frame);
-        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.viewport);
+        EXPECT_EQ(Rect(mHardwareDisplaySize), compositionState.displaySpace.content);
+        // For 270, the orientedDisplaySpaceRect and layerStackSpaceRect have the hardware display
+        // size width and height swapped
+        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)),
+                  compositionState.orientedDisplaySpace.content);
+        EXPECT_EQ(Rect(SwapWH(mHardwareDisplaySize)), compositionState.layerStackSpace.content);
         EXPECT_EQ(false, compositionState.needsFiltering);
     }
 
@@ -1821,7 +1780,9 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
         ASSERT_TRUE(displayId);
         const auto hwcDisplayId = Case::Display::HWC_DISPLAY_ID_OPT::value;
         ASSERT_TRUE(hwcDisplayId);
-        state.physical = {.id = *displayId, .type = *connectionType, .hwcDisplayId = *hwcDisplayId};
+        state.physical = {.id = static_cast<PhysicalDisplayId>(*displayId),
+                          .type = *connectionType,
+                          .hwcDisplayId = *hwcDisplayId};
     }
 
     state.isSecure = static_cast<bool>(Case::Display::SECURE);
@@ -1997,7 +1958,7 @@ void HandleTransactionLockedTest::verifyDisplayIsConnected(const sp<IBinder>& di
         ASSERT_TRUE(displayId);
         const auto hwcDisplayId = Case::Display::HWC_DISPLAY_ID_OPT::value;
         ASSERT_TRUE(hwcDisplayId);
-        expectedPhysical = {.id = *displayId,
+        expectedPhysical = {.id = static_cast<PhysicalDisplayId>(*displayId),
                             .type = *connectionType,
                             .hwcDisplayId = *hwcDisplayId};
     }
@@ -2047,8 +2008,6 @@ void HandleTransactionLockedTest::processesHotplugConnectCommon() {
 
     // --------------------------------------------------------------------
     // Call Expectations
-
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillOnce(Return(false));
 
     setupCommonCallExpectationsForConnectProcessing<Case>();
 
@@ -2111,7 +2070,6 @@ void HandleTransactionLockedTest::processesHotplugDisconnectCommon() {
     // --------------------------------------------------------------------
     // Call Expectations
 
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mComposer, getDisplayIdentificationData(Case::Display::HWC_DISPLAY_ID, _, _))
             .Times(0);
 
@@ -2168,18 +2126,7 @@ TEST_F(HandleTransactionLockedTest, ignoresHotplugConnectIfPrimaryAndExternalAlr
                             SetArgPointee<2>(TertiaryDisplay::GET_IDENTIFICATION_DATA()),
                             Return(Error::NONE)));
 
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(false));
-
     ignoresHotplugConnectCommon<SimpleTertiaryDisplayCase>();
-}
-
-TEST_F(HandleTransactionLockedTest, ignoresHotplugConnectIfExternalForVrComposer) {
-    // Inject a primary display.
-    PrimaryDisplayVariant::injectHwcDisplay(this);
-
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(true));
-
-    ignoresHotplugConnectCommon<SimpleExternalDisplayCase>();
 }
 
 TEST_F(HandleTransactionLockedTest, processesHotplugDisconnectPrimaryDisplay) {
@@ -2205,8 +2152,6 @@ TEST_F(HandleTransactionLockedTest, processesHotplugConnectThenDisconnectPrimary
 
     // --------------------------------------------------------------------
     // Call Expectations
-
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(false));
 
     setupCommonCallExpectationsForConnectProcessing<Case>();
     setupCommonCallExpectationsForDisconnectProcessing<Case>();
@@ -2253,8 +2198,6 @@ TEST_F(HandleTransactionLockedTest, processesHotplugDisconnectThenConnectPrimary
 
     // --------------------------------------------------------------------
     // Call Expectations
-
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(false));
 
     setupCommonCallExpectationsForConnectProcessing<Case>();
     setupCommonCallExpectationsForDisconnectProcessing<Case>();
@@ -2414,11 +2357,6 @@ TEST_F(HandleTransactionLockedTest, processesVirtualDisplayRemoval) {
     mFlinger.mutableCurrentState().displays.removeItem(existing.token());
 
     // --------------------------------------------------------------------
-    // Call Expectations
-
-    EXPECT_CALL(*mComposer, isUsingVrComposer()).WillRepeatedly(Return(false));
-
-    // --------------------------------------------------------------------
     // Invocation
 
     mFlinger.handleTransactionLocked(eDisplayTransactionNeeded);
@@ -2486,11 +2424,11 @@ TEST_F(HandleTransactionLockedTest, processesDisplayTransformChanges) {
     EXPECT_EQ(newTransform, display.mutableDisplayDevice()->getOrientation());
 }
 
-TEST_F(HandleTransactionLockedTest, processesDisplayViewportChanges) {
+TEST_F(HandleTransactionLockedTest, processesDisplayLayerStackRectChanges) {
     using Case = NonHwcVirtualDisplayCase;
 
-    const Rect oldViewport(0, 0, 0, 0);
-    const Rect newViewport(0, 0, 123, 456);
+    const Rect oldLayerStackRect(0, 0, 0, 0);
+    const Rect newLayerStackRect(0, 0, 123, 456);
 
     // --------------------------------------------------------------------
     // Preconditions
@@ -2499,9 +2437,9 @@ TEST_F(HandleTransactionLockedTest, processesDisplayViewportChanges) {
     auto display = Case::Display::makeFakeExistingDisplayInjector(this);
     display.inject();
 
-    // There is a change to the viewport state
-    display.mutableDrawingDisplayState().viewport = oldViewport;
-    display.mutableCurrentDisplayState().viewport = newViewport;
+    // There is a change to the layerStackSpaceRect state
+    display.mutableDrawingDisplayState().layerStackSpaceRect = oldLayerStackRect;
+    display.mutableCurrentDisplayState().layerStackSpaceRect = newLayerStackRect;
 
     // --------------------------------------------------------------------
     // Invocation
@@ -2511,7 +2449,7 @@ TEST_F(HandleTransactionLockedTest, processesDisplayViewportChanges) {
     // --------------------------------------------------------------------
     // Postconditions
 
-    EXPECT_EQ(newViewport, display.mutableDisplayDevice()->getViewport());
+    EXPECT_EQ(newLayerStackRect, display.mutableDisplayDevice()->getLayerStackSpaceRect());
 }
 
 TEST_F(HandleTransactionLockedTest, processesDisplayFrameChanges) {
@@ -2527,9 +2465,9 @@ TEST_F(HandleTransactionLockedTest, processesDisplayFrameChanges) {
     auto display = Case::Display::makeFakeExistingDisplayInjector(this);
     display.inject();
 
-    // There is a change to the viewport state
-    display.mutableDrawingDisplayState().frame = oldFrame;
-    display.mutableCurrentDisplayState().frame = newFrame;
+    // There is a change to the layerStackSpaceRect state
+    display.mutableDrawingDisplayState().orientedDisplaySpaceRect = oldFrame;
+    display.mutableCurrentDisplayState().orientedDisplaySpaceRect = newFrame;
 
     // --------------------------------------------------------------------
     // Invocation
@@ -2539,7 +2477,7 @@ TEST_F(HandleTransactionLockedTest, processesDisplayFrameChanges) {
     // --------------------------------------------------------------------
     // Postconditions
 
-    EXPECT_EQ(newFrame, display.mutableDisplayDevice()->getFrame());
+    EXPECT_EQ(newFrame, display.mutableDisplayDevice()->getOrientedDisplaySpaceRect());
 }
 
 TEST_F(HandleTransactionLockedTest, processesDisplayWidthChanges) {
@@ -2570,7 +2508,7 @@ TEST_F(HandleTransactionLockedTest, processesDisplayWidthChanges) {
     EXPECT_CALL(*nativeWindow, perform(NATIVE_WINDOW_API_DISCONNECT)).Times(1);
     display.inject();
 
-    // There is a change to the viewport state
+    // There is a change to the layerStackSpaceRect state
     display.mutableDrawingDisplayState().width = oldWidth;
     display.mutableDrawingDisplayState().height = oldHeight;
     display.mutableCurrentDisplayState().width = newWidth;
@@ -2615,7 +2553,7 @@ TEST_F(HandleTransactionLockedTest, processesDisplayHeightChanges) {
     EXPECT_CALL(*nativeWindow, perform(NATIVE_WINDOW_API_DISCONNECT)).Times(1);
     display.inject();
 
-    // There is a change to the viewport state
+    // There is a change to the layerStackSpaceRect state
     display.mutableDrawingDisplayState().width = oldWidth;
     display.mutableDrawingDisplayState().height = oldHeight;
     display.mutableCurrentDisplayState().width = oldWidth;
@@ -2836,8 +2774,8 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfLayerStackCh
 TEST_F(DisplayTransactionTest, setDisplayStateLockedDoesNothingIfProjectionDidNotChange) {
     using Case = SimplePrimaryDisplayCase;
     constexpr ui::Rotation initialOrientation = ui::ROTATION_180;
-    const Rect initialFrame = {1, 2, 3, 4};
-    const Rect initialViewport = {5, 6, 7, 8};
+    const Rect initialOrientedDisplayRect = {1, 2, 3, 4};
+    const Rect initialLayerStackRect = {5, 6, 7, 8};
 
     // --------------------------------------------------------------------
     // Preconditions
@@ -2848,16 +2786,16 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedDoesNothingIfProjectionDidNo
 
     // The current display state projection state is all set
     display.mutableCurrentDisplayState().orientation = initialOrientation;
-    display.mutableCurrentDisplayState().frame = initialFrame;
-    display.mutableCurrentDisplayState().viewport = initialViewport;
+    display.mutableCurrentDisplayState().orientedDisplaySpaceRect = initialOrientedDisplayRect;
+    display.mutableCurrentDisplayState().layerStackSpaceRect = initialLayerStackRect;
 
     // The incoming request sets the same projection state
     DisplayState state;
     state.what = DisplayState::eDisplayProjectionChanged;
     state.token = display.token();
     state.orientation = initialOrientation;
-    state.frame = initialFrame;
-    state.viewport = initialViewport;
+    state.orientedDisplaySpaceRect = initialOrientedDisplayRect;
+    state.layerStackSpaceRect = initialLayerStackRect;
 
     // --------------------------------------------------------------------
     // Invocation
@@ -2873,8 +2811,9 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedDoesNothingIfProjectionDidNo
     // The current display state is unchanged
     EXPECT_EQ(initialOrientation, display.getCurrentDisplayState().orientation);
 
-    EXPECT_EQ(initialFrame, display.getCurrentDisplayState().frame);
-    EXPECT_EQ(initialViewport, display.getCurrentDisplayState().viewport);
+    EXPECT_EQ(initialOrientedDisplayRect,
+              display.getCurrentDisplayState().orientedDisplaySpaceRect);
+    EXPECT_EQ(initialLayerStackRect, display.getCurrentDisplayState().layerStackSpaceRect);
 }
 
 TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfOrientationChanged) {
@@ -2915,8 +2854,8 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfOrientationC
 
 TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfFrameChanged) {
     using Case = SimplePrimaryDisplayCase;
-    const Rect initialFrame = {0, 0, 0, 0};
-    const Rect desiredFrame = {5, 6, 7, 8};
+    const Rect initialOrientedDisplayRect = {0, 0, 0, 0};
+    const Rect desiredOrientedDisplayRect = {5, 6, 7, 8};
 
     // --------------------------------------------------------------------
     // Preconditions
@@ -2925,14 +2864,14 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfFrameChanged
     auto display = Case::Display::makeFakeExistingDisplayInjector(this);
     display.inject();
 
-    // The current display state does not have a frame
-    display.mutableCurrentDisplayState().frame = initialFrame;
+    // The current display state does not have a orientedDisplaySpaceRect
+    display.mutableCurrentDisplayState().orientedDisplaySpaceRect = initialOrientedDisplayRect;
 
-    // The incoming request sets a frame
+    // The incoming request sets a orientedDisplaySpaceRect
     DisplayState state;
     state.what = DisplayState::eDisplayProjectionChanged;
     state.token = display.token();
-    state.frame = desiredFrame;
+    state.orientedDisplaySpaceRect = desiredOrientedDisplayRect;
 
     // --------------------------------------------------------------------
     // Invocation
@@ -2946,13 +2885,14 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfFrameChanged
     EXPECT_EQ(eDisplayTransactionNeeded, flags);
 
     // The current display state has the new value.
-    EXPECT_EQ(desiredFrame, display.getCurrentDisplayState().frame);
+    EXPECT_EQ(desiredOrientedDisplayRect,
+              display.getCurrentDisplayState().orientedDisplaySpaceRect);
 }
 
-TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfViewportChanged) {
+TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfLayerStackRectChanged) {
     using Case = SimplePrimaryDisplayCase;
-    const Rect initialViewport = {0, 0, 0, 0};
-    const Rect desiredViewport = {5, 6, 7, 8};
+    const Rect initialLayerStackRect = {0, 0, 0, 0};
+    const Rect desiredLayerStackRect = {5, 6, 7, 8};
 
     // --------------------------------------------------------------------
     // Preconditions
@@ -2961,14 +2901,14 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfViewportChan
     auto display = Case::Display::makeFakeExistingDisplayInjector(this);
     display.inject();
 
-    // The current display state does not have a viewport
-    display.mutableCurrentDisplayState().viewport = initialViewport;
+    // The current display state does not have a layerStackSpaceRect
+    display.mutableCurrentDisplayState().layerStackSpaceRect = initialLayerStackRect;
 
-    // The incoming request sets a viewport
+    // The incoming request sets a layerStackSpaceRect
     DisplayState state;
     state.what = DisplayState::eDisplayProjectionChanged;
     state.token = display.token();
-    state.viewport = desiredViewport;
+    state.layerStackSpaceRect = desiredLayerStackRect;
 
     // --------------------------------------------------------------------
     // Invocation
@@ -2982,7 +2922,7 @@ TEST_F(DisplayTransactionTest, setDisplayStateLockedRequestsUpdateIfViewportChan
     EXPECT_EQ(eDisplayTransactionNeeded, flags);
 
     // The current display state has the new value.
-    EXPECT_EQ(desiredViewport, display.getCurrentDisplayState().viewport);
+    EXPECT_EQ(desiredLayerStackRect, display.getCurrentDisplayState().layerStackSpaceRect);
 }
 
 TEST_F(DisplayTransactionTest, setDisplayStateLockedDoesNothingIfSizeDidNotChange) {
@@ -3126,7 +3066,7 @@ TEST_F(DisplayTransactionTest, onInitializeDisplaysSetsUpPrimaryDisplay) {
     // processing.
     EXPECT_CALL(*mMessageQueue, invalidate()).Times(1);
 
-    EXPECT_CALL(*mPrimaryDispSync, expectedPresentTime(_)).WillRepeatedly(Return(0));
+    EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
 
     // --------------------------------------------------------------------
     // Invocation
@@ -3144,11 +3084,11 @@ TEST_F(DisplayTransactionTest, onInitializeDisplaysSetsUpPrimaryDisplay) {
     // The orientation state should be set to zero
     EXPECT_EQ(ui::ROTATION_0, primaryDisplayState.orientation);
 
-    // The frame state should be set to INVALID
-    EXPECT_EQ(Rect::INVALID_RECT, primaryDisplayState.frame);
+    // The orientedDisplaySpaceRect state should be set to INVALID
+    EXPECT_EQ(Rect::INVALID_RECT, primaryDisplayState.orientedDisplaySpaceRect);
 
-    // The viewport state should be set to INVALID
-    EXPECT_EQ(Rect::INVALID_RECT, primaryDisplayState.viewport);
+    // The layerStackSpaceRect state should be set to INVALID
+    EXPECT_EQ(Rect::INVALID_RECT, primaryDisplayState.layerStackSpaceRect);
 
     // The width and height should both be zero
     EXPECT_EQ(0u, primaryDisplayState.width);
@@ -3159,7 +3099,7 @@ TEST_F(DisplayTransactionTest, onInitializeDisplaysSetsUpPrimaryDisplay) {
     auto displayDevice = primaryDisplay.mutableDisplayDevice();
     EXPECT_EQ(PowerMode::ON, displayDevice->getPowerMode());
 
-    // The display refresh period should be set in the frame tracker.
+    // The display refresh period should be set in the orientedDisplaySpaceRect tracker.
     FrameStats stats;
     mFlinger.getAnimFrameTracker().getStats(&stats);
     EXPECT_EQ(DEFAULT_REFRESH_RATE, stats.refreshPeriodNano);
@@ -3212,9 +3152,9 @@ struct DozeNotSupportedVariant {
 };
 
 struct EventThreadBaseSupportedVariant {
-    static void setupEventAndEventControlThreadNoCallExpectations(DisplayTransactionTest* test) {
-        // The event control thread should not be notified.
-        EXPECT_CALL(*test->mEventControlThread, setVsyncEnabled(_)).Times(0);
+    static void setupVsyncAndEventThreadNoCallExpectations(DisplayTransactionTest* test) {
+        // The callback should not be notified to toggle VSYNC.
+        EXPECT_CALL(test->mSchedulerCallback, setVsyncEnabled(_)).Times(0);
 
         // The event thread should not be notified.
         EXPECT_CALL(*test->mEventThread, onScreenReleased()).Times(0);
@@ -3227,29 +3167,29 @@ struct EventThreadNotSupportedVariant : public EventThreadBaseSupportedVariant {
         // These calls are only expected for the primary display.
 
         // Instead expect no calls.
-        setupEventAndEventControlThreadNoCallExpectations(test);
+        setupVsyncAndEventThreadNoCallExpectations(test);
     }
 
     static void setupReleaseAndDisableVsyncCallExpectations(DisplayTransactionTest* test) {
         // These calls are only expected for the primary display.
 
         // Instead expect no calls.
-        setupEventAndEventControlThreadNoCallExpectations(test);
+        setupVsyncAndEventThreadNoCallExpectations(test);
     }
 };
 
 struct EventThreadIsSupportedVariant : public EventThreadBaseSupportedVariant {
     static void setupAcquireAndEnableVsyncCallExpectations(DisplayTransactionTest* test) {
-        // The event control thread should be notified to enable vsyncs
-        EXPECT_CALL(*test->mEventControlThread, setVsyncEnabled(true)).Times(1);
+        // The callback should be notified to enable VSYNC.
+        EXPECT_CALL(test->mSchedulerCallback, setVsyncEnabled(true)).Times(1);
 
         // The event thread should be notified that the screen was acquired.
         EXPECT_CALL(*test->mEventThread, onScreenAcquired()).Times(1);
     }
 
     static void setupReleaseAndDisableVsyncCallExpectations(DisplayTransactionTest* test) {
-        // There should be a call to setVsyncEnabled(false)
-        EXPECT_CALL(*test->mEventControlThread, setVsyncEnabled(false)).Times(1);
+        // The callback should be notified to disable VSYNC.
+        EXPECT_CALL(test->mSchedulerCallback, setVsyncEnabled(false)).Times(1);
 
         // The event thread should not be notified that the screen was released.
         EXPECT_CALL(*test->mEventThread, onScreenReleased()).Times(1);
@@ -3257,20 +3197,14 @@ struct EventThreadIsSupportedVariant : public EventThreadBaseSupportedVariant {
 };
 
 struct DispSyncIsSupportedVariant {
-    static void setupBeginResyncCallExpectations(DisplayTransactionTest* test) {
-        EXPECT_CALL(*test->mPrimaryDispSync, setPeriod(DEFAULT_REFRESH_RATE)).Times(1);
-        EXPECT_CALL(*test->mPrimaryDispSync, beginResync()).Times(1);
-    }
-
-    static void setupEndResyncCallExpectations(DisplayTransactionTest* test) {
-        EXPECT_CALL(*test->mPrimaryDispSync, endResync()).Times(1);
+    static void setupResetModelCallExpectations(DisplayTransactionTest* test) {
+        EXPECT_CALL(*test->mVsyncController, startPeriodTransition(DEFAULT_REFRESH_RATE)).Times(1);
+        EXPECT_CALL(*test->mVSyncTracker, resetModel()).Times(1);
     }
 };
 
 struct DispSyncNotSupportedVariant {
-    static void setupBeginResyncCallExpectations(DisplayTransactionTest* /* test */) {}
-
-    static void setupEndResyncCallExpectations(DisplayTransactionTest* /* test */) {}
+    static void setupResetModelCallExpectations(DisplayTransactionTest* /* test */) {}
 };
 
 // --------------------------------------------------------------------
@@ -3293,7 +3227,7 @@ struct TransitionOffToOnVariant : public TransitionVariantCommon<PowerMode::OFF,
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::ON);
         Case::EventThread::setupAcquireAndEnableVsyncCallExpectations(test);
-        Case::DispSync::setupBeginResyncCallExpectations(test);
+        Case::DispSync::setupResetModelCallExpectations(test);
         Case::setupRepaintEverythingCallExpectations(test);
     }
 
@@ -3308,7 +3242,7 @@ struct TransitionOffToDozeSuspendVariant
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE_SUSPEND);
-        Case::EventThread::setupEventAndEventControlThreadNoCallExpectations(test);
+        Case::EventThread::setupVsyncAndEventThreadNoCallExpectations(test);
         Case::setupRepaintEverythingCallExpectations(test);
     }
 
@@ -3322,7 +3256,6 @@ struct TransitionOnToOffVariant : public TransitionVariantCommon<PowerMode::ON, 
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::EventThread::setupReleaseAndDisableVsyncCallExpectations(test);
-        Case::DispSync::setupEndResyncCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::OFF);
     }
 
@@ -3335,7 +3268,7 @@ struct TransitionDozeSuspendToOffVariant
       : public TransitionVariantCommon<PowerMode::DOZE_SUSPEND, PowerMode::OFF> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupEventAndEventControlThreadNoCallExpectations(test);
+        Case::EventThread::setupVsyncAndEventThreadNoCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::OFF);
     }
 
@@ -3347,7 +3280,7 @@ struct TransitionDozeSuspendToOffVariant
 struct TransitionOnToDozeVariant : public TransitionVariantCommon<PowerMode::ON, PowerMode::DOZE> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupEventAndEventControlThreadNoCallExpectations(test);
+        Case::EventThread::setupVsyncAndEventThreadNoCallExpectations(test);
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE);
     }
 };
@@ -3357,7 +3290,7 @@ struct TransitionDozeSuspendToDozeVariant
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::EventThread::setupAcquireAndEnableVsyncCallExpectations(test);
-        Case::DispSync::setupBeginResyncCallExpectations(test);
+        Case::DispSync::setupResetModelCallExpectations(test);
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE);
     }
 };
@@ -3365,7 +3298,7 @@ struct TransitionDozeSuspendToDozeVariant
 struct TransitionDozeToOnVariant : public TransitionVariantCommon<PowerMode::DOZE, PowerMode::ON> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupEventAndEventControlThreadNoCallExpectations(test);
+        Case::EventThread::setupVsyncAndEventThreadNoCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::ON);
     }
 };
@@ -3375,7 +3308,7 @@ struct TransitionDozeSuspendToOnVariant
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::EventThread::setupAcquireAndEnableVsyncCallExpectations(test);
-        Case::DispSync::setupBeginResyncCallExpectations(test);
+        Case::DispSync::setupResetModelCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::ON);
     }
 };
@@ -3385,7 +3318,6 @@ struct TransitionOnToDozeSuspendVariant
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::EventThread::setupReleaseAndDisableVsyncCallExpectations(test);
-        Case::DispSync::setupEndResyncCallExpectations(test);
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE_SUSPEND);
     }
 };
@@ -3394,7 +3326,7 @@ struct TransitionOnToUnknownVariant
       : public TransitionVariantCommon<PowerMode::ON, static_cast<PowerMode>(POWER_MODE_LEET)> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupEventAndEventControlThreadNoCallExpectations(test);
+        Case::EventThread::setupVsyncAndEventThreadNoCallExpectations(test);
         Case::setupNoComposerPowerModeCallExpectations(test);
     }
 };

@@ -508,7 +508,7 @@ public:
 #ifndef NO_INPUT
         Transaction& setInputWindowInfo(const sp<SurfaceControl>& sc, const InputWindowInfo& info);
         Transaction& setFocusedWindow(const sp<IBinder>& token, const sp<IBinder>& focusedToken,
-                                      nsecs_t timestampNanos);
+                                      nsecs_t timestampNanos, int32_t displayId);
         Transaction& setFocusedWindow(const FocusRequest& request);
         Transaction& syncInputWindows();
 #endif
@@ -595,28 +595,12 @@ private:
 
 class ScreenshotClient {
 public:
-    // if cropping isn't required, callers may pass in a default Rect, e.g.:
-    //   capture(display, producer, Rect(), reqWidth, ...);
-    static status_t capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                            uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                            ui::Rotation rotation, bool captureSecureLayers,
-                            sp<GraphicBuffer>* outBuffer, bool& outCapturedSecureLayers);
-    static status_t capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                            uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                            ui::Rotation rotation, sp<GraphicBuffer>* outBuffer);
-    static status_t capture(uint64_t displayOrLayerStack, ui::Dataspace* outDataspace,
-                            sp<GraphicBuffer>* outBuffer);
-    static status_t captureLayers(const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace,
-                                  ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                  float frameScale, sp<GraphicBuffer>* outBuffer);
-    static status_t captureChildLayers(
-            const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace,
-            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
-                    excludeHandles,
-            float frameScale, sp<GraphicBuffer>* outBuffer);
+    static status_t captureDisplay(const DisplayCaptureArgs& captureArgs,
+                                   const sp<IScreenCaptureListener>& captureListener);
+    static status_t captureDisplay(uint64_t displayOrLayerStack,
+                                   const sp<IScreenCaptureListener>& captureListener);
+    static status_t captureLayers(const LayerCaptureArgs& captureArgs,
+                                  const sp<IScreenCaptureListener>& captureListener);
 };
 
 // ---------------------------------------------------------------------------

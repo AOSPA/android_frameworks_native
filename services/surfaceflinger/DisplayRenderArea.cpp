@@ -20,49 +20,14 @@
 namespace android {
 namespace {
 
-RenderArea::RotationFlags applyDeviceOrientation(RenderArea::RotationFlags rotation,
+RenderArea::RotationFlags applyDeviceOrientation(bool useIdentityTransform,
                                                  const DisplayDevice& display) {
-    uint32_t inverseRotate90 = 0;
-    uint32_t inverseReflect = 0;
-
-    // Reverse the logical orientation.
-    ui::Rotation logicalOrientation = display.getOrientation();
-    if (logicalOrientation == ui::Rotation::Rotation90) {
-        logicalOrientation = ui::Rotation::Rotation270;
-    } else if (logicalOrientation == ui::Rotation::Rotation270) {
-        logicalOrientation = ui::Rotation::Rotation90;
+    if (!useIdentityTransform) {
+        return RenderArea::RotationFlags::ROT_0;
     }
 
-    const ui::Rotation orientation = display.getPhysicalOrientation() + logicalOrientation;
-
-    switch (orientation) {
-        case ui::ROTATION_0:
-            return rotation;
-
-        case ui::ROTATION_90:
-            inverseRotate90 = ui::Transform::ROT_90;
-            inverseReflect = ui::Transform::ROT_180;
-            break;
-
-        case ui::ROTATION_180:
-            inverseReflect = ui::Transform::ROT_180;
-            break;
-
-        case ui::ROTATION_270:
-            inverseRotate90 = ui::Transform::ROT_90;
-            break;
-    }
-
-    const uint32_t rotate90 = rotation & ui::Transform::ROT_90;
-    uint32_t reflect = rotation & ui::Transform::ROT_180;
-
-    // Apply reflection for double rotation.
-    if (rotate90 & inverseRotate90) {
-        reflect = ~reflect & ui::Transform::ROT_180;
-    }
-
-    return static_cast<RenderArea::RotationFlags>((rotate90 ^ inverseRotate90) |
-                                                  (reflect ^ inverseReflect));
+    const ui::Rotation orientation = display.getPhysicalOrientation() + display.getOrientation();
+    return ui::Transform::toRotationFlags(orientation);
 }
 
 } // namespace
@@ -70,25 +35,24 @@ RenderArea::RotationFlags applyDeviceOrientation(RenderArea::RotationFlags rotat
 std::unique_ptr<RenderArea> DisplayRenderArea::create(wp<const DisplayDevice> displayWeak,
                                                       const Rect& sourceCrop, ui::Size reqSize,
                                                       ui::Dataspace reqDataSpace,
-                                                      RotationFlags rotation,
+                                                      bool useIdentityTransform,
                                                       bool allowSecureLayers) {
     if (auto display = displayWeak.promote()) {
         // Using new to access a private constructor.
         return std::unique_ptr<DisplayRenderArea>(
                 new DisplayRenderArea(std::move(display), sourceCrop, reqSize, reqDataSpace,
-                                      rotation, allowSecureLayers));
+                                      useIdentityTransform, allowSecureLayers));
     }
     return nullptr;
 }
 
 DisplayRenderArea::DisplayRenderArea(sp<const DisplayDevice> display, const Rect& sourceCrop,
                                      ui::Size reqSize, ui::Dataspace reqDataSpace,
-                                     RotationFlags rotation, bool allowSecureLayers)
-      : RenderArea(reqSize, CaptureFill::OPAQUE, reqDataSpace, display->getViewport(),
-                   applyDeviceOrientation(rotation, *display)),
+                                     bool useIdentityTransform, bool allowSecureLayers)
+      : RenderArea(reqSize, CaptureFill::OPAQUE, reqDataSpace, display->getLayerStackSpaceRect(),
+                   allowSecureLayers, applyDeviceOrientation(useIdentityTransform, *display)),
         mDisplay(std::move(display)),
-        mSourceCrop(sourceCrop),
-        mAllowSecureLayers(allowSecureLayers) {}
+        mSourceCrop(sourceCrop) {}
 
 const ui::Transform& DisplayRenderArea::getTransform() const {
     return mTransform;
@@ -129,23 +93,16 @@ bool DisplayRenderArea::needsFiltering() const {
 Rect DisplayRenderArea::getSourceCrop() const {
     // use the projected display viewport by default.
     if (mSourceCrop.isEmpty()) {
-        return mDisplay->getSourceClip();
+        return mDisplay->getLayerStackSpaceRect();
     }
 
-    // If there is a source crop provided then it is assumed that the device
-    // was in portrait orientation. This may not logically be true, so
-    // correct for the orientation error by undoing the rotation
-
-    ui::Rotation logicalOrientation = mDisplay->getOrientation();
-    if (logicalOrientation == ui::Rotation::Rotation90) {
-        logicalOrientation = ui::Rotation::Rotation270;
-    } else if (logicalOrientation == ui::Rotation::Rotation270) {
-        logicalOrientation = ui::Rotation::Rotation90;
-    }
-
-    const auto flags = ui::Transform::toRotationFlags(logicalOrientation);
-    int width = mDisplay->getSourceClip().getWidth();
-    int height = mDisplay->getSourceClip().getHeight();
+    // Correct for the orientation when the screen capture request contained
+    // useIdentityTransform. This will cause the rotation flag to be non 0 since
+    // it needs to rotate based on the screen orientation to allow the screenshot
+    // to be taken in the ROT_0 orientation
+    const auto flags = getRotationFlags();
+    int width = mDisplay->getLayerStackSpaceRect().getWidth();
+    int height = mDisplay->getLayerStackSpaceRect().getHeight();
     ui::Transform rotation;
     rotation.set(flags, width, height);
     return rotation.transform(mSourceCrop);

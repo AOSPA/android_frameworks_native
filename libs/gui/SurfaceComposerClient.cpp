@@ -1137,7 +1137,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrame
         return *this;
     }
     s->what |= layer_state_t::eFrameChanged;
-    s->frame = frame;
+    s->orientedDisplaySpaceRect = frame;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -1365,11 +1365,13 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setInput
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFocusedWindow(
-        const sp<IBinder>& token, const sp<IBinder>& focusedToken, nsecs_t timestampNanos) {
+        const sp<IBinder>& token, const sp<IBinder>& focusedToken, nsecs_t timestampNanos,
+        int32_t displayId) {
     FocusRequest request;
     request.token = token;
     request.focusedToken = focusedToken;
     request.timestamp = timestampNanos;
+    request.displayId = displayId;
     return setFocusedWindow(request);
 }
 
@@ -1545,8 +1547,8 @@ void SurfaceComposerClient::Transaction::setDisplayProjection(const sp<IBinder>&
                                                               const Rect& displayRect) {
     DisplayState& s(getDisplayState(token));
     s.orientation = orientation;
-    s.viewport = layerStackRect;
-    s.frame = displayRect;
+    s.layerStackSpaceRect = layerStackRect;
+    s.orientedDisplaySpaceRect = displayRect;
     s.what |= DisplayState::eDisplayProjectionChanged;
     mForceSynchronous = true; // TODO: do we actually still need this?
 }
@@ -1922,59 +1924,28 @@ status_t SurfaceComposerClient::setGlobalShadowSettings(const half4& ambientColo
 
 // ----------------------------------------------------------------------------
 
-status_t ScreenshotClient::capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                                   ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                   uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   ui::Rotation rotation, bool captureSecureLayers,
-                                   sp<GraphicBuffer>* outBuffer, bool& outCapturedSecureLayers) {
+status_t ScreenshotClient::captureDisplay(const DisplayCaptureArgs& captureArgs,
+                                          const sp<IScreenCaptureListener>& captureListener) {
     sp<ISurfaceComposer> s(ComposerService::getComposerService());
     if (s == nullptr) return NO_INIT;
-    status_t ret = s->captureScreen(display, outBuffer, outCapturedSecureLayers, reqDataSpace,
-                                    reqPixelFormat, sourceCrop, reqWidth, reqHeight,
-                                    useIdentityTransform, rotation, captureSecureLayers);
-    if (ret != NO_ERROR) {
-        return ret;
-    }
-    return ret;
+
+    return s->captureDisplay(captureArgs, captureListener);
 }
 
-status_t ScreenshotClient::capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                                   ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                   uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   ui::Rotation rotation, sp<GraphicBuffer>* outBuffer) {
-    bool ignored;
-    return capture(display, reqDataSpace, reqPixelFormat, sourceCrop, reqWidth, reqHeight,
-                   useIdentityTransform, rotation, false, outBuffer, ignored);
-}
-
-status_t ScreenshotClient::capture(uint64_t displayOrLayerStack, ui::Dataspace* outDataspace,
-                                   sp<GraphicBuffer>* outBuffer) {
+status_t ScreenshotClient::captureDisplay(uint64_t displayOrLayerStack,
+                                          const sp<IScreenCaptureListener>& captureListener) {
     sp<ISurfaceComposer> s(ComposerService::getComposerService());
     if (s == nullptr) return NO_INIT;
-    return s->captureScreen(displayOrLayerStack, outDataspace, outBuffer);
+
+    return s->captureDisplay(displayOrLayerStack, captureListener);
 }
 
-status_t ScreenshotClient::captureLayers(const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace,
-                                         ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                         float frameScale, sp<GraphicBuffer>* outBuffer) {
+status_t ScreenshotClient::captureLayers(const LayerCaptureArgs& captureArgs,
+                                         const sp<IScreenCaptureListener>& captureListener) {
     sp<ISurfaceComposer> s(ComposerService::getComposerService());
     if (s == nullptr) return NO_INIT;
-    status_t ret = s->captureLayers(layerHandle, outBuffer, reqDataSpace, reqPixelFormat,
-                                    sourceCrop, {}, frameScale, false /* childrenOnly */);
-    return ret;
-}
 
-status_t ScreenshotClient::captureChildLayers(
-        const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace, ui::PixelFormat reqPixelFormat,
-        const Rect& sourceCrop,
-        const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& excludeHandles,
-        float frameScale, sp<GraphicBuffer>* outBuffer) {
-    sp<ISurfaceComposer> s(ComposerService::getComposerService());
-    if (s == nullptr) return NO_INIT;
-    status_t ret =
-            s->captureLayers(layerHandle, outBuffer, reqDataSpace, reqPixelFormat, sourceCrop,
-                             excludeHandles, frameScale, true /* childrenOnly */);
-    return ret;
+    return s->captureLayers(captureArgs, captureListener);
 }
 
 } // namespace android

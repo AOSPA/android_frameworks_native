@@ -129,59 +129,6 @@ void Composer::CommandWriter::setLayerType(uint32_t type)
     endCommand();
 }
 
-#if defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-Composer::CommandWriter::CommandWriter(uint32_t initialMaxSize)
-    : CommandWriterBase(initialMaxSize) {}
-
-Composer::CommandWriter::~CommandWriter()
-{
-}
-
-void Composer::CommandWriter::setLayerInfo(uint32_t type, uint32_t appId)
-{
-    constexpr uint16_t kSetLayerInfoLength = 2;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                         IVrComposerClient::VrCommand::SET_LAYER_INFO),
-                 kSetLayerInfoLength);
-    write(type);
-    write(appId);
-    endCommand();
-}
-
-void Composer::CommandWriter::setClientTargetMetadata(
-        const IVrComposerClient::BufferMetadata& metadata)
-{
-    constexpr uint16_t kSetClientTargetMetadataLength = 7;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                         IVrComposerClient::VrCommand::SET_CLIENT_TARGET_METADATA),
-                 kSetClientTargetMetadataLength);
-    writeBufferMetadata(metadata);
-    endCommand();
-}
-
-void Composer::CommandWriter::setLayerBufferMetadata(
-        const IVrComposerClient::BufferMetadata& metadata)
-{
-    constexpr uint16_t kSetLayerBufferMetadataLength = 7;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                         IVrComposerClient::VrCommand::SET_LAYER_BUFFER_METADATA),
-                 kSetLayerBufferMetadataLength);
-    writeBufferMetadata(metadata);
-    endCommand();
-}
-
-void Composer::CommandWriter::writeBufferMetadata(
-        const IVrComposerClient::BufferMetadata& metadata)
-{
-    write(metadata.width);
-    write(metadata.height);
-    write(metadata.stride);
-    write(metadata.layerCount);
-    writeSigned(static_cast<int32_t>(metadata.format));
-    write64(metadata.usage);
-}
-#endif // defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-
 void Composer::CommandWriter::setDisplayElapseTime(uint64_t time)
 {
     constexpr uint16_t kSetDisplayElapseTimeLength = 2;
@@ -192,10 +139,7 @@ void Composer::CommandWriter::setDisplayElapseTime(uint64_t time)
     endCommand();
 }
 
-Composer::Composer(const std::string& serviceName)
-    : mWriter(kWriterInitialSize),
-      mIsUsingVrComposer(serviceName == std::string("vr"))
-{
+Composer::Composer(const std::string& serviceName) : mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);
 
     if (mComposer == nullptr) {
@@ -237,15 +181,6 @@ Composer::Composer(const std::string& serviceName)
     if (mClient == nullptr) {
         LOG_ALWAYS_FATAL("failed to create composer client");
     }
-
-#if defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-    if (mIsUsingVrComposer) {
-        sp<IVrComposerClient> vrClient = IVrComposerClient::castFrom(mClient);
-        if (vrClient == nullptr) {
-            LOG_ALWAYS_FATAL("failed to create vr composer client");
-        }
-    }
-#endif // defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
 }
 
 Composer::~Composer() = default;
@@ -282,10 +217,6 @@ void Composer::registerCallback(const sp<IComposerCallback>& callback)
     if (!ret.isOk()) {
         ALOGE("failed to register IComposerCallback");
     }
-}
-
-bool Composer::isRemote() {
-    return mClient->isRemote();
 }
 
 void Composer::resetCommands() {
@@ -609,20 +540,6 @@ Error Composer::setClientTarget(Display display, uint32_t slot,
 {
     mWriter.selectDisplay(display);
 
-#if defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-    if (mIsUsingVrComposer && target.get()) {
-        IVrComposerClient::BufferMetadata metadata = {
-                .width = target->getWidth(),
-                .height = target->getHeight(),
-                .stride = target->getStride(),
-                .layerCount = target->getLayerCount(),
-                .format = static_cast<types::V1_2::PixelFormat>(target->getPixelFormat()),
-                .usage = target->getUsage(),
-        };
-        mWriter.setClientTargetMetadata(metadata);
-    }
-#endif // defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-
     const native_handle_t* handle = nullptr;
     if (target.get()) {
         handle = target->getNativeBuffer()->handle;
@@ -749,20 +666,6 @@ Error Composer::setLayerBuffer(Display display, Layer layer,
     mWriter.selectDisplay(display);
     mWriter.selectLayer(layer);
 
-#if defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-    if (mIsUsingVrComposer && buffer.get()) {
-        IVrComposerClient::BufferMetadata metadata = {
-                .width = buffer->getWidth(),
-                .height = buffer->getHeight(),
-                .stride = buffer->getStride(),
-                .layerCount = buffer->getLayerCount(),
-                .format = static_cast<types::V1_2::PixelFormat>(buffer->getPixelFormat()),
-                .usage = buffer->getUsage(),
-        };
-        mWriter.setLayerBufferMetadata(metadata);
-    }
-#endif // defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-
     const native_handle_t* handle = nullptr;
     if (buffer.get()) {
         handle = buffer->getNativeBuffer()->handle;
@@ -878,27 +781,6 @@ Error Composer::setLayerZOrder(Display display, Layer layer, uint32_t z)
     mWriter.setLayerZOrder(z);
     return Error::NONE;
 }
-
-#if defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
-Error Composer::setLayerInfo(Display display, Layer layer, uint32_t type,
-                             uint32_t appId)
-{
-    if (mIsUsingVrComposer) {
-        mWriter.selectDisplay(display);
-        mWriter.selectLayer(layer);
-        mWriter.setLayerInfo(type, appId);
-    }
-    return Error::NONE;
-}
-#else
-Error Composer::setLayerInfo(Display display, Layer layer, uint32_t, uint32_t) {
-    if (mIsUsingVrComposer) {
-        mWriter.selectDisplay(display);
-        mWriter.selectLayer(layer);
-    }
-    return Error::NONE;
-}
-#endif // defined(USE_VR_COMPOSER) && USE_VR_COMPOSER
 
 Error Composer::setLayerType(Display display, Layer layer, uint32_t type)
 {

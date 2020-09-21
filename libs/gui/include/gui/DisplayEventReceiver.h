@@ -53,19 +53,27 @@ public:
         DISPLAY_EVENT_VSYNC = fourcc('v', 's', 'y', 'n'),
         DISPLAY_EVENT_HOTPLUG = fourcc('p', 'l', 'u', 'g'),
         DISPLAY_EVENT_CONFIG_CHANGED = fourcc('c', 'o', 'n', 'f'),
+        DISPLAY_EVENT_NULL = fourcc('n', 'u', 'l', 'l'),
     };
 
     struct Event {
+        // We add __attribute__((aligned(8))) for nsecs_t fields because
+        // we need to make sure all fields are aligned the same with x86
+        // and x64 (long long has different default alignment):
+        //
+        // https://en.wikipedia.org/wiki/Data_structure_alignment
 
         struct Header {
             uint32_t type;
-            PhysicalDisplayId displayId;
+            PhysicalDisplayId displayId __attribute__((aligned(8)));
             nsecs_t timestamp __attribute__((aligned(8)));
         };
 
         struct VSync {
             uint32_t count;
-            nsecs_t expectedVSyncTimestamp;
+            nsecs_t expectedVSyncTimestamp __attribute__((aligned(8)));
+            nsecs_t deadlineTimestamp __attribute__((aligned(8)));
+            int64_t vsyncId;
         };
 
         struct Hotplug {
@@ -74,7 +82,7 @@ public:
 
         struct Config {
             int32_t configId;
-            nsecs_t vsyncPeriod;
+            nsecs_t vsyncPeriod __attribute__((aligned(8)));
         };
 
         Header header;
@@ -130,6 +138,7 @@ public:
      * sendEvents write events to the queue and returns how many events were
      * written.
      */
+    ssize_t sendEvents(Event const* events, size_t count);
     static ssize_t sendEvents(gui::BitTube* dataChannel, Event const* events, size_t count);
 
     /*
@@ -145,12 +154,6 @@ public:
      * if the vsync rate is > 0.
      */
     status_t requestNextVsync();
-
-    /*
-     * requestLatestConfig() force-requests the current config for the primary
-     * display.
-     */
-    status_t requestLatestConfig();
 
 private:
     sp<IDisplayEventConnection> mEventConnection;

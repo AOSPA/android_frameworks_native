@@ -99,9 +99,8 @@ public:
     }
 
     const ui::Transform& getTransform() const;
-    const Rect& getViewport() const;
-    const Rect& getFrame() const;
-    const Rect& getSourceClip() const;
+    const Rect& getLayerStackSpaceRect() const;
+    const Rect& getOrientedDisplaySpaceRect() const;
     bool needsFiltering() const;
     ui::LayerStack getLayerStack() const;
 
@@ -197,7 +196,7 @@ private:
 
 struct DisplayDeviceState {
     struct Physical {
-        DisplayId id;
+        PhysicalDisplayId id;
         DisplayConnectionType type;
         hardware::graphics::composer::hal::HWDisplayId hwcDisplayId;
         std::optional<DeviceProductInfo> deviceProductInfo;
@@ -212,8 +211,8 @@ struct DisplayDeviceState {
     std::optional<Physical> physical;
     sp<IGraphicBufferProducer> surface;
     ui::LayerStack layerStack = ui::NO_LAYER_STACK;
-    Rect viewport;
-    Rect frame;
+    Rect layerStackSpaceRect;
+    Rect orientedDisplaySpaceRect;
     ui::Rotation orientation = ui::ROTATION_0;
     uint32_t width = 0;
     uint32_t height = 0;
