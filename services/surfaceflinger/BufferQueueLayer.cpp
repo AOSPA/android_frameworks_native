@@ -133,8 +133,8 @@ bool BufferQueueLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
         smomo::SmomoBufferStats bufferStats;
         bufferStats.id = getSequence();
         bufferStats.queued_frames = getQueuedFrameCount();
-        bufferStats.auto_timestamp = mQueueItems[0].mIsAutoTimestamp;
-        bufferStats.timestamp = mQueueItems[0].mTimestamp;
+        bufferStats.auto_timestamp = mQueueItems[0].item.mIsAutoTimestamp;
+        bufferStats.timestamp = mQueueItems[0].item.mTimestamp;
         bufferStats.dequeue_latency = 0;
         isDue = mFlinger->mSmoMo->ShouldPresentNow(bufferStats, expectedPresentTime);
     }
