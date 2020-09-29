@@ -141,8 +141,9 @@ DispSyncSource::DispSyncSource(scheduler::VSyncDispatch& vSyncDispatch,
             ALOGW("Unable to open libdolphin.so: %s.", dlerror());
         } else {
             mDolphinCheck = (bool (*) (const char*))dlsym(mDolphinHandle, "dolphinCheck");
-            if (!mDolphinCheck)
+            if (!mDolphinCheck) {
                 dlclose(mDolphinHandle);
+            }
         }
 }
 
@@ -161,12 +162,7 @@ void DispSyncSource::setVSyncEnabled(bool enable) {
         // ATRACE_INT(mVsyncOnLabel.c_str(), 0);
         if (mDolphinCheck) {
             if (mDolphinCheck(mName)) {
-                status_t err = mDispSync->addEventListener(mName, mPhaseOffset,
-                                                           static_cast<DispSync::Callback*>(this),
-                                                           mLastCallbackTime);
-                if (err != NO_ERROR) {
-                    ALOGE("error registering vsync callback: %s (%d)", strerror(-err), err);
-                }
+                mCallbackRepeater->start(mWorkDuration, mReadyDuration);
             }
         }
     }
