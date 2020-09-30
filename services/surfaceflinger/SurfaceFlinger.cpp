@@ -1597,7 +1597,7 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
 }
 
 status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
-    nsecs_t sfOffset = mPhaseConfiguration->getCurrentOffsets().late.sf;
+    nsecs_t sfOffset = mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
     if (!mUseAdvanceSfOffset && (sfOffset >= 0)) {
         return OK;
     }
@@ -1971,7 +1971,7 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
         return;
     }
 
-    const sp<Fence>& fence = mVSyncModulator->getVsyncConfig().sfOffset > 0 ? mPreviousPresentFences[0]
+    const sp<Fence>& fence = mVsyncModulator->getVsyncConfig().sfOffset > 0 ? mPreviousPresentFences[0]
                                                                             : mPreviousPresentFences[1];
 
     if (fence == Fence::NO_FENCE) {
@@ -1984,13 +1984,13 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
         return;
     }
 
-    const nsecs_t period = getVsyncPeriod();
+    const nsecs_t period = getVsyncPeriodFromHWC();
     mScheduler->resyncToHardwareVsync(true, period, true /* force resync */);
     if (timeStamp > 0) {
         bool periodFlushed = false;
         mScheduler->addResyncSample(timeStamp, period, &periodFlushed);
         if (periodFlushed) {
-            mVSyncModulator->onRefreshRateChangeCompleted();
+            modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
 }
@@ -2116,7 +2116,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         });
         mMaxQueuedFrames = maxQueuedFrames;
         DisplayStatInfo stats;
-        mScheduler->getDisplayStatInfo(&stats);
+        mScheduler->getDisplayStatInfo(&stats, systemTime());
         if(mDolphinMonitor(maxQueuedFrames, stats.vsyncPeriod)) {
             signalLayerUpdate();
             if (mFrameExtn) {
@@ -2691,12 +2691,12 @@ void SurfaceFlinger::updateVsyncSource()
     } else if (mNextVsyncSource && (mActiveVsyncSource == NULL)) {
         mScheduler->onScreenAcquired(mAppConnectionHandle);
         bool isPrimary = mNextVsyncSource->isPrimary();
-        nsecs_t vsync = (isPrimary && (mVsyncPeriod > 0)) ? mVsyncPeriod : getVsyncPeriod();
+        nsecs_t vsync = (isPrimary && (mVsyncPeriod > 0)) ? mVsyncPeriod : getVsyncPeriodFromHWC();
         mScheduler->resyncToHardwareVsync(true, vsync);
     } else if ((mNextVsyncSource != NULL) &&
         (mActiveVsyncSource != NULL)) {
         // Switch vsync to the new source
-        mScheduler->resyncToHardwareVsync(true, getVsyncPeriod());
+        mScheduler->resyncToHardwareVsync(true, getVsyncPeriodFromHWC());
     }
 }
 
@@ -3071,9 +3071,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             if (mUseFbScaling && display->isPrimary()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
                 DisplayDeviceState& tmpState = mCurrentState.displays.editValueAt(index);
-                tmpState.width =  currentState.viewport.width();
-                tmpState.height = currentState.viewport.height();
-                tmpState.frame =  currentState.viewport;
+                tmpState.width =  currentState.layerStackSpaceRect.width();
+                tmpState.height = currentState.layerStackSpaceRect.height();
+                tmpState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
                 setFrameBufferSizeForScaling(display, currentState);
                 displaySizeChanged = true;
             } else {
@@ -3103,19 +3103,19 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
                                                   const DisplayDeviceState& state) {
     base::unique_fd fd;
     auto display = displayDevice->getCompositionDisplay();
-    int newWidth = state.viewport.width();
-    int newHeight = state.viewport.height();
+    int newWidth = state.layerStackSpaceRect.width();
+    int newHeight = state.layerStackSpaceRect.height();
     if (state.orientation == ui::ROTATION_90 || state.orientation == ui::ROTATION_270){
         std::swap(newWidth, newHeight);
     }
     if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight) {
-        displayDevice->setProjection(state.orientation, state.viewport, state.viewport);
+        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
         return;
     }
 
     if (mBootStage == BootStage::FINISHED) {
         displayDevice->setDisplaySize(newWidth, newHeight);
-        displayDevice->setProjection(state.orientation, state.viewport, state.viewport);
+        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
         display->getRenderSurface()->setViewportAndProjection();
         display->getRenderSurface()->flipClientTarget(true);
         // queue a scratch buffer to flip Client Target with updated size
@@ -5886,7 +5886,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
               uint64_t disp = data.readUint64();
               int mode = data.readInt32();
               ALOGI("Debug: Set display = %llu, power mode = %d", (unsigned long long)disp, mode);
-              setPowerMode(getPhysicalDisplayToken(disp), mode);
+              setPowerMode(getPhysicalDisplayToken(PhysicalDisplayId{disp}), mode);
               return NO_ERROR;
             }
         }
@@ -6916,7 +6916,7 @@ bool SurfaceFlinger::getHwcDisplayId(const sp<DisplayDevice>& display, uint32_t 
     if (display) {
         const auto displayId = display->getId();
         if (displayId) {
-            const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+            const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(static_cast<PhysicalDisplayId>(*displayId));
             if (halDisplayId) {
                 *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
                 return true;
