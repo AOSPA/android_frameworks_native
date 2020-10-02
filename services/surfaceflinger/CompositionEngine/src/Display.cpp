@@ -71,6 +71,7 @@ void Display::setConfiguration(const compositionengine::DisplayCreationArgs& arg
 
     if (args.physical) {
         mId = args.physical->id;
+        mConnectionType = args.physical->type;
     } else {
         std::optional<DisplayId> id;
         if (args.useHwcVirtualDisplays) {
@@ -81,6 +82,7 @@ void Display::setConfiguration(const compositionengine::DisplayCreationArgs& arg
         }
         LOG_ALWAYS_FATAL_IF(!id, "Failed to generate display ID");
         mId = *id;
+        mConnectionType = ui::DisplayConnectionType::Internal;
     }
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
@@ -301,7 +303,7 @@ void Display::chooseCompositionStrategy() {
     });
     const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
     if (physicalDisplayId.has_value() &&
-        (hwc.getDisplayConnectionType(*physicalDisplayId) == ui::DisplayConnectionType::External) &&
+        (mConnectionType == ui::DisplayConnectionType::External) &&
         (hasScreenshot != mHasScreenshot) && mDisplayConfigIntf) {
         const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
         mDisplayConfigIntf->SetDisplayAnimating(*hwcDisplayId, hasScreenshot);
