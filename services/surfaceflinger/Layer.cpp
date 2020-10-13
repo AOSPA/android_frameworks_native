@@ -825,7 +825,9 @@ void Layer::pushPendingState() {
             // to be applied as per normal (no synchronization).
             mCurrentState.barrierLayer_legacy = nullptr;
         } else {
-            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.frameNumber_legacy, this);
+            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.frameNumber_legacy,
+                                                         this,
+                                                         barrierLayer);
             if (barrierLayer->addSyncPoint(syncPoint)) {
                 std::stringstream ss;
                 ss << "Adding sync point " << mCurrentState.frameNumber_legacy;
@@ -850,7 +852,7 @@ void Layer::popPendingState(State* stateToCommit) {
     ATRACE_CALL();
     *stateToCommit = mPendingStates[0];
 
-    mPendingStates.removeAt(0);
+    mPendingStates.pop_front();
     ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
 }
 
@@ -889,6 +891,7 @@ bool Layer::applyPendingStates(State* stateToCommit) {
                 mRemoteSyncPoints.pop_front();
             } else {
                 ATRACE_NAME("!frameIsAvailable");
+                mRemoteSyncPoints.front()->checkTimeoutAndLog();
                 break;
             }
         } else {
