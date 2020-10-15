@@ -136,6 +136,7 @@
 #include "layer_extn_intf.h"
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
+#include <hardware/hwcomposer_defs.h>
 #include <config/client_interface.h>
 namespace DisplayConfig {
 class ClientInterface;
@@ -2991,7 +2992,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                                                        displaySurface, producer);
     mDisplays.emplace(displayToken, display);
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
-    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(PhysicalDisplayId (*displayId));
     bool supported = false;
     if (mDisplayConfigIntf) {
         mDisplayConfigIntf->IsPowerModeOverrideSupported(*hwcDisplayId, &supported);
@@ -4801,7 +4802,7 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
     const auto displayId = display->getId();
-    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(PhysicalDisplayId(*displayId));
     // Fallback to default power state behavior as HWC does not support power mode override.
     if (!display->getPowerModeOverrideConfig() ||
         mode  ==  HWC_POWER_MODE_DOZE ||
