@@ -66,42 +66,39 @@ public:
         return interface_cast<ISurfaceComposerClient>(reply.readStrongBinder());
     }
 
-    virtual void setTransactionState(const Vector<ComposerState>& state,
-                                     const Vector<DisplayState>& displays, uint32_t flags,
-                                     const sp<IBinder>& applyToken,
-                                     const InputWindowCommands& commands,
-                                     int64_t desiredPresentTime,
-                                     const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
-                                     const std::vector<ListenerCallbacks>& listenerCallbacks) {
+    virtual status_t setTransactionState(
+            const Vector<ComposerState>& state, const Vector<DisplayState>& displays,
+            uint32_t flags, const sp<IBinder>& applyToken, const InputWindowCommands& commands,
+            int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
+            bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks) {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
 
-        data.writeUint32(static_cast<uint32_t>(state.size()));
+        SAFE_PARCEL(data.writeUint32, static_cast<uint32_t>(state.size()));
         for (const auto& s : state) {
-            s.write(data);
+            SAFE_PARCEL(s.write, data);
         }
 
-        data.writeUint32(static_cast<uint32_t>(displays.size()));
+        SAFE_PARCEL(data.writeUint32, static_cast<uint32_t>(displays.size()));
         for (const auto& d : displays) {
-            d.write(data);
+            SAFE_PARCEL(d.write, data);
         }
 
-        data.writeUint32(flags);
-        data.writeStrongBinder(applyToken);
-        commands.write(data);
-        data.writeInt64(desiredPresentTime);
-        data.writeStrongBinder(uncacheBuffer.token.promote());
-        data.writeUint64(uncacheBuffer.id);
-        data.writeBool(hasListenerCallbacks);
+        SAFE_PARCEL(data.writeUint32, flags);
+        SAFE_PARCEL(data.writeStrongBinder, applyToken);
+        SAFE_PARCEL(commands.write, data);
+        SAFE_PARCEL(data.writeInt64, desiredPresentTime);
+        SAFE_PARCEL(data.writeStrongBinder, uncacheBuffer.token.promote());
+        SAFE_PARCEL(data.writeUint64, uncacheBuffer.id);
+        SAFE_PARCEL(data.writeBool, hasListenerCallbacks);
 
-        if (data.writeVectorSize(listenerCallbacks) == NO_ERROR) {
-            for (const auto& [listener, callbackIds] : listenerCallbacks) {
-                data.writeStrongBinder(listener);
-                data.writeInt64Vector(callbackIds);
-            }
+        SAFE_PARCEL(data.writeVectorSize, listenerCallbacks);
+        for (const auto& [listener, callbackIds] : listenerCallbacks) {
+            SAFE_PARCEL(data.writeStrongBinder, listener);
+            SAFE_PARCEL(data.writeInt64Vector, callbackIds);
         }
 
-        remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE, data, &reply);
+        return remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE, data, &reply);
     }
 
     virtual void bootFinished()
@@ -111,95 +108,34 @@ public:
         remote()->transact(BnSurfaceComposer::BOOT_FINISHED, data, &reply);
     }
 
-    virtual status_t captureScreen(const sp<IBinder>& display, sp<GraphicBuffer>* outBuffer,
-                                   bool& outCapturedSecureLayers, ui::Dataspace reqDataspace,
-                                   ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                   uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   ui::Rotation rotation, bool captureSecureLayers) {
+    virtual status_t captureDisplay(const DisplayCaptureArgs& args,
+                                    const sp<IScreenCaptureListener>& captureListener) {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        data.writeStrongBinder(display);
-        data.writeInt32(static_cast<int32_t>(reqDataspace));
-        data.writeInt32(static_cast<int32_t>(reqPixelFormat));
-        data.write(sourceCrop);
-        data.writeUint32(reqWidth);
-        data.writeUint32(reqHeight);
-        data.writeInt32(static_cast<int32_t>(useIdentityTransform));
-        data.writeInt32(static_cast<int32_t>(rotation));
-        data.writeInt32(static_cast<int32_t>(captureSecureLayers));
-        status_t result = remote()->transact(BnSurfaceComposer::CAPTURE_SCREEN, data, &reply);
-        if (result != NO_ERROR) {
-            ALOGE("captureScreen failed to transact: %d", result);
-            return result;
-        }
-        result = reply.readInt32();
-        if (result != NO_ERROR) {
-            ALOGE("captureScreen failed to readInt32: %d", result);
-            return result;
-        }
+        SAFE_PARCEL(args.write, data);
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
 
-        *outBuffer = new GraphicBuffer();
-        reply.read(**outBuffer);
-        outCapturedSecureLayers = reply.readBool();
-
-        return result;
+        return remote()->transact(BnSurfaceComposer::CAPTURE_DISPLAY, data, &reply);
     }
 
-    virtual status_t captureScreen(uint64_t displayOrLayerStack, ui::Dataspace* outDataspace,
-                                   sp<GraphicBuffer>* outBuffer) {
+    virtual status_t captureDisplay(uint64_t displayOrLayerStack,
+                                    const sp<IScreenCaptureListener>& captureListener) {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        data.writeUint64(displayOrLayerStack);
-        status_t result = remote()->transact(BnSurfaceComposer::CAPTURE_SCREEN_BY_ID, data, &reply);
-        if (result != NO_ERROR) {
-            ALOGE("captureScreen failed to transact: %d", result);
-            return result;
-        }
-        result = reply.readInt32();
-        if (result != NO_ERROR) {
-            ALOGE("captureScreen failed to readInt32: %d", result);
-            return result;
-        }
+        SAFE_PARCEL(data.writeUint64, displayOrLayerStack);
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
 
-        *outDataspace = static_cast<ui::Dataspace>(reply.readInt32());
-        *outBuffer = new GraphicBuffer();
-        reply.read(**outBuffer);
-        return result;
+        return remote()->transact(BnSurfaceComposer::CAPTURE_DISPLAY_BY_ID, data, &reply);
     }
 
-    virtual status_t captureLayers(
-            const sp<IBinder>& layerHandleBinder, sp<GraphicBuffer>* outBuffer,
-            const ui::Dataspace reqDataspace, const ui::PixelFormat reqPixelFormat,
-            const Rect& sourceCrop,
-            const std::unordered_set<sp<IBinder>, SpHash<IBinder>>& excludeLayers, float frameScale,
-            bool childrenOnly) {
+    virtual status_t captureLayers(const LayerCaptureArgs& args,
+                                   const sp<IScreenCaptureListener>& captureListener) {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        data.writeStrongBinder(layerHandleBinder);
-        data.writeInt32(static_cast<int32_t>(reqDataspace));
-        data.writeInt32(static_cast<int32_t>(reqPixelFormat));
-        data.write(sourceCrop);
-        data.writeInt32(excludeLayers.size());
-        for (auto el : excludeLayers) {
-            data.writeStrongBinder(el);
-        }
-        data.writeFloat(frameScale);
-        data.writeBool(childrenOnly);
-        status_t result = remote()->transact(BnSurfaceComposer::CAPTURE_LAYERS, data, &reply);
-        if (result != NO_ERROR) {
-            ALOGE("captureLayers failed to transact: %d", result);
-            return result;
-        }
-        result = reply.readInt32();
-        if (result != NO_ERROR) {
-            ALOGE("captureLayers failed to readInt32: %d", result);
-            return result;
-        }
+        SAFE_PARCEL(args.write, data);
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
 
-        *outBuffer = new GraphicBuffer();
-        reply.read(**outBuffer);
-
-        return result;
+        return remote()->transact(BnSurfaceComposer::CAPTURE_LAYERS, data, &reply);
     }
 
     virtual bool authenticateSurfaceTexture(
@@ -308,10 +244,25 @@ public:
     {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        data.writeString8(displayName);
-        data.writeInt32(secure ? 1 : 0);
-        remote()->transact(BnSurfaceComposer::CREATE_DISPLAY, data, &reply);
-        return reply.readStrongBinder();
+        status_t status = data.writeString8(displayName);
+        if (status) {
+            return nullptr;
+        }
+        status = data.writeBool(secure);
+        if (status) {
+            return nullptr;
+        }
+
+        status = remote()->transact(BnSurfaceComposer::CREATE_DISPLAY, data, &reply);
+        if (status) {
+            return nullptr;
+        }
+        sp<IBinder> display;
+        status = reply.readNullableStrongBinder(&display);
+        if (status) {
+            return nullptr;
+        }
+        return display;
     }
 
     virtual void destroyDisplay(const sp<IBinder>& display)
@@ -327,8 +278,11 @@ public:
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         if (remote()->transact(BnSurfaceComposer::GET_PHYSICAL_DISPLAY_IDS, data, &reply) ==
             NO_ERROR) {
-            std::vector<PhysicalDisplayId> displayIds;
-            if (reply.readUint64Vector(&displayIds) == NO_ERROR) {
+            std::vector<uint64_t> rawIds;
+            if (reply.readUint64Vector(&rawIds) == NO_ERROR) {
+                std::vector<PhysicalDisplayId> displayIds(rawIds.size());
+                std::transform(rawIds.begin(), rawIds.end(), displayIds.begin(),
+                               [](uint64_t rawId) { return PhysicalDisplayId(rawId); });
                 return displayIds;
             }
         }
@@ -339,7 +293,7 @@ public:
     virtual sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        data.writeUint64(displayId);
+        data.writeUint64(displayId.value);
         remote()->transact(BnSurfaceComposer::GET_PHYSICAL_DISPLAY_TOKEN, data, &reply);
         return reply.readStrongBinder();
     }
@@ -1211,6 +1165,38 @@ public:
 
         return NO_ERROR;
     }
+
+    virtual status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& surface,
+                                           int64_t frameTimelineVsyncId) {
+        Parcel data, reply;
+        status_t err = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
+        if (err != NO_ERROR) {
+            ALOGE("setFrameTimelineVsync: failed writing interface token: %s (%d)", strerror(-err),
+                  -err);
+            return err;
+        }
+
+        err = data.writeStrongBinder(IInterface::asBinder(surface));
+        if (err != NO_ERROR) {
+            ALOGE("setFrameTimelineVsync: failed writing strong binder: %s (%d)", strerror(-err),
+                  -err);
+            return err;
+        }
+
+        err = data.writeInt64(frameTimelineVsyncId);
+        if (err != NO_ERROR) {
+            ALOGE("setFrameTimelineVsync: failed writing int64_t: %s (%d)", strerror(-err), -err);
+            return err;
+        }
+
+        err = remote()->transact(BnSurfaceComposer::SET_FRAME_TIMELINE_VSYNC, data, &reply);
+        if (err != NO_ERROR) {
+            ALOGE("setFrameTimelineVsync: failed to transact: %s (%d)", strerror(-err), err);
+            return err;
+        }
+
+        return reply.readInt32();
+    }
 };
 
 // Out-of-line virtual method definition to trigger vtable emission in this
@@ -1234,135 +1220,88 @@ status_t BnSurfaceComposer::onTransact(
         case SET_TRANSACTION_STATE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
 
-            size_t count = data.readUint32();
-            if (count > data.dataSize()) {
-                return BAD_VALUE;
-            }
+            uint32_t count = 0;
+            SAFE_PARCEL_READ_SIZE(data.readUint32, &count, data.dataSize());
             Vector<ComposerState> state;
             state.setCapacity(count);
             for (size_t i = 0; i < count; i++) {
                 ComposerState s;
-                if (s.read(data) == BAD_VALUE) {
-                    return BAD_VALUE;
-                }
+                SAFE_PARCEL(s.read, data);
                 state.add(s);
             }
 
-            count = data.readUint32();
-            if (count > data.dataSize()) {
-                return BAD_VALUE;
-            }
+            SAFE_PARCEL_READ_SIZE(data.readUint32, &count, data.dataSize());
             DisplayState d;
             Vector<DisplayState> displays;
             displays.setCapacity(count);
             for (size_t i = 0; i < count; i++) {
-                if (d.read(data) == BAD_VALUE) {
-                    return BAD_VALUE;
-                }
+                SAFE_PARCEL(d.read, data);
                 displays.add(d);
             }
 
-            uint32_t stateFlags = data.readUint32();
-            sp<IBinder> applyToken = data.readStrongBinder();
+            uint32_t stateFlags = 0;
+            SAFE_PARCEL(data.readUint32, &stateFlags);
+            sp<IBinder> applyToken;
+            SAFE_PARCEL(data.readStrongBinder, &applyToken);
             InputWindowCommands inputWindowCommands;
-            inputWindowCommands.read(data);
+            SAFE_PARCEL(inputWindowCommands.read, data);
 
-            int64_t desiredPresentTime = data.readInt64();
+            int64_t desiredPresentTime = 0;
+            SAFE_PARCEL(data.readInt64, &desiredPresentTime);
 
             client_cache_t uncachedBuffer;
-            uncachedBuffer.token = data.readStrongBinder();
-            uncachedBuffer.id = data.readUint64();
+            sp<IBinder> tmpBinder;
+            SAFE_PARCEL(data.readNullableStrongBinder, &tmpBinder);
+            uncachedBuffer.token = tmpBinder;
+            SAFE_PARCEL(data.readUint64, &uncachedBuffer.id);
 
-            bool hasListenerCallbacks = data.readBool();
+            bool hasListenerCallbacks = false;
+            SAFE_PARCEL(data.readBool, &hasListenerCallbacks);
 
             std::vector<ListenerCallbacks> listenerCallbacks;
-            int32_t listenersSize = data.readInt32();
+            int32_t listenersSize = 0;
+            SAFE_PARCEL_READ_SIZE(data.readInt32, &listenersSize, data.dataSize());
             for (int32_t i = 0; i < listenersSize; i++) {
-                auto listener = data.readStrongBinder();
+                SAFE_PARCEL(data.readStrongBinder, &tmpBinder);
                 std::vector<CallbackId> callbackIds;
-                data.readInt64Vector(&callbackIds);
-                listenerCallbacks.emplace_back(listener, callbackIds);
+                SAFE_PARCEL(data.readInt64Vector, &callbackIds);
+                listenerCallbacks.emplace_back(tmpBinder, callbackIds);
             }
-            setTransactionState(state, displays, stateFlags, applyToken, inputWindowCommands,
-                                desiredPresentTime, uncachedBuffer, hasListenerCallbacks,
-                                listenerCallbacks);
-            return NO_ERROR;
+            return setTransactionState(state, displays, stateFlags, applyToken, inputWindowCommands,
+                                       desiredPresentTime, uncachedBuffer, hasListenerCallbacks,
+                                       listenerCallbacks);
         }
         case BOOT_FINISHED: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             bootFinished();
             return NO_ERROR;
         }
-        case CAPTURE_SCREEN: {
+        case CAPTURE_DISPLAY: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            sp<IBinder> display = data.readStrongBinder();
-            ui::Dataspace reqDataspace = static_cast<ui::Dataspace>(data.readInt32());
-            ui::PixelFormat reqPixelFormat = static_cast<ui::PixelFormat>(data.readInt32());
-            sp<GraphicBuffer> outBuffer;
-            Rect sourceCrop(Rect::EMPTY_RECT);
-            data.read(sourceCrop);
-            uint32_t reqWidth = data.readUint32();
-            uint32_t reqHeight = data.readUint32();
-            bool useIdentityTransform = static_cast<bool>(data.readInt32());
-            int32_t rotation = data.readInt32();
-            bool captureSecureLayers = static_cast<bool>(data.readInt32());
+            DisplayCaptureArgs args;
+            sp<IScreenCaptureListener> captureListener;
+            SAFE_PARCEL(args.read, data);
+            SAFE_PARCEL(data.readStrongBinder, &captureListener);
 
-            bool capturedSecureLayers = false;
-            status_t res = captureScreen(display, &outBuffer, capturedSecureLayers, reqDataspace,
-                                         reqPixelFormat, sourceCrop, reqWidth, reqHeight,
-                                         useIdentityTransform, ui::toRotation(rotation),
-                                         captureSecureLayers);
-
-            reply->writeInt32(res);
-            if (res == NO_ERROR) {
-                reply->write(*outBuffer);
-                reply->writeBool(capturedSecureLayers);
-            }
-            return NO_ERROR;
+            return captureDisplay(args, captureListener);
         }
-        case CAPTURE_SCREEN_BY_ID: {
+        case CAPTURE_DISPLAY_BY_ID: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            uint64_t displayOrLayerStack = data.readUint64();
-            ui::Dataspace outDataspace = ui::Dataspace::V0_SRGB;
-            sp<GraphicBuffer> outBuffer;
-            status_t res = captureScreen(displayOrLayerStack, &outDataspace, &outBuffer);
-            reply->writeInt32(res);
-            if (res == NO_ERROR) {
-                reply->writeInt32(static_cast<int32_t>(outDataspace));
-                reply->write(*outBuffer);
-            }
-            return NO_ERROR;
+            uint64_t displayOrLayerStack = 0;
+            sp<IScreenCaptureListener> captureListener;
+            SAFE_PARCEL(data.readUint64, &displayOrLayerStack);
+            SAFE_PARCEL(data.readStrongBinder, &captureListener);
+
+            return captureDisplay(displayOrLayerStack, captureListener);
         }
         case CAPTURE_LAYERS: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            sp<IBinder> layerHandleBinder = data.readStrongBinder();
-            ui::Dataspace reqDataspace = static_cast<ui::Dataspace>(data.readInt32());
-            ui::PixelFormat reqPixelFormat = static_cast<ui::PixelFormat>(data.readInt32());
-            sp<GraphicBuffer> outBuffer;
-            Rect sourceCrop(Rect::EMPTY_RECT);
-            data.read(sourceCrop);
+            LayerCaptureArgs args;
+            sp<IScreenCaptureListener> captureListener;
+            SAFE_PARCEL(args.read, data);
+            SAFE_PARCEL(data.readStrongBinder, &captureListener);
 
-            std::unordered_set<sp<IBinder>, SpHash<IBinder>> excludeHandles;
-            int numExcludeHandles = data.readInt32();
-            if (numExcludeHandles >= static_cast<int>(MAX_LAYERS)) {
-                return BAD_VALUE;
-            }
-            excludeHandles.reserve(numExcludeHandles);
-            for (int i = 0; i < numExcludeHandles; i++) {
-                excludeHandles.emplace(data.readStrongBinder());
-            }
-
-            float frameScale = data.readFloat();
-            bool childrenOnly = data.readBool();
-
-            status_t res =
-                    captureLayers(layerHandleBinder, &outBuffer, reqDataspace, reqPixelFormat,
-                                  sourceCrop, excludeHandles, frameScale, childrenOnly);
-            reply->writeInt32(res);
-            if (res == NO_ERROR) {
-                reply->write(*outBuffer);
-            }
-            return NO_ERROR;
+            return captureLayers(args, captureListener);
         }
         case AUTHENTICATE_SURFACE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
@@ -1403,10 +1342,12 @@ status_t BnSurfaceComposer::onTransact(
         }
         case CREATE_DISPLAY: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            String8 displayName = data.readString8();
-            bool secure = bool(data.readInt32());
-            sp<IBinder> display(createDisplay(displayName, secure));
-            reply->writeStrongBinder(display);
+            String8 displayName;
+            SAFE_PARCEL(data.readString8, &displayName);
+            bool secure = false;
+            SAFE_PARCEL(data.readBool, &secure);
+            sp<IBinder> display = createDisplay(displayName, secure);
+            SAFE_PARCEL(reply->writeStrongBinder, display);
             return NO_ERROR;
         }
         case DESTROY_DISPLAY: {
@@ -1417,7 +1358,7 @@ status_t BnSurfaceComposer::onTransact(
         }
         case GET_PHYSICAL_DISPLAY_TOKEN: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            PhysicalDisplayId displayId = data.readUint64();
+            PhysicalDisplayId displayId(data.readUint64());
             sp<IBinder> display = getPhysicalDisplayToken(displayId);
             reply->writeStrongBinder(display);
             return NO_ERROR;
@@ -1819,7 +1760,11 @@ status_t BnSurfaceComposer::onTransact(
         }
         case GET_PHYSICAL_DISPLAY_IDS: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            return reply->writeUint64Vector(getPhysicalDisplayIds());
+            std::vector<PhysicalDisplayId> ids = getPhysicalDisplayIds();
+            std::vector<uint64_t> rawIds(ids.size());
+            std::transform(ids.begin(), ids.end(), rawIds.begin(),
+                           [](PhysicalDisplayId id) { return id.value; });
+            return reply->writeUint64Vector(rawIds);
         }
         case ADD_REGION_SAMPLING_LISTENER: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
@@ -2052,6 +1997,33 @@ status_t BnSurfaceComposer::onTransact(
             if (result == NO_ERROR) {
                 reply->writeStrongBinder(token);
             }
+            return NO_ERROR;
+        }
+        case SET_FRAME_TIMELINE_VSYNC: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IBinder> binder;
+            status_t err = data.readStrongBinder(&binder);
+            if (err != NO_ERROR) {
+                ALOGE("setFrameTimelineVsync: failed to read strong binder: %s (%d)",
+                      strerror(-err), -err);
+                return err;
+            }
+            sp<IGraphicBufferProducer> surface = interface_cast<IGraphicBufferProducer>(binder);
+            if (!surface) {
+                ALOGE("setFrameTimelineVsync: failed to cast to IGraphicBufferProducer: %s (%d)",
+                      strerror(-err), -err);
+                return err;
+            }
+            int64_t frameTimelineVsyncId;
+            err = data.readInt64(&frameTimelineVsyncId);
+            if (err != NO_ERROR) {
+                ALOGE("setFrameTimelineVsync: failed to read int64_t: %s (%d)", strerror(-err),
+                      -err);
+                return err;
+            }
+
+            status_t result = setFrameTimelineVsync(surface, frameTimelineVsyncId);
+            reply->writeInt32(result);
             return NO_ERROR;
         }
         default: {

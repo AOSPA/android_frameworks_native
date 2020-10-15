@@ -1,3 +1,23 @@
+/*
+ * Copyright (C) 2020 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 #include <gtest/gtest.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/LayerDebugInfo.h>
@@ -7,8 +27,8 @@
 #include <private/gui/ComposerService.h>
 #include <ui/DisplayConfig.h>
 #include <utils/String8.h>
-
 #include <functional>
+#include "utils/ScreenshotUtils.h"
 
 namespace android {
 
@@ -18,7 +38,6 @@ using ui::ColorMode;
 namespace {
 const String8 DISPLAY_NAME("Credentials Display Test");
 const String8 SURFACE_NAME("Test Surface Name");
-const float FRAME_SCALE = 1.0f;
 } // namespace
 
 /**
@@ -79,26 +98,6 @@ protected:
                   t.setLayer(mBGSurfaceControl, INT_MAX - 3).show(mBGSurfaceControl).apply());
     }
 
-    void setupVirtualDisplay() {
-        mVirtualDisplay = SurfaceComposerClient::createDisplay(DISPLAY_NAME, true);
-        const ssize_t displayWidth = 100;
-        const ssize_t displayHeight = 100;
-
-        // Background surface
-        mVirtualSurfaceControl =
-                mComposerClient->createSurface(SURFACE_NAME, displayWidth, displayHeight,
-                                               PIXEL_FORMAT_RGBA_8888, 0);
-        ASSERT_TRUE(mVirtualSurfaceControl != nullptr);
-        ASSERT_TRUE(mVirtualSurfaceControl->isValid());
-
-        Transaction t;
-        t.setDisplayLayerStack(mVirtualDisplay, 0);
-        ASSERT_EQ(NO_ERROR,
-                  t.setLayer(mVirtualSurfaceControl, INT_MAX - 3)
-                          .show(mVirtualSurfaceControl)
-                          .apply());
-    }
-
     /**
      * Sets UID to imitate Graphic's process.
      */
@@ -146,6 +145,10 @@ protected:
         // Check as a non-supported user.
         setBinUID();
         ASSERT_EQ(unprivilegedValue, condition());
+
+        // Check as shell since shell has some additional permissions
+        seteuid(AID_SHELL);
+        ASSERT_EQ(unprivilegedValue, condition());
     }
 };
 
@@ -188,7 +191,7 @@ TEST_F(CredentialsTest, AllowedGetterMethodsTest) {
     Vector<DisplayConfig> configs;
     ASSERT_EQ(NO_ERROR, SurfaceComposerClient::getDisplayConfigs(display, &configs));
 
-    ASSERT_EQ(NO_ERROR, SurfaceComposerClient::getActiveConfig(display));
+    ASSERT_TRUE(SurfaceComposerClient::getActiveConfig(display) >= 0);
 
     ASSERT_NE(static_cast<ui::ColorMode>(BAD_VALUE),
               SurfaceComposerClient::getActiveColorMode(display));
@@ -243,11 +246,31 @@ TEST_F(CredentialsTest, SetActiveColorModeTest) {
 }
 
 TEST_F(CredentialsTest, CreateDisplayTest) {
+    // Only graphics and system processes can create a secure display.
     std::function<bool()> condition = [=]() {
         sp<IBinder> testDisplay = SurfaceComposerClient::createDisplay(DISPLAY_NAME, true);
         return testDisplay.get() != nullptr;
     };
-    ASSERT_NO_FATAL_FAILURE(checkWithPrivileges(condition, true, false));
+
+    // Check with root.
+    seteuid(AID_ROOT);
+    ASSERT_FALSE(condition());
+
+    // Check as a Graphics user.
+    setGraphicsUID();
+    ASSERT_TRUE(condition());
+
+    // Check as a system user.
+    setSystemUID();
+    ASSERT_TRUE(condition());
+
+    // Check as a non-supported user.
+    setBinUID();
+    ASSERT_FALSE(condition());
+
+    // Check as shell since shell has some additional permissions
+    seteuid(AID_SHELL);
+    ASSERT_FALSE(condition());
 
     condition = [=]() {
         sp<IBinder> testDisplay = SurfaceComposerClient::createDisplay(DISPLAY_NAME, false);
@@ -260,9 +283,10 @@ TEST_F(CredentialsTest, CaptureTest) {
     const auto display = SurfaceComposerClient::getInternalDisplayToken();
     std::function<status_t()> condition = [=]() {
         sp<GraphicBuffer> outBuffer;
-        return ScreenshotClient::capture(display, ui::Dataspace::V0_SRGB,
-                                         ui::PixelFormat::RGBA_8888, Rect(), 0 /*reqWidth*/,
-                                         0 /*reqHeight*/, false, ui::ROTATION_0, &outBuffer);
+        DisplayCaptureArgs captureArgs;
+        captureArgs.displayToken = display;
+        ScreenCaptureResults captureResults;
+        return ScreenCapture::captureDisplay(captureArgs, captureResults);
     };
     ASSERT_NO_FATAL_FAILURE(checkWithPrivileges<status_t>(condition, NO_ERROR, PERMISSION_DENIED));
 }
@@ -271,10 +295,12 @@ TEST_F(CredentialsTest, CaptureLayersTest) {
     setupBackgroundSurface();
     sp<GraphicBuffer> outBuffer;
     std::function<status_t()> condition = [=]() {
-        sp<GraphicBuffer> outBuffer;
-        return ScreenshotClient::captureLayers(mBGSurfaceControl->getHandle(),
-                                               ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888,
-                                               Rect(0, 0, 1, 1), FRAME_SCALE, &outBuffer);
+        LayerCaptureArgs captureArgs;
+        captureArgs.layerHandle = mBGSurfaceControl->getHandle();
+        captureArgs.sourceCrop = {0, 0, 1, 1};
+
+        ScreenCaptureResults captureResults;
+        return ScreenCapture::captureLayers(captureArgs, captureResults);
     };
     ASSERT_NO_FATAL_FAILURE(checkWithPrivileges<status_t>(condition, NO_ERROR, PERMISSION_DENIED));
 }

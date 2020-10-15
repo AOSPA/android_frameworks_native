@@ -742,6 +742,8 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
         mSharedBufferHasBeenQueued = false;
     }
 
+    mDequeuedSlots.insert(buf);
+
     return OK;
 }
 
@@ -769,6 +771,8 @@ int Surface::cancelBuffer(android_native_buffer_t* buffer,
     if (mSharedBufferMode && mAutoRefresh && mSharedBufferSlot == i) {
         mSharedBufferHasBeenQueued = true;
     }
+
+    mDequeuedSlots.erase(i);
 
     return OK;
 }
@@ -904,6 +908,8 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     if (err != OK)  {
         ALOGE("queueBuffer: error queuing buffer to SurfaceTexture, %d", err);
     }
+
+    mDequeuedSlots.erase(i);
 
     if (mEnableFrameTimestamps) {
         mFrameEventHistory->applyDelta(output.frameTimestamps);
@@ -1215,6 +1221,9 @@ int Surface::perform(int operation, va_list args)
     case NATIVE_WINDOW_GET_LAST_QUEUED_BUFFER:
         res = dispatchGetLastQueuedBuffer(args);
         break;
+    case NATIVE_WINDOW_SET_FRAME_TIMELINE_VSYNC:
+        res = dispatchSetFrameTimelineVsync(args);
+        break;
     default:
         res = NAME_NOT_FOUND;
         break;
@@ -1521,13 +1530,21 @@ int Surface::dispatchGetLastQueuedBuffer(va_list args) {
     return result;
 }
 
+int Surface::dispatchSetFrameTimelineVsync(va_list args) {
+    ATRACE_CALL();
+    auto frameTimelineVsyncId = static_cast<int64_t>(va_arg(args, int64_t));
+
+    ALOGV("Surface::dispatchSetFrameTimelineVsync");
+    return composerService()->setFrameTimelineVsync(mGraphicBufferProducer, frameTimelineVsyncId);
+}
+
 bool Surface::transformToDisplayInverse() {
     return (mTransform & NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY) ==
             NATIVE_WINDOW_TRANSFORM_INVERSE_DISPLAY;
 }
 
 int Surface::connect(int api) {
-    static sp<IProducerListener> listener = new DummyProducerListener();
+    static sp<IProducerListener> listener = new StubProducerListener();
     return connect(api, listener);
 }
 
@@ -1674,6 +1691,7 @@ int Surface::attachBuffer(ANativeWindowBuffer* buffer)
         mRemovedBuffers.push_back(mSlots[attachedSlot].buffer);
     }
     mSlots[attachedSlot].buffer = graphicBuffer;
+    mDequeuedSlots.insert(attachedSlot);
 
     return NO_ERROR;
 }
@@ -1940,6 +1958,10 @@ Dataspace Surface::getBuffersDataSpace() {
 }
 
 void Surface::freeAllBuffers() {
+    if (!mDequeuedSlots.empty()) {
+        ALOGE("%s: %zu buffers were freed while being dequeued!",
+                __FUNCTION__, mDequeuedSlots.size());
+    }
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
         mSlots[i].buffer = nullptr;
     }
@@ -1959,6 +1981,10 @@ status_t Surface::getAndFlushBuffersFromSlots(const std::vector<int32_t>& slots,
     for (int32_t i : slots) {
         if (mSlots[i].buffer == nullptr) {
             ALOGW("%s: Discarded slot %d doesn't contain buffer!", __FUNCTION__, i);
+            continue;
+        }
+        // Don't flush currently dequeued buffers
+        if (mDequeuedSlots.count(i) > 0) {
             continue;
         }
         outBuffers->push_back(mSlots[i].buffer);

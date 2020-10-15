@@ -116,36 +116,6 @@ void RenderEngineThreaded::dump(std::string& result) {
     result.assign(resultFuture.get());
 }
 
-bool RenderEngineThreaded::useNativeFenceSync() const {
-    std::promise<bool> resultPromise;
-    std::future<bool> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& /*instance*/) {
-            ATRACE_NAME("REThreaded::useNativeFenceSync");
-            bool returnValue = SyncFeatures::getInstance().useNativeFenceSync();
-            resultPromise.set_value(returnValue);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
-}
-
-bool RenderEngineThreaded::useWaitSync() const {
-    std::promise<bool> resultPromise;
-    std::future<bool> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& /*instance*/) {
-            ATRACE_NAME("REThreaded::useWaitSync");
-            bool returnValue = SyncFeatures::getInstance().useWaitSync();
-            resultPromise.set_value(returnValue);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
-}
-
 void RenderEngineThreaded::genTextures(size_t count, uint32_t* names) {
     std::promise<void> resultPromise;
     std::future<void> resultFuture = resultPromise.get_future();
@@ -176,40 +146,6 @@ void RenderEngineThreaded::deleteTextures(size_t count, uint32_t const* names) {
     resultFuture.wait();
 }
 
-void RenderEngineThreaded::bindExternalTextureImage(uint32_t texName, const Image& image) {
-    std::promise<void> resultPromise;
-    std::future<void> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push(
-                [&resultPromise, texName, &image](renderengine::RenderEngine& instance) {
-                    ATRACE_NAME("REThreaded::bindExternalTextureImage");
-                    instance.bindExternalTextureImage(texName, image);
-                    resultPromise.set_value();
-                });
-    }
-    mCondition.notify_one();
-    resultFuture.wait();
-}
-
-status_t RenderEngineThreaded::bindExternalTextureBuffer(uint32_t texName,
-                                                         const sp<GraphicBuffer>& buffer,
-                                                         const sp<Fence>& fence) {
-    std::promise<status_t> resultPromise;
-    std::future<status_t> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push(
-                [&resultPromise, texName, &buffer, &fence](renderengine::RenderEngine& instance) {
-                    ATRACE_NAME("REThreaded::bindExternalTextureBuffer");
-                    status_t status = instance.bindExternalTextureBuffer(texName, buffer, fence);
-                    resultPromise.set_value(status);
-                });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
-}
-
 void RenderEngineThreaded::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) {
     std::promise<void> resultPromise;
     std::future<void> resultFuture = resultPromise.get_future();
@@ -233,36 +169,6 @@ void RenderEngineThreaded::unbindExternalTextureBuffer(uint64_t bufferId) {
         mFunctionCalls.push([&resultPromise, &bufferId](renderengine::RenderEngine& instance) {
             ATRACE_NAME("REThreaded::unbindExternalTextureBuffer");
             instance.unbindExternalTextureBuffer(bufferId);
-            resultPromise.set_value();
-        });
-    }
-    mCondition.notify_one();
-    resultFuture.wait();
-}
-
-status_t RenderEngineThreaded::bindFrameBuffer(Framebuffer* framebuffer) {
-    std::promise<status_t> resultPromise;
-    std::future<status_t> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise, &framebuffer](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::bindFrameBuffer");
-            status_t status = instance.bindFrameBuffer(framebuffer);
-            resultPromise.set_value(status);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
-}
-
-void RenderEngineThreaded::unbindFrameBuffer(Framebuffer* framebuffer) {
-    std::promise<void> resultPromise;
-    std::future<void> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise, &framebuffer](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::unbindFrameBuffer");
-            instance.unbindFrameBuffer(framebuffer);
             resultPromise.set_value();
         });
     }
@@ -346,6 +252,21 @@ bool RenderEngineThreaded::useProtectedContext(bool useProtectedContext) {
     return resultFuture.get();
 }
 
+bool RenderEngineThreaded::cleanupPostRender(CleanupMode mode) {
+    std::promise<bool> resultPromise;
+    std::future<bool> resultFuture = resultPromise.get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push([&resultPromise, mode](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::cleanupPostRender");
+            bool returnValue = instance.cleanupPostRender(mode);
+            resultPromise.set_value(returnValue);
+        });
+    }
+    mCondition.notify_one();
+    return resultFuture.get();
+}
+
 void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCrop) {
     std::promise<void> resultPromise;
     std::future<void> resultFuture = resultPromise.get_future();
@@ -359,36 +280,6 @@ void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCr
     }
     mCondition.notify_one();
     resultFuture.wait();
-}
-
-Framebuffer* RenderEngineThreaded::getFramebufferForDrawing() {
-    std::promise<Framebuffer*> resultPromise;
-    std::future<Framebuffer*> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::getFramebufferForDrawing");
-            Framebuffer* framebuffer = instance.getFramebufferForDrawing();
-            resultPromise.set_value(framebuffer);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
-}
-
-bool RenderEngineThreaded::cleanupPostRender() {
-    std::promise<bool> resultPromise;
-    std::future<bool> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::cleanupPostRender");
-            bool returnValue = instance.cleanupPostRender();
-            resultPromise.set_value(returnValue);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
 }
 
 status_t RenderEngineThreaded::drawLayers(const DisplaySettings& display,
@@ -411,6 +302,21 @@ status_t RenderEngineThreaded::drawLayers(const DisplaySettings& display,
     }
     mCondition.notify_one();
     return resultFuture.get();
+}
+
+void RenderEngineThreaded::cleanFramebufferCache() {
+    std::promise<void> resultPromise;
+    std::future<void> resultFuture = resultPromise.get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::cleanFramebufferCache");
+            instance.cleanFramebufferCache();
+            resultPromise.set_value();
+        });
+    }
+    mCondition.notify_one();
+    resultFuture.wait();
 }
 
 } // namespace threaded

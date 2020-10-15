@@ -113,8 +113,13 @@ LIBBINDER_NDK30 { # introduced=30
 
 LIBBINDER_NDK31 { # introduced=31
   global:
+    ABinderProcess_handlePolledCommands; # apex
+    ABinderProcess_setupPolling; # apex
     AIBinder_getCallingSid; # apex
     AIBinder_setRequestingSid; # apex
+    AServiceManager_isDeclared; # apex llndk
+    AServiceManager_registerLazyService; # llndk
+    AServiceManager_waitForService; # apex llndk
 };
 
 LIBBINDER_NDK_PLATFORM {

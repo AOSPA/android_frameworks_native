@@ -39,6 +39,7 @@
 #include <gui/LayerDebugInfo.h>
 #include <gui/Surface.h>
 #include <math.h>
+#include <private/android_filesystem_config.h>
 #include <renderengine/RenderEngine.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -141,6 +142,14 @@ Layer::Layer(const LayerCreationArgs& args)
 
     mCallingPid = args.callingPid;
     mCallingUid = args.callingUid;
+
+    if (mCallingUid == AID_GRAPHICS || mCallingUid == AID_SYSTEM) {
+        // If the system didn't send an ownerUid, use the callingUid for the ownerUid.
+        mOwnerUid = args.metadata.getInt32(METADATA_OWNER_UID, mCallingUid);
+    } else {
+        // A create layer request from a non system request cannot specify the owner uid
+        mOwnerUid = mCallingUid;
+    }
 }
 
 void Layer::onFirstRef() {
@@ -500,8 +509,6 @@ void Layer::prepareGeometryCompositionState() {
     compositionState->isSecureCamera = isSecureCamera();
     compositionState->isScreenshot = isScreenshot();
 
-    compositionState->type = type;
-    compositionState->appId = appId;
     compositionState->layerClass = mLayerClass;
 
     compositionState->metadata.clear();
@@ -617,7 +624,7 @@ const char* Layer::getDebugName() const {
 // ---------------------------------------------------------------------------
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientComposition(
-        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
+        compositionengine::LayerFE::ClientCompositionTargetSettings& /* targetSettings */) {
     if (!getCompositionState()) {
         return {};
     }
@@ -627,11 +634,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     compositionengine::LayerFE::LayerSettings layerSettings;
     layerSettings.geometry.boundaries = bounds;
-    if (targetSettings.useIdentityTransform) {
-        layerSettings.geometry.positionTransform = mat4();
-    } else {
-        layerSettings.geometry.positionTransform = getTransform().asMatrix4();
-    }
+    layerSettings.geometry.positionTransform = getTransform().asMatrix4();
 
     if (hasColorTransform()) {
         layerSettings.colorTransform = getColorTransform();
@@ -648,9 +651,9 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 }
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareShadowClientComposition(
-        const LayerFE::LayerSettings& casterLayerSettings, const Rect& displayViewport,
+        const LayerFE::LayerSettings& casterLayerSettings, const Rect& layerStackRect,
         ui::Dataspace outputDataspace) {
-    renderengine::ShadowSettings shadow = getShadowSettings(displayViewport);
+    renderengine::ShadowSettings shadow = getShadowSettings(layerStackRect);
     if (shadow.length <= 0.f) {
         return {};
     }
@@ -1019,8 +1022,7 @@ uint32_t Layer::doTransaction(uint32_t flags) {
         this->contentDirty = true;
 
         // we may use linear filtering, if the matrix scales us
-        const uint8_t type = getActiveTransform(c).getType();
-        mNeedsFiltering = (!getActiveTransform(c).preserveRects() || type >= ui::Transform::SCALE);
+        mNeedsFiltering = getActiveTransform(c).needsBilinearFiltering();
     }
 
     if (mCurrentState.inputInfoChanged) {
@@ -1454,6 +1456,10 @@ bool Layer::setFrameRate(FrameRate frameRate) {
     return true;
 }
 
+void Layer::setFrameTimelineVsync(int64_t frameTimelineVsyncId) {
+    mFrameTimelineVsyncId = frameTimelineVsyncId;
+}
+
 Layer::FrameRate Layer::getFrameRateForLayerTree() const {
     const auto frameRate = getDrawingState().frameRate;
     if (frameRate.rate > 0 || frameRate.type == FrameRateCompatibility::NoVote) {
@@ -1471,6 +1477,13 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
 
 void Layer::deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber) {
     ATRACE_CALL();
+    if (mLayerDetached) {
+        // If the layer is detached, then we don't defer this transaction since we will not
+        // commit the pending state while the layer is detached. Adding sync points may cause
+        // the barrier layer to wait for the states to be committed before dequeuing a buffer.
+        return;
+    }
+
     mCurrentState.barrierLayer_legacy = barrierLayer;
     mCurrentState.frameNumber_legacy = frameNumber;
     // We don't set eTransactionNeeded, because just receiving a deferral
@@ -1694,8 +1707,8 @@ void Layer::dumpFrameEvents(std::string& result) {
 }
 
 void Layer::dumpCallingUidPid(std::string& result) const {
-    StringAppendF(&result, "Layer %s (%s) pid:%d uid:%d\n", getName().c_str(), getType(),
-                  mCallingPid, mCallingUid);
+    StringAppendF(&result, "Layer %s (%s) callingPid:%d callingUid:%d ownerUid:%d\n",
+                  getName().c_str(), getType(), mCallingPid, mCallingUid, mOwnerUid);
 }
 
 void Layer::onDisconnect() {
@@ -2178,12 +2191,12 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
             : RoundedCornerState();
 }
 
-renderengine::ShadowSettings Layer::getShadowSettings(const Rect& viewport) const {
+renderengine::ShadowSettings Layer::getShadowSettings(const Rect& layerStackRect) const {
     renderengine::ShadowSettings state = mFlinger->mDrawingState.globalShadowSettings;
 
     // Shift the spot light x-position to the middle of the display and then
     // offset it by casting layer's screen pos.
-    state.lightPos.x = (viewport.width() / 2.f) - mScreenBounds.left;
+    state.lightPos.x = (layerStackRect.width() / 2.f) - mScreenBounds.left;
     state.lightPos.y -= mScreenBounds.top;
 
     state.length = mEffectiveShadowRadius;
@@ -2368,6 +2381,8 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
         }
 
         layerInfo->set_is_relative_of(state.isRelativeOf);
+
+        layerInfo->set_owner_uid(mOwnerUid);
     }
 
     if (traceFlags & SurfaceTracing::TRACE_INPUT) {
@@ -2438,7 +2453,15 @@ InputWindowInfo Layer::fillInputInfo() {
     xSurfaceInset = (xSurfaceInset >= 0) ? std::min(xSurfaceInset, layerBounds.getWidth() / 2) : 0;
     ySurfaceInset = (ySurfaceInset >= 0) ? std::min(ySurfaceInset, layerBounds.getHeight() / 2) : 0;
 
-    layerBounds.inset(xSurfaceInset, ySurfaceInset, xSurfaceInset, ySurfaceInset);
+    // inset while protecting from overflow TODO(b/161235021): What is going wrong
+    // in the overflow scenario?
+    {
+    int32_t tmp;
+    if (!__builtin_add_overflow(layerBounds.left, xSurfaceInset, &tmp)) layerBounds.left = tmp;
+    if (!__builtin_sub_overflow(layerBounds.right, xSurfaceInset, &tmp)) layerBounds.right = tmp;
+    if (!__builtin_add_overflow(layerBounds.top, ySurfaceInset, &tmp)) layerBounds.top = tmp;
+    if (!__builtin_sub_overflow(layerBounds.bottom, ySurfaceInset, &tmp)) layerBounds.bottom = tmp;
+    }
 
     // Input coordinate should match the layer bounds.
     info.frameLeft = layerBounds.left;

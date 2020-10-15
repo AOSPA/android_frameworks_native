@@ -73,9 +73,8 @@ static const Rect TestInfoTouchableRegionRect = {100 /* left */, 150 /* top */, 
                                                  450 /* bottom */};
 static const Region TestInfoTouchableRegion(TestInfoTouchableRegionRect);
 static constexpr bool TestInfoVisible = false;
-static constexpr bool TestInfoCanReceiveKeys = false;
 static constexpr bool TestInfoTrustedOverlay = true;
-static constexpr bool TestInfoHasFocus = false;
+static constexpr bool TestInfoFocusable = false;
 static constexpr bool TestInfoHasWallpaper = false;
 static constexpr bool TestInfoPaused = false;
 static constexpr int32_t TestInfoOwnerPid = 19;
@@ -149,7 +148,7 @@ public:
             const sp<ISetInputWindowsListener>& setInputWindowsListener) override;
 
     binder::Status registerInputChannel(const InputChannel& channel) override;
-    binder::Status unregisterInputChannel(const InputChannel& channel) override;
+    binder::Status unregisterInputChannel(const sp<IBinder>& connectionToken) override;
     binder::Status setFocusedWindow(const FocusRequest&) override;
 
 private:
@@ -221,13 +220,13 @@ binder::Status TestInputManager::registerInputChannel(const InputChannel& channe
     return binder::Status::ok();
 }
 
-binder::Status TestInputManager::unregisterInputChannel(const InputChannel& channel) {
+binder::Status TestInputManager::unregisterInputChannel(const sp<IBinder>& connectionToken) {
     AutoMutex _l(mLock);
-    // check Fd flags
-    checkFdFlags(channel.getFd());
 
     auto it = std::find_if(mInputChannels.begin(), mInputChannels.end(),
-                           [&](std::shared_ptr<InputChannel>& c) { return *c == channel; });
+                           [&](std::shared_ptr<InputChannel>& c) {
+                               return c->getConnectionToken() == connectionToken;
+                           });
     if (it != mInputChannels.end()) {
         mInputChannels.erase(it);
     }
@@ -291,13 +290,13 @@ void InputFlingerServiceTest::SetUp() {
     mInfo.frameBottom = TestInfoFrameBottom;
     mInfo.surfaceInset = TestInfoSurfaceInset;
     mInfo.globalScaleFactor = TestInfoGlobalScaleFactor;
-    mInfo.transform.set(std::array<float, 9>{TestInfoWindowXScale, 0, TestInfoFrameLeft, 0,
-                                             TestInfoWindowYScale, TestInfoFrameTop, 0, 0, 1});
+    mInfo.transform.set({TestInfoWindowXScale, 0, TestInfoFrameLeft, 0, TestInfoWindowYScale,
+                         TestInfoFrameTop, 0, 0, 1});
     mInfo.touchableRegion = TestInfoTouchableRegion;
     mInfo.visible = TestInfoVisible;
-    mInfo.canReceiveKeys = TestInfoCanReceiveKeys;
     mInfo.trustedOverlay = TestInfoTrustedOverlay;
-    mInfo.hasFocus = TestInfoHasFocus;
+    mInfo.focusable = TestInfoFocusable;
+
     mInfo.hasWallpaper = TestInfoHasWallpaper;
     mInfo.paused = TestInfoPaused;
     mInfo.ownerPid = TestInfoOwnerPid;
@@ -310,7 +309,9 @@ void InputFlingerServiceTest::SetUp() {
 
     mInfo.applicationInfo.name = TestAppInfoName;
     mInfo.applicationInfo.token = TestAppInfoToken;
-    mInfo.applicationInfo.dispatchingTimeout = TestAppInfoDispatchingTimeout;
+    mInfo.applicationInfo.dispatchingTimeoutMillis =
+            std::chrono::duration_cast<std::chrono::milliseconds>(TestAppInfoDispatchingTimeout)
+                    .count();
 
     InitializeInputFlinger();
 }
@@ -379,7 +380,7 @@ TEST_F(InputFlingerServiceTest, InputWindow_RegisterInputChannel) {
     ASSERT_EQ(channels.size(), 1UL);
     EXPECT_EQ(channels[0], *serverChannel);
 
-    mService->unregisterInputChannel(*serverChannel);
+    mService->unregisterInputChannel(serverChannel->getConnectionToken());
     mQuery->getInputChannels(&channels);
     EXPECT_EQ(channels.size(), 0UL);
 }
@@ -396,15 +397,15 @@ TEST_F(InputFlingerServiceTest, InputWindow_RegisterInputChannelInvalid) {
     EXPECT_EQ(channels.size(), 0UL);
 
     mService->registerInputChannel(InputChannel());
-    mService->unregisterInputChannel(*clientChannel);
+    mService->unregisterInputChannel(clientChannel->getConnectionToken());
 
     mService->registerInputChannel(*serverChannel);
     mService->registerInputChannel(*clientChannel);
     mQuery->getInputChannels(&channels);
     EXPECT_EQ(channels.size(), 2UL);
 
-    mService->unregisterInputChannel(*clientChannel);
-    mService->unregisterInputChannel(*serverChannel);
+    mService->unregisterInputChannel(clientChannel->getConnectionToken());
+    mService->unregisterInputChannel(serverChannel->getConnectionToken());
     mQuery->getInputChannels(&channels);
     EXPECT_EQ(channels.size(), 0UL);
 }

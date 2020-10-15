@@ -25,6 +25,7 @@
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/IProducerListener.h>
 #include <gui/SurfaceComposerClient.h>
+#include <gui/SyncScreenCaptureListener.h>
 #include <private/gui/ComposerService.h>
 #include <ui/DisplayConfig.h>
 #include <ui/GraphicBuffer.h>
@@ -120,6 +121,8 @@ protected:
                 .show(mSurfaceControl)
                 .setDataspace(mSurfaceControl, ui::Dataspace::V0_SRGB)
                 .apply();
+
+        mCaptureArgs.displayToken = mDisplayToken;
     }
 
     void setUpProducer(BLASTBufferQueueHelper adapter, sp<IGraphicBufferProducer>& producer) {
@@ -128,7 +131,7 @@ protected:
         ASSERT_EQ(NO_ERROR, igbProducer->setMaxDequeuedBufferCount(2));
         IGraphicBufferProducer::QueueBufferOutput qbOutput;
         ASSERT_EQ(NO_ERROR,
-                  igbProducer->connect(new DummyProducerListener, NATIVE_WINDOW_API_CPU, false,
+                  igbProducer->connect(new StubProducerListener, NATIVE_WINDOW_API_CPU, false,
                                        &qbOutput));
         ASSERT_NE(ui::Transform::ROT_INVALID, qbOutput.transformHint);
         producer = igbProducer;
@@ -165,14 +168,15 @@ protected:
 
     void checkScreenCapture(uint8_t r, uint8_t g, uint8_t b, Rect region, int32_t border = 0,
                             bool outsideRegion = false) {
+        sp<GraphicBuffer>& captureBuf = mCaptureResults.buffer;
         const auto epsilon = 3;
-        const auto width = mScreenCaptureBuf->getWidth();
-        const auto height = mScreenCaptureBuf->getHeight();
-        const auto stride = mScreenCaptureBuf->getStride();
+        const auto width = captureBuf->getWidth();
+        const auto height = captureBuf->getHeight();
+        const auto stride = captureBuf->getStride();
 
         uint32_t* bufData;
-        mScreenCaptureBuf->lock(static_cast<uint32_t>(GraphicBuffer::USAGE_SW_READ_OFTEN),
-                                reinterpret_cast<void**>(&bufData));
+        captureBuf->lock(static_cast<uint32_t>(GraphicBuffer::USAGE_SW_READ_OFTEN),
+                         reinterpret_cast<void**>(&bufData));
 
         for (uint32_t row = 0; row < height; row++) {
             for (uint32_t col = 0; col < width; col++) {
@@ -196,8 +200,22 @@ protected:
                 }
             }
         }
-        mScreenCaptureBuf->unlock();
+        captureBuf->unlock();
         ASSERT_EQ(false, ::testing::Test::HasFailure());
+    }
+
+    static status_t captureDisplay(DisplayCaptureArgs& captureArgs,
+                                   ScreenCaptureResults& captureResults) {
+        const auto sf = ComposerService::getComposerService();
+        SurfaceComposerClient::Transaction().apply(true);
+
+        const sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
+        status_t status = sf->captureDisplay(captureArgs, captureListener);
+        if (status != NO_ERROR) {
+            return status;
+        }
+        captureResults = captureListener->waitForResults();
+        return captureResults.result;
     }
 
     sp<SurfaceComposerClient> mClient;
@@ -206,10 +224,12 @@ protected:
     sp<IBinder> mDisplayToken;
 
     sp<SurfaceControl> mSurfaceControl;
-    sp<GraphicBuffer> mScreenCaptureBuf;
 
     uint32_t mDisplayWidth;
     uint32_t mDisplayHeight;
+
+    DisplayCaptureArgs mCaptureArgs;
+    ScreenCaptureResults mCaptureResults;
 };
 
 TEST_F(BLASTBufferQueueTest, CreateBLASTBufferQueue) {
@@ -301,12 +321,7 @@ TEST_F(BLASTBufferQueueTest, onFrameAvailable_Apply) {
     adapter.waitForCallbacks();
 
     // capture screen and verify that it is red
-    bool capturedSecureLayers;
-    ASSERT_EQ(NO_ERROR,
-              mComposer->captureScreen(mDisplayToken, &mScreenCaptureBuf, capturedSecureLayers,
-                                       ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888, Rect(),
-                                       mDisplayWidth, mDisplayHeight,
-                                       /*useIdentityTransform*/ false));
+    ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
     ASSERT_NO_FATAL_FAILURE(
             checkScreenCapture(r, g, b, {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight}));
 }
@@ -383,12 +398,8 @@ TEST_F(BLASTBufferQueueTest, SetCrop_Item) {
 
     adapter.waitForCallbacks();
     // capture screen and verify that it is red
-    bool capturedSecureLayers;
-    ASSERT_EQ(NO_ERROR,
-              mComposer->captureScreen(mDisplayToken, &mScreenCaptureBuf, capturedSecureLayers,
-                                       ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888, Rect(),
-                                       mDisplayWidth, mDisplayHeight,
-                                       /*useIdentityTransform*/ false));
+    ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
+
     ASSERT_NO_FATAL_FAILURE(
             checkScreenCapture(r, g, b, {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight}));
 }
@@ -444,12 +455,8 @@ TEST_F(BLASTBufferQueueTest, SetCrop_ScalingModeScaleCrop) {
 
     adapter.waitForCallbacks();
     // capture screen and verify that it is red
-    bool capturedSecureLayers;
-    ASSERT_EQ(NO_ERROR,
-              mComposer->captureScreen(mDisplayToken, &mScreenCaptureBuf, capturedSecureLayers,
-                                       ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888, Rect(),
-                                       mDisplayWidth, mDisplayHeight,
-                                       /*useIdentityTransform*/ false));
+    ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
+
     ASSERT_NO_FATAL_FAILURE(
             checkScreenCapture(r, g, b,
                                {0, 0, (int32_t)bufferSideLength, (int32_t)bufferSideLength}));
@@ -489,12 +496,8 @@ public:
         ASSERT_NE(ui::Transform::ROT_INVALID, qbOutput.transformHint);
 
         adapter.waitForCallbacks();
-        bool capturedSecureLayers;
-        ASSERT_EQ(NO_ERROR,
-                  mComposer->captureScreen(mDisplayToken, &mScreenCaptureBuf, capturedSecureLayers,
-                                           ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888,
-                                           Rect(), mDisplayWidth, mDisplayHeight,
-                                           /*useIdentityTransform*/ false));
+        ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
+
         switch (tr) {
             case ui::Transform::ROT_0:
                 ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 0, 0,

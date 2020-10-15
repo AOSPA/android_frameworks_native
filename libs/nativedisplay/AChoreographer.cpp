@@ -128,14 +128,18 @@ public:
 
     static Choreographer* getForThread();
     virtual ~Choreographer() override EXCLUDES(gChoreographers.lock);
+    int64_t getVsyncId() const;
+
 
 private:
     Choreographer(const Choreographer&) = delete;
 
-    void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count) override;
+    void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count,
+                       int64_t vsyncId) override;
     void dispatchHotplug(nsecs_t timestamp, PhysicalDisplayId displayId, bool connected) override;
     void dispatchConfigChanged(nsecs_t timestamp, PhysicalDisplayId displayId, int32_t configId,
                                nsecs_t vsyncPeriod) override;
+    void dispatchNullEvent(nsecs_t, PhysicalDisplayId) override;
 
     void scheduleCallbacks();
 
@@ -145,6 +149,7 @@ private:
     std::vector<RefreshRateCallback> mRefreshRateCallbacks;
 
     nsecs_t mLatestVsyncPeriod = -1;
+    int64_t mLastVsyncId = -1;
 
     const sp<Looper> mLooper;
     const std::thread::id mThreadId;
@@ -170,7 +175,7 @@ Choreographer* Choreographer::getForThread() {
 
 Choreographer::Choreographer(const sp<Looper>& looper)
       : DisplayEventDispatcher(looper, ISurfaceComposer::VsyncSource::eVsyncSourceApp,
-                               ISurfaceComposer::ConfigChanged::eConfigChangedDispatch),
+                               ISurfaceComposer::ConfigChanged::eConfigChangedSuppress),
         mLooper(looper),
         mThreadId(std::this_thread::get_id()) {
     std::lock_guard<std::mutex> _l(gChoreographers.lock);
@@ -294,8 +299,14 @@ void Choreographer::scheduleLatestConfigRequest() {
     } else {
         // If the looper thread is detached from Choreographer, then refresh rate
         // changes will be handled in AChoreographer_handlePendingEvents, so we
-        // need to redispatch a config from SF
-        requestLatestConfig();
+        // need to wake up the looper thread by writing to the write-end of the
+        // socket the looper is listening on.
+        // Fortunately, these events are small so sending packets across the
+        // socket should be atomic across processes.
+        DisplayEventReceiver::Event event;
+        event.header = DisplayEventReceiver::Event::Header{DisplayEventReceiver::DISPLAY_EVENT_NULL,
+                                                           PhysicalDisplayId(0), systemTime()};
+        injectEvent(event);
     }
 }
 
@@ -343,7 +354,7 @@ void Choreographer::handleRefreshRateUpdates() {
 // TODO(b/74619554): The PhysicalDisplayId is ignored because SF only emits VSYNC events for the
 // internal display and DisplayEventReceiver::requestNextVsync only allows requesting VSYNC for
 // the internal display implicitly.
-void Choreographer::dispatchVsync(nsecs_t timestamp, PhysicalDisplayId, uint32_t) {
+void Choreographer::dispatchVsync(nsecs_t timestamp, PhysicalDisplayId, uint32_t, int64_t vsyncId) {
     std::vector<FrameCallback> callbacks{};
     {
         std::lock_guard<std::mutex> _l{mLock};
@@ -353,6 +364,7 @@ void Choreographer::dispatchVsync(nsecs_t timestamp, PhysicalDisplayId, uint32_t
             mFrameCallbacks.pop();
         }
     }
+    mLastVsyncId = vsyncId;
     for (const auto& cb : callbacks) {
         if (cb.callback64 != nullptr) {
             cb.callback64(timestamp, cb.data);
@@ -363,9 +375,8 @@ void Choreographer::dispatchVsync(nsecs_t timestamp, PhysicalDisplayId, uint32_t
 }
 
 void Choreographer::dispatchHotplug(nsecs_t, PhysicalDisplayId displayId, bool connected) {
-    ALOGV("choreographer %p ~ received hotplug event (displayId=%"
-            ANDROID_PHYSICAL_DISPLAY_ID_FORMAT ", connected=%s), ignoring.",
-            this, displayId, toString(connected));
+    ALOGV("choreographer %p ~ received hotplug event (displayId=%s, connected=%s), ignoring.",
+            this, to_string(displayId).c_str(), toString(connected));
 }
 
 // TODO(b/74619554): The PhysicalDisplayId is ignored because currently
@@ -374,28 +385,14 @@ void Choreographer::dispatchHotplug(nsecs_t, PhysicalDisplayId displayId, bool c
 // displays. When multi-display choreographer is properly supported, then
 // PhysicalDisplayId should no longer be ignored.
 void Choreographer::dispatchConfigChanged(nsecs_t, PhysicalDisplayId displayId, int32_t configId,
-                                          nsecs_t vsyncPeriod) {
-    ALOGV("choreographer %p ~ received config change event "
-          "(displayId=%" ANDROID_PHYSICAL_DISPLAY_ID_FORMAT ", configId=%d).",
-          this, displayId, configId);
+                                          nsecs_t) {
+    ALOGV("choreographer %p ~ received config change event (displayId=%s, configId=%d).",
+          this, to_string(displayId).c_str(), configId);
+}
 
-    const nsecs_t lastPeriod = mLatestVsyncPeriod;
-    std::vector<RefreshRateCallback> callbacks{};
-    {
-        std::lock_guard<std::mutex> _l{mLock};
-        for (auto& cb : mRefreshRateCallbacks) {
-            callbacks.push_back(cb);
-            cb.firstCallbackFired = true;
-        }
-    }
-
-    for (auto& cb : callbacks) {
-        if (!cb.firstCallbackFired || (vsyncPeriod > 0 && vsyncPeriod != lastPeriod)) {
-            cb.callback(vsyncPeriod, cb.data);
-        }
-    }
-
-    mLatestVsyncPeriod = vsyncPeriod;
+void Choreographer::dispatchNullEvent(nsecs_t, PhysicalDisplayId) {
+    ALOGV("choreographer %p ~ received null event.", this);
+    handleRefreshRateUpdates();
 }
 
 void Choreographer::handleMessage(const Message& message) {
@@ -412,11 +409,20 @@ void Choreographer::handleMessage(const Message& message) {
     }
 }
 
+int64_t Choreographer::getVsyncId() const {
+    return mLastVsyncId;
+}
+
 } // namespace android
 using namespace android;
 
 static inline Choreographer* AChoreographer_to_Choreographer(AChoreographer* choreographer) {
     return reinterpret_cast<Choreographer*>(choreographer);
+}
+
+static inline const Choreographer* AChoreographer_to_Choreographer(
+        const AChoreographer* choreographer) {
+    return reinterpret_cast<const Choreographer*>(choreographer);
 }
 
 // Glue for private C api
@@ -476,14 +482,13 @@ void AChoreographer_routeUnregisterRefreshRateCallback(AChoreographer* choreogra
     return AChoreographer_unregisterRefreshRateCallback(choreographer, callback, data);
 }
 
+int64_t AChoreographer_getVsyncId(const AChoreographer* choreographer) {
+    return AChoreographer_to_Choreographer(choreographer)->getVsyncId();
+}
+
 } // namespace android
 
 /* Glue for the NDK interface */
-
-static inline const Choreographer* AChoreographer_to_Choreographer(
-        const AChoreographer* choreographer) {
-    return reinterpret_cast<const Choreographer*>(choreographer);
-}
 
 static inline AChoreographer* Choreographer_to_AChoreographer(Choreographer* choreographer) {
     return reinterpret_cast<AChoreographer*>(choreographer);

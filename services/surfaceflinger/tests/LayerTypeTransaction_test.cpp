@@ -61,8 +61,10 @@ TEST_P(LayerTypeTransactionTest, SetRelativeZNegative) {
 
     std::unique_ptr<ScreenCapture> screenshot;
     // only layerB is in this range
-    sp<IBinder> parentHandle = parent->getHandle();
-    ScreenCapture::captureLayers(&screenshot, parentHandle, Rect(0, 0, 32, 32));
+    LayerCaptureArgs captureArgs;
+    captureArgs.layerHandle = parent->getHandle();
+    captureArgs.sourceCrop = {0, 0, 32, 32};
+    ScreenCapture::captureLayers(&screenshot, captureArgs);
     screenshot->expectColor(Rect(0, 0, 32, 32), Color::BLUE);
 }
 
@@ -165,17 +167,21 @@ TEST_P(LayerTypeTransactionTest, SetFlagsSecure) {
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillLayerColor(layer, Color::RED, 32, 32));
 
-    sp<ISurfaceComposer> composer = ComposerService::getComposerService();
     sp<GraphicBuffer> outBuffer;
     Transaction()
             .setFlags(layer, layer_state_t::eLayerSecure, layer_state_t::eLayerSecure)
             .apply(true);
-    ASSERT_EQ(PERMISSION_DENIED,
-              composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+
+    DisplayCaptureArgs args;
+    args.displayToken = mDisplay;
+
+    ScreenCaptureResults captureResults;
+    ASSERT_EQ(PERMISSION_DENIED, ScreenCapture::captureDisplay(args, captureResults));
 
     Transaction().setFlags(layer, 0, layer_state_t::eLayerSecure).apply(true);
-    ASSERT_EQ(NO_ERROR, composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+    ASSERT_EQ(NO_ERROR, ScreenCapture::captureDisplay(args, captureResults));
 }
+
 TEST_P(LayerTypeTransactionTest, RefreshRateIsInitialized) {
     sp<SurfaceControl> layer;
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));

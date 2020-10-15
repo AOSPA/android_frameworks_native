@@ -53,10 +53,9 @@ TEST(InputWindowInfo, Parcelling) {
     i.frameBottom = 19;
     i.surfaceInset = 17;
     i.globalScaleFactor = 0.3;
-    i.transform.set(std::array<float, 9>{0.4, -1, 100, 0.5, 0, 40, 0, 0, 1});
+    i.transform.set({0.4, -1, 100, 0.5, 0, 40, 0, 0, 1});
     i.visible = false;
-    i.canReceiveKeys = false;
-    i.hasFocus = false;
+    i.focusable = false;
     i.hasWallpaper = false;
     i.paused = false;
     i.ownerPid = 19;
@@ -66,6 +65,9 @@ TEST(InputWindowInfo, Parcelling) {
     i.portalToDisplayId = 2;
     i.replaceTouchableRegionWithCrop = true;
     i.touchableRegionCropHandle = touchableRegionCropHandle;
+    i.applicationInfo.name = "ApplicationFooBar";
+    i.applicationInfo.token = new BBinder();
+    i.applicationInfo.dispatchingTimeoutMillis = 0x12345678ABCD;
 
     Parcel p;
     i.writeToParcel(&p);
@@ -86,8 +88,7 @@ TEST(InputWindowInfo, Parcelling) {
     ASSERT_EQ(i.globalScaleFactor, i2.globalScaleFactor);
     ASSERT_EQ(i.transform, i2.transform);
     ASSERT_EQ(i.visible, i2.visible);
-    ASSERT_EQ(i.canReceiveKeys, i2.canReceiveKeys);
-    ASSERT_EQ(i.hasFocus, i2.hasFocus);
+    ASSERT_EQ(i.focusable, i2.focusable);
     ASSERT_EQ(i.hasWallpaper, i2.hasWallpaper);
     ASSERT_EQ(i.paused, i2.paused);
     ASSERT_EQ(i.ownerPid, i2.ownerPid);
@@ -97,6 +98,21 @@ TEST(InputWindowInfo, Parcelling) {
     ASSERT_EQ(i.portalToDisplayId, i2.portalToDisplayId);
     ASSERT_EQ(i.replaceTouchableRegionWithCrop, i2.replaceTouchableRegionWithCrop);
     ASSERT_EQ(i.touchableRegionCropHandle, i2.touchableRegionCropHandle);
+    ASSERT_EQ(i.applicationInfo, i2.applicationInfo);
+}
+
+TEST(InputApplicationInfo, Parcelling) {
+    InputApplicationInfo i;
+    i.token = new BBinder();
+    i.name = "ApplicationFooBar";
+    i.dispatchingTimeoutMillis = 0x12345678ABCD;
+
+    Parcel p;
+    ASSERT_EQ(i.writeToParcel(&p), OK);
+    p.setDataPosition(0);
+    InputApplicationInfo i2;
+    ASSERT_EQ(i2.readFromParcel(&p), OK);
+    ASSERT_EQ(i, i2);
 }
 
 } // namespace test

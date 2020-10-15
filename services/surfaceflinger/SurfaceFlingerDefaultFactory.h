@@ -26,14 +26,11 @@ class DefaultFactory : public surfaceflinger::Factory {
 public:
     virtual ~DefaultFactory();
 
-    std::unique_ptr<DispSync> createDispSync(const char* name, bool hasSyncFramework) override;
-    std::unique_ptr<EventControlThread> createEventControlThread(SetVSyncEnabled) override;
     std::unique_ptr<HWComposer> createHWComposer(const std::string& serviceName) override;
     std::unique_ptr<MessageQueue> createMessageQueue() override;
-    std::unique_ptr<scheduler::PhaseConfiguration> createPhaseConfiguration(
+    std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
             const scheduler::RefreshRateConfigs&) override;
-    std::unique_ptr<Scheduler> createScheduler(SetVSyncEnabled,
-                                               const scheduler::RefreshRateConfigs&,
+    std::unique_ptr<Scheduler> createScheduler(const scheduler::RefreshRateConfigs&,
                                                ISchedulerCallback&) override;
     std::unique_ptr<SurfaceInterceptor> createSurfaceInterceptor(SurfaceFlinger*) override;
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override;

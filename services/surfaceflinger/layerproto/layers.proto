@@ -123,6 +123,8 @@ message LayerProto {
   bool is_relative_of = 51;
   // Layer's background blur radius in pixels.
   int32 background_blur_radius = 52;
+
+  uint32 owner_uid = 53;
 }
 
 message PositionProto {
@@ -191,8 +193,8 @@ message InputWindowInfoProto {
 
     uint32 surface_inset = 5;
     bool visible = 6;
-    bool can_receive_keys = 7;
-    bool has_focus = 8;
+    bool can_receive_keys = 7  [deprecated=true];
+    bool focusable = 8;
     bool has_wallpaper = 9;
 
     float global_scale_factor = 10;

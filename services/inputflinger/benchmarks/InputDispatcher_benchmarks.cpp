@@ -47,8 +47,8 @@ protected:
 private:
     void notifyConfigurationChanged(nsecs_t) override {}
 
-    std::chrono::nanoseconds notifyAnr(const sp<InputApplicationHandle>&, const sp<IBinder>&,
-                                       const std::string& name) override {
+    std::chrono::nanoseconds notifyAnr(const std::shared_ptr<InputApplicationHandle>&,
+                                       const sp<IBinder>&, const std::string& name) override {
         ALOGE("The window is not responding : %s", name.c_str());
         return 0s;
     }
@@ -94,7 +94,8 @@ public:
     virtual ~FakeApplicationHandle() {}
 
     virtual bool updateInfo() {
-        mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
+        mInfo.dispatchingTimeoutMillis =
+                std::chrono::duration_cast<std::chrono::milliseconds>(DISPATCHING_TIMEOUT).count();
         return true;
     }
 };
@@ -102,7 +103,7 @@ public:
 class FakeInputReceiver {
 public:
     void consumeEvent() {
-        uint32_t consumeSeq;
+        uint32_t consumeSeq = 0;
         InputEvent* event;
 
         std::chrono::time_point start = std::chrono::steady_clock::now();
@@ -148,7 +149,7 @@ public:
     static const int32_t WIDTH = 200;
     static const int32_t HEIGHT = 200;
 
-    FakeWindowHandle(const sp<InputApplicationHandle>& inputApplicationHandle,
+    FakeWindowHandle(const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle,
                      const sp<InputDispatcher>& dispatcher, const std::string name)
           : FakeInputReceiver(dispatcher, name), mFrame(Rect(0, 0, WIDTH, HEIGHT)) {
         mDispatcher->registerInputChannel(mServerChannel);
@@ -170,8 +171,7 @@ public:
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(mFrame);
         mInfo.visible = true;
-        mInfo.canReceiveKeys = true;
-        mInfo.hasFocus = true;
+        mInfo.focusable = true;
         mInfo.hasWallpaper = false;
         mInfo.paused = false;
         mInfo.ownerPid = INJECTOR_PID;
@@ -199,13 +199,13 @@ static MotionEvent generateMotionEvent() {
 
     const nsecs_t currentTime = now();
 
+    ui::Transform identityTransform;
     MotionEvent event;
     event.initialize(InputEvent::nextId(), DEVICE_ID, AINPUT_SOURCE_TOUCHSCREEN,
                      ADISPLAY_ID_DEFAULT, INVALID_HMAC, AMOTION_EVENT_ACTION_DOWN,
                      /* actionButton */ 0, /* flags */ 0,
                      /* edgeFlags */ 0, AMETA_NONE, /* buttonState */ 0, MotionClassification::NONE,
-                     1 /* xScale */, 1 /* yScale */,
-                     /* xOffset */ 0, /* yOffset */ 0, /* xPrecision */ 0,
+                     identityTransform, /* xPrecision */ 0,
                      /* yPrecision */ 0, AMOTION_EVENT_INVALID_CURSOR_POSITION,
                      AMOTION_EVENT_INVALID_CURSOR_POSITION, currentTime, currentTime,
                      /*pointerCount*/ 1, pointerProperties, pointerCoords);
@@ -246,7 +246,7 @@ static void benchmarkNotifyMotion(benchmark::State& state) {
     dispatcher->start();
 
     // Create a window that will receive motion events
-    sp<FakeApplicationHandle> application = new FakeApplicationHandle();
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window = new FakeWindowHandle(application, dispatcher, "Fake Window");
 
     dispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -282,7 +282,7 @@ static void benchmarkInjectMotion(benchmark::State& state) {
     dispatcher->start();
 
     // Create a window that will receive motion events
-    sp<FakeApplicationHandle> application = new FakeApplicationHandle();
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window = new FakeWindowHandle(application, dispatcher, "Fake Window");
 
     dispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});

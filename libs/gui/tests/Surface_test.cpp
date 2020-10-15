@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "DummyConsumer.h"
+#include "MockConsumer.h"
 
 #include <gtest/gtest.h>
 
@@ -28,6 +28,7 @@
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
+#include <gui/SyncScreenCaptureListener.h>
 #include <inttypes.h>
 #include <private/gui/ComposerService.h>
 #include <ui/BufferQueueDefs.h>
@@ -56,12 +57,11 @@ class FakeProducerFrameEventHistory;
 
 static constexpr uint64_t NO_FRAME_INDEX = std::numeric_limits<uint64_t>::max();
 
-class DummySurfaceListener : public SurfaceListener {
+class FakeSurfaceListener : public SurfaceListener {
 public:
-    DummySurfaceListener(bool enableReleasedCb = false) :
-            mEnableReleaseCb(enableReleasedCb),
-            mBuffersReleased(0) {}
-    virtual ~DummySurfaceListener() = default;
+    FakeSurfaceListener(bool enableReleasedCb = false)
+          : mEnableReleaseCb(enableReleasedCb), mBuffersReleased(0) {}
+    virtual ~FakeSurfaceListener() = default;
 
     virtual void onBufferReleased() {
         mBuffersReleased++;
@@ -124,15 +124,15 @@ protected:
         sp<IGraphicBufferConsumer> consumer;
         BufferQueue::createBufferQueue(&producer, &consumer);
 
-        sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-        consumer->consumerConnect(dummyConsumer, false);
+        sp<MockConsumer> mockConsumer(new MockConsumer);
+        consumer->consumerConnect(mockConsumer, false);
         consumer->setConsumerName(String8("TestConsumer"));
 
         sp<Surface> surface = new Surface(producer);
         sp<ANativeWindow> window(surface);
-        sp<DummySurfaceListener> listener;
+        sp<FakeSurfaceListener> listener;
         if (hasSurfaceListener) {
-            listener = new DummySurfaceListener(enableReleasedCb);
+            listener = new FakeSurfaceListener(enableReleasedCb);
         }
         ASSERT_EQ(OK, surface->connect(
                 NATIVE_WINDOW_API_CPU,
@@ -198,6 +198,20 @@ protected:
         ASSERT_EQ(NO_ERROR, surface->disconnect(NATIVE_WINDOW_API_CPU));
     }
 
+    static status_t captureDisplay(DisplayCaptureArgs& captureArgs,
+                                   ScreenCaptureResults& captureResults) {
+        const auto sf = ComposerService::getComposerService();
+        SurfaceComposerClient::Transaction().apply(true);
+
+        const sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
+        status_t status = sf->captureDisplay(captureArgs, captureListener);
+        if (status != NO_ERROR) {
+            return status;
+        }
+        captureResults = captureListener->waitForResults();
+        return captureResults.result;
+    }
+
     sp<Surface> mSurface;
     sp<SurfaceComposerClient> mComposerClient;
     sp<SurfaceControl> mSurfaceControl;
@@ -245,11 +259,13 @@ TEST_F(SurfaceTest, ScreenshotsOfProtectedBuffersDontSucceed) {
     const sp<IBinder> display = sf->getInternalDisplayToken();
     ASSERT_FALSE(display == nullptr);
 
-    sp<GraphicBuffer> outBuffer;
-    bool ignored;
-    ASSERT_EQ(NO_ERROR,
-              sf->captureScreen(display, &outBuffer, ignored, ui::Dataspace::V0_SRGB,
-                                ui::PixelFormat::RGBA_8888, Rect(), 64, 64, false));
+    DisplayCaptureArgs captureArgs;
+    captureArgs.displayToken = display;
+    captureArgs.width = 64;
+    captureArgs.height = 64;
+
+    ScreenCaptureResults captureResults;
+    ASSERT_EQ(NO_ERROR, captureDisplay(captureArgs, captureResults));
 
     ASSERT_EQ(NO_ERROR, native_window_api_connect(anw.get(),
             NATIVE_WINDOW_API_CPU));
@@ -279,9 +295,7 @@ TEST_F(SurfaceTest, ScreenshotsOfProtectedBuffersDontSucceed) {
                 &buf));
         ASSERT_EQ(NO_ERROR, anw->queueBuffer(anw.get(), buf, -1));
     }
-    ASSERT_EQ(NO_ERROR,
-              sf->captureScreen(display, &outBuffer, ignored, ui::Dataspace::V0_SRGB,
-                                ui::PixelFormat::RGBA_8888, Rect(), 64, 64, false));
+    ASSERT_EQ(NO_ERROR, captureDisplay(captureArgs, captureResults));
 }
 
 TEST_F(SurfaceTest, ConcreteTypeIsSurface) {
@@ -381,8 +395,8 @@ TEST_F(SurfaceTest, GetConsumerName) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
@@ -397,8 +411,8 @@ TEST_F(SurfaceTest, GetWideColorSupport) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
@@ -428,8 +442,8 @@ TEST_F(SurfaceTest, GetHdrSupport) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
@@ -452,8 +466,8 @@ TEST_F(SurfaceTest, SetHdrMetadata) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
@@ -497,8 +511,8 @@ TEST_F(SurfaceTest, DynamicSetBufferCount) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
@@ -523,13 +537,13 @@ TEST_F(SurfaceTest, GetAndFlushRemovedBuffers) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setConsumerName(String8("TestConsumer"));
 
     sp<Surface> surface = new Surface(producer);
     sp<ANativeWindow> window(surface);
-    sp<DummyProducerListener> listener = new DummyProducerListener();
+    sp<StubProducerListener> listener = new StubProducerListener();
     ASSERT_EQ(OK, surface->connect(
             NATIVE_WINDOW_API_CPU,
             /*listener*/listener,
@@ -682,13 +696,13 @@ public:
     void destroyDisplay(const sp<IBinder>& /*display */) override {}
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const override { return {}; }
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId) const override { return nullptr; }
-    void setTransactionState(const Vector<ComposerState>& /*state*/,
-                             const Vector<DisplayState>& /*displays*/, uint32_t /*flags*/,
-                             const sp<IBinder>& /*applyToken*/,
-                             const InputWindowCommands& /*inputWindowCommands*/,
-                             int64_t /*desiredPresentTime*/, const client_cache_t& /*cachedBuffer*/,
-                             bool /*hasListenerCallbacks*/,
-                             const std::vector<ListenerCallbacks>& /*listenerCallbacks*/) override {
+    status_t setTransactionState(
+            const Vector<ComposerState>& /*state*/, const Vector<DisplayState>& /*displays*/,
+            uint32_t /*flags*/, const sp<IBinder>& /*applyToken*/,
+            const InputWindowCommands& /*inputWindowCommands*/, int64_t /*desiredPresentTime*/,
+            const client_cache_t& /*cachedBuffer*/, bool /*hasListenerCallbacks*/,
+            const std::vector<ListenerCallbacks>& /*listenerCallbacks*/) override {
+        return NO_ERROR;
     }
 
     void bootFinished() override {}
@@ -743,12 +757,8 @@ public:
     }
     status_t setActiveColorMode(const sp<IBinder>& /*display*/,
         ColorMode /*colorMode*/) override { return NO_ERROR; }
-    status_t captureScreen(const sp<IBinder>& /*display*/, sp<GraphicBuffer>* /*outBuffer*/,
-                           bool& /*outCapturedSecureLayers*/, ui::Dataspace /*reqDataspace*/,
-                           ui::PixelFormat /*reqPixelFormat*/, const Rect& /*sourceCrop*/,
-                           uint32_t /*reqWidth*/, uint32_t /*reqHeight*/,
-                           bool /*useIdentityTransform*/, ui::Rotation,
-                           bool /*captureSecureLayers*/) override {
+    status_t captureDisplay(const DisplayCaptureArgs& /* captureArgs */,
+                            const sp<IScreenCaptureListener>& /* captureListener */) override {
         return NO_ERROR;
     }
     status_t getAutoLowLatencyModeSupport(const sp<IBinder>& /*display*/,
@@ -761,17 +771,13 @@ public:
         return NO_ERROR;
     }
     void setGameContentType(const sp<IBinder>& /*display*/, bool /*on*/) override {}
-    status_t captureScreen(uint64_t /*displayOrLayerStack*/, ui::Dataspace* /*outDataspace*/,
-                           sp<GraphicBuffer>* /*outBuffer*/) override {
+    status_t captureDisplay(uint64_t /*displayOrLayerStack*/,
+                            const sp<IScreenCaptureListener>& /* captureListener */) override {
         return NO_ERROR;
     }
     virtual status_t captureLayers(
-            const sp<IBinder>& /*parentHandle*/, sp<GraphicBuffer>* /*outBuffer*/,
-            ui::Dataspace /*reqDataspace*/, ui::PixelFormat /*reqPixelFormat*/,
-            const Rect& /*sourceCrop*/,
-            const std::unordered_set<sp<IBinder>,
-                                     ISurfaceComposer::SpHash<IBinder>>& /*excludeHandles*/,
-            float /*frameScale*/, bool /*childrenOnly*/) override {
+            const LayerCaptureArgs& /* captureArgs */,
+            const sp<IScreenCaptureListener>& /* captureListener */) override {
         return NO_ERROR;
     }
     status_t clearAnimationFrameStats() override { return NO_ERROR; }
@@ -863,7 +869,14 @@ public:
         return NO_ERROR;
     }
 
-    status_t acquireFrameRateFlexibilityToken(sp<IBinder>* /*outToken*/) { return NO_ERROR; }
+    status_t acquireFrameRateFlexibilityToken(sp<IBinder>* /*outToken*/) override {
+        return NO_ERROR;
+    }
+
+    status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& /*surface*/,
+                                   int64_t /*frameTimelineVsyncId*/) override {
+        return NO_ERROR;
+    }
 
 protected:
     IBinder* onAsBinder() override { return nullptr; }
@@ -1910,8 +1923,8 @@ TEST_F(SurfaceTest, DequeueWithConsumerDrivenSize) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
     consumer->setDefaultBufferSize(10, 10);
 
     sp<Surface> surface = new Surface(producer);
@@ -1980,8 +1993,8 @@ TEST_F(SurfaceTest, DefaultMaxBufferCountSetAndUpdated) {
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
 
-    sp<DummyConsumer> dummyConsumer(new DummyConsumer);
-    consumer->consumerConnect(dummyConsumer, false);
+    sp<MockConsumer> mockConsumer(new MockConsumer);
+    consumer->consumerConnect(mockConsumer, false);
 
     sp<Surface> surface = new Surface(producer);
     sp<ANativeWindow> window(surface);

@@ -312,11 +312,6 @@ private:
  */
 constexpr float AMOTION_EVENT_INVALID_CURSOR_POSITION = std::numeric_limits<float>::quiet_NaN();
 
-/**
- * Invalid value of HMAC - SHA256. Any events with this HMAC value will be marked as not verified.
- */
-constexpr std::array<uint8_t, 32> INVALID_HMAC = {0};
-
 /*
  * Pointer coordinate data.
  */
@@ -527,13 +522,11 @@ public:
 
     inline void setActionButton(int32_t button) { mActionButton = button; }
 
-    inline float getXScale() const { return mXScale; }
+    inline float getXOffset() const { return mTransform.tx(); }
 
-    inline float getYScale() const { return mYScale; }
+    inline float getYOffset() const { return mTransform.ty(); }
 
-    inline float getXOffset() const { return mXOffset; }
-
-    inline float getYOffset() const { return mYOffset; }
+    inline ui::Transform getTransform() const { return mTransform; }
 
     inline float getXPrecision() const { return mXPrecision; }
 
@@ -695,8 +688,8 @@ public:
     void initialize(int32_t id, int32_t deviceId, uint32_t source, int32_t displayId,
                     std::array<uint8_t, 32> hmac, int32_t action, int32_t actionButton,
                     int32_t flags, int32_t edgeFlags, int32_t metaState, int32_t buttonState,
-                    MotionClassification classification, float xScale, float yScale, float xOffset,
-                    float yOffset, float xPrecision, float yPrecision, float rawXCursorPosition,
+                    MotionClassification classification, const ui::Transform& transform,
+                    float xPrecision, float yPrecision, float rawXCursorPosition,
                     float rawYCursorPosition, nsecs_t downTime, nsecs_t eventTime,
                     size_t pointerCount, const PointerProperties* pointerProperties,
                     const PointerCoords* pointerCoords);
@@ -713,7 +706,7 @@ public:
 
     // Apply 3x3 perspective matrix transformation.
     // Matrix is in row-major form and compatible with SkMatrix.
-    void transform(const float matrix[9]);
+    void transform(const std::array<float, 9>& matrix);
 
 #ifdef __ANDROID__
     status_t readFromParcel(Parcel* parcel);
@@ -729,7 +722,7 @@ public:
     inline const PointerProperties* getPointerProperties() const {
         return mPointerProperties.array();
     }
-    inline const nsecs_t* getSampleEventTimes() const { return mSampleEventTimes.array(); }
+    inline const nsecs_t* getSampleEventTimes() const { return mSampleEventTimes.data(); }
     inline const PointerCoords* getSamplePointerCoords() const {
             return mSamplePointerCoords.array();
     }
@@ -747,10 +740,6 @@ protected:
     int32_t mMetaState;
     int32_t mButtonState;
     MotionClassification mClassification;
-    float mXScale;
-    float mYScale;
-    float mXOffset;
-    float mYOffset;
     ui::Transform mTransform;
     float mXPrecision;
     float mYPrecision;
@@ -758,7 +747,7 @@ protected:
     float mRawYCursorPosition;
     nsecs_t mDownTime;
     Vector<PointerProperties> mPointerProperties;
-    Vector<nsecs_t> mSampleEventTimes;
+    std::vector<nsecs_t> mSampleEventTimes;
     Vector<PointerCoords> mSamplePointerCoords;
 };
 

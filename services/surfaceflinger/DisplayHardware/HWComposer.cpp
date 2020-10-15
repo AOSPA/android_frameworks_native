@@ -284,7 +284,8 @@ std::optional<DisplayId> HWComposer::allocateVirtualDisplay(uint32_t width, uint
     return displayId;
 }
 
-void HWComposer::allocatePhysicalDisplay(hal::HWDisplayId hwcDisplayId, DisplayId displayId) {
+void HWComposer::allocatePhysicalDisplay(hal::HWDisplayId hwcDisplayId,
+                                         PhysicalDisplayId displayId) {
     if (!mInternalHwcDisplayId) {
         mInternalHwcDisplayId = hwcDisplayId;
     } else if (mInternalHwcDisplayId != hwcDisplayId && !mExternalHwcDisplayId) {
@@ -812,10 +813,6 @@ std::future<status_t> HWComposer::setDisplayBrightness(DisplayId displayId, floa
             });
 }
 
-bool HWComposer::isUsingVrComposer() const {
-    return getComposer()->isUsingVrComposer();
-}
-
 status_t HWComposer::setAutoLowLatencyMode(DisplayId displayId, bool on) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
     const auto error = mDisplayData[displayId].hwcDisplay->setAutoLowLatencyMode(on);
@@ -862,7 +859,8 @@ void HWComposer::dump(std::string& result) const {
     result.append(mComposer->dumpDebugInfo());
 }
 
-std::optional<DisplayId> HWComposer::toPhysicalDisplayId(hal::HWDisplayId hwcDisplayId) const {
+std::optional<PhysicalDisplayId> HWComposer::toPhysicalDisplayId(
+        hal::HWDisplayId hwcDisplayId) const {
     if (const auto it = mPhysicalDisplayIdMap.find(hwcDisplayId);
         it != mPhysicalDisplayIdMap.end()) {
         return it->second;
@@ -870,7 +868,8 @@ std::optional<DisplayId> HWComposer::toPhysicalDisplayId(hal::HWDisplayId hwcDis
     return {};
 }
 
-std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(DisplayId displayId) const {
+std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(
+        PhysicalDisplayId displayId) const {
     if (const auto it = mDisplayData.find(displayId);
         it != mDisplayData.end() && !it->second.isVirtual) {
         return it->second.hwcDisplay->getId();
@@ -880,11 +879,6 @@ std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(DisplayId disp
 
 bool HWComposer::shouldIgnoreHotplugConnect(hal::HWDisplayId hwcDisplayId,
                                             bool hasDisplayIdentificationData) const {
-    if (isUsingVrComposer() && mInternalHwcDisplayId) {
-        ALOGE("Ignoring connection of external display %" PRIu64 " in VR mode", hwcDisplayId);
-        return true;
-    }
-
     if (mHasMultiDisplaySupport && !hasDisplayIdentificationData) {
         ALOGE("Ignoring connection of display %" PRIu64 " without identification data",
               hwcDisplayId);
@@ -934,7 +928,7 @@ std::optional<DisplayIdentificationInfo> HWComposer::onHotplugConnect(
                 port = isPrimary ? LEGACY_DISPLAY_TYPE_PRIMARY : LEGACY_DISPLAY_TYPE_EXTERNAL;
             }
 
-            return DisplayIdentificationInfo{.id = getFallbackDisplayId(port),
+            return DisplayIdentificationInfo{.id = PhysicalDisplayId::fromPort(port),
                                              .name = isPrimary ? "Internal display"
                                                                : "External display",
                                              .deviceProductInfo = std::nullopt};

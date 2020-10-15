@@ -28,6 +28,7 @@
 #include <vibratorservice/VibratorHalWrapper.h>
 
 using android::hardware::vibrator::CompositeEffect;
+using android::hardware::vibrator::CompositePrimitive;
 using android::hardware::vibrator::Effect;
 using android::hardware::vibrator::EffectStrength;
 
@@ -91,7 +92,7 @@ std::shared_ptr<HalWrapper> HalConnector::connect(std::shared_ptr<CallbackSchedu
 template <typename T>
 HalResult<T> HalController::processHalResult(HalResult<T> result, const char* functionName) {
     if (result.isFailed()) {
-        ALOGE("%s failed: Vibrator HAL not available", functionName);
+        ALOGE("%s failed: %s", functionName, result.errorMessage());
         std::lock_guard<std::mutex> lock(mConnectedHalMutex);
         mConnectedHal->tryReconnect();
     }
@@ -199,6 +200,12 @@ HalResult<std::vector<Effect>> HalController::getSupportedEffects() {
         return hal->getSupportedEffects();
     };
     return apply(getSupportedEffectsFn, "getSupportedEffects");
+}
+
+HalResult<std::vector<CompositePrimitive>> HalController::getSupportedPrimitives() {
+    hal_fn<std::vector<CompositePrimitive>> getSupportedPrimitivesFn =
+            [](std::shared_ptr<HalWrapper> hal) { return hal->getSupportedPrimitives(); };
+    return apply(getSupportedPrimitivesFn, "getSupportedPrimitives");
 }
 
 HalResult<milliseconds> HalController::performEffect(

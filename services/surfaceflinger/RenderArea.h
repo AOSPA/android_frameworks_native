@@ -24,12 +24,14 @@ public:
     static float getCaptureFillValue(CaptureFill captureFill);
 
     RenderArea(ui::Size reqSize, CaptureFill captureFill, ui::Dataspace reqDataSpace,
-               const Rect& displayViewport, RotationFlags rotation = ui::Transform::ROT_0)
-          : mReqSize(reqSize),
+               const Rect& layerStackRect, bool allowSecureLayers = false,
+               RotationFlags rotation = ui::Transform::ROT_0)
+          : mAllowSecureLayers(allowSecureLayers),
+            mReqSize(reqSize),
             mReqDataSpace(reqDataSpace),
             mCaptureFill(captureFill),
             mRotationFlags(rotation),
-            mDisplayViewport(displayViewport) {}
+            mLayerStackSpaceRect(layerStackRect) {}
 
     virtual ~RenderArea() = default;
 
@@ -81,14 +83,17 @@ public:
     virtual sp<const DisplayDevice> getDisplayDevice() const = 0;
 
     // Returns the source display viewport.
-    const Rect& getDisplayViewport() const { return mDisplayViewport; }
+    const Rect& getLayerStackSpaceRect() const { return mLayerStackSpaceRect; }
+
+protected:
+    const bool mAllowSecureLayers;
 
 private:
     const ui::Size mReqSize;
     const ui::Dataspace mReqDataSpace;
     const CaptureFill mCaptureFill;
     const RotationFlags mRotationFlags;
-    const Rect mDisplayViewport;
+    const Rect mLayerStackSpaceRect;
 };
 
 } // namespace android

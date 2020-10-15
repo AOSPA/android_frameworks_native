@@ -27,6 +27,7 @@
 #include <vibratorservice/VibratorHalWrapper.h>
 
 using android::hardware::vibrator::CompositeEffect;
+using android::hardware::vibrator::CompositePrimitive;
 using android::hardware::vibrator::Effect;
 using android::hardware::vibrator::EffectStrength;
 
@@ -67,6 +68,10 @@ bool isStaticCastValid(Effect effect) {
 
 // -------------------------------------------------------------------------------------------------
 
+const constexpr char* STATUS_T_ERROR_MESSAGE_PREFIX = "status_t = ";
+const constexpr char* STATUS_V_1_0_ERROR_MESSAGE_PREFIX =
+        "android::hardware::vibrator::V1_0::Status = ";
+
 template <typename T>
 HalResult<T> HalResult<T>::fromStatus(binder::Status status, T data) {
     if (status.exceptionCode() == binder::Status::EX_UNSUPPORTED_OPERATION) {
@@ -75,7 +80,7 @@ HalResult<T> HalResult<T>::fromStatus(binder::Status status, T data) {
     if (status.isOk()) {
         return HalResult<T>::ok(data);
     }
-    return HalResult<T>::failed();
+    return HalResult<T>::failed(std::string(status.toString8().c_str()));
 }
 
 template <typename T>
@@ -86,23 +91,31 @@ HalResult<T> HalResult<T>::fromStatus(V1_0::Status status, T data) {
         case V1_0::Status::UNSUPPORTED_OPERATION:
             return HalResult<T>::unsupported();
         default:
-            return HalResult<T>::failed();
+            return HalResult<T>::failed(STATUS_V_1_0_ERROR_MESSAGE_PREFIX + toString(status));
     }
 }
 
 template <typename T>
 template <typename R>
 HalResult<T> HalResult<T>::fromReturn(hardware::Return<R>& ret, T data) {
-    return ret.isOk() ? HalResult<T>::ok(data) : HalResult<T>::failed();
+    return ret.isOk() ? HalResult<T>::ok(data) : HalResult<T>::failed(ret.description());
 }
 
 template <typename T>
 template <typename R>
 HalResult<T> HalResult<T>::fromReturn(hardware::Return<R>& ret, V1_0::Status status, T data) {
-    return ret.isOk() ? HalResult<T>::fromStatus(status, data) : HalResult<T>::failed();
+    return ret.isOk() ? HalResult<T>::fromStatus(status, data)
+                      : HalResult<T>::failed(ret.description());
 }
 
 // -------------------------------------------------------------------------------------------------
+
+HalResult<void> HalResult<void>::fromStatus(status_t status) {
+    if (status == android::OK) {
+        return HalResult<void>::ok();
+    }
+    return HalResult<void>::failed(STATUS_T_ERROR_MESSAGE_PREFIX + statusToString(status));
+}
 
 HalResult<void> HalResult<void>::fromStatus(binder::Status status) {
     if (status.exceptionCode() == binder::Status::EX_UNSUPPORTED_OPERATION) {
@@ -111,7 +124,7 @@ HalResult<void> HalResult<void>::fromStatus(binder::Status status) {
     if (status.isOk()) {
         return HalResult<void>::ok();
     }
-    return HalResult<void>::failed();
+    return HalResult<void>::failed(std::string(status.toString8().c_str()));
 }
 
 HalResult<void> HalResult<void>::fromStatus(V1_0::Status status) {
@@ -121,13 +134,13 @@ HalResult<void> HalResult<void>::fromStatus(V1_0::Status status) {
         case V1_0::Status::UNSUPPORTED_OPERATION:
             return HalResult<void>::unsupported();
         default:
-            return HalResult<void>::failed();
+            return HalResult<void>::failed(STATUS_V_1_0_ERROR_MESSAGE_PREFIX + toString(status));
     }
 }
 
 template <typename R>
 HalResult<void> HalResult<void>::fromReturn(hardware::Return<R>& ret) {
-    return ret.isOk() ? HalResult<void>::ok() : HalResult<void>::failed();
+    return ret.isOk() ? HalResult<void>::ok() : HalResult<void>::failed(ret.description());
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -149,8 +162,7 @@ private:
 // -------------------------------------------------------------------------------------------------
 
 HalResult<void> AidlHalWrapper::ping() {
-    return IInterface::asBinder(getHal())->pingBinder() ? HalResult<void>::ok()
-                                                        : HalResult<void>::failed();
+    return HalResult<void>::fromStatus(IInterface::asBinder(getHal())->pingBinder());
 }
 
 void AidlHalWrapper::tryReconnect() {
@@ -210,6 +222,13 @@ HalResult<std::vector<Effect>> AidlHalWrapper::getSupportedEffects() {
                                            mSupportedEffects);
 }
 
+HalResult<std::vector<CompositePrimitive>> AidlHalWrapper::getSupportedPrimitives() {
+    std::lock_guard<std::mutex> lock(mSupportedPrimitivesMutex);
+    return loadCached<std::vector<
+            CompositePrimitive>>(std::bind(&AidlHalWrapper::getSupportedPrimitivesInternal, this),
+                                 mSupportedPrimitives);
+}
+
 HalResult<milliseconds> AidlHalWrapper::performEffect(
         Effect effect, EffectStrength strength, const std::function<void()>& completionCallback) {
     HalResult<Capabilities> capabilities = getCapabilities();
@@ -247,6 +266,12 @@ HalResult<std::vector<Effect>> AidlHalWrapper::getSupportedEffectsInternal() {
     std::vector<Effect> supportedEffects;
     auto result = getHal()->getSupportedEffects(&supportedEffects);
     return HalResult<std::vector<Effect>>::fromStatus(result, supportedEffects);
+}
+
+HalResult<std::vector<CompositePrimitive>> AidlHalWrapper::getSupportedPrimitivesInternal() {
+    std::vector<CompositePrimitive> supportedPrimitives;
+    auto result = getHal()->getSupportedPrimitives(&supportedPrimitives);
+    return HalResult<std::vector<CompositePrimitive>>::fromStatus(result, supportedPrimitives);
 }
 
 sp<Aidl::IVibrator> AidlHalWrapper::getHal() {
@@ -323,6 +348,12 @@ template <typename I>
 HalResult<std::vector<Effect>> HidlHalWrapper<I>::getSupportedEffects() {
     ALOGV("Skipped getSupportedEffects because Vibrator HAL AIDL is not available");
     return HalResult<std::vector<Effect>>::unsupported();
+}
+
+template <typename I>
+HalResult<std::vector<CompositePrimitive>> HidlHalWrapper<I>::getSupportedPrimitives() {
+    ALOGV("Skipped getSupportedPrimitives because Vibrator HAL AIDL is not available");
+    return HalResult<std::vector<CompositePrimitive>>::unsupported();
 }
 
 template <typename I>
@@ -456,20 +487,24 @@ HalResult<milliseconds> HidlHalWrapperV1_3::performEffect(
 }
 
 HalResult<Capabilities> HidlHalWrapperV1_3::getCapabilitiesInternal() {
+    Capabilities capabilities = Capabilities::NONE;
+
     sp<V1_3::IVibrator> hal = getHal();
     auto amplitudeResult = hal->supportsAmplitudeControl();
     if (!amplitudeResult.isOk()) {
-        return HalResult<Capabilities>::failed();
+        return HalResult<Capabilities>::fromReturn(amplitudeResult, capabilities);
     }
 
     auto externalControlResult = hal->supportsExternalControl();
-    Capabilities capabilities = Capabilities::NONE;
-
     if (amplitudeResult.withDefault(false)) {
         capabilities |= Capabilities::AMPLITUDE_CONTROL;
     }
     if (externalControlResult.withDefault(false)) {
         capabilities |= Capabilities::EXTERNAL_CONTROL;
+
+        if (amplitudeResult.withDefault(false)) {
+            capabilities |= Capabilities::EXTERNAL_AMPLITUDE_CONTROL;
+        }
     }
 
     return HalResult<Capabilities>::fromReturn(externalControlResult, capabilities);

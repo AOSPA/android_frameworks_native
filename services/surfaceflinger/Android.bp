@@ -40,14 +40,17 @@ cc_defaults {
 
 libdisplayconfig_cc_defaults {
     name: "libsurfaceflinger_defaults",
-    defaults: ["surfaceflinger_defaults", "libdisplayconfig_defaults"],
+    defaults: [
+        "surfaceflinger_defaults",
+        "skia_deps",
+        "libdisplayconfig_defaults",
+    ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
         "-DGL_GLEXT_PROTOTYPES",
         "-DEGL_EGLEXT_PROTOTYPES",
     ],
     shared_libs: [
-        "android.frameworks.vr.composer@2.0",
         "android.hardware.configstore-utils",
         "android.hardware.configstore@1.0",
         "android.hardware.configstore@1.1",
@@ -86,21 +89,13 @@ libdisplayconfig_cc_defaults {
         "libutils",
         "libSurfaceFlingerProp",
     ],
-    // VrComposer is not used when building surfaceflinger for vendors
-    target: {
-        vendor: {
-            exclude_shared_libs: [
-                "android.frameworks.vr.composer@2.0",
-            ],
-        },
-    },
     static_libs: [
         "libcompositionengine",
+        "libframetimeline",
         "libperfetto_client_experimental",
         "librenderengine",
         "libserviceutils",
         "libtrace_proto",
-        "libvrflinger",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -189,9 +184,7 @@ filegroup {
         "RefreshRateOverlay.cpp",
         "RegionSamplingThread.cpp",
         "RenderArea.cpp",
-        "Scheduler/DispSync.cpp",
         "Scheduler/DispSyncSource.cpp",
-        "Scheduler/EventControlThread.cpp",
         "Scheduler/EventThread.cpp",
         "Scheduler/OneShotTimer.cpp",
         "Scheduler/LayerHistory.cpp",
@@ -199,15 +192,15 @@ filegroup {
         "Scheduler/LayerInfo.cpp",
         "Scheduler/LayerInfoV2.cpp",
         "Scheduler/MessageQueue.cpp",
-        "Scheduler/PhaseOffsets.cpp",
         "Scheduler/RefreshRateConfigs.cpp",
         "Scheduler/Scheduler.cpp",
         "Scheduler/SchedulerUtils.cpp",
         "Scheduler/Timer.cpp",
         "Scheduler/VSyncDispatchTimerQueue.cpp",
         "Scheduler/VSyncPredictor.cpp",
-        "Scheduler/VSyncModulator.cpp",
+        "Scheduler/VsyncModulator.cpp",
         "Scheduler/VSyncReactor.cpp",
+        "Scheduler/VsyncConfiguration.cpp",
         "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
@@ -217,35 +210,12 @@ filegroup {
     ],
 }
 
-cc_library_shared {
-    // Please use libsurfaceflinger_defaults to configure how the sources are
-    // built, so the same settings can be used elsewhere.
-    name: "libsurfaceflinger",
-    defaults: ["libsurfaceflinger_production_defaults"],
-    srcs: [
-        ":libsurfaceflinger_sources",
-
-        // Note: SurfaceFlingerFactory is not in the default sources so that it
-        // can be easily replaced.
-        "SurfaceFlingerFactory.cpp",
-    ],
-    cflags: [
-        "-DUSE_VR_COMPOSER=1",
-    ],
-    // VrComposer is not used when building surfaceflinger for vendors
-    target: {
-        vendor: {
-            cflags: [
-                "-DUSE_VR_COMPOSER=0",
-            ],
-        },
-    },
-    logtags: ["EventLog/EventLogTags.logtags"],
-}
-
 cc_defaults {
     name: "libsurfaceflinger_binary",
-    defaults: ["surfaceflinger_defaults"],
+    defaults: [
+        "surfaceflinger_defaults",
+        "libsurfaceflinger_production_defaults",
+    ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
     ],
@@ -270,23 +240,31 @@ cc_defaults {
         "libserviceutils",
         "libtrace_proto",
     ],
-    ldflags: ["-Wl,--export-dynamic"],
 }
 
 filegroup {
     name: "surfaceflinger_binary_sources",
-    srcs: ["main_surfaceflinger.cpp"],
+    srcs: [
+        ":libsurfaceflinger_sources",
+        "main_surfaceflinger.cpp",
+    ],
 }
 
 cc_binary {
     name: "surfaceflinger",
     defaults: ["libsurfaceflinger_binary"],
     init_rc: ["surfaceflinger.rc"],
-    srcs: [":surfaceflinger_binary_sources"],
+    srcs: [
+        ":surfaceflinger_binary_sources",
+        // Note: SurfaceFlingerFactory is not in the filegroup so that it
+        // can be easily replaced.
+        "SurfaceFlingerFactory.cpp",
+    ],
     shared_libs: [
-        "libsurfaceflinger",
         "libSurfaceFlingerProp",
     ],
+
+     logtags: ["EventLog/EventLogTags.logtags"],
 }
 
 subdirs = [

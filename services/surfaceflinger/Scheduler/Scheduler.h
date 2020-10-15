@@ -29,7 +29,6 @@
 #include <ui/GraphicTypes.h>
 #pragma clang diagnostic pop
 
-#include "EventControlThread.h"
 #include "EventThread.h"
 #include "LayerHistory.h"
 #include "OneShotTimer.h"
@@ -41,53 +40,43 @@ namespace android {
 using namespace std::chrono_literals;
 using scheduler::LayerHistory;
 
-class DispSync;
 class FenceTime;
 class InjectVSyncSource;
+class PredictedVsyncTracer;
 
 namespace scheduler {
+class VsyncController;
 class VSyncDispatch;
 class VSyncTracker;
 } // namespace scheduler
 
-class ISchedulerCallback {
-public:
-    virtual ~ISchedulerCallback() = default;
+namespace frametimeline {
+class TokenManager;
+} // namespace frametimeline
+
+struct ISchedulerCallback {
+    virtual void setVsyncEnabled(bool) = 0;
     virtual void changeRefreshRate(const scheduler::RefreshRateConfigs::RefreshRate&,
                                    scheduler::RefreshRateConfigEvent) = 0;
     virtual void repaintEverythingForHWC() = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
+
+protected:
+    ~ISchedulerCallback() = default;
 };
 
-class IPhaseOffsetControl {
-public:
-    virtual ~IPhaseOffsetControl() = default;
-    virtual void setPhaseOffset(scheduler::ConnectionHandle, nsecs_t phaseOffset) = 0;
-};
-
-class Scheduler : public IPhaseOffsetControl {
+class Scheduler {
 public:
     using RefreshRate = scheduler::RefreshRateConfigs::RefreshRate;
     using ConfigEvent = scheduler::RefreshRateConfigEvent;
 
-    // Indicates whether to start the transaction early, or at vsync time.
-    enum class TransactionStart {
-        Early,      // DEPRECATED. Start the transaction early. Times out on its own
-        EarlyStart, // Start the transaction early and keep this config until EarlyEnd
-        EarlyEnd,   // End the early config started at EarlyStart
-        Normal      // Start the transaction at the normal time
-    };
-
-    Scheduler(impl::EventControlThread::SetVSyncEnabledFunction,
-              const scheduler::RefreshRateConfigs&, ISchedulerCallback& schedulerCallback,
-              bool useContentDetectionV2, bool useContentDetection);
-
-    virtual ~Scheduler();
-
-    DispSync& getPrimaryDispSync();
+    Scheduler(const scheduler::RefreshRateConfigs&, ISchedulerCallback&);
+    ~Scheduler();
 
     using ConnectionHandle = scheduler::ConnectionHandle;
-    ConnectionHandle createConnection(const char* connectionName, nsecs_t phaseOffsetNs,
+    ConnectionHandle createConnection(const char* connectionName, frametimeline::TokenManager*,
+                                      std::chrono::nanoseconds workDuration,
+                                      std::chrono::nanoseconds readyDuration,
                                       impl::EventThread::InterceptVSyncsCallback);
 
     sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle,
@@ -104,17 +93,16 @@ public:
     void onScreenAcquired(ConnectionHandle);
     void onScreenReleased(ConnectionHandle);
 
-    // Modifies phase offset in the event thread.
-    void setPhaseOffset(ConnectionHandle, nsecs_t phaseOffset) override;
+    // Modifies work duration in the event thread.
+    void setDuration(ConnectionHandle, std::chrono::nanoseconds workDuration,
+                     std::chrono::nanoseconds readyDuration);
 
-    void getDisplayStatInfo(DisplayStatInfo* stats);
+    void getDisplayStatInfo(DisplayStatInfo* stats, nsecs_t now);
 
     // Returns injector handle if injection has toggled, or an invalid handle otherwise.
     ConnectionHandle enableVSyncInjection(bool enable);
-
     // Returns false if injection is disabled.
-    bool injectVSync(nsecs_t when, nsecs_t expectedVSyncTime);
-
+    bool injectVSync(nsecs_t when, nsecs_t expectedVSyncTime, nsecs_t deadlineTimestamp);
     void enableHardwareVsync();
     void disableHardwareVsync(bool makeUnavailable);
 
@@ -126,13 +114,12 @@ public:
     void resyncToHardwareVsync(bool makeAvailable, nsecs_t period, bool force_resync = false);
     void resync();
 
-    // Passes a vsync sample to DispSync. periodFlushed will be true if
-    // DispSync detected that the vsync period changed, and false otherwise.
+    // Passes a vsync sample to VsyncController. periodFlushed will be true if
+    // VsyncController detected that the vsync period changed, and false otherwise.
     void addResyncSample(nsecs_t timestamp, std::optional<nsecs_t> hwcVsyncPeriod,
                          bool* periodFlushed);
     void addPresentFence(const std::shared_ptr<FenceTime>&);
     void setIgnorePresentFences(bool ignore);
-    nsecs_t getDispSyncExpectedPresentTime(nsecs_t now);
 
     // Layers are registered on creation, and unregistered when the weak reference expires.
     void registerLayer(Layer*);
@@ -152,6 +139,7 @@ public:
 
     void dump(std::string&) const;
     void dump(ConnectionHandle, std::string&) const;
+    void dumpVsync(std::string&) const;
 
     // Get the appropriate refresh for current conditions.
     std::optional<HwcConfigIndexType> getPreferredConfigId();
@@ -167,6 +155,11 @@ public:
 
     size_t getEventThreadConnectionCount(ConnectionHandle handle);
 
+    std::unique_ptr<VSyncSource> makePrimaryDispSyncSource(const char* name,
+                                                           std::chrono::nanoseconds workDuration,
+                                                           std::chrono::nanoseconds readyDuration,
+                                                           bool traceVsync = true);
+
 private:
     friend class TestableScheduler;
 
@@ -176,15 +169,31 @@ private:
     enum class TimerState { Reset, Expired };
     enum class TouchState { Inactive, Active };
 
-    // Used by tests to inject mocks.
-    Scheduler(std::unique_ptr<DispSync>, std::unique_ptr<EventControlThread>,
-              const scheduler::RefreshRateConfigs&, ISchedulerCallback&,
-              std::unique_ptr<LayerHistory>, bool useContentDetectionV2, bool useContentDetection);
+    struct Options {
+        // Whether to use idle timer callbacks that support the kernel timer.
+        bool supportKernelTimer;
+        // Whether to use content detection at all.
+        bool useContentDetection;
+        // Whether to use improved content detection.
+        bool useContentDetectionV2;
+    };
 
+    struct VsyncSchedule {
+        std::unique_ptr<scheduler::VsyncController> controller;
+        std::unique_ptr<scheduler::VSyncTracker> tracker;
+        std::unique_ptr<scheduler::VSyncDispatch> dispatch;
+    };
+
+    // Unlike the testing constructor, this creates the VsyncSchedule, LayerHistory, and timers.
+    Scheduler(const scheduler::RefreshRateConfigs&, ISchedulerCallback&, Options);
+
+    // Used by tests to inject mocks.
+    Scheduler(VsyncSchedule, const scheduler::RefreshRateConfigs&, ISchedulerCallback&,
+              std::unique_ptr<LayerHistory>, Options);
+
+    static VsyncSchedule createVsyncSchedule(bool supportKernelIdleTimer);
     static std::unique_ptr<LayerHistory> createLayerHistory(const scheduler::RefreshRateConfigs&,
                                                             bool useContentDetectionV2);
-
-    std::unique_ptr<VSyncSource> makePrimaryDispSyncSource(const char* name, nsecs_t phaseOffsetNs);
 
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>);
@@ -231,14 +240,8 @@ private:
 
     std::atomic<nsecs_t> mLastResyncTime = 0;
 
-    // Whether to use idle timer callbacks that support the kernel timer.
-    const bool mSupportKernelTimer;
-
-    const bool mUseVsyncPredictor;
-    const std::unique_ptr<scheduler::VSyncTracker> mVSyncTracker;
-    const std::unique_ptr<scheduler::VSyncDispatch> mVSyncDispatch;
-    std::unique_ptr<DispSync> mPrimaryDispSync;
-    std::unique_ptr<EventControlThread> mEventControlThread;
+    const Options mOptions;
+    VsyncSchedule mVsyncSchedule;
 
     // Used to choose refresh rate if content detection is enabled.
     const std::unique_ptr<LayerHistory> mLayerHistory;
@@ -285,10 +288,7 @@ private:
             GUARDED_BY(mVsyncTimelineLock);
     static constexpr std::chrono::nanoseconds MAX_VSYNC_APPLIED_TIME = 200ms;
 
-    // This variable indicates whether to use the content detection feature at all.
-    const bool mUseContentDetection;
-    // This variable indicates whether to use V2 version of the content detection.
-    const bool mUseContentDetectionV2;
+    const std::unique_ptr<PredictedVsyncTracer> mPredictedVsyncTracer;
 };
 
 } // namespace android
