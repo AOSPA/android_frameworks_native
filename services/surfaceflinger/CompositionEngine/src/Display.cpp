@@ -214,7 +214,7 @@ std::unique_ptr<compositionengine::OutputLayer> Display::createOutputLayer(
         result->setHwcLayer(std::move(hwcLayer));
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
         if (layerFE->getCompositionState()->internalOnly && mDisplayConfigIntf) {
-            const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*mId);
+            const auto hwcDisplayId = hwc.fromPhysicalDisplayId(PhysicalDisplayId(*mId));
             mDisplayConfigIntf->SetLayerAsMask(static_cast<uint32_t>(*hwcDisplayId),
                                                result->getHwcLayer()->getId());
         }
@@ -281,7 +281,7 @@ void Display::chooseCompositionStrategy() {
     });
     if ((hwc.getDisplayConnectionType(*mId) == DisplayConnectionType::External) &&
         (hasScreenshot != mHasScreenshot) && mDisplayConfigIntf) {
-        const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*mId);
+        const auto hwcDisplayId = hwc.fromPhysicalDisplayId(PhysicalDisplayId(*mId));
         mDisplayConfigIntf->SetDisplayAnimating(*hwcDisplayId, hasScreenshot);
         mHasScreenshot = hasScreenshot;
     }
