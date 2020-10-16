@@ -66,8 +66,8 @@ class BLASTBufferQueue
     : public ConsumerBase::FrameAvailableListener, public BufferItemConsumer::BufferFreedListener
 {
 public:
-    BLASTBufferQueue(const sp<SurfaceControl>& surface, int width, int height,
-                     bool enableTripleBuffering = true);
+    BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
+                     int height, bool enableTripleBuffering = true);
 
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;
@@ -81,7 +81,7 @@ public:
             const std::vector<SurfaceControlStats>& stats);
     void setNextTransaction(SurfaceComposerClient::Transaction *t);
 
-    void update(const sp<SurfaceControl>& surface, int width, int height);
+    void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height);
 
     virtual ~BLASTBufferQueue() = default;
 
@@ -94,7 +94,10 @@ private:
 
     void processNextBufferLocked(bool useNextTransaction) REQUIRES(mMutex);
     Rect computeCrop(const BufferItem& item);
+    // Return true if we need to reject the buffer based on the scaling mode and the buffer size.
+    bool rejectBuffer(const BufferItem& item) const;
 
+    std::string mName;
     sp<SurfaceControl> mSurfaceControl;
 
     std::mutex mMutex;
@@ -106,17 +109,19 @@ private:
 
     int32_t mNumFrameAvailable GUARDED_BY(mMutex);
     int32_t mNumAcquired GUARDED_BY(mMutex);
-
+    bool mInitialCallbackReceived GUARDED_BY(mMutex) = false;
     struct PendingReleaseItem {
         BufferItem item;
         sp<Fence> releaseFence;
     };
 
     std::queue<const BufferItem> mSubmitted GUARDED_BY(mMutex);
+    // Keep a reference to the currently presented buffer so we can release it when the next buffer
+    // is ready to be presented.
     PendingReleaseItem mPendingReleaseItem GUARDED_BY(mMutex);
 
-    int mWidth GUARDED_BY(mMutex);
-    int mHeight GUARDED_BY(mMutex);
+    uint32_t mWidth GUARDED_BY(mMutex);
+    uint32_t mHeight GUARDED_BY(mMutex);
 
     uint32_t mTransformHint GUARDED_BY(mMutex);
 

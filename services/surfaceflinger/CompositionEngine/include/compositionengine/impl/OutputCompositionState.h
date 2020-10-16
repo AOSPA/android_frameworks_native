@@ -39,7 +39,7 @@ namespace android {
 namespace compositionengine::impl {
 
 struct OutputCompositionState {
-    // If false, composition will not per performed for this display
+    // If false, composition will not be performed for this display
     bool isEnabled{false};
 
     // If false, this output is not considered secure
@@ -64,14 +64,17 @@ struct OutputCompositionState {
     uint32_t layerStackId{~0u};
 
     // The common space for all layers in the layer stack. layerStackSpace.content is the Rect
-    // which gets projected on the display. The content in this space is always in a single
-    // orientation.
+    // which gets projected on the display. The orientation of this space is always ROTATION_0.
     ProjectionSpace layerStackSpace;
 
     // Oriented physical display space. It will have the same size as displaySpace oriented to
-    // match the orientation of layerStackSpace. The content in this space is always in a single
-    // orientation.
+    // match the orientation of layerStackSpace. The orientation of this space is always ROTATION_0.
     ProjectionSpace orientedDisplaySpace;
+
+    // The space of the framebuffer. Its bounds match the size of the framebuffer and its
+    // orientation matches the orientation of the display. Typically the framebuffer space will
+    // be identical to the physical display space.
+    ProjectionSpace framebufferSpace;
 
     // The space of the physical display. It is as big as the currently active display mode. The
     // content in this space can be rotated.
@@ -79,9 +82,6 @@ struct OutputCompositionState {
 
     // Transformation from layerStackSpace to displaySpace
     ui::Transform transform;
-
-    // The physical orientation of the display, expressed as ui::Transform orientation flags.
-    uint32_t orientation{0};
 
     // If true, RenderEngine filtering should be enabled
     bool needsFiltering{false};

@@ -532,7 +532,17 @@ macro_rules! declare_binder_interface {
             }
 
             fn on_transact(&self, code: $crate::TransactionCode, data: &$crate::Parcel, reply: &mut $crate::Parcel) -> $crate::Result<()> {
-                $on_transact(&*self.0, code, data, reply)
+                match $on_transact(&*self.0, code, data, reply) {
+                    // The C++ backend converts UNEXPECTED_NULL into an exception
+                    Err($crate::StatusCode::UNEXPECTED_NULL) => {
+                        let status = $crate::Status::new_exception(
+                            $crate::ExceptionCode::NULL_POINTER,
+                            None,
+                        );
+                        reply.write(&status)
+                    },
+                    result => result
+                }
             }
 
             fn get_class() -> $crate::InterfaceClass {
@@ -588,6 +598,15 @@ macro_rules! declare_binder_interface {
         impl std::fmt::Debug for dyn $interface {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.pad(stringify!($interface))
+            }
+        }
+
+        // Convert a &dyn $interface to Box<dyn $interface>
+        impl std::borrow::ToOwned for dyn $interface {
+            type Owned = Box<dyn $interface>;
+            fn to_owned(&self) -> Self::Owned {
+                self.as_binder().into_interface()
+                    .expect(concat!("Error cloning interface ", stringify!($interface)))
             }
         }
     };

@@ -39,7 +39,6 @@ using SurfaceChange = surfaceflinger::SurfaceChange;
 using Trace = surfaceflinger::Trace;
 using Increment = surfaceflinger::Increment;
 
-constexpr int32_t SCALING_UPDATE = 1;
 constexpr uint32_t BUFFER_UPDATES = 18;
 constexpr uint32_t LAYER_UPDATE = INT_MAX - 2;
 constexpr uint32_t SIZE_UPDATE = 134;
@@ -221,7 +220,6 @@ public:
     void cornerRadiusUpdate(Transaction&);
     void backgroundBlurRadiusUpdate(Transaction&);
     void matrixUpdate(Transaction&);
-    void overrideScalingModeUpdate(Transaction&);
     void transparentRegionHintUpdate(Transaction&);
     void layerStackUpdate(Transaction&);
     void hiddenFlagUpdate(Transaction&);
@@ -371,10 +369,6 @@ void SurfaceInterceptorTest::matrixUpdate(Transaction& t) {
     t.setMatrix(mBGSurfaceControl, M_SQRT1_2, M_SQRT1_2, -M_SQRT1_2, M_SQRT1_2);
 }
 
-void SurfaceInterceptorTest::overrideScalingModeUpdate(Transaction& t) {
-    t.setOverrideScalingMode(mBGSurfaceControl, SCALING_UPDATE);
-}
-
 void SurfaceInterceptorTest::transparentRegionHintUpdate(Transaction& t) {
     Region region(CROP_UPDATE);
     t.setTransparentRegionHint(mBGSurfaceControl, region);
@@ -397,16 +391,15 @@ void SurfaceInterceptorTest::secureFlagUpdate(Transaction& t) {
 }
 
 void SurfaceInterceptorTest::deferredTransactionUpdate(Transaction& t) {
-    t.deferTransactionUntil_legacy(mBGSurfaceControl, mBGSurfaceControl->getHandle(),
-                                   DEFERRED_UPDATE);
+    t.deferTransactionUntil_legacy(mBGSurfaceControl, mBGSurfaceControl, DEFERRED_UPDATE);
 }
 
 void SurfaceInterceptorTest::reparentUpdate(Transaction& t) {
-    t.reparent(mBGSurfaceControl, mFGSurfaceControl->getHandle());
+    t.reparent(mBGSurfaceControl, mFGSurfaceControl);
 }
 
 void SurfaceInterceptorTest::relativeParentUpdate(Transaction& t) {
-    t.setRelativeLayer(mBGSurfaceControl, mFGSurfaceControl->getHandle(), RELATIVE_Z);
+    t.setRelativeLayer(mBGSurfaceControl, mFGSurfaceControl, RELATIVE_Z);
 }
 
 void SurfaceInterceptorTest::detachChildrenUpdate(Transaction& t) {
@@ -414,7 +407,7 @@ void SurfaceInterceptorTest::detachChildrenUpdate(Transaction& t) {
 }
 
 void SurfaceInterceptorTest::reparentChildrenUpdate(Transaction& t) {
-    t.reparentChildren(mBGSurfaceControl, mFGSurfaceControl->getHandle());
+    t.reparentChildren(mBGSurfaceControl, mFGSurfaceControl);
 }
 
 void SurfaceInterceptorTest::shadowRadiusUpdate(Transaction& t) {
@@ -440,7 +433,6 @@ void SurfaceInterceptorTest::runAllUpdates() {
     runInTransaction(&SurfaceInterceptorTest::layerUpdate);
     runInTransaction(&SurfaceInterceptorTest::cropUpdate);
     runInTransaction(&SurfaceInterceptorTest::matrixUpdate);
-    runInTransaction(&SurfaceInterceptorTest::overrideScalingModeUpdate);
     runInTransaction(&SurfaceInterceptorTest::transparentRegionHintUpdate);
     runInTransaction(&SurfaceInterceptorTest::layerStackUpdate);
     runInTransaction(&SurfaceInterceptorTest::hiddenFlagUpdate);
@@ -560,17 +552,6 @@ bool SurfaceInterceptorTest::matrixUpdateFound(const SurfaceChange& change, bool
         [] () { FAIL(); }();
     }
     return foundMatrix;
-}
-
-bool SurfaceInterceptorTest::scalingModeUpdateFound(const SurfaceChange& change,
-        bool foundScalingMode) {
-    bool hasScalingUpdate(change.override_scaling_mode().override_scaling_mode() == SCALING_UPDATE);
-    if (hasScalingUpdate && !foundScalingMode) {
-        foundScalingMode = true;
-    } else if (hasScalingUpdate && foundScalingMode) {
-        [] () { FAIL(); }();
-    }
-    return foundScalingMode;
 }
 
 bool SurfaceInterceptorTest::transparentRegionHintUpdateFound(const SurfaceChange& change,
@@ -728,9 +709,6 @@ bool SurfaceInterceptorTest::surfaceUpdateFound(const Trace& trace,
                         case SurfaceChange::SurfaceChangeCase::kMatrix:
                             foundUpdate = matrixUpdateFound(change, foundUpdate);
                             break;
-                        case SurfaceChange::SurfaceChangeCase::kOverrideScalingMode:
-                            foundUpdate = scalingModeUpdateFound(change, foundUpdate);
-                            break;
                         case SurfaceChange::SurfaceChangeCase::kTransparentRegionHint:
                             foundUpdate = transparentRegionHintUpdateFound(change, foundUpdate);
                             break;
@@ -781,7 +759,6 @@ void SurfaceInterceptorTest::assertAllUpdatesFound(const Trace& trace) {
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kLayer));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kCrop));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kMatrix));
-    ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kOverrideScalingMode));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kTransparentRegionHint));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kLayerStack));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kHiddenFlag));
@@ -914,11 +891,6 @@ TEST_F(SurfaceInterceptorTest, InterceptBackgroundBlurRadiusUpdateWorks) {
 
 TEST_F(SurfaceInterceptorTest, InterceptMatrixUpdateWorks) {
     captureTest(&SurfaceInterceptorTest::matrixUpdate, SurfaceChange::SurfaceChangeCase::kMatrix);
-}
-
-TEST_F(SurfaceInterceptorTest, InterceptOverrideScalingModeUpdateWorks) {
-    captureTest(&SurfaceInterceptorTest::overrideScalingModeUpdate,
-            SurfaceChange::SurfaceChangeCase::kOverrideScalingMode);
 }
 
 TEST_F(SurfaceInterceptorTest, InterceptTransparentRegionHintUpdateWorks) {

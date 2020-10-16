@@ -70,7 +70,8 @@ public:
     bool setCrop(const Rect& crop) override;
     bool setFrame(const Rect& frame) override;
     bool setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence, nsecs_t postTime,
-                   nsecs_t desiredPresentTime, const client_cache_t& clientCacheId) override;
+                   nsecs_t desiredPresentTime, const client_cache_t& clientCacheId,
+                   uint64_t frameNumber) override;
     bool setAcquireFence(const sp<Fence>& fence) override;
     bool setDataspace(ui::Dataspace dataspace) override;
     bool setHdrMetadata(const HdrMetadata& hdrMetadata) override;
@@ -91,7 +92,6 @@ public:
         return false;
     }
     bool setCrop_legacy(const Rect& /*crop*/) override { return false; }
-    bool setOverrideScalingMode(int32_t /*overrideScalingMode*/) override { return false; }
     void deferTransactionUntil_legacy(const sp<IBinder>& /*barrierHandle*/,
                                       uint64_t /*frameNumber*/) override {}
     void deferTransactionUntil_legacy(const sp<Layer>& /*barrierLayer*/,
@@ -109,6 +109,7 @@ public:
     bool fenceHasSignaled() const override;
     bool framePresentTimeIsCurrent(nsecs_t expectedPresentTime) const override;
     bool onPreComposition(nsecs_t refreshStartTime) override;
+    uint32_t getEffectiveScalingMode() const override;
 
 protected:
     void gatherBufferInfo() override;

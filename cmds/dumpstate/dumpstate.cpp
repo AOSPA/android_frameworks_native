@@ -1350,7 +1350,7 @@ static Dumpstate::RunStatus RunDumpsysNormal() {
 static void DumpHals(int out_fd = STDOUT_FILENO) {
     if (!ds.IsZipping()) {
         RunCommand("HARDWARE HALS", {"lshal", "--all", "--types=all", "--debug"},
-                   CommandOptions::WithTimeout(10).AsRootIfAvailable().Build(),
+                   CommandOptions::WithTimeout(60).AsRootIfAvailable().Build(),
                    false, out_fd);
         return;
     }
@@ -2688,6 +2688,15 @@ void Dumpstate::Cancel() {
     }
     tombstone_data_.clear();
     anr_data_.clear();
+
+    // Instead of shutdown the pool, we delete temporary files directly since
+    // shutdown blocking the call.
+    if (dump_pool_) {
+        dump_pool_->deleteTempFiles();
+    }
+    if (zip_entry_tasks_) {
+        zip_entry_tasks_->run(/*do_cancel =*/ true);
+    }
 }
 
 /*

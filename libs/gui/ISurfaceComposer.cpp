@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <android/gui/ITransactionTraceListener.h>
+
 #include <binder/Parcel.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
@@ -67,13 +69,15 @@ public:
     }
 
     virtual status_t setTransactionState(
-            const Vector<ComposerState>& state, const Vector<DisplayState>& displays,
-            uint32_t flags, const sp<IBinder>& applyToken, const InputWindowCommands& commands,
-            int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
-            bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks) {
+            int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
+            const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
+            const InputWindowCommands& commands, int64_t desiredPresentTime,
+            const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
+            const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
 
+        SAFE_PARCEL(data.writeInt64, frameTimelineVsyncId);
         SAFE_PARCEL(data.writeUint32, static_cast<uint32_t>(state.size()));
         for (const auto& s : state) {
             SAFE_PARCEL(s.write, data);
@@ -97,6 +101,8 @@ public:
             SAFE_PARCEL(data.writeStrongBinder, listener);
             SAFE_PARCEL(data.writeInt64Vector, callbackIds);
         }
+
+        SAFE_PARCEL(data.writeUint64, transactionId);
 
         return remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE, data, &reply);
     }
@@ -1197,6 +1203,15 @@ public:
 
         return reply.readInt32();
     }
+
+    virtual status_t addTransactionTraceListener(
+            const sp<gui::ITransactionTraceListener>& listener) {
+        Parcel data, reply;
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(listener));
+
+        return remote()->transact(BnSurfaceComposer::ADD_TRANSACTION_TRACE_LISTENER, data, &reply);
+    }
 };
 
 // Out-of-line virtual method definition to trigger vtable emission in this
@@ -1220,6 +1235,8 @@ status_t BnSurfaceComposer::onTransact(
         case SET_TRANSACTION_STATE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
 
+            int64_t frameTimelineVsyncId;
+            SAFE_PARCEL(data.readInt64, &frameTimelineVsyncId);
             uint32_t count = 0;
             SAFE_PARCEL_READ_SIZE(data.readUint32, &count, data.dataSize());
             Vector<ComposerState> state;
@@ -1267,9 +1284,14 @@ status_t BnSurfaceComposer::onTransact(
                 SAFE_PARCEL(data.readInt64Vector, &callbackIds);
                 listenerCallbacks.emplace_back(tmpBinder, callbackIds);
             }
-            return setTransactionState(state, displays, stateFlags, applyToken, inputWindowCommands,
-                                       desiredPresentTime, uncachedBuffer, hasListenerCallbacks,
-                                       listenerCallbacks);
+
+            uint64_t transactionId = -1;
+            SAFE_PARCEL(data.readUint64, &transactionId);
+
+            return setTransactionState(frameTimelineVsyncId, state, displays, stateFlags,
+                                       applyToken, inputWindowCommands, desiredPresentTime,
+                                       uncachedBuffer, hasListenerCallbacks, listenerCallbacks,
+                                       transactionId);
         }
         case BOOT_FINISHED: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
@@ -2025,6 +2047,13 @@ status_t BnSurfaceComposer::onTransact(
             status_t result = setFrameTimelineVsync(surface, frameTimelineVsyncId);
             reply->writeInt32(result);
             return NO_ERROR;
+        }
+        case ADD_TRANSACTION_TRACE_LISTENER: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<gui::ITransactionTraceListener> listener;
+            SAFE_PARCEL(data.readStrongBinder, &listener);
+
+            return addTransactionTraceListener(listener);
         }
         default: {
             return BBinder::onTransact(code, data, reply, flags);

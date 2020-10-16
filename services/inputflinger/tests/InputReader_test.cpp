@@ -1330,28 +1330,54 @@ protected:
     }
 };
 
-TEST_F(InputReaderTest, GetInputDevices) {
+TEST_F(InputReaderTest, ReaderGetInputDevices) {
     ASSERT_NO_FATAL_FAILURE(addDevice(1, "keyboard", InputDeviceClass::KEYBOARD, nullptr));
     ASSERT_NO_FATAL_FAILURE(addDevice(2, "ignored", Flags<InputDeviceClass>(0),
                                       nullptr)); // no classes so device will be ignored
 
-    std::vector<InputDeviceInfo> inputDevices;
-    mReader->getInputDevices(inputDevices);
+    const std::vector<InputDeviceInfo> inputDevices = mReader->getInputDevices();
     ASSERT_EQ(1U, inputDevices.size());
     ASSERT_EQ(END_RESERVED_ID + 1, inputDevices[0].getId());
     ASSERT_STREQ("keyboard", inputDevices[0].getIdentifier().name.c_str());
     ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, inputDevices[0].getKeyboardType());
     ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, inputDevices[0].getSources());
     ASSERT_EQ(size_t(0), inputDevices[0].getMotionRanges().size());
+}
+
+TEST_F(InputReaderTest, PolicyGetInputDevices) {
+    ASSERT_NO_FATAL_FAILURE(addDevice(1, "keyboard", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(2, "ignored", Flags<InputDeviceClass>(0),
+                                      nullptr)); // no classes so device will be ignored
 
     // Should also have received a notification describing the new input devices.
-    inputDevices = mFakePolicy->getInputDevices();
+    const std::vector<InputDeviceInfo>& inputDevices = mFakePolicy->getInputDevices();
     ASSERT_EQ(1U, inputDevices.size());
     ASSERT_EQ(END_RESERVED_ID + 1, inputDevices[0].getId());
     ASSERT_STREQ("keyboard", inputDevices[0].getIdentifier().name.c_str());
     ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, inputDevices[0].getKeyboardType());
     ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, inputDevices[0].getSources());
     ASSERT_EQ(size_t(0), inputDevices[0].getMotionRanges().size());
+}
+
+TEST_F(InputReaderTest, GetMergedInputDevices) {
+    constexpr int32_t deviceId = END_RESERVED_ID + 1000;
+    constexpr int32_t eventHubIds[2] = {END_RESERVED_ID, END_RESERVED_ID + 1};
+    // Add two subdevices to device
+    std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake");
+    // Must add at least one mapper or the device will be ignored!
+    device->addMapper<FakeInputMapper>(eventHubIds[0], AINPUT_SOURCE_KEYBOARD);
+    device->addMapper<FakeInputMapper>(eventHubIds[1], AINPUT_SOURCE_KEYBOARD);
+
+    // Push same device instance for next device to be added, so they'll have same identifier.
+    mReader->pushNextDevice(device);
+    mReader->pushNextDevice(device);
+    ASSERT_NO_FATAL_FAILURE(
+            addDevice(eventHubIds[0], "fake1", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(
+            addDevice(eventHubIds[1], "fake2", InputDeviceClass::KEYBOARD, nullptr));
+
+    // Two devices will be merged to one input device as they have same identifier
+    ASSERT_EQ(1U, mReader->getInputDevices().size());
 }
 
 TEST_F(InputReaderTest, WhenEnabledChanges_SendsDeviceResetNotification) {
@@ -1792,20 +1818,17 @@ TEST_F(InputReaderIntegrationTest, AddNewDevice) {
     ASSERT_EQ(initialNumDevices + 1, mFakePolicy->getInputDevices().size());
 
     // Find the test device by its name.
-    std::vector<InputDeviceInfo> inputDevices;
-    mReader->getInputDevices(inputDevices);
-    InputDeviceInfo* keyboardInfo = nullptr;
-    const char* keyboardName = keyboard->getName();
-    for (unsigned int i = 0; i < initialNumDevices + 1; i++) {
-        if (!strcmp(inputDevices[i].getIdentifier().name.c_str(), keyboardName)) {
-            keyboardInfo = &inputDevices[i];
-            break;
-        }
-    }
-    ASSERT_NE(keyboardInfo, nullptr);
-    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, keyboardInfo->getKeyboardType());
-    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, keyboardInfo->getSources());
-    ASSERT_EQ(0U, keyboardInfo->getMotionRanges().size());
+    const std::vector<InputDeviceInfo> inputDevices = mReader->getInputDevices();
+    const auto& it =
+            std::find_if(inputDevices.begin(), inputDevices.end(),
+                         [&keyboard](const InputDeviceInfo& info) {
+                             return info.getIdentifier().name == keyboard->getName();
+                         });
+
+    ASSERT_NE(it, inputDevices.end());
+    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, it->getKeyboardType());
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, it->getSources());
+    ASSERT_EQ(0U, it->getMotionRanges().size());
 
     keyboard.reset();
     ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
@@ -3036,15 +3059,17 @@ TEST_F(KeyboardInputMapperTest, Process_LockedKeysShouldToggleAfterReattach) {
     mFakeEventHub->addKey(SECOND_EVENTHUB_ID, KEY_NUMLOCK, 0, AKEYCODE_NUM_LOCK, 0);
     mFakeEventHub->addKey(SECOND_EVENTHUB_ID, KEY_SCROLLLOCK, 0, AKEYCODE_SCROLL_LOCK, 0);
 
-    device2->addMapper<KeyboardInputMapper>(SECOND_EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD,
-                                            AINPUT_KEYBOARD_TYPE_ALPHABETIC);
+    KeyboardInputMapper& mapper2 =
+            device2->addMapper<KeyboardInputMapper>(SECOND_EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD,
+                                                    AINPUT_KEYBOARD_TYPE_ALPHABETIC);
     device2->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(), 0 /*changes*/);
     device2->reset(ARBITRARY_TIME);
 
     ASSERT_TRUE(mFakeEventHub->getLedState(SECOND_EVENTHUB_ID, LED_CAPSL));
     ASSERT_TRUE(mFakeEventHub->getLedState(SECOND_EVENTHUB_ID, LED_NUML));
     ASSERT_TRUE(mFakeEventHub->getLedState(SECOND_EVENTHUB_ID, LED_SCROLLL));
-    ASSERT_EQ(AMETA_CAPS_LOCK_ON | AMETA_NUM_LOCK_ON | AMETA_SCROLL_LOCK_ON, mapper.getMetaState());
+    ASSERT_EQ(AMETA_CAPS_LOCK_ON | AMETA_NUM_LOCK_ON | AMETA_SCROLL_LOCK_ON,
+              mapper2.getMetaState());
 }
 
 // --- KeyboardInputMapperTest_ExternalDevice ---

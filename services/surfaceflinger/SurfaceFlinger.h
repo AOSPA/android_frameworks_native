@@ -52,6 +52,7 @@
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
 #include "DisplayHardware/PowerAdvisor.h"
+#include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
@@ -414,8 +415,8 @@ protected:
     virtual ~SurfaceFlinger();
 
     virtual uint32_t setClientStateLocked(
-            const ComposerState& composerState, int64_t desiredPresentTime, int64_t postTime,
-            bool privileged,
+            int64_t frameTimelineVsyncId, const ComposerState& composerState,
+            int64_t desiredPresentTime, int64_t postTime, bool privileged,
             std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
             REQUIRES(mStateLock);
     virtual void commitTransactionLocked();
@@ -506,13 +507,14 @@ private:
     };
 
     struct TransactionState {
-        TransactionState(const Vector<ComposerState>& composerStates,
+        TransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& composerStates,
                          const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
                          int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
                          int64_t postTime, bool privileged, bool hasListenerCallbacks,
-                         std::vector<ListenerCallbacks> listenerCallbacks, int originPID,
-                         int originUID)
-              : states(composerStates),
+                         std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
+                         int originUid, uint64_t transactionId)
+              : frameTimelineVsyncId(frameTimelineVsyncId),
+                states(composerStates),
                 displays(displayStates),
                 flags(transactionFlags),
                 desiredPresentTime(desiredPresentTime),
@@ -521,9 +523,11 @@ private:
                 privileged(privileged),
                 hasListenerCallbacks(hasListenerCallbacks),
                 listenerCallbacks(listenerCallbacks),
-                originPID(originPID),
-                originUID(originUID) {}
+                originPid(originPid),
+                originUid(originUid),
+                id(transactionId) {}
 
+        int64_t frameTimelineVsyncId;
         Vector<ComposerState> states;
         Vector<DisplayState> displays;
         uint32_t flags;
@@ -533,8 +537,9 @@ private:
         bool privileged;
         bool hasListenerCallbacks;
         std::vector<ListenerCallbacks> listenerCallbacks;
-        int originPID;
-        int originUID;
+        int originPid;
+        int originUid;
+        uint64_t id;
     };
 
     template <typename F, std::enable_if_t<!std::is_member_function_pointer_v<F>>* = nullptr>
@@ -565,11 +570,14 @@ private:
               typename Handler = VsyncModulator::VsyncConfigOpt (VsyncModulator::*)(Args...)>
     void modulateVsync(Handler handler, Args... args) {
         if (const auto config = (*mVsyncModulator.*handler)(args...)) {
-            setVsyncConfig(*config);
+            const auto vsyncPeriod = mRefreshRateConfigs->getCurrentRefreshRate().getVsyncPeriod();
+            setVsyncConfig(*config, vsyncPeriod);
         }
     }
 
     static const int MAX_TRACING_MEMORY = 100 * 1024 * 1024; // 100MB
+    // Maximum allowed number of display frames that can be set through backdoor
+    static const int MAX_ALLOWED_DISPLAY_FRAMES = 2048;
 
     // Implements IBinder.
     status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
@@ -583,13 +591,14 @@ private:
     void destroyDisplay(const sp<IBinder>& displayToken) override;
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const override;
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const override;
-    status_t setTransactionState(const Vector<ComposerState>& state,
+    status_t setTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
                                  const Vector<DisplayState>& displays, uint32_t flags,
                                  const sp<IBinder>& applyToken,
                                  const InputWindowCommands& inputWindowCommands,
                                  int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
                                  bool hasListenerCallbacks,
-                                 const std::vector<ListenerCallbacks>& listenerCallbacks) override;
+                                 const std::vector<ListenerCallbacks>& listenerCallbacks,
+                                 uint64_t transactionId) override;
     void bootFinished() override;
     bool authenticateSurfaceTexture(
             const sp<IGraphicBufferProducer>& bufferProducer) const override;
@@ -671,6 +680,9 @@ private:
 
     status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& surface,
                                    int64_t frameTimelineVsyncId) override;
+
+    status_t addTransactionTraceListener(
+            const sp<gui::ITransactionTraceListener>& listener) override;
 
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
@@ -771,7 +783,7 @@ private:
 
     void initScheduler(PhysicalDisplayId primaryDisplayId);
     void updatePhaseConfiguration(const RefreshRate&);
-    void setVsyncConfig(const VsyncModulator::VsyncConfig&);
+    void setVsyncConfig(const VsyncModulator::VsyncConfig&, nsecs_t vsyncPeriod);
 
     /* handlePageFlip - latch a new buffer if available and compute the dirty
      * region. Returns whether a new buffer has been latched, i.e., whether it
@@ -782,15 +794,15 @@ private:
     /*
      * Transactions
      */
-    void applyTransactionState(const Vector<ComposerState>& state,
+    void applyTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
                                const Vector<DisplayState>& displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime,
                                const client_cache_t& uncacheBuffer, const int64_t postTime,
                                bool privileged, bool hasListenerCallbacks,
                                const std::vector<ListenerCallbacks>& listenerCallbacks,
-                               int originPID, int originUID, bool isMainThread = false)
-            REQUIRES(mStateLock);
+                               int originPid, int originUid, uint64_t transactionId,
+                               bool isMainThread = false) REQUIRES(mStateLock);
     // Returns true if at least one transaction was flushed
     bool flushTransactionQueues();
     // Returns true if there is at least one transaction that needs to be flushed
@@ -819,7 +831,8 @@ private:
     status_t createLayer(const String8& name, const sp<Client>& client, uint32_t w, uint32_t h,
                          PixelFormat format, uint32_t flags, LayerMetadata metadata,
                          sp<IBinder>* handle, sp<IGraphicBufferProducer>* gbp,
-                         const sp<IBinder>& parentHandle, const sp<Layer>& parentLayer = nullptr,
+                         const sp<IBinder>& parentHandle, int32_t* outLayerId,
+                         const sp<Layer>& parentLayer = nullptr,
                          uint32_t* outTransformHint = nullptr);
 
     status_t createBufferQueueLayer(const sp<Client>& client, std::string name, uint32_t w,
@@ -840,7 +853,7 @@ private:
                                   sp<IBinder>* outHandle, sp<Layer>* outLayer);
 
     status_t mirrorLayer(const sp<Client>& client, const sp<IBinder>& mirrorFromHandle,
-                         sp<IBinder>* outHandle);
+                         sp<IBinder>* outHandle, int32_t* outLayerId);
 
     std::string getUniqueLayerName(const char* name);
 
@@ -1027,8 +1040,8 @@ private:
         return it != mPhysicalDisplayTokens.end() ? it->second : nullptr;
     }
 
-    std::optional<DisplayId> getPhysicalDisplayIdLocked(const sp<IBinder>& displayToken) const
-            REQUIRES(mStateLock) {
+    std::optional<PhysicalDisplayId> getPhysicalDisplayIdLocked(
+            const sp<IBinder>& displayToken) const REQUIRES(mStateLock) {
         for (const auto& [id, token] : mPhysicalDisplayTokens) {
             if (token == displayToken) {
                 return id;
@@ -1058,6 +1071,7 @@ private:
     void dumpStatsLocked(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
     void clearStatsLocked(const DumpArgs& args, std::string& result);
     void dumpTimeStats(const DumpArgs& args, bool asProto, std::string& result) const;
+    void dumpFrameTimeline(const DumpArgs& args, std::string& result) const;
     void logFrameStats();
 
     void dumpVSync(std::string& result) const REQUIRES(mStateLock);
@@ -1213,6 +1227,8 @@ private:
     std::unordered_map<PhysicalDisplayId, sp<IBinder>> mPhysicalDisplayTokens
             GUARDED_BY(mStateLock);
 
+    RandomDisplayIdGenerator<GpuVirtualDisplayId> mGpuVirtualDisplayIdGenerator;
+
     std::unordered_map<BBinder*, wp<Layer>> mLayersByLocalBinderToken GUARDED_BY(mStateLock);
 
     // don't use a lock for these, we don't care
@@ -1223,7 +1239,7 @@ private:
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
     bool mPropagateBackpressureClientComposition = false;
-    std::unique_ptr<SurfaceInterceptor> mInterceptor;
+    sp<SurfaceInterceptor> mInterceptor;
 
     SurfaceTracing mTracing{*this};
     std::mutex mTracingLock;

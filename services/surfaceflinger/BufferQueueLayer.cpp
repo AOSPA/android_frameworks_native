@@ -254,7 +254,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
     bool queuedBuffer = false;
     const int32_t layerId = getSequence();
     LayerRejecter r(mDrawingState, getCurrentState(), recomputeVisibleRegions,
-                    getProducerStickyTransform() != 0, mName, mOverrideScalingMode,
+                    getProducerStickyTransform() != 0, mName,
                     getTransformToDisplayInverse());
 
     if (isRemovedFromCurrentState()) {
@@ -355,7 +355,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
                                                FrameTracer::FrameEvent::LATCH);
 
         if (mQueueItems[0].surfaceFrame) {
-            mQueueItems[0].surfaceFrame->setActualEndTime(
+            mQueueItems[0].surfaceFrame->setAcquireFenceTime(
                     mQueueItems[0].item.mFenceTime->getSignalTime());
             mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mQueueItems[0].surfaceFrame),
                                                       PresentState::Presented);
@@ -394,6 +394,10 @@ status_t BufferQueueLayer::updateFrameNumber(nsecs_t latchTime) {
         mFrameEventHistory.addLatch(mCurrentFrameNumber, latchTime);
     }
     return NO_ERROR;
+}
+
+void BufferQueueLayer::setFrameTimelineVsyncForBuffer(int64_t frameTimelineVsyncId) {
+    mFrameTimelineVsyncId = frameTimelineVsyncId;
 }
 
 // -----------------------------------------------------------------------

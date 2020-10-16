@@ -36,6 +36,7 @@ public:
     enum { // (keep in sync with SurfaceControl.java)
         eHidden = 0x00000004,
         eDestroyBackbuffer = 0x00000020,
+        eSkipScreenshot = 0x00000040,
         eSecure = 0x00000080,
         eNonPremultiplied = 0x00000100,
         eOpaque = 0x00000400,
@@ -57,7 +58,8 @@ public:
     virtual status_t createSurface(const String8& name, uint32_t w, uint32_t h, PixelFormat format,
                                    uint32_t flags, const sp<IBinder>& parent,
                                    LayerMetadata metadata, sp<IBinder>* handle,
-                                   sp<IGraphicBufferProducer>* gbp, uint32_t* outTransformHint) = 0;
+                                   sp<IGraphicBufferProducer>* gbp, int32_t* outLayerId,
+                                   uint32_t* outTransformHint) = 0;
 
     /*
      * Requires ACCESS_SURFACE_FLINGER permission
@@ -66,7 +68,7 @@ public:
                                              PixelFormat format, uint32_t flags,
                                              const sp<IGraphicBufferProducer>& parent,
                                              LayerMetadata metadata, sp<IBinder>* handle,
-                                             sp<IGraphicBufferProducer>* gbp,
+                                             sp<IGraphicBufferProducer>* gbp, int32_t* outLayerId,
                                              uint32_t* outTransformHint) = 0;
 
     /*
@@ -79,7 +81,8 @@ public:
      */
     virtual status_t getLayerFrameStats(const sp<IBinder>& handle, FrameStats* outStats) const = 0;
 
-    virtual status_t mirrorSurface(const sp<IBinder>& mirrorFromHandle, sp<IBinder>* outHandle) = 0;
+    virtual status_t mirrorSurface(const sp<IBinder>& mirrorFromHandle, sp<IBinder>* outHandle,
+                                   int32_t* outLayerId) = 0;
 };
 
 class BnSurfaceComposerClient : public SafeBnInterface<ISurfaceComposerClient> {

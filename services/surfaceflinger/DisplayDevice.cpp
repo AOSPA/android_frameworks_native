@@ -165,80 +165,38 @@ void DisplayDevice::setLayerStack(ui::LayerStack stack) {
 }
 
 void DisplayDevice::setDisplaySize(int width, int height) {
-    mCompositionDisplay->setDisplaySpaceSize(ui::Size(width, height));
+    LOG_FATAL_IF(!isVirtual(), "Changing the display size is supported only for virtual displays.");
+    mCompositionDisplay->setDisplaySize(ui::Size(width, height));
 }
 
 void DisplayDevice::setProjection(ui::Rotation orientation, Rect layerStackSpaceRect,
                                   Rect orientedDisplaySpaceRect) {
     mOrientation = orientation;
 
-    const Rect& displayBounds = getCompositionDisplay()->getState().displaySpace.bounds;
-    const int displayWidth = displayBounds.width();
-    const int displayHeight = displayBounds.height();
+    if (isPrimary()) {
+        sPrimaryDisplayRotationFlags = ui::Transform::toRotationFlags(orientation);
+    }
 
     if (!orientedDisplaySpaceRect.isValid()) {
-        // the destination frame can be invalid if it has never been set,
-        // in that case we assume the whole display frame.
-        orientedDisplaySpaceRect = Rect(displayWidth, displayHeight);
+        // The destination frame can be invalid if it has never been set,
+        // in that case we assume the whole display size.
+        orientedDisplaySpaceRect = getCompositionDisplay()->getState().displaySpace.bounds;
     }
 
     if (layerStackSpaceRect.isEmpty()) {
-        // layerStackSpaceRect can be invalid if it has never been set, in that case
-        // we assume the whole display size.
-        // It's also invalid to have an empty layerStackSpaceRect, so we handle that
-        // case in the same way.
-        layerStackSpaceRect = Rect(displayWidth, displayHeight);
+        // The layerStackSpaceRect can be invalid if it has never been set, in that case
+        // we assume the whole framebuffer size.
+        layerStackSpaceRect = getCompositionDisplay()->getState().framebufferSpace.bounds;
         if (orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270) {
             std::swap(layerStackSpaceRect.right, layerStackSpaceRect.bottom);
         }
     }
 
-    ui::Transform logicalTranslation, physicalTranslation, scale;
-    const float sourceWidth = layerStackSpaceRect.width();
-    const float sourceHeight = layerStackSpaceRect.height();
-    const float destWidth = orientedDisplaySpaceRect.width();
-    const float destHeight = orientedDisplaySpaceRect.height();
-    if (sourceWidth != destWidth || sourceHeight != destHeight) {
-        const float scaleX = destWidth / sourceWidth;
-        const float scaleY = destHeight / sourceHeight;
-        scale.set(scaleX, 0, 0, scaleY);
-    }
-
-    const float sourceX = layerStackSpaceRect.left;
-    const float sourceY = layerStackSpaceRect.top;
-    const float destX = orientedDisplaySpaceRect.left;
-    const float destY = orientedDisplaySpaceRect.top;
-    logicalTranslation.set(-sourceX, -sourceY);
-    physicalTranslation.set(destX, destY);
-
     // We need to take care of display rotation for globalTransform for case if the panel is not
     // installed aligned with device orientation.
     const auto transformOrientation = orientation + mPhysicalOrientation;
-    const uint32_t transformOrientationFlags = ui::Transform::toRotationFlags(transformOrientation);
-    ui::Transform rotation;
-    if (transformOrientationFlags != ui::Transform::ROT_INVALID) {
-        rotation.set(transformOrientationFlags, displayWidth, displayHeight);
-    }
-
-    // The layerStackSpaceRect and orientedDisplaySpaceRect are both in the logical orientation.
-    // Apply the logical translation, scale to physical size, apply the
-    // physical translation and finally rotate to the physical orientation.
-    ui::Transform globalTransform = rotation * physicalTranslation * scale * logicalTranslation;
-
-    Rect displaySpaceRect = globalTransform.transform(layerStackSpaceRect);
-    if (displaySpaceRect.isEmpty()) {
-        displaySpaceRect = displayBounds;
-    }
-    // Make sure the displaySpaceRect is contained in the display bounds
-    displaySpaceRect.intersect(displayBounds, &displaySpaceRect);
-
-    if (isPrimary()) {
-        sPrimaryDisplayRotationFlags = ui::Transform::toRotationFlags(orientation);
-    }
-
-    getCompositionDisplay()->setProjection(globalTransform, transformOrientationFlags,
-                                           orientedDisplaySpaceRect, layerStackSpaceRect,
-                                           displaySpaceRect);
+    getCompositionDisplay()->setProjection(transformOrientation, layerStackSpaceRect,
+                                           orientedDisplaySpaceRect);
 }
 
 ui::Transform::RotationFlags DisplayDevice::getPrimaryDisplayRotationFlags() {
@@ -246,17 +204,12 @@ ui::Transform::RotationFlags DisplayDevice::getPrimaryDisplayRotationFlags() {
 }
 
 std::string DisplayDevice::getDebugName() const {
-    std::string displayId;
-    if (const auto id = getId()) {
-        displayId = to_string(*id) + ", ";
-    }
-
     const char* type = "virtual";
     if (mConnectionType) {
         type = *mConnectionType == DisplayConnectionType::Internal ? "internal" : "external";
     }
 
-    return base::StringPrintf("DisplayDevice{%s%s%s, \"%s\"}", displayId.c_str(), type,
+    return base::StringPrintf("DisplayDevice{%s, %s%s, \"%s\"}", to_string(getId()).c_str(), type,
                               isPrimary() ? ", primary" : "", mDisplayName.c_str());
 }
 
@@ -280,9 +233,7 @@ bool DisplayDevice::hasRenderIntent(ui::RenderIntent intent) const {
     return mCompositionDisplay->getDisplayColorProfile()->hasRenderIntent(intent);
 }
 
-// ----------------------------------------------------------------------------
-
-const std::optional<DisplayId>& DisplayDevice::getId() const {
+DisplayId DisplayDevice::getId() const {
     return mCompositionDisplay->getId();
 }
 

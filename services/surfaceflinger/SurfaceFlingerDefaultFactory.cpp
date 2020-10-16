@@ -68,9 +68,8 @@ std::unique_ptr<Scheduler> DefaultFactory::createScheduler(
     return std::make_unique<Scheduler>(configs, callback);
 }
 
-std::unique_ptr<SurfaceInterceptor> DefaultFactory::createSurfaceInterceptor(
-        SurfaceFlinger* flinger) {
-    return std::make_unique<android::impl::SurfaceInterceptor>(flinger);
+sp<SurfaceInterceptor> DefaultFactory::createSurfaceInterceptor() {
+    return new android::impl::SurfaceInterceptor();
 }
 
 sp<StartPropertySetThread> DefaultFactory::createStartPropertySetThread(

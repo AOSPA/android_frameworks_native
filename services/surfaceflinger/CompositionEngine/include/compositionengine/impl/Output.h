@@ -38,10 +38,9 @@ public:
     bool isValid() const override;
     std::optional<DisplayId> getDisplayId() const override;
     void setCompositionEnabled(bool) override;
-    void setProjection(const ui::Transform&, uint32_t orientation,
-                       const Rect& orientedDisplaySpaceRect, const Rect& layerStackSpaceRect,
-                       const Rect& displaySpaceRect) override;
-    void setDisplaySpaceSize(const ui::Size&) override;
+    void setProjection(ui::Rotation orientation, const Rect& layerStackSpaceRect,
+                       const Rect& orientedDisplaySpaceRect) override;
+    void setDisplaySize(const ui::Size&) override;
     void setLayerStackFilter(uint32_t layerStackId, bool isInternal) override;
 
     void setColorTransform(const compositionengine::CompositionRefreshArgs&) override;
