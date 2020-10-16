@@ -1609,7 +1609,11 @@ status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) 
     }
 
     uint64_t timeStamp = static_cast<uint64_t>(mVsyncTimeStamp + (sfOffset * -1));
-    return getHwComposer().setDisplayElapseTime(*display->getId(), timeStamp);
+    const auto id = HalDisplayId::tryCast(display->getId());
+    if (!id) {
+        return BAD_VALUE;
+    }
+    return getHwComposer().setDisplayElapseTime(*id, timeStamp);
 }
 
 status_t SurfaceFlinger::getDisplayedContentSample(const sp<IBinder>& displayToken,
@@ -2459,7 +2463,7 @@ void SurfaceFlinger::postComposition()
     getBE().mDisplayTimeline.updateSignalTimes();
     mPreviousPresentFences[1] = mPreviousPresentFences[0];
     mPreviousPresentFences[0] = mActiveVsyncSource
-            ? getHwComposer().getPresentFence(*mActiveVsyncSource->getPhysicalId())
+            ? getHwComposer().getPresentFence(mActiveVsyncSource->getPhysicalId())
             : Fence::NO_FENCE;
     auto presentFenceTime = std::make_shared<FenceTime>(mPreviousPresentFences[0]);
     getBE().mDisplayTimeline.push(presentFenceTime);
@@ -2998,10 +3002,12 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                                                        displaySurface, producer);
     mDisplays.emplace(displayToken, display);
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
-    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(PhysicalDisplayId (*displayId));
     bool supported = false;
-    if (mDisplayConfigIntf) {
-        mDisplayConfigIntf->IsPowerModeOverrideSupported(*hwcDisplayId, &supported);
+    if (const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId)) {
+        const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
+        if (mDisplayConfigIntf) {
+            mDisplayConfigIntf->IsPowerModeOverrideSupported(*hwcDisplayId, &supported);
+        }
     }
     if (supported) {
       sp<DisplayDevice> display = getDisplayDeviceLocked(displayToken);
@@ -4789,7 +4795,11 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
     const auto displayId = display->getId();
-    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(PhysicalDisplayId(*displayId));
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+    if (!physicalDisplayId) {
+      return;
+    }
+    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
     // Fallback to default power state behavior as HWC does not support power mode override.
     if (!display->getPowerModeOverrideConfig() ||
         mode  ==  HWC_POWER_MODE_DOZE ||
@@ -6930,8 +6940,12 @@ bool SurfaceFlinger::isInternalDisplay(const sp<DisplayDevice>& display) {
 bool SurfaceFlinger::getHwcDisplayId(const sp<DisplayDevice>& display, uint32_t *hwcDisplayId) {
     if (display) {
         const auto displayId = display->getId();
-        if (displayId) {
-            const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(static_cast<PhysicalDisplayId>(*displayId));
+        if (displayId.value) {
+            const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+            if (!physicalDisplayId) {
+                return false;
+            }
+            const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
             if (halDisplayId) {
                 *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
                 return true;
@@ -7065,7 +7079,8 @@ void SurfaceFlinger::setupEarlyWakeUpFeature() {
                 uint32_t hwcDisplayId;
                 if (getHwcDisplayId(display, &hwcDisplayId)) {
                     const auto displayId = display->getId();
-                    uint32_t configId = getHwComposer().getActiveConfigIndex(*displayId);
+                    uint32_t configId = getHwComposer().getActiveConfigIndex(
+                        PhysicalDisplayId(displayId.value));
                     updateDisplayExtension(hwcDisplayId, configId, true);
                 }
             }

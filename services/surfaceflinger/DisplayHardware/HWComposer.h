@@ -221,7 +221,7 @@ public:
 
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
-    virtual status_t setDisplayElapseTime(DisplayId displayId, uint64_t timeStamp) = 0;
+    virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
 };
 
 namespace impl {
