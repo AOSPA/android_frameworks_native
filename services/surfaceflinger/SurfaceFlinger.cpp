@@ -1608,7 +1608,8 @@ status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) 
         return OK;
     }
 
-    uint64_t timeStamp = static_cast<uint64_t>(mVsyncTimeStamp + (sfOffset * -1));
+    // TODO(b/171604397): Fix timeStamp value.
+    uint64_t timeStamp = 0; //static_cast<uint64_t>(mVsyncTimeStamp + (sfOffset * -1));
     const auto id = HalDisplayId::tryCast(display->getId());
     if (!id) {
         return BAD_VALUE;
