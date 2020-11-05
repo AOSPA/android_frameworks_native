@@ -40,6 +40,7 @@
 #include "SurfaceInterceptor.h"
 #include "TestableScheduler.h"
 #include "mock/DisplayHardware/MockDisplay.h"
+#include "mock/MockDisplayIdGenerator.h"
 
 namespace android {
 
@@ -83,8 +84,8 @@ public:
         return nullptr;
     }
 
-    std::unique_ptr<SurfaceInterceptor> createSurfaceInterceptor(SurfaceFlinger* flinger) override {
-        return std::make_unique<android::impl::SurfaceInterceptor>(flinger);
+    sp<SurfaceInterceptor> createSurfaceInterceptor() override {
+        return new android::impl::SurfaceInterceptor();
     }
 
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
@@ -171,6 +172,9 @@ public:
 
     SurfaceFlinger* flinger() { return mFlinger.get(); }
     TestableScheduler* scheduler() { return mScheduler; }
+    mock::DisplayIdGenerator<GpuVirtualDisplayId>& gpuVirtualDisplayIdGenerator() {
+        return mGpuVirtualDisplayIdGenerator;
+    }
 
     // Extend this as needed for accessing SurfaceFlinger private (and public)
     // functions.
@@ -273,6 +277,10 @@ public:
         layer->mPotentialCursor = potentialCursor;
     }
 
+    static void setLayerDrawingParent(const sp<Layer>& layer, const sp<Layer>& drawingParent) {
+        layer->mDrawingParent = drawingParent;
+    }
+
     /* ------------------------------------------------------------------------
      * Forwarding for functions being tested
      */
@@ -348,16 +356,18 @@ public:
 
     auto& getTransactionQueue() { return mFlinger->mTransactionQueues; }
 
-    auto setTransactionState(const Vector<ComposerState>& states,
+    auto setTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& states,
                              const Vector<DisplayState>& displays, uint32_t flags,
                              const sp<IBinder>& applyToken,
                              const InputWindowCommands& inputWindowCommands,
                              int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
                              bool hasListenerCallbacks,
-                             std::vector<ListenerCallbacks>& listenerCallbacks) {
-        return mFlinger->setTransactionState(states, displays, flags, applyToken,
-                                             inputWindowCommands, desiredPresentTime, uncacheBuffer,
-                                             hasListenerCallbacks, listenerCallbacks);
+                             std::vector<ListenerCallbacks>& listenerCallbacks,
+                             uint64_t transactionId) {
+        return mFlinger->setTransactionState(frameTimelineVsyncId, states, displays, flags,
+                                             applyToken, inputWindowCommands, desiredPresentTime,
+                                             uncacheBuffer, hasListenerCallbacks, listenerCallbacks,
+                                             transactionId);
     }
 
     auto flushTransactionQueues() { return mFlinger->flushTransactionQueues(); };
@@ -424,7 +434,7 @@ public:
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
         mutableEventQueue().reset();
-        mutableInterceptor().reset();
+        mutableInterceptor().clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
         mFlinger->mCompositionEngine->setRenderEngine(
@@ -461,7 +471,8 @@ public:
         static constexpr hal::HWConfigId DEFAULT_ACTIVE_CONFIG = 0;
         static constexpr hal::PowerMode DEFAULT_POWER_MODE = hal::PowerMode::ON;
 
-        FakeHwcDisplayInjector(DisplayId displayId, hal::DisplayType hwcDisplayType, bool isPrimary)
+        FakeHwcDisplayInjector(HalDisplayId displayId, hal::DisplayType hwcDisplayType,
+                               bool isPrimary)
               : mDisplayId(displayId), mHwcDisplayType(hwcDisplayType), mIsPrimary(isPrimary) {}
 
         auto& setHwcDisplayId(hal::HWDisplayId displayId) {
@@ -534,14 +545,16 @@ public:
             flinger->mutableHwcDisplayData()[mDisplayId].hwcDisplay = std::move(display);
 
             if (mHwcDisplayType == hal::DisplayType::PHYSICAL) {
-                flinger->mutableHwcPhysicalDisplayIdMap().emplace(mHwcDisplayId, mDisplayId);
+                const auto physicalId = PhysicalDisplayId::tryCast(mDisplayId);
+                LOG_ALWAYS_FATAL_IF(!physicalId);
+                flinger->mutableHwcPhysicalDisplayIdMap().emplace(mHwcDisplayId, *physicalId);
                 (mIsPrimary ? flinger->mutableInternalHwcDisplayId()
                             : flinger->mutableExternalHwcDisplayId()) = mHwcDisplayId;
             }
         }
 
     private:
-        const DisplayId mDisplayId;
+        const HalDisplayId mDisplayId;
         const hal::DisplayType mHwcDisplayType;
         const bool mIsPrimary;
 
@@ -633,10 +646,10 @@ public:
             DisplayDeviceState state;
             if (const auto type = mCreationArgs.connectionType) {
                 LOG_ALWAYS_FATAL_IF(!displayId);
+                const auto physicalId = PhysicalDisplayId::tryCast(*displayId);
+                LOG_ALWAYS_FATAL_IF(!physicalId);
                 LOG_ALWAYS_FATAL_IF(!mHwcDisplayId);
-                state.physical = {.id = static_cast<PhysicalDisplayId>(*displayId),
-                                  .type = *type,
-                                  .hwcDisplayId = *mHwcDisplayId};
+                state.physical = {.id = *physicalId, .type = *type, .hwcDisplayId = *mHwcDisplayId};
             }
 
             state.isSecure = mCreationArgs.isSecure;
@@ -670,6 +683,7 @@ private:
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);
     TestableScheduler* mScheduler = nullptr;
     Hwc2::mock::Display mDisplay;
+    mock::DisplayIdGenerator<GpuVirtualDisplayId> mGpuVirtualDisplayIdGenerator;
 };
 
 } // namespace android

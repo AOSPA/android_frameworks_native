@@ -19,6 +19,9 @@
 #include <binder/Binder.h>
 #include "../dispatcher/InputDispatcher.h"
 
+using android::os::InputEventInjectionResult;
+using android::os::InputEventInjectionSync;
+
 namespace android::inputdispatcher {
 
 // An arbitrary device id.
@@ -56,6 +59,8 @@ private:
     void notifyInputChannelBroken(const sp<IBinder>&) override {}
 
     void notifyFocusChanged(const sp<IBinder>&, const sp<IBinder>&) override {}
+
+    void notifyUntrustedTouch(const std::string& obscuringPackage) override {}
 
     void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) override {
         *outConfig = mConfig;
@@ -129,17 +134,14 @@ public:
 protected:
     explicit FakeInputReceiver(const sp<InputDispatcher>& dispatcher, const std::string name)
           : mDispatcher(dispatcher) {
-        std::unique_ptr<InputChannel> serverChannel, clientChannel;
-        InputChannel::openInputChannelPair(name, serverChannel, clientChannel);
-        mServerChannel = std::move(serverChannel);
-        mClientChannel = std::move(clientChannel);
+        mClientChannel = *mDispatcher->createInputChannel(name);
         mConsumer = std::make_unique<InputConsumer>(mClientChannel);
     }
 
     virtual ~FakeInputReceiver() {}
 
     sp<InputDispatcher> mDispatcher;
-    std::shared_ptr<InputChannel> mServerChannel, mClientChannel;
+    std::shared_ptr<InputChannel> mClientChannel;
     std::unique_ptr<InputConsumer> mConsumer;
     PreallocatedInputEventFactory mEventFactory;
 };
@@ -152,14 +154,12 @@ public:
     FakeWindowHandle(const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle,
                      const sp<InputDispatcher>& dispatcher, const std::string name)
           : FakeInputReceiver(dispatcher, name), mFrame(Rect(0, 0, WIDTH, HEIGHT)) {
-        mDispatcher->registerInputChannel(mServerChannel);
-
         inputApplicationHandle->updateInfo();
         mInfo.applicationInfo = *inputApplicationHandle->getInfo();
     }
 
     virtual bool updateInfo() override {
-        mInfo.token = mServerChannel->getConnectionToken();
+        mInfo.token = mClientChannel->getConnectionToken();
         mInfo.name = "FakeWindowHandle";
         mInfo.type = InputWindowInfo::Type::APPLICATION;
         mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
@@ -291,13 +291,13 @@ static void benchmarkInjectMotion(benchmark::State& state) {
         MotionEvent event = generateMotionEvent();
         // Send ACTION_DOWN
         dispatcher->injectInputEvent(&event, INJECTOR_PID, INJECTOR_UID,
-                                     INPUT_EVENT_INJECTION_SYNC_NONE, INJECT_EVENT_TIMEOUT,
+                                     InputEventInjectionSync::NONE, INJECT_EVENT_TIMEOUT,
                                      POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER);
 
         // Send ACTION_UP
         event.setAction(AMOTION_EVENT_ACTION_UP);
         dispatcher->injectInputEvent(&event, INJECTOR_PID, INJECTOR_UID,
-                                     INPUT_EVENT_INJECTION_SYNC_NONE, INJECT_EVENT_TIMEOUT,
+                                     InputEventInjectionSync::NONE, INJECT_EVENT_TIMEOUT,
                                      POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER);
 
         window->consumeEvent();

@@ -73,14 +73,13 @@ void clean(const void* id, void* obj, void* cookie) {
 AIBinder::AIBinder(const AIBinder_Class* clazz) : mClazz(clazz) {}
 AIBinder::~AIBinder() {}
 
-bool AIBinder::associateClass(const AIBinder_Class* clazz) {
-    if (clazz == nullptr) return false;
+std::optional<bool> AIBinder::associateClassInternal(const AIBinder_Class* clazz,
+                                                     const String16& newDescriptor, bool set) {
+    std::lock_guard<std::mutex> lock(mClazzMutex);
     if (mClazz == clazz) return true;
 
-    String8 newDescriptor(clazz->getInterfaceDescriptor());
-
     if (mClazz != nullptr) {
-        String8 currentDescriptor(mClazz->getInterfaceDescriptor());
+        const String16& currentDescriptor = mClazz->getInterfaceDescriptor();
         if (newDescriptor == currentDescriptor) {
             LOG(ERROR) << __func__ << ": Class descriptors '" << currentDescriptor
                        << "' match during associateClass, but they are different class objects. "
@@ -89,33 +88,46 @@ bool AIBinder::associateClass(const AIBinder_Class* clazz) {
             LOG(ERROR) << __func__
                        << ": Class cannot be associated on object which already has a class. "
                           "Trying to associate to '"
-                       << newDescriptor.c_str() << "' but already set to '"
-                       << currentDescriptor.c_str() << "'.";
+                       << newDescriptor << "' but already set to '" << currentDescriptor << "'.";
         }
 
         // always a failure because we know mClazz != clazz
         return false;
     }
 
+    if (set) {
+        // if this is a local object, it's not one known to libbinder_ndk
+        mClazz = clazz;
+        return true;
+    }
+
+    return {};
+}
+
+bool AIBinder::associateClass(const AIBinder_Class* clazz) {
+    if (clazz == nullptr) return false;
+
+    const String16& newDescriptor = clazz->getInterfaceDescriptor();
+
+    auto result = associateClassInternal(clazz, newDescriptor, false);
+    if (result.has_value()) return *result;
+
     CHECK(asABpBinder() != nullptr);  // ABBinder always has a descriptor
 
-    String8 descriptor(getBinder()->getInterfaceDescriptor());
+    const String16& descriptor = getBinder()->getInterfaceDescriptor();
     if (descriptor != newDescriptor) {
         if (getBinder()->isBinderAlive()) {
-            LOG(ERROR) << __func__ << ": Expecting binder to have class '" << newDescriptor.c_str()
-                       << "' but descriptor is actually '" << descriptor.c_str() << "'.";
+            LOG(ERROR) << __func__ << ": Expecting binder to have class '" << newDescriptor
+                       << "' but descriptor is actually '" << descriptor << "'.";
         } else {
             // b/155793159
-            LOG(ERROR) << __func__ << ": Cannot associate class '" << newDescriptor.c_str()
+            LOG(ERROR) << __func__ << ": Cannot associate class '" << newDescriptor
                        << "' to dead binder.";
         }
         return false;
     }
 
-    // if this is a local object, it's not one known to libbinder_ndk
-    mClazz = clazz;
-
-    return true;
+    return associateClassInternal(clazz, newDescriptor, true).value();
 }
 
 ABBinder::ABBinder(const AIBinder_Class* clazz, void* userData)

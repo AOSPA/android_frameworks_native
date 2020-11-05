@@ -17,17 +17,21 @@
 #ifndef SF_SKIAGLRENDERENGINE_H_
 #define SF_SKIAGLRENDERENGINE_H_
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GrDirectContext.h>
+#include <SkSurface.h>
+#include <android-base/thread_annotations.h>
+#include <renderengine/RenderEngine.h>
 #include <sys/types.h>
+
 #include <mutex>
 #include <unordered_map>
 
-#include <android-base/thread_annotations.h>
-#include <renderengine/RenderEngine.h>
-
-#include <GrDirectContext.h>
-#include <SkSurface.h>
-
+#include "EGL/egl.h"
 #include "SkiaRenderEngine.h"
+#include "filters/BlurFilter.h"
 
 namespace android {
 namespace renderengine {
@@ -36,8 +40,8 @@ namespace skia {
 class SkiaGLRenderEngine : public skia::SkiaRenderEngine {
 public:
     static std::unique_ptr<SkiaGLRenderEngine> create(const RenderEngineCreationArgs& args);
-    SkiaGLRenderEngine(EGLDisplay display, EGLConfig config, EGLContext ctxt,
-                       EGLSurface placeholder, EGLContext protectedContext,
+    SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display, EGLConfig config,
+                       EGLContext ctxt, EGLSurface placeholder, EGLContext protectedContext,
                        EGLSurface protectedPlaceholder);
     ~SkiaGLRenderEngine() override{};
 
@@ -60,10 +64,17 @@ private:
                                        Protection protection);
     static EGLSurface createPlaceholderEglPbufferSurface(EGLDisplay display, EGLConfig config,
                                                          int hwcFormat, Protection protection);
+    inline SkRect getSkRect(const FloatRect& layer);
+    inline SkRect getSkRect(const Rect& layer);
     inline SkRRect getRoundedRect(const LayerSettings* layer);
+    inline SkColor getSkColor(const vec4& color);
+    inline SkM44 getSkM44(const mat4& matrix);
+    inline SkPoint3 getSkPoint3(const vec3& vector);
 
     base::unique_fd flush();
     bool waitFence(base::unique_fd fenceFd);
+    void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
+                    const ShadowSettings& shadowSettings);
 
     EGLDisplay mEGLDisplay;
     EGLConfig mEGLConfig;
@@ -71,6 +82,9 @@ private:
     EGLSurface mPlaceholderSurface;
     EGLContext mProtectedEGLContext;
     EGLSurface mProtectedPlaceholderSurface;
+    BlurFilter* mBlurFilter = nullptr;
+
+    const bool mUseColorManagement;
 
     // Cache of GL images that we'll store per GraphicBuffer ID
     std::unordered_map<uint64_t, sk_sp<SkImage>> mImageCache GUARDED_BY(mRenderingMutex);

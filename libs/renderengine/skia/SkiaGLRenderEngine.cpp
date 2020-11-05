@@ -15,27 +15,33 @@
  */
 
 //#define LOG_NDEBUG 0
+#include <cstdint>
 #undef LOG_TAG
 #define LOG_TAG "RenderEngine"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
-#include <cmath>
-
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
+#include <GrContextOptions.h>
+#include <SkCanvas.h>
+#include <SkColorFilter.h>
+#include <SkColorMatrix.h>
+#include <SkColorSpace.h>
+#include <SkImage.h>
+#include <SkImageFilters.h>
+#include <SkShadowUtils.h>
+#include <SkSurface.h>
+#include <gl/GrGLInterface.h>
 #include <sync/sync.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/Trace.h>
+
+#include <cmath>
+
 #include "../gl/GLExtensions.h"
 #include "SkiaGLRenderEngine.h"
-
-#include <GrContextOptions.h>
-#include <gl/GrGLInterface.h>
-
-#include <SkCanvas.h>
-#include <SkImage.h>
-#include <SkSurface.h>
+#include "filters/BlurFilter.h"
 
 extern "C" EGLAPI const char* eglQueryStringImplementationANDROID(EGLDisplay dpy, EGLint name);
 
@@ -127,6 +133,47 @@ static status_t selectEGLConfig(EGLDisplay display, EGLint format, EGLint render
     return err;
 }
 
+// Converts an android dataspace to a supported SkColorSpace
+// Supported dataspaces are
+// 1. sRGB
+// 2. Display P3
+// 3. BT2020 PQ
+// 4. BT2020 HLG
+// Unknown primaries are mapped to BT709, and unknown transfer functions
+// are mapped to sRGB.
+static sk_sp<SkColorSpace> toColorSpace(ui::Dataspace dataspace) {
+    skcms_Matrix3x3 gamut;
+    switch (dataspace & HAL_DATASPACE_STANDARD_MASK) {
+        case HAL_DATASPACE_STANDARD_BT709:
+            gamut = SkNamedGamut::kSRGB;
+            break;
+        case HAL_DATASPACE_STANDARD_BT2020:
+            gamut = SkNamedGamut::kRec2020;
+            break;
+        case HAL_DATASPACE_STANDARD_DCI_P3:
+            gamut = SkNamedGamut::kDisplayP3;
+            break;
+        default:
+            ALOGV("Unsupported Gamut: %d, defaulting to sRGB", dataspace);
+            gamut = SkNamedGamut::kSRGB;
+            break;
+    }
+
+    switch (dataspace & HAL_DATASPACE_TRANSFER_MASK) {
+        case HAL_DATASPACE_TRANSFER_LINEAR:
+            return SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, gamut);
+        case HAL_DATASPACE_TRANSFER_SRGB:
+            return SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, gamut);
+        case HAL_DATASPACE_TRANSFER_ST2084:
+            return SkColorSpace::MakeRGB(SkNamedTransferFn::kPQ, gamut);
+        case HAL_DATASPACE_TRANSFER_HLG:
+            return SkColorSpace::MakeRGB(SkNamedTransferFn::kHLG, gamut);
+        default:
+            ALOGV("Unsupported Gamma: %d, defaulting to sRGB transfer", dataspace);
+            return SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, gamut);
+    }
+}
+
 std::unique_ptr<SkiaGLRenderEngine> SkiaGLRenderEngine::create(
         const RenderEngineCreationArgs& args) {
     // initialize EGL for the default display
@@ -193,7 +240,7 @@ std::unique_ptr<SkiaGLRenderEngine> SkiaGLRenderEngine::create(
 
     // initialize the renderer while GL is current
     std::unique_ptr<SkiaGLRenderEngine> engine =
-            std::make_unique<SkiaGLRenderEngine>(display, config, ctxt, placeholder,
+            std::make_unique<SkiaGLRenderEngine>(args, display, config, ctxt, placeholder,
                                                  protectedContext, protectedPlaceholder);
 
     ALOGI("OpenGL ES informations:");
@@ -246,15 +293,16 @@ EGLConfig SkiaGLRenderEngine::chooseEglConfig(EGLDisplay display, int format, bo
     return config;
 }
 
-SkiaGLRenderEngine::SkiaGLRenderEngine(EGLDisplay display, EGLConfig config, EGLContext ctxt,
-                                       EGLSurface placeholder, EGLContext protectedContext,
-                                       EGLSurface protectedPlaceholder)
+SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
+                                       EGLConfig config, EGLContext ctxt, EGLSurface placeholder,
+                                       EGLContext protectedContext, EGLSurface protectedPlaceholder)
       : mEGLDisplay(display),
         mEGLConfig(config),
         mEGLContext(ctxt),
         mPlaceholderSurface(placeholder),
         mProtectedEGLContext(protectedContext),
-        mProtectedPlaceholderSurface(protectedPlaceholder) {
+        mProtectedPlaceholderSurface(protectedPlaceholder),
+        mUseColorManagement(args.useColorManagement) {
     // Suppress unused field warnings for things we definitely will need/use
     // These EGL fields will all be needed for toggling between protected & unprotected contexts
     // Or we need different RE instances for that
@@ -272,6 +320,10 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(EGLDisplay display, EGLConfig config, EGL
     options.fPreferExternalImagesOverES3 = true;
     options.fDisableDistanceFieldPaths = true;
     mGrContext = GrDirectContext::MakeGL(std::move(glInterface), options);
+
+    if (args.supportsBackgroundBlur) {
+        mBlurFilter = new BlurFilter();
+    }
 }
 
 base::unique_fd SkiaGLRenderEngine::flush() {
@@ -331,6 +383,26 @@ static bool hasUsage(const AHardwareBuffer_Desc& desc, uint64_t usage) {
     return !!(desc.usage & usage);
 }
 
+static float toDegrees(uint32_t transform) {
+    switch (transform) {
+        case ui::Transform::ROT_90:
+            return 90.0;
+        case ui::Transform::ROT_180:
+            return 180.0;
+        case ui::Transform::ROT_270:
+            return 270.0;
+        default:
+            return 0.0;
+    }
+}
+
+static SkColorMatrix toSkColorMatrix(const mat4& matrix) {
+    return SkColorMatrix(matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0], 0, matrix[0][1],
+                         matrix[1][1], matrix[2][1], matrix[3][1], 0, matrix[0][2], matrix[1][2],
+                         matrix[2][2], matrix[3][2], 0, matrix[0][3], matrix[1][3], matrix[2][3],
+                         matrix[3][3], 0);
+}
+
 void SkiaGLRenderEngine::unbindExternalTextureBuffer(uint64_t bufferId) {
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     mImageCache.erase(bufferId);
@@ -378,7 +450,10 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
     if (!surface) {
         surface = SkSurface::MakeFromAHardwareBuffer(mGrContext.get(), buffer->toAHardwareBuffer(),
                                                      GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
-                                                     SkColorSpace::MakeSRGB(), nullptr);
+                                                     mUseColorManagement
+                                                             ? toColorSpace(display.outputDataspace)
+                                                             : SkColorSpace::MakeSRGB(),
+                                                     nullptr);
         if (useFramebufferCache && surface) {
             ALOGD("Adding to cache");
             mSurfaceCache.insert({buffer->getId(), surface});
@@ -388,19 +463,54 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         ALOGE("Failed to make surface");
         return BAD_VALUE;
     }
-    auto canvas = surface->getCanvas();
 
-    canvas->clipRect(SkRect::MakeLTRB(display.clip.left, display.clip.top, display.clip.right,
-                                      display.clip.bottom));
-    canvas->drawColor(0, SkBlendMode::kSrc);
+    auto canvas = surface->getCanvas();
+    // Clear the entire canvas with a transparent black to prevent ghost images.
+    canvas->clear(SK_ColorTRANSPARENT);
+    canvas->save();
+
+    // Before doing any drawing, let's make sure that we'll start at the origin of the display.
+    // Some displays don't start at 0,0 for example when we're mirroring the screen. Also, virtual
+    // displays might have different scaling when compared to the physical screen.
+
+    canvas->clipRect(getSkRect(display.physicalDisplay));
+    canvas->translate(display.physicalDisplay.left, display.physicalDisplay.top);
+
+    const auto clipWidth = display.clip.width();
+    const auto clipHeight = display.clip.height();
+    auto rotatedClipWidth = clipWidth;
+    auto rotatedClipHeight = clipHeight;
+    // Scale is contingent on the rotation result.
+    if (display.orientation & ui::Transform::ROT_90) {
+        std::swap(rotatedClipWidth, rotatedClipHeight);
+    }
+    const auto scaleX = static_cast<SkScalar>(display.physicalDisplay.width()) /
+            static_cast<SkScalar>(rotatedClipWidth);
+    const auto scaleY = static_cast<SkScalar>(display.physicalDisplay.height()) /
+            static_cast<SkScalar>(rotatedClipHeight);
+    canvas->scale(scaleX, scaleY);
+
+    // Canvas rotation is done by centering the clip window at the origin, rotating, translating
+    // back so that the top left corner of the clip is at (0, 0).
+    canvas->translate(rotatedClipWidth / 2, rotatedClipHeight / 2);
+    canvas->rotate(toDegrees(display.orientation));
+    canvas->translate(-clipWidth / 2, -clipHeight / 2);
+    canvas->translate(-display.clip.left, -display.clip.top);
     for (const auto& layer : layers) {
         SkPaint paint;
         const auto& bounds = layer->geometry.boundaries;
-        const auto dest = SkRect::MakeLTRB(bounds.left, bounds.top, bounds.right, bounds.bottom);
+        const auto dest = getSkRect(bounds);
+
+        if (layer->backgroundBlurRadius > 0) {
+            ATRACE_NAME("BackgroundBlur");
+            mBlurFilter->draw(canvas, surface, layer->backgroundBlurRadius);
+        }
 
         if (layer->source.buffer.buffer) {
             ATRACE_NAME("DrawImage");
             const auto& item = layer->source.buffer;
+            const auto bufferWidth = item.buffer->getBounds().width();
+            const auto bufferHeight = item.buffer->getBounds().height();
             sk_sp<SkImage> image;
             auto iter = mImageCache.find(item.buffer->getId());
             if (iter != mImageCache.end()) {
@@ -409,7 +519,11 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                 image = SkImage::MakeFromAHardwareBuffer(item.buffer->toAHardwareBuffer(),
                                                          item.usePremultipliedAlpha
                                                                  ? kPremul_SkAlphaType
-                                                                 : kUnpremul_SkAlphaType);
+                                                                 : kUnpremul_SkAlphaType,
+                                                         mUseColorManagement
+                                                                 ? toColorSpace(
+                                                                           layer->sourceDataspace)
+                                                                 : SkColorSpace::MakeSRGB());
                 mImageCache.insert({item.buffer->getId(), image});
             }
 
@@ -421,6 +535,38 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             } else {
                 matrix.setIdentity();
             }
+
+            auto texMatrix = getSkM44(item.textureTransform).asM33();
+            // textureTansform was intended to be passed directly into a shader, so when
+            // building the total matrix with the textureTransform we need to first
+            // normalize it, then apply the textureTransform, then scale back up.
+            matrix.postScale(1.0f / bufferWidth, 1.0f / bufferHeight);
+
+            auto rotatedBufferWidth = bufferWidth;
+            auto rotatedBufferHeight = bufferHeight;
+
+            // Swap the buffer width and height if we're rotating, so that we
+            // scale back up by the correct factors post-rotation.
+            if (texMatrix.getSkewX() <= -0.5f || texMatrix.getSkewX() >= 0.5f) {
+                std::swap(rotatedBufferWidth, rotatedBufferHeight);
+                // TODO: clean this up.
+                // GLESRenderEngine specifies its texture coordinates in
+                // CW orientation under OpenGL conventions, when they probably should have
+                // been CCW instead. The net result is that orientation
+                // transforms are applied in the reverse
+                // direction to render the correct result, because SurfaceFlinger uses the inverse
+                // of the display transform to correct for that. But this means that
+                // the tex transform passed by SkiaGLRenderEngine will rotate
+                // individual layers in the reverse orientation. Hack around it
+                // by injected a 180 degree rotation, but ultimately this is
+                // a bug in how SurfaceFlinger invokes the RenderEngine
+                // interface, so the proper fix should live there, and GLESRenderEngine
+                // should be fixed accordingly.
+                matrix.postRotate(180, 0.5, 0.5);
+            }
+
+            matrix.postConcat(texMatrix);
+            matrix.postScale(rotatedBufferWidth, rotatedBufferHeight);
             paint.setShader(image->makeShader(matrix));
         } else {
             ATRACE_NAME("DrawColor");
@@ -428,16 +574,31 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             paint.setColor(SkColor4f{.fR = color.r, .fG = color.g, .fB = color.b, layer->alpha});
         }
 
+        paint.setColorFilter(SkColorFilters::Matrix(toSkColorMatrix(display.colorTransform)));
+
+        // Layers have a local transform matrix that should be applied to them.
+        canvas->save();
+        canvas->concat(getSkM44(layer->geometry.positionTransform));
+
+        if (layer->shadow.length > 0) {
+            const auto rect = layer->geometry.roundedCornersRadius > 0
+                    ? getSkRect(layer->geometry.roundedCornersCrop)
+                    : dest;
+            drawShadow(canvas, rect, layer->geometry.roundedCornersRadius, layer->shadow);
+        }
+
         if (layer->geometry.roundedCornersRadius > 0) {
             canvas->drawRRect(getRoundedRect(layer), paint);
         } else {
             canvas->drawRect(dest, paint);
         }
+        canvas->restore();
     }
     {
         ATRACE_NAME("flush surface");
         surface->flush();
     }
+    canvas->restore();
 
     if (drawFence != nullptr) {
         *drawFence = flush();
@@ -464,11 +625,33 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
     return NO_ERROR;
 }
 
+inline SkRect SkiaGLRenderEngine::getSkRect(const FloatRect& rect) {
+    return SkRect::MakeLTRB(rect.left, rect.top, rect.right, rect.bottom);
+}
+
+inline SkRect SkiaGLRenderEngine::getSkRect(const Rect& rect) {
+    return SkRect::MakeLTRB(rect.left, rect.top, rect.right, rect.bottom);
+}
+
 inline SkRRect SkiaGLRenderEngine::getRoundedRect(const LayerSettings* layer) {
-    const auto& crop = layer->geometry.roundedCornersCrop;
-    const auto rect = SkRect::MakeLTRB(crop.left, crop.top, crop.right, crop.bottom);
+    const auto rect = getSkRect(layer->geometry.roundedCornersCrop);
     const auto cornerRadius = layer->geometry.roundedCornersRadius;
     return SkRRect::MakeRectXY(rect, cornerRadius, cornerRadius);
+}
+
+inline SkColor SkiaGLRenderEngine::getSkColor(const vec4& color) {
+    return SkColorSetARGB(color.a * 255, color.r * 255, color.g * 255, color.b * 255);
+}
+
+inline SkM44 SkiaGLRenderEngine::getSkM44(const mat4& matrix) {
+    return SkM44(matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0],
+                 matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1],
+                 matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2],
+                 matrix[0][3], matrix[1][3], matrix[2][3], matrix[3][3]);
+}
+
+inline SkPoint3 SkiaGLRenderEngine::getSkPoint3(const vec3& vector) {
+    return SkPoint3::Make(vector.x, vector.y, vector.z);
 }
 
 size_t SkiaGLRenderEngine::getMaxTextureSize() const {
@@ -477,6 +660,22 @@ size_t SkiaGLRenderEngine::getMaxTextureSize() const {
 
 size_t SkiaGLRenderEngine::getMaxViewportDims() const {
     return mGrContext->maxRenderTargetSize();
+}
+
+void SkiaGLRenderEngine::drawShadow(SkCanvas* canvas, const SkRect& casterRect, float cornerRadius,
+                                    const ShadowSettings& settings) {
+    ATRACE_CALL();
+    const float casterZ = settings.length / 2.0f;
+    const auto shadowShape = cornerRadius > 0
+            ? SkPath::RRect(SkRRect::MakeRectXY(casterRect, cornerRadius, cornerRadius))
+            : SkPath::Rect(casterRect);
+    const auto flags =
+            settings.casterIsTranslucent ? kTransparentOccluder_ShadowFlag : kNone_ShadowFlag;
+
+    SkShadowUtils::DrawShadow(canvas, shadowShape, SkPoint3::Make(0, 0, casterZ),
+                              getSkPoint3(settings.lightPos), settings.lightRadius,
+                              getSkColor(settings.ambientColor), getSkColor(settings.spotColor),
+                              flags);
 }
 
 EGLContext SkiaGLRenderEngine::createEglContext(EGLDisplay display, EGLConfig config,

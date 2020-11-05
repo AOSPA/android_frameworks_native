@@ -1322,7 +1322,7 @@ protected:
         {
             TransactionScope ts(*sFakeComposer);
             ts.setAlpha(mFGSurfaceControl, 0.75);
-            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl,
                                             syncSurfaceControl->getSurface()->getNextFrameNumber());
         }
         EXPECT_TRUE(framesAreSame(referenceFrame, sFakeComposer->getLatestFrame()));
@@ -1330,7 +1330,7 @@ protected:
         {
             TransactionScope ts(*sFakeComposer);
             ts.setPosition(mFGSurfaceControl, 128, 128);
-            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl,
                                             syncSurfaceControl->getSurface()->getNextFrameNumber() +
                                                     1);
         }
@@ -1376,7 +1376,7 @@ protected:
             TransactionScope ts(*sFakeComposer);
             ts.setPosition(relativeSurfaceControl, 64, 64);
             ts.show(relativeSurfaceControl);
-            ts.setRelativeLayer(relativeSurfaceControl, mFGSurfaceControl->getHandle(), 1);
+            ts.setRelativeLayer(relativeSurfaceControl, mFGSurfaceControl, 1);
         }
         auto referenceFrame = mBaseFrame;
         // NOTE: All three layers will be visible as the surfaces are
@@ -1606,7 +1606,7 @@ protected:
 
         {
             TransactionScope ts(*Base::sFakeComposer);
-            ts.reparentChildren(Base::mFGSurfaceControl, Base::mBGSurfaceControl->getHandle());
+            ts.reparentChildren(Base::mFGSurfaceControl, Base::mBGSurfaceControl);
         }
 
         auto referenceFrame2 = referenceFrame;
@@ -1691,30 +1691,6 @@ protected:
         EXPECT_TRUE(framesAreSame(referenceFrame, Base::sFakeComposer->getLatestFrame()));
     }
 
-    void Test_InheritNonTransformScalingFromParent() {
-        {
-            TransactionScope ts(*Base::sFakeComposer);
-            ts.show(mChild);
-            ts.setPosition(mChild, 0, 0);
-            ts.setPosition(Base::mFGSurfaceControl, 0, 0);
-        }
-
-        {
-            TransactionScope ts(*Base::sFakeComposer);
-            ts.setOverrideScalingMode(Base::mFGSurfaceControl,
-                                      NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-            // We cause scaling by 2.
-            ts.setSize(Base::mFGSurfaceControl, 128, 128);
-        }
-
-        auto referenceFrame = Base::mBaseFrame;
-        referenceFrame[Base::FG_LAYER].mDisplayFrame = hwc_rect_t{0, 0, 128, 128};
-        referenceFrame[Base::FG_LAYER].mSourceCrop = hwc_frect_t{0.f, 0.f, 64.f, 64.f};
-        referenceFrame[CHILD_LAYER].mDisplayFrame = hwc_rect_t{0, 0, 20, 20};
-        referenceFrame[CHILD_LAYER].mSourceCrop = hwc_frect_t{0.f, 0.f, 10.f, 10.f};
-        EXPECT_TRUE(framesAreSame(referenceFrame, Base::sFakeComposer->getLatestFrame()));
-    }
-
     // Regression test for b/37673612
     void Test_ChildrenWithParentBufferTransform() {
         {
@@ -1761,7 +1737,7 @@ protected:
         // Show the child layer in a deferred transaction
         {
             TransactionScope ts(*Base::sFakeComposer);
-            ts.deferTransactionUntil_legacy(mChild, Base::mFGSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mChild, Base::mFGSurfaceControl,
                                             Base::mFGSurfaceControl->getSurface()
                                                     ->getNextFrameNumber());
             ts.show(mChild);
@@ -1821,10 +1797,6 @@ TEST_F(ChildLayerTest_2_1, DISABLED_DetachChildrenSameClient) {
 
 TEST_F(ChildLayerTest_2_1, DISABLED_DetachChildrenDifferentClient) {
     Test_DetachChildrenDifferentClient();
-}
-
-TEST_F(ChildLayerTest_2_1, DISABLED_InheritNonTransformScalingFromParent) {
-    Test_InheritNonTransformScalingFromParent();
 }
 
 // Regression test for b/37673612

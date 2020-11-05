@@ -71,6 +71,10 @@ namespace impl {
 class SurfaceInterceptor;
 }
 
+namespace frametimeline {
+class SurfaceFrame;
+} // namespace frametimeline
+
 struct LayerCreationArgs {
     LayerCreationArgs(SurfaceFlinger*, sp<Client>, std::string name, uint32_t w, uint32_t h,
                       uint32_t flags, LayerMetadata);
@@ -187,7 +191,7 @@ public:
         // If set, defers this state update until the identified Layer
         // receives a frame with the given frameNumber
         wp<Layer> barrierLayer_legacy;
-        uint64_t frameNumber_legacy;
+        uint64_t barrierFrameNumber;
 
         // the transparentRegion hint is a bit special, it's latched only
         // when we receive a buffer -- this is because it's "content"
@@ -267,6 +271,12 @@ public:
         // a buffer of a different size. ui::Transform::ROT_INVALID means the
         // a fixed transform hint is not set.
         ui::Transform::RotationFlags fixedTransformHint;
+
+        // The vsync id that was used to start the transaction
+        int64_t frameTimelineVsyncId;
+
+        // When the transaction was posted
+        nsecs_t postTime;
     };
 
     /*
@@ -331,7 +341,6 @@ public:
     //
     // The first set of geometry functions are controlled by the scaling mode, described
     // in window.h. The scaling mode may be set by the client, as it submits buffers.
-    // This value may be overriden through SurfaceControl, with setOverrideScalingMode.
     //
     // Put simply, if our scaling mode is SCALING_MODE_FREEZE, then
     // matrix updates will not be applied while a resize is pending
@@ -389,7 +398,6 @@ public:
     virtual void deferTransactionUntil_legacy(const sp<IBinder>& barrierHandle,
                                               uint64_t frameNumber);
     virtual void deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber);
-    virtual bool setOverrideScalingMode(int32_t overrideScalingMode);
     virtual bool setMetadata(const LayerMetadata& data);
     virtual void setChildrenDrawingParent(const sp<Layer>&);
     virtual bool reparent(const sp<IBinder>& newParentHandle);
@@ -406,7 +414,7 @@ public:
     virtual bool setFrame(const Rect& /*frame*/) { return false; };
     virtual bool setBuffer(const sp<GraphicBuffer>& /*buffer*/, const sp<Fence>& /*acquireFence*/,
                            nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
-                           const client_cache_t& /*clientCacheId*/) {
+                           const client_cache_t& /*clientCacheId*/, uint64_t /* frameNumber */) {
         return false;
     };
     virtual bool setAcquireFence(const sp<Fence>& /*fence*/) { return false; };
@@ -509,6 +517,8 @@ public:
     virtual bool isHdrY410() const { return false; }
 
     virtual bool shouldPresentNow(nsecs_t /*expectedPresentTime*/) const { return false; }
+
+    virtual uint64_t getHeadFrameNumber(nsecs_t /* expectedPresentTime */) const { return 0; }
 
     /*
      * called after composition.
@@ -699,8 +709,7 @@ public:
 
     InputWindowInfo::Type getWindowType() const { return mWindowType; }
 
-    void setPrimaryDisplayOnly() { mPrimaryDisplayOnly = true; }
-    bool getPrimaryDisplayOnly() const { return mPrimaryDisplayOnly; }
+    bool getPrimaryDisplayOnly() const;
 
     void updateMirrorInfo();
 
@@ -826,7 +835,8 @@ public:
 
     bool setFrameRate(FrameRate);
 
-    void setFrameTimelineVsync(int64_t frameTimelineVsyncId);
+    virtual void setFrameTimelineVsyncForBuffer(int64_t /*frameTimelineVsyncId*/) {}
+    void setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, nsecs_t postTime);
 
     // Creates a new handle each time, so we only expect
     // this to be called once.
@@ -970,8 +980,6 @@ protected:
     const std::string mName;
     const std::string mTransactionName{"TX - " + mName};
 
-    bool mPrimaryDisplayOnly = false;
-
     // These are only accessed by the main thread or the tracing thread.
     State mDrawingState;
     // Store a copy of the pending state so that the drawing thread can access the
@@ -1002,7 +1010,6 @@ protected:
     bool mIsActiveBufferUpdatedForGpu = true;
 
     // We encode unset as -1.
-    int32_t mOverrideScalingMode{-1};
     std::atomic<uint64_t> mCurrentFrameNumber{0};
     // Whether filtering is needed b/c of the drawingstate
     bool mNeedsFiltering{false};
@@ -1033,11 +1040,11 @@ protected:
     // Can only be accessed with the SF state lock held.
     bool mChildrenChanged{false};
 
-    // Can only be accessed with the SF state lock held.
-    std::optional<int64_t> mFrameTimelineVsyncId;
-
     // Window types from WindowManager.LayoutParams
     const InputWindowInfo::Type mWindowType;
+
+    // Can only be accessed with the SF state lock held.
+    std::unique_ptr<frametimeline::SurfaceFrame> mSurfaceFrame;
 
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}

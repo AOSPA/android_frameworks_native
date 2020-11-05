@@ -137,6 +137,8 @@ public:
 
     void setDisplayPowerState(bool normal);
 
+    scheduler::VSyncDispatch& getVsyncDispatch() { return *mVsyncSchedule.dispatch; }
+
     void dump(std::string&) const;
     void dump(ConnectionHandle, std::string&) const;
     void dumpVsync(std::string&) const;
@@ -228,7 +230,8 @@ private:
     };
 
     ConnectionHandle::Id mNextConnectionHandleId = 0;
-    std::unordered_map<ConnectionHandle, Connection> mConnections;
+    mutable std::mutex mConnectionsLock;
+    std::unordered_map<ConnectionHandle, Connection> mConnections GUARDED_BY(mConnectionsLock);
 
     bool mInjectVSyncs = false;
     InjectVSyncSource* mVSyncInjector = nullptr;

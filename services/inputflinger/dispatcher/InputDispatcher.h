@@ -95,10 +95,10 @@ public:
     virtual void notifySwitch(const NotifySwitchArgs* args) override;
     virtual void notifyDeviceReset(const NotifyDeviceResetArgs* args) override;
 
-    virtual int32_t injectInputEvent(const InputEvent* event, int32_t injectorPid,
-                                     int32_t injectorUid, int32_t syncMode,
-                                     std::chrono::milliseconds timeout,
-                                     uint32_t policyFlags) override;
+    virtual android::os::InputEventInjectionResult injectInputEvent(
+            const InputEvent* event, int32_t injectorPid, int32_t injectorUid,
+            android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
+            uint32_t policyFlags) override;
 
     virtual std::unique_ptr<VerifiedInputEvent> verifyInputEvent(const InputEvent& event) override;
 
@@ -112,16 +112,18 @@ public:
     virtual void setInputDispatchMode(bool enabled, bool frozen) override;
     virtual void setInputFilterEnabled(bool enabled) override;
     virtual void setInTouchMode(bool inTouchMode) override;
+    virtual void setMaximumObscuringOpacityForTouch(float opacity) override;
+    virtual void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) override;
 
     virtual bool transferTouchFocus(const sp<IBinder>& fromToken,
                                     const sp<IBinder>& toToken) override;
 
-    virtual status_t registerInputChannel(
-            const std::shared_ptr<InputChannel>& inputChannel) override;
+    virtual base::Result<std::unique_ptr<InputChannel>> createInputChannel(
+            const std::string& name) override;
     virtual void setFocusedWindow(const FocusRequest&) override;
-    virtual status_t registerInputMonitor(const std::shared_ptr<InputChannel>& inputChannel,
-                                          int32_t displayId, bool isGestureMonitor) override;
-    virtual status_t unregisterInputChannel(const sp<IBinder>& connectionToken) override;
+    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(
+            int32_t displayId, bool isGestureMonitor, const std::string& name) override;
+    virtual status_t removeInputChannel(const sp<IBinder>& connectionToken) override;
     virtual status_t pilferPointers(const sp<IBinder>& token) override;
 
     std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
@@ -240,7 +242,8 @@ private:
     // Event injection and synchronization.
     std::condition_variable mInjectionResultAvailable;
     bool hasInjectionPermission(int32_t injectorPid, int32_t injectorUid);
-    void setInjectionResult(EventEntry* entry, int32_t injectionResult);
+    void setInjectionResult(EventEntry* entry,
+                            android::os::InputEventInjectionResult injectionResult);
 
     std::condition_variable mInjectionSyncFinished;
     void incrementPendingForegroundDispatches(EventEntry* entry);
@@ -296,6 +299,8 @@ private:
     bool mDispatchFrozen GUARDED_BY(mLock);
     bool mInputFilterEnabled GUARDED_BY(mLock);
     bool mInTouchMode GUARDED_BY(mLock);
+    float mMaximumObscuringOpacityForTouch GUARDED_BY(mLock);
+    android::os::BlockUntrustedTouchesMode mBlockUntrustedTouchesMode GUARDED_BY(mLock);
 
     std::unordered_map<int32_t, std::vector<sp<InputWindowHandle>>> mWindowHandlesByDisplay
             GUARDED_BY(mLock);
@@ -390,6 +395,11 @@ private:
      * Used to raise an ANR when we have no focused window.
      */
     std::shared_ptr<InputApplicationHandle> mAwaitedFocusedApplication GUARDED_BY(mLock);
+    /**
+     * The displayId that the focused application is associated with.
+     */
+    int32_t mAwaitedApplicationDisplayId GUARDED_BY(mLock);
+    void processNoFocusedWindowAnrLocked() REQUIRES(mLock);
 
     /**
      * This map will store the pending focus requests that cannot be currently processed. This can
@@ -422,13 +432,12 @@ private:
     void resetNoFocusedWindowTimeoutLocked() REQUIRES(mLock);
 
     int32_t getTargetDisplayId(const EventEntry& entry);
-    int32_t findFocusedWindowTargetsLocked(nsecs_t currentTime, const EventEntry& entry,
-                                           std::vector<InputTarget>& inputTargets,
-                                           nsecs_t* nextWakeupTime) REQUIRES(mLock);
-    int32_t findTouchedWindowTargetsLocked(nsecs_t currentTime, const MotionEntry& entry,
-                                           std::vector<InputTarget>& inputTargets,
-                                           nsecs_t* nextWakeupTime,
-                                           bool* outConflictingPointerActions) REQUIRES(mLock);
+    android::os::InputEventInjectionResult findFocusedWindowTargetsLocked(
+            nsecs_t currentTime, const EventEntry& entry, std::vector<InputTarget>& inputTargets,
+            nsecs_t* nextWakeupTime) REQUIRES(mLock);
+    android::os::InputEventInjectionResult findTouchedWindowTargetsLocked(
+            nsecs_t currentTime, const MotionEntry& entry, std::vector<InputTarget>& inputTargets,
+            nsecs_t* nextWakeupTime, bool* outConflictingPointerActions) REQUIRES(mLock);
     std::vector<TouchedMonitor> findTouchedGestureMonitorsLocked(
             int32_t displayId, const std::vector<sp<InputWindowHandle>>& portalWindows) const
             REQUIRES(mLock);
@@ -446,6 +455,17 @@ private:
     void pokeUserActivityLocked(const EventEntry& eventEntry) REQUIRES(mLock);
     bool checkInjectionPermission(const sp<InputWindowHandle>& windowHandle,
                                   const InjectionState* injectionState);
+
+    struct TouchOcclusionInfo {
+        bool hasBlockingOcclusion;
+        float obscuringOpacity;
+        std::string obscuringPackage;
+        int32_t obscuringUid;
+    };
+
+    TouchOcclusionInfo computeTouchOcclusionInfoLocked(const sp<InputWindowHandle>& windowHandle,
+                                                       int32_t x, int32_t y) const REQUIRES(mLock);
+    bool isTouchTrustedLocked(const TouchOcclusionInfo& occlusionInfo) const REQUIRES(mLock);
     bool isWindowObscuredAtPointLocked(const sp<InputWindowHandle>& windowHandle, int32_t x,
                                        int32_t y) const REQUIRES(mLock);
     bool isWindowObscuredLocked(const sp<InputWindowHandle>& windowHandle) const REQUIRES(mLock);
@@ -513,7 +533,7 @@ private:
     void removeMonitorChannelLocked(
             const sp<IBinder>& connectionToken,
             std::unordered_map<int32_t, std::vector<Monitor>>& monitorsByDisplay) REQUIRES(mLock);
-    status_t unregisterInputChannelLocked(const sp<IBinder>& connectionToken, bool notify)
+    status_t removeInputChannelLocked(const sp<IBinder>& connectionToken, bool notify)
             REQUIRES(mLock);
 
     // Interesting events that we might like to log or tell the framework about.
@@ -525,8 +545,9 @@ private:
                               int32_t displayId, std::string_view reason) REQUIRES(mLock);
     void notifyFocusChangedLocked(const sp<IBinder>& oldFocus, const sp<IBinder>& newFocus)
             REQUIRES(mLock);
-    void onAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
+    void onAnrLocked(const Connection& connection) REQUIRES(mLock);
     void onAnrLocked(const std::shared_ptr<InputApplicationHandle>& application) REQUIRES(mLock);
+    void onUntrustedTouchLocked(const std::string& obscuringPackage) REQUIRES(mLock);
     void updateLastAnrStateLocked(const sp<InputWindowHandle>& window, const std::string& reason)
             REQUIRES(mLock);
     void updateLastAnrStateLocked(const std::shared_ptr<InputApplicationHandle>& application,
@@ -540,6 +561,7 @@ private:
     void doNotifyInputChannelBrokenLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doNotifyFocusChangedLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doNotifyAnrLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
+    void doNotifyUntrustedTouchLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doInterceptKeyBeforeDispatchingLockedInterruptible(CommandEntry* commandEntry)
             REQUIRES(mLock);
     void doDispatchCycleFinishedLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);

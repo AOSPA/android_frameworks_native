@@ -29,6 +29,13 @@ cc_test {
 }
 
 cc_test {
+    name: "DisplayId_test",
+    shared_libs: ["libui"],
+    srcs: ["DisplayId_test.cpp"],
+    cflags: ["-Wall", "-Werror"],
+}
+
+cc_test {
     name: "FlattenableHelpers_test",
     shared_libs: ["libui"],
     srcs: ["FlattenableHelpers_test.cpp"],
@@ -82,6 +89,14 @@ cc_test {
         "libui",
         "libutils",
     ],
+}
+
+cc_test {
+    name: "Rect_test",
+    test_suites: ["device-tests"],
+    shared_libs: ["libui"],
+    srcs: ["Rect_test.cpp"],
+    cflags: ["-Wall", "-Werror"],
 }
 
 cc_test {

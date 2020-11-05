@@ -61,7 +61,7 @@ public:
     status_t start() override;
     status_t stop() override;
 
-    void getInputDevices(std::vector<InputDeviceInfo>& outInputDevices) override;
+    std::vector<InputDeviceInfo> getInputDevices() const override;
 
     bool isInputDeviceEnabled(int32_t deviceId) override;
 
@@ -121,7 +121,7 @@ protected:
 private:
     std::unique_ptr<InputThread> mThread;
 
-    Mutex mLock;
+    mutable Mutex mLock;
 
     Condition mReaderIsAliveCondition;
 
@@ -141,6 +141,11 @@ private:
     // An input device can represent a collection of EventHub devices. This map provides a way
     // to lookup the input device instance from the EventHub device id.
     std::unordered_map<int32_t /*eventHubId*/, std::shared_ptr<InputDevice>> mDevices;
+
+    // An input device contains one or more eventHubId, this map provides a way to lookup the
+    // EventHubIds contained in the input device from the input device instance.
+    std::unordered_map<std::shared_ptr<InputDevice>, std::vector<int32_t> /*eventHubId*/>
+            mDeviceToEventHubIdsMap;
 
     // low-level input event decoding and device management
     void processEventsLocked(const RawEvent* rawEvents, size_t count);
@@ -176,7 +181,7 @@ private:
     int32_t mNextInputDeviceId;
     int32_t nextInputDeviceIdLocked();
 
-    void getInputDevicesLocked(std::vector<InputDeviceInfo>& outInputDevices);
+    std::vector<InputDeviceInfo> getInputDevicesLocked() const;
 
     nsecs_t mDisableVirtualKeysTimeout;
     void disableVirtualKeysUntilLocked(nsecs_t time);

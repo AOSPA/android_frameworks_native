@@ -30,6 +30,12 @@ cc_library_headers {
     min_sdk_version: "29",
 }
 
+filegroup {
+    name: "libgui_aidl",
+    srcs: ["aidl/**/*.aidl"],
+    path: "aidl/",
+}
+
 cc_defaults {
     name: "libgui_defaults",
     double_loadable: true,
@@ -38,6 +44,7 @@ cc_defaults {
 
     srcs: [
         ":framework_native_aidl",
+        ":libgui_aidl",
         ":libgui_bufferqueue_sources",
 
         "BitTube.cpp",
@@ -70,6 +77,7 @@ cc_defaults {
         "SurfaceControl.cpp",
         "SurfaceComposerClient.cpp",
         "SyncFeatures.cpp",
+        "TransactionTracing.cpp",
         "view/Surface.cpp",
         "bufferqueue/1.0/B2HProducerListener.cpp",
         "bufferqueue/1.0/H2BGraphicBufferProducer.cpp",
@@ -141,6 +149,7 @@ cc_library_static {
     defaults: ["libgui_bufferqueue-defaults"],
 
     srcs: [
+        ":libgui_aidl",
         ":libgui_bufferqueue_sources",
     ],
 }

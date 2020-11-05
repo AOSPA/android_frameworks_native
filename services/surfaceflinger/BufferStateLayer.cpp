@@ -48,7 +48,6 @@ const std::array<float, 16> BufferStateLayer::IDENTITY_MATRIX{
 
 BufferStateLayer::BufferStateLayer(const LayerCreationArgs& args)
       : BufferLayer(args), mHwcSlotGenerator(new HwcSlotGenerator()) {
-    mOverrideScalingMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
     mCurrentState.dataspace = ui::Dataspace::V0_SRGB;
 }
 
@@ -161,6 +160,10 @@ void BufferStateLayer::pushPendingState() {
 bool BufferStateLayer::applyPendingStates(Layer::State* stateToCommit) {
     mCurrentStateModified = mCurrentState.modified;
     bool stateUpdateAvailable = Layer::applyPendingStates(stateToCommit);
+    if (stateUpdateAvailable && mCallbackHandleAcquireTime != -1) {
+        // Update the acquire fence time if we have a buffer
+        mSurfaceFrame->setAcquireFenceTime(mCallbackHandleAcquireTime);
+    }
     mCurrentStateModified = stateUpdateAvailable && mCurrentStateModified;
     mCurrentState.modified = false;
     return stateUpdateAvailable;
@@ -258,12 +261,12 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
 
 bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence,
                                  nsecs_t postTime, nsecs_t desiredPresentTime,
-                                 const client_cache_t& clientCacheId) {
+                                 const client_cache_t& clientCacheId, uint64_t frameNumber) {
     if (mCurrentState.buffer) {
         mReleasePreviousBuffer = true;
     }
 
-    mCurrentState.frameNumber++;
+    mCurrentState.frameNumber = frameNumber;
 
     mCurrentState.buffer = buffer;
     mCurrentState.clientCacheId = clientCacheId;
@@ -675,6 +678,10 @@ void BufferStateLayer::gatherBufferInfo() {
     mBufferInfo.mApi = s.api;
     mBufferInfo.mTransformToDisplayInverse = s.transformToDisplayInverse;
     mBufferInfo.mBufferSlot = mHwcSlotGenerator->getHwcCacheSlot(s.clientCacheId);
+}
+
+uint32_t BufferStateLayer::getEffectiveScalingMode() const {
+   return NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
 }
 
 Rect BufferStateLayer::computeCrop(const State& s) {

@@ -179,19 +179,6 @@ TEST_P(LayerRenderTypeTransactionTest, SetSizeBasic_BufferQueue) {
     }
 }
 
-TEST_P(LayerRenderTypeTransactionTest, SetSizeWithScaleToWindow_BufferQueue) {
-    sp<SurfaceControl> layer;
-    ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
-    ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
-
-    // setSize is immediate with SCALE_TO_WINDOW, unlike setPosition
-    Transaction()
-            .setSize(layer, 64, 64)
-            .setOverrideScalingMode(layer, NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW)
-            .apply();
-    getScreenCapture()->expectColor(Rect(0, 0, 64, 64), Color::RED);
-}
-
 TEST_P(LayerRenderTypeTransactionTest, CreateLayer_BufferState) {
     uint32_t transformHint = ui::Transform::ROT_INVALID;
     sp<SurfaceControl> layer;
@@ -211,16 +198,13 @@ void LayerRenderTypeTransactionTest::setRelativeZBasicHelper(uint32_t layerType)
 
     switch (layerType) {
         case ISurfaceComposerClient::eFXSurfaceBufferQueue:
-            Transaction()
-                    .setPosition(layerG, 16, 16)
-                    .setRelativeLayer(layerG, layerR->getHandle(), 1)
-                    .apply();
+            Transaction().setPosition(layerG, 16, 16).setRelativeLayer(layerG, layerR, 1).apply();
             break;
         case ISurfaceComposerClient::eFXSurfaceBufferState:
             Transaction()
                     .setFrame(layerR, Rect(0, 0, 32, 32))
                     .setFrame(layerG, Rect(16, 16, 48, 48))
-                    .setRelativeLayer(layerG, layerR->getHandle(), 1)
+                    .setRelativeLayer(layerG, layerR, 1)
                     .apply();
             break;
         default:
@@ -233,7 +217,7 @@ void LayerRenderTypeTransactionTest::setRelativeZBasicHelper(uint32_t layerType)
         shot->expectColor(Rect(16, 16, 48, 48), Color::GREEN);
     }
 
-    Transaction().setRelativeLayer(layerG, layerR->getHandle(), -1).apply();
+    Transaction().setRelativeLayer(layerG, layerR, -1).apply();
     {
         SCOPED_TRACE("layerG below");
         auto shot = getScreenCapture();
@@ -266,7 +250,7 @@ void LayerRenderTypeTransactionTest::setRelativeZGroupHelper(uint32_t layerType)
         case ISurfaceComposerClient::eFXSurfaceBufferQueue:
             Transaction()
                     .setPosition(layerG, 8, 8)
-                    .setRelativeLayer(layerG, layerR->getHandle(), 3)
+                    .setRelativeLayer(layerG, layerR, 3)
                     .setPosition(layerB, 16, 16)
                     .setLayer(layerB, mLayerZBase + 2)
                     .apply();
@@ -275,7 +259,7 @@ void LayerRenderTypeTransactionTest::setRelativeZGroupHelper(uint32_t layerType)
             Transaction()
                     .setFrame(layerR, Rect(0, 0, 32, 32))
                     .setFrame(layerG, Rect(8, 8, 40, 40))
-                    .setRelativeLayer(layerG, layerR->getHandle(), 3)
+                    .setRelativeLayer(layerG, layerR, 3)
                     .setFrame(layerB, Rect(16, 16, 48, 48))
                     .setLayer(layerB, mLayerZBase + 2)
                     .apply();
@@ -303,7 +287,7 @@ void LayerRenderTypeTransactionTest::setRelativeZGroupHelper(uint32_t layerType)
     }
 
     // layerR = 4, layerG = layerR - 3, layerB = 2
-    Transaction().setRelativeLayer(layerG, layerR->getHandle(), -3).apply();
+    Transaction().setRelativeLayer(layerG, layerR, -3).apply();
     {
         SCOPED_TRACE("layerB < (layerG < layerR)");
         auto shot = getScreenCapture();
@@ -810,7 +794,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorWithParentAlpha_Bug74220420) {
     // channel) should be less than one
     const uint8_t tolerance = 1;
     Transaction()
-            .reparent(colorLayer, parentLayer->getHandle())
+            .reparent(colorLayer, parentLayer)
             .setColor(colorLayer, color)
             .setAlpha(parentLayer, alpha)
             .setLayer(parentLayer, mLayerZBase + 1)
@@ -950,40 +934,6 @@ TEST_P(LayerRenderTypeTransactionTest, SetMatrixWithResize_BufferQueue) {
         SCOPED_TRACE("resize applied");
         const Rect rect(0, 0, 128, 128);
         getScreenCapture()->expectColor(rect, Color::RED);
-    }
-}
-
-TEST_P(LayerRenderTypeTransactionTest, SetMatrixWithScaleToWindow_BufferQueue) {
-    sp<SurfaceControl> layer;
-    ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
-    ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
-
-    // setMatrix is immediate with SCALE_TO_WINDOW, unlike setPosition
-    Transaction()
-            .setMatrix(layer, 2.0f, 0.0f, 0.0f, 2.0f)
-            .setSize(layer, 64, 64)
-            .setOverrideScalingMode(layer, NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW)
-            .apply();
-    getScreenCapture()->expectColor(Rect(0, 0, 128, 128), Color::RED);
-}
-
-TEST_P(LayerRenderTypeTransactionTest, SetOverrideScalingModeBasic_BufferQueue) {
-    sp<SurfaceControl> layer;
-    ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
-    ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerQuadrant(layer, 32, 32, Color::RED, Color::GREEN,
-                                                         Color::BLUE, Color::WHITE));
-
-    // XXX SCALE_CROP is not respected; calling setSize and
-    // setOverrideScalingMode in separate transactions does not work
-    // (b/69315456)
-    Transaction()
-            .setSize(layer, 64, 16)
-            .setOverrideScalingMode(layer, NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW)
-            .apply();
-    {
-        SCOPED_TRACE("SCALE_TO_WINDOW");
-        getScreenCapture()->expectQuadrant(Rect(0, 0, 64, 16), Color::RED, Color::GREEN,
-                                           Color::BLUE, Color::WHITE, true /* filtered */);
     }
 }
 
@@ -1225,7 +1175,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetFrameDefaultBSParent_BufferState) {
             child = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
     ASSERT_NO_FATAL_FAILURE(fillBufferStateLayerColor(child, Color::BLUE, 10, 10));
 
-    Transaction().reparent(child, parent->getHandle()).apply();
+    Transaction().reparent(child, parent).apply();
 
     // A layer will default to the frame of its parent
     auto shot = getScreenCapture();
@@ -1242,7 +1192,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetFrameDefaultBQParent_BufferState) {
             child = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
     ASSERT_NO_FATAL_FAILURE(fillBufferStateLayerColor(child, Color::BLUE, 10, 10));
 
-    Transaction().reparent(child, parent->getHandle()).apply();
+    Transaction().reparent(child, parent).apply();
 
     // A layer will default to the frame of its parent
     auto shot = getScreenCapture();
@@ -1272,7 +1222,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetFrameOutsideBounds_BufferState) {
             parent = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
     ASSERT_NO_FATAL_FAILURE(
             child = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
-    Transaction().reparent(child, parent->getHandle()).apply();
+    Transaction().reparent(child, parent).apply();
 
     ASSERT_NO_FATAL_FAILURE(fillBufferStateLayerColor(parent, Color::RED, 32, 32));
     Transaction().setFrame(parent, Rect(0, 0, 32, 32)).apply();

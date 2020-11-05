@@ -22,6 +22,7 @@
 #include <binder/IBinder.h>
 #include <binder/IInterface.h>
 
+#include <android/gui/ITransactionTraceListener.h>
 #include <gui/IScreenCaptureListener.h>
 #include <gui/ITransactionCompletedListener.h>
 
@@ -108,6 +109,9 @@ public:
 
     enum ConfigChanged { eConfigChangedSuppress = 0, eConfigChangedDispatch = 1 };
 
+    // Needs to be in sync with android.graphics.FrameInfo.INVALID_VSYNC_ID in java
+    static constexpr int64_t INVALID_VSYNC_ID = -1;
+
     /*
      * Create a connection with SurfaceFlinger.
      */
@@ -152,11 +156,11 @@ public:
 
     /* open/close transactions. requires ACCESS_SURFACE_FLINGER permission */
     virtual status_t setTransactionState(
-            const Vector<ComposerState>& state, const Vector<DisplayState>& displays,
-            uint32_t flags, const sp<IBinder>& applyToken,
+            int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
+            const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
             const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
             const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
-            const std::vector<ListenerCallbacks>& listenerCallbacks) = 0;
+            const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) = 0;
 
     /* signal that we're done booting.
      * Requires ACCESS_SURFACE_FLINGER permission
@@ -486,6 +490,12 @@ public:
      */
     virtual status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& surface,
                                            int64_t frameTimelineVsyncId) = 0;
+
+    /*
+     * Adds a TransactionTraceListener to listen for transaction tracing state updates.
+     */
+    virtual status_t addTransactionTraceListener(
+            const sp<gui::ITransactionTraceListener>& listener) = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -546,6 +556,7 @@ public:
         SET_FRAME_RATE,
         ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN,
         SET_FRAME_TIMELINE_VSYNC,
+        ADD_TRANSACTION_TRACE_LISTENER,
         // Always append new enum to the end.
     };
 
