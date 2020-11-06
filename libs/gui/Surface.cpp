@@ -63,7 +63,8 @@ bool isInterceptorRegistrationOp(int op) {
 
 } // namespace
 
-Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controlledByApp)
+Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controlledByApp,
+                 const sp<IBinder>& surfaceControlHandle)
       : mGraphicBufferProducer(bufferProducer),
         mCrop(Rect::EMPTY_RECT),
         mBufferAge(0),
@@ -111,6 +112,7 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mProducerControlledByApp = controlledByApp;
     mSwapIntervalZero = false;
     mMaxBufferCount = NUM_BUFFER_SLOTS;
+    mSurfaceControlHandle = surfaceControlHandle;
 }
 
 Surface::~Surface() {
@@ -1535,7 +1537,7 @@ int Surface::dispatchSetFrameTimelineVsync(va_list args) {
     auto frameTimelineVsyncId = static_cast<int64_t>(va_arg(args, int64_t));
 
     ALOGV("Surface::dispatchSetFrameTimelineVsync");
-    return composerService()->setFrameTimelineVsync(mGraphicBufferProducer, frameTimelineVsyncId);
+    return setFrameTimelineVsync(frameTimelineVsyncId);
 }
 
 bool Surface::transformToDisplayInverse() {
@@ -2300,6 +2302,11 @@ status_t Surface::setFrameRate(float frameRate, int8_t compatibility) {
     }
 
     return composerService()->setFrameRate(mGraphicBufferProducer, frameRate, compatibility);
+}
+
+status_t Surface::setFrameTimelineVsync(int64_t frameTimelineVsyncId) {
+    return composerService()->setFrameTimelineVsync(mGraphicBufferProducer,
+        frameTimelineVsyncId);
 }
 
 }; // namespace android

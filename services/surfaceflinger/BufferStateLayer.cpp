@@ -262,6 +262,8 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
 bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence,
                                  nsecs_t postTime, nsecs_t desiredPresentTime,
                                  const client_cache_t& clientCacheId, uint64_t frameNumber) {
+    ATRACE_CALL();
+
     if (mCurrentState.buffer) {
         mReleasePreviousBuffer = true;
     }
@@ -275,7 +277,7 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
 
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mCurrentState.frameNumber, getName().c_str(),
-                                      postTime);
+                                      mOwnerUid, postTime);
     desiredPresentTime = desiredPresentTime <= 0 ? 0 : desiredPresentTime;
     mCurrentState.desiredPresentTime = desiredPresentTime;
 
@@ -741,6 +743,31 @@ Layer::RoundedCornerState BufferStateLayer::getRoundedCornerState() const {
                                         static_cast<float>(s.active.transform.tx() + s.active.w),
                                         static_cast<float>(s.active.transform.ty() + s.active.h)),
                               radius);
+}
+
+bool BufferStateLayer::bufferNeedsFiltering() const {
+    const State& s(getDrawingState());
+    if (!s.buffer) {
+        return false;
+    }
+
+    uint32_t bufferWidth = s.buffer->width;
+    uint32_t bufferHeight = s.buffer->height;
+
+    // Undo any transformations on the buffer and return the result.
+    if (s.transform & ui::Transform::ROT_90) {
+        std::swap(bufferWidth, bufferHeight);
+    }
+
+    if (s.transformToDisplayInverse) {
+        uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
+        if (invTransform & ui::Transform::ROT_90) {
+            std::swap(bufferWidth, bufferHeight);
+        }
+    }
+
+    const Rect layerSize{getBounds()};
+    return layerSize.width() != bufferWidth || layerSize.height() != bufferHeight;
 }
 } // namespace android
 

@@ -146,6 +146,21 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeByte, frameRateCompatibility);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeUint64, frameNumber);
+    SAFE_PARCEL(output.writeInt64, frameTimelineVsyncId);
+
+    SAFE_PARCEL(output.writeUint32, blurRegions.size());
+    for (auto region : blurRegions) {
+        SAFE_PARCEL(output.writeUint32, region.blurRadius);
+        SAFE_PARCEL(output.writeFloat, region.cornerRadiusTL);
+        SAFE_PARCEL(output.writeFloat, region.cornerRadiusTR);
+        SAFE_PARCEL(output.writeFloat, region.cornerRadiusBL);
+        SAFE_PARCEL(output.writeFloat, region.cornerRadiusBR);
+        SAFE_PARCEL(output.writeFloat, region.alpha);
+        SAFE_PARCEL(output.writeInt32, region.left);
+        SAFE_PARCEL(output.writeInt32, region.top);
+        SAFE_PARCEL(output.writeInt32, region.right);
+        SAFE_PARCEL(output.writeInt32, region.bottom);
+    }
     return NO_ERROR;
 }
 
@@ -250,6 +265,25 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readUint64, &frameNumber);
+    SAFE_PARCEL(input.readInt64, &frameTimelineVsyncId);
+
+    uint32_t numRegions = 0;
+    SAFE_PARCEL(input.readUint32, &numRegions);
+    blurRegions.clear();
+    for (uint32_t i = 0; i < numRegions; i++) {
+        BlurRegion region;
+        SAFE_PARCEL(input.readUint32, &region.blurRadius);
+        SAFE_PARCEL(input.readFloat, &region.cornerRadiusTL);
+        SAFE_PARCEL(input.readFloat, &region.cornerRadiusTR);
+        SAFE_PARCEL(input.readFloat, &region.cornerRadiusBL);
+        SAFE_PARCEL(input.readFloat, &region.cornerRadiusBR);
+        SAFE_PARCEL(input.readFloat, &region.alpha);
+        SAFE_PARCEL(input.readInt32, &region.left);
+        SAFE_PARCEL(input.readInt32, &region.top);
+        SAFE_PARCEL(input.readInt32, &region.right);
+        SAFE_PARCEL(input.readInt32, &region.bottom);
+        blurRegions.push_back(region);
+    }
     return NO_ERROR;
 }
 
@@ -372,6 +406,10 @@ void layer_state_t::merge(const layer_state_t& other) {
     if (other.what & eBackgroundBlurRadiusChanged) {
         what |= eBackgroundBlurRadiusChanged;
         backgroundBlurRadius = other.backgroundBlurRadius;
+    }
+    if (other.what & eBlurRegionsChanged) {
+        what |= eBlurRegionsChanged;
+        blurRegions = other.blurRegions;
     }
     if (other.what & eDeferTransaction_legacy) {
         what |= eDeferTransaction_legacy;
@@ -586,6 +624,7 @@ status_t CaptureArgs::write(Parcel& output) const {
     SAFE_PARCEL(output.writeBool, captureSecureLayers);
     SAFE_PARCEL(output.writeInt32, uid);
     SAFE_PARCEL(output.writeInt32, static_cast<int32_t>(dataspace));
+    SAFE_PARCEL(output.writeBool, allowProtected);
     return NO_ERROR;
 }
 
@@ -599,6 +638,7 @@ status_t CaptureArgs::read(const Parcel& input) {
     SAFE_PARCEL(input.readInt32, &uid);
     SAFE_PARCEL(input.readInt32, &value);
     dataspace = static_cast<ui::Dataspace>(value);
+    SAFE_PARCEL(input.readBool, &allowProtected);
     return NO_ERROR;
 }
 

@@ -19,17 +19,21 @@
 
 #include <attestation/HmacKeyManager.h>
 #include <cutils/compiler.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <string.h>
 
+#include <android-base/stringprintf.h>
 #include <input/Input.h>
 #include <input/InputDevice.h>
 #include <input/InputEventLabels.h>
 
-#ifdef __ANDROID__
 #include <binder/Parcel.h>
+#ifdef __ANDROID__
 #include <sys/random.h>
 #endif
+
+using android::base::StringPrintf;
 
 namespace android {
 
@@ -250,7 +254,6 @@ void PointerCoords::applyOffset(float xOffset, float yOffset) {
     setAxisValue(AMOTION_EVENT_AXIS_Y, getY() + yOffset);
 }
 
-#ifdef __ANDROID__
 status_t PointerCoords::readFromParcel(Parcel* parcel) {
     bits = parcel->readInt64();
 
@@ -274,7 +277,6 @@ status_t PointerCoords::writeToParcel(Parcel* parcel) const {
     }
     return OK;
 }
-#endif
 
 void PointerCoords::tooManyAxes(int axis) {
     ALOGW("Could not set value for axis %d because the PointerCoords structure is full and "
@@ -536,7 +538,6 @@ void MotionEvent::transform(const std::array<float, 9>& matrix) {
     }
 }
 
-#ifdef __ANDROID__
 static status_t readFromParcel(ui::Transform& transform, const Parcel& parcel) {
     float dsdx, dtdx, tx, dtdy, dsdy, ty;
     status_t status = parcel.readFloat(&dsdx);
@@ -673,7 +674,6 @@ status_t MotionEvent::writeToParcel(Parcel* parcel) const {
     }
     return OK;
 }
-#endif
 
 bool MotionEvent::isTouchEvent(uint32_t source, int32_t action) {
     if (source & AINPUT_SOURCE_CLASS_POINTER) {
@@ -700,23 +700,37 @@ int32_t MotionEvent::getAxisFromLabel(const char* label) {
     return InputEventLookup::getAxisByLabel(label);
 }
 
-const char* MotionEvent::actionToString(int32_t action) {
+std::string MotionEvent::actionToString(int32_t action) {
     // Convert MotionEvent action to string
     switch (action & AMOTION_EVENT_ACTION_MASK) {
         case AMOTION_EVENT_ACTION_DOWN:
             return "DOWN";
-        case AMOTION_EVENT_ACTION_MOVE:
-            return "MOVE";
         case AMOTION_EVENT_ACTION_UP:
             return "UP";
+        case AMOTION_EVENT_ACTION_MOVE:
+            return "MOVE";
         case AMOTION_EVENT_ACTION_CANCEL:
             return "CANCEL";
+        case AMOTION_EVENT_ACTION_OUTSIDE:
+            return "OUTSIDE";
         case AMOTION_EVENT_ACTION_POINTER_DOWN:
             return "POINTER_DOWN";
         case AMOTION_EVENT_ACTION_POINTER_UP:
             return "POINTER_UP";
+        case AMOTION_EVENT_ACTION_HOVER_MOVE:
+            return "HOVER_MOVE";
+        case AMOTION_EVENT_ACTION_SCROLL:
+            return "SCROLL";
+        case AMOTION_EVENT_ACTION_HOVER_ENTER:
+            return "HOVER_ENTER";
+        case AMOTION_EVENT_ACTION_HOVER_EXIT:
+            return "HOVER_EXIT";
+        case AMOTION_EVENT_ACTION_BUTTON_PRESS:
+            return "BUTTON_PRESS";
+        case AMOTION_EVENT_ACTION_BUTTON_RELEASE:
+            return "BUTTON_RELEASE";
     }
-    return "UNKNOWN";
+    return android::base::StringPrintf("%" PRId32, action);
 }
 
 // --- FocusEvent ---

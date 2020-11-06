@@ -695,8 +695,6 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous) {
         }
     }
 
-    mListenerCallbacks.clear();
-
     cacheBuffers();
 
     Vector<ComposerState> composerStates;
@@ -709,10 +707,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous) {
         composerStates.add(kv.second);
     }
 
-    mComposerStates.clear();
-
-    displayStates = mDisplayStates;
-    mDisplayStates.clear();
+    displayStates = std::move(mDisplayStates);
 
     if (mForceSynchronous) {
         flags |= ISurfaceComposer::eSynchronous;
@@ -733,21 +728,16 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous) {
         flags |= ISurfaceComposer::eExplicitEarlyWakeupEnd;
     }
 
-    mForceSynchronous = false;
-    mAnimation = false;
-    mEarlyWakeup = false;
-    mExplicitEarlyWakeupStart = false;
-    mExplicitEarlyWakeupEnd = false;
-
-    uint64_t transactionId = mId;
-    mId = generateId();
-
     sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
     sf->setTransactionState(mFrameTimelineVsyncId, composerStates, displayStates, flags, applyToken,
                             mInputWindowCommands, mDesiredPresentTime,
                             {} /*uncacheBuffer - only set in doUncacheBufferTransaction*/,
-                            hasListenerCallbacks, listenerCallbacks, transactionId);
-    mInputWindowCommands.clear();
+                            hasListenerCallbacks, listenerCallbacks, mId);
+    mId = generateId();
+
+    // Clear the current states and flags
+    clear();
+
     mStatus = NO_ERROR;
     return NO_ERROR;
 }
@@ -1024,6 +1014,18 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBackg
     }
     s->what |= layer_state_t::eBackgroundBlurRadiusChanged;
     s->backgroundBlurRadius = backgroundBlurRadius;
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBlurRegions(
+        const sp<SurfaceControl>& sc, const std::vector<BlurRegion>& blurRegions) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    s->what |= layer_state_t::eBlurRegionsChanged;
+    s->blurRegions = blurRegions;
     return *this;
 }
 
@@ -1510,6 +1512,19 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrame
     return *this;
 }
 
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrameTimelineVsync(
+        const sp<SurfaceControl>& sc, int64_t frameTimelineVsyncId) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+
+    s->what |= layer_state_t::eFrameTimelineVsyncChanged;
+    s->frameTimelineVsyncId = frameTimelineVsyncId;
+    return *this;
+}
+
 // ---------------------------------------------------------------------------
 
 DisplayState& SurfaceComposerClient::Transaction::getDisplayState(const sp<IBinder>& token) {
@@ -1625,11 +1640,11 @@ void SurfaceComposerClient::dispose() {
 
 sp<SurfaceControl> SurfaceComposerClient::createSurface(const String8& name, uint32_t w, uint32_t h,
                                                         PixelFormat format, uint32_t flags,
-                                                        SurfaceControl* parent,
+                                                        const sp<IBinder>& parentHandle,
                                                         LayerMetadata metadata,
                                                         uint32_t* outTransformHint) {
     sp<SurfaceControl> s;
-    createSurfaceChecked(name, w, h, format, &s, flags, parent, std::move(metadata),
+    createSurfaceChecked(name, w, h, format, &s, flags, parentHandle, std::move(metadata),
                          outTransformHint);
     return s;
 }
@@ -1666,19 +1681,15 @@ sp<SurfaceControl> SurfaceComposerClient::createWithSurfaceParent(const String8&
 status_t SurfaceComposerClient::createSurfaceChecked(const String8& name, uint32_t w, uint32_t h,
                                                      PixelFormat format,
                                                      sp<SurfaceControl>* outSurface, uint32_t flags,
-                                                     SurfaceControl* parent, LayerMetadata metadata,
+                                                     const sp<IBinder>& parentHandle,
+                                                     LayerMetadata metadata,
                                                      uint32_t* outTransformHint) {
     sp<SurfaceControl> sur;
     status_t err = mStatus;
 
     if (mStatus == NO_ERROR) {
         sp<IBinder> handle;
-        sp<IBinder> parentHandle;
         sp<IGraphicBufferProducer> gbp;
-
-        if (parent != nullptr) {
-            parentHandle = parent->getHandle();
-        }
 
         uint32_t transformHint = 0;
         int32_t id = -1;
@@ -1774,27 +1785,24 @@ int SurfaceComposerClient::getActiveConfig(const sp<IBinder>& display) {
     return ComposerService::getComposerService()->getActiveConfig(display);
 }
 
-status_t SurfaceComposerClient::setDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                             int32_t defaultConfig,
-                                                             float primaryRefreshRateMin,
-                                                             float primaryRefreshRateMax,
-                                                             float appRequestRefreshRateMin,
-                                                             float appRequestRefreshRateMax) {
+status_t SurfaceComposerClient::setDesiredDisplayConfigSpecs(
+        const sp<IBinder>& displayToken, int32_t defaultConfig, bool allowGroupSwitching,
+        float primaryRefreshRateMin, float primaryRefreshRateMax, float appRequestRefreshRateMin,
+        float appRequestRefreshRateMax) {
     return ComposerService::getComposerService()
-            ->setDesiredDisplayConfigSpecs(displayToken, defaultConfig, primaryRefreshRateMin,
-                                           primaryRefreshRateMax, appRequestRefreshRateMin,
-                                           appRequestRefreshRateMax);
+            ->setDesiredDisplayConfigSpecs(displayToken, defaultConfig, allowGroupSwitching,
+                                           primaryRefreshRateMin, primaryRefreshRateMax,
+                                           appRequestRefreshRateMin, appRequestRefreshRateMax);
 }
 
-status_t SurfaceComposerClient::getDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                             int32_t* outDefaultConfig,
-                                                             float* outPrimaryRefreshRateMin,
-                                                             float* outPrimaryRefreshRateMax,
-                                                             float* outAppRequestRefreshRateMin,
-                                                             float* outAppRequestRefreshRateMax) {
+status_t SurfaceComposerClient::getDesiredDisplayConfigSpecs(
+        const sp<IBinder>& displayToken, int32_t* outDefaultConfig, bool* outAllowGroupSwitching,
+        float* outPrimaryRefreshRateMin, float* outPrimaryRefreshRateMax,
+        float* outAppRequestRefreshRateMin, float* outAppRequestRefreshRateMax) {
     return ComposerService::getComposerService()
-            ->getDesiredDisplayConfigSpecs(displayToken, outDefaultConfig, outPrimaryRefreshRateMin,
-                                           outPrimaryRefreshRateMax, outAppRequestRefreshRateMin,
+            ->getDesiredDisplayConfigSpecs(displayToken, outDefaultConfig, outAllowGroupSwitching,
+                                           outPrimaryRefreshRateMin, outPrimaryRefreshRateMax,
+                                           outAppRequestRefreshRateMin,
                                            outAppRequestRefreshRateMax);
 }
 

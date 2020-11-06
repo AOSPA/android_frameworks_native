@@ -26,6 +26,7 @@
 #include <renderengine/Mesh.h>
 #include <renderengine/Texture.h>
 #include <sys/types.h>
+#include <ui/BlurRegion.h>
 #include <ui/FloatRect.h>
 #include <ui/FrameStats.h>
 #include <ui/GraphicBuffer.h>
@@ -255,6 +256,9 @@ public:
         // be rendered around the layer.
         float shadowRadius;
 
+        // Layer regions that are made of custom materials, like frosted glass
+        std::vector<BlurRegion> blurRegions;
+
         // Priority of the layer assigned by Window Manager.
         int32_t frameRateSelectionPriority;
 
@@ -391,6 +395,7 @@ public:
     // When non-zero, everything below this layer will be blurred by backgroundBlurRadius, which
     // is specified in pixels.
     virtual bool setBackgroundBlurRadius(int backgroundBlurRadius);
+    virtual bool setBlurRegions(const std::vector<BlurRegion>& effectRegions);
     virtual bool setTransparentRegionHint(const Region& transparent);
     virtual bool setFlags(uint8_t flags, uint8_t mask);
     virtual bool setLayerStack(uint32_t layerStack);
@@ -465,7 +470,7 @@ public:
     virtual bool canReceiveInput() const;
 
     /*
-     * isProtected - true if the layer may contain protected content in the
+     * isProtected - true if the layer may contain protected contents in the
      * GRALLOC_USAGE_PROTECTED sense.
      */
     virtual bool isProtected() const { return false; }
@@ -677,7 +682,8 @@ public:
 
     /*
      * isSecure - true if this surface is secure, that is if it prevents
-     * screenshots or VNC servers.
+     * screenshots or VNC servers. A surface can be set to be secure by the
+     * application, being secure doesn't mean the surface has DRM contents.
      */
     bool isSecure() const;
 
@@ -852,6 +858,8 @@ public:
     bool hasInputInfo() const;
 
     uid_t getOwnerUid() { return mOwnerUid; }
+
+    pid_t getOwnerPid() { return mOwnerPid; }
 
     // This layer is not a clone, but it's the parent to the cloned hierarchy. The
     // variable mClonedChild represents the top layer that will be cloned so this
@@ -1046,6 +1054,14 @@ protected:
     // Can only be accessed with the SF state lock held.
     std::unique_ptr<frametimeline::SurfaceFrame> mSurfaceFrame;
 
+    // The owner of the layer. If created from a non system process, it will be the calling uid.
+    // If created from a system process, the value can be passed in.
+    uid_t mOwnerUid;
+
+    // The owner pid of the layer. If created from a non system process, it will be the calling pid.
+    // If created from a system process, the value can be passed in.
+    pid_t mOwnerPid;
+
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}
 
@@ -1082,7 +1098,8 @@ private:
     sp<Layer> getRootLayer();
 
     // Cached properties computed from drawing state
-    // Effective transform taking into account parent transforms and any parent scaling.
+    // Effective transform taking into account parent transforms and any parent scaling, which is
+    // a transform from the current layer coordinate space to display(screen) coordinate space.
     ui::Transform mEffectiveTransform;
 
     // Bounds of the layer before any transformation is applied and before it has been cropped
@@ -1103,10 +1120,6 @@ private:
     pid_t mCallingPid;
     uid_t mCallingUid;
 
-    // The owner of the layer. If created from a non system process, it will be the calling uid.
-    // If created from a system process, the value can be passed in.
-    uid_t mOwnerUid;
-
     // The current layer is a clone of mClonedFrom. This means that this layer will update it's
     // properties based on mClonedFrom. When mClonedFrom latches a new buffer for BufferLayers,
     // this layer will update it's buffer. When mClonedFrom updates it's drawing state, children,
@@ -1117,6 +1130,9 @@ private:
     // final shadow radius for this layer. If a shadow is specified for a layer, then effective
     // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
     float mEffectiveShadowRadius = 0.f;
+
+    // A list of regions on this layer that should have blurs.
+    const std::vector<BlurRegion>& getBlurRegions() const;
 };
 
 } // namespace android

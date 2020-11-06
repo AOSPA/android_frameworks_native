@@ -29,6 +29,7 @@
 #include <utils/SortedVector.h>
 #include <utils/threads.h>
 
+#include <ui/BlurRegion.h>
 #include <ui/ConfigStoreTypes.h>
 #include <ui/DisplayedFrameStats.h>
 #include <ui/FrameStats.h>
@@ -120,13 +121,15 @@ public:
 
     // Sets the refresh rate boundaries for the display.
     static status_t setDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                 int32_t defaultConfig, float primaryRefreshRateMin,
+                                                 int32_t defaultConfig, bool allowGroupSwitching,
+                                                 float primaryRefreshRateMin,
                                                  float primaryRefreshRateMax,
                                                  float appRequestRefreshRateMin,
                                                  float appRequestRefreshRateMax);
     // Gets the refresh rate boundaries for the display.
     static status_t getDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
                                                  int32_t* outDefaultConfig,
+                                                 bool* outAllowGroupSwitching,
                                                  float* outPrimaryRefreshRateMin,
                                                  float* outPrimaryRefreshRateMax,
                                                  float* outAppRequestRefreshRateMin,
@@ -253,13 +256,13 @@ public:
     static sp<SurfaceComposerClient> getDefault();
 
     //! Create a surface
-    sp<SurfaceControl> createSurface(const String8& name,              // name of the surface
-                                     uint32_t w,                       // width in pixel
-                                     uint32_t h,                       // height in pixel
-                                     PixelFormat format,               // pixel-format desired
-                                     uint32_t flags = 0,               // usage flags
-                                     SurfaceControl* parent = nullptr, // parent
-                                     LayerMetadata metadata = LayerMetadata(), // metadata
+    sp<SurfaceControl> createSurface(const String8& name, // name of the surface
+                                     uint32_t w,          // width in pixel
+                                     uint32_t h,          // height in pixel
+                                     PixelFormat format,  // pixel-format desired
+                                     uint32_t flags = 0,  // usage flags
+                                     const sp<IBinder>& parentHandle = nullptr, // parentHandle
+                                     LayerMetadata metadata = LayerMetadata(),  // metadata
                                      uint32_t* outTransformHint = nullptr);
 
     status_t createSurfaceChecked(const String8& name, // name of the surface
@@ -267,9 +270,9 @@ public:
                                   uint32_t h,          // height in pixel
                                   PixelFormat format,  // pixel-format desired
                                   sp<SurfaceControl>* outSurface,
-                                  uint32_t flags = 0,                       // usage flags
-                                  SurfaceControl* parent = nullptr,         // parent
-                                  LayerMetadata metadata = LayerMetadata(), // metadata
+                                  uint32_t flags = 0,                        // usage flags
+                                  const sp<IBinder>& parentHandle = nullptr, // parentHandle
+                                  LayerMetadata metadata = LayerMetadata(),  // metadata
                                   uint32_t* outTransformHint = nullptr);
 
     //! Create a surface
@@ -437,6 +440,8 @@ public:
         Transaction& setCornerRadius(const sp<SurfaceControl>& sc, float cornerRadius);
         Transaction& setBackgroundBlurRadius(const sp<SurfaceControl>& sc,
                                              int backgroundBlurRadius);
+        Transaction& setBlurRegions(const sp<SurfaceControl>& sc,
+                                    const std::vector<BlurRegion>& regions);
         Transaction& setLayerStack(const sp<SurfaceControl>& sc, uint32_t layerStack);
         Transaction& setMetadata(const sp<SurfaceControl>& sc, uint32_t key, const Parcel& p);
         // Defers applying any changes made in this transaction until the Layer
@@ -532,6 +537,9 @@ public:
         // Sets the frame timeline vsync id received from choreographer that corresponds
         // to the transaction.
         Transaction& setFrameTimelineVsync(int64_t frameTimelineVsyncId);
+        // Variant that only applies to a specific SurfaceControl.
+        Transaction& setFrameTimelineVsync(const sp<SurfaceControl>& sc,
+                int64_t frameTimelineVsyncId);
 
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);
