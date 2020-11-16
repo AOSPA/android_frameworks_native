@@ -4323,9 +4323,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(
     }
     if (what & layer_state_t::eFrameTimelineVsyncChanged) {
         layer->setFrameTimelineVsyncForTransaction(s.frameTimelineVsyncId, postTime);
-    } else {
-        // TODO (b/171252403) We are calling this too much, potentially triggering
-        // unnecessary work
+    } else if (frameTimelineVsyncId != ISurfaceComposer::INVALID_VSYNC_ID) {
         layer->setFrameTimelineVsyncForTransaction(frameTimelineVsyncId, postTime);
     }
     if (what & layer_state_t::eFixedTransformHintChanged) {
@@ -6302,7 +6300,8 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
         });
     }
 
-    const uint32_t usage = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE |
+    const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
+            GRALLOC_USAGE_HW_TEXTURE |
             (hasProtectedLayer && allowProtected && supportsProtected
                      ? GRALLOC_USAGE_PROTECTED
                      : GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);

@@ -49,6 +49,7 @@
 
 #include <private/binder/binder_module.h>
 #include "Static.h"
+#include "Utils.h"
 
 #define LOG_REFS(...)
 //#define LOG_REFS(...) ALOG(LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -500,6 +501,11 @@ bool Parcel::hasFileDescriptors() const
         scanForFds();
     }
     return mHasFds;
+}
+
+void Parcel::markSensitive() const
+{
+    mDeallocZero = true;
 }
 
 void Parcel::updateWorkSourceRequestHeaderPosition() const {
@@ -1068,6 +1074,7 @@ status_t Parcel::writeString8(const char* str, size_t len)
 {
     if (str == nullptr) return writeInt32(-1);
 
+    // NOTE: Keep this logic in sync with android_os_Parcel.cpp
     status_t err = writeInt32(len);
     if (err == NO_ERROR) {
         uint8_t* data = (uint8_t*)writeInplace(len+sizeof(char));
@@ -1108,6 +1115,7 @@ status_t Parcel::writeString16(const char16_t* str, size_t len)
 {
     if (str == nullptr) return writeInt32(-1);
 
+    // NOTE: Keep this logic in sync with android_os_Parcel.cpp
     status_t err = writeInt32(len);
     if (err == NO_ERROR) {
         len *= sizeof(char16_t);
@@ -1906,17 +1914,6 @@ double Parcel::readDouble() const
 
 #endif
 
-status_t Parcel::readIntPtr(intptr_t *pArg) const
-{
-    return readAligned(pArg);
-}
-
-
-intptr_t Parcel::readIntPtr() const
-{
-    return readAligned<intptr_t>();
-}
-
 status_t Parcel::readBool(bool *pArg) const
 {
     int32_t tmp = 0;
@@ -2501,7 +2498,7 @@ size_t Parcel::ipcObjectsCount() const
 }
 
 void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
-    const binder_size_t* objects, size_t objectsCount, release_func relFunc, void* relCookie)
+    const binder_size_t* objects, size_t objectsCount, release_func relFunc)
 {
     binder_size_t minOffset = 0;
     freeDataNoInit();
@@ -2516,7 +2513,6 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
     mNextObjectHint = 0;
     mObjectsSorted = false;
     mOwner = relFunc;
-    mOwnerCookie = relCookie;
     for (size_t i = 0; i < mObjectsSize; i++) {
         binder_size_t offset = mObjects[i];
         if (offset < minOffset) {
@@ -2617,7 +2613,7 @@ void Parcel::freeDataNoInit()
     if (mOwner) {
         LOG_ALLOC("Parcel %p: freeing other owner data", this);
         //ALOGI("Freeing data ref of %p (pid=%d)", this, getpid());
-        mOwner(this, mData, mDataSize, mObjects, mObjectsSize, mOwnerCookie);
+        mOwner(this, mData, mDataSize, mObjects, mObjectsSize);
     } else {
         LOG_ALLOC("Parcel %p: freeing allocated data", this);
         releaseObjects();
@@ -2625,6 +2621,9 @@ void Parcel::freeDataNoInit()
             LOG_ALLOC("Parcel %p: freeing with %zu capacity", this, mDataCapacity);
             gParcelGlobalAllocSize -= mDataCapacity;
             gParcelGlobalAllocCount--;
+            if (mDeallocZero) {
+                zeroMemory(mData, mDataSize);
+            }
             free(mData);
         }
         if (mObjects) free(mObjects);
@@ -2647,6 +2646,21 @@ status_t Parcel::growData(size_t len)
             : continueWrite(std::max(newSize, (size_t) 128));
 }
 
+static uint8_t* reallocZeroFree(uint8_t* data, size_t oldCapacity, size_t newCapacity, bool zero) {
+    if (!zero) {
+        return (uint8_t*)realloc(data, newCapacity);
+    }
+    uint8_t* newData = (uint8_t*)malloc(newCapacity);
+    if (!newData) {
+        return nullptr;
+    }
+
+    memcpy(newData, data, std::min(oldCapacity, newCapacity));
+    zeroMemory(data, oldCapacity);
+    free(data);
+    return newData;
+}
+
 status_t Parcel::restartWrite(size_t desired)
 {
     if (desired > INT32_MAX) {
@@ -2660,7 +2674,7 @@ status_t Parcel::restartWrite(size_t desired)
         return continueWrite(desired);
     }
 
-    uint8_t* data = (uint8_t*)realloc(mData, desired);
+    uint8_t* data = reallocZeroFree(mData, mDataCapacity, desired, mDeallocZero);
     if (!data && desired > mDataCapacity) {
         mError = NO_MEMORY;
         return NO_MEMORY;
@@ -2762,7 +2776,7 @@ status_t Parcel::continueWrite(size_t desired)
             memcpy(objects, mObjects, objectsSize*sizeof(binder_size_t));
         }
         //ALOGI("Freeing data ref of %p (pid=%d)", this, getpid());
-        mOwner(this, mData, mDataSize, mObjects, mObjectsSize, mOwnerCookie);
+        mOwner(this, mData, mDataSize, mObjects, mObjectsSize);
         mOwner = nullptr;
 
         LOG_ALLOC("Parcel %p: taking ownership of %zu capacity", this, desired);
@@ -2811,7 +2825,7 @@ status_t Parcel::continueWrite(size_t desired)
 
         // We own the data, so we can just do a realloc().
         if (desired > mDataCapacity) {
-            uint8_t* data = (uint8_t*)realloc(mData, desired);
+            uint8_t* data = reallocZeroFree(mData, mDataCapacity, desired, mDeallocZero);
             if (data) {
                 LOG_ALLOC("Parcel %p: continue from %zu to %zu capacity", this, mDataCapacity,
                         desired);
@@ -2879,6 +2893,7 @@ void Parcel::initState()
     mHasFds = false;
     mFdsKnown = true;
     mAllowFds = true;
+    mDeallocZero = false;
     mOwner = nullptr;
     mOpenAshmemSize = 0;
     mWorkSourceRequestHeaderPosition = 0;
