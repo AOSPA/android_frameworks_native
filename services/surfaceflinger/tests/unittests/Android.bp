@@ -14,7 +14,10 @@
 
 cc_test {
     name: "libsurfaceflinger_unittest",
-    defaults: ["surfaceflinger_defaults"],
+    defaults: [
+        "surfaceflinger_defaults",
+        "libsurfaceflinger_qti_defaults",
+    ],
     test_suites: ["device-tests"],
     sanitize: {
         // Using the address sanitizer not only helps uncover issues in the code
