@@ -192,6 +192,10 @@ void Output::setDisplaySize(const ui::Size& size) {
     dirtyEntireOutput();
 }
 
+ui::Transform::RotationFlags Output::getTransformHint() const {
+    return static_cast<ui::Transform::RotationFlags>(getState().transform.getOrientation());
+}
+
 void Output::setLayerStackFilter(uint32_t layerStackId, bool isInternal) {
     auto& outputState = editState();
     outputState.layerStackId = layerStackId;
@@ -665,7 +669,8 @@ void Output::updateAndWriteCompositionState(
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {
     compositionengine::OutputLayer* layerRequestingBgComposition = nullptr;
     for (auto* layer : getOutputLayersOrderedByZ()) {
-        if (layer->getLayerFE().getCompositionState()->backgroundBlurRadius > 0) {
+        if (layer->getLayerFE().getCompositionState()->backgroundBlurRadius > 0 ||
+            layer->getLayerFE().getCompositionState()->blurRegions.size() > 0) {
             layerRequestingBgComposition = layer;
         }
     }
@@ -917,6 +922,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
             needsProtected == renderEngine.isProtected()) {
             mRenderSurface->setProtected(needsProtected);
         }
+    } else if (!outputState.isSecure && renderEngine.isProtected()) {
+        renderEngine.useProtectedContext(false);
     }
 
     base::unique_fd fd;

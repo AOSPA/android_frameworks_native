@@ -239,10 +239,10 @@ TEST_F(ZippedBugreportGenerationTest, IsGeneratedWithoutErrors) {
     EXPECT_EQ(access(getZipFilePath().c_str(), F_OK), 0);
 }
 
-TEST_F(ZippedBugreportGenerationTest, Is3MBMBinSize) {
+TEST_F(ZippedBugreportGenerationTest, Is1MBMBinSize) {
     struct stat st;
     EXPECT_EQ(stat(getZipFilePath().c_str(), &st), 0);
-    EXPECT_GE(st.st_size, 3000000 /* 3MB */);
+    EXPECT_GE(st.st_size, 1000000 /* 1MB */);
 }
 
 TEST_F(ZippedBugreportGenerationTest, TakesBetween30And300Seconds) {
@@ -401,7 +401,7 @@ TEST_F(BugreportSectionTest, BatteryStatsSectionGenerated) {
     SectionExists("batterystats", /* bytes= */ 1000);
 }
 
-TEST_F(BugreportSectionTest, WifiSectionGenerated) {
+TEST_F(BugreportSectionTest, DISABLED_WifiSectionGenerated) {
     SectionExists("wifi", /* bytes= */ 100000);
 }
 

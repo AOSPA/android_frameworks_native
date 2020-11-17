@@ -55,8 +55,10 @@ BlurFilter::BlurFilter() {
     mBlurEffect = std::move(blurEffect);
 }
 
-void BlurFilter::draw(SkCanvas* canvas, sk_sp<SkSurface> input, const uint32_t blurRadius) const {
+sk_sp<SkSurface> BlurFilter::generate(SkCanvas* canvas, const sk_sp<SkSurface> input,
+                                      const uint32_t blurRadius) const {
     ATRACE_CALL();
+
     // Kawase is an approximation of Gaussian, but it behaves differently from it.
     // A radius transformation is required for approximating them, and also to introduce
     // non-integer steps, necessary to smoothly interpolate large radii.
@@ -72,8 +74,10 @@ void BlurFilter::draw(SkCanvas* canvas, sk_sp<SkSurface> input, const uint32_t b
     const float stepY = radiusByPasses;
 
     // start by drawing and downscaling and doing the first blur pass
+    SkFilterOptions linear = {SkSamplingMode::kLinear, SkMipmapMode::kNone};
     SkRuntimeShaderBuilder blurBuilder(mBlurEffect);
-    blurBuilder.child("input") = input->makeImageSnapshot()->makeShader();
+    blurBuilder.child("input") =
+            input->makeImageSnapshot()->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, linear);
     blurBuilder.uniform("in_inverseScale") = kInverseInputScale;
     blurBuilder.uniform("in_blurOffset") =
             SkV2{stepX * kInverseInputScale, stepY * kInverseInputScale};
@@ -97,7 +101,9 @@ void BlurFilter::draw(SkCanvas* canvas, sk_sp<SkSurface> input, const uint32_t b
         for (auto i = 1; i < numberOfPasses; i++) {
             const float stepScale = (float)i * kInputScale;
 
-            blurBuilder.child("input") = readSurface->makeImageSnapshot()->makeShader();
+            blurBuilder.child("input") =
+                    readSurface->makeImageSnapshot()->makeShader(SkTileMode::kClamp,
+                                                                 SkTileMode::kClamp, linear);
             blurBuilder.uniform("in_inverseScale") = 1.0f;
             blurBuilder.uniform("in_blurOffset") = SkV2{stepX * stepScale, stepY * stepScale};
 
@@ -107,25 +113,35 @@ void BlurFilter::draw(SkCanvas* canvas, sk_sp<SkSurface> input, const uint32_t b
             drawSurface->getCanvas()->drawIRect(scaledInfo.bounds(), paint);
 
             // Swap buffers for next iteration
-            auto tmp = drawSurface;
+            const auto tmp = drawSurface;
             drawSurface = readSurface;
             readSurface = tmp;
             blurBuilder.child("input") = nullptr;
         }
         lastDrawTarget = readSurface;
     }
+    lastDrawTarget->flushAndSubmit();
+    return lastDrawTarget;
+}
 
-    drawSurface->flushAndSubmit();
+sk_sp<SkSurface> BlurFilter::draw(SkCanvas* canvas, const sk_sp<SkSurface> input,
+                                  const uint32_t blurRadius) const {
+    ATRACE_CALL();
+    auto surface = generate(canvas, input, blurRadius);
 
-    // do the final composition, with alpha blending to hide downscaling artifacts.
-    {
-        SkPaint paint;
-        paint.setShader(lastDrawTarget->makeImageSnapshot()->makeShader(
-                SkMatrix::MakeScale(kInverseInputScale)));
-        paint.setFilterQuality(kLow_SkFilterQuality);
-        paint.setAlpha(std::min(1.0f, (float)blurRadius / kMaxCrossFadeRadius) * 255);
-        canvas->drawIRect(SkIRect::MakeWH(input->width(), input->height()), paint);
-    }
+    SkPaint paint;
+    const auto image = surface->makeImageSnapshot();
+    paint.setShader(image->makeShader(SkMatrix::MakeScale(kInverseInputScale)));
+    paint.setFilterQuality(kLow_SkFilterQuality);
+    paint.setAlpha(std::min(1.0f, (float)blurRadius / kMaxCrossFadeRadius) * 255);
+    canvas->drawIRect(SkIRect::MakeWH(input->width(), input->height()), paint);
+    return surface;
+}
+
+SkMatrix BlurFilter::getShaderMatrix(const SkMatrix& transformMatrix) const {
+    SkMatrix matrix;
+    matrix.setConcat(transformMatrix, SkMatrix::MakeScale(kInverseInputScale));
+    return matrix;
 }
 
 } // namespace skia

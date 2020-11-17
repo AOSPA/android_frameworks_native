@@ -72,9 +72,10 @@ public:
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;
     }
+    sp<Surface> getSurface(bool includeSurfaceControlHandle);
 
     void onBufferFreed(const wp<GraphicBuffer>&/* graphicBuffer*/) override { /* TODO */ }
-    void onFrameReplaced(const BufferItem& item) override {onFrameAvailable(item);}
+    void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
 
     void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
@@ -82,6 +83,10 @@ public:
     void setNextTransaction(SurfaceComposerClient::Transaction *t);
 
     void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height);
+    void flushShadowQueue() { mFlushShadowQueue = true; }
+
+    status_t setFrameRate(float frameRate, int8_t compatibility);
+    status_t setFrameTimelineVsync(int64_t frameTimelineVsyncId);
 
     virtual ~BLASTBufferQueue() = default;
 
@@ -93,9 +98,10 @@ private:
     BLASTBufferQueue(const BLASTBufferQueue& rhs);
 
     void processNextBufferLocked(bool useNextTransaction) REQUIRES(mMutex);
-    Rect computeCrop(const BufferItem& item);
+    Rect computeCrop(const BufferItem& item) REQUIRES(mMutex);
     // Return true if we need to reject the buffer based on the scaling mode and the buffer size.
-    bool rejectBuffer(const BufferItem& item) const;
+    bool rejectBuffer(const BufferItem& item) const REQUIRES(mMutex);
+    bool maxBuffersAcquired() const REQUIRES(mMutex);
 
     std::string mName;
     sp<SurfaceControl> mSurfaceControl;
@@ -130,6 +136,9 @@ private:
     sp<BLASTBufferItemConsumer> mBufferItemConsumer;
 
     SurfaceComposerClient::Transaction* mNextTransaction GUARDED_BY(mMutex);
+    // If set to true, the next queue buffer will wait until the shadow queue has been processed by
+    // the adapter.
+    bool mFlushShadowQueue = false;
 };
 
 } // namespace android

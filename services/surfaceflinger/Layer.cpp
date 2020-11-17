@@ -152,9 +152,11 @@ Layer::Layer(const LayerCreationArgs& args)
     if (mCallingUid == AID_GRAPHICS || mCallingUid == AID_SYSTEM) {
         // If the system didn't send an ownerUid, use the callingUid for the ownerUid.
         mOwnerUid = args.metadata.getInt32(METADATA_OWNER_UID, mCallingUid);
+        mOwnerPid = args.metadata.getInt32(METADATA_OWNER_PID, mCallingPid);
     } else {
         // A create layer request from a non system request cannot specify the owner uid
         mOwnerUid = mCallingUid;
+        mOwnerPid = mCallingPid;
     }
 }
 
@@ -484,6 +486,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     compositionState->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     compositionState->alpha = alpha;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+    compositionState->blurRegions = drawingState.blurRegions;
 }
 
 void Layer::prepareGeometryCompositionState() {
@@ -557,7 +560,8 @@ void Layer::preparePerFrameCompositionState() {
             isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
 
     // Force client composition for special cases known only to the front-end.
-    if (isHdrY410() || usesRoundedCorners || drawShadows()) {
+    if (isHdrY410() || usesRoundedCorners || drawShadows() ||
+        getDrawingState().blurRegions.size() > 0) {
         compositionState->forceClientComposition = true;
     }
 }
@@ -653,6 +657,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
     layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+    layerSettings.blurRegions = getBlurRegions();
     return layerSettings;
 }
 
@@ -921,7 +926,9 @@ bool Layer::applyPendingStates(State* stateToCommit) {
                 : std::make_optional(stateToCommit->frameTimelineVsyncId);
 
         auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mTransactionName, vsyncId);
+                mFlinger->mFrameTimeline->createSurfaceFrameForToken(getOwnerPid(), getOwnerUid(),
+                                                                     mName, mTransactionName,
+                                                                     vsyncId);
         surfaceFrame->setActualQueueTime(stateToCommit->postTime);
         // For transactions we set the acquire fence time to the post time as we
         // don't have a buffer. For BufferStateLayer it is overridden in
@@ -1056,6 +1063,12 @@ uint32_t Layer::doTransaction(uint32_t flags) {
     if (mCurrentState.inputInfoChanged) {
         flags |= eInputInfoChanged;
         mCurrentState.inputInfoChanged = false;
+    }
+
+    // Add the callbacks from the drawing state into the current state. This is so when the current
+    // state gets copied to drawing, we don't lose the callback handles that are still in drawing.
+    for (auto& handle : s.callbackHandles) {
+        c.callbackHandles.push_back(handle);
     }
 
     // Commit the transaction
@@ -1303,6 +1316,14 @@ bool Layer::setTransparentRegionHint(const Region& transparent) {
     return true;
 }
 
+bool Layer::setBlurRegions(const std::vector<BlurRegion>& blurRegions) {
+    mCurrentState.sequence++;
+    mCurrentState.blurRegions = blurRegions;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
 bool Layer::setFlags(uint8_t flags, uint8_t mask) {
     const uint32_t newFlags = (mCurrentState.flags & ~mask) | (flags & mask);
     if (mCurrentState.flags == newFlags) return false;
@@ -1479,7 +1500,6 @@ bool Layer::setFrameRate(FrameRate frameRate) {
 }
 
 void Layer::setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, nsecs_t postTime) {
-    mCurrentState.sequence++;
     mCurrentState.frameTimelineVsyncId = frameTimelineVsyncId;
     mCurrentState.postTime = postTime;
     mCurrentState.modified = true;
@@ -1749,7 +1769,7 @@ void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                      FrameEventHistoryDelta* outDelta) {
     if (newTimestamps) {
         mFlinger->mTimeStats->setPostTime(getSequence(), newTimestamps->frameNumber,
-                                          getName().c_str(), newTimestamps->postedTime);
+                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime);
         mFlinger->mTimeStats->setAcquireFence(getSequence(), newTimestamps->frameNumber,
                                               newTimestamps->acquireFence);
     }
@@ -2193,6 +2213,10 @@ int32_t Layer::getBackgroundBlurRadius() const {
     return getDrawingState().backgroundBlurRadius;
 }
 
+const std::vector<BlurRegion>& Layer::getBlurRegions() const {
+    return getDrawingState().blurRegions;
+}
+
 Layer::RoundedCornerState Layer::getRoundedCornerState() const {
     const auto& p = mDrawingParent.promote();
     if (p != nullptr) {
@@ -2472,6 +2496,7 @@ InputWindowInfo Layer::fillInputInfo() {
         ySurfaceInset = std::round(ySurfaceInset * yScale);
     }
 
+    // Transform the layer bounds from layer coordinate space to display coordinate space.
     Rect transformedLayerBounds = t.transform(layerBounds);
 
     // clamp inset to layer bounds
@@ -2496,7 +2521,7 @@ InputWindowInfo Layer::fillInputInfo() {
         transformedLayerBounds.bottom = tmp;
     }
 
-    // Input coordinate should match the layer bounds.
+    // Input coordinates should be in display coordinate space.
     info.frameLeft = transformedLayerBounds.left;
     info.frameTop = transformedLayerBounds.top;
     info.frameRight = transformedLayerBounds.right;
@@ -2509,7 +2534,7 @@ InputWindowInfo Layer::fillInputInfo() {
     // the final frame calculated.
     // 1. Take the original transform set on the window and get the inverse transform. This is
     //    used to get the final bounds in display space (ignorning the transform). Apply the
-    //    inverse transform on the layerBounds to get the untransformed frame (in display space)
+    //    inverse transform on the layerBounds to get the untransformed frame (in layer space)
     // 2. Take the top and left of the untransformed frame to get the real position on screen.
     //    Apply the layer transform on top/left so it includes any scale or rotation. These will
     //    be the new translation values for the transform.

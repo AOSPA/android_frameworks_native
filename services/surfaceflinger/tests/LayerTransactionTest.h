@@ -16,6 +16,10 @@
 
 #pragma once
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 #include <gtest/gtest.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/SurfaceComposerClient.h>
@@ -75,8 +79,9 @@ protected:
                                              PixelFormat format, uint32_t flags,
                                              SurfaceControl* parent = nullptr,
                                              uint32_t* outTransformHint = nullptr) {
-        auto layer = client->createSurface(String8(name), width, height, format, flags, parent,
-                                           LayerMetadata(), outTransformHint);
+        sp<IBinder> parentHandle = (parent) ? parent->getHandle() : nullptr;
+        auto layer = client->createSurface(String8(name), width, height, format, flags,
+                                           parentHandle, LayerMetadata(), outTransformHint);
         EXPECT_NE(nullptr, layer.get()) << "failed to create SurfaceControl";
         return layer;
     }
@@ -299,3 +304,6 @@ private:
 };
 
 } // namespace android
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

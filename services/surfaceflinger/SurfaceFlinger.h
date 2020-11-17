@@ -658,11 +658,12 @@ private:
                                        const sp<IRegionSamplingListener>& listener) override;
     status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) override;
     status_t setDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken, int32_t displayModeId,
-                                          float primaryRefreshRateMin, float primaryRefreshRateMax,
+                                          bool allowGroupSwitching, float primaryRefreshRateMin,
+                                          float primaryRefreshRateMax,
                                           float appRequestRefreshRateMin,
                                           float appRequestRefreshRateMax) override;
     status_t getDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                          int32_t* outDefaultConfig,
+                                          int32_t* outDefaultConfig, bool* outAllowGroupSwitching,
                                           float* outPrimaryRefreshRateMin,
                                           float* outPrimaryRefreshRateMax,
                                           float* outAppRequestRefreshRateMin,
@@ -875,13 +876,14 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
+                                 ui::PixelFormat, const bool allowProtected,
+                                 const sp<IScreenCaptureListener>&);
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, sp<GraphicBuffer>&,
+                                 bool regionSampling, const sp<IScreenCaptureListener>&);
     status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
                                     const sp<GraphicBuffer>&, bool forSystem, int* outSyncFd,
                                     bool regionSampling, ScreenCaptureResults&);
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
-                                 ui::PixelFormat, const sp<IScreenCaptureListener>&);
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, sp<GraphicBuffer>&,
-                                 bool regionSampling, const sp<IScreenCaptureListener>&);
 
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayByLayerStack(uint64_t layerStack) REQUIRES(mStateLock);
@@ -1244,7 +1246,7 @@ private:
     SurfaceTracing mTracing{*this};
     std::mutex mTracingLock;
     bool mTracingEnabled = false;
-    bool mAddCompositionStateToTrace = false;
+    bool mTracePostComposition = false;
     std::atomic<bool> mTracingEnabledChanged = false;
 
     const std::shared_ptr<TimeStats> mTimeStats;

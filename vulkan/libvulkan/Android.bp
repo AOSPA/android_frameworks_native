@@ -21,7 +21,7 @@ ndk_library {
 }
 
 llndk_library {
-    name: "libvulkan",
+    name: "libvulkan.llndk",
     symbol_file: "libvulkan.map.txt",
     export_llndk_headers: [
         "vulkan_headers_llndk",
@@ -30,6 +30,7 @@ llndk_library {
 
 cc_library_shared {
     name: "libvulkan",
+    llndk_stubs: "libvulkan.llndk",
     clang: true,
     sanitize: {
         misc_undefined: ["integer"],
@@ -89,7 +90,6 @@ cc_library_shared {
         "libhardware",
         "libsync",
         "libbase",
-        "libdl_android",
         "libhidlbase",
         "liblog",
         "libui",
@@ -100,6 +100,7 @@ cc_library_shared {
         "libnativebridge_lazy",
         "libnativeloader_lazy",
         "libnativewindow",
+        "libvndksupport",
         "android.hardware.graphics.common@1.0",
         "libSurfaceFlingerProp",
     ],
