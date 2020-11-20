@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_PARCEL_H
-#define ANDROID_PARCEL_H
+#pragma once
 
 #include <map> // for legacy reasons
 #include <string>
@@ -83,6 +82,13 @@ public:
     void                restoreAllowFds(bool lastValue);
 
     bool                hasFileDescriptors() const;
+
+    // Zeros data when reallocating. Other mitigations may be added
+    // in the future.
+    //
+    // WARNING: some read methods may make additional copies of data.
+    // In order to verify this, heap dumps should be used.
+    void                markSensitive() const;
 
     // Writes the RPC header.
     status_t            writeInterfaceToken(const String16& interface);
@@ -297,8 +303,6 @@ public:
     status_t            readFloat(float *pArg) const;
     double              readDouble() const;
     status_t            readDouble(double *pArg) const;
-    intptr_t            readIntPtr() const;
-    status_t            readIntPtr(intptr_t *pArg) const;
     bool                readBool() const;
     status_t            readBool(bool *pArg) const;
     char16_t            readChar() const;
@@ -481,24 +485,21 @@ public:
     // uid.
     uid_t               readCallingWorkSourceUid() const;
 
+    void                print(TextOutput& to, uint32_t flags = 0) const;
+
 private:
     typedef void        (*release_func)(Parcel* parcel,
                                         const uint8_t* data, size_t dataSize,
-                                        const binder_size_t* objects, size_t objectsSize,
-                                        void* cookie);
-                        
+                                        const binder_size_t* objects, size_t objectsSize);
+
     uintptr_t           ipcData() const;
     size_t              ipcDataSize() const;
     uintptr_t           ipcObjects() const;
     size_t              ipcObjectsCount() const;
     void                ipcSetDataReference(const uint8_t* data, size_t dataSize,
                                             const binder_size_t* objects, size_t objectsCount,
-                                            release_func relFunc, void* relCookie);
-    
-public:
-    void                print(TextOutput& to, uint32_t flags = 0) const;
+                                            release_func relFunc);
 
-private:
                         Parcel(const Parcel& o);
     Parcel&             operator=(const Parcel& o);
     
@@ -600,8 +601,14 @@ private:
     mutable bool        mHasFds;
     bool                mAllowFds;
 
+    // if this parcelable is involved in a secure transaction, force the
+    // data to be overridden with zero when deallocated
+    mutable bool        mDeallocZero;
+
     release_func        mOwner;
-    void*               mOwnerCookie;
+
+    // TODO(167966510): reserved for binder/version/stability
+    void*               mReserved = reinterpret_cast<void*>(0xAAAAAAAA);
 
     class Blob {
     public:
@@ -1328,5 +1335,3 @@ inline TextOutput& operator<<(TextOutput& to, const Parcel& parcel)
 } // namespace android
 
 // ---------------------------------------------------------------------------
-
-#endif // ANDROID_PARCEL_H

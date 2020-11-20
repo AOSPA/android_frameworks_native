@@ -1230,9 +1230,7 @@ bool InputDispatcher::dispatchKeyLocked(nsecs_t currentTime, std::shared_ptr<Key
                     &InputDispatcher::doInterceptKeyBeforeDispatchingLockedInterruptible);
             sp<IBinder> focusedWindowToken =
                     getValueByKey(mFocusedWindowTokenByDisplay, getTargetDisplayId(*entry));
-            if (focusedWindowToken != nullptr) {
-                commandEntry->inputChannel = getInputChannelLocked(focusedWindowToken);
-            }
+            commandEntry->connectionToken = focusedWindowToken;
             commandEntry->keyEntry = entry;
             postCommandLocked(std::move(commandEntry));
             return false; // wait for the command to run
@@ -2272,13 +2270,14 @@ InputDispatcher::TouchOcclusionInfo InputDispatcher::computeTouchOcclusionInfoLo
 
 std::string InputDispatcher::dumpWindowForTouchOcclusion(const InputWindowInfo* info,
                                                          bool isTouchedWindow) const {
-    return StringPrintf(INDENT2 "* %stype=%s, package=%s/%" PRId32 ", mode=%s, alpha=%.2f, "
+    return StringPrintf(INDENT2 "* %stype=%s, package=%s/%" PRId32 ", id=%" PRId32
+                                ", mode=%s, alpha=%.2f, "
                                 "frame=[%" PRId32 ",%" PRId32 "][%" PRId32 ",%" PRId32
                                 "], touchableRegion=%s, window={%s}, applicationInfo=%s, "
                                 "flags={%s}, inputFeatures={%s}, hasToken=%s\n",
                         (isTouchedWindow) ? "[TOUCHED] " : "",
                         NamedEnum::string(info->type, "%" PRId32).c_str(),
-                        info->packageName.c_str(), info->ownerUid,
+                        info->packageName.c_str(), info->ownerUid, info->id,
                         toString(info->touchOcclusionMode).c_str(), info->alpha, info->frameLeft,
                         info->frameTop, info->frameRight, info->frameBottom,
                         dumpRegion(info->touchableRegion).c_str(), info->name.c_str(),
@@ -4404,6 +4403,24 @@ std::string InputDispatcher::dumpFocusedWindowsLocked() {
     return dump;
 }
 
+std::string InputDispatcher::dumpPendingFocusRequestsLocked() {
+    if (mPendingFocusRequests.empty()) {
+        return INDENT "mPendingFocusRequests: <none>\n";
+    }
+
+    std::string dump;
+    dump += INDENT "mPendingFocusRequests:\n";
+    for (const auto& [displayId, focusRequest] : mPendingFocusRequests) {
+        // Rather than printing raw values for focusRequest.token and focusRequest.focusedToken,
+        // try to resolve them to actual windows.
+        std::string windowName = getConnectionNameLocked(focusRequest.token);
+        std::string focusedWindowName = getConnectionNameLocked(focusRequest.focusedToken);
+        dump += StringPrintf(INDENT2 "displayId=%" PRId32 ", token->%s, focusedToken->%s\n",
+                             displayId, windowName.c_str(), focusedWindowName.c_str());
+    }
+    return dump;
+}
+
 void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
     dump += StringPrintf(INDENT "DispatchEnabled: %s\n", toString(mDispatchEnabled));
     dump += StringPrintf(INDENT "DispatchFrozen: %s\n", toString(mDispatchFrozen));
@@ -4426,6 +4443,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
     }
 
     dump += dumpFocusedWindowsLocked();
+    dump += dumpPendingFocusRequestsLocked();
 
     if (!mTouchStatesByDisplay.empty()) {
         dump += StringPrintf(INDENT "TouchStatesByDisplay:\n");
@@ -4469,19 +4487,19 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
                     const sp<InputWindowHandle>& windowHandle = windowHandles[i];
                     const InputWindowInfo* windowInfo = windowHandle->getInfo();
 
-                    dump += StringPrintf(INDENT3 "%zu: name='%s', displayId=%d, "
+                    dump += StringPrintf(INDENT3 "%zu: name='%s', id=%" PRId32 ", displayId=%d, "
                                                  "portalToDisplayId=%d, paused=%s, focusable=%s, "
-                                                 "hasWallpaper=%s, visible=%s, "
+                                                 "hasWallpaper=%s, visible=%s, alpha=%.2f, "
                                                  "flags=%s, type=0x%08x, "
                                                  "frame=[%d,%d][%d,%d], globalScale=%f, "
                                                  "applicationInfo=%s, "
                                                  "touchableRegion=",
-                                         i, windowInfo->name.c_str(), windowInfo->displayId,
-                                         windowInfo->portalToDisplayId,
+                                         i, windowInfo->name.c_str(), windowInfo->id,
+                                         windowInfo->displayId, windowInfo->portalToDisplayId,
                                          toString(windowInfo->paused),
                                          toString(windowInfo->focusable),
                                          toString(windowInfo->hasWallpaper),
-                                         toString(windowInfo->visible),
+                                         toString(windowInfo->visible), windowInfo->alpha,
                                          windowInfo->flags.string().c_str(),
                                          static_cast<int32_t>(windowInfo->type),
                                          windowInfo->frameLeft, windowInfo->frameTop,
@@ -4833,6 +4851,14 @@ sp<Connection> InputDispatcher::getConnectionLocked(const sp<IBinder>& inputConn
     return nullptr;
 }
 
+std::string InputDispatcher::getConnectionNameLocked(const sp<IBinder>& connectionToken) const {
+    sp<Connection> connection = getConnectionLocked(connectionToken);
+    if (connection == nullptr) {
+        return "<nullptr>";
+    }
+    return connection->getInputChannelName();
+}
+
 void InputDispatcher::removeConnectionLocked(const sp<Connection>& connection) {
     mAnrTracker.eraseToken(connection->inputChannel->getConnectionToken());
     removeByValue(mConnectionsByFd, connection);
@@ -4893,14 +4919,13 @@ void InputDispatcher::onAnrLocked(const Connection& connection) {
                                         connection.inputChannel->getName().c_str(),
                                         ns2ms(currentWait),
                                         oldestEntry->eventEntry->getDescription().c_str());
-
-    updateLastAnrStateLocked(getWindowHandleLocked(connection.inputChannel->getConnectionToken()),
-                             reason);
+    sp<IBinder> connectionToken = connection.inputChannel->getConnectionToken();
+    updateLastAnrStateLocked(getWindowHandleLocked(connectionToken), reason);
 
     std::unique_ptr<CommandEntry> commandEntry =
             std::make_unique<CommandEntry>(&InputDispatcher::doNotifyAnrLockedInterruptible);
     commandEntry->inputApplicationHandle = nullptr;
-    commandEntry->inputChannel = connection.inputChannel;
+    commandEntry->connectionToken = connectionToken;
     commandEntry->reason = std::move(reason);
     postCommandLocked(std::move(commandEntry));
 }
@@ -4914,7 +4939,6 @@ void InputDispatcher::onAnrLocked(const std::shared_ptr<InputApplicationHandle>&
     std::unique_ptr<CommandEntry> commandEntry =
             std::make_unique<CommandEntry>(&InputDispatcher::doNotifyAnrLockedInterruptible);
     commandEntry->inputApplicationHandle = application;
-    commandEntry->inputChannel = nullptr;
     commandEntry->reason = std::move(reason);
     postCommandLocked(std::move(commandEntry));
 }
@@ -4983,10 +5007,8 @@ void InputDispatcher::doNotifyFocusChangedLockedInterruptible(CommandEntry* comm
 }
 
 void InputDispatcher::doNotifyAnrLockedInterruptible(CommandEntry* commandEntry) {
-    sp<IBinder> token =
-            commandEntry->inputChannel ? commandEntry->inputChannel->getConnectionToken() : nullptr;
     mLock.unlock();
-
+    const sp<IBinder>& token = commandEntry->connectionToken;
     const std::chrono::nanoseconds timeoutExtension =
             mPolicy->notifyAnr(commandEntry->inputApplicationHandle, token, commandEntry->reason);
 
@@ -5049,9 +5071,7 @@ void InputDispatcher::doInterceptKeyBeforeDispatchingLockedInterruptible(
     mLock.unlock();
 
     android::base::Timer t;
-    sp<IBinder> token = commandEntry->inputChannel != nullptr
-            ? commandEntry->inputChannel->getConnectionToken()
-            : nullptr;
+    const sp<IBinder>& token = commandEntry->connectionToken;
     nsecs_t delay = mPolicy->interceptKeyBeforeDispatching(token, &event, entry.policyFlags);
     if (t.duration() > SLOW_INTERCEPTION_THRESHOLD) {
         ALOGW("Excessive delay in interceptKeyBeforeDispatching; took %s ms",
