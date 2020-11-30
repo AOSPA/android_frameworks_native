@@ -687,7 +687,7 @@ public:
 
     sp<ISurfaceComposerClient> createConnection() override { return nullptr; }
     sp<IDisplayEventConnection> createDisplayEventConnection(
-            ISurfaceComposer::VsyncSource, ISurfaceComposer::ConfigChanged) override {
+            ISurfaceComposer::VsyncSource, ISurfaceComposer::EventRegistrationFlags) override {
         return nullptr;
     }
     sp<IBinder> createDisplay(const String8& /*displayName*/,
@@ -869,7 +869,7 @@ public:
     }
 
     status_t setFrameRate(const sp<IGraphicBufferProducer>& /*surface*/, float /*frameRate*/,
-                          int8_t /*compatibility*/) override {
+                          int8_t /*compatibility*/, bool /*shouldBeSeamless*/) override {
         return NO_ERROR;
     }
 

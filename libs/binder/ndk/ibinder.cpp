@@ -307,7 +307,8 @@ AIBinder_Class::AIBinder_Class(const char* interfaceDescriptor, AIBinder_Class_o
     : onCreate(onCreate),
       onDestroy(onDestroy),
       onTransact(onTransact),
-      mInterfaceDescriptor(interfaceDescriptor) {}
+      mInterfaceDescriptor(interfaceDescriptor),
+      mWideInterfaceDescriptor(interfaceDescriptor) {}
 
 AIBinder_Class* AIBinder_Class_define(const char* interfaceDescriptor,
                                       AIBinder_Class_onCreate onCreate,
@@ -333,6 +334,12 @@ void AIBinder_Class_setHandleShellCommand(AIBinder_Class* clazz,
     CHECK(clazz != nullptr) << "setHandleShellCommand requires non-null clazz";
 
     clazz->handleShellCommand = handleShellCommand;
+}
+
+const char* AIBinder_Class_getDescriptor(const AIBinder_Class* clazz) {
+    CHECK(clazz != nullptr) << "getDescriptor requires non-null clazz";
+
+    return clazz->getInterfaceDescriptorUtf8();
 }
 
 void AIBinder_DeathRecipient::TransferDeathRecipient::binderDied(const wp<IBinder>& who) {
@@ -367,7 +374,7 @@ void AIBinder_DeathRecipient::pruneDeadTransferEntriesLocked() {
                            mDeathRecipients.end());
 }
 
-binder_status_t AIBinder_DeathRecipient::linkToDeath(sp<IBinder> binder, void* cookie) {
+binder_status_t AIBinder_DeathRecipient::linkToDeath(const sp<IBinder>& binder, void* cookie) {
     CHECK(binder != nullptr);
 
     std::lock_guard<std::mutex> l(mDeathRecipientsMutex);
@@ -386,7 +393,7 @@ binder_status_t AIBinder_DeathRecipient::linkToDeath(sp<IBinder> binder, void* c
     return STATUS_OK;
 }
 
-binder_status_t AIBinder_DeathRecipient::unlinkToDeath(sp<IBinder> binder, void* cookie) {
+binder_status_t AIBinder_DeathRecipient::unlinkToDeath(const sp<IBinder>& binder, void* cookie) {
     CHECK(binder != nullptr);
 
     std::lock_guard<std::mutex> l(mDeathRecipientsMutex);

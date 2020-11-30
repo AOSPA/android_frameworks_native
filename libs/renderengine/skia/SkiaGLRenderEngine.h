@@ -29,9 +29,13 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "AutoBackendTexture.h"
 #include "EGL/egl.h"
+#include "SkImageInfo.h"
 #include "SkiaRenderEngine.h"
+#include "android-base/macros.h"
 #include "filters/BlurFilter.h"
+#include "skia/filters/LinearEffect.h"
 
 namespace android {
 namespace renderengine {
@@ -40,8 +44,8 @@ namespace skia {
 class SkiaGLRenderEngine : public skia::SkiaRenderEngine {
 public:
     static std::unique_ptr<SkiaGLRenderEngine> create(const RenderEngineCreationArgs& args);
-    SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display, EGLConfig config,
-                       EGLContext ctxt, EGLSurface placeholder, EGLContext protectedContext,
+    SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display, EGLContext ctxt,
+                       EGLSurface placeholder, EGLContext protectedContext,
                        EGLSurface protectedPlaceholder);
     ~SkiaGLRenderEngine() override{};
 
@@ -51,6 +55,9 @@ public:
                         const sp<GraphicBuffer>& buffer, const bool useFramebufferCache,
                         base::unique_fd&& bufferFence, base::unique_fd* drawFence) override;
     void cleanFramebufferCache() override;
+    bool isProtected() const override { return mInProtectedContext; }
+    bool supportsProtectedContent() const override;
+    bool useProtectedContext(bool useProtectedContext) override;
 
 protected:
     void dump(std::string& /*result*/) override{};
@@ -67,6 +74,7 @@ private:
     inline SkRect getSkRect(const FloatRect& layer);
     inline SkRect getSkRect(const Rect& layer);
     inline SkRRect getRoundedRect(const LayerSettings* layer);
+    inline BlurRegion getBlurRegion(const LayerSettings* layer);
     inline SkColor getSkColor(const vec4& color);
     inline SkM44 getSkM44(const mat4& matrix);
     inline SkMatrix getDrawTransform(const LayerSettings* layer, const SkMatrix& screenTransform);
@@ -76,11 +84,10 @@ private:
     bool waitFence(base::unique_fd fenceFd);
     void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
                     const ShadowSettings& shadowSettings);
-    void drawBlurRegion(SkCanvas* canvas, const BlurRegion& blurRegion, const SkRect& layerBounds,
-                        sk_sp<SkSurface> blurrendSurface);
+    void drawBlurRegion(SkCanvas* canvas, const BlurRegion& blurRegion,
+                        const SkMatrix& drawTransform, sk_sp<SkSurface> blurrendSurface);
 
     EGLDisplay mEGLDisplay;
-    EGLConfig mEGLConfig;
     EGLContext mEGLContext;
     EGLSurface mPlaceholderSurface;
     EGLContext mProtectedEGLContext;
@@ -89,8 +96,12 @@ private:
 
     const bool mUseColorManagement;
 
-    // Cache of GL images that we'll store per GraphicBuffer ID
-    std::unordered_map<uint64_t, sk_sp<SkImage>> mImageCache GUARDED_BY(mRenderingMutex);
+    // Cache of GL textures that we'll store per GraphicBuffer ID
+    std::unordered_map<uint64_t, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
+            GUARDED_BY(mRenderingMutex);
+    std::unordered_map<uint64_t, std::shared_ptr<AutoBackendTexture::LocalRef>>
+            mProtectedTextureCache GUARDED_BY(mRenderingMutex);
+    std::unordered_map<LinearEffect, sk_sp<SkRuntimeEffect>, LinearEffectHasher> mRuntimeEffects;
     // Mutex guarding rendering operations, so that:
     // 1. GL operations aren't interleaved, and
     // 2. Internal state related to rendering that is potentially modified by
@@ -99,9 +110,12 @@ private:
 
     sp<Fence> mLastDrawFence;
 
+    // Graphics context used for creating surfaces and submitting commands
     sk_sp<GrDirectContext> mGrContext;
+    // Same as above, but for protected content (eg. DRM)
+    sk_sp<GrDirectContext> mProtectedGrContext;
 
-    std::unordered_map<uint64_t, sk_sp<SkSurface>> mSurfaceCache;
+    bool mInProtectedContext = false;
 };
 
 } // namespace skia
