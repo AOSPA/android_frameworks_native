@@ -1240,6 +1240,7 @@ private:
     bool mDebugDisableTransformHint = false;
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
+    bool mPropagateBackpressure = true;
     bool mPropagateBackpressureClientComposition = false;
     sp<SurfaceInterceptor> mInterceptor;
 
