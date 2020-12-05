@@ -46,6 +46,9 @@
 #include "FrameTimeline.h"
 #include "HwcStrongTypes.h"
 
+#undef LOG_TAG
+#define LOG_TAG "EventThread"
+
 using namespace std::chrono_literals;
 
 namespace android {
@@ -124,14 +127,36 @@ DisplayEventReceiver::Event makeConfigChanged(PhysicalDisplayId displayId,
     return event;
 }
 
+DisplayEventReceiver::Event makeFrameRateOverrideEvent(PhysicalDisplayId displayId,
+                                                       FrameRateOverride frameRateOverride) {
+    return DisplayEventReceiver::Event{
+            .header =
+                    DisplayEventReceiver::Event::Header{
+                            .type = DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE,
+                            .displayId = displayId,
+                            .timestamp = systemTime(),
+                    },
+            .frameRateOverride = frameRateOverride,
+    };
+}
+
+DisplayEventReceiver::Event makeFrameRateOverrideFlushEvent(PhysicalDisplayId displayId) {
+    return DisplayEventReceiver::Event{
+            .header = DisplayEventReceiver::Event::Header{
+                    .type = DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH,
+                    .displayId = displayId,
+                    .timestamp = systemTime(),
+            }};
+}
+
 } // namespace
 
-EventThreadConnection::EventThreadConnection(EventThread* eventThread, uid_t callingUid,
-                                             ResyncCallback resyncCallback,
-                                             ISurfaceComposer::ConfigChanged configChanged)
+EventThreadConnection::EventThreadConnection(
+        EventThread* eventThread, uid_t callingUid, ResyncCallback resyncCallback,
+        ISurfaceComposer::EventRegistrationFlags eventRegistration)
       : resyncCallback(std::move(resyncCallback)),
-        mConfigChanged(configChanged),
         mOwnerUid(callingUid),
+        mEventRegistration(eventRegistration),
         mEventThread(eventThread),
         mChannel(gui::BitTube(8 * 1024 /* default size is 4KB, double it */)) {}
 
@@ -162,8 +187,25 @@ void EventThreadConnection::requestNextVsync() {
 }
 
 status_t EventThreadConnection::postEvent(const DisplayEventReceiver::Event& event) {
-    ssize_t size = DisplayEventReceiver::sendEvents(&mChannel, &event, 1);
-    return size < 0 ? status_t(size) : status_t(NO_ERROR);
+    constexpr auto toStatus = [](ssize_t size) {
+        return size < 0 ? status_t(size) : status_t(NO_ERROR);
+    };
+
+    if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE ||
+        event.header.type == DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH) {
+        mPendingEvents.emplace_back(event);
+        if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE) {
+            return status_t(NO_ERROR);
+        }
+
+        auto size = DisplayEventReceiver::sendEvents(&mChannel, mPendingEvents.data(),
+                                                     mPendingEvents.size());
+        mPendingEvents.clear();
+        return toStatus(size);
+    }
+
+    auto size = DisplayEventReceiver::sendEvents(&mChannel, &event, 1);
+    return toStatus(size);
 }
 
 // ---------------------------------------------------------------------------
@@ -231,10 +273,11 @@ void EventThread::setDuration(std::chrono::nanoseconds workDuration,
 }
 
 sp<EventThreadConnection> EventThread::createEventConnection(
-        ResyncCallback resyncCallback, ISurfaceComposer::ConfigChanged configChanged) const {
+        ResyncCallback resyncCallback,
+        ISurfaceComposer::EventRegistrationFlags eventRegistration) const {
     return new EventThreadConnection(const_cast<EventThread*>(this),
                                      IPCThreadState::self()->getCallingUid(),
-                                     std::move(resyncCallback), configChanged);
+                                     std::move(resyncCallback), eventRegistration);
 }
 
 status_t EventThread::registerDisplayEventConnection(const sp<EventThreadConnection>& connection) {
@@ -341,6 +384,18 @@ void EventThread::onConfigChanged(PhysicalDisplayId displayId, HwcConfigIndexTyp
     std::lock_guard<std::mutex> lock(mMutex);
 
     mPendingEvents.push_back(makeConfigChanged(displayId, configId, vsyncPeriod));
+    mCondition.notify_all();
+}
+
+void EventThread::onFrameRateOverridesChanged(PhysicalDisplayId displayId,
+                                              std::vector<FrameRateOverride> overrides) {
+    std::lock_guard<std::mutex> lock(mMutex);
+
+    for (auto frameRateOverride : overrides) {
+        mPendingEvents.push_back(makeFrameRateOverrideEvent(displayId, frameRateOverride));
+    }
+    mPendingEvents.push_back(makeFrameRateOverrideFlushEvent(displayId));
+
     mCondition.notify_all();
 }
 
@@ -488,7 +543,8 @@ bool EventThread::shouldConsumeEvent(const DisplayEventReceiver::Event& event,
             return true;
 
         case DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED: {
-            return connection->mConfigChanged == ISurfaceComposer::eConfigChangedDispatch;
+            return connection->mEventRegistration.test(
+                    ISurfaceComposer::EventRegistration::configChanged);
         }
 
         case DisplayEventReceiver::DISPLAY_EVENT_VSYNC:
@@ -516,6 +572,12 @@ bool EventThread::shouldConsumeEvent(const DisplayEventReceiver::Event& event,
                     // rare case
                     return event.vsync.count % vsyncPeriod(connection->vsyncRequest) == 0;
             }
+
+        case DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE:
+            [[fallthrough]];
+        case DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH:
+            return connection->mEventRegistration.test(
+                    ISurfaceComposer::EventRegistration::frameRateOverride);
 
         default:
             return false;

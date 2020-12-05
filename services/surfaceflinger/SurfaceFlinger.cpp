@@ -429,7 +429,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
       : mFactory(factory),
         mInterceptor(mFactory.createSurfaceInterceptor()),
         mTimeStats(std::make_shared<impl::TimeStats>()),
-        mFrameTracer(std::make_unique<FrameTracer>()),
+        mFrameTracer(mFactory.createFrameTracer()),
         mFrameTimeline(std::make_unique<frametimeline::impl::FrameTimeline>(mTimeStats)),
         mEventQueue(mFactory.createMessageQueue()),
         mCompositionEngine(mFactory.createCompositionEngine()),
@@ -1773,11 +1773,12 @@ status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
 // ----------------------------------------------------------------------------
 
 sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
-        ISurfaceComposer::VsyncSource vsyncSource, ISurfaceComposer::ConfigChanged configChanged) {
+        ISurfaceComposer::VsyncSource vsyncSource,
+        ISurfaceComposer::EventRegistrationFlags eventRegistration) {
     const auto& handle =
             vsyncSource == eVsyncSourceSurfaceFlinger ? mSfConnectionHandle : mAppConnectionHandle;
 
-    return mScheduler->createDisplayEventConnection(handle, configChanged);
+    return mScheduler->createDisplayEventConnection(handle, eventRegistration);
 }
 
 void SurfaceFlinger::signalTransaction() {
@@ -4317,7 +4318,8 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                               "SurfaceFlinger::setClientStateLocked") &&
             layer->setFrameRate(Layer::FrameRate(s.frameRate,
                                                  Layer::FrameRate::convertCompatibility(
-                                                         s.frameRateCompatibility)))) {
+                                                         s.frameRateCompatibility),
+                                                 s.shouldBeSeamless))) {
             flags |= eTraversalNeeded;
         }
     }
@@ -4330,6 +4332,9 @@ uint32_t SurfaceFlinger::setClientStateLocked(
         if (layer->setFixedTransformHint(s.fixedTransformHint)) {
             flags |= eTraversalNeeded | eTransformHintUpdateNeeded;
         }
+    }
+    if (what & layer_state_t::eAutoRefreshChanged) {
+        layer->setAutoRefresh(s.autoRefresh);
     }
     // This has to happen after we reparent children because when we reparent to null we remove
     // child layers from current state and remove its relative z. If the children are reparented in
@@ -5000,16 +5005,10 @@ void SurfaceFlinger::dumpVSync(std::string& result) const {
                   "      present offset: %9" PRId64 " ns\t     VSYNC period: %9" PRId64 " ns\n\n",
                   dispSyncPresentTimeOffset, getVsyncPeriodFromHWC());
 
-    scheduler::RefreshRateConfigs::Policy policy = mRefreshRateConfigs->getDisplayManagerPolicy();
-    StringAppendF(&result, "DesiredDisplayConfigSpecs (DisplayManager): %s\n\n",
-                  policy.toString().c_str());
+    mRefreshRateConfigs->dump(result);
+
     StringAppendF(&result, "(config override by backdoor: %s)\n\n",
                   mDebugDisplayConfigSetByBackdoor ? "yes" : "no");
-    scheduler::RefreshRateConfigs::Policy currentPolicy = mRefreshRateConfigs->getCurrentPolicy();
-    if (currentPolicy != policy) {
-        StringAppendF(&result, "DesiredDisplayConfigSpecs (Override): %s\n\n",
-                      currentPolicy.toString().c_str());
-    }
 
     mScheduler->dump(mAppConnectionHandle, result);
     mScheduler->dumpVsync(result);
@@ -5906,10 +5905,18 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 return NO_ERROR;
             }
             case 1039: {
-                // The first parameter is the uid
-                n = data.readInt32();
-                const float refreshRateHz = data.readFloat();
-                mRefreshRateConfigs->setPreferredRefreshRateForUid(n, refreshRateHz);
+                PhysicalDisplayId displayId = [&]() {
+                    Mutex::Autolock lock(mStateLock);
+                    return getDefaultDisplayDeviceLocked()->getPhysicalId();
+                }();
+
+                auto inUid = static_cast<uid_t>(data.readInt32());
+                const auto refreshRate = data.readFloat();
+                mRefreshRateConfigs->setPreferredRefreshRateForUid(
+                        FrameRateOverride{inUid, refreshRate});
+                const auto mappings = mRefreshRateConfigs->getFrameRateOverrides();
+                mScheduler->onFrameRateOverridesChanged(mAppConnectionHandle, displayId,
+                                                        std::move(mappings));
                 return NO_ERROR;
             }
             case 20000: {
@@ -5919,7 +5926,6 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
               setPowerMode(getPhysicalDisplayToken(PhysicalDisplayId{disp}), mode);
               return NO_ERROR;
             }
-                return NO_ERROR;
         }
     }
     return err;
@@ -6295,9 +6301,14 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     const bool supportsProtected = getRenderEngine().supportsProtectedContent();
     bool hasProtectedLayer = false;
     if (allowProtected && supportsProtected) {
-        traverseLayers([&](Layer* layer) {
-            hasProtectedLayer = hasProtectedLayer || (layer->isVisible() && layer->isProtected());
-        });
+        hasProtectedLayer = schedule([=]() {
+                                bool protectedLayerFound = false;
+                                traverseLayers([&](Layer* layer) {
+                                    protectedLayerFound = protectedLayerFound ||
+                                            (layer->isVisible() && layer->isProtected());
+                                });
+                                return protectedLayerFound;
+                            }).get();
     }
 
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
@@ -6809,7 +6820,7 @@ const std::unordered_map<std::string, uint32_t>& SurfaceFlinger::getGenericLayer
 }
 
 status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                                      int8_t compatibility) {
+                                      int8_t compatibility, bool shouldBeSeamless) {
     if (!ValidateFrameRate(frameRate, compatibility, "SurfaceFlinger::setFrameRate")) {
         return BAD_VALUE;
     }
@@ -6822,10 +6833,10 @@ status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface,
                 ALOGE("Attempt to set frame rate on a layer that no longer exists");
                 return BAD_VALUE;
             }
-
             if (layer->setFrameRate(
                         Layer::FrameRate(frameRate,
-                                         Layer::FrameRate::convertCompatibility(compatibility)))) {
+                                         Layer::FrameRate::convertCompatibility(compatibility),
+                                         shouldBeSeamless))) {
                 setTransactionFlags(eTraversalNeeded);
             }
         } else {

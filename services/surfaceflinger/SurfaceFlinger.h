@@ -605,8 +605,7 @@ private:
     status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const override;
     sp<IDisplayEventConnection> createDisplayEventConnection(
             ISurfaceComposer::VsyncSource vsyncSource = eVsyncSourceApp,
-            ISurfaceComposer::ConfigChanged configChanged =
-                    ISurfaceComposer::eConfigChangedSuppress) override;
+            ISurfaceComposer::EventRegistrationFlags eventRegistration = {}) override;
     status_t captureDisplay(const DisplayCaptureArgs& args,
                             const sp<IScreenCaptureListener>& captureListener) override;
     status_t captureDisplay(uint64_t displayOrLayerStack,
@@ -675,7 +674,7 @@ private:
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                          int8_t compatibility) override;
+                          int8_t compatibility, bool shouldBeSeamless) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
 

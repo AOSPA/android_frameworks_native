@@ -223,8 +223,8 @@ public:
         return NO_ERROR;
     }
 
-    virtual sp<IDisplayEventConnection> createDisplayEventConnection(VsyncSource vsyncSource,
-                                                                     ConfigChanged configChanged) {
+    virtual sp<IDisplayEventConnection> createDisplayEventConnection(
+            VsyncSource vsyncSource, EventRegistrationFlags eventRegistration) {
         Parcel data, reply;
         sp<IDisplayEventConnection> result;
         int err = data.writeInterfaceToken(
@@ -233,7 +233,7 @@ public:
             return result;
         }
         data.writeInt32(static_cast<int32_t>(vsyncSource));
-        data.writeInt32(static_cast<int32_t>(configChanged));
+        data.writeUint32(eventRegistration.get());
         err = remote()->transact(
                 BnSurfaceComposer::CREATE_DISPLAY_EVENT_CONNECTION,
                 data, &reply);
@@ -1114,7 +1114,7 @@ public:
     }
 
     virtual status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                                  int8_t compatibility) {
+                                  int8_t compatibility, bool shouldBeSeamless) {
         Parcel data, reply;
         status_t err = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         if (err != NO_ERROR) {
@@ -1137,6 +1137,12 @@ public:
         err = data.writeByte(compatibility);
         if (err != NO_ERROR) {
             ALOGE("setFrameRate: failed writing byte: %s (%d)", strerror(-err), -err);
+            return err;
+        }
+
+        err = data.writeBool(shouldBeSeamless);
+        if (err != NO_ERROR) {
+            ALOGE("setFrameRate: failed writing bool: %s (%d)", strerror(-err), -err);
             return err;
         }
 
@@ -1367,10 +1373,11 @@ status_t BnSurfaceComposer::onTransact(
         case CREATE_DISPLAY_EVENT_CONNECTION: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             auto vsyncSource = static_cast<ISurfaceComposer::VsyncSource>(data.readInt32());
-            auto configChanged = static_cast<ISurfaceComposer::ConfigChanged>(data.readInt32());
+            EventRegistrationFlags eventRegistration =
+                    static_cast<EventRegistration>(data.readUint32());
 
             sp<IDisplayEventConnection> connection(
-                    createDisplayEventConnection(vsyncSource, configChanged));
+                    createDisplayEventConnection(vsyncSource, eventRegistration));
             reply->writeStrongBinder(IInterface::asBinder(connection));
             return NO_ERROR;
         }
@@ -2033,7 +2040,13 @@ status_t BnSurfaceComposer::onTransact(
                 ALOGE("setFrameRate: failed to read byte: %s (%d)", strerror(-err), -err);
                 return err;
             }
-            status_t result = setFrameRate(surface, frameRate, compatibility);
+            bool shouldBeSeamless;
+            err = data.readBool(&shouldBeSeamless);
+            if (err != NO_ERROR) {
+                ALOGE("setFrameRate: failed to read bool: %s (%d)", strerror(-err), -err);
+                return err;
+            }
+            status_t result = setFrameRate(surface, frameRate, compatibility, shouldBeSeamless);
             reply->writeInt32(result);
             return NO_ERROR;
         }

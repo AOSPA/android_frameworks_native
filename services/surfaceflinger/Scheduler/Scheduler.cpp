@@ -135,7 +135,7 @@ Scheduler::Scheduler(const scheduler::RefreshRateConfigs& configs, ISchedulerCal
         const auto callback = mOptions.supportKernelTimer ? &Scheduler::kernelIdleTimerCallback
                                                           : &Scheduler::idleTimerCallback;
         mIdleTimer.emplace(
-                std::chrono::milliseconds(millis),
+                "IdleTimer", std::chrono::milliseconds(millis),
                 [this, callback] { std::invoke(callback, this, TimerState::Reset); },
                 [this, callback] { std::invoke(callback, this, TimerState::Expired); });
         mIdleTimer->start();
@@ -144,7 +144,7 @@ Scheduler::Scheduler(const scheduler::RefreshRateConfigs& configs, ISchedulerCal
     if (const int64_t millis = set_touch_timer_ms(0); millis > 0) {
         // Touch events are coming to SF every 100ms, so the timer needs to be higher than that
         mTouchTimer.emplace(
-                std::chrono::milliseconds(millis),
+                "TouchTimer", std::chrono::milliseconds(millis),
                 [this] { touchTimerCallback(TimerState::Reset); },
                 [this] { touchTimerCallback(TimerState::Expired); });
         mTouchTimer->start();
@@ -152,7 +152,7 @@ Scheduler::Scheduler(const scheduler::RefreshRateConfigs& configs, ISchedulerCal
 
     if (const int64_t millis = set_display_power_timer_ms(0); millis > 0) {
         mDisplayPowerTimer.emplace(
-                std::chrono::milliseconds(millis),
+                "DisplayPowerTimer", std::chrono::milliseconds(millis),
                 [this] { displayPowerTimerCallback(TimerState::Reset); },
                 [this] { displayPowerTimerCallback(TimerState::Expired); });
         mDisplayPowerTimer->start();
@@ -239,8 +239,7 @@ Scheduler::ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThr
     const ConnectionHandle handle = ConnectionHandle{mNextConnectionHandleId++};
     ALOGV("Creating a connection handle with ID %" PRIuPTR, handle.id);
 
-    auto connection =
-            createConnectionInternal(eventThread.get(), ISurfaceComposer::eConfigChangedSuppress);
+    auto connection = createConnectionInternal(eventThread.get());
 
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     mConnections.emplace(handle, Connection{connection, std::move(eventThread)});
@@ -248,15 +247,15 @@ Scheduler::ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThr
 }
 
 sp<EventThreadConnection> Scheduler::createConnectionInternal(
-        EventThread* eventThread, ISurfaceComposer::ConfigChanged configChanged) {
-    return eventThread->createEventConnection([&] { resync(); }, configChanged);
+        EventThread* eventThread, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+    return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
 }
 
 sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(
-        ConnectionHandle handle, ISurfaceComposer::ConfigChanged configChanged) {
+        ConnectionHandle handle, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     RETURN_IF_INVALID_HANDLE(handle, nullptr);
-    return createConnectionInternal(mConnections[handle].thread.get(), configChanged);
+    return createConnectionInternal(mConnections[handle].thread.get(), eventRegistration);
 }
 
 sp<EventThreadConnection> Scheduler::getEventConnection(ConnectionHandle handle) {
@@ -295,6 +294,17 @@ void Scheduler::onScreenReleased(ConnectionHandle handle) {
         thread = mConnections[handle].thread.get();
     }
     thread->onScreenReleased();
+}
+
+void Scheduler::onFrameRateOverridesChanged(ConnectionHandle handle, PhysicalDisplayId displayId,
+                                            std::vector<FrameRateOverride> overrides) {
+    android::EventThread* thread;
+    {
+        std::lock_guard<std::mutex> lock(mConnectionsLock);
+        RETURN_IF_INVALID_HANDLE(handle);
+        thread = mConnections[handle].thread.get();
+    }
+    thread->onFrameRateOverridesChanged(displayId, std::move(overrides));
 }
 
 void Scheduler::onPrimaryDisplayConfigChanged(ConnectionHandle handle, PhysicalDisplayId displayId,

@@ -2336,7 +2336,7 @@ bool InputDispatcher::isWindowObscuredLocked(const sp<InputWindowHandle>& window
 }
 
 std::string InputDispatcher::getApplicationWindowLabel(
-        const std::shared_ptr<InputApplicationHandle>& applicationHandle,
+        const InputApplicationHandle* applicationHandle,
         const sp<InputWindowHandle>& windowHandle) {
     if (applicationHandle != nullptr) {
         if (windowHandle != nullptr) {
@@ -3542,6 +3542,15 @@ void InputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs* args) {
     }
 }
 
+void InputDispatcher::notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) {
+#if DEBUG_INBOUND_EVENT_DETAILS
+    ALOGD("notifyPointerCaptureChanged - eventTime=%" PRId64 ", enabled=%s", args->eventTime,
+          args->enabled ? "true" : "false");
+#endif
+
+    // TODO(prabirmsp): Implement.
+}
+
 InputEventInjectionResult InputDispatcher::injectInputEvent(
         const InputEvent* event, int32_t injectorPid, int32_t injectorUid,
         InputEventInjectionSync syncMode, std::chrono::milliseconds timeout, uint32_t policyFlags) {
@@ -4490,7 +4499,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
                     dump += StringPrintf(INDENT3 "%zu: name='%s', id=%" PRId32 ", displayId=%d, "
                                                  "portalToDisplayId=%d, paused=%s, focusable=%s, "
                                                  "hasWallpaper=%s, visible=%s, alpha=%.2f, "
-                                                 "flags=%s, type=0x%08x, "
+                                                 "flags=%s, type=%s, "
                                                  "frame=[%d,%d][%d,%d], globalScale=%f, "
                                                  "applicationInfo=%s, "
                                                  "touchableRegion=",
@@ -4501,7 +4510,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
                                          toString(windowInfo->hasWallpaper),
                                          toString(windowInfo->visible), windowInfo->alpha,
                                          windowInfo->flags.string().c_str(),
-                                         static_cast<int32_t>(windowInfo->type),
+                                         NamedEnum::string(windowInfo->type).c_str(),
                                          windowInfo->frameLeft, windowInfo->frameTop,
                                          windowInfo->frameRight, windowInfo->frameBottom,
                                          windowInfo->globalScaleFactor,
@@ -4510,11 +4519,13 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
                     dump += StringPrintf(", inputFeatures=%s",
                                          windowInfo->inputFeatures.string().c_str());
                     dump += StringPrintf(", ownerPid=%d, ownerUid=%d, dispatchingTimeout=%" PRId64
-                                         "ms, trustedOverlay=%s, hasToken=%s\n",
+                                         "ms, trustedOverlay=%s, hasToken=%s, "
+                                         "touchOcclusionMode=%s\n",
                                          windowInfo->ownerPid, windowInfo->ownerUid,
                                          millis(windowInfo->dispatchingTimeout),
                                          toString(windowInfo->trustedOverlay),
-                                         toString(windowInfo->token != nullptr));
+                                         toString(windowInfo->token != nullptr),
+                                         toString(windowInfo->touchOcclusionMode).c_str());
                     windowInfo->transform.dump(dump, "transform", INDENT4);
                 }
             } else {
@@ -4922,24 +4933,21 @@ void InputDispatcher::onAnrLocked(const Connection& connection) {
     sp<IBinder> connectionToken = connection.inputChannel->getConnectionToken();
     updateLastAnrStateLocked(getWindowHandleLocked(connectionToken), reason);
 
-    std::unique_ptr<CommandEntry> commandEntry =
-            std::make_unique<CommandEntry>(&InputDispatcher::doNotifyAnrLockedInterruptible);
-    commandEntry->inputApplicationHandle = nullptr;
+    std::unique_ptr<CommandEntry> commandEntry = std::make_unique<CommandEntry>(
+            &InputDispatcher::doNotifyConnectionUnresponsiveLockedInterruptible);
     commandEntry->connectionToken = connectionToken;
     commandEntry->reason = std::move(reason);
     postCommandLocked(std::move(commandEntry));
 }
 
-void InputDispatcher::onAnrLocked(const std::shared_ptr<InputApplicationHandle>& application) {
-    std::string reason = android::base::StringPrintf("%s does not have a focused window",
-                                                     application->getName().c_str());
+void InputDispatcher::onAnrLocked(std::shared_ptr<InputApplicationHandle> application) {
+    std::string reason =
+            StringPrintf("%s does not have a focused window", application->getName().c_str());
+    updateLastAnrStateLocked(*application, reason);
 
-    updateLastAnrStateLocked(application, reason);
-
-    std::unique_ptr<CommandEntry> commandEntry =
-            std::make_unique<CommandEntry>(&InputDispatcher::doNotifyAnrLockedInterruptible);
-    commandEntry->inputApplicationHandle = application;
-    commandEntry->reason = std::move(reason);
+    std::unique_ptr<CommandEntry> commandEntry = std::make_unique<CommandEntry>(
+            &InputDispatcher::doNotifyNoFocusedWindowAnrLockedInterruptible);
+    commandEntry->inputApplicationHandle = std::move(application);
     postCommandLocked(std::move(commandEntry));
 }
 
@@ -4956,9 +4964,9 @@ void InputDispatcher::updateLastAnrStateLocked(const sp<InputWindowHandle>& wind
     updateLastAnrStateLocked(windowLabel, reason);
 }
 
-void InputDispatcher::updateLastAnrStateLocked(
-        const std::shared_ptr<InputApplicationHandle>& application, const std::string& reason) {
-    const std::string windowLabel = getApplicationWindowLabel(application, nullptr);
+void InputDispatcher::updateLastAnrStateLocked(const InputApplicationHandle& application,
+                                               const std::string& reason) {
+    const std::string windowLabel = getApplicationWindowLabel(&application, nullptr);
     updateLastAnrStateLocked(windowLabel, reason);
 }
 
@@ -5006,24 +5014,36 @@ void InputDispatcher::doNotifyFocusChangedLockedInterruptible(CommandEntry* comm
     mLock.lock();
 }
 
-void InputDispatcher::doNotifyAnrLockedInterruptible(CommandEntry* commandEntry) {
+void InputDispatcher::doNotifyNoFocusedWindowAnrLockedInterruptible(CommandEntry* commandEntry) {
     mLock.unlock();
-    const sp<IBinder>& token = commandEntry->connectionToken;
-    const std::chrono::nanoseconds timeoutExtension =
-            mPolicy->notifyAnr(commandEntry->inputApplicationHandle, token, commandEntry->reason);
+
+    mPolicy->notifyNoFocusedWindowAnr(commandEntry->inputApplicationHandle);
+
+    mLock.lock();
+}
+
+void InputDispatcher::doNotifyConnectionUnresponsiveLockedInterruptible(
+        CommandEntry* commandEntry) {
+    mLock.unlock();
+
+    mPolicy->notifyConnectionUnresponsive(commandEntry->connectionToken, commandEntry->reason);
 
     mLock.lock();
 
-    if (timeoutExtension > 0s) {
-        extendAnrTimeoutsLocked(commandEntry->inputApplicationHandle, token, timeoutExtension);
-    } else {
-        // stop waking up for events in this connection, it is already not responding
-        sp<Connection> connection = getConnectionLocked(token);
-        if (connection == nullptr) {
-            return;
-        }
-        cancelEventsForAnrLocked(connection);
+    // stop waking up for events in this connection, it is already not responding
+    sp<Connection> connection = getConnectionLocked(commandEntry->connectionToken);
+    if (connection == nullptr) {
+        return;
     }
+    cancelEventsForAnrLocked(connection);
+}
+
+void InputDispatcher::doNotifyConnectionResponsiveLockedInterruptible(CommandEntry* commandEntry) {
+    mLock.unlock();
+
+    mPolicy->notifyConnectionResponsive(commandEntry->connectionToken);
+
+    mLock.lock();
 }
 
 void InputDispatcher::doNotifyUntrustedTouchLockedInterruptible(CommandEntry* commandEntry) {
@@ -5032,35 +5052,6 @@ void InputDispatcher::doNotifyUntrustedTouchLockedInterruptible(CommandEntry* co
     mPolicy->notifyUntrustedTouch(commandEntry->obscuringPackage);
 
     mLock.lock();
-}
-
-void InputDispatcher::extendAnrTimeoutsLocked(
-        const std::shared_ptr<InputApplicationHandle>& application,
-        const sp<IBinder>& connectionToken, std::chrono::nanoseconds timeoutExtension) {
-    if (connectionToken == nullptr && application != nullptr) {
-        // The ANR happened because there's no focused window
-        mNoFocusedWindowTimeoutTime = now() + timeoutExtension.count();
-        mAwaitedFocusedApplication = application;
-    }
-
-    sp<Connection> connection = getConnectionLocked(connectionToken);
-    if (connection == nullptr) {
-        // It's possible that the connection already disappeared. No action necessary.
-        return;
-    }
-
-    ALOGI("Raised ANR, but the policy wants to keep waiting on %s for %" PRId64 "ms longer",
-          connection->inputChannel->getName().c_str(), millis(timeoutExtension));
-
-    connection->responsive = true;
-    const nsecs_t newTimeout = now() + timeoutExtension.count();
-    for (DispatchEntry* entry : connection->waitQueue) {
-        if (newTimeout >= entry->timeoutTime) {
-            // Already removed old entries when connection was marked unresponsive
-            entry->timeoutTime = newTimeout;
-            mAnrTracker.insert(entry->timeoutTime, connectionToken);
-        }
-    }
 }
 
 void InputDispatcher::doInterceptKeyBeforeDispatchingLockedInterruptible(
@@ -5150,10 +5141,19 @@ void InputDispatcher::doDispatchCycleFinishedLockedInterruptible(CommandEntry* c
     if (dispatchEntryIt != connection->waitQueue.end()) {
         dispatchEntry = *dispatchEntryIt;
         connection->waitQueue.erase(dispatchEntryIt);
-        mAnrTracker.erase(dispatchEntry->timeoutTime,
-                          connection->inputChannel->getConnectionToken());
+        const sp<IBinder>& connectionToken = connection->inputChannel->getConnectionToken();
+        mAnrTracker.erase(dispatchEntry->timeoutTime, connectionToken);
         if (!connection->responsive) {
             connection->responsive = isConnectionResponsive(*connection);
+            if (connection->responsive) {
+                // The connection was unresponsive, and now it's responsive. Tell the policy
+                // about it so that it can stop ANR.
+                std::unique_ptr<CommandEntry> connectionResponsiveCommand =
+                        std::make_unique<CommandEntry>(
+                                &InputDispatcher::doNotifyConnectionResponsiveLockedInterruptible);
+                connectionResponsiveCommand->connectionToken = connectionToken;
+                postCommandLocked(std::move(connectionResponsiveCommand));
+            }
         }
         traceWaitQueueLength(connection);
         if (restartEvent && connection->status == Connection::STATUS_NORMAL) {
