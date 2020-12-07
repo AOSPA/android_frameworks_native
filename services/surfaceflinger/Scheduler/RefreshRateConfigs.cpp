@@ -27,6 +27,14 @@
 #define LOG_TAG "RefreshRateConfigs"
 
 namespace android::scheduler {
+namespace {
+std::string formatLayerInfo(const RefreshRateConfigs::LayerRequirement& layer, float weight) {
+    return base::StringPrintf("%s (type=%s, weight=%.2f seamlessness=%s) %.2fHz",
+                              layer.name.c_str(),
+                              RefreshRateConfigs::layerVoteTypeString(layer.vote).c_str(), weight,
+                              toString(layer.seamlessness).c_str(), layer.desiredRefreshRate);
+}
+} // namespace
 
 using AllRefreshRatesMapType = RefreshRateConfigs::AllRefreshRatesMapType;
 using RefreshRate = RefreshRateConfigs::RefreshRate;
@@ -59,60 +67,6 @@ std::string RefreshRateConfigs::Policy::toString() const {
                               ", primary range: [%.2f %.2f], app request range: [%.2f %.2f]",
                               defaultConfig.value(), allowGroupSwitching, primaryRange.min,
                               primaryRange.max, appRequestRange.min, appRequestRange.max);
-}
-
-const RefreshRate& RefreshRateConfigs::getRefreshRateForContent(
-        const std::vector<LayerRequirement>& layers) const {
-    std::lock_guard lock(mLock);
-    int contentFramerate = 0;
-    int explicitContentFramerate = 0;
-    for (const auto& layer : layers) {
-        const auto desiredRefreshRateRound = round<int>(layer.desiredRefreshRate);
-        if (layer.vote == LayerVoteType::ExplicitDefault ||
-            layer.vote == LayerVoteType::ExplicitExactOrMultiple) {
-            if (desiredRefreshRateRound > explicitContentFramerate) {
-                explicitContentFramerate = desiredRefreshRateRound;
-            }
-        } else {
-            if (desiredRefreshRateRound > contentFramerate) {
-                contentFramerate = desiredRefreshRateRound;
-            }
-        }
-    }
-
-    if (explicitContentFramerate != 0) {
-        contentFramerate = explicitContentFramerate;
-    } else if (contentFramerate == 0) {
-        contentFramerate = round<int>(mMaxSupportedRefreshRate->getFps());
-    }
-    ATRACE_INT("ContentFPS", contentFramerate);
-
-    // Find the appropriate refresh rate with minimal error
-    auto iter = min_element(mPrimaryRefreshRates.cbegin(), mPrimaryRefreshRates.cend(),
-                            [contentFramerate](const auto& lhs, const auto& rhs) -> bool {
-                                return std::abs(lhs->fps - contentFramerate) <
-                                        std::abs(rhs->fps - contentFramerate);
-                            });
-
-    // Some content aligns better on higher refresh rate. For example for 45fps we should choose
-    // 90Hz config. However we should still prefer a lower refresh rate if the content doesn't
-    // align well with both
-    const RefreshRate* bestSoFar = *iter;
-    constexpr float MARGIN = 0.05f;
-    float ratio = (*iter)->fps / contentFramerate;
-    if (std::abs(std::round(ratio) - ratio) > MARGIN) {
-        while (iter != mPrimaryRefreshRates.cend()) {
-            ratio = (*iter)->fps / contentFramerate;
-
-            if (std::abs(std::round(ratio) - ratio) <= MARGIN) {
-                bestSoFar = *iter;
-                break;
-            }
-            ++iter;
-        }
-    }
-
-    return *bestSoFar;
 }
 
 std::pair<nsecs_t, nsecs_t> RefreshRateConfigs::getDisplayFrames(nsecs_t layerPeriod,
@@ -170,7 +124,7 @@ const RefreshRate& RefreshRateConfigs::getBestRefreshRate(
             maxExplicitWeight = std::max(maxExplicitWeight, layer.weight);
         }
 
-        if (!layer.shouldBeSeamless) {
+        if (layer.seamlessness == Seamlessness::SeamedAndSeamless) {
             seamedLayers++;
         }
     }
@@ -229,27 +183,38 @@ const RefreshRate& RefreshRateConfigs::getBestRefreshRate(
         auto weight = layer.weight;
 
         for (auto i = 0u; i < scores.size(); i++) {
-            // If there are no layers with shouldBeSeamless=false and the current
-            // config group is different from the default one, this means a layer with
-            // shouldBeSeamless=false has just disappeared and we should switch back to
-            // the default config group.
-            const bool isSeamlessSwitch = seamedLayers > 0
-                    ? scores[i].first->getConfigGroup() == mCurrentRefreshRate->getConfigGroup()
-                    : scores[i].first->getConfigGroup() == defaultConfig->getConfigGroup();
+            const bool isSeamlessSwitch =
+                    scores[i].first->getConfigGroup() == mCurrentRefreshRate->getConfigGroup();
 
-            if (layer.shouldBeSeamless && !isSeamlessSwitch) {
-                ALOGV("%s (weight %.2f) ignores %s (group=%d) to avoid non-seamless switch."
-                      "Current config = %s",
-                      layer.name.c_str(), weight, scores[i].first->name.c_str(),
-                      scores[i].first->getConfigGroup(), mCurrentRefreshRate->toString().c_str());
+            if (layer.seamlessness == Seamlessness::OnlySeamless && !isSeamlessSwitch) {
+                ALOGV("%s ignores %s to avoid non-seamless switch. Current config = %s",
+                      formatLayerInfo(layer, weight).c_str(), scores[i].first->toString().c_str(),
+                      mCurrentRefreshRate->toString().c_str());
                 continue;
             }
 
-            if (!layer.shouldBeSeamless && !isSeamlessSwitch && !layer.focused) {
-                ALOGV("%s (weight %.2f) ignores %s (group=%d) because it's not focused"
-                      " and the switch is going to be seamed. Current config = %s",
-                      layer.name.c_str(), weight, scores[i].first->name.c_str(),
-                      scores[i].first->getConfigGroup(), mCurrentRefreshRate->toString().c_str());
+            if (layer.seamlessness == Seamlessness::SeamedAndSeamless && !isSeamlessSwitch &&
+                !layer.focused) {
+                ALOGV("%s ignores %s because it's not focused and the switch is going to be seamed."
+                      " Current config = %s",
+                      formatLayerInfo(layer, weight).c_str(), scores[i].first->toString().c_str(),
+                      mCurrentRefreshRate->toString().c_str());
+                continue;
+            }
+
+            // Layers with default seamlessness vote for the current config group if
+            // there are layers with seamlessness=SeamedAndSeamless and for the default
+            // config group otherwise. In second case, if the current config group is different
+            // from the default, this means a layer with seamlessness=SeamedAndSeamless has just
+            // disappeared.
+            const bool isInPolicyForDefault = seamedLayers > 0
+                    ? scores[i].first->getConfigGroup() == mCurrentRefreshRate->getConfigGroup()
+                    : scores[i].first->getConfigGroup() == defaultConfig->getConfigGroup();
+
+            if (layer.seamlessness == Seamlessness::Default && !isInPolicyForDefault &&
+                !layer.focused) {
+                ALOGV("%s ignores %s. Current config = %s", formatLayerInfo(layer, weight).c_str(),
+                      scores[i].first->toString().c_str(), mCurrentRefreshRate->toString().c_str());
                 continue;
             }
 
@@ -267,7 +232,7 @@ const RefreshRate& RefreshRateConfigs::getBestRefreshRate(
                 const auto ratio = scores[i].first->fps / scores.back().first->fps;
                 // use ratio^2 to get a lower score the more we get further from peak
                 const auto layerScore = ratio * ratio;
-                ALOGV("%s (Max, weight %.2f) gives %s score of %.2f", layer.name.c_str(), weight,
+                ALOGV("%s gives %s score of %.2f", formatLayerInfo(layer, weight).c_str(),
                       scores[i].first->name.c_str(), layerScore);
                 scores[i].second += weight * layerScore;
                 continue;
@@ -290,9 +255,8 @@ const RefreshRate& RefreshRateConfigs::getBestRefreshRate(
                                             static_cast<float>(actualLayerPeriod));
                 }();
 
-                ALOGV("%s (ExplicitDefault, weight %.2f) %.2fHz gives %s score of %.2f",
-                      layer.name.c_str(), weight, 1e9f / layerPeriod, scores[i].first->name.c_str(),
-                      layerScore);
+                ALOGV("%s gives %s score of %.2f", formatLayerInfo(layer, weight).c_str(),
+                      scores[i].first->name.c_str(), layerScore);
                 scores[i].second += weight * layerScore;
                 continue;
             }
@@ -332,8 +296,7 @@ const RefreshRate& RefreshRateConfigs::getBestRefreshRate(
                 // Slightly prefer seamless switches.
                 constexpr float kSeamedSwitchPenalty = 0.95f;
                 const float seamlessness = isSeamlessSwitch ? 1.0f : kSeamedSwitchPenalty;
-                ALOGV("%s (%s, weight %.2f) %.2fHz gives %s score of %.2f", layer.name.c_str(),
-                      layerVoteTypeString(layer.vote).c_str(), weight, 1e9f / layerPeriod,
+                ALOGV("%s gives %s score of %.2f", formatLayerInfo(layer, weight).c_str(),
                       scores[i].first->name.c_str(), layerScore);
                 scores[i].second += weight * layerScore * seamlessness;
                 continue;

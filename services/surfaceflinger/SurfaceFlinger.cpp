@@ -430,7 +430,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
         mInterceptor(mFactory.createSurfaceInterceptor()),
         mTimeStats(std::make_shared<impl::TimeStats>()),
         mFrameTracer(mFactory.createFrameTracer()),
-        mFrameTimeline(std::make_unique<frametimeline::impl::FrameTimeline>(mTimeStats)),
+        mFrameTimeline(mFactory.createFrameTimeline(mTimeStats)),
         mEventQueue(mFactory.createMessageQueue()),
         mCompositionEngine(mFactory.createCompositionEngine()),
         mInternalDisplayDensity(getDensityFromProperty("ro.sf.lcd_density", true)),
@@ -775,8 +775,7 @@ compositionengine::CompositionEngine& SurfaceFlinger::getCompositionEngine() con
     return *mCompositionEngine.get();
 }
 
-void SurfaceFlinger::bootFinished()
-{
+void SurfaceFlinger::bootFinished() {
     if (mBootFinished == true) {
         ALOGE("Extra call to bootFinished");
         return;
@@ -791,6 +790,7 @@ void SurfaceFlinger::bootFinished()
 
     mFrameTracer->initialize();
     mTimeStats->onBootFinished();
+    mFrameTimeline->onBootFinished();
 
     // wait patiently for the window manager death
     const String16 name("window");
@@ -2450,13 +2450,12 @@ void SurfaceFlinger::setCompositorTimingSnapped(const DisplayStatInfo& stats,
     getBE().mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
 }
 
-void SurfaceFlinger::postComposition()
-{
+void SurfaceFlinger::postComposition() {
     ATRACE_CALL();
     ALOGV("postComposition");
 
     nsecs_t dequeueReadyTime = systemTime();
-    for (auto layer : mLayersWithQueuedFrames) {
+    for (const auto& layer : mLayersWithQueuedFrames) {
         layer->releasePendingBuffer(dequeueReadyTime);
     }
 
@@ -2730,8 +2729,7 @@ void SurfaceFlinger::postFrame() {
     }
 }
 
-void SurfaceFlinger::handleTransaction(uint32_t transactionFlags)
-{
+void SurfaceFlinger::handleTransaction(uint32_t transactionFlags) {
     ATRACE_CALL();
 
     // here we keep a copy of the drawing state (that is the state that's
@@ -3187,8 +3185,7 @@ void SurfaceFlinger::processDisplayChangesLocked() {
     mDrawingState.displays = mCurrentState.displays;
 }
 
-void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
-{
+void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags) {
     const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
 
     // Notify all layers of available frames
@@ -3539,8 +3536,7 @@ void SurfaceFlinger::invalidateLayerStack(const sp<const Layer>& layer, const Re
     }
 }
 
-bool SurfaceFlinger::handlePageFlip()
-{
+bool SurfaceFlinger::handlePageFlip() {
     ATRACE_CALL();
     ALOGV("handlePageFlip");
 
@@ -3596,7 +3592,7 @@ bool SurfaceFlinger::handlePageFlip()
         // writes to Layer current state. See also b/119481871
         Mutex::Autolock lock(mStateLock);
 
-        for (auto& layer : mLayersWithQueuedFrames) {
+        for (const auto& layer : mLayersWithQueuedFrames) {
             if (layer->latchBuffer(visibleRegions, latchTime, expectedPresentTime)) {
                 mLayersPendingRefresh.push_back(layer);
             }
@@ -3628,8 +3624,7 @@ bool SurfaceFlinger::handlePageFlip()
     return !mLayersWithQueuedFrames.empty() && newDataLatched;
 }
 
-void SurfaceFlinger::invalidateHwcGeometry()
-{
+void SurfaceFlinger::invalidateHwcGeometry() {
     mGeometryInvalid = true;
 }
 
@@ -4577,7 +4572,14 @@ status_t SurfaceFlinger::createBufferStateLayer(const sp<Client>& client, std::s
                                                 sp<Layer>* outLayer) {
     LayerCreationArgs args(this, client, std::move(name), w, h, flags, std::move(metadata));
     args.textureName = getNewTexture();
-    sp<BufferStateLayer> layer = getFactory().createBufferStateLayer(args);
+    sp<BufferStateLayer> layer;
+    {
+        // TODO (b/173538294): Investigate why we need mStateLock here and above in
+        // createBufferQueue layer. Is it the renderengine::Image?
+        Mutex::Autolock lock(mStateLock);
+        layer = getFactory().createBufferStateLayer(args);
+
+    }
     *handle = layer->getHandle();
     *outLayer = layer;
 
@@ -4609,8 +4611,7 @@ void SurfaceFlinger::markLayerPendingRemovalLocked(const sp<Layer>& layer) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer)
-{
+void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer) {
     Mutex::Autolock lock(mStateLock);
     // If a layer has a parent, we allow it to out-live it's handle
     // with the idea that the parent holds a reference and will eventually
