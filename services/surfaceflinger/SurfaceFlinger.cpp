@@ -4818,6 +4818,12 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     }
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
+    if (mode < 0 || mode > (int)hal::PowerMode::DOZE_SUSPEND) {
+        ALOGW("Attempt to set invalid power mode %d", mode);
+        return;
+    }
+
+    hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
     const auto displayId = display->getId();
     const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
     if (!physicalDisplayId) {
@@ -4826,21 +4832,21 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
     // Fallback to default power state behavior as HWC does not support power mode override.
     if (!display->getPowerModeOverrideConfig() ||
-        mode  ==  HWC_POWER_MODE_DOZE ||
-        mode  ==  HWC_POWER_MODE_DOZE_SUSPEND) {
+        power_mode  ==  hal::PowerMode::DOZE ||
+        power_mode  ==  hal::PowerMode::DOZE_SUSPEND) {
         setPowerModeOnMainThread(displayToken, mode);
         return;
     }
 
-     ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
-     switch (mode) {
-     case HWC_POWER_MODE_NORMAL: hwcMode = ::DisplayConfig::PowerMode::kOn; break;
-     default: hwcMode = ::DisplayConfig::PowerMode::kOff; break;
-     }
+    ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
+    switch (power_mode) {
+        case hal::PowerMode::ON: hwcMode = ::DisplayConfig::PowerMode::kOn; break;
+        default: hwcMode = ::DisplayConfig::PowerMode::kOff; break;
+    }
 
-     bool step_up = false;
-     if (mode == HWC_POWER_MODE_NORMAL) {
-         step_up = true;
+    bool step_up = false;
+    if (power_mode == hal::PowerMode::ON) {
+        step_up = true;
     }
     // Change hardware state first while stepping up.
     if (step_up) {
