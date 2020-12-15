@@ -304,63 +304,6 @@ TEST_F(RefreshRateConfigsTest, twoDeviceConfigs_getCurrentRefreshRate) {
     }
 }
 
-TEST_F(RefreshRateConfigsTest, twoDeviceConfigs_getRefreshRateForContent) {
-    auto refreshRateConfigs =
-            std::make_unique<RefreshRateConfigs>(m60_90Device,
-                                                 /*currentConfigId=*/HWC_CONFIG_ID_60);
-
-    const auto makeLayerRequirements = [](float refreshRate) -> std::vector<LayerRequirement> {
-        return {{"testLayer", LayerVoteType::Heuristic, refreshRate, /*shouldBeSeamless*/ true,
-                 /*weight*/ 1.0f, /*focused*/ false}};
-    };
-
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(90.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(60.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(45.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(30.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(24.0f)));
-
-    ASSERT_GE(refreshRateConfigs->setDisplayManagerPolicy({HWC_CONFIG_ID_60, {60, 60}}), 0);
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(90.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(60.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(45.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(30.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(24.0f)));
-
-    ASSERT_GE(refreshRateConfigs->setDisplayManagerPolicy({HWC_CONFIG_ID_90, {90, 90}}), 0);
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(90.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(60.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(45.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(30.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(24.0f)));
-    ASSERT_GE(refreshRateConfigs->setDisplayManagerPolicy({HWC_CONFIG_ID_60, {0, 120}}), 0);
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(90.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(60.0f)));
-    EXPECT_EQ(mExpected90Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(45.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(30.0f)));
-    EXPECT_EQ(mExpected60Config,
-              refreshRateConfigs->getRefreshRateForContent(makeLayerRequirements(24.0f)));
-}
-
 TEST_F(RefreshRateConfigsTest, getBestRefreshRate_noLayers) {
     auto refreshRateConfigs =
             std::make_unique<RefreshRateConfigs>(m60_72_90Device, /*currentConfigId=*/
@@ -847,29 +790,6 @@ TEST_F(RefreshRateConfigsTest, getBestRefreshRate_24FpsVideo) {
     }
 }
 
-TEST_F(RefreshRateConfigsTest, twoDeviceConfigs_getRefreshRateForContent_Explicit) {
-    auto refreshRateConfigs =
-            std::make_unique<RefreshRateConfigs>(m60_90Device,
-                                                 /*currentConfigId=*/HWC_CONFIG_ID_60);
-
-    auto layers = std::vector<LayerRequirement>{LayerRequirement{.weight = 1.0f},
-                                                LayerRequirement{.weight = 1.0f}};
-    auto& lr1 = layers[0];
-    auto& lr2 = layers[1];
-
-    lr1.vote = LayerVoteType::Heuristic;
-    lr1.desiredRefreshRate = 60.0f;
-    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
-    lr2.desiredRefreshRate = 90.0f;
-    EXPECT_EQ(mExpected90Config, refreshRateConfigs->getRefreshRateForContent(layers));
-
-    lr1.vote = LayerVoteType::Heuristic;
-    lr1.desiredRefreshRate = 90.0f;
-    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
-    lr2.desiredRefreshRate = 60.0f;
-    EXPECT_EQ(mExpected60Config, refreshRateConfigs->getRefreshRateForContent(layers));
-}
-
 TEST_F(RefreshRateConfigsTest, twoDeviceConfigs_getBestRefreshRate_Explicit) {
     auto refreshRateConfigs =
             std::make_unique<RefreshRateConfigs>(m60_90Device,
@@ -1263,7 +1183,7 @@ TEST_F(RefreshRateConfigsTest, groupSwitching) {
     auto& layer = layers[0];
     layer.vote = LayerVoteType::ExplicitDefault;
     layer.desiredRefreshRate = 90.0f;
-    layer.shouldBeSeamless = false;
+    layer.seamlessness = Seamlessness::SeamedAndSeamless;
     layer.name = "90Hz ExplicitDefault";
     layer.focused = true;
 
@@ -1280,32 +1200,49 @@ TEST_F(RefreshRateConfigsTest, groupSwitching) {
                       .getConfigId());
 
     // Verify that we won't change the group if seamless switch is required.
-    layer.shouldBeSeamless = true;
+    layer.seamlessness = Seamlessness::OnlySeamless;
     ASSERT_EQ(HWC_CONFIG_ID_60,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
                       .getConfigId());
 
-    // At this point the default config in the DisplayManager policy with be 60Hz.
-    // Verify that if the current config is in another group and there are no layers with
-    // shouldBeSeamless=false we'll go back to the default group.
+    // Verify that we won't do a seamless switch if we request the same mode as the default
     refreshRateConfigs->setCurrentConfigId(HWC_CONFIG_ID_90);
     layer.desiredRefreshRate = 60.0f;
     layer.name = "60Hz ExplicitDefault";
-    layer.shouldBeSeamless = true;
+    layer.seamlessness = Seamlessness::OnlySeamless;
+    ASSERT_EQ(HWC_CONFIG_ID_90,
+              refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
+                      .getConfigId());
+
+    // Verify that if the current config is in another group and there are no layers with
+    // seamlessness=SeamedAndSeamless we'll go back to the default group.
+    layer.desiredRefreshRate = 60.0f;
+    layer.name = "60Hz ExplicitDefault";
+    layer.seamlessness = Seamlessness::Default;
     ASSERT_EQ(HWC_CONFIG_ID_60,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
                       .getConfigId());
 
-    // If there's a layer with shouldBeSeamless=false, another layer with shouldBeSeamless=true
-    // can't change the config group.
+    // If there's a layer with seamlessness=SeamedAndSeamless, another layer with
+    // seamlessness=OnlySeamless can't change the config group.
     refreshRateConfigs->setCurrentConfigId(HWC_CONFIG_ID_90);
-    auto layer2 = LayerRequirement{.weight = 0.5f};
+    layer.seamlessness = Seamlessness::OnlySeamless;
+
+    layers.push_back(LayerRequirement{.weight = 0.5f});
+    auto& layer2 = layers[layers.size() - 1];
     layer2.vote = LayerVoteType::ExplicitDefault;
     layer2.desiredRefreshRate = 90.0f;
     layer2.name = "90Hz ExplicitDefault";
-    layer2.shouldBeSeamless = false;
+    layer2.seamlessness = Seamlessness::SeamedAndSeamless;
     layer2.focused = false;
-    layers.push_back(layer2);
+
+    ASSERT_EQ(HWC_CONFIG_ID_90,
+              refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
+                      .getConfigId());
+
+    // If there's a layer with seamlessness=SeamedAndSeamless, another layer with
+    // seamlessness=Default can't change the config group.
+    layers[0].seamlessness = Seamlessness::Default;
     ASSERT_EQ(HWC_CONFIG_ID_90,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
                       .getConfigId());
@@ -1326,7 +1263,7 @@ TEST_F(RefreshRateConfigsTest, nonSeamlessVotePrefersSeamlessSwitches) {
     auto& layer = layers[0];
     layer.vote = LayerVoteType::ExplicitExactOrMultiple;
     layer.desiredRefreshRate = 60.0f;
-    layer.shouldBeSeamless = false;
+    layer.seamlessness = Seamlessness::SeamedAndSeamless;
     layer.name = "60Hz ExplicitExactOrMultiple";
     layer.focused = true;
 
@@ -1355,13 +1292,13 @@ TEST_F(RefreshRateConfigsTest, nonSeamlessExactAndSeamlessMultipleLayers) {
             LayerRequirement>{LayerRequirement{.name = "60Hz ExplicitDefault",
                                                .vote = LayerVoteType::ExplicitDefault,
                                                .desiredRefreshRate = 60.0f,
-                                               .shouldBeSeamless = false,
+                                               .seamlessness = Seamlessness::SeamedAndSeamless,
                                                .weight = 0.5f,
                                                .focused = false},
                               LayerRequirement{.name = "25Hz ExplicitExactOrMultiple",
                                                .vote = LayerVoteType::ExplicitExactOrMultiple,
                                                .desiredRefreshRate = 25.0f,
-                                               .shouldBeSeamless = true,
+                                               .seamlessness = Seamlessness::OnlySeamless,
                                                .weight = 1.0f,
                                                .focused = true}};
     auto& seamedLayer = layers[0];

@@ -164,12 +164,8 @@ static void release_object(const sp<ProcessState>& proc,
     ALOGE("Invalid object type 0x%08x", obj.hdr.type);
 }
 
-status_t Parcel::finishFlattenBinder(
-    const sp<IBinder>& binder, const flat_binder_object& flat)
+status_t Parcel::finishFlattenBinder(const sp<IBinder>& binder)
 {
-    status_t status = writeObject(flat, false);
-    if (status != OK) return status;
-
     internal::Stability::tryMarkCompilationUnit(binder.get());
     auto category = internal::Stability::getCategory(binder.get());
     return writeInt32(category.repr());
@@ -226,6 +222,9 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder)
             if (local->isRequestingSid()) {
                 obj.flags |= FLAT_BINDER_FLAG_TXN_SECURITY_CTX;
             }
+            if (local->isInheritRt()) {
+                obj.flags |= FLAT_BINDER_FLAG_INHERIT_RT;
+            }
             obj.hdr.type = BINDER_TYPE_BINDER;
             obj.binder = reinterpret_cast<uintptr_t>(local->getWeakRefs());
             obj.cookie = reinterpret_cast<uintptr_t>(local);
@@ -238,7 +237,10 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder)
 
     obj.flags |= schedBits;
 
-    return finishFlattenBinder(binder, obj);
+    status_t status = writeObject(obj, false);
+    if (status != OK) return status;
+
+    return finishFlattenBinder(binder);
 }
 
 status_t Parcel::unflattenBinder(sp<IBinder>* out) const
@@ -2056,8 +2058,11 @@ const char* Parcel::readString8Inplace(size_t* outLen) const
     if (size >= 0 && size < INT32_MAX) {
         *outLen = size;
         const char* str = (const char*)readInplace(size+1);
-        if (str != nullptr && str[size] == '\0') {
-            return str;
+        if (str != nullptr) {
+            if (str[size] == '\0') {
+                return str;
+            }
+            android_errorWriteLog(0x534e4554, "172655291");
         }
     }
     *outLen = 0;
@@ -2139,8 +2144,11 @@ const char16_t* Parcel::readString16Inplace(size_t* outLen) const
     if (size >= 0 && size < INT32_MAX) {
         *outLen = size;
         const char16_t* str = (const char16_t*)readInplace((size+1)*sizeof(char16_t));
-        if (str != nullptr && str[size] == u'\0') {
-            return str;
+        if (str != nullptr) {
+            if (str[size] == u'\0') {
+                return str;
+            }
+            android_errorWriteLog(0x534e4554, "172655291");
         }
     }
     *outLen = 0;
