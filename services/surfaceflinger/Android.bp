@@ -62,6 +62,16 @@ soong_config_module_type {
       }
   }
 
+cc_defaults {
+    name: "libdisplayconfigaidl_defaults",
+    cflags: [
+       "-DAIDL_DISPLAY_CONFIG_ENABLED"
+    ],
+    shared_libs: [
+       "libbinder_ndk",
+       "vendor.qti.hardware.display.config-V2-ndk_platform",
+    ],
+}
 
 cc_defaults {
     name: "surfaceflinger_defaults",
@@ -84,6 +94,7 @@ cc_defaults {
         "skia_renderengine_deps",
         "libdisplayconfig_defaults",
         "unfieddraw_defaults",
+        "libdisplayconfigaidl_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",

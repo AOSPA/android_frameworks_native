@@ -25,6 +25,10 @@
 #include "SurfaceFlinger.h"
 #include "TraceUtils.h"
 
+#include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
+#include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
+#include <android/binder_process.h>
+#include <android/binder_manager.h>
 #include <android-base/properties.h>
 #include <android/configuration.h>
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
@@ -180,6 +184,7 @@ using ui::ColorMode;
 using ui::Dataspace;
 using ui::DisplayPrimaries;
 using ui::RenderIntent;
+using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
 
 namespace hal = android::hardware::graphics::composer::hal;
 
@@ -340,6 +345,11 @@ Dataspace SurfaceFlinger::wideColorGamutCompositionDataspace = Dataspace::V0_SRG
 ui::PixelFormat SurfaceFlinger::wideColorGamutCompositionPixelFormat = ui::PixelFormat::RGBA_8888;
 bool SurfaceFlinger::useFrameRateApi;
 bool SurfaceFlinger::sDirectStreaming;
+
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+std::shared_ptr<IDisplayConfig> displayConfigIntf = nullptr;
+#endif
+
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
 ::DisplayConfig::ClientInterface *mDisplayConfigIntf = nullptr;
 DisplayConfigCallbackHandler *mDisplayConfigCallbackhandler = nullptr;
@@ -665,6 +675,20 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     base::SetProperty(KERNEL_IDLE_TIMER_PROP, mKernelIdleTimerEnabled ? "true" : "false");
 
     mRefreshRateOverlaySpinner = property_get_bool("sf.debug.show_refresh_rate_overlay_spinner", 0);
+
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    ndk::SpAIBinder binder(
+         AServiceManager_checkService("vendor.qti.hardware.display.config.IDisplayConfig/default"));
+
+    if (binder.get() == nullptr) {
+        ALOGE("DisplayConfig AIDL is not present");
+    } else {
+        displayConfigIntf = IDisplayConfig::fromBinder(binder);
+        if (displayConfigIntf == nullptr) {
+            ALOGE("Failed to retrieve DisplayConfig AIDL binder");
+        }
+    }
+#endif
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
@@ -1667,13 +1691,26 @@ status_t SurfaceFlinger::isSupportedConfigSwitch(const sp<IBinder>& displayToken
                displayToken.get());
         return NAME_NOT_FOUND;
     }
-#if (defined QTI_DISPLAY_CONFIG_ENABLED && defined VALIDATE_CONFIG_SWITCH)
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    if (displayConfigIntf != nullptr) {
+        const auto displayId = PhysicalDisplayId::tryCast(display->getId());
+        const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+        bool supported = false;
+        displayConfigIntf->isSupportedConfigSwitch(*hwcDisplayId, config, &supported);
+        if (!supported) {
+            ALOGW("AIDL Switching to config:%d is not supported", config);
+            return INVALID_OPERATION;
+        } else {
+            ALOGI("AIDL Switching to config:%d is supported", config);
+        }
+    }
+#elif defined(QTI_DISPLAY_CONFIG_ENABLED)
     const auto displayId = display->getId();
     const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
     bool supported = false;
     mDisplayConfigIntf->IsSupportedConfigSwitch(*hwcDisplayId, config, &supported);
     if (!supported) {
-        ALOGW("Switching to config:%d is not supported", config);
+        ALOGW("HIDL Switching to config:%d is not supported", config);
         return INVALID_OPERATION;
     }
 #endif
