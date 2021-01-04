@@ -145,8 +145,12 @@ Layer::Layer(const LayerCreationArgs& args)
 
     mCallingPid = args.callingPid;
     mCallingUid = args.callingUid;
+#ifdef TARGET_HAS_OLD_DISPLAY_STACK
+    mDontScreenShot = false;
+#else
     mDontScreenShot = args.metadata.getInt32(METADATA_WINDOW_TYPE_DONT_SCREENSHOT, 0) ?
                       true : false;
+#endif // TARGET_HAS_OLD_DISPLAY_STACK
 }
 
 void Layer::onFirstRef() {

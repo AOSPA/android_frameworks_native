@@ -40,7 +40,11 @@ cc_defaults {
 
 libdisplayconfig_cc_defaults {
     name: "libsurfaceflinger_defaults",
-    defaults: ["surfaceflinger_defaults", "libdisplayconfig_defaults"],
+    defaults: [
+        "surfaceflinger_defaults",
+        "libdisplayconfig_defaults",
+        "has_old_display_stack_defaults"
+    ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
         "-DGL_GLEXT_PROTOTYPES",
