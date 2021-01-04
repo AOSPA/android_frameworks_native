@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#undef LOG_TAG
+#define LOG_TAG "Transform"
+
 #include <math.h>
 
 #include <android-base/stringprintf.h>
@@ -22,8 +25,7 @@
 #include <ui/Transform.h>
 #include <utils/String8.h>
 
-namespace android {
-namespace ui {
+namespace android::ui {
 
 Transform::Transform() {
     reset();
@@ -57,8 +59,7 @@ bool Transform::operator==(const Transform& other) const {
             mMatrix[2][2] == other.mMatrix[2][2];
 }
 
-Transform Transform::operator * (const Transform& rhs) const
-{
+Transform Transform::operator*(const Transform& rhs) const {
     if (CC_LIKELY(mType == IDENTITY))
         return rhs;
 
@@ -134,7 +135,7 @@ float Transform::dsdy() const {
 }
 
 float Transform::getScaleX() const {
-    return sqrt(dsdx() * dsdx()) + (dtdx() * dtdx());
+    return sqrt((dsdx() * dsdx()) + (dtdx() * dtdx()));
 }
 
 float Transform::getScaleY() const {
@@ -150,8 +151,7 @@ void Transform::reset() {
     }
 }
 
-void Transform::set(float tx, float ty)
-{
+void Transform::set(float tx, float ty) {
     mMatrix[2][0] = tx;
     mMatrix[2][1] = ty;
     mMatrix[2][2] = 1.0f;
@@ -163,8 +163,7 @@ void Transform::set(float tx, float ty)
     }
 }
 
-void Transform::set(float a, float b, float c, float d)
-{
+void Transform::set(float a, float b, float c, float d) {
     mat33& M(mMatrix);
     M[0][0] = a;    M[1][0] = b;
     M[0][1] = c;    M[1][1] = d;
@@ -172,8 +171,7 @@ void Transform::set(float a, float b, float c, float d)
     mType = UNKNOWN_TYPE;
 }
 
-status_t Transform::set(uint32_t flags, float w, float h)
-{
+status_t Transform::set(uint32_t flags, float w, float h) {
     if (flags & ROT_INVALID) {
         // that's not allowed!
         reset();
@@ -245,13 +243,11 @@ vec2 Transform::transform(float x, float y) const {
     return transform(vec2(x, y));
 }
 
-Rect Transform::makeBounds(int w, int h) const
-{
+Rect Transform::makeBounds(int w, int h) const {
     return transform( Rect(w, h) );
 }
 
-Rect Transform::transform(const Rect& bounds, bool roundOutwards) const
-{
+Rect Transform::transform(const Rect& bounds, bool roundOutwards) const {
     Rect r;
     vec2 lt( bounds.left,  bounds.top    );
     vec2 rt( bounds.right, bounds.top    );
@@ -278,8 +274,7 @@ Rect Transform::transform(const Rect& bounds, bool roundOutwards) const
     return r;
 }
 
-FloatRect Transform::transform(const FloatRect& bounds) const
-{
+FloatRect Transform::transform(const FloatRect& bounds) const {
     vec2 lt(bounds.left, bounds.top);
     vec2 rt(bounds.right, bounds.top);
     vec2 lb(bounds.left, bounds.bottom);
@@ -299,8 +294,7 @@ FloatRect Transform::transform(const FloatRect& bounds) const
     return r;
 }
 
-Region Transform::transform(const Region& reg) const
-{
+Region Transform::transform(const Region& reg) const {
     Region out;
     if (CC_UNLIKELY(type() > TRANSLATE)) {
         if (CC_LIKELY(preserveRects())) {
@@ -320,8 +314,7 @@ Region Transform::transform(const Region& reg) const
     return out;
 }
 
-uint32_t Transform::type() const
-{
+uint32_t Transform::type() const {
     if (mType & UNKNOWN_TYPE) {
         // recompute what this transform is
 
@@ -416,14 +409,16 @@ uint32_t Transform::getType() const {
     return type() & 0xFF;
 }
 
-uint32_t Transform::getOrientation() const
-{
+uint32_t Transform::getOrientation() const {
     return (type() >> 8) & 0xFF;
 }
 
-bool Transform::preserveRects() const
-{
+bool Transform::preserveRects() const {
     return (getOrientation() & ROT_INVALID) ? false : true;
+}
+
+bool Transform::needsBilinearFiltering() const {
+    return (!preserveRects() || getType() >= ui::Transform::SCALE);
 }
 
 mat4 Transform::asMatrix4() const {
@@ -457,7 +452,43 @@ mat4 Transform::asMatrix4() const {
     return m;
 }
 
-void Transform::dump(std::string& out, const char* name) const {
+static std::string rotationToString(const uint32_t rotationFlags) {
+    switch (rotationFlags) {
+        case Transform::ROT_0:
+            return "ROT_0";
+        case Transform::FLIP_H:
+            return "FLIP_H";
+        case Transform::FLIP_V:
+            return "FLIP_V";
+        case Transform::ROT_90:
+            return "ROT_90";
+        case Transform::ROT_180:
+            return "ROT_180";
+        case Transform::ROT_270:
+            return "ROT_270";
+        case Transform::ROT_INVALID:
+        default:
+            return "ROT_INVALID";
+    }
+}
+
+static std::string transformToString(const uint32_t transform) {
+    if (transform == Transform::IDENTITY) {
+        return "IDENTITY";
+    }
+
+    if (transform == Transform::UNKNOWN) {
+        return "UNKNOWN";
+    }
+
+    std::string out;
+    if (transform & Transform::SCALE) out.append("SCALE ");
+    if (transform & Transform::ROTATE) out.append("ROTATE ");
+    if (transform & Transform::TRANSLATE) out.append("TRANSLATE");
+    return out;
+}
+
+void Transform::dump(std::string& out, const char* name, const char* prefix) const {
     using android::base::StringAppendF;
 
     type(); // Ensure the information in mType is up to date
@@ -465,40 +496,34 @@ void Transform::dump(std::string& out, const char* name) const {
     const uint32_t type = mType;
     const uint32_t orient = type >> 8;
 
-    StringAppendF(&out, "%s 0x%08x (", name, orient);
+    out += prefix;
+    out += name;
+    out += " ";
 
     if (orient & ROT_INVALID) {
-        out.append("ROT_INVALID ");
-    } else {
-        if (orient & ROT_90) {
-            out.append("ROT_90 ");
-        } else {
-            out.append("ROT_0 ");
-        }
-        if (orient & FLIP_V) out.append("FLIP_V ");
-        if (orient & FLIP_H) out.append("FLIP_H ");
+        StringAppendF(&out, "0x%08x ", orient);
+    }
+    out += "(" + rotationToString(orient) + ") ";
+
+    if (type & UNKNOWN) {
+        StringAppendF(&out, "0x%02x ", type);
+    }
+    out += "(" + transformToString(type) + ")\n";
+
+    if (type == IDENTITY) {
+        return;
     }
 
-    StringAppendF(&out, ") 0x%02x (", type);
-
-    if (!(type & (SCALE | ROTATE | TRANSLATE))) out.append("IDENTITY ");
-    if (type & SCALE) out.append("SCALE ");
-    if (type & ROTATE) out.append("ROTATE ");
-    if (type & TRANSLATE) out.append("TRANSLATE ");
-
-    out.append(")\n");
-
     for (size_t i = 0; i < 3; i++) {
-        StringAppendF(&out, "    %.4f  %.4f  %.4f\n", static_cast<double>(mMatrix[0][i]),
+        StringAppendF(&out, "%s    %.4f  %.4f  %.4f\n", prefix, static_cast<double>(mMatrix[0][i]),
                       static_cast<double>(mMatrix[1][i]), static_cast<double>(mMatrix[2][i]));
     }
 }
 
-void Transform::dump(const char* name) const {
+void Transform::dump(const char* name, const char* prefix) const {
     std::string out;
-    dump(out, name);
+    dump(out, name, prefix);
     ALOGD("%s", out.c_str());
 }
 
-}  // namespace ui
-}  // namespace android
+} // namespace android::ui

@@ -1,4 +1,4 @@
-cc_library_shared {
+cc_library {
     name: "liblayers_proto",
     export_include_dirs: ["include"],
 
@@ -33,7 +33,6 @@ cc_library_shared {
         "-Wno-old-style-cast",
         "-Wno-undef",
     ],
-
 }
 
 java_library_static {

@@ -48,7 +48,6 @@ const std::array<float, 16> BufferStateLayer::IDENTITY_MATRIX{
 
 BufferStateLayer::BufferStateLayer(const LayerCreationArgs& args)
       : BufferLayer(args), mHwcSlotGenerator(new HwcSlotGenerator()) {
-    mOverrideScalingMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
     mCurrentState.dataspace = ui::Dataspace::V0_SRGB;
 }
 
@@ -161,6 +160,10 @@ void BufferStateLayer::pushPendingState() {
 bool BufferStateLayer::applyPendingStates(Layer::State* stateToCommit) {
     mCurrentStateModified = mCurrentState.modified;
     bool stateUpdateAvailable = Layer::applyPendingStates(stateToCommit);
+    if (stateUpdateAvailable && mCallbackHandleAcquireTime != -1) {
+        // Update the acquire fence time if we have a buffer
+        mSurfaceFrame->setAcquireFenceTime(mCallbackHandleAcquireTime);
+    }
     mCurrentStateModified = stateUpdateAvailable && mCurrentStateModified;
     mCurrentState.modified = false;
     return stateUpdateAvailable;
@@ -258,12 +261,14 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
 
 bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence,
                                  nsecs_t postTime, nsecs_t desiredPresentTime,
-                                 const client_cache_t& clientCacheId) {
+                                 const client_cache_t& clientCacheId, uint64_t frameNumber) {
+    ATRACE_CALL();
+
     if (mCurrentState.buffer) {
         mReleasePreviousBuffer = true;
     }
 
-    mCurrentState.frameNumber++;
+    mCurrentState.frameNumber = frameNumber;
 
     mCurrentState.buffer = buffer;
     mCurrentState.clientCacheId = clientCacheId;
@@ -272,7 +277,7 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
 
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mCurrentState.frameNumber, getName().c_str(),
-                                      postTime);
+                                      mOwnerUid, postTime);
     desiredPresentTime = desiredPresentTime <= 0 ? 0 : desiredPresentTime;
     mCurrentState.desiredPresentTime = desiredPresentTime;
 
@@ -508,13 +513,6 @@ bool BufferStateLayer::hasFrameUpdate() const {
     return mCurrentStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
-status_t BufferStateLayer::bindTextureImage() {
-    const State& s(getDrawingState());
-    auto& engine(mFlinger->getRenderEngine());
-
-    return engine.bindExternalTextureBuffer(mTextureName, s.buffer, s.acquireFence);
-}
-
 status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
                                           nsecs_t /*expectedPresentTime*/) {
     const State& s(getDrawingState());
@@ -557,20 +555,6 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
     for (auto& handle : mDrawingState.callbackHandles) {
         handle->latchTime = latchTime;
         handle->frameNumber = mDrawingState.frameNumber;
-    }
-
-    if (!SyncFeatures::getInstance().useNativeFenceSync()) {
-        // Bind the new buffer to the GL texture.
-        //
-        // Older devices require the "implicit" synchronization provided
-        // by glEGLImageTargetTexture2DOES, which this method calls.  Newer
-        // devices will either call this in Layer::onDraw, or (if it's not
-        // a GL-composited layer) not at all.
-        status_t err = bindTextureImage();
-        if (err != NO_ERROR) {
-            mFlinger->mTimeStats->onDestroy(layerId);
-            return BAD_VALUE;
-        }
     }
 
     mFlinger->mTimeStats->setAcquireFence(layerId, mDrawingState.frameNumber,
@@ -698,6 +682,10 @@ void BufferStateLayer::gatherBufferInfo() {
     mBufferInfo.mBufferSlot = mHwcSlotGenerator->getHwcCacheSlot(s.clientCacheId);
 }
 
+uint32_t BufferStateLayer::getEffectiveScalingMode() const {
+   return NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
+}
+
 Rect BufferStateLayer::computeCrop(const State& s) {
     if (s.crop.isEmpty() && s.buffer) {
         return s.buffer->getBounds();
@@ -755,6 +743,31 @@ Layer::RoundedCornerState BufferStateLayer::getRoundedCornerState() const {
                                         static_cast<float>(s.active.transform.tx() + s.active.w),
                                         static_cast<float>(s.active.transform.ty() + s.active.h)),
                               radius);
+}
+
+bool BufferStateLayer::bufferNeedsFiltering() const {
+    const State& s(getDrawingState());
+    if (!s.buffer) {
+        return false;
+    }
+
+    uint32_t bufferWidth = s.buffer->width;
+    uint32_t bufferHeight = s.buffer->height;
+
+    // Undo any transformations on the buffer and return the result.
+    if (s.transform & ui::Transform::ROT_90) {
+        std::swap(bufferWidth, bufferHeight);
+    }
+
+    if (s.transformToDisplayInverse) {
+        uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
+        if (invTransform & ui::Transform::ROT_90) {
+            std::swap(bufferWidth, bufferHeight);
+        }
+    }
+
+    const Rect layerSize{getBounds()};
+    return layerSize.width() != bufferWidth || layerSize.height() != bufferHeight;
 }
 } // namespace android
 

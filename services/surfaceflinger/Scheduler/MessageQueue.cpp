@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-// TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wconversion"
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <binder/IPCThreadState.h>
 
@@ -28,6 +26,7 @@
 #include <gui/IDisplayEventConnection.h>
 
 #include "EventThread.h"
+#include "FrameTimeline.h"
 #include "MessageQueue.h"
 #include "SurfaceFlinger.h"
 
@@ -39,8 +38,9 @@ void MessageQueue::Handler::dispatchRefresh() {
     }
 }
 
-void MessageQueue::Handler::dispatchInvalidate(nsecs_t expectedVSyncTimestamp) {
+void MessageQueue::Handler::dispatchInvalidate(int64_t vsyncId, nsecs_t expectedVSyncTimestamp) {
     if ((android_atomic_or(eventMaskInvalidate, &mEventMask) & eventMaskInvalidate) == 0) {
+        mVsyncId = vsyncId;
         mExpectedVSyncTime = expectedVSyncTimestamp;
         mQueue.mLooper->sendMessage(this, Message(MessageQueue::INVALIDATE));
     }
@@ -50,11 +50,11 @@ void MessageQueue::Handler::handleMessage(const Message& message) {
     switch (message.what) {
         case INVALIDATE:
             android_atomic_and(~eventMaskInvalidate, &mEventMask);
-            mQueue.mFlinger->onMessageReceived(message.what, mExpectedVSyncTime);
+            mQueue.mFlinger->onMessageReceived(message.what, mVsyncId, mExpectedVSyncTime);
             break;
         case REFRESH:
             android_atomic_and(~eventMaskRefresh, &mEventMask);
-            mQueue.mFlinger->onMessageReceived(message.what, mExpectedVSyncTime);
+            mQueue.mFlinger->onMessageReceived(message.what, mVsyncId, mExpectedVSyncTime);
             break;
     }
 }
@@ -67,15 +67,58 @@ void MessageQueue::init(const sp<SurfaceFlinger>& flinger) {
     mHandler = new Handler(*this);
 }
 
+// TODO(b/169865816): refactor VSyncInjections to use MessageQueue directly
+// and remove the EventThread from MessageQueue
 void MessageQueue::setEventConnection(const sp<EventThreadConnection>& connection) {
     if (mEventTube.getFd() >= 0) {
         mLooper->removeFd(mEventTube.getFd());
     }
 
     mEvents = connection;
-    mEvents->stealReceiveChannel(&mEventTube);
-    mLooper->addFd(mEventTube.getFd(), 0, Looper::EVENT_INPUT, MessageQueue::cb_eventReceiver,
-                   this);
+    if (mEvents) {
+        mEvents->stealReceiveChannel(&mEventTube);
+        mLooper->addFd(mEventTube.getFd(), 0, Looper::EVENT_INPUT, MessageQueue::cb_eventReceiver,
+                       this);
+    }
+}
+
+void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, nsecs_t readyTime) {
+    ATRACE_CALL();
+    // Trace VSYNC-sf
+    mVsync.value = (mVsync.value + 1) % 2;
+
+    {
+        std::lock_guard lock(mVsync.mutex);
+        mVsync.lastCallbackTime = std::chrono::nanoseconds(vsyncTime);
+        mVsync.mScheduled = false;
+    }
+    mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
+                                         {targetWakeupTime, readyTime, vsyncTime}),
+                                 vsyncTime);
+}
+
+void MessageQueue::initVsync(scheduler::VSyncDispatch& dispatch,
+                             frametimeline::TokenManager& tokenManager,
+                             std::chrono::nanoseconds workDuration) {
+    setDuration(workDuration);
+    mVsync.tokenManager = &tokenManager;
+    mVsync.registration = std::make_unique<
+            scheduler::VSyncCallbackRegistration>(dispatch,
+                                                  std::bind(&MessageQueue::vsyncCallback, this,
+                                                            std::placeholders::_1,
+                                                            std::placeholders::_2,
+                                                            std::placeholders::_3),
+                                                  "sf");
+}
+
+void MessageQueue::setDuration(std::chrono::nanoseconds workDuration) {
+    ATRACE_CALL();
+    std::lock_guard lock(mVsync.mutex);
+    mVsync.workDuration = workDuration;
+    if (mVsync.mScheduled) {
+        mVsync.registration->schedule({mVsync.workDuration.get().count(), /*readyDuration=*/0,
+                                       mVsync.lastCallbackTime.count()});
+    }
 }
 
 void MessageQueue::waitMessage() {
@@ -105,7 +148,15 @@ void MessageQueue::postMessage(sp<MessageHandler>&& handler) {
 }
 
 void MessageQueue::invalidate() {
-    mEvents->requestNextVsync();
+    ATRACE_CALL();
+    if (mEvents) {
+        mEvents->requestNextVsync();
+    } else {
+        std::lock_guard lock(mVsync.mutex);
+        mVsync.mScheduled = true;
+        mVsync.registration->schedule({mVsync.workDuration.get().count(), /*readyDuration=*/0,
+                                       mVsync.lastCallbackTime.count()});
+    }
 }
 
 void MessageQueue::refresh() {
@@ -124,7 +175,8 @@ int MessageQueue::eventReceiver(int /*fd*/, int /*events*/) {
         for (int i = 0; i < n; i++) {
             if (buffer[i].header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
                 mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
-                mHandler->dispatchInvalidate(buffer[i].vsync.expectedVSyncTimestamp);
+                mHandler->dispatchInvalidate(buffer[i].vsync.vsyncId,
+                                             buffer[i].vsync.expectedVSyncTimestamp);
                 break;
             }
         }
@@ -134,5 +186,3 @@ int MessageQueue::eventReceiver(int /*fd*/, int /*events*/) {
 
 } // namespace android::impl
 
-// TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"

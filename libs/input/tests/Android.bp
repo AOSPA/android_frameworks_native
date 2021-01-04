@@ -2,6 +2,7 @@
 cc_test {
     name: "libinput_tests",
     srcs: [
+        "NamedEnum_test.cpp",
         "Flags_test.cpp",
         "IdGenerator_test.cpp",
         "InputChannel_test.cpp",
@@ -19,14 +20,18 @@ cc_test {
         "-Wextra",
         "-Werror",
     ],
-    shared_libs: [
+    static_libs: [
         "libinput",
-        "libcutils",
-        "libutils",
-        "libbinder",
-        "libui",
+    ],
+    shared_libs: [
         "libbase",
-    ]
+        "libbinder",
+        "libcutils",
+        "liblog",
+        "libui",
+        "libutils",
+    ],
+    test_suites: ["device-tests"],
 }
 
 // NOTE: This is a compile time test, and does not need to be

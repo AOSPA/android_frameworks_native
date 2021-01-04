@@ -21,6 +21,7 @@
 #include <compositionengine/mock/LayerFE.h>
 #include <compositionengine/mock/Output.h>
 #include <gtest/gtest.h>
+#include <log/log.h>
 
 #include "MockHWC2.h"
 #include "MockHWComposer.h"
@@ -53,6 +54,22 @@ MATCHER_P(ColorEq, expected, "") {
     *result_listener << "actual " << arg.r << " " << arg.g << " " << arg.b << " " << arg.a << "\n";
 
     return expected.r == arg.r && expected.g == arg.g && expected.b == arg.b && expected.a == arg.a;
+}
+
+ui::Rotation toRotation(uint32_t rotationFlag) {
+    switch (rotationFlag) {
+        case ui::Transform::RotationFlags::ROT_0:
+            return ui::ROTATION_0;
+        case ui::Transform::RotationFlags::ROT_90:
+            return ui::ROTATION_90;
+        case ui::Transform::RotationFlags::ROT_180:
+            return ui::ROTATION_180;
+        case ui::Transform::RotationFlags::ROT_270:
+            return ui::ROTATION_270;
+        default:
+            LOG_FATAL("Unexpected rotation flag %d", rotationFlag);
+            return ui::Rotation(-1);
+    }
 }
 
 struct OutputLayerTest : public testing::Test {
@@ -138,7 +155,7 @@ struct OutputLayerSourceCropTest : public OutputLayerTest {
         mLayerFEState.geomBufferSize = Rect{0, 0, 1920, 1080};
         mLayerFEState.geomBufferTransform = TR_IDENT;
 
-        mOutputState.viewport = Rect{0, 0, 1920, 1080};
+        mOutputState.layerStackSpace.content = Rect{0, 0, 1920, 1080};
     }
 
     FloatRect calculateOutputSourceCrop() {
@@ -209,7 +226,7 @@ TEST_F(OutputLayerSourceCropTest, calculateOutputSourceCropWorksWithATransformed
 
         mLayerFEState.geomBufferUsesDisplayInverseTransform = entry.bufferInvDisplay;
         mLayerFEState.geomBufferTransform = entry.buffer;
-        mOutputState.orientation = entry.display;
+        mOutputState.displaySpace.orientation = toRotation(entry.display);
 
         EXPECT_THAT(calculateOutputSourceCrop(), entry.expected) << "entry " << i;
     }
@@ -223,7 +240,7 @@ TEST_F(OutputLayerSourceCropTest, geomContentCropAffectsCrop) {
 }
 
 TEST_F(OutputLayerSourceCropTest, viewportAffectsCrop) {
-    mOutputState.viewport = Rect{0, 0, 960, 540};
+    mOutputState.layerStackSpace.content = Rect{0, 0, 960, 540};
 
     const FloatRect expected{0.f, 0.f, 960.f, 540.f};
     EXPECT_THAT(calculateOutputSourceCrop(), expected);
@@ -245,7 +262,7 @@ struct OutputLayerDisplayFrameTest : public OutputLayerTest {
         mLayerFEState.geomCrop = Rect{0, 0, 1920, 1080};
         mLayerFEState.geomLayerBounds = FloatRect{0.f, 0.f, 1920.f, 1080.f};
 
-        mOutputState.viewport = Rect{0, 0, 1920, 1080};
+        mOutputState.layerStackSpace.content = Rect{0, 0, 1920, 1080};
         mOutputState.transform = ui::Transform{TR_IDENT};
     }
 
@@ -293,7 +310,7 @@ TEST_F(OutputLayerDisplayFrameTest, geomLayerBoundsAffectsFrame) {
 }
 
 TEST_F(OutputLayerDisplayFrameTest, viewportAffectsFrame) {
-    mOutputState.viewport = Rect{0, 0, 960, 540};
+    mOutputState.layerStackSpace.content = Rect{0, 0, 960, 540};
     const Rect expected{0, 0, 960, 540};
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
@@ -358,7 +375,7 @@ TEST_F(OutputLayerTest, calculateOutputRelativeBufferTransformTestsNeeded) {
 
         mLayerFEState.geomLayerTransform.set(entry.layer, 1920, 1080);
         mLayerFEState.geomBufferTransform = entry.buffer;
-        mOutputState.orientation = entry.display;
+        mOutputState.displaySpace.orientation = toRotation(entry.display);
         mOutputState.transform = ui::Transform{entry.display};
 
         const auto actual = mOutputLayer.calculateOutputRelativeBufferTransform(entry.display);
@@ -470,7 +487,7 @@ TEST_F(OutputLayerTest,
 
         mLayerFEState.geomLayerTransform.set(entry.layer, 1920, 1080);
         mLayerFEState.geomBufferTransform = entry.buffer;
-        mOutputState.orientation = entry.display;
+        mOutputState.displaySpace.orientation = toRotation(entry.display);
         mOutputState.transform = ui::Transform{entry.display};
 
         const auto actual = mOutputLayer.calculateOutputRelativeBufferTransform(entry.internal);
@@ -676,8 +693,6 @@ struct OutputLayerWriteStateToHWCTest : public OutputLayerTest {
     static constexpr Hwc2::IComposerClient::BlendMode kBlendMode =
             static_cast<Hwc2::IComposerClient::BlendMode>(41);
     static constexpr float kAlpha = 51.f;
-    static constexpr uint32_t kType = 61u;
-    static constexpr uint32_t kAppId = 62u;
     static constexpr ui::Dataspace kDataspace = static_cast<ui::Dataspace>(71);
     static constexpr int kSupportedPerFrameMetadata = 101;
     static constexpr int kExpectedHwcSlot = 0;
@@ -711,8 +726,6 @@ struct OutputLayerWriteStateToHWCTest : public OutputLayerTest {
 
         mLayerFEState.blendMode = kBlendMode;
         mLayerFEState.alpha = kAlpha;
-        mLayerFEState.type = kType;
-        mLayerFEState.appId = kAppId;
         mLayerFEState.colorTransform = kColorTransform;
         mLayerFEState.color = kColor;
         mLayerFEState.surfaceDamage = kSurfaceDamage;
@@ -746,7 +759,6 @@ struct OutputLayerWriteStateToHWCTest : public OutputLayerTest {
 
         EXPECT_CALL(*mHwcLayer, setBlendMode(kBlendMode)).WillOnce(Return(kError));
         EXPECT_CALL(*mHwcLayer, setPlaneAlpha(kAlpha)).WillOnce(Return(kError));
-        EXPECT_CALL(*mHwcLayer, setInfo(kType, kAppId)).WillOnce(Return(kError));
     }
 
     void expectPerFrameCommonCalls(SimulateUnsupported unsupported = SimulateUnsupported::None) {
@@ -858,7 +870,7 @@ TEST_F(OutputLayerTest, displayInstallOrientationBufferTransformSetTo90) {
     // This test simulates a scenario where displayInstallOrientation is set to
     // ROT_90. This only has an effect on the transform; orientation stays 0 (see
     // DisplayDevice::setProjection).
-    mOutputState.orientation = TR_IDENT;
+    mOutputState.displaySpace.orientation = ui::ROTATION_0;
     mOutputState.transform = ui::Transform{TR_ROT_90};
     // Buffers are pre-rotated based on the transform hint (ROT_90); their
     // geomBufferTransform is set to the inverse transform.
@@ -988,7 +1000,7 @@ struct OutputLayerWriteCursorPositionToHWCTest : public OutputLayerTest {
 
         mLayerFEState.cursorFrame = kDefaultCursorFrame;
 
-        mOutputState.viewport = kDefaultDisplayViewport;
+        mOutputState.layerStackSpace.content = kDefaultDisplayViewport;
         mOutputState.transform = ui::Transform{kDefaultTransform};
     }
 

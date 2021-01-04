@@ -136,7 +136,7 @@ struct OutputTest : public testing::Test {
                 std::unique_ptr<DisplayColorProfile>(mDisplayColorProfile));
         mOutput->setRenderSurfaceForTest(std::unique_ptr<RenderSurface>(mRenderSurface));
 
-        mOutput->editState().bounds = kDefaultDisplaySize;
+        mOutput->editState().displaySpace.bounds = kDefaultDisplaySize;
     }
 
     void injectOutputLayer(InjectedLayer& layer) {
@@ -235,42 +235,123 @@ TEST_F(OutputTest, setCompositionEnabledSetsDisabledAndDirtiesEntireOutput) {
  * Output::setProjection()
  */
 
-TEST_F(OutputTest, setProjectionTriviallyWorks) {
-    const ui::Transform transform{ui::Transform::ROT_180};
-    const int32_t orientation = 123;
-    const Rect frame{1, 2, 3, 4};
-    const Rect viewport{5, 6, 7, 8};
-    const Rect sourceClip{9, 10, 11, 12};
-    const Rect destinationClip{13, 14, 15, 16};
-    const bool needsFiltering = true;
+TEST_F(OutputTest, setProjectionWorks) {
+    const Rect displayRect{0, 0, 1000, 2000};
+    mOutput->editState().displaySpace.bounds = displayRect;
+    mOutput->editState().framebufferSpace.bounds = displayRect;
 
-    mOutput->setProjection(transform, orientation, frame, viewport, sourceClip, destinationClip,
-                           needsFiltering);
+    const ui::Rotation orientation = ui::ROTATION_90;
+    const Rect frame{50, 60, 100, 100};
+    const Rect viewport{10, 20, 30, 40};
 
-    EXPECT_THAT(mOutput->getState().transform, transform);
-    EXPECT_EQ(orientation, mOutput->getState().orientation);
-    EXPECT_EQ(frame, mOutput->getState().frame);
-    EXPECT_EQ(viewport, mOutput->getState().viewport);
-    EXPECT_EQ(sourceClip, mOutput->getState().sourceClip);
-    EXPECT_EQ(destinationClip, mOutput->getState().destinationClip);
-    EXPECT_EQ(needsFiltering, mOutput->getState().needsFiltering);
+    mOutput->setProjection(orientation, viewport, frame);
+
+    EXPECT_EQ(orientation, mOutput->getState().displaySpace.orientation);
+    EXPECT_EQ(frame, mOutput->getState().orientedDisplaySpace.content);
+    EXPECT_EQ(viewport, mOutput->getState().layerStackSpace.content);
+
+    const auto state = mOutput->getState();
+    EXPECT_EQ(ui::ROTATION_0, state.layerStackSpace.orientation);
+    EXPECT_EQ(viewport, state.layerStackSpace.content);
+    EXPECT_EQ(viewport, state.layerStackSpace.bounds);
+
+    EXPECT_EQ(ui::ROTATION_0, state.orientedDisplaySpace.orientation);
+    EXPECT_EQ(frame, state.orientedDisplaySpace.content);
+    EXPECT_EQ(Rect(0, 0, 2000, 1000), state.orientedDisplaySpace.bounds);
+
+    EXPECT_EQ(displayRect, state.displaySpace.bounds);
+    EXPECT_EQ(Rect(900, 50, 940, 100), state.displaySpace.content);
+    EXPECT_EQ(orientation, state.displaySpace.orientation);
+
+    EXPECT_EQ(displayRect, state.framebufferSpace.bounds);
+    EXPECT_EQ(Rect(900, 50, 940, 100), state.framebufferSpace.content);
+    EXPECT_EQ(orientation, state.framebufferSpace.orientation);
+
+    EXPECT_EQ(state.displaySpace.content, state.transform.transform(state.layerStackSpace.content));
+
+    EXPECT_EQ(ui::Transform::ROT_90, mOutput->getTransformHint());
+}
+
+TEST_F(OutputTest, setProjectionWithSmallFramebufferWorks) {
+    const Rect displayRect{0, 0, 1000, 2000};
+    const Rect framebufferRect{0, 0, 500, 1000};
+    mOutput->editState().displaySpace.bounds = displayRect;
+    mOutput->editState().framebufferSpace.bounds = framebufferRect;
+
+    const ui::Rotation orientation = ui::ROTATION_90;
+    const Rect frame{50, 60, 100, 100};
+    const Rect viewport{10, 20, 30, 40};
+
+    mOutput->setProjection(orientation, viewport, frame);
+
+    EXPECT_EQ(orientation, mOutput->getState().displaySpace.orientation);
+    EXPECT_EQ(frame, mOutput->getState().orientedDisplaySpace.content);
+    EXPECT_EQ(viewport, mOutput->getState().layerStackSpace.content);
+
+    const auto state = mOutput->getState();
+    EXPECT_EQ(ui::ROTATION_0, state.layerStackSpace.orientation);
+    EXPECT_EQ(viewport, state.layerStackSpace.content);
+    EXPECT_EQ(viewport, state.layerStackSpace.bounds);
+
+    EXPECT_EQ(ui::ROTATION_0, state.orientedDisplaySpace.orientation);
+    EXPECT_EQ(frame, state.orientedDisplaySpace.content);
+    EXPECT_EQ(Rect(0, 0, 2000, 1000), state.orientedDisplaySpace.bounds);
+
+    EXPECT_EQ(displayRect, state.displaySpace.bounds);
+    EXPECT_EQ(Rect(900, 50, 940, 100), state.displaySpace.content);
+    EXPECT_EQ(orientation, state.displaySpace.orientation);
+
+    EXPECT_EQ(framebufferRect, state.framebufferSpace.bounds);
+    EXPECT_EQ(Rect(450, 25, 470, 50), state.framebufferSpace.content);
+    EXPECT_EQ(orientation, state.framebufferSpace.orientation);
+
+    EXPECT_EQ(state.displaySpace.content, state.transform.transform(state.layerStackSpace.content));
 }
 
 /*
- * Output::setBounds()
+ * Output::setDisplaySize()
  */
 
-TEST_F(OutputTest, setBoundsSetsSizeAndDirtiesEntireOutput) {
-    const ui::Size displaySize{200, 400};
+TEST_F(OutputTest, setDisplaySpaceSizeUpdatesOutputStateAndDirtiesEntireOutput) {
+    mOutput->editState().layerStackSpace.content = Rect(0, 0, 2000, 1000);
+    mOutput->editState().layerStackSpace.bounds = Rect(0, 0, 2000, 1000);
+    mOutput->editState().orientedDisplaySpace.content = Rect(0, 0, 1800, 900);
+    mOutput->editState().orientedDisplaySpace.bounds = Rect(0, 0, 2000, 1000);
+    mOutput->editState().framebufferSpace.content = Rect(0, 0, 900, 1800);
+    mOutput->editState().framebufferSpace.bounds = Rect(0, 0, 1000, 2000);
+    mOutput->editState().framebufferSpace.orientation = ui::ROTATION_90;
+    mOutput->editState().displaySpace.content = Rect(0, 0, 900, 1800);
+    mOutput->editState().displaySpace.bounds = Rect(0, 0, 1000, 2000);
+    mOutput->editState().displaySpace.orientation = ui::ROTATION_90;
 
-    EXPECT_CALL(*mRenderSurface, setDisplaySize(displaySize)).Times(1);
-    EXPECT_CALL(*mRenderSurface, getSize()).WillOnce(ReturnRef(displaySize));
+    const ui::Size newDisplaySize{500, 1000};
 
-    mOutput->setBounds(displaySize);
+    EXPECT_CALL(*mRenderSurface, setDisplaySize(newDisplaySize)).Times(1);
 
-    EXPECT_EQ(Rect(displaySize), mOutput->getState().bounds);
+    mOutput->setDisplaySize(newDisplaySize);
 
-    EXPECT_THAT(mOutput->getState().dirtyRegion, RegionEq(Region(Rect(displaySize))));
+    const auto state = mOutput->getState();
+
+    const Rect displayRect(newDisplaySize);
+    EXPECT_EQ(ui::ROTATION_0, state.layerStackSpace.orientation);
+    EXPECT_EQ(Rect(0, 0, 2000, 1000), state.layerStackSpace.content);
+    EXPECT_EQ(Rect(0, 0, 2000, 1000), state.layerStackSpace.bounds);
+
+    EXPECT_EQ(ui::ROTATION_0, state.orientedDisplaySpace.orientation);
+    EXPECT_EQ(Rect(0, 0, 900, 450), state.orientedDisplaySpace.content);
+    EXPECT_EQ(Rect(0, 0, 1000, 500), state.orientedDisplaySpace.bounds);
+
+    EXPECT_EQ(displayRect, state.displaySpace.bounds);
+    EXPECT_EQ(Rect(0, 0, 450, 900), state.displaySpace.content);
+    EXPECT_EQ(ui::ROTATION_90, state.displaySpace.orientation);
+
+    EXPECT_EQ(displayRect, state.framebufferSpace.bounds);
+    EXPECT_EQ(Rect(0, 0, 450, 900), state.framebufferSpace.content);
+    EXPECT_EQ(ui::ROTATION_90, state.framebufferSpace.orientation);
+
+    EXPECT_EQ(state.displaySpace.content, state.transform.transform(state.layerStackSpace.content));
+
+    EXPECT_THAT(state.dirtyRegion, RegionEq(Region(displayRect)));
 }
 
 /*
@@ -431,7 +512,7 @@ TEST_F(OutputTest, setRenderSurfaceResetsBounds) {
 
     mOutput->setRenderSurface(std::unique_ptr<RenderSurface>(renderSurface));
 
-    EXPECT_EQ(Rect(newDisplaySize), mOutput->getState().bounds);
+    EXPECT_EQ(Rect(newDisplaySize), mOutput->getState().framebufferSpace.bounds);
 }
 
 /*
@@ -440,7 +521,7 @@ TEST_F(OutputTest, setRenderSurfaceResetsBounds) {
 
 TEST_F(OutputTest, getDirtyRegionWithRepaintEverythingTrue) {
     const Rect viewport{100, 200};
-    mOutput->editState().viewport = viewport;
+    mOutput->editState().layerStackSpace.content = viewport;
     mOutput->editState().dirtyRegion.set(50, 300);
 
     {
@@ -452,7 +533,7 @@ TEST_F(OutputTest, getDirtyRegionWithRepaintEverythingTrue) {
 
 TEST_F(OutputTest, getDirtyRegionWithRepaintEverythingFalse) {
     const Rect viewport{100, 200};
-    mOutput->editState().viewport = viewport;
+    mOutput->editState().layerStackSpace.content = viewport;
     mOutput->editState().dirtyRegion.set(50, 300);
 
     {
@@ -860,7 +941,7 @@ struct OutputRebuildLayerStacksTest : public testing::Test {
     OutputRebuildLayerStacksTest() {
         mOutput.mState.isEnabled = true;
         mOutput.mState.transform = kIdentityTransform;
-        mOutput.mState.bounds = kOutputBounds;
+        mOutput.mState.displaySpace.bounds = kOutputBounds;
 
         mRefreshArgs.updatingOutputGeometryThisFrame = true;
 
@@ -1067,8 +1148,8 @@ struct OutputEnsureOutputLayerIfVisibleTest : public testing::Test {
         EXPECT_CALL(mOutput, getOutputLayerOrderedByZByIndex(0u))
                 .WillRepeatedly(Return(&mLayer.outputLayer));
 
-        mOutput.mState.bounds = Rect(0, 0, 200, 300);
-        mOutput.mState.viewport = Rect(0, 0, 200, 300);
+        mOutput.mState.displaySpace.bounds = Rect(0, 0, 200, 300);
+        mOutput.mState.layerStackSpace.content = Rect(0, 0, 200, 300);
         mOutput.mState.transform = ui::Transform(TR_IDENT, 200, 300);
 
         mLayer.layerFEState.isVisible = true;
@@ -1148,7 +1229,7 @@ TEST_F(OutputEnsureOutputLayerIfVisibleTest, takesEarlyOutIfLayerHasEmptyVisible
 }
 
 TEST_F(OutputEnsureOutputLayerIfVisibleTest, takesNotSoEarlyOutifDrawRegionEmpty) {
-    mOutput.mState.bounds = Rect(0, 0, 0, 0);
+    mOutput.mState.displaySpace.bounds = Rect(0, 0, 0, 0);
 
     ensureOutputLayerIfVisible();
 }
@@ -1345,7 +1426,7 @@ TEST_F(OutputEnsureOutputLayerIfVisibleTest,
     mLayer.layerFEState.contentDirty = true;
     mLayer.layerFEState.geomLayerTransform = ui::Transform(TR_IDENT, 100, 200);
 
-    mOutput.mState.viewport = Rect(0, 0, 300, 200);
+    mOutput.mState.layerStackSpace.content = Rect(0, 0, 300, 200);
     mOutput.mState.transform = ui::Transform(TR_ROT_90, 200, 300);
 
     EXPECT_CALL(mOutput, getOutputLayerCount()).WillOnce(Return(0u));
@@ -1371,7 +1452,7 @@ TEST_F(OutputEnsureOutputLayerIfVisibleTest,
     mLayer.layerFEState.contentDirty = true;
     mLayer.layerFEState.geomLayerTransform = ui::Transform(TR_IDENT, 100, 200);
 
-    mOutput.mState.viewport = Rect(0, 0, 300, 200);
+    mOutput.mState.layerStackSpace.content = Rect(0, 0, 300, 200);
     mOutput.mState.transform = ui::Transform(TR_ROT_90, 200, 300);
 
     EXPECT_CALL(mOutput, ensureOutputLayer(Eq(0u), Eq(mLayer.layerFE)))
@@ -2785,12 +2866,12 @@ struct OutputComposeSurfacesTest : public testing::Test {
         mOutput.setRenderSurfaceForTest(std::unique_ptr<RenderSurface>(mRenderSurface));
         mOutput.cacheClientCompositionRequests(MAX_CLIENT_COMPOSITION_CACHE_SIZE);
 
-        mOutput.mState.frame = kDefaultOutputFrame;
-        mOutput.mState.viewport = kDefaultOutputViewport;
-        mOutput.mState.sourceClip = kDefaultOutputSourceClip;
-        mOutput.mState.destinationClip = kDefaultOutputDestinationClip;
-        mOutput.mState.transform = ui::Transform{kDefaultOutputOrientation};
-        mOutput.mState.orientation = kDefaultOutputOrientation;
+        mOutput.mState.orientedDisplaySpace.content = kDefaultOutputFrame;
+        mOutput.mState.layerStackSpace.content = kDefaultOutputViewport;
+        mOutput.mState.framebufferSpace.content = kDefaultOutputDestinationClip;
+        mOutput.mState.displaySpace.content = kDefaultOutputDestinationClip;
+        mOutput.mState.displaySpace.orientation = kDefaultOutputOrientation;
+        mOutput.mState.transform = ui::Transform{kDefaultOutputOrientationFlags};
         mOutput.mState.dataspace = kDefaultOutputDataspace;
         mOutput.mState.colorTransformMatrix = kDefaultColorTransformMat;
         mOutput.mState.isSecure = false;
@@ -2825,7 +2906,9 @@ struct OutputComposeSurfacesTest : public testing::Test {
     // Call this member function to start using the mini-DSL defined above.
     [[nodiscard]] auto verify() { return ExecuteState::make(this); }
 
-    static constexpr uint32_t kDefaultOutputOrientation = TR_IDENT;
+    static constexpr ui::Rotation kDefaultOutputOrientation = ui::ROTATION_0;
+    static constexpr uint32_t kDefaultOutputOrientationFlags =
+            ui::Transform::toRotationFlags(kDefaultOutputOrientation);
     static constexpr ui::Dataspace kDefaultOutputDataspace = ui::Dataspace::UNKNOWN;
     static constexpr ui::Dataspace kExpensiveOutputDataspace = ui::Dataspace::DISPLAY_P3;
     static constexpr float kDefaultMaxLuminance = 0.9f;
@@ -2834,7 +2917,6 @@ struct OutputComposeSurfacesTest : public testing::Test {
 
     static const Rect kDefaultOutputFrame;
     static const Rect kDefaultOutputViewport;
-    static const Rect kDefaultOutputSourceClip;
     static const Rect kDefaultOutputDestinationClip;
     static const mat4 kDefaultColorTransformMat;
 
@@ -2856,7 +2938,6 @@ struct OutputComposeSurfacesTest : public testing::Test {
 
 const Rect OutputComposeSurfacesTest::kDefaultOutputFrame{1001, 1002, 1003, 1004};
 const Rect OutputComposeSurfacesTest::kDefaultOutputViewport{1005, 1006, 1007, 1008};
-const Rect OutputComposeSurfacesTest::kDefaultOutputSourceClip{1009, 1010, 1011, 1012};
 const Rect OutputComposeSurfacesTest::kDefaultOutputDestinationClip{1013, 1014, 1015, 1016};
 const mat4 OutputComposeSurfacesTest::kDefaultColorTransformMat{mat4() * 0.5f};
 const compositionengine::CompositionRefreshArgs OutputComposeSurfacesTest::kDefaultRefreshArgs;
@@ -2871,6 +2952,7 @@ TEST_F(OutputComposeSurfacesTest, doesNothingButSignalNoExpensiveRenderingIfNoCl
     mOutput.mState.usesClientComposition = false;
 
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
 
     EXPECT_CALL(mOutput, setExpensiveRenderingExpected(false));
 
@@ -2883,6 +2965,7 @@ TEST_F(OutputComposeSurfacesTest,
     mOutput.mState.flipClientTarget = true;
 
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
 
     EXPECT_CALL(*mRenderSurface, dequeueBuffer(_)).WillOnce(Return(mOutputBuffer));
     EXPECT_CALL(mOutput, setExpensiveRenderingExpected(false));
@@ -2892,6 +2975,7 @@ TEST_F(OutputComposeSurfacesTest,
 
 TEST_F(OutputComposeSurfacesTest, doesMinimalWorkIfDequeueBufferFailsForClientComposition) {
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
 
     EXPECT_CALL(*mRenderSurface, dequeueBuffer(_)).WillOnce(Return(nullptr));
 
@@ -2904,6 +2988,7 @@ TEST_F(OutputComposeSurfacesTest,
     mOutput.mState.flipClientTarget = true;
 
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
 
     EXPECT_CALL(*mRenderSurface, dequeueBuffer(_)).WillOnce(Return(nullptr));
 
@@ -2914,6 +2999,7 @@ TEST_F(OutputComposeSurfacesTest, handlesZeroCompositionRequests) {
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{}));
     EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -2936,6 +3022,7 @@ TEST_F(OutputComposeSurfacesTest, buildsAndRendersRequestList) {
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{r1}));
     EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -2963,6 +3050,7 @@ TEST_F(OutputComposeSurfacesTest, renderDuplicateClientCompositionRequestsWithou
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{r1, r2}));
     EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -2991,6 +3079,7 @@ TEST_F(OutputComposeSurfacesTest, skipDuplicateClientCompositionRequests) {
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{r1, r2}));
     EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -3019,6 +3108,7 @@ TEST_F(OutputComposeSurfacesTest, clientCompositionIfBufferChanges) {
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{r1, r2}));
     EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -3050,6 +3140,7 @@ TEST_F(OutputComposeSurfacesTest, clientCompositionIfRequestChanges) {
     EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
     EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+    EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
     EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
             .WillOnce(Return(std::vector<LayerFE::LayerSettings>{r1, r2}))
             .WillOnce(Return(std::vector<LayerFE::LayerSettings>{r1, r3}));
@@ -3072,6 +3163,7 @@ TEST_F(OutputComposeSurfacesTest, clientCompositionIfRequestChanges) {
 struct OutputComposeSurfacesTest_UsesExpectedDisplaySettings : public OutputComposeSurfacesTest {
     OutputComposeSurfacesTest_UsesExpectedDisplaySettings() {
         EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+        EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
         EXPECT_CALL(mOutput, generateClientCompositionRequests(_, _, kDefaultOutputDataspace))
                 .WillRepeatedly(Return(std::vector<LayerFE::LayerSettings>{}));
         EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
@@ -3122,9 +3214,9 @@ TEST_F(OutputComposeSurfacesTest_UsesExpectedDisplaySettings, forHdrMixedComposi
     verify().ifMixedCompositionIs(true)
             .andIfUsesHdr(true)
             .andIfSkipColorTransform(false)
-            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputSourceClip,
+            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputViewport,
                                             kDefaultMaxLuminance, kDefaultOutputDataspace, mat4(),
-                                            Region::INVALID_REGION, kDefaultOutputOrientation})
+                                            Region::INVALID_REGION, kDefaultOutputOrientationFlags})
             .execute()
             .expectAFenceWasReturned();
 }
@@ -3133,9 +3225,9 @@ TEST_F(OutputComposeSurfacesTest_UsesExpectedDisplaySettings, forNonHdrMixedComp
     verify().ifMixedCompositionIs(true)
             .andIfUsesHdr(false)
             .andIfSkipColorTransform(false)
-            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputSourceClip,
+            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputViewport,
                                             kDefaultMaxLuminance, kDefaultOutputDataspace, mat4(),
-                                            Region::INVALID_REGION, kDefaultOutputOrientation})
+                                            Region::INVALID_REGION, kDefaultOutputOrientationFlags})
             .execute()
             .expectAFenceWasReturned();
 }
@@ -3144,10 +3236,10 @@ TEST_F(OutputComposeSurfacesTest_UsesExpectedDisplaySettings, forHdrOnlyClientCo
     verify().ifMixedCompositionIs(false)
             .andIfUsesHdr(true)
             .andIfSkipColorTransform(false)
-            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputSourceClip,
+            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputViewport,
                                             kDefaultMaxLuminance, kDefaultOutputDataspace,
                                             kDefaultColorTransformMat, Region::INVALID_REGION,
-                                            kDefaultOutputOrientation})
+                                            kDefaultOutputOrientationFlags})
             .execute()
             .expectAFenceWasReturned();
 }
@@ -3156,10 +3248,10 @@ TEST_F(OutputComposeSurfacesTest_UsesExpectedDisplaySettings, forNonHdrOnlyClien
     verify().ifMixedCompositionIs(false)
             .andIfUsesHdr(false)
             .andIfSkipColorTransform(false)
-            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputSourceClip,
+            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputViewport,
                                             kDefaultMaxLuminance, kDefaultOutputDataspace,
                                             kDefaultColorTransformMat, Region::INVALID_REGION,
-                                            kDefaultOutputOrientation})
+                                            kDefaultOutputOrientationFlags})
             .execute()
             .expectAFenceWasReturned();
 }
@@ -3169,9 +3261,9 @@ TEST_F(OutputComposeSurfacesTest_UsesExpectedDisplaySettings,
     verify().ifMixedCompositionIs(false)
             .andIfUsesHdr(true)
             .andIfSkipColorTransform(true)
-            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputSourceClip,
+            .thenExpectDisplaySettingsUsed({kDefaultOutputDestinationClip, kDefaultOutputViewport,
                                             kDefaultMaxLuminance, kDefaultOutputDataspace, mat4(),
-                                            Region::INVALID_REGION, kDefaultOutputOrientation})
+                                            Region::INVALID_REGION, kDefaultOutputOrientationFlags})
             .execute()
             .expectAFenceWasReturned();
 }
@@ -3219,6 +3311,8 @@ TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifDisplayIsNotSecure) 
     mOutput.mState.isSecure = false;
     mLayer2.mLayerFEState.hasProtectedContent = true;
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
+    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true));
+    EXPECT_CALL(mRenderEngine, useProtectedContext(false)).WillOnce(Return(true));
 
     mOutput.composeSurfaces(kDebugRegion, kDefaultRefreshArgs);
 }
@@ -3311,6 +3405,7 @@ struct OutputComposeSurfacesTest_SetsExpensiveRendering : public OutputComposeSu
         EXPECT_CALL(mOutput, getSkipColorTransform()).WillRepeatedly(Return(false));
         EXPECT_CALL(*mDisplayColorProfile, hasWideColorGamut()).WillRepeatedly(Return(true));
         EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
+        EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
         EXPECT_CALL(mOutput, appendRegionFlashRequests(RegionEq(kDebugRegion), _))
                 .WillRepeatedly(Return());
         EXPECT_CALL(*mRenderSurface, dequeueBuffer(_)).WillRepeatedly(Return(mOutputBuffer));
@@ -3414,12 +3509,12 @@ struct GenerateClientCompositionRequestsTest : public testing::Test {
 struct GenerateClientCompositionRequestsTest_ThreeLayers
       : public GenerateClientCompositionRequestsTest {
     GenerateClientCompositionRequestsTest_ThreeLayers() {
-        mOutput.mState.frame = kDisplayFrame;
-        mOutput.mState.viewport = kDisplayViewport;
-        mOutput.mState.sourceClip = kDisplaySourceClip;
-        mOutput.mState.destinationClip = kDisplayDestinationClip;
-        mOutput.mState.transform = ui::Transform{kDisplayOrientation};
-        mOutput.mState.orientation = kDisplayOrientation;
+        mOutput.mState.orientedDisplaySpace.content = kDisplayFrame;
+        mOutput.mState.layerStackSpace.content = kDisplayViewport;
+        mOutput.mState.displaySpace.content = kDisplayDestinationClip;
+        mOutput.mState.transform =
+                ui::Transform{ui::Transform::toRotationFlags(kDisplayOrientation)};
+        mOutput.mState.displaySpace.orientation = kDisplayOrientation;
         mOutput.mState.needsFiltering = false;
         mOutput.mState.isSecure = false;
 
@@ -3443,12 +3538,11 @@ struct GenerateClientCompositionRequestsTest_ThreeLayers
         EXPECT_CALL(mOutput, getOutputLayerCount()).WillRepeatedly(Return(mLayers.size()));
     }
 
-    static constexpr uint32_t kDisplayOrientation = TR_IDENT;
+    static constexpr ui::Rotation kDisplayOrientation = ui::ROTATION_0;
     static constexpr ui::Dataspace kDisplayDataspace = ui::Dataspace::UNKNOWN;
 
     static const Rect kDisplayFrame;
     static const Rect kDisplayViewport;
-    static const Rect kDisplaySourceClip;
     static const Rect kDisplayDestinationClip;
 
     std::array<Layer, 3> mLayers;
@@ -3456,7 +3550,6 @@ struct GenerateClientCompositionRequestsTest_ThreeLayers
 
 const Rect GenerateClientCompositionRequestsTest_ThreeLayers::kDisplayFrame(0, 0, 100, 200);
 const Rect GenerateClientCompositionRequestsTest_ThreeLayers::kDisplayViewport(0, 0, 101, 201);
-const Rect GenerateClientCompositionRequestsTest_ThreeLayers::kDisplaySourceClip(0, 0, 102, 202);
 const Rect GenerateClientCompositionRequestsTest_ThreeLayers::kDisplayDestinationClip(0, 0, 103,
                                                                                       203);
 
@@ -3583,15 +3676,14 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
     mLayers[1].mLayerFEState.isOpaque = true;
     mLayers[2].mLayerFEState.isOpaque = true;
     Region accumClearRegion(Rect(10, 11, 12, 13));
-    Region dummyRegion;
+    Region stubRegion;
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
-            false,       /* identity transform */
-            false,       /* needs filtering */
-            false,       /* secure */
-            false,       /* supports protected content */
-            dummyRegion, /* clear region */
+            false,      /* needs filtering */
+            false,      /* secure */
+            false,      /* supports protected content */
+            stubRegion, /* clear region */
             kDisplayViewport,
             kDisplayDataspace,
             false /* realContentIsVisible */,
@@ -3599,7 +3691,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3643,7 +3734,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer0TargetSettings{
             Region(Rect(10, 10, 20, 20)),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3655,7 +3745,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(Rect(0, 0, 30, 30)),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3667,7 +3756,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(Rect(0, 0, 40, 201)),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3699,7 +3787,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer0TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             true,  /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3711,7 +3798,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3723,7 +3809,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3755,7 +3840,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer0TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             true,  /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3768,7 +3852,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             true,  /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3780,7 +3863,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             true,  /* needs filtering */
             false, /* secure */
             false, /* supports protected content */
@@ -3811,7 +3893,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer0TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             true,  /* secure */
             false, /* supports protected content */
@@ -3823,7 +3904,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             true,  /* secure */
             false, /* supports protected content */
@@ -3835,7 +3915,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             true,  /* secure */
             false, /* supports protected content */
@@ -3864,7 +3943,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
 
     compositionengine::LayerFE::ClientCompositionTargetSettings layer0TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             true,  /* supports protected content */
@@ -3876,7 +3954,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             true,  /* supports protected content */
@@ -3888,7 +3965,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
-            false, /* identity transform */
             false, /* needs filtering */
             false, /* secure */
             true,  /* supports protected content */
@@ -3938,6 +4014,34 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, handlesBackgroundBlurRequests) 
     mOutput->updateAndWriteCompositionState(args);
 }
 
+TEST_F(OutputUpdateAndWriteCompositionStateTest, handlesBlurRegionRequests) {
+    InjectedLayer layer1;
+    InjectedLayer layer2;
+    InjectedLayer layer3;
+
+    // Layer requesting blur, or below, should request client composition.
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, writeStateToHWC(false));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, writeStateToHWC(false));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer3.outputLayer, writeStateToHWC(false));
+
+    BlurRegion region;
+    layer2.layerFEState.blurRegions.push_back(region);
+
+    injectOutputLayer(layer1);
+    injectOutputLayer(layer2);
+    injectOutputLayer(layer3);
+
+    mOutput->editState().isEnabled = true;
+
+    CompositionRefreshArgs args;
+    args.updatingGeometryThisFrame = false;
+    args.devOptForceClientComposition = false;
+    mOutput->updateAndWriteCompositionState(args);
+}
+
 TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenRequests) {
     // In split-screen landscape mode, the screen is rotated 90 degrees, with
     // one layer on the left covering the left side of the output, and one layer
@@ -3945,17 +4049,15 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
 
     const Rect kPortraitFrame(0, 0, 1000, 2000);
     const Rect kPortraitViewport(0, 0, 2000, 1000);
-    const Rect kPortraitSourceClip(0, 0, 1000, 2000);
     const Rect kPortraitDestinationClip(0, 0, 1000, 2000);
-    const uint32_t kPortraitOrientation = TR_ROT_90;
+    const ui::Rotation kPortraitOrientation = ui::ROTATION_90;
     constexpr ui::Dataspace kOutputDataspace = ui::Dataspace::DISPLAY_P3;
 
-    mOutput.mState.frame = kPortraitFrame;
-    mOutput.mState.viewport = kPortraitViewport;
-    mOutput.mState.sourceClip = kPortraitSourceClip;
-    mOutput.mState.destinationClip = kPortraitDestinationClip;
-    mOutput.mState.transform = ui::Transform{kPortraitOrientation};
-    mOutput.mState.orientation = kPortraitOrientation;
+    mOutput.mState.orientedDisplaySpace.content = kPortraitFrame;
+    mOutput.mState.layerStackSpace.content = kPortraitViewport;
+    mOutput.mState.displaySpace.content = kPortraitDestinationClip;
+    mOutput.mState.transform = ui::Transform{ui::Transform::toRotationFlags(kPortraitOrientation)};
+    mOutput.mState.displaySpace.orientation = kPortraitOrientation;
     mOutput.mState.needsFiltering = false;
     mOutput.mState.isSecure = true;
 
@@ -3982,7 +4084,6 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
 
     compositionengine::LayerFE::ClientCompositionTargetSettings leftLayerSettings{
             Region(Rect(0, 0, 1000, 1000)),
-            false, /* identity transform */
             false, /* needs filtering */
             true,  /* secure */
             true,  /* supports protected content */
@@ -4000,7 +4101,6 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
 
     compositionengine::LayerFE::ClientCompositionTargetSettings rightLayerSettings{
             Region(Rect(1000, 0, 2000, 1000)),
-            false, /* identity transform */
             false, /* needs filtering */
             true,  /* secure */
             true,  /* supports protected content */
@@ -4034,7 +4134,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     Region accumClearRegion(Rect(10, 11, 12, 13));
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2Settings{
             Region(Rect(60, 40, 70, 80)).merge(Rect(40, 80, 70, 90)), /* visible region */
-            false,                                                    /* identity transform */
             false,                                                    /* needs filtering */
             false,                                                    /* secure */
             false, /* supports protected content */
@@ -4080,7 +4179,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
     Region accumClearRegion(Rect(10, 11, 12, 13));
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2Settings{
             Region(Rect(50, 40, 70, 80)).merge(Rect(40, 80, 70, 90)), /* visible region */
-            false,                                                    /* identity transform */
             false,                                                    /* needs filtering */
             false,                                                    /* secure */
             false, /* supports protected content */

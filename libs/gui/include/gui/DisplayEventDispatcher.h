@@ -20,6 +20,17 @@
 
 namespace android {
 
+struct VsyncEventData {
+    // The Vsync Id corresponsing to this vsync event. This will be used to
+    // populate ISurfaceComposer::setFrameTimelineVsync and
+    // SurfaceComposerClient::setFrameTimelineVsync
+    int64_t id = ISurfaceComposer::INVALID_VSYNC_ID;
+
+    // The deadline in CLOCK_MONOTONIC that the app needs to complete its
+    // frame by (both on the CPU and the GPU)
+    int64_t deadlineTimestamp = std::numeric_limits<int64_t>::max();
+};
+
 class DisplayEventDispatcher : public LooperCallback {
 public:
     explicit DisplayEventDispatcher(
@@ -31,7 +42,7 @@ public:
     status_t initialize();
     void dispose();
     status_t scheduleVsync();
-    void requestLatestConfig();
+    void injectEvent(const DisplayEventReceiver::Event& event);
     int getFd() const;
     virtual int handleEvent(int receiveFd, int events, void* data);
 
@@ -43,13 +54,17 @@ private:
     DisplayEventReceiver mReceiver;
     bool mWaitingForVsync;
 
-    virtual void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count) = 0;
+    virtual void dispatchVsync(nsecs_t timestamp, PhysicalDisplayId displayId, uint32_t count,
+                               VsyncEventData vsyncEventData) = 0;
     virtual void dispatchHotplug(nsecs_t timestamp, PhysicalDisplayId displayId,
                                  bool connected) = 0;
     virtual void dispatchConfigChanged(nsecs_t timestamp, PhysicalDisplayId displayId,
                                        int32_t configId, nsecs_t vsyncPeriod) = 0;
+    // AChoreographer-specific hook for processing null-events so that looper
+    // can be properly poked.
+    virtual void dispatchNullEvent(nsecs_t timestamp, PhysicalDisplayId displayId) = 0;
 
     bool processPendingEvents(nsecs_t* outTimestamp, PhysicalDisplayId* outDisplayId,
-                              uint32_t* outCount);
+                              uint32_t* outCount, VsyncEventData* outVsyncEventData);
 };
 } // namespace android

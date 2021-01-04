@@ -448,6 +448,14 @@ int32_t IPCThreadState::getLastTransactionBinderFlags() const
     return mLastTransactionBinderFlags;
 }
 
+void IPCThreadState::setCallRestriction(ProcessState::CallRestriction restriction) {
+    mCallRestriction = restriction;
+}
+
+ProcessState::CallRestriction IPCThreadState::getCallRestriction() const {
+    return mCallRestriction;
+}
+
 void IPCThreadState::restoreCallingIdentity(int64_t token)
 {
     mCallingUid = (int)(token>>32);
@@ -614,7 +622,7 @@ void IPCThreadState::joinThreadPool(bool isMain)
     talkWithDriver(false);
 }
 
-int IPCThreadState::setupPolling(int* fd)
+status_t IPCThreadState::setupPolling(int* fd)
 {
     if (mProcess->mDriverFD < 0) {
         return -EBADF;
@@ -679,7 +687,7 @@ status_t IPCThreadState::transact(int32_t handle,
                 CallStack::logStack("non-oneway call", CallStack::getCurrent(10).get(),
                     ANDROID_LOG_ERROR);
             } else /* FATAL_IF_NOT_ONEWAY */ {
-                LOG_ALWAYS_FATAL("Process may not make oneway calls (code: %u).", code);
+                LOG_ALWAYS_FATAL("Process may not make non-oneway calls (code: %u).", code);
             }
         }
 
@@ -860,6 +868,10 @@ status_t IPCThreadState::waitForResponse(Parcel *reply, status_t *acquireResult)
             err = FAILED_TRANSACTION;
             goto finish;
 
+        case BR_FROZEN_REPLY:
+            err = FAILED_TRANSACTION;
+            goto finish;
+
         case BR_ACQUIRE_RESULT:
             {
                 ALOG_ASSERT(acquireResult != NULL, "Unexpected brACQUIRE_RESULT");
@@ -883,21 +895,21 @@ status_t IPCThreadState::waitForResponse(Parcel *reply, status_t *acquireResult)
                             tr.data_size,
                             reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
                             tr.offsets_size/sizeof(binder_size_t),
-                            freeBuffer, this);
+                            freeBuffer);
                     } else {
                         err = *reinterpret_cast<const status_t*>(tr.data.ptr.buffer);
                         freeBuffer(nullptr,
                             reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                             tr.data_size,
                             reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                            tr.offsets_size/sizeof(binder_size_t), this);
+                            tr.offsets_size/sizeof(binder_size_t));
                     }
                 } else {
                     freeBuffer(nullptr,
                         reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                         tr.data_size,
                         reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                        tr.offsets_size/sizeof(binder_size_t), this);
+                        tr.offsets_size/sizeof(binder_size_t));
                     continue;
                 }
             }
@@ -1171,7 +1183,7 @@ status_t IPCThreadState::executeCommand(int32_t cmd)
                 reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                 tr.data_size,
                 reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                tr.offsets_size/sizeof(binder_size_t), freeBuffer, this);
+                tr.offsets_size/sizeof(binder_size_t), freeBuffer);
 
             const void* origServingStackPointer = mServingStackPointer;
             mServingStackPointer = &origServingStackPointer; // anything on the stack
@@ -1232,7 +1244,9 @@ status_t IPCThreadState::executeCommand(int32_t cmd)
             if ((tr.flags & TF_ONE_WAY) == 0) {
                 LOG_ONEWAY("Sending reply to %d!", mCallingPid);
                 if (error < NO_ERROR) reply.setError(error);
-                sendReply(reply, 0);
+
+                constexpr uint32_t kForwardReplyFlags = TF_CLEAR_BUF;
+                sendReply(reply, (tr.flags & kForwardReplyFlags));
             } else {
                 if (error != OK || reply.dataSize() != 0) {
                     alog << "oneway function results will be dropped but finished with status "
@@ -1316,11 +1330,47 @@ void IPCThreadState::threadDestructor(void *st)
         }
 }
 
+status_t IPCThreadState::getProcessFreezeInfo(pid_t pid, bool *sync_received, bool *async_received)
+{
+    int ret = 0;
+    binder_frozen_status_info info;
+    info.pid = pid;
+
+#if defined(__ANDROID__)
+    if (ioctl(self()->mProcess->mDriverFD, BINDER_GET_FROZEN_INFO, &info) < 0)
+        ret = -errno;
+#endif
+    *sync_received = info.sync_recv;
+    *async_received = info.async_recv;
+
+    return ret;
+}
+
+status_t IPCThreadState::freeze(pid_t pid, bool enable, uint32_t timeout_ms) {
+    struct binder_freeze_info info;
+    int ret = 0;
+
+    info.pid = pid;
+    info.enable = enable;
+    info.timeout_ms = timeout_ms;
+
+
+#if defined(__ANDROID__)
+    if (ioctl(self()->mProcess->mDriverFD, BINDER_FREEZE, &info) < 0)
+        ret = -errno;
+#endif
+
+    //
+    // ret==-EAGAIN indicates that transactions have not drained.
+    // Call again to poll for completion.
+    //
+    return ret;
+}
 
 void IPCThreadState::freeBuffer(Parcel* parcel, const uint8_t* data,
                                 size_t /*dataSize*/,
                                 const binder_size_t* /*objects*/,
-                                size_t /*objectsSize*/, void* /*cookie*/)
+                                size_t /*objectsSize*/)
 {
     //ALOGI("Freeing parcel %p", &parcel);
     IF_LOG_COMMANDS() {

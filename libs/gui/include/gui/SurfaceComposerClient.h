@@ -29,6 +29,7 @@
 #include <utils/SortedVector.h>
 #include <utils/threads.h>
 
+#include <ui/BlurRegion.h>
 #include <ui/ConfigStoreTypes.h>
 #include <ui/DisplayedFrameStats.h>
 #include <ui/FrameStats.h>
@@ -120,13 +121,15 @@ public:
 
     // Sets the refresh rate boundaries for the display.
     static status_t setDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                 int32_t defaultConfig, float primaryRefreshRateMin,
+                                                 int32_t defaultConfig, bool allowGroupSwitching,
+                                                 float primaryRefreshRateMin,
                                                  float primaryRefreshRateMax,
                                                  float appRequestRefreshRateMin,
                                                  float appRequestRefreshRateMax);
     // Gets the refresh rate boundaries for the display.
     static status_t getDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
                                                  int32_t* outDefaultConfig,
+                                                 bool* outAllowGroupSwitching,
                                                  float* outPrimaryRefreshRateMin,
                                                  float* outPrimaryRefreshRateMax,
                                                  float* outAppRequestRefreshRateMin,
@@ -253,13 +256,13 @@ public:
     static sp<SurfaceComposerClient> getDefault();
 
     //! Create a surface
-    sp<SurfaceControl> createSurface(const String8& name,              // name of the surface
-                                     uint32_t w,                       // width in pixel
-                                     uint32_t h,                       // height in pixel
-                                     PixelFormat format,               // pixel-format desired
-                                     uint32_t flags = 0,               // usage flags
-                                     SurfaceControl* parent = nullptr, // parent
-                                     LayerMetadata metadata = LayerMetadata(), // metadata
+    sp<SurfaceControl> createSurface(const String8& name, // name of the surface
+                                     uint32_t w,          // width in pixel
+                                     uint32_t h,          // height in pixel
+                                     PixelFormat format,  // pixel-format desired
+                                     uint32_t flags = 0,  // usage flags
+                                     const sp<IBinder>& parentHandle = nullptr, // parentHandle
+                                     LayerMetadata metadata = LayerMetadata(),  // metadata
                                      uint32_t* outTransformHint = nullptr);
 
     status_t createSurfaceChecked(const String8& name, // name of the surface
@@ -267,9 +270,9 @@ public:
                                   uint32_t h,          // height in pixel
                                   PixelFormat format,  // pixel-format desired
                                   sp<SurfaceControl>* outSurface,
-                                  uint32_t flags = 0,                       // usage flags
-                                  SurfaceControl* parent = nullptr,         // parent
-                                  LayerMetadata metadata = LayerMetadata(), // metadata
+                                  uint32_t flags = 0,                        // usage flags
+                                  const sp<IBinder>& parentHandle = nullptr, // parentHandle
+                                  LayerMetadata metadata = LayerMetadata(),  // metadata
                                   uint32_t* outTransformHint = nullptr);
 
     //! Create a surface
@@ -339,11 +342,17 @@ public:
     };
 
     class Transaction : public Parcelable {
+    private:
+        static std::atomic<uint32_t> idCounter;
+        int64_t generateId();
+
     protected:
         std::unordered_map<sp<IBinder>, ComposerState, IBinderHash> mComposerStates;
-        SortedVector<DisplayState > mDisplayStates;
+        SortedVector<DisplayState> mDisplayStates;
         std::unordered_map<sp<ITransactionCompletedListener>, CallbackInfo, TCLHash>
                 mListenerCallbacks;
+
+        uint64_t mId;
 
         uint32_t mForceSynchronous = 0;
         uint32_t mTransactionNestCount = 0;
@@ -367,20 +376,20 @@ public:
         // The desired present time does not affect this ordering.
         int64_t mDesiredPresentTime = -1;
 
+        // The vsync Id provided by Choreographer.getVsyncId
+        int64_t mFrameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
+
         InputWindowCommands mInputWindowCommands;
         int mStatus = NO_ERROR;
 
-        layer_state_t* getLayerState(const sp<IBinder>& surfaceHandle);
-        layer_state_t* getLayerState(const sp<SurfaceControl>& sc) {
-            return getLayerState(sc->getHandle());
-        }
+        layer_state_t* getLayerState(const sp<SurfaceControl>& sc);
         DisplayState& getDisplayState(const sp<IBinder>& token);
 
         void cacheBuffers();
         void registerSurfaceControlForCallback(const sp<SurfaceControl>& sc);
 
     public:
-        Transaction() = default;
+        Transaction();
         virtual ~Transaction() = default;
         Transaction(Transaction const& other);
 
@@ -418,7 +427,7 @@ public:
         // If the relative is removed, the Surface will have no layer and be
         // invisible, until the next time set(Relative)Layer is called.
         Transaction& setRelativeLayer(const sp<SurfaceControl>& sc,
-                const sp<IBinder>& relativeTo, int32_t z);
+                                      const sp<SurfaceControl>& relativeTo, int32_t z);
         Transaction& setFlags(const sp<SurfaceControl>& sc,
                 uint32_t flags, uint32_t mask);
         Transaction& setTransparentRegionHint(const sp<SurfaceControl>& sc,
@@ -431,6 +440,8 @@ public:
         Transaction& setCornerRadius(const sp<SurfaceControl>& sc, float cornerRadius);
         Transaction& setBackgroundBlurRadius(const sp<SurfaceControl>& sc,
                                              int backgroundBlurRadius);
+        Transaction& setBlurRegions(const sp<SurfaceControl>& sc,
+                                    const std::vector<BlurRegion>& regions);
         Transaction& setLayerStack(const sp<SurfaceControl>& sc, uint32_t layerStack);
         Transaction& setMetadata(const sp<SurfaceControl>& sc, uint32_t key, const Parcel& p);
         // Defers applying any changes made in this transaction until the Layer
@@ -438,22 +449,16 @@ public:
         // by handle is removed, then we will apply this transaction regardless of
         // what frame number has been reached.
         Transaction& deferTransactionUntil_legacy(const sp<SurfaceControl>& sc,
-                                                  const sp<IBinder>& handle, uint64_t frameNumber);
-        // A variant of deferTransactionUntil_legacy which identifies the Layer we wait for by
-        // Surface instead of Handle. Useful for clients which may not have the
-        // SurfaceControl for some of their Surfaces. Otherwise behaves identically.
-        Transaction& deferTransactionUntil_legacy(const sp<SurfaceControl>& sc,
-                                                  const sp<Surface>& barrierSurface,
+                                                  const sp<SurfaceControl>& barrierSurfaceControl,
                                                   uint64_t frameNumber);
         // Reparents all children of this layer to the new parent handle.
         Transaction& reparentChildren(const sp<SurfaceControl>& sc,
-                const sp<IBinder>& newParentHandle);
+                                      const sp<SurfaceControl>& newParent);
 
         /// Reparents the current layer to the new parent handle. The new parent must not be null.
         // This can be used instead of reparentChildren if the caller wants to
         // only re-parent a specific child.
-        Transaction& reparent(const sp<SurfaceControl>& sc,
-                const sp<IBinder>& newParentHandle);
+        Transaction& reparent(const sp<SurfaceControl>& sc, const sp<SurfaceControl>& newParent);
 
         Transaction& setColor(const sp<SurfaceControl>& sc, const half3& color);
 
@@ -487,6 +492,8 @@ public:
 
         // ONLY FOR BLAST ADAPTER
         Transaction& notifyProducerDisconnect(const sp<SurfaceControl>& sc);
+        // Set the framenumber generated by the graphics producer to mimic BufferQueue behaviour.
+        Transaction& setFrameNumber(const sp<SurfaceControl>& sc, uint64_t frameNumber);
 
         // Detaches all child surfaces (and their children recursively)
         // from their SurfaceControl.
@@ -499,16 +506,11 @@ public:
         // Sometimes the WindowManager needs to extend their lifetime slightly
         // in order to perform an exit animation or prevent flicker.
         Transaction& detachChildren(const sp<SurfaceControl>& sc);
-        // Set an override scaling mode as documented in <system/window.h>
-        // the override scaling mode will take precedence over any client
-        // specified scaling mode. -1 will clear the override scaling mode.
-        Transaction& setOverrideScalingMode(const sp<SurfaceControl>& sc,
-                int32_t overrideScalingMode);
 
 #ifndef NO_INPUT
         Transaction& setInputWindowInfo(const sp<SurfaceControl>& sc, const InputWindowInfo& info);
         Transaction& setFocusedWindow(const sp<IBinder>& token, const sp<IBinder>& focusedToken,
-                                      nsecs_t timestampNanos);
+                                      nsecs_t timestampNanos, int32_t displayId);
         Transaction& setFocusedWindow(const FocusRequest& request);
         Transaction& syncInputWindows();
 #endif
@@ -531,6 +533,13 @@ public:
         // the layer orientation, the graphic producer may not need to allocate
         // a buffer of a different size.
         Transaction& setFixedTransformHint(const sp<SurfaceControl>& sc, int32_t transformHint);
+
+        // Sets the frame timeline vsync id received from choreographer that corresponds
+        // to the transaction.
+        Transaction& setFrameTimelineVsync(int64_t frameTimelineVsyncId);
+        // Variant that only applies to a specific SurfaceControl.
+        Transaction& setFrameTimelineVsync(const sp<SurfaceControl>& sc,
+                int64_t frameTimelineVsyncId);
 
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);
@@ -595,28 +604,12 @@ private:
 
 class ScreenshotClient {
 public:
-    // if cropping isn't required, callers may pass in a default Rect, e.g.:
-    //   capture(display, producer, Rect(), reqWidth, ...);
-    static status_t capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                            uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                            ui::Rotation rotation, bool captureSecureLayers,
-                            sp<GraphicBuffer>* outBuffer, bool& outCapturedSecureLayers);
-    static status_t capture(const sp<IBinder>& display, ui::Dataspace reqDataSpace,
-                            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                            uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                            ui::Rotation rotation, sp<GraphicBuffer>* outBuffer);
-    static status_t capture(uint64_t displayOrLayerStack, ui::Dataspace* outDataspace,
-                            sp<GraphicBuffer>* outBuffer);
-    static status_t captureLayers(const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace,
-                                  ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                  float frameScale, sp<GraphicBuffer>* outBuffer);
-    static status_t captureChildLayers(
-            const sp<IBinder>& layerHandle, ui::Dataspace reqDataSpace,
-            ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
-                    excludeHandles,
-            float frameScale, sp<GraphicBuffer>* outBuffer);
+    static status_t captureDisplay(const DisplayCaptureArgs& captureArgs,
+                                   const sp<IScreenCaptureListener>& captureListener);
+    static status_t captureDisplay(uint64_t displayOrLayerStack,
+                                   const sp<IScreenCaptureListener>& captureListener);
+    static status_t captureLayers(const LayerCaptureArgs& captureArgs,
+                                  const sp<IScreenCaptureListener>& captureListener);
 };
 
 // ---------------------------------------------------------------------------

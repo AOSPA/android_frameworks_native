@@ -28,6 +28,7 @@
 #include <vibratorservice/VibratorHalWrapper.h>
 
 using android::hardware::vibrator::CompositeEffect;
+using android::hardware::vibrator::CompositePrimitive;
 using android::hardware::vibrator::Effect;
 using android::hardware::vibrator::EffectStrength;
 
@@ -44,8 +45,6 @@ namespace android {
 namespace vibrator {
 
 // -------------------------------------------------------------------------------------------------
-
-static constexpr int MAX_RETRIES = 1;
 
 std::shared_ptr<HalWrapper> HalConnector::connect(std::shared_ptr<CallbackScheduler> scheduler) {
     static bool gHalExists = true;
@@ -88,10 +87,12 @@ std::shared_ptr<HalWrapper> HalConnector::connect(std::shared_ptr<CallbackSchedu
 
 // -------------------------------------------------------------------------------------------------
 
+static constexpr int MAX_RETRIES = 1;
+
 template <typename T>
 HalResult<T> HalController::processHalResult(HalResult<T> result, const char* functionName) {
     if (result.isFailed()) {
-        ALOGE("%s failed: Vibrator HAL not available", functionName);
+        ALOGE("%s failed: %s", functionName, result.errorMessage());
         std::lock_guard<std::mutex> lock(mConnectedHalMutex);
         mConnectedHal->tryReconnect();
     }
@@ -125,11 +126,12 @@ HalResult<T> HalController::apply(HalController::hal_fn<T>& halFn, const char* f
 
 // -------------------------------------------------------------------------------------------------
 
-void HalController::init() {
+bool HalController::init() {
     std::lock_guard<std::mutex> lock(mConnectedHalMutex);
     if (mConnectedHal == nullptr) {
         mConnectedHal = mHalConnector->connect(mCallbackScheduler);
     }
+    return mConnectedHal != nullptr;
 }
 
 HalResult<void> HalController::ping() {
@@ -199,6 +201,12 @@ HalResult<std::vector<Effect>> HalController::getSupportedEffects() {
         return hal->getSupportedEffects();
     };
     return apply(getSupportedEffectsFn, "getSupportedEffects");
+}
+
+HalResult<std::vector<CompositePrimitive>> HalController::getSupportedPrimitives() {
+    hal_fn<std::vector<CompositePrimitive>> getSupportedPrimitivesFn =
+            [](std::shared_ptr<HalWrapper> hal) { return hal->getSupportedPrimitives(); };
+    return apply(getSupportedPrimitivesFn, "getSupportedPrimitives");
 }
 
 HalResult<milliseconds> HalController::performEffect(

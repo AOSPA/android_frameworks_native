@@ -466,7 +466,8 @@ void GraphicsEnv::updateUseAngle() {
 }
 
 void GraphicsEnv::setAngleInfo(const std::string path, const std::string appName,
-                               const std::string developerOptIn, const int rulesFd,
+                               const std::string developerOptIn,
+                               const std::vector<std::string> eglFeatures, const int rulesFd,
                                const long rulesOffset, const long rulesLength) {
     if (mUseAngle != UNKNOWN) {
         // We've already figured out an answer for this app, so just return.
@@ -474,6 +475,8 @@ void GraphicsEnv::setAngleInfo(const std::string path, const std::string appName
               (mUseAngle == YES) ? "true" : "false");
         return;
     }
+
+    mAngleEglFeatures = std::move(eglFeatures);
 
     ALOGV("setting ANGLE path to '%s'", path.c_str());
     mAnglePath = path;
@@ -520,6 +523,10 @@ std::string& GraphicsEnv::getAngleAppName() {
     return mAngleAppName;
 }
 
+const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
+    return mAngleEglFeatures;
+}
+
 const std::string& GraphicsEnv::getLayerPaths() {
     return mLayerPaths;
 }
@@ -541,7 +548,7 @@ void GraphicsEnv::setDebugLayersGLES(const std::string layers) {
 }
 
 // Return true if all the required libraries from vndk and sphal namespace are
-// linked to the Game Driver namespace correctly.
+// linked to the updatable gfx driver namespace correctly.
 bool GraphicsEnv::linkDriverNamespaceLocked(android_namespace_t* vndkNamespace) {
     const std::string llndkLibraries = getSystemNativeLibraries(NativeLibrary::LLNDK);
     if (llndkLibraries.empty()) {

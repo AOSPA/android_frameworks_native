@@ -33,6 +33,7 @@ static const char* native_processes_to_dump[] = {
         "/system/bin/mediaextractor", // media.extractor
         "/system/bin/mediametrics", // media.metrics
         "/system/bin/mediaserver",
+        "/system/bin/mediatranscoding", // media.transcoding
         "/system/bin/netd",
         "/system/bin/sdcard",
         "/apex/com.android.os.statsd/bin/statsd",
@@ -56,6 +57,7 @@ static const char* hal_interfaces_to_dump[] {
         "android.hardware.audio@4.0::IDevicesFactory",
         "android.hardware.audio@5.0::IDevicesFactory",
         "android.hardware.audio@6.0::IDevicesFactory",
+        "android.hardware.audio@7.0::IDevicesFactory",
         "android.hardware.automotive.audiocontrol@1.0::IAudioControl",
         "android.hardware.automotive.audiocontrol@2.0::IAudioControl",
         "android.hardware.automotive.evs@1.0::IEvsCamera",

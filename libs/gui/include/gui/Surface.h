@@ -30,6 +30,7 @@
 #include <utils/RefBase.h>
 
 #include <shared_mutex>
+#include <unordered_set>
 
 namespace android {
 
@@ -67,7 +68,6 @@ class Surface
     : public ANativeObjectBase<ANativeWindow, Surface, RefBase>
 {
 public:
-
     /*
      * creates a Surface from the given IGraphicBufferProducer (which concrete
      * implementation is a BufferQueue).
@@ -82,15 +82,23 @@ public:
      *
      * the controlledByApp flag indicates that this Surface (producer) is
      * controlled by the application. This flag is used at connect time.
+     *
+     * Pass in the SurfaceControlHandle to store a weak reference to the layer
+     * that the Surface was created from. This handle can be used to create a
+     * child surface without using the IGBP to identify the layer. This is used
+     * for surfaces created by the BlastBufferQueue whose IGBP is created on the
+     * client and cannot be verified in SF.
      */
-    explicit Surface(const sp<IGraphicBufferProducer>& bufferProducer,
-            bool controlledByApp = false);
+    explicit Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controlledByApp = false,
+                     const sp<IBinder>& surfaceControlHandle = nullptr);
 
     /* getIGraphicBufferProducer() returns the IGraphicBufferProducer this
      * Surface was created with. Usually it's an error to use the
      * IGraphicBufferProducer while the Surface is connected.
      */
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const;
+
+    sp<IBinder> getSurfaceControlHandle() const { return mSurfaceControlHandle; }
 
     /* convenience function to check that the given surface is non NULL as
      * well as its IGraphicBufferProducer */
@@ -119,7 +127,7 @@ public:
      * delay during dequeueBuffer. If there are already the maximum number of
      * buffers allocated, this function has no effect.
      */
-    void allocateBuffers();
+    virtual void allocateBuffers();
 
     /* Sets the generation number on the IGraphicBufferProducer and updates the
      * generation number on any buffers attached to the Surface after this call.
@@ -181,7 +189,8 @@ public:
     status_t getUniqueId(uint64_t* outId) const;
     status_t getConsumerUsage(uint64_t* outUsage) const;
 
-    status_t setFrameRate(float frameRate, int8_t compatibility);
+    virtual status_t setFrameRate(float frameRate, int8_t compatibility);
+    virtual status_t setFrameTimelineVsync(int64_t frameTimelineVsyncId);
 
 protected:
     virtual ~Surface();
@@ -267,6 +276,7 @@ private:
     int dispatchAddQueueInterceptor(va_list args);
     int dispatchAddQueryInterceptor(va_list args);
     int dispatchGetLastQueuedBuffer(va_list args);
+    int dispatchSetFrameTimelineVsync(va_list args);
     bool transformToDisplayInverse();
 
 protected:
@@ -544,13 +554,25 @@ protected:
     bool mEnableFrameTimestamps = false;
     std::unique_ptr<ProducerFrameEventHistory> mFrameEventHistory;
 
+    // Reference to the SurfaceFlinger layer that was used to create this
+    // surface. This is only populated when the Surface is created from
+    // a BlastBufferQueue.
+    sp<IBinder> mSurfaceControlHandle;
+
     bool mReportRemovedBuffers = false;
     std::vector<sp<GraphicBuffer>> mRemovedBuffers;
     int mMaxBufferCount;
 
     sp<IProducerListener> mListenerProxy;
+
+    // Get and flush the buffers of given slots, if the buffer in the slot
+    // is currently dequeued then it won't be flushed and won't be returned
+    // in outBuffers.
     status_t getAndFlushBuffersFromSlots(const std::vector<int32_t>& slots,
             std::vector<sp<GraphicBuffer>>* outBuffers);
+
+    // Buffers that are successfully dequeued/attached and handed to clients
+    std::unordered_set<int> mDequeuedSlots;
 };
 
 } // namespace android

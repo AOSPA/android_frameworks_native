@@ -116,14 +116,15 @@ ACTION(TriggerCallbackInArg2) {
 }
 
 TEST_F(VibratorHalWrapperAidlTest, TestPing) {
-    {
-        InSequence seq;
-        EXPECT_CALL(*mMockHal.get(), onAsBinder())
-                .Times(Exactly(1))
-                .WillRepeatedly(Return(mMockBinder.get()));
-        EXPECT_CALL(*mMockBinder.get(), pingBinder()).Times(Exactly(1));
-    }
+    EXPECT_CALL(*mMockHal.get(), onAsBinder())
+            .Times(Exactly(2))
+            .WillRepeatedly(Return(mMockBinder.get()));
+    EXPECT_CALL(*mMockBinder.get(), pingBinder())
+            .Times(Exactly(2))
+            .WillOnce(Return(android::OK))
+            .WillRepeatedly(Return(android::DEAD_OBJECT));
 
+    ASSERT_TRUE(mWrapper->ping().isOk());
     ASSERT_TRUE(mWrapper->ping().isFailed());
 }
 
@@ -364,6 +365,50 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetSupportedEffectsCachesResult) {
     auto result = mWrapper->getSupportedEffects();
     ASSERT_TRUE(result.isOk());
     ASSERT_EQ(supportedEffects, result.value());
+}
+
+TEST_F(VibratorHalWrapperAidlTest, TestGetSupportedPrimitivesDoesNotCacheFailedResult) {
+    std::vector<CompositePrimitive> supportedPrimitives;
+    supportedPrimitives.push_back(CompositePrimitive::CLICK);
+    supportedPrimitives.push_back(CompositePrimitive::THUD);
+
+    EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
+            .Times(Exactly(3))
+            .WillOnce(
+                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)))
+            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
+            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedPrimitives), Return(Status())));
+
+    ASSERT_TRUE(mWrapper->getSupportedPrimitives().isUnsupported());
+    ASSERT_TRUE(mWrapper->getSupportedPrimitives().isFailed());
+
+    auto result = mWrapper->getSupportedPrimitives();
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(supportedPrimitives, result.value());
+}
+
+TEST_F(VibratorHalWrapperAidlTest, TestGetSupportedPrimitivesCachesResult) {
+    std::vector<CompositePrimitive> supportedPrimitives;
+    supportedPrimitives.push_back(CompositePrimitive::CLICK);
+    supportedPrimitives.push_back(CompositePrimitive::THUD);
+
+    EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
+            .Times(Exactly(1))
+            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedPrimitives), Return(Status())));
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 10; i++) {
+        threads.push_back(std::thread([&]() {
+            auto result = mWrapper->getSupportedPrimitives();
+            ASSERT_TRUE(result.isOk());
+            ASSERT_EQ(supportedPrimitives, result.value());
+        }));
+    }
+    std::for_each(threads.begin(), threads.end(), [](std::thread& t) { t.join(); });
+
+    auto result = mWrapper->getSupportedPrimitives();
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(supportedPrimitives, result.value());
 }
 
 TEST_F(VibratorHalWrapperAidlTest, TestPerformEffectWithCallbackSupport) {

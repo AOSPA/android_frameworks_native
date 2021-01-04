@@ -25,6 +25,7 @@
 #include <libbpf_android.h>
 #include <log/log.h>
 #include <unistd.h>
+#include <utils/Timers.h>
 #include <utils/Trace.h>
 
 #include <unordered_map>
@@ -42,18 +43,21 @@ void GpuMem::initialize() {
     // Make sure bpf programs are loaded
     bpf::waitForProgsLoaded();
 
-    int fd = bpf::bpfFdGet(kGpuMemTotalProgPath, BPF_F_RDONLY);
+    errno = 0;
+    int fd = bpf::retrieveProgram(kGpuMemTotalProgPath);
     if (fd < 0) {
-        ALOGE("Failed to retrieve pinned program from %s", kGpuMemTotalProgPath);
+        ALOGE("Failed to retrieve pinned program from %s [%d(%s)]", kGpuMemTotalProgPath, errno,
+              strerror(errno));
         return;
     }
 
     // Attach the program to the tracepoint, and the tracepoint is automatically enabled here.
+    errno = 0;
     int count = 0;
     while (bpf_attach_tracepoint(fd, kGpuMemTraceGroup, kGpuMemTotalTracepoint) < 0) {
         if (++count > kGpuWaitTimeout) {
-            ALOGE("Failed to attach bpf program to %s/%s tracepoint", kGpuMemTraceGroup,
-                  kGpuMemTotalTracepoint);
+            ALOGE("Failed to attach bpf program to %s/%s tracepoint [%d(%s)]", kGpuMemTraceGroup,
+                  kGpuMemTotalTracepoint, errno, strerror(errno));
             return;
         }
         // Retry until GPU driver loaded or timeout.
@@ -61,9 +65,11 @@ void GpuMem::initialize() {
     }
 
     // Use the read-only wrapper BpfMapRO to properly retrieve the read-only map.
+    errno = 0;
     auto map = bpf::BpfMapRO<uint64_t, uint64_t>(kGpuMemTotalMapPath);
     if (!map.isValid()) {
-        ALOGE("Failed to create bpf map from %s", kGpuMemTotalMapPath);
+        ALOGE("Failed to create bpf map from %s [%d(%s)]", kGpuMemTotalMapPath, errno,
+              strerror(errno));
         return;
     }
     setGpuMemTotalMap(map);
@@ -125,6 +131,26 @@ void GpuMem::dump(const Vector<String16>& /* args */, std::string* result) {
             StringAppendF(result, "Proc %u total: %" PRIu64 "\n", gpu.second[i].first,
                           gpu.second[i].second);
         }
+    }
+}
+
+void GpuMem::traverseGpuMemTotals(const std::function<void(int64_t ts, uint32_t gpuId, uint32_t pid,
+                                                           uint64_t size)>& callback) {
+    auto res = mGpuMemTotalMap.getFirstKey();
+    if (!res.ok()) return;
+    uint64_t key = res.value();
+    while (true) {
+        uint32_t gpu_id = key >> 32;
+        uint32_t pid = key;
+
+        res = mGpuMemTotalMap.readValue(key);
+        if (!res.ok()) break;
+        uint64_t size = res.value();
+
+        callback(systemTime(), gpu_id, pid, size);
+        res = mGpuMemTotalMap.getNextKey(key);
+        if (!res.ok()) break;
+        key = res.value();
     }
 }
 

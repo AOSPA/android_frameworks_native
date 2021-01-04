@@ -165,11 +165,15 @@ public:
     virtual void setCompositionEnabled(bool) = 0;
 
     // Sets the projection state to use
-    virtual void setProjection(const ui::Transform&, uint32_t orientation, const Rect& frame,
-                               const Rect& viewport, const Rect& sourceClip,
-                               const Rect& destinationClip, bool needsFiltering) = 0;
+    virtual void setProjection(ui::Rotation orientation, const Rect& layerStackSpaceRect,
+                               const Rect& orientedDisplaySpaceRect) = 0;
     // Sets the bounds to use
-    virtual void setBounds(const ui::Size&) = 0;
+    virtual void setDisplaySize(const ui::Size&) = 0;
+    // Gets the transform hint used in layers that belong to this output. Used to guide
+    // composition orientation so that HW overlay can be used when display isn't in its natural
+    // orientation on some devices. Therefore usually we only use transform hint from display
+    // output.
+    virtual ui::Transform::RotationFlags getTransformHint() const = 0;
 
     // Sets the layer stack filtering settings for this output. See
     // belongsInOutput for full details.

@@ -14,10 +14,6 @@
  * limitations under the License.
  */
 
-// TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wconversion"
-
 #undef LOG_TAG
 #define LOG_TAG "LibSurfaceFlingerUnittests"
 
@@ -31,9 +27,8 @@
 #include "Layer.h"
 #include "TestableSurfaceFlinger.h"
 #include "mock/DisplayHardware/MockComposer.h"
-#include "mock/MockDispSync.h"
-#include "mock/MockEventControlThread.h"
 #include "mock/MockEventThread.h"
+#include "mock/MockVsyncController.h"
 
 namespace android {
 
@@ -65,7 +60,7 @@ protected:
     static constexpr int32_t PRIORITY_UNSET = -1;
 
     void setupScheduler();
-    void setupComposer(int virtualDisplayCount);
+    void setupComposer(uint32_t virtualDisplayCount);
     sp<BufferQueueLayer> createBufferQueueLayer();
     sp<BufferStateLayer> createBufferStateLayer();
     sp<EffectLayer> createEffectLayer();
@@ -123,7 +118,11 @@ void RefreshRateSelectionTest::setParent(Layer* child, Layer* parent) {
 }
 
 void RefreshRateSelectionTest::commitTransaction(Layer* layer) {
-    layer->commitTransaction(layer->getCurrentState());
+    layer->pushPendingState();
+    auto c = layer->getCurrentState();
+    if (layer->applyPendingStates(&c)) {
+        layer->commitTransaction(c);
+    }
 }
 
 void RefreshRateSelectionTest::setupScheduler() {
@@ -132,26 +131,28 @@ void RefreshRateSelectionTest::setupScheduler() {
 
     EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*eventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(eventThread.get(), ResyncCallback(),
+            .WillOnce(Return(new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
+                                                       ResyncCallback(),
                                                        ISurfaceComposer::eConfigChangedSuppress)));
 
     EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), ResyncCallback(),
+            .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
+                                                       ResyncCallback(),
                                                        ISurfaceComposer::eConfigChangedSuppress)));
 
-    auto primaryDispSync = std::make_unique<mock::DispSync>();
+    auto vsyncController = std::make_unique<mock::VsyncController>();
+    auto vsyncTracker = std::make_unique<mock::VSyncTracker>();
 
-    EXPECT_CALL(*primaryDispSync, computeNextRefresh(0, _)).WillRepeatedly(Return(0));
-    EXPECT_CALL(*primaryDispSync, getPeriod())
+    EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
+    EXPECT_CALL(*vsyncTracker, currentPeriod())
             .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_REFRESH_RATE));
-    EXPECT_CALL(*primaryDispSync, expectedPresentTime(_)).WillRepeatedly(Return(0));
-    mFlinger.setupScheduler(std::move(primaryDispSync),
-                            std::make_unique<mock::EventControlThread>(), std::move(eventThread),
-                            std::move(sfEventThread));
+    EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
+    mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
+                            std::move(eventThread), std::move(sfEventThread));
 }
 
-void RefreshRateSelectionTest::setupComposer(int virtualDisplayCount) {
+void RefreshRateSelectionTest::setupComposer(uint32_t virtualDisplayCount) {
     mComposer = new Hwc2::mock::Composer();
     EXPECT_CALL(*mComposer, getMaxVirtualDisplayCount()).WillOnce(Return(virtualDisplayCount));
     mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
@@ -283,6 +284,3 @@ TEST_F(RefreshRateSelectionTest, testPriorityOnEffectLayers) {
 
 } // namespace
 } // namespace android
-
-// TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"

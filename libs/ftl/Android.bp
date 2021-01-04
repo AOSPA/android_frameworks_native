@@ -1,0 +1,17 @@
+cc_test {
+    name: "ftl_test",
+    test_suites: ["device-tests"],
+    sanitize: {
+        address: true,
+    },
+    srcs: [
+        "SmallVector_test.cpp",
+        "StaticVector_test.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+        "-Wpedantic",
+    ],
+}

@@ -37,6 +37,7 @@
 #include "BufferLayerConsumer.h"
 #include "Client.h"
 #include "DisplayHardware/HWComposer.h"
+#include "FrameTimeline.h"
 #include "FrameTracker.h"
 #include "Layer.h"
 #include "LayerVector.h"
@@ -50,10 +51,7 @@ public:
     explicit BufferLayer(const LayerCreationArgs& args);
     virtual ~BufferLayer() override;
 
-    // -----------------------------------------------------------------------
-    // Overriden from Layer
-    // -----------------------------------------------------------------------
-public:
+    // Implements Layer.
     sp<compositionengine::LayerFE> getCompositionEngineLayerFE() const override;
     compositionengine::LayerFECompositionState* editCompositionState() override;
 
@@ -96,8 +94,7 @@ public:
 
     bool hasReadyFrame() const override;
 
-    // Returns the current scaling mode, unless mOverrideScalingMode
-    // is set, in which case, it returns mOverrideScalingMode
+    // Returns the current scaling mode
     uint32_t getEffectiveScalingMode() const override;
 
     // Calls latchBuffer if the buffer has a frame queued and then releases the buffer.
@@ -118,40 +115,9 @@ public:
 
     ui::Transform::RotationFlags getTransformHint() const override { return mTransformHint; }
 
-    // -----------------------------------------------------------------------
-    // Functions that must be implemented by derived classes
-    // -----------------------------------------------------------------------
-private:
-    virtual bool fenceHasSignaled() const = 0;
-    virtual bool framePresentTimeIsCurrent(nsecs_t expectedPresentTime) const = 0;
-
-    PixelFormat getPixelFormat() const;
-
-    // Computes the transform matrix using the setFilteringEnabled to determine whether the
-    // transform matrix should be computed for use with bilinear filtering.
-    void getDrawingTransformMatrix(bool filteringEnabled, float outMatrix[16]);
-
-    virtual uint64_t getFrameNumber(nsecs_t expectedPresentTime) const = 0;
-
-    virtual bool getAutoRefresh() const = 0;
-    virtual bool getSidebandStreamChanged() const = 0;
-
-    // Latch sideband stream and returns true if the dirty region should be updated.
-    virtual bool latchSidebandStream(bool& recomputeVisibleRegions) = 0;
-
-    virtual bool hasFrameUpdate() const = 0;
-
-    virtual status_t bindTextureImage() = 0;
-    virtual status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
-                                    nsecs_t expectedPresentTime) = 0;
-
-    virtual status_t updateActiveBuffer() = 0;
-    virtual status_t updateFrameNumber(nsecs_t latchTime) = 0;
-
-    // We generate InputWindowHandles for all non-cursor buffered layers regardless of whether they
-    // have an InputChannel. This is to enable the InputDispatcher to do PID based occlusion
-    // detection.
-    bool needsInputInfo() const override { return !mPotentialCursor; }
+    // Returns true if the transformed buffer size does not match the layer size and we need
+    // to apply filtering.
+    virtual bool bufferNeedsFiltering() const;
 
 protected:
     struct BufferInfo {
@@ -204,7 +170,7 @@ protected:
     void updateCloneBufferInfo() override;
     uint64_t mPreviousFrameNumber = 0;
 
-    virtual uint64_t getHeadFrameNumber(nsecs_t expectedPresentTime) const;
+    uint64_t getHeadFrameNumber(nsecs_t expectedPresentTime) const override;
 
     void setTransformHint(ui::Transform::RotationFlags displayTransformHint) override;
 
@@ -213,6 +179,29 @@ protected:
     ui::Transform::RotationFlags mTransformHint = ui::Transform::ROT_0;
 
 private:
+    virtual bool fenceHasSignaled() const = 0;
+    virtual bool framePresentTimeIsCurrent(nsecs_t expectedPresentTime) const = 0;
+    virtual uint64_t getFrameNumber(nsecs_t expectedPresentTime) const = 0;
+
+    virtual bool getAutoRefresh() const = 0;
+    virtual bool getSidebandStreamChanged() const = 0;
+
+    // Latch sideband stream and returns true if the dirty region should be updated.
+    virtual bool latchSidebandStream(bool& recomputeVisibleRegions) = 0;
+
+    virtual bool hasFrameUpdate() const = 0;
+
+    virtual status_t updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
+                                    nsecs_t expectedPresentTime) = 0;
+
+    virtual status_t updateActiveBuffer() = 0;
+    virtual status_t updateFrameNumber(nsecs_t latchTime) = 0;
+
+    // We generate InputWindowHandles for all non-cursor buffered layers regardless of whether they
+    // have an InputChannel. This is to enable the InputDispatcher to do PID based occlusion
+    // detection.
+    bool needsInputInfo() const override { return !mPotentialCursor; }
+
     // Returns true if this layer requires filtering
     bool needsFiltering(const DisplayDevice*) const override;
     bool needsFilteringForScreenshots(const DisplayDevice*,
@@ -221,6 +210,12 @@ private:
     // BufferStateLayers can return Rect::INVALID_RECT if the layer does not have a display frame
     // and its parent layer is not bounded
     Rect getBufferSize(const State& s) const override;
+
+    PixelFormat getPixelFormat() const;
+
+    // Computes the transform matrix using the setFilteringEnabled to determine whether the
+    // transform matrix should be computed for use with bilinear filtering.
+    void getDrawingTransformMatrix(bool filteringEnabled, float outMatrix[16]);
 
     std::unique_ptr<compositionengine::LayerFECompositionState> mCompositionState;
 

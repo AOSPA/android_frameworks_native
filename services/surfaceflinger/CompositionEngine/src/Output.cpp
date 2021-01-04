@@ -69,6 +69,19 @@ Reversed<T> reversed(const T& c) {
     return Reversed<T>(c);
 }
 
+struct ScaleVector {
+    float x;
+    float y;
+};
+
+// Returns a ScaleVector (x, y) such that from.scale(x, y) = to',
+// where to' will have the same size as "to". In the case where "from" and "to"
+// start at the origin to'=to.
+ScaleVector getScale(const Rect& from, const Rect& to) {
+    return {.x = static_cast<float>(to.width()) / from.width(),
+            .y = static_cast<float>(to.height()) / from.height()};
+}
+
 } // namespace
 
 std::shared_ptr<Output> createOutput(
@@ -105,28 +118,82 @@ void Output::setCompositionEnabled(bool enabled) {
     dirtyEntireOutput();
 }
 
-void Output::setProjection(const ui::Transform& transform, uint32_t orientation, const Rect& frame,
-                           const Rect& viewport, const Rect& sourceClip,
-                           const Rect& destinationClip, bool needsFiltering) {
+void Output::setProjection(ui::Rotation orientation, const Rect& layerStackSpaceRect,
+                           const Rect& orientedDisplaySpaceRect) {
     auto& outputState = editState();
-    outputState.transform = transform;
-    outputState.orientation = orientation;
-    outputState.sourceClip = sourceClip;
-    outputState.destinationClip = destinationClip;
-    outputState.frame = frame;
-    outputState.viewport = viewport;
-    outputState.needsFiltering = needsFiltering;
+
+    outputState.displaySpace.orientation = orientation;
+    LOG_FATAL_IF(outputState.displaySpace.bounds == Rect::INVALID_RECT,
+                 "The display bounds are unknown.");
+
+    // Compute orientedDisplaySpace
+    ui::Size orientedSize = outputState.displaySpace.bounds.getSize();
+    if (orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270) {
+        std::swap(orientedSize.width, orientedSize.height);
+    }
+    outputState.orientedDisplaySpace.bounds = Rect(orientedSize);
+    outputState.orientedDisplaySpace.content = orientedDisplaySpaceRect;
+
+    // Compute displaySpace.content
+    const uint32_t transformOrientationFlags = ui::Transform::toRotationFlags(orientation);
+    ui::Transform rotation;
+    if (transformOrientationFlags != ui::Transform::ROT_INVALID) {
+        const auto displaySize = outputState.displaySpace.bounds;
+        rotation.set(transformOrientationFlags, displaySize.width(), displaySize.height());
+    }
+    outputState.displaySpace.content = rotation.transform(orientedDisplaySpaceRect);
+
+    // Compute framebufferSpace
+    outputState.framebufferSpace.orientation = orientation;
+    LOG_FATAL_IF(outputState.framebufferSpace.bounds == Rect::INVALID_RECT,
+                 "The framebuffer bounds are unknown.");
+    const auto scale =
+            getScale(outputState.displaySpace.bounds, outputState.framebufferSpace.bounds);
+    outputState.framebufferSpace.content = outputState.displaySpace.content.scale(scale.x, scale.y);
+
+    // Compute layerStackSpace
+    outputState.layerStackSpace.content = layerStackSpaceRect;
+    outputState.layerStackSpace.bounds = layerStackSpaceRect;
+
+    outputState.transform = outputState.layerStackSpace.getTransform(outputState.displaySpace);
+    outputState.needsFiltering = outputState.transform.needsBilinearFiltering();
+    dirtyEntireOutput();
+}
+
+void Output::setDisplaySize(const ui::Size& size) {
+    mRenderSurface->setDisplaySize(size);
+
+    auto& state = editState();
+
+    // Update framebuffer space
+    const Rect newBounds(size);
+    ScaleVector scale;
+    scale = getScale(state.framebufferSpace.bounds, newBounds);
+    state.framebufferSpace.bounds = newBounds;
+    state.framebufferSpace.content.scaleSelf(scale.x, scale.y);
+
+    // Update display space
+    scale = getScale(state.displaySpace.bounds, newBounds);
+    state.displaySpace.bounds = newBounds;
+    state.displaySpace.content.scaleSelf(scale.x, scale.y);
+    state.transform = state.layerStackSpace.getTransform(state.displaySpace);
+
+    // Update oriented display space
+    const auto orientation = state.displaySpace.orientation;
+    ui::Size orientedSize = size;
+    if (orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270) {
+        std::swap(orientedSize.width, orientedSize.height);
+    }
+    const Rect newOrientedBounds(orientedSize);
+    scale = getScale(state.orientedDisplaySpace.bounds, newOrientedBounds);
+    state.orientedDisplaySpace.bounds = newOrientedBounds;
+    state.orientedDisplaySpace.content.scaleSelf(scale.x, scale.y);
 
     dirtyEntireOutput();
 }
 
-// TODO(b/121291683): Rename setSize() once more is moved.
-void Output::setBounds(const ui::Size& size) {
-    mRenderSurface->setDisplaySize(size);
-    // TODO(b/121291683): Rename outputState.size once more is moved.
-    editState().bounds = Rect(mRenderSurface->getSize());
-
-    dirtyEntireOutput();
+ui::Transform::RotationFlags Output::getTransformHint() const {
+    return static_cast<ui::Transform::RotationFlags>(getState().transform.getOrientation());
 }
 
 void Output::setLayerStackFilter(uint32_t layerStackId, bool isInternal) {
@@ -232,8 +299,7 @@ compositionengine::RenderSurface* Output::getRenderSurface() const {
 
 void Output::setRenderSurface(std::unique_ptr<compositionengine::RenderSurface> surface) {
     mRenderSurface = std::move(surface);
-    editState().bounds = Rect(mRenderSurface->getSize());
-
+    editState().framebufferSpace.bounds = Rect(mRenderSurface->getSize());
     dirtyEntireOutput();
 }
 
@@ -251,7 +317,7 @@ void Output::setRenderSurfaceForTest(std::unique_ptr<compositionengine::RenderSu
 
 Region Output::getDirtyRegion(bool repaintEverything) const {
     const auto& outputState = getState();
-    Region dirty(outputState.viewport);
+    Region dirty(outputState.layerStackSpace.content);
     if (!repaintEverything) {
         dirty.andSelf(outputState.dirtyRegion);
     }
@@ -336,7 +402,7 @@ void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs&
 
     // Compute the resulting coverage for this output, and store it for later
     const ui::Transform& tr = outputState.transform;
-    Region undefinedRegion{outputState.bounds};
+    Region undefinedRegion{outputState.displaySpace.bounds};
     undefinedRegion.subtractSelf(tr.transform(coverage.aboveOpaqueLayers));
 
     outputState.undefinedRegion = undefinedRegion;
@@ -539,7 +605,7 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     // TODO(b/121291683): Why does this not use visibleRegion? (see outputSpaceVisibleRegion below)
     const auto& outputState = getState();
     Region drawRegion(outputState.transform.transform(visibleNonTransparentRegion));
-    drawRegion.andSelf(outputState.bounds);
+    drawRegion.andSelf(outputState.displaySpace.bounds);
     if (drawRegion.isEmpty()) {
         return;
     }
@@ -556,8 +622,8 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     outputLayerState.visibleRegion = visibleRegion;
     outputLayerState.visibleNonTransparentRegion = visibleNonTransparentRegion;
     outputLayerState.coveredRegion = coveredRegion;
-    outputLayerState.outputSpaceVisibleRegion =
-            outputState.transform.transform(visibleNonShadowRegion.intersect(outputState.viewport));
+    outputLayerState.outputSpaceVisibleRegion = outputState.transform.transform(
+            visibleNonShadowRegion.intersect(outputState.layerStackSpace.content));
     outputLayerState.shadowRegion = shadowRegion;
 }
 
@@ -603,7 +669,8 @@ void Output::updateAndWriteCompositionState(
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {
     compositionengine::OutputLayer* layerRequestingBgComposition = nullptr;
     for (auto* layer : getOutputLayersOrderedByZ()) {
-        if (layer->getLayerFE().getCompositionState()->backgroundBlurRadius > 0) {
+        if (layer->getLayerFE().getCompositionState()->backgroundBlurRadius > 0 ||
+            layer->getLayerFE().getCompositionState()->blurRegions.size() > 0) {
             layerRequestingBgComposition = layer;
         }
     }
@@ -855,6 +922,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
             needsProtected == renderEngine.isProtected()) {
             mRenderSurface->setProtected(needsProtected);
         }
+    } else if (!outputState.isSecure && renderEngine.isProtected()) {
+        renderEngine.useProtectedContext(false);
     }
 
     base::unique_fd fd;
@@ -882,9 +951,10 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     ALOGV("hasClientComposition");
 
     renderengine::DisplaySettings clientCompositionDisplay;
-    clientCompositionDisplay.physicalDisplay = outputState.destinationClip;
-    clientCompositionDisplay.clip = outputState.sourceClip;
-    clientCompositionDisplay.orientation = outputState.orientation;
+    clientCompositionDisplay.physicalDisplay = outputState.framebufferSpace.content;
+    clientCompositionDisplay.clip = outputState.layerStackSpace.content;
+    clientCompositionDisplay.orientation =
+            ui::Transform::toRotationFlags(outputState.displaySpace.orientation);
     clientCompositionDisplay.outputDataspace = mDisplayColorProfile->hasWideColorGamut()
             ? outputState.dataspace
             : ui::Dataspace::UNKNOWN;
@@ -967,11 +1037,10 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
     ALOGV("Rendering client layers");
 
     const auto& outputState = getState();
-    const Region viewportRegion(outputState.viewport);
-    const bool useIdentityTransform = false;
+    const Region viewportRegion(outputState.layerStackSpace.content);
     bool firstLayer = true;
     // Used when a layer clears part of the buffer.
-    Region dummyRegion;
+    Region stubRegion;
 
     for (auto* layer : getOutputLayersOrderedByZ()) {
         const auto& layerState = layer->getState();
@@ -1004,18 +1073,17 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                 !layerState.visibleRegion.subtract(layerState.shadowRegion).isEmpty();
 
         if (clientComposition || clearClientComposition) {
-            compositionengine::LayerFE::ClientCompositionTargetSettings targetSettings{
-                    clip,
-                    useIdentityTransform,
-                    layer->needsFiltering() || outputState.needsFiltering,
-                    outputState.isSecure,
-                    supportsProtectedContent,
-                    clientComposition ? clearRegion : dummyRegion,
-                    outputState.viewport,
-                    outputDataspace,
-                    realContentIsVisible,
-                    !clientComposition, /* clearContent  */
-            };
+            compositionengine::LayerFE::ClientCompositionTargetSettings
+                    targetSettings{.clip = clip,
+                                   .needsFiltering =
+                                           layer->needsFiltering() || outputState.needsFiltering,
+                                   .isSecure = outputState.isSecure,
+                                   .supportsProtectedContent = supportsProtectedContent,
+                                   .clearRegion = clientComposition ? clearRegion : stubRegion,
+                                   .viewport = outputState.layerStackSpace.content,
+                                   .dataspace = outputDataspace,
+                                   .realContentIsVisible = realContentIsVisible,
+                                   .clearContent = !clientComposition};
             std::vector<LayerFE::LayerSettings> results =
                     layerFE.prepareClientCompositionList(targetSettings);
             if (realContentIsVisible && !results.empty()) {
@@ -1112,7 +1180,7 @@ void Output::postFramebuffer() {
 
 void Output::dirtyEntireOutput() {
     auto& outputState = editState();
-    outputState.dirtyRegion.set(outputState.bounds);
+    outputState.dirtyRegion.set(outputState.displaySpace.bounds);
 }
 
 void Output::chooseCompositionStrategy() {

@@ -48,6 +48,13 @@ std::string RefreshRateConfigs::layerVoteTypeString(LayerVoteType vote) {
     }
 }
 
+std::string RefreshRateConfigs::Policy::toString() const {
+    return base::StringPrintf("default config ID: %d, allowGroupSwitching = %d"
+                              ", primary range: [%.2f %.2f], app request range: [%.2f %.2f]",
+                              defaultConfig.value(), allowGroupSwitching, primaryRange.min,
+                              primaryRange.max, appRequestRange.min, appRequestRange.max);
+}
+
 const RefreshRate& RefreshRateConfigs::getRefreshRateForContent(
         const std::vector<LayerRequirement>& layers) const {
     std::lock_guard lock(mLock);
@@ -426,10 +433,12 @@ bool RefreshRateConfigs::isPolicyValid(const Policy& policy) {
     // defaultConfig must be a valid config, and within the given refresh rate range.
     auto iter = mRefreshRates.find(policy.defaultConfig);
     if (iter == mRefreshRates.end()) {
+        ALOGE("Default config is not found.");
         return false;
     }
     const RefreshRate& refreshRate = *iter->second;
     if (!refreshRate.inPolicy(policy.primaryRange.min, policy.primaryRange.max)) {
+        ALOGE("Default config is not in the primary range.");
         return false;
     }
     return policy.appRequestRange.min <= policy.primaryRange.min &&
@@ -439,6 +448,7 @@ bool RefreshRateConfigs::isPolicyValid(const Policy& policy) {
 status_t RefreshRateConfigs::setDisplayManagerPolicy(const Policy& policy) {
     std::lock_guard lock(mLock);
     if (!isPolicyValid(policy)) {
+        ALOGE("Invalid refresh rate policy: %s", policy.toString().c_str());
         return BAD_VALUE;
     }
     Policy previousPolicy = *getCurrentPolicyLocked();
@@ -616,6 +626,38 @@ RefreshRateConfigs::KernelIdleTimerAction RefreshRateConfigs::getIdleTimerAction
     }
     // Turn on the timer in all other cases.
     return RefreshRateConfigs::KernelIdleTimerAction::TurnOn;
+}
+
+void RefreshRateConfigs::setPreferredRefreshRateForUid(uid_t uid, float refreshRateHz) {
+    if (refreshRateHz > 0 && refreshRateHz < 1) {
+        return;
+    }
+
+    std::lock_guard lock(mLock);
+    if (refreshRateHz != 0) {
+        mPreferredRefreshRateForUid[uid] = refreshRateHz;
+    } else {
+        mPreferredRefreshRateForUid.erase(uid);
+    }
+}
+
+int RefreshRateConfigs::getRefreshRateDividerForUid(uid_t uid) const {
+    constexpr float kThreshold = 0.1f;
+    std::lock_guard lock(mLock);
+
+    const auto iter = mPreferredRefreshRateForUid.find(uid);
+    if (iter == mPreferredRefreshRateForUid.end()) {
+        return 1;
+    }
+
+    const auto refreshRateHz = iter->second;
+    const auto numPeriods = mCurrentRefreshRate->getFps() / refreshRateHz;
+    const auto numPeriodsRounded = std::round(numPeriods);
+    if (std::abs(numPeriods - numPeriodsRounded) > kThreshold) {
+        return 1;
+    }
+
+    return static_cast<int>(numPeriods);
 }
 
 } // namespace android::scheduler

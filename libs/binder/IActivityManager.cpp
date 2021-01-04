@@ -17,9 +17,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include <android/permission_manager.h>
 #include <binder/ActivityManager.h>
 #include <binder/IActivityManager.h>
 #include <binder/Parcel.h>
+#include <utils/Errors.h>
 
 namespace android {
 
@@ -105,15 +107,21 @@ public:
         return reply.readInt32();
     }
 
-    virtual bool setSchedPolicyCgroup(const int32_t tid, const int32_t group)
-    {
-         Parcel data, reply;
-         data.writeInterfaceToken(IActivityManager::getInterfaceDescriptor());
-         data.writeInt32(tid);
-         data.writeInt32(group);
-         remote()->transact(SET_SCHED_POLICY_CGROUP_TRANSACTION, data, &reply);
-         if (reply.readExceptionCode() != 0) return false;
-         return reply.readBool();
+    virtual status_t checkPermission(const String16& permission,
+                                    const pid_t pid,
+                                    const uid_t uid,
+                                    int32_t* outResult) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IActivityManager::getInterfaceDescriptor());
+        data.writeString16(permission);
+        data.writeInt32(pid);
+        data.writeInt32(uid);
+        status_t err = remote()->transact(CHECK_PERMISSION_TRANSACTION, data, &reply);
+        if (err != NO_ERROR || ((err = reply.readExceptionCode()) != NO_ERROR)) {
+            return err;
+        }
+        *outResult = reply.readInt32();
+        return NO_ERROR;
     }
 };
 

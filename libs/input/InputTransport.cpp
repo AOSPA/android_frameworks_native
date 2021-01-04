@@ -195,14 +195,14 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             msg->body.motion.edgeFlags = body.motion.edgeFlags;
             // nsecs_t downTime
             msg->body.motion.downTime = body.motion.downTime;
-            // float xScale
-            msg->body.motion.xScale = body.motion.xScale;
-            // float yScale
-            msg->body.motion.yScale = body.motion.yScale;
-            // float xOffset
-            msg->body.motion.xOffset = body.motion.xOffset;
-            // float yOffset
-            msg->body.motion.yOffset = body.motion.yOffset;
+
+            msg->body.motion.dsdx = body.motion.dsdx;
+            msg->body.motion.dtdx = body.motion.dtdx;
+            msg->body.motion.dtdy = body.motion.dtdy;
+            msg->body.motion.dsdy = body.motion.dsdy;
+            msg->body.motion.tx = body.motion.tx;
+            msg->body.motion.ty = body.motion.ty;
+
             // float xPrecision
             msg->body.motion.xPrecision = body.motion.xPrecision;
             // float yPrecision
@@ -377,20 +377,14 @@ status_t InputChannel::receiveMessage(InputMessage* msg) {
 }
 
 std::unique_ptr<InputChannel> InputChannel::dup() const {
-    android::base::unique_fd newFd(::dup(getFd()));
-    if (!newFd.ok()) {
-        ALOGE("Could not duplicate fd %i for channel %s: %s", getFd().get(), getName().c_str(),
-              strerror(errno));
-        const bool hitFdLimit = errno == EMFILE || errno == ENFILE;
-        // If this process is out of file descriptors, then throwing that might end up exploding
-        // on the other side of a binder call, which isn't really helpful.
-        // Better to just crash here and hope that the FD leak is slow.
-        // Other failures could be client errors, so we still propagate those back to the caller.
-        LOG_ALWAYS_FATAL_IF(hitFdLimit, "Too many open files, could not duplicate input channel %s",
-                            getName().c_str());
-        return nullptr;
-    }
+    base::unique_fd newFd(dupFd());
     return InputChannel::create(getName(), std::move(newFd), getConnectionToken());
+}
+
+void InputChannel::copyTo(InputChannel& outChannel) const {
+    outChannel.mName = getName();
+    outChannel.mFd = dupFd();
+    outChannel.mToken = getConnectionToken();
 }
 
 status_t InputChannel::writeToParcel(android::Parcel* parcel) const {
@@ -413,6 +407,23 @@ status_t InputChannel::readFromParcel(const android::Parcel* parcel) {
 
 sp<IBinder> InputChannel::getConnectionToken() const {
     return mToken;
+}
+
+base::unique_fd InputChannel::dupFd() const {
+    android::base::unique_fd newFd(::dup(getFd()));
+    if (!newFd.ok()) {
+        ALOGE("Could not duplicate fd %i for channel %s: %s", getFd().get(), getName().c_str(),
+              strerror(errno));
+        const bool hitFdLimit = errno == EMFILE || errno == ENFILE;
+        // If this process is out of file descriptors, then throwing that might end up exploding
+        // on the other side of a binder call, which isn't really helpful.
+        // Better to just crash here and hope that the FD leak is slow.
+        // Other failures could be client errors, so we still propagate those back to the caller.
+        LOG_ALWAYS_FATAL_IF(hitFdLimit, "Too many open files, could not duplicate input channel %s",
+                            getName().c_str());
+        return {};
+    }
+    return newFd;
 }
 
 // --- InputPublisher ---
@@ -469,10 +480,10 @@ status_t InputPublisher::publishMotionEvent(
         uint32_t seq, int32_t eventId, int32_t deviceId, int32_t source, int32_t displayId,
         std::array<uint8_t, 32> hmac, int32_t action, int32_t actionButton, int32_t flags,
         int32_t edgeFlags, int32_t metaState, int32_t buttonState,
-        MotionClassification classification, float xScale, float yScale, float xOffset,
-        float yOffset, float xPrecision, float yPrecision, float xCursorPosition,
-        float yCursorPosition, nsecs_t downTime, nsecs_t eventTime, uint32_t pointerCount,
-        const PointerProperties* pointerProperties, const PointerCoords* pointerCoords) {
+        MotionClassification classification, const ui::Transform& transform, float xPrecision,
+        float yPrecision, float xCursorPosition, float yCursorPosition, nsecs_t downTime,
+        nsecs_t eventTime, uint32_t pointerCount, const PointerProperties* pointerProperties,
+        const PointerCoords* pointerCoords) {
     if (ATRACE_ENABLED()) {
         std::string message = StringPrintf(
                 "publishMotionEvent(inputChannel=%s, action=%" PRId32 ")",
@@ -480,17 +491,18 @@ status_t InputPublisher::publishMotionEvent(
         ATRACE_NAME(message.c_str());
     }
     if (DEBUG_TRANSPORT_ACTIONS) {
+        std::string transformString;
+        transform.dump(transformString, "transform", "        ");
         ALOGD("channel '%s' publisher ~ publishMotionEvent: seq=%u, deviceId=%d, source=0x%x, "
               "displayId=%" PRId32 ", "
               "action=0x%x, actionButton=0x%08x, flags=0x%x, edgeFlags=0x%x, "
-              "metaState=0x%x, buttonState=0x%x, classification=%s, xScale=%.1f, yScale=%.1f, "
-              "xOffset=%.1f, yOffset=%.1f, "
+              "metaState=0x%x, buttonState=0x%x, classification=%s,"
               "xPrecision=%f, yPrecision=%f, downTime=%" PRId64 ", eventTime=%" PRId64 ", "
-              "pointerCount=%" PRIu32,
+              "pointerCount=%" PRIu32 " \n%s",
               mChannel->getName().c_str(), seq, deviceId, source, displayId, action, actionButton,
               flags, edgeFlags, metaState, buttonState,
-              motionClassificationToString(classification), xScale, yScale, xOffset, yOffset,
-              xPrecision, yPrecision, downTime, eventTime, pointerCount);
+              motionClassificationToString(classification), xPrecision, yPrecision, downTime,
+              eventTime, pointerCount, transformString.c_str());
     }
 
     if (!seq) {
@@ -519,10 +531,12 @@ status_t InputPublisher::publishMotionEvent(
     msg.body.motion.metaState = metaState;
     msg.body.motion.buttonState = buttonState;
     msg.body.motion.classification = classification;
-    msg.body.motion.xScale = xScale;
-    msg.body.motion.yScale = yScale;
-    msg.body.motion.xOffset = xOffset;
-    msg.body.motion.yOffset = yOffset;
+    msg.body.motion.dsdx = transform.dsdx();
+    msg.body.motion.dtdx = transform.dtdx();
+    msg.body.motion.dtdy = transform.dtdy();
+    msg.body.motion.dsdy = transform.dsdy();
+    msg.body.motion.tx = transform.tx();
+    msg.body.motion.ty = transform.ty();
     msg.body.motion.xPrecision = xPrecision;
     msg.body.motion.yPrecision = yPrecision;
     msg.body.motion.xCursorPosition = xCursorPosition;
@@ -1177,16 +1191,18 @@ void InputConsumer::initializeMotionEvent(MotionEvent* event, const InputMessage
         pointerCoords[i].copyFrom(msg->body.motion.pointers[i].coords);
     }
 
+    ui::Transform transform;
+    transform.set({msg->body.motion.dsdx, msg->body.motion.dtdx, msg->body.motion.tx,
+                   msg->body.motion.dtdy, msg->body.motion.dsdy, msg->body.motion.ty, 0, 0, 1});
     event->initialize(msg->body.motion.eventId, msg->body.motion.deviceId, msg->body.motion.source,
                       msg->body.motion.displayId, msg->body.motion.hmac, msg->body.motion.action,
                       msg->body.motion.actionButton, msg->body.motion.flags,
                       msg->body.motion.edgeFlags, msg->body.motion.metaState,
-                      msg->body.motion.buttonState, msg->body.motion.classification,
-                      msg->body.motion.xScale, msg->body.motion.yScale, msg->body.motion.xOffset,
-                      msg->body.motion.yOffset, msg->body.motion.xPrecision,
-                      msg->body.motion.yPrecision, msg->body.motion.xCursorPosition,
-                      msg->body.motion.yCursorPosition, msg->body.motion.downTime,
-                      msg->body.motion.eventTime, pointerCount, pointerProperties, pointerCoords);
+                      msg->body.motion.buttonState, msg->body.motion.classification, transform,
+                      msg->body.motion.xPrecision, msg->body.motion.yPrecision,
+                      msg->body.motion.xCursorPosition, msg->body.motion.yCursorPosition,
+                      msg->body.motion.downTime, msg->body.motion.eventTime, pointerCount,
+                      pointerProperties, pointerCoords);
 }
 
 void InputConsumer::addSample(MotionEvent* event, const InputMessage* msg) {

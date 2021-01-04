@@ -20,8 +20,7 @@
 
 #include "TimeStats/TimeStats.h"
 
-namespace android {
-namespace mock {
+namespace android::mock {
 
 class TimeStats : public android::TimeStats {
 public:
@@ -42,7 +41,7 @@ public:
     MOCK_METHOD2(recordFrameDuration, void(nsecs_t, nsecs_t));
     MOCK_METHOD2(recordRenderEngineDuration, void(nsecs_t, nsecs_t));
     MOCK_METHOD2(recordRenderEngineDuration, void(nsecs_t, const std::shared_ptr<FenceTime>&));
-    MOCK_METHOD4(setPostTime, void(int32_t, uint64_t, const std::string&, nsecs_t));
+    MOCK_METHOD5(setPostTime, void(int32_t, uint64_t, const std::string&, uid_t, nsecs_t));
     MOCK_METHOD2(incrementLatchSkipped, void(int32_t layerId, LatchSkipReason reason));
     MOCK_METHOD1(incrementBadDesiredPresent, void(int32_t layerId));
     MOCK_METHOD3(setLatchTime, void(int32_t, uint64_t, nsecs_t));
@@ -51,6 +50,8 @@ public:
     MOCK_METHOD3(setAcquireFence, void(int32_t, uint64_t, const std::shared_ptr<FenceTime>&));
     MOCK_METHOD3(setPresentTime, void(int32_t, uint64_t, nsecs_t));
     MOCK_METHOD3(setPresentFence, void(int32_t, uint64_t, const std::shared_ptr<FenceTime>&));
+    MOCK_METHOD1(incrementJankyFrames, void(int32_t));
+    MOCK_METHOD3(incrementJankyFrames, void(uid_t, const std::string&, int32_t));
     MOCK_METHOD1(onDestroy, void(int32_t));
     MOCK_METHOD2(removeTimeRecord, void(int32_t, uint64_t));
     MOCK_METHOD1(setPowerMode,
@@ -59,5 +60,4 @@ public:
     MOCK_METHOD1(setPresentFenceGlobal, void(const std::shared_ptr<FenceTime>&));
 };
 
-} // namespace mock
-} // namespace android
+} // namespace android::mock

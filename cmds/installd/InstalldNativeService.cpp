@@ -420,33 +420,6 @@ static bool prepare_app_profile_dir(const std::string& packageName, int32_t appI
     return true;
 }
 
-binder::Status InstalldNativeService::createAppDataBatched(
-        const std::optional<std::vector<std::optional<std::string>>>& uuids,
-        const std::optional<std::vector<std::optional<std::string>>>& packageNames,
-        int32_t userId, int32_t flags, const std::vector<int32_t>& appIds,
-        const std::vector<std::string>& seInfos, const std::vector<int32_t>& targetSdkVersions,
-        int64_t* _aidl_return) {
-    ENFORCE_UID(AID_SYSTEM);
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-
-    ATRACE_BEGIN("createAppDataBatched");
-    binder::Status ret;
-    for (size_t i = 0; i < uuids->size(); i++) {
-        std::optional<std::string> packageName = packageNames->at(i);
-        if (!packageName) {
-            continue;
-        }
-        ret = createAppData(uuids->at(i), *packageName, userId, flags, appIds[i],
-                seInfos[i], targetSdkVersions[i], _aidl_return);
-        if (!ret.isOk()) {
-            ATRACE_END();
-            return ret;
-        }
-    }
-    ATRACE_END();
-    return ok();
-}
-
 binder::Status InstalldNativeService::createAppData(const std::optional<std::string>& uuid,
         const std::string& packageName, int32_t userId, int32_t flags, int32_t appId,
         const std::string& seInfo, int32_t targetSdkVersion, int64_t* _aidl_return) {
@@ -525,6 +498,38 @@ binder::Status InstalldNativeService::createAppData(const std::optional<std::str
             return error("Failed to prepare profiles for " + packageName);
         }
     }
+    return ok();
+}
+
+
+binder::Status InstalldNativeService::createAppData(
+        const android::os::CreateAppDataArgs& args,
+        android::os::CreateAppDataResult* _aidl_return) {
+    ENFORCE_UID(AID_SYSTEM);
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+
+    int64_t ceDataInode = -1;
+    auto status = createAppData(args.uuid, args.packageName, args.userId, args.flags, args.appId,
+                                args.seInfo, args.targetSdkVersion, &ceDataInode);
+    _aidl_return->ceDataInode = ceDataInode;
+    _aidl_return->exceptionCode = status.exceptionCode();
+    _aidl_return->exceptionMessage = status.exceptionMessage();
+    return ok();
+}
+
+binder::Status InstalldNativeService::createAppDataBatched(
+        const std::vector<android::os::CreateAppDataArgs>& args,
+        std::vector<android::os::CreateAppDataResult>* _aidl_return) {
+    ENFORCE_UID(AID_SYSTEM);
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+
+    std::vector<android::os::CreateAppDataResult> results;
+    for (auto arg : args) {
+        android::os::CreateAppDataResult result;
+        createAppData(arg, &result);
+        results.push_back(result);
+    }
+    *_aidl_return = results;
     return ok();
 }
 
@@ -941,6 +946,33 @@ binder::Status InstalldNativeService::snapshotAppData(
 
     auto scope_guard = android::base::make_scope_guard(deleter);
 
+    if (storageFlags & FLAG_STORAGE_DE) {
+        auto from = create_data_user_de_package_path(volume_uuid, user, package_name);
+        auto to = create_data_misc_de_rollback_path(volume_uuid, user, snapshotId);
+        auto rollback_package_path = create_data_misc_de_rollback_package_path(volume_uuid, user,
+            snapshotId, package_name);
+
+        int rc = create_dir_if_needed(to.c_str(), kRollbackFolderMode);
+        if (rc != 0) {
+            return error(rc, "Failed to create folder " + to);
+        }
+
+        rc = delete_dir_contents(rollback_package_path, true /* ignore_if_missing */);
+        if (rc != 0) {
+            return error(rc, "Failed clearing existing snapshot " + rollback_package_path);
+        }
+
+        // Check if we have data to copy.
+        if (access(from.c_str(), F_OK) == 0) {
+          rc = copy_directory_recursive(from.c_str(), to.c_str());
+        }
+        if (rc != 0) {
+            res = error(rc, "Failed copying " + from + " to " + to);
+            clear_de_on_exit = true;
+            return res;
+        }
+    }
+
     // The app may not have any data at all, in which case it's OK to skip here.
     auto from_ce = create_data_user_ce_package_path(volume_uuid, user, package_name);
     if (access(from_ce.c_str(), F_OK) != 0) {
@@ -964,30 +996,6 @@ binder::Status InstalldNativeService::snapshotAppData(
         // It should be fine to continue snapshot if we for some reason failed
         // to clear code_cache.
         LOG(WARNING) << "Failed to clear code_cache of app " << packageName;
-    }
-
-    if (storageFlags & FLAG_STORAGE_DE) {
-        auto from = create_data_user_de_package_path(volume_uuid, user, package_name);
-        auto to = create_data_misc_de_rollback_path(volume_uuid, user, snapshotId);
-        auto rollback_package_path = create_data_misc_de_rollback_package_path(volume_uuid, user,
-            snapshotId, package_name);
-
-        int rc = create_dir_if_needed(to.c_str(), kRollbackFolderMode);
-        if (rc != 0) {
-            return error(rc, "Failed to create folder " + to);
-        }
-
-        rc = delete_dir_contents(rollback_package_path, true /* ignore_if_missing */);
-        if (rc != 0) {
-            return error(rc, "Failed clearing existing snapshot " + rollback_package_path);
-        }
-
-        rc = copy_directory_recursive(from.c_str(), to.c_str());
-        if (rc != 0) {
-            res = error(rc, "Failed copying " + from + " to " + to);
-            clear_de_on_exit = true;
-            return res;
-        }
     }
 
     if (storageFlags & FLAG_STORAGE_CE) {

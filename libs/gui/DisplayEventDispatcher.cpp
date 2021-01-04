@@ -73,7 +73,8 @@ status_t DisplayEventDispatcher::scheduleVsync() {
         nsecs_t vsyncTimestamp;
         PhysicalDisplayId vsyncDisplayId;
         uint32_t vsyncCount;
-        if (processPendingEvents(&vsyncTimestamp, &vsyncDisplayId, &vsyncCount)) {
+        VsyncEventData vsyncEventData;
+        if (processPendingEvents(&vsyncTimestamp, &vsyncDisplayId, &vsyncCount, &vsyncEventData)) {
             ALOGE("dispatcher %p ~ last event processed while scheduling was for %" PRId64 "", this,
                   ns2ms(static_cast<nsecs_t>(vsyncTimestamp)));
         }
@@ -89,12 +90,8 @@ status_t DisplayEventDispatcher::scheduleVsync() {
     return OK;
 }
 
-void DisplayEventDispatcher::requestLatestConfig() {
-    status_t status = mReceiver.requestLatestConfig();
-    if (status) {
-        ALOGW("Failed enable config events, status=%d", status);
-        return;
-    }
+void DisplayEventDispatcher::injectEvent(const DisplayEventReceiver::Event& event) {
+    mReceiver.sendEvents(&event, 1);
 }
 
 int DisplayEventDispatcher::getFd() const {
@@ -120,12 +117,14 @@ int DisplayEventDispatcher::handleEvent(int, int events, void*) {
     nsecs_t vsyncTimestamp;
     PhysicalDisplayId vsyncDisplayId;
     uint32_t vsyncCount;
-    if (processPendingEvents(&vsyncTimestamp, &vsyncDisplayId, &vsyncCount)) {
+    VsyncEventData vsyncEventData;
+    if (processPendingEvents(&vsyncTimestamp, &vsyncDisplayId, &vsyncCount, &vsyncEventData)) {
         ALOGV("dispatcher %p ~ Vsync pulse: timestamp=%" PRId64
-              ", displayId=%" ANDROID_PHYSICAL_DISPLAY_ID_FORMAT ", count=%d",
-              this, ns2ms(vsyncTimestamp), vsyncDisplayId, vsyncCount);
+              ", displayId=%s, count=%d, vsyncId=%" PRId64,
+              this, ns2ms(vsyncTimestamp), to_string(vsyncDisplayId).c_str(), vsyncCount,
+              vsyncEventData.id);
         mWaitingForVsync = false;
-        dispatchVsync(vsyncTimestamp, vsyncDisplayId, vsyncCount);
+        dispatchVsync(vsyncTimestamp, vsyncDisplayId, vsyncCount, vsyncEventData);
     }
 
     return 1; // keep the callback
@@ -133,7 +132,8 @@ int DisplayEventDispatcher::handleEvent(int, int events, void*) {
 
 bool DisplayEventDispatcher::processPendingEvents(nsecs_t* outTimestamp,
                                                   PhysicalDisplayId* outDisplayId,
-                                                  uint32_t* outCount) {
+                                                  uint32_t* outCount,
+                                                  VsyncEventData* outVsyncEventData) {
     bool gotVsync = false;
     DisplayEventReceiver::Event buf[EVENT_BUFFER_SIZE];
     ssize_t n;
@@ -149,6 +149,8 @@ bool DisplayEventDispatcher::processPendingEvents(nsecs_t* outTimestamp,
                     *outTimestamp = ev.header.timestamp;
                     *outDisplayId = ev.header.displayId;
                     *outCount = ev.vsync.count;
+                    outVsyncEventData->id = ev.vsync.vsyncId;
+                    outVsyncEventData->deadlineTimestamp = ev.vsync.deadlineTimestamp;
                     break;
                 case DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG:
                     dispatchHotplug(ev.header.timestamp, ev.header.displayId, ev.hotplug.connected);
@@ -156,6 +158,9 @@ bool DisplayEventDispatcher::processPendingEvents(nsecs_t* outTimestamp,
                 case DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED:
                     dispatchConfigChanged(ev.header.timestamp, ev.header.displayId,
                                           ev.config.configId, ev.config.vsyncPeriod);
+                    break;
+                case DisplayEventReceiver::DISPLAY_EVENT_NULL:
+                    dispatchNullEvent(ev.header.timestamp, ev.header.displayId);
                     break;
                 default:
                     ALOGW("dispatcher %p ~ ignoring unknown event type %#x", this, ev.header.type);
@@ -168,4 +173,5 @@ bool DisplayEventDispatcher::processPendingEvents(nsecs_t* outTimestamp,
     }
     return gotVsync;
 }
+
 } // namespace android

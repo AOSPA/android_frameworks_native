@@ -79,6 +79,8 @@ uint8_t SensorService::sHmacGlobalKey[128] = {};
 bool SensorService::sHmacGlobalKeyIsValid = false;
 std::map<String16, int> SensorService::sPackageTargetVersion;
 Mutex SensorService::sPackageTargetVersionLock;
+String16 SensorService::sSensorInterfaceDescriptorPrefix =
+        String16("android.frameworks.sensorservice@");
 AppOpsManager SensorService::sAppOpsManager;
 
 #define SENSOR_SERVICE_DIR "/data/system/sensor_service"
@@ -1110,6 +1112,10 @@ String8 SensorService::getSensorName(int handle) const {
     return mSensors.getName(handle);
 }
 
+String8 SensorService::getSensorStringType(int handle) const {
+    return mSensors.getStringType(handle);
+}
+
 bool SensorService::isVirtualSensor(int handle) const {
     sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
     return sensor != nullptr && sensor->isVirtual();
@@ -1805,9 +1811,6 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
     }
 
     const int32_t opCode = sensor.getRequiredAppOp();
-    const int32_t appOpMode = sAppOpsManager.checkOp(opCode,
-            IPCThreadState::self()->getCallingUid(), opPackageName);
-    bool appOpAllowed = appOpMode == AppOpsManager::MODE_ALLOWED;
     int targetSdkVersion = getTargetSdkVersion(opPackageName);
 
     bool canAccess = false;
@@ -1820,14 +1823,16 @@ bool SensorService::canAccessSensor(const Sensor& sensor, const char* operation,
         canAccess = true;
     } else if (hasPermissionForSensor(sensor)) {
         // Ensure that the AppOp is allowed, or that there is no necessary app op for the sensor
-        if (opCode < 0 || appOpAllowed) {
+        if (opCode >= 0) {
+            const int32_t appOpMode = sAppOpsManager.checkOp(opCode,
+                    IPCThreadState::self()->getCallingUid(), opPackageName);
+            canAccess = (appOpMode == AppOpsManager::MODE_ALLOWED);
+        } else {
             canAccess = true;
         }
     }
 
-    if (canAccess) {
-        sAppOpsManager.noteOp(opCode, IPCThreadState::self()->getCallingUid(), opPackageName);
-    } else {
+    if (!canAccess) {
         ALOGE("%s %s a sensor (%s) without holding %s", String8(opPackageName).string(),
               operation, sensor.getName().string(), sensor.getRequiredPermission().string());
     }
@@ -1850,6 +1855,13 @@ bool SensorService::hasPermissionForSensor(const Sensor& sensor) {
 }
 
 int SensorService::getTargetSdkVersion(const String16& opPackageName) {
+    // Don't query the SDK version for the ISensorManager descriptor as it doesn't have one. This
+    // descriptor tends to be used for VNDK clients, but can technically be set by anyone so don't
+    // give it elevated privileges.
+    if (opPackageName.startsWith(sSensorInterfaceDescriptorPrefix)) {
+        return -1;
+    }
+
     Mutex::Autolock packageLock(sPackageTargetVersionLock);
     int targetSdkVersion = -1;
     auto entry = sPackageTargetVersion.find(opPackageName);

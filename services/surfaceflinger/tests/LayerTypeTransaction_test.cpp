@@ -54,15 +54,17 @@ TEST_P(LayerTypeTransactionTest, SetRelativeZNegative) {
     ASSERT_NO_FATAL_FAILURE(layerB = createLayer("test B", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillLayerColor(layerB, Color::BLUE, 32, 32));
 
-    Transaction().reparent(layerB, parent->getHandle()).apply();
+    Transaction().reparent(layerB, parent).apply();
 
     // layerR = mLayerZBase, layerG = layerR - 1, layerB = -2
-    Transaction().setRelativeLayer(layerG, layerR->getHandle(), -1).setLayer(layerB, -2).apply();
+    Transaction().setRelativeLayer(layerG, layerR, -1).setLayer(layerB, -2).apply();
 
     std::unique_ptr<ScreenCapture> screenshot;
     // only layerB is in this range
-    sp<IBinder> parentHandle = parent->getHandle();
-    ScreenCapture::captureLayers(&screenshot, parentHandle, Rect(0, 0, 32, 32));
+    LayerCaptureArgs captureArgs;
+    captureArgs.layerHandle = parent->getHandle();
+    captureArgs.sourceCrop = {0, 0, 32, 32};
+    ScreenCapture::captureLayers(&screenshot, captureArgs);
     screenshot->expectColor(Rect(0, 0, 32, 32), Color::BLUE);
 }
 
@@ -86,10 +88,7 @@ TEST_P(LayerTypeTransactionTest, SetLayerAndRelative) {
             .setCrop_legacy(childLayer, Rect(0, 0, 20, 30))
             .apply();
 
-    Transaction()
-            .setRelativeLayer(childLayer, parent->getHandle(), -1)
-            .setLayer(childLayer, 1)
-            .apply();
+    Transaction().setRelativeLayer(childLayer, parent, -1).setLayer(childLayer, 1).apply();
 
     {
         SCOPED_TRACE("setLayer above");
@@ -99,10 +98,7 @@ TEST_P(LayerTypeTransactionTest, SetLayerAndRelative) {
         screenshot->expectColor(Rect(0, 0, 20, 30), Color::RED);
     }
 
-    Transaction()
-            .setLayer(childLayer, 1)
-            .setRelativeLayer(childLayer, parent->getHandle(), -1)
-            .apply();
+    Transaction().setLayer(childLayer, 1).setRelativeLayer(childLayer, parent, -1).apply();
 
     {
         SCOPED_TRACE("setRelative below");
@@ -139,7 +135,7 @@ TEST_P(LayerTypeTransactionTest, HideRelativeParentHidesLayer) {
             .setLayer(relativeParent, mLayerZBase)
             .apply();
 
-    Transaction().setRelativeLayer(childLayer, relativeParent->getHandle(), 1).apply();
+    Transaction().setRelativeLayer(childLayer, relativeParent, 1).apply();
 
     {
         SCOPED_TRACE("setLayer above");
@@ -165,17 +161,21 @@ TEST_P(LayerTypeTransactionTest, SetFlagsSecure) {
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillLayerColor(layer, Color::RED, 32, 32));
 
-    sp<ISurfaceComposer> composer = ComposerService::getComposerService();
     sp<GraphicBuffer> outBuffer;
     Transaction()
             .setFlags(layer, layer_state_t::eLayerSecure, layer_state_t::eLayerSecure)
             .apply(true);
-    ASSERT_EQ(PERMISSION_DENIED,
-              composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+
+    DisplayCaptureArgs args;
+    args.displayToken = mDisplay;
+
+    ScreenCaptureResults captureResults;
+    ASSERT_EQ(PERMISSION_DENIED, ScreenCapture::captureDisplay(args, captureResults));
 
     Transaction().setFlags(layer, 0, layer_state_t::eLayerSecure).apply(true);
-    ASSERT_EQ(NO_ERROR, composer->captureScreen(mDisplay, &outBuffer, Rect(), 0, 0, false));
+    ASSERT_EQ(NO_ERROR, ScreenCapture::captureDisplay(args, captureResults));
 }
+
 TEST_P(LayerTypeTransactionTest, RefreshRateIsInitialized) {
     sp<SurfaceControl> layer;
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));

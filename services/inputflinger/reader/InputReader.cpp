@@ -47,6 +47,7 @@ InputReader::InputReader(std::shared_ptr<EventHubInterface> eventHub,
         mEventHub(eventHub),
         mPolicy(policy),
         mGlobalMetaState(0),
+        mLedMetaState(AMETA_NUM_LOCK_ON),
         mGeneration(1),
         mNextInputDeviceId(END_RESERVED_ID),
         mDisableVirtualKeysTimeout(LLONG_MIN),
@@ -86,7 +87,6 @@ void InputReader::loopOnce() {
     int32_t oldGeneration;
     int32_t timeoutMillis;
     bool inputDevicesChanged = false;
-    std::vector<InputDeviceInfo> inputDevices;
     { // acquire lock
         AutoMutex _l(mLock);
 
@@ -127,13 +127,12 @@ void InputReader::loopOnce() {
 
         if (oldGeneration != mGeneration) {
             inputDevicesChanged = true;
-            getInputDevicesLocked(inputDevices);
         }
     } // release lock
 
     // Send out a message that the describes the changed input devices.
     if (inputDevicesChanged) {
-        mPolicy->notifyInputDevicesChanged(inputDevices);
+        mPolicy->notifyInputDevicesChanged(getInputDevicesLocked());
     }
 
     // Flush queued events out to the listener.
@@ -206,9 +205,17 @@ void InputReader::addDeviceLocked(nsecs_t when, int32_t eventHubId) {
     }
 
     mDevices.emplace(eventHubId, device);
+    // Add device to device to EventHub ids map.
+    const auto mapIt = mDeviceToEventHubIdsMap.find(device);
+    if (mapIt == mDeviceToEventHubIdsMap.end()) {
+        std::vector<int32_t> ids = {eventHubId};
+        mDeviceToEventHubIdsMap.emplace(device, ids);
+    } else {
+        mapIt->second.push_back(eventHubId);
+    }
     bumpGenerationLocked();
 
-    if (device->getClasses() & INPUT_DEVICE_CLASS_EXTERNAL_STYLUS) {
+    if (device->getClasses().test(InputDeviceClass::EXTERNAL_STYLUS)) {
         notifyExternalStylusPresenceChanged();
     }
 }
@@ -222,6 +229,17 @@ void InputReader::removeDeviceLocked(nsecs_t when, int32_t eventHubId) {
 
     std::shared_ptr<InputDevice> device = std::move(deviceIt->second);
     mDevices.erase(deviceIt);
+    // Erase device from device to EventHub ids map.
+    auto mapIt = mDeviceToEventHubIdsMap.find(device);
+    if (mapIt != mDeviceToEventHubIdsMap.end()) {
+        std::vector<int32_t>& eventHubIds = mapIt->second;
+        eventHubIds.erase(std::remove_if(eventHubIds.begin(), eventHubIds.end(),
+                                         [eventHubId](int32_t eId) { return eId == eventHubId; }),
+                          eventHubIds.end());
+        if (eventHubIds.size() == 0) {
+            mDeviceToEventHubIdsMap.erase(mapIt);
+        }
+    }
     bumpGenerationLocked();
 
     if (device->isIgnored()) {
@@ -237,7 +255,7 @@ void InputReader::removeDeviceLocked(nsecs_t when, int32_t eventHubId) {
 
     device->removeEventHubDevice(eventHubId);
 
-    if (device->getClasses() & INPUT_DEVICE_CLASS_EXTERNAL_STYLUS) {
+    if (device->getClasses().test(InputDeviceClass::EXTERNAL_STYLUS)) {
         notifyExternalStylusPresenceChanged();
     }
 
@@ -353,6 +371,18 @@ int32_t InputReader::getGlobalMetaStateLocked() {
     return mGlobalMetaState;
 }
 
+void InputReader::updateLedMetaStateLocked(int32_t metaState) {
+    mLedMetaState = metaState;
+    for (auto& devicePair : mDevices) {
+        std::shared_ptr<InputDevice>& device = devicePair.second;
+        device->updateLedState(false);
+    }
+}
+
+int32_t InputReader::getLedMetaStateLocked() {
+    return mLedMetaState;
+}
+
 void InputReader::notifyExternalStylusPresenceChanged() {
     refreshConfigurationLocked(InputReaderConfiguration::CHANGE_EXTERNAL_STYLUS_PRESENCE);
 }
@@ -360,7 +390,7 @@ void InputReader::notifyExternalStylusPresenceChanged() {
 void InputReader::getExternalStylusDevicesLocked(std::vector<InputDeviceInfo>& outDevices) {
     for (auto& devicePair : mDevices) {
         std::shared_ptr<InputDevice>& device = devicePair.second;
-        if (device->getClasses() & INPUT_DEVICE_CLASS_EXTERNAL_STYLUS && !device->isIgnored()) {
+        if (device->getClasses().test(InputDeviceClass::EXTERNAL_STYLUS) && !device->isIgnored()) {
             InputDeviceInfo info;
             device->getDeviceInfo(&info);
             outDevices.push_back(info);
@@ -442,22 +472,23 @@ int32_t InputReader::bumpGenerationLocked() {
     return ++mGeneration;
 }
 
-void InputReader::getInputDevices(std::vector<InputDeviceInfo>& outInputDevices) {
+std::vector<InputDeviceInfo> InputReader::getInputDevices() const {
     AutoMutex _l(mLock);
-    getInputDevicesLocked(outInputDevices);
+    return getInputDevicesLocked();
 }
 
-void InputReader::getInputDevicesLocked(std::vector<InputDeviceInfo>& outInputDevices) {
-    outInputDevices.clear();
+std::vector<InputDeviceInfo> InputReader::getInputDevicesLocked() const {
+    std::vector<InputDeviceInfo> outInputDevices;
+    outInputDevices.reserve(mDeviceToEventHubIdsMap.size());
 
-    for (auto& devicePair : mDevices) {
-        std::shared_ptr<InputDevice>& device = devicePair.second;
+    for (const auto& [device, eventHubIds] : mDeviceToEventHubIdsMap) {
         if (!device->isIgnored()) {
             InputDeviceInfo info;
             device->getDeviceInfo(&info);
             outInputDevices.push_back(info);
         }
     }
+    return outInputDevices;
 }
 
 int32_t InputReader::getKeyCodeState(int32_t deviceId, uint32_t sourceMask, int32_t keyCode) {
@@ -622,11 +653,17 @@ void InputReader::dump(std::string& dump) {
     mEventHub->dump(dump);
     dump += "\n";
 
-    dump += "Input Reader State:\n";
+    dump += StringPrintf("Input Reader State (Nums of device: %zu):\n",
+                         mDeviceToEventHubIdsMap.size());
 
-    for (const auto& devicePair : mDevices) {
-        const std::shared_ptr<InputDevice>& device = devicePair.second;
-        device->dump(dump);
+    for (const auto& devicePair : mDeviceToEventHubIdsMap) {
+        const std::shared_ptr<InputDevice>& device = devicePair.first;
+        std::string eventHubDevStr = INDENT "EventHub Devices: [ ";
+        for (const auto& eId : devicePair.second) {
+            eventHubDevStr += StringPrintf("%d ", eId);
+        }
+        eventHubDevStr += "] \n";
+        device->dump(dump, eventHubDevStr);
     }
 
     dump += INDENT "Configuration:\n";
@@ -708,6 +745,16 @@ void InputReader::ContextImpl::updateGlobalMetaState() {
 int32_t InputReader::ContextImpl::getGlobalMetaState() {
     // lock is already held by the input loop
     return mReader->getGlobalMetaStateLocked();
+}
+
+void InputReader::ContextImpl::updateLedMetaState(int32_t metaState) {
+    // lock is already held by the input loop
+    mReader->updateLedMetaStateLocked(metaState);
+}
+
+int32_t InputReader::ContextImpl::getLedMetaState() {
+    // lock is already held by the input loop
+    return mReader->getLedMetaStateLocked();
 }
 
 void InputReader::ContextImpl::disableVirtualKeysUntil(nsecs_t time) {

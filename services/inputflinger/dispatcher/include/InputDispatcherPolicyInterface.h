@@ -48,12 +48,15 @@ public:
     /* Notifies the system that an application is not responding.
      * Returns a new timeout to continue waiting, or 0 to abort dispatch. */
     virtual std::chrono::nanoseconds notifyAnr(
-            const sp<InputApplicationHandle>& inputApplicationHandle, const sp<IBinder>& token,
-            const std::string& reason) = 0;
+            const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle,
+            const sp<IBinder>& token, const std::string& reason) = 0;
 
     /* Notifies the system that an input channel is unrecoverably broken. */
     virtual void notifyInputChannelBroken(const sp<IBinder>& token) = 0;
     virtual void notifyFocusChanged(const sp<IBinder>& oldToken, const sp<IBinder>& newToken) = 0;
+
+    /* Notifies the system that an untrusted touch occurred. */
+    virtual void notifyUntrustedTouch(const std::string& obscuringPackage) = 0;
 
     /* Gets the input dispatcher configuration. */
     virtual void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) = 0;

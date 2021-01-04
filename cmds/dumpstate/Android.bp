@@ -105,6 +105,8 @@ cc_binary {
     name: "dumpstate",
     defaults: ["dumpstate_defaults"],
     srcs: [
+        "DumpPool.cpp",
+        "TaskQueue.cpp",
         "dumpstate.cpp",
         "main.cpp",
     ],
@@ -132,6 +134,8 @@ cc_test {
     name: "dumpstate_test",
     defaults: ["dumpstate_defaults"],
     srcs: [
+        "DumpPool.cpp",
+        "TaskQueue.cpp",
         "dumpstate.cpp",
         "tests/dumpstate_test.cpp",
     ],
@@ -148,6 +152,8 @@ cc_test {
     name: "dumpstate_smoke_test",
     defaults: ["dumpstate_defaults"],
     srcs: [
+        "DumpPool.cpp",
+        "TaskQueue.cpp",
         "dumpstate.cpp",
         "tests/dumpstate_smoke_test.cpp",
     ],

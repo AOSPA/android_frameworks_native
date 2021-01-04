@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_APP_OPS_MANAGER_H
-#define ANDROID_APP_OPS_MANAGER_H
+#pragma once
 
 #include <binder/IAppOpsService.h>
 
@@ -133,7 +132,11 @@ public:
         OP_DEPRECATED_1 = 96,
         OP_AUTO_REVOKE_PERMISSIONS_IF_UNUSED = 97,
         OP_AUTO_REVOKE_MANAGED_BY_INSTALLER = 98,
-        _NUM_OP = 99
+        OP_NO_ISOLATED_STORAGE = 99,
+        OP_PHONE_CALL_MICROPHONE = 100,
+        OP_PHONE_CALL_CAMERA = 101,
+        OP_RECORD_AUDIO_HOTWORD = 102,
+        _NUM_OP = 103
     };
 
     AppOpsManager();
@@ -175,5 +178,3 @@ private:
 } // namespace android
 
 // ---------------------------------------------------------------------------
-
-#endif // ANDROID_APP_OPS_MANAGER_H

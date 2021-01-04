@@ -18,11 +18,18 @@
 
 #include <android/binder_ibinder.h>
 
-#if !defined(__ANDROID_APEX__) && !defined(__ANDROID_VNDK__)
-#include <binder/IBinder.h>
-#endif
-
 __BEGIN_DECLS
+
+// platform values for binder_flags_t
+enum {
+    /**
+     * The transaction and reply will be cleared by the kernel in read-only
+     * binder buffers storing transactions.
+     *
+     * Introduced in API level 31.
+     */
+    FLAG_CLEAR_BUF = 0x20,
+};
 
 /**
  * Makes calls to AIBinder_getCallingSid work if the kernel supports it. This
@@ -32,7 +39,8 @@ __BEGIN_DECLS
  *
  * \param binder local server binder to request security contexts on
  */
-void AIBinder_setRequestingSid(AIBinder* binder, bool requestingSid) __INTRODUCED_IN(31);
+__attribute__((weak)) void AIBinder_setRequestingSid(AIBinder* binder, bool requestingSid)
+        __INTRODUCED_IN(31);
 
 /**
  * Returns the selinux context of the callee.
@@ -45,36 +53,6 @@ void AIBinder_setRequestingSid(AIBinder* binder, bool requestingSid) __INTRODUCE
  * \return security context or null if unavailable. The lifetime of this context
  * is the lifetime of the transaction.
  */
-__attribute__((warn_unused_result)) const char* AIBinder_getCallingSid() __INTRODUCED_IN(31);
+__attribute__((weak, warn_unused_result)) const char* AIBinder_getCallingSid() __INTRODUCED_IN(31);
 
 __END_DECLS
-
-#if !defined(__ANDROID_APEX__) && !defined(__ANDROID_VNDK__)
-
-/**
- * Get libbinder version of binder from AIBinder.
- *
- * WARNING: function calls to a local object on the other side of this function
- * will parcel. When converting between binders, keep in mind it is not as
- * efficient as a direct function call.
- *
- * \param binder binder with ownership retained by the client
- * \return platform binder object
- */
-android::sp<android::IBinder> AIBinder_toPlatformBinder(AIBinder* binder);
-
-/**
- * Get libbinder_ndk version of binder from platform binder.
- *
- * WARNING: function calls to a local object on the other side of this function
- * will parcel. When converting between binders, keep in mind it is not as
- * efficient as a direct function call.
- *
- * \param binder platform binder which may be from anywhere (doesn't have to be
- * created with libbinder_ndK)
- * \return binder with one reference count of ownership given to the client. See
- * AIBinder_decStrong
- */
-AIBinder* AIBinder_fromPlatformBinder(const android::sp<android::IBinder>& binder);
-
-#endif

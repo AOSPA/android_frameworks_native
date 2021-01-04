@@ -73,14 +73,14 @@ void JoystickInputMapper::dump(std::string& dump) {
 
     dump += INDENT3 "Axes:\n";
     for (const auto& [rawAxis, axis] : mAxes) {
-        const char* label = getAxisLabel(axis.axisInfo.axis);
+        const char* label = InputEventLookup::getAxisLabel(axis.axisInfo.axis);
         if (label) {
             dump += StringPrintf(INDENT4 "%s", label);
         } else {
             dump += StringPrintf(INDENT4 "%d", axis.axisInfo.axis);
         }
         if (axis.axisInfo.mode == AxisInfo::MODE_SPLIT) {
-            label = getAxisLabel(axis.axisInfo.highAxis);
+            label = InputEventLookup::getAxisLabel(axis.axisInfo.highAxis);
             if (label) {
                 dump += StringPrintf(" / %s (split at %d)", label, axis.axisInfo.splitValue);
             } else {
@@ -111,8 +111,8 @@ void JoystickInputMapper::configure(nsecs_t when, const InputReaderConfiguration
     if (!changes) { // first time only
         // Collect all axes.
         for (int32_t abs = 0; abs <= ABS_MAX; abs++) {
-            if (!(getAbsAxisUsage(abs, getDeviceContext().getDeviceClasses()) &
-                  INPUT_DEVICE_CLASS_JOYSTICK)) {
+            if (!(getAbsAxisUsage(abs, getDeviceContext().getDeviceClasses())
+                          .test(InputDeviceClass::JOYSTICK))) {
                 continue; // axis must be claimed by a different device
             }
 

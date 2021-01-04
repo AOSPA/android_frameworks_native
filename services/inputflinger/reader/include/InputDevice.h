@@ -18,9 +18,10 @@
 #define _UI_INPUTREADER_INPUT_DEVICE_H
 
 #include <input/DisplayViewport.h>
+#include <input/Flags.h>
 #include <input/InputDevice.h>
+#include <input/PropertyMap.h>
 #include <stdint.h>
-#include <utils/PropertyMap.h>
 
 #include <optional>
 #include <unordered_map>
@@ -48,7 +49,7 @@ public:
     inline int32_t getGeneration() const { return mGeneration; }
     inline const std::string getName() const { return mIdentifier.name; }
     inline const std::string getDescriptor() { return mIdentifier.descriptor; }
-    inline uint32_t getClasses() const { return mClasses; }
+    inline Flags<InputDeviceClass> getClasses() const { return mClasses; }
     inline uint32_t getSources() const { return mSources; }
     inline bool hasEventHubDevices() const { return !mDevices.empty(); }
 
@@ -66,7 +67,7 @@ public:
     bool isEnabled();
     void setEnabled(bool enabled, nsecs_t when);
 
-    void dump(std::string& dump);
+    void dump(std::string& dump, const std::string& eventHubDevStr);
     void addEventHubDevice(int32_t eventHubId, bool populateMappers = true);
     void removeEventHubDevice(int32_t eventHubId);
     void configure(nsecs_t when, const InputReaderConfiguration* config, uint32_t changes);
@@ -97,6 +98,8 @@ public:
 
     std::optional<int32_t> getAssociatedDisplayId();
 
+    void updateLedState(bool reset);
+
     size_t getMapperCount();
 
     // construct and add a mapper to the input device
@@ -121,7 +124,7 @@ private:
     int32_t mControllerNumber;
     InputDeviceIdentifier mIdentifier;
     std::string mAlias;
-    uint32_t mClasses;
+    Flags<InputDeviceClass> mClasses;
 
     // map from eventHubId to device context and mappers
     using MapperVector = std::vector<std::unique_ptr<InputMapper>>;
@@ -206,7 +209,9 @@ public:
     inline int32_t getId() { return mDeviceId; }
     inline int32_t getEventHubId() { return mId; }
 
-    inline uint32_t getDeviceClasses() const { return mEventHub->getDeviceClasses(mId); }
+    inline Flags<InputDeviceClass> getDeviceClasses() const {
+        return mEventHub->getDeviceClasses(mId);
+    }
     inline InputDeviceIdentifier getDeviceIdentifier() const {
         return mEventHub->getDeviceIdentifier(mId);
     }
@@ -256,10 +261,10 @@ public:
     inline void getVirtualKeyDefinitions(std::vector<VirtualKeyDefinition>& outVirtualKeys) const {
         return mEventHub->getVirtualKeyDefinitions(mId, outVirtualKeys);
     }
-    inline sp<KeyCharacterMap> getKeyCharacterMap() const {
+    inline const std::shared_ptr<KeyCharacterMap> getKeyCharacterMap() const {
         return mEventHub->getKeyCharacterMap(mId);
     }
-    inline bool setKeyboardLayoutOverlay(const sp<KeyCharacterMap>& map) {
+    inline bool setKeyboardLayoutOverlay(std::shared_ptr<KeyCharacterMap> map) {
         return mEventHub->setKeyboardLayoutOverlay(mId, map);
     }
     inline void vibrate(const VibrationElement& element) {

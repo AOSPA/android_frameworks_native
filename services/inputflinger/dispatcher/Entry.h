@@ -54,7 +54,6 @@ struct EventEntry {
     }
 
     int32_t id;
-    mutable int32_t refCount;
     Type type;
     nsecs_t eventTime;
     uint32_t policyFlags;
@@ -79,23 +78,19 @@ struct EventEntry {
         return isInjected() || IdGenerator::getSource(id) != IdGenerator::Source::INPUT_READER;
     }
 
-    void release();
+    virtual std::string getDescription() const = 0;
 
-    virtual void appendDescription(std::string& msg) const = 0;
-
-    std::string getDescription() const;
-
-protected:
     EventEntry(int32_t id, Type type, nsecs_t eventTime, uint32_t policyFlags);
     virtual ~EventEntry();
+
+protected:
     void releaseInjectionState();
 };
 
 struct ConfigurationChangedEntry : EventEntry {
     explicit ConfigurationChangedEntry(int32_t id, nsecs_t eventTime);
-    virtual void appendDescription(std::string& msg) const;
+    std::string getDescription() const override;
 
-protected:
     virtual ~ConfigurationChangedEntry();
 };
 
@@ -103,20 +98,20 @@ struct DeviceResetEntry : EventEntry {
     int32_t deviceId;
 
     DeviceResetEntry(int32_t id, nsecs_t eventTime, int32_t deviceId);
-    virtual void appendDescription(std::string& msg) const;
+    std::string getDescription() const override;
 
-protected:
     virtual ~DeviceResetEntry();
 };
 
 struct FocusEntry : EventEntry {
     sp<IBinder> connectionToken;
     bool hasFocus;
+    std::string_view reason;
 
-    FocusEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool hasFocus);
-    virtual void appendDescription(std::string& msg) const;
+    FocusEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool hasFocus,
+               std::string_view reason);
+    std::string getDescription() const override;
 
-protected:
     virtual ~FocusEntry();
 };
 
@@ -146,15 +141,13 @@ struct KeyEntry : EventEntry {
     KeyEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32_t source, int32_t displayId,
              uint32_t policyFlags, int32_t action, int32_t flags, int32_t keyCode, int32_t scanCode,
              int32_t metaState, int32_t repeatCount, nsecs_t downTime);
-    virtual void appendDescription(std::string& msg) const;
+    std::string getDescription() const override;
     void recycle();
 
-protected:
     virtual ~KeyEntry();
 };
 
 struct MotionEntry : EventEntry {
-    nsecs_t eventTime;
     int32_t deviceId;
     uint32_t source;
     int32_t displayId;
@@ -181,9 +174,8 @@ struct MotionEntry : EventEntry {
                 float yCursorPosition, nsecs_t downTime, uint32_t pointerCount,
                 const PointerProperties* pointerProperties, const PointerCoords* pointerCoords,
                 float xOffset, float yOffset);
-    virtual void appendDescription(std::string& msg) const;
+    std::string getDescription() const override;
 
-protected:
     virtual ~MotionEntry();
 };
 
@@ -191,7 +183,7 @@ protected:
 struct DispatchEntry {
     const uint32_t seq; // unique sequence number, never 0
 
-    EventEntry* eventEntry; // the event to dispatch
+    std::shared_ptr<EventEntry> eventEntry; // the event to dispatch
     int32_t targetFlags;
     ui::Transform transform;
     float globalScaleFactor;
@@ -206,9 +198,8 @@ struct DispatchEntry {
     int32_t resolvedAction;
     int32_t resolvedFlags;
 
-    DispatchEntry(EventEntry* eventEntry, int32_t targetFlags, ui::Transform transform,
-                  float globalScaleFactor);
-    ~DispatchEntry();
+    DispatchEntry(std::shared_ptr<EventEntry> eventEntry, int32_t targetFlags,
+                  ui::Transform transform, float globalScaleFactor);
 
     inline bool hasForegroundTarget() const { return targetFlags & InputTarget::FLAG_FOREGROUND; }
 
@@ -253,15 +244,16 @@ struct CommandEntry {
     // parameters for the command (usage varies by command)
     sp<Connection> connection;
     nsecs_t eventTime;
-    KeyEntry* keyEntry;
-    sp<InputApplicationHandle> inputApplicationHandle;
+    std::shared_ptr<KeyEntry> keyEntry;
+    std::shared_ptr<InputApplicationHandle> inputApplicationHandle;
     std::string reason;
     int32_t userActivityEventType;
     uint32_t seq;
     bool handled;
-    std::shared_ptr<InputChannel> inputChannel;
+    sp<IBinder> connectionToken;
     sp<IBinder> oldToken;
     sp<IBinder> newToken;
+    std::string obscuringPackage;
 };
 
 } // namespace android::inputdispatcher

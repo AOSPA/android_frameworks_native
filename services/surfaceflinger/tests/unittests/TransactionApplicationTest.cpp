@@ -31,10 +31,9 @@
 
 #include "TestableScheduler.h"
 #include "TestableSurfaceFlinger.h"
-#include "mock/MockDispSync.h"
-#include "mock/MockEventControlThread.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockMessageQueue.h"
+#include "mock/MockVsyncController.h"
 
 namespace android {
 
@@ -67,21 +66,23 @@ public:
         EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*eventThread, createEventConnection(_, _))
                 .WillOnce(Return(
-                        new EventThreadConnection(eventThread.get(), ResyncCallback(),
+                        new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
+                                                  ResyncCallback(),
                                                   ISurfaceComposer::eConfigChangedSuppress)));
 
         EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
                 .WillOnce(Return(
-                        new EventThreadConnection(sfEventThread.get(), ResyncCallback(),
+                        new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
+                                                  ResyncCallback(),
                                                   ISurfaceComposer::eConfigChangedSuppress)));
 
-        EXPECT_CALL(*mPrimaryDispSync, computeNextRefresh(0, _)).WillRepeatedly(Return(0));
-        EXPECT_CALL(*mPrimaryDispSync, getPeriod())
+        EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
+        EXPECT_CALL(*mVSyncTracker, currentPeriod())
                 .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_REFRESH_RATE));
 
-        mFlinger.setupScheduler(std::unique_ptr<mock::DispSync>(mPrimaryDispSync),
-                                std::make_unique<mock::EventControlThread>(),
+        mFlinger.setupScheduler(std::unique_ptr<mock::VsyncController>(mVsyncController),
+                                std::unique_ptr<mock::VSyncTracker>(mVSyncTracker),
                                 std::move(eventThread), std::move(sfEventThread));
     }
 
@@ -89,10 +90,10 @@ public:
     TestableSurfaceFlinger mFlinger;
 
     std::unique_ptr<mock::EventThread> mEventThread = std::make_unique<mock::EventThread>();
-    mock::EventControlThread* mEventControlThread = new mock::EventControlThread();
 
     mock::MessageQueue* mMessageQueue = new mock::MessageQueue();
-    mock::DispSync* mPrimaryDispSync = new mock::DispSync();
+    mock::VsyncController* mVsyncController = new mock::VsyncController();
+    mock::VSyncTracker* mVSyncTracker = new mock::VSyncTracker();
 
     struct TransactionInfo {
         Vector<ComposerState> states;
@@ -101,7 +102,9 @@ public:
         sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
         InputWindowCommands inputWindowCommands;
         int64_t desiredPresentTime = -1;
+        int64_t frameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
         client_cache_t uncacheBuffer;
+        int64_t id = -1;
     };
 
     void checkEqual(TransactionInfo info, SurfaceFlinger::TransactionState state) {
@@ -115,26 +118,28 @@ public:
     }
 
     void setupSingle(TransactionInfo& transaction, uint32_t flags, bool syncInputWindows,
-                     int64_t desiredPresentTime) {
+                     int64_t desiredPresentTime, int64_t frameTimelineVsyncId) {
         mTransactionNumber++;
         transaction.flags |= flags; // ISurfaceComposer::eSynchronous;
         transaction.inputWindowCommands.syncInputWindows = syncInputWindows;
         transaction.desiredPresentTime = desiredPresentTime;
+        transaction.frameTimelineVsyncId = frameTimelineVsyncId;
     }
 
     void NotPlacedOnTransactionQueue(uint32_t flags, bool syncInputWindows) {
         ASSERT_EQ(0, mFlinger.getTransactionQueue().size());
         // called in SurfaceFlinger::signalTransaction
         EXPECT_CALL(*mMessageQueue, invalidate()).Times(1);
-        EXPECT_CALL(*mPrimaryDispSync, expectedPresentTime(_)).WillOnce(Return(systemTime()));
+        EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillOnce(Return(systemTime()));
         TransactionInfo transaction;
         setupSingle(transaction, flags, syncInputWindows,
-                    /*desiredPresentTime*/ -1);
+                    /*desiredPresentTime*/ -1, ISurfaceComposer::INVALID_VSYNC_ID);
         nsecs_t applicationTime = systemTime();
-        mFlinger.setTransactionState(transaction.states, transaction.displays, transaction.flags,
+        mFlinger.setTransactionState(transaction.frameTimelineVsyncId, transaction.states,
+                                     transaction.displays, transaction.flags,
                                      transaction.applyToken, transaction.inputWindowCommands,
                                      transaction.desiredPresentTime, transaction.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks);
+                                     mHasListenerCallbacks, mCallbacks, transaction.id);
 
         // This transaction should not have been placed on the transaction queue.
         // If transaction is synchronous or syncs input windows, SF
@@ -159,16 +164,17 @@ public:
         // first check will see desired present time has not passed,
         // but afterwards it will look like the desired present time has passed
         nsecs_t time = systemTime();
-        EXPECT_CALL(*mPrimaryDispSync, expectedPresentTime(_))
+        EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_))
                 .WillOnce(Return(time + nsecs_t(5 * 1e8)));
         TransactionInfo transaction;
         setupSingle(transaction, flags, syncInputWindows,
-                    /*desiredPresentTime*/ time + s2ns(1));
+                    /*desiredPresentTime*/ time + s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
         nsecs_t applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transaction.states, transaction.displays, transaction.flags,
+        mFlinger.setTransactionState(transaction.frameTimelineVsyncId, transaction.states,
+                                     transaction.displays, transaction.flags,
                                      transaction.applyToken, transaction.inputWindowCommands,
                                      transaction.desiredPresentTime, transaction.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks);
+                                     mHasListenerCallbacks, mCallbacks, transaction.id);
 
         nsecs_t returnedTime = systemTime();
         EXPECT_LE(returnedTime, applicationSentTime + s2ns(5));
@@ -182,24 +188,25 @@ public:
         // called in SurfaceFlinger::signalTransaction
         nsecs_t time = systemTime();
         EXPECT_CALL(*mMessageQueue, invalidate()).Times(1);
-        EXPECT_CALL(*mPrimaryDispSync, expectedPresentTime(_))
+        EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_))
                 .WillOnce(Return(time + nsecs_t(5 * 1e8)));
         // transaction that should go on the pending thread
         TransactionInfo transactionA;
         setupSingle(transactionA, /*flags*/ 0, /*syncInputWindows*/ false,
-                    /*desiredPresentTime*/ time + s2ns(1));
+                    /*desiredPresentTime*/ time + s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
 
         // transaction that would not have gone on the pending thread if not
         // blocked
         TransactionInfo transactionB;
         setupSingle(transactionB, flags, syncInputWindows,
-                    /*desiredPresentTime*/ -1);
+                    /*desiredPresentTime*/ -1, ISurfaceComposer::INVALID_VSYNC_ID);
 
         nsecs_t applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transactionA.states, transactionA.displays, transactionA.flags,
+        mFlinger.setTransactionState(transactionA.frameTimelineVsyncId, transactionA.states,
+                                     transactionA.displays, transactionA.flags,
                                      transactionA.applyToken, transactionA.inputWindowCommands,
                                      transactionA.desiredPresentTime, transactionA.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks);
+                                     mHasListenerCallbacks, mCallbacks, transactionA.id);
 
         // This thread should not have been blocked by the above transaction
         // (5s is the timeout period that applyTransactionState waits for SF to
@@ -207,10 +214,11 @@ public:
         EXPECT_LE(systemTime(), applicationSentTime + s2ns(5));
 
         applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transactionB.states, transactionB.displays, transactionB.flags,
+        mFlinger.setTransactionState(transactionB.frameTimelineVsyncId, transactionB.states,
+                                     transactionB.displays, transactionB.flags,
                                      transactionB.applyToken, transactionB.inputWindowCommands,
                                      transactionB.desiredPresentTime, transactionB.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks);
+                                     mHasListenerCallbacks, mCallbacks, transactionB.id);
 
         // this thread should have been blocked by the above transaction
         // if this is an animation, this thread should be blocked for 5s
@@ -247,16 +255,17 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     EXPECT_CALL(*mMessageQueue, invalidate()).Times(1);
 
     // nsecs_t time = systemTime();
-    EXPECT_CALL(*mPrimaryDispSync, expectedPresentTime(_))
+    EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_))
             .WillOnce(Return(nsecs_t(5 * 1e8)))
             .WillOnce(Return(s2ns(2)));
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*syncInputWindows*/ false,
-                /*desiredPresentTime*/ s2ns(1));
-    mFlinger.setTransactionState(transactionA.states, transactionA.displays, transactionA.flags,
-                                 transactionA.applyToken, transactionA.inputWindowCommands,
-                                 transactionA.desiredPresentTime, transactionA.uncacheBuffer,
-                                 mHasListenerCallbacks, mCallbacks);
+                /*desiredPresentTime*/ s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
+    mFlinger.setTransactionState(transactionA.frameTimelineVsyncId, transactionA.states,
+                                 transactionA.displays, transactionA.flags, transactionA.applyToken,
+                                 transactionA.inputWindowCommands, transactionA.desiredPresentTime,
+                                 transactionA.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
+                                 transactionA.id);
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_EQ(1, transactionQueue.size());
@@ -272,9 +281,10 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     // different process) to re-query and reset the cached expected present time
     TransactionInfo empty;
     empty.applyToken = sp<IBinder>();
-    mFlinger.setTransactionState(empty.states, empty.displays, empty.flags, empty.applyToken,
-                                 empty.inputWindowCommands, empty.desiredPresentTime,
-                                 empty.uncacheBuffer, mHasListenerCallbacks, mCallbacks);
+    mFlinger.setTransactionState(empty.frameTimelineVsyncId, empty.states, empty.displays,
+                                 empty.flags, empty.applyToken, empty.inputWindowCommands,
+                                 empty.desiredPresentTime, empty.uncacheBuffer,
+                                 mHasListenerCallbacks, mCallbacks, empty.id);
 
     // flush transaction queue should flush as desiredPresentTime has
     // passed

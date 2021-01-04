@@ -387,10 +387,6 @@ status_t Replayer::doSurfaceTransaction(
             case SurfaceChange::SurfaceChangeCase::kMatrix:
                 setMatrix(transaction, change.id(), change.matrix());
                 break;
-            case SurfaceChange::SurfaceChangeCase::kOverrideScalingMode:
-                setOverrideScalingMode(transaction, change.id(),
-                        change.override_scaling_mode());
-                break;
             case SurfaceChange::SurfaceChangeCase::kTransparentRegionHint:
                 setTransparentRegionHint(transaction, change.id(),
                         change.transparent_region_hint());
@@ -426,6 +422,9 @@ status_t Replayer::doSurfaceTransaction(
                 break;
             case SurfaceChange::SurfaceChangeCase::kShadowRadius:
                 setShadowRadiusChange(transaction, change.id(), change.shadow_radius());
+                break;
+            case SurfaceChange::SurfaceChangeCase::kBlurRegions:
+                setBlurRegionsChange(transaction, change.id(), change.blur_regions());
                 break;
             default:
                 status = 1;
@@ -525,12 +524,6 @@ void Replayer::setMatrix(SurfaceComposerClient::Transaction& t,
     t.setMatrix(mLayers[id], mc.dsdx(), mc.dtdx(), mc.dsdy(), mc.dtdy());
 }
 
-void Replayer::setOverrideScalingMode(SurfaceComposerClient::Transaction& t,
-        layer_id id, const OverrideScalingModeChange& osmc) {
-    ALOGV("Layer %d: Setting Override Scaling Mode -- mode=%d", id, osmc.override_scaling_mode());
-    t.setOverrideScalingMode(mLayers[id], osmc.override_scaling_mode());
-}
-
 void Replayer::setTransparentRegionHint(SurfaceComposerClient::Transaction& t,
         layer_id id, const TransparentRegionHintChange& trhc) {
     ALOGV("Setting Transparent Region Hint");
@@ -584,9 +577,7 @@ void Replayer::setDeferredTransaction(SurfaceComposerClient::Transaction& t,
         return;
     }
 
-    auto handle = mLayers[dtc.layer_id()]->getHandle();
-
-    t.deferTransactionUntil_legacy(mLayers[id], handle, dtc.frame_number());
+    t.deferTransactionUntil_legacy(mLayers[id], mLayers[dtc.layer_id()], dtc.frame_number());
 }
 
 void Replayer::setDisplaySurface(SurfaceComposerClient::Transaction& t,
@@ -706,11 +697,11 @@ status_t Replayer::loadSurfaceComposerClient() {
 
 void Replayer::setReparentChange(SurfaceComposerClient::Transaction& t,
         layer_id id, const ReparentChange& c) {
-    sp<IBinder> newParentHandle = nullptr;
+    sp<SurfaceControl> newSurfaceControl = nullptr;
     if (mLayers.count(c.parent_id()) != 0 && mLayers[c.parent_id()] != nullptr) {
-        newParentHandle = mLayers[c.parent_id()]->getHandle();
+        newSurfaceControl = mLayers[c.parent_id()];
     }
-    t.reparent(mLayers[id], newParentHandle);
+    t.reparent(mLayers[id], newSurfaceControl);
 }
 
 void Replayer::setRelativeParentChange(SurfaceComposerClient::Transaction& t,
@@ -719,7 +710,7 @@ void Replayer::setRelativeParentChange(SurfaceComposerClient::Transaction& t,
         ALOGE("Layer %d not found in set relative parent transaction", c.relative_parent_id());
         return;
     }
-    t.setRelativeLayer(mLayers[id], mLayers[c.relative_parent_id()]->getHandle(), c.z());
+    t.setRelativeLayer(mLayers[id], mLayers[c.relative_parent_id()], c.z());
 }
 
 void Replayer::setDetachChildrenChange(SurfaceComposerClient::Transaction& t,
@@ -733,10 +724,31 @@ void Replayer::setReparentChildrenChange(SurfaceComposerClient::Transaction& t,
         ALOGE("Layer %d not found in reparent children transaction", c.parent_id());
         return;
     }
-    t.reparentChildren(mLayers[id], mLayers[c.parent_id()]->getHandle());
+    t.reparentChildren(mLayers[id], mLayers[c.parent_id()]);
 }
 
 void Replayer::setShadowRadiusChange(SurfaceComposerClient::Transaction& t,
         layer_id id, const ShadowRadiusChange& c) {
     t.setShadowRadius(mLayers[id], c.radius());
+}
+
+void Replayer::setBlurRegionsChange(SurfaceComposerClient::Transaction& t,
+        layer_id id, const BlurRegionsChange& c) {
+    std::vector<BlurRegion> regions;
+    for(size_t i=0; i < c.blur_regions_size(); i++) {
+        auto protoRegion = c.blur_regions(i);
+        regions.push_back(BlurRegion{
+            .blurRadius = protoRegion.blur_radius(),
+            .alpha = protoRegion.alpha(),
+            .cornerRadiusTL = protoRegion.corner_radius_tl(),
+            .cornerRadiusTR = protoRegion.corner_radius_tr(),
+            .cornerRadiusBL = protoRegion.corner_radius_bl(),
+            .cornerRadiusBR = protoRegion.corner_radius_br(),
+            .left = protoRegion.left(),
+            .top = protoRegion.top(),
+            .right = protoRegion.right(),
+            .bottom = protoRegion.bottom()
+        });
+    }
+    t.setBlurRegions(mLayers[id], regions);
 }

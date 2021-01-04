@@ -72,6 +72,9 @@ using Attribute = V2_4::IComposerClient::Attribute;
 
 ///////////////////////////////////////////////
 
+constexpr PhysicalDisplayId kPrimaryDisplayId = PhysicalDisplayId::fromPort(PRIMARY_DISPLAY);
+constexpr PhysicalDisplayId kExternalDisplayId = PhysicalDisplayId::fromPort(EXTERNAL_DISPLAY);
+
 struct TestColor {
 public:
     uint8_t r;
@@ -272,6 +275,10 @@ protected:
         mFakeComposerClient->runVSyncAndWait();
     }
 
+    bool waitForHotplugEvent(Display displayId, bool connected) {
+        return waitForHotplugEvent(PhysicalDisplayId(displayId), connected);
+    }
+
     bool waitForHotplugEvent(PhysicalDisplayId displayId, bool connected) {
         int waitCount = 20;
         while (waitCount--) {
@@ -280,9 +287,8 @@ protected:
                 mReceivedDisplayEvents.pop_front();
 
                 ALOGV_IF(event.header.type == DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG,
-                         "event hotplug: displayId %" ANDROID_PHYSICAL_DISPLAY_ID_FORMAT
-                         ", connected %d\t",
-                         event.header.displayId, event.hotplug.connected);
+                         "event hotplug: displayId %s, connected %d\t",
+                         to_string(event.header.displayId).c_str(), event.hotplug.connected);
 
                 if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG &&
                     event.header.displayId == displayId && event.hotplug.connected == connected) {
@@ -295,7 +301,8 @@ protected:
         return false;
     }
 
-    bool waitForConfigChangedEvent(PhysicalDisplayId displayId, int32_t configId) {
+    bool waitForConfigChangedEvent(Display display, int32_t configId) {
+        PhysicalDisplayId displayId(display);
         int waitCount = 20;
         while (waitCount--) {
             while (!mReceivedDisplayEvents.empty()) {
@@ -303,9 +310,8 @@ protected:
                 mReceivedDisplayEvents.pop_front();
 
                 ALOGV_IF(event.header.type == DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED,
-                         "event config: displayId %" ANDROID_PHYSICAL_DISPLAY_ID_FORMAT
-                         ", configId %d\t",
-                         event.header.displayId, event.config.configId);
+                         "event config: displayId %s, configId %d\t",
+                         to_string(event.header.displayId).c_str(), event.config.configId);
 
                 if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED &&
                     event.header.displayId == displayId && event.config.configId == configId) {
@@ -335,7 +341,7 @@ protected:
         EXPECT_TRUE(waitForHotplugEvent(EXTERNAL_DISPLAY, true));
 
         {
-            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(EXTERNAL_DISPLAY);
+            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kExternalDisplayId);
             EXPECT_FALSE(display == nullptr);
 
             DisplayConfig config;
@@ -367,7 +373,7 @@ protected:
         EXPECT_TRUE(waitForHotplugEvent(EXTERNAL_DISPLAY, false));
 
         {
-            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(EXTERNAL_DISPLAY);
+            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kExternalDisplayId);
             EXPECT_TRUE(display == nullptr);
 
             DisplayConfig config;
@@ -396,7 +402,7 @@ protected:
         waitForDisplayTransaction();
         EXPECT_TRUE(waitForHotplugEvent(EXTERNAL_DISPLAY, true));
 
-        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(EXTERNAL_DISPLAY);
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kExternalDisplayId);
         EXPECT_FALSE(display == nullptr);
 
         DisplayConfig config;
@@ -441,7 +447,7 @@ protected:
             const auto& config = configs[i];
             if (config.resolution.getWidth() == 800) {
                 EXPECT_EQ(NO_ERROR,
-                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i,
+                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i, false,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
@@ -503,7 +509,7 @@ protected:
         waitForDisplayTransaction();
         EXPECT_TRUE(waitForHotplugEvent(EXTERNAL_DISPLAY, true));
 
-        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(EXTERNAL_DISPLAY);
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kExternalDisplayId);
         EXPECT_FALSE(display == nullptr);
 
         DisplayConfig config;
@@ -547,7 +553,7 @@ protected:
             const auto& config = configs[i];
             if (config.refreshRate == 1e9f / 11'111'111) {
                 EXPECT_EQ(NO_ERROR,
-                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i,
+                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i, false,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
@@ -619,7 +625,7 @@ protected:
         waitForDisplayTransaction();
         EXPECT_TRUE(waitForHotplugEvent(EXTERNAL_DISPLAY, true));
 
-        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(EXTERNAL_DISPLAY);
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kExternalDisplayId);
         EXPECT_FALSE(display == nullptr);
 
         DisplayConfig config;
@@ -664,7 +670,8 @@ protected:
             if (config.resolution.getWidth() == 800 && config.refreshRate == 1e9f / 11'111'111) {
                 EXPECT_EQ(NO_ERROR,
                           SurfaceComposerClient::
-                                  setDesiredDisplayConfigSpecs(display, i, configs[i].refreshRate,
+                                  setDesiredDisplayConfigSpecs(display, i, false,
+                                                               configs[i].refreshRate,
                                                                configs[i].refreshRate,
                                                                configs[i].refreshRate,
                                                                configs[i].refreshRate));
@@ -710,7 +717,7 @@ protected:
             const auto& config = configs[i];
             if (config.refreshRate == 1e9f / 8'333'333) {
                 EXPECT_EQ(NO_ERROR,
-                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i,
+                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i, false,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
@@ -757,7 +764,7 @@ protected:
             const auto& config = configs[i];
             if (config.resolution.getWidth() == 1600 && config.refreshRate == 1e9f / 11'111'111) {
                 EXPECT_EQ(NO_ERROR,
-                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i,
+                          SurfaceComposerClient::setDesiredDisplayConfigSpecs(display, i, false,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
                                                                               config.refreshRate,
@@ -808,7 +815,7 @@ protected:
 
         EXPECT_TRUE(waitForHotplugEvent(PRIMARY_DISPLAY, false));
         {
-            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(PRIMARY_DISPLAY);
+            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kPrimaryDisplayId);
             EXPECT_TRUE(display == nullptr);
 
             DisplayConfig config;
@@ -834,7 +841,7 @@ protected:
         EXPECT_TRUE(waitForHotplugEvent(PRIMARY_DISPLAY, true));
 
         {
-            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(PRIMARY_DISPLAY);
+            const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kPrimaryDisplayId);
             EXPECT_FALSE(display == nullptr);
 
             DisplayConfig config;
@@ -988,7 +995,7 @@ protected:
         ASSERT_EQ(NO_ERROR, mComposerClient->initCheck());
 
         ALOGI("TransactionTest::SetUp - display");
-        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(PRIMARY_DISPLAY);
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(kPrimaryDisplayId);
         ASSERT_FALSE(display == nullptr);
 
         DisplayConfig config;
@@ -1316,7 +1323,7 @@ protected:
         {
             TransactionScope ts(*sFakeComposer);
             ts.setAlpha(mFGSurfaceControl, 0.75);
-            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl,
                                             syncSurfaceControl->getSurface()->getNextFrameNumber());
         }
         EXPECT_TRUE(framesAreSame(referenceFrame, sFakeComposer->getLatestFrame()));
@@ -1324,7 +1331,7 @@ protected:
         {
             TransactionScope ts(*sFakeComposer);
             ts.setPosition(mFGSurfaceControl, 128, 128);
-            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mFGSurfaceControl, syncSurfaceControl,
                                             syncSurfaceControl->getSurface()->getNextFrameNumber() +
                                                     1);
         }
@@ -1370,7 +1377,7 @@ protected:
             TransactionScope ts(*sFakeComposer);
             ts.setPosition(relativeSurfaceControl, 64, 64);
             ts.show(relativeSurfaceControl);
-            ts.setRelativeLayer(relativeSurfaceControl, mFGSurfaceControl->getHandle(), 1);
+            ts.setRelativeLayer(relativeSurfaceControl, mFGSurfaceControl, 1);
         }
         auto referenceFrame = mBaseFrame;
         // NOTE: All three layers will be visible as the surfaces are
@@ -1463,7 +1470,7 @@ protected:
         Base::SetUp();
         mChild = Base::mComposerClient->createSurface(String8("Child surface"), 10, 10,
                                                       PIXEL_FORMAT_RGBA_8888, 0,
-                                                      Base::mFGSurfaceControl.get());
+                                                      Base::mFGSurfaceControl->getHandle());
         fillSurfaceRGBA8(mChild, LIGHT_GRAY);
 
         Base::sFakeComposer->runVSyncAndWait();
@@ -1600,7 +1607,7 @@ protected:
 
         {
             TransactionScope ts(*Base::sFakeComposer);
-            ts.reparentChildren(Base::mFGSurfaceControl, Base::mBGSurfaceControl->getHandle());
+            ts.reparentChildren(Base::mFGSurfaceControl, Base::mBGSurfaceControl);
         }
 
         auto referenceFrame2 = referenceFrame;
@@ -1647,7 +1654,7 @@ protected:
         sp<SurfaceControl> childNewClient =
                 newComposerClient->createSurface(String8("New Child Test Surface"), 10, 10,
                                                  PIXEL_FORMAT_RGBA_8888, 0,
-                                                 Base::mFGSurfaceControl.get());
+                                                 Base::mFGSurfaceControl->getHandle());
         ASSERT_TRUE(childNewClient != nullptr);
         ASSERT_TRUE(childNewClient->isValid());
         fillSurfaceRGBA8(childNewClient, LIGHT_GRAY);
@@ -1682,30 +1689,6 @@ protected:
         // Nothing should have changed. The child control becomes a no-op
         // zombie on detach. See comments for detachChildren in the
         // SurfaceControl.h file.
-        EXPECT_TRUE(framesAreSame(referenceFrame, Base::sFakeComposer->getLatestFrame()));
-    }
-
-    void Test_InheritNonTransformScalingFromParent() {
-        {
-            TransactionScope ts(*Base::sFakeComposer);
-            ts.show(mChild);
-            ts.setPosition(mChild, 0, 0);
-            ts.setPosition(Base::mFGSurfaceControl, 0, 0);
-        }
-
-        {
-            TransactionScope ts(*Base::sFakeComposer);
-            ts.setOverrideScalingMode(Base::mFGSurfaceControl,
-                                      NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-            // We cause scaling by 2.
-            ts.setSize(Base::mFGSurfaceControl, 128, 128);
-        }
-
-        auto referenceFrame = Base::mBaseFrame;
-        referenceFrame[Base::FG_LAYER].mDisplayFrame = hwc_rect_t{0, 0, 128, 128};
-        referenceFrame[Base::FG_LAYER].mSourceCrop = hwc_frect_t{0.f, 0.f, 64.f, 64.f};
-        referenceFrame[CHILD_LAYER].mDisplayFrame = hwc_rect_t{0, 0, 20, 20};
-        referenceFrame[CHILD_LAYER].mSourceCrop = hwc_frect_t{0.f, 0.f, 10.f, 10.f};
         EXPECT_TRUE(framesAreSame(referenceFrame, Base::sFakeComposer->getLatestFrame()));
     }
 
@@ -1750,12 +1733,12 @@ protected:
         mChild = Base::mComposerClient->createSurface(String8("Child surface"), 10, 10,
                                                       PIXEL_FORMAT_RGBA_8888,
                                                       ISurfaceComposerClient::eHidden,
-                                                      Base::mFGSurfaceControl.get());
+                                                      Base::mFGSurfaceControl->getHandle());
 
         // Show the child layer in a deferred transaction
         {
             TransactionScope ts(*Base::sFakeComposer);
-            ts.deferTransactionUntil_legacy(mChild, Base::mFGSurfaceControl->getHandle(),
+            ts.deferTransactionUntil_legacy(mChild, Base::mFGSurfaceControl,
                                             Base::mFGSurfaceControl->getSurface()
                                                     ->getNextFrameNumber());
             ts.show(mChild);
@@ -1817,10 +1800,6 @@ TEST_F(ChildLayerTest_2_1, DISABLED_DetachChildrenDifferentClient) {
     Test_DetachChildrenDifferentClient();
 }
 
-TEST_F(ChildLayerTest_2_1, DISABLED_InheritNonTransformScalingFromParent) {
-    Test_InheritNonTransformScalingFromParent();
-}
-
 // Regression test for b/37673612
 TEST_F(ChildLayerTest_2_1, DISABLED_ChildrenWithParentBufferTransform) {
     Test_ChildrenWithParentBufferTransform();
@@ -1841,7 +1820,7 @@ protected:
                 Base::mComposerClient->createSurface(String8("Child surface"), 0, 0,
                                                      PIXEL_FORMAT_RGBA_8888,
                                                      ISurfaceComposerClient::eFXSurfaceEffect,
-                                                     Base::mFGSurfaceControl.get());
+                                                     Base::mFGSurfaceControl->getHandle());
         {
             TransactionScope ts(*Base::sFakeComposer);
             ts.setColor(Base::mChild,

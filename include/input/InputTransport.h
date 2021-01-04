@@ -37,6 +37,7 @@
 #include <binder/Parcelable.h>
 #include <input/Input.h>
 #include <sys/stat.h>
+#include <ui/Transform.h>
 #include <utils/BitSet.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
@@ -115,10 +116,12 @@ struct InputMessage {
             uint8_t empty2[3];                   // 3 bytes to fill gap created by classification
             int32_t edgeFlags;
             nsecs_t downTime __attribute__((aligned(8)));
-            float xScale;
-            float yScale;
-            float xOffset;
-            float yOffset;
+            float dsdx;
+            float dtdx;
+            float dtdy;
+            float dsdy;
+            float tx;
+            float ty;
             float xPrecision;
             float yPrecision;
             float xCursorPosition;
@@ -243,6 +246,8 @@ public:
     /* Return a new object that has a duplicate of this channel's fd. */
     std::unique_ptr<InputChannel> dup() const;
 
+    void copyTo(InputChannel& outChannel) const;
+
     status_t readFromParcel(const android::Parcel* parcel) override;
     status_t writeToParcel(android::Parcel* parcel) const override;
 
@@ -274,6 +279,8 @@ public:
     }
 
 private:
+    base::unique_fd dupFd() const;
+
     std::string mName;
     android::base::unique_fd mFd;
 
@@ -319,11 +326,10 @@ public:
                                 int32_t displayId, std::array<uint8_t, 32> hmac, int32_t action,
                                 int32_t actionButton, int32_t flags, int32_t edgeFlags,
                                 int32_t metaState, int32_t buttonState,
-                                MotionClassification classification, float xScale, float yScale,
-                                float xOffset, float yOffset, float xPrecision, float yPrecision,
-                                float xCursorPosition, float yCursorPosition, nsecs_t downTime,
-                                nsecs_t eventTime, uint32_t pointerCount,
-                                const PointerProperties* pointerProperties,
+                                MotionClassification classification, const ui::Transform& transform,
+                                float xPrecision, float yPrecision, float xCursorPosition,
+                                float yCursorPosition, nsecs_t downTime, nsecs_t eventTime,
+                                uint32_t pointerCount, const PointerProperties* pointerProperties,
                                 const PointerCoords* pointerCoords);
 
     /* Publishes a focus event to the input channel.

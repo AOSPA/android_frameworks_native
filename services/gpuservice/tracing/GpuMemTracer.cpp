@@ -23,9 +23,7 @@
 #include <gpumem/GpuMem.h>
 #include <perfetto/trace/android/gpu_mem_event.pbzero.h>
 #include <unistd.h>
-#include <utils/Timers.h>
 
-#include <algorithm>
 #include <thread>
 
 PERFETTO_DEFINE_DATA_SOURCE_STATIC_MEMBERS(android::GpuMemTracer::GpuMemDataSource);
@@ -44,10 +42,6 @@ void GpuMemTracer::initialize(std::shared_ptr<GpuMem> gpuMem) {
     mGpuMem = gpuMem;
     perfetto::TracingInitArgs args;
     args.backends = perfetto::kSystemBackend;
-    // TODO(b/160016498): Find a better way to wait for traced
-    // Sleep for 30 seconds to make sure the data source is registered only
-    // after traced starts.
-    sleep(30);
     perfetto::Tracing::Initialize(args);
     registerDataSource();
     std::thread tracerThread(&GpuMemTracer::threadLoop, this);
@@ -83,10 +77,11 @@ void GpuMemTracer::traceInitialCounters() {
         ALOGE("Cannot trace without GpuMem initialization");
         return;
     }
-    mGpuMem->traceGpuMemTotals([](uint32_t gpuId, uint32_t pid, uint64_t size) {
+    mGpuMem->traverseGpuMemTotals([](int64_t ts, uint32_t gpuId, uint32_t pid, uint64_t size) {
         GpuMemDataSource::Trace([&](GpuMemDataSource::TraceContext ctx) {
             auto packet = ctx.NewTracePacket();
-            packet->set_timestamp(systemTime());
+            packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
+            packet->set_timestamp(ts);
             auto* event = packet->set_gpu_mem_total_event();
             event->set_gpu_id(gpuId);
             event->set_pid(pid);

@@ -49,37 +49,60 @@ KeyLayoutMap::KeyLayoutMap() {
 KeyLayoutMap::~KeyLayoutMap() {
 }
 
-status_t KeyLayoutMap::load(const std::string& filename, sp<KeyLayoutMap>* outMap) {
-    outMap->clear();
+base::Result<std::shared_ptr<KeyLayoutMap>> KeyLayoutMap::loadContents(const std::string& filename,
+                                                                       const char* contents) {
+    Tokenizer* tokenizer;
+    status_t status = Tokenizer::fromContents(String8(filename.c_str()), contents, &tokenizer);
+    if (status) {
+        ALOGE("Error %d opening key layout map.", status);
+        return Errorf("Error {} opening key layout map file {}.", status, filename.c_str());
+    }
+    std::unique_ptr<Tokenizer> t(tokenizer);
+    auto ret = load(t.get());
+    if (ret) {
+        (*ret)->mLoadFileName = filename;
+    }
+    return ret;
+}
 
+base::Result<std::shared_ptr<KeyLayoutMap>> KeyLayoutMap::load(const std::string& filename) {
     Tokenizer* tokenizer;
     status_t status = Tokenizer::open(String8(filename.c_str()), &tokenizer);
     if (status) {
         ALOGE("Error %d opening key layout map file %s.", status, filename.c_str());
-    } else {
-        sp<KeyLayoutMap> map = new KeyLayoutMap();
-        if (!map.get()) {
-            ALOGE("Error allocating key layout map.");
-            status = NO_MEMORY;
-        } else {
-#if DEBUG_PARSER_PERFORMANCE
-            nsecs_t startTime = systemTime(SYSTEM_TIME_MONOTONIC);
-#endif
-            Parser parser(map.get(), tokenizer);
-            status = parser.parse();
-#if DEBUG_PARSER_PERFORMANCE
-            nsecs_t elapsedTime = systemTime(SYSTEM_TIME_MONOTONIC) - startTime;
-            ALOGD("Parsed key layout map file '%s' %d lines in %0.3fms.",
-                    tokenizer->getFilename().string(), tokenizer->getLineNumber(),
-                    elapsedTime / 1000000.0);
-#endif
-            if (!status) {
-                *outMap = map;
-            }
-        }
-        delete tokenizer;
+        return Errorf("Error {} opening key layout map file {}.", status, filename.c_str());
     }
-    return status;
+    std::unique_ptr<Tokenizer> t(tokenizer);
+    auto ret = load(t.get());
+    if (ret) {
+        (*ret)->mLoadFileName = filename;
+    }
+    return ret;
+}
+
+base::Result<std::shared_ptr<KeyLayoutMap>> KeyLayoutMap::load(Tokenizer* tokenizer) {
+    std::shared_ptr<KeyLayoutMap> map = std::shared_ptr<KeyLayoutMap>(new KeyLayoutMap());
+    status_t status = OK;
+    if (!map.get()) {
+        ALOGE("Error allocating key layout map.");
+        return Errorf("Error allocating key layout map.");
+    } else {
+#if DEBUG_PARSER_PERFORMANCE
+        nsecs_t startTime = systemTime(SYSTEM_TIME_MONOTONIC);
+#endif
+        Parser parser(map.get(), tokenizer);
+        status = parser.parse();
+#if DEBUG_PARSER_PERFORMANCE
+        nsecs_t elapsedTime = systemTime(SYSTEM_TIME_MONOTONIC) - startTime;
+        ALOGD("Parsed key layout map file '%s' %d lines in %0.3fms.",
+              tokenizer->getFilename().string(), tokenizer->getLineNumber(),
+              elapsedTime / 1000000.0);
+#endif
+        if (!status) {
+            return std::move(map);
+        }
+    }
+    return Errorf("Load KeyLayoutMap failed {}.", status);
 }
 
 status_t KeyLayoutMap::mapKey(int32_t scanCode, int32_t usageCode,
@@ -264,7 +287,7 @@ status_t KeyLayoutMap::Parser::parseKey() {
 
     mTokenizer->skipDelimiters(WHITESPACE);
     String8 keyCodeToken = mTokenizer->nextToken(WHITESPACE);
-    int32_t keyCode = getKeyCodeByLabel(keyCodeToken.string());
+    int32_t keyCode = InputEventLookup::getKeyCodeByLabel(keyCodeToken.string());
     if (!keyCode) {
         ALOGE("%s: Expected key code label, got '%s'.", mTokenizer->getLocation().string(),
                 keyCodeToken.string());
@@ -277,7 +300,7 @@ status_t KeyLayoutMap::Parser::parseKey() {
         if (mTokenizer->isEol() || mTokenizer->peekChar() == '#') break;
 
         String8 flagToken = mTokenizer->nextToken(WHITESPACE);
-        uint32_t flag = getKeyFlagByLabel(flagToken.string());
+        uint32_t flag = InputEventLookup::getKeyFlagByLabel(flagToken.string());
         if (!flag) {
             ALOGE("%s: Expected key flag label, got '%s'.", mTokenizer->getLocation().string(),
                     flagToken.string());
@@ -326,7 +349,7 @@ status_t KeyLayoutMap::Parser::parseAxis() {
 
         mTokenizer->skipDelimiters(WHITESPACE);
         String8 axisToken = mTokenizer->nextToken(WHITESPACE);
-        axisInfo.axis = getAxisByLabel(axisToken.string());
+        axisInfo.axis = InputEventLookup::getAxisByLabel(axisToken.string());
         if (axisInfo.axis < 0) {
             ALOGE("%s: Expected inverted axis label, got '%s'.",
                     mTokenizer->getLocation().string(), axisToken.string());
@@ -346,7 +369,7 @@ status_t KeyLayoutMap::Parser::parseAxis() {
 
         mTokenizer->skipDelimiters(WHITESPACE);
         String8 lowAxisToken = mTokenizer->nextToken(WHITESPACE);
-        axisInfo.axis = getAxisByLabel(lowAxisToken.string());
+        axisInfo.axis = InputEventLookup::getAxisByLabel(lowAxisToken.string());
         if (axisInfo.axis < 0) {
             ALOGE("%s: Expected low axis label, got '%s'.",
                     mTokenizer->getLocation().string(), lowAxisToken.string());
@@ -355,14 +378,14 @@ status_t KeyLayoutMap::Parser::parseAxis() {
 
         mTokenizer->skipDelimiters(WHITESPACE);
         String8 highAxisToken = mTokenizer->nextToken(WHITESPACE);
-        axisInfo.highAxis = getAxisByLabel(highAxisToken.string());
+        axisInfo.highAxis = InputEventLookup::getAxisByLabel(highAxisToken.string());
         if (axisInfo.highAxis < 0) {
             ALOGE("%s: Expected high axis label, got '%s'.",
                     mTokenizer->getLocation().string(), highAxisToken.string());
             return BAD_VALUE;
         }
     } else {
-        axisInfo.axis = getAxisByLabel(token.string());
+        axisInfo.axis = InputEventLookup::getAxisByLabel(token.string());
         if (axisInfo.axis < 0) {
             ALOGE("%s: Expected axis label, 'split' or 'invert', got '%s'.",
                     mTokenizer->getLocation().string(), token.string());
@@ -428,7 +451,7 @@ status_t KeyLayoutMap::Parser::parseLed() {
 
     mTokenizer->skipDelimiters(WHITESPACE);
     String8 ledCodeToken = mTokenizer->nextToken(WHITESPACE);
-    int32_t ledCode = getLedByLabel(ledCodeToken.string());
+    int32_t ledCode = InputEventLookup::getLedByLabel(ledCodeToken.string());
     if (ledCode < 0) {
         ALOGE("%s: Expected LED code label, got '%s'.", mTokenizer->getLocation().string(),
                 ledCodeToken.string());

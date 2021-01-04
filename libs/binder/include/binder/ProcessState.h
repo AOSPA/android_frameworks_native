@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_PROCESS_STATE_H
-#define ANDROID_PROCESS_STATE_H
+#pragma once
 
 #include <binder/IBinder.h>
 #include <utils/KeyedVector.h>
@@ -50,14 +49,8 @@ public:
             sp<IBinder>         getContextObject(const sp<IBinder>& caller);
 
             void                startThreadPool();
-                        
-    typedef bool (*context_check_func)(const String16& name,
-                                       const sp<IBinder>& caller,
-                                       void* userData);
 
-            bool                becomeContextManager(
-                                    context_check_func checkFunc,
-                                    void* userData);
+            bool                becomeContextManager();
 
             sp<IBinder>         getStrongProxyForHandle(int32_t handle);
             void                expungeHandle(int32_t handle, IBinder* binder);
@@ -128,9 +121,6 @@ private:
 
             Vector<handle_entry>mHandleToObject;
 
-            context_check_func  mBinderContextCheckFunc;
-            void*               mBinderContextUserData;
-
             String8             mRootDir;
             bool                mThreadPoolStarted;
     volatile int32_t            mThreadPoolSeq;
@@ -141,5 +131,3 @@ private:
 } // namespace android
 
 // ---------------------------------------------------------------------------
-
-#endif // ANDROID_PROCESS_STATE_H

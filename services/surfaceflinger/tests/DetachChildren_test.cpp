@@ -61,7 +61,7 @@ TEST_F(DetachChildren, RelativesAreNotDetached) {
     TransactionUtils::fillSurfaceRGBA8(relative, relativeColor);
 
     Transaction{}
-            .setRelativeLayer(relative, mMainSurface->getHandle(), 1)
+            .setRelativeLayer(relative, mMainSurface, 1)
             .setPosition(relative, relBounds.left, relBounds.top)
             .apply();
 
@@ -204,7 +204,7 @@ TEST_F(DetachChildren, DetachChildrenThenAttach) {
             .setLayer(newParentSurface, INT32_MAX - 1)
             .show(newParentSurface)
             .setPosition(newParentSurface, newParentBounds.left, newParentBounds.top)
-            .reparent(childNewClient, newParentSurface->getHandle())
+            .reparent(childNewClient, newParentSurface)
             .apply();
     {
         mCapture = screenshot();
@@ -238,10 +238,62 @@ TEST_F(DetachChildren, DetachChildrenWithDeferredTransaction) {
     }
 
     Transaction()
-            .deferTransactionUntil_legacy(childNewClient, mMainSurface->getHandle(),
+            .deferTransactionUntil_legacy(childNewClient, mMainSurface,
                                           mMainSurface->getSurface()->getNextFrameNumber())
             .apply();
     Transaction().detachChildren(mMainSurface).apply();
+    ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(mMainSurface, Color::RED,
+                                                      mMainSurfaceBounds.width(),
+                                                      mMainSurfaceBounds.height()));
+
+    // BufferLayer can still dequeue buffers even though there's a detached layer with a
+    // deferred transaction.
+    {
+        SCOPED_TRACE("new buffer");
+        mCapture = screenshot();
+        mCapture->expectBorder(childBounds, Color::RED);
+        mCapture->expectColor(childBounds, childColor);
+    }
+}
+
+/**
+ * Tests that a deferring transaction on an already detached layer will be dropped gracefully and
+ * allow the barrier layer to dequeue buffers.
+ *
+ * Fixes b/150924737 - buffer cannot be latched because it waits for a detached layer
+ * to commit its pending states.
+ */
+TEST_F(DetachChildren, DeferredTransactionOnDetachedChildren) {
+    Color childColor = {200, 200, 200, 255};
+    Rect childBounds = Rect(74, 74, 84, 84);
+
+    sp<SurfaceComposerClient> newComposerClient = new SurfaceComposerClient;
+    sp<SurfaceControl> childNewClient =
+            createSurface(newComposerClient, "New Child Test Surface", childBounds.width(),
+                          childBounds.height(), PIXEL_FORMAT_RGBA_8888, 0, mMainSurface.get());
+    ASSERT_TRUE(childNewClient->isValid());
+
+    TransactionUtils::fillSurfaceRGBA8(childNewClient, childColor);
+
+    Transaction()
+            .show(childNewClient)
+            .setPosition(childNewClient, childBounds.left - mMainSurfaceBounds.left,
+                         childBounds.top - mMainSurfaceBounds.top)
+            .apply();
+
+    {
+        mCapture = screenshot();
+        mCapture->expectBorder(childBounds, mMainSurfaceColor);
+        mCapture->expectColor(childBounds, childColor);
+    }
+
+    Transaction().detachChildren(mMainSurface).apply();
+    Transaction()
+            .setCrop_legacy(childNewClient, {0, 0, childBounds.width(), childBounds.height()})
+            .deferTransactionUntil_legacy(childNewClient, mMainSurface,
+                                          mMainSurface->getSurface()->getNextFrameNumber())
+            .apply();
+
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(mMainSurface, Color::RED,
                                                       mMainSurfaceBounds.width(),
                                                       mMainSurfaceBounds.height()));
@@ -300,7 +352,7 @@ TEST_F(DetachChildren, ReparentParentLayerOfDetachedChildren) {
         mCapture->expectColor(mMainSurfaceBounds, Color::BLACK);
     }
 
-    Transaction().reparent(mMainSurface, mBlackBgSurface->getHandle()).apply();
+    Transaction().reparent(mMainSurface, mBlackBgSurface).apply();
     {
         mCapture = screenshot();
         mCapture->expectBorder(childBounds, mMainSurfaceColor);

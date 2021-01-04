@@ -1,0 +1,18 @@
+cc_library_static {
+    name: "libframetimeline",
+    defaults: ["surfaceflinger_defaults"],
+    srcs: [
+        "FrameTimeline.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.graphics.composer@2.4",
+        "libbase",
+        "libcutils",
+        "liblog",
+        "libgui",
+        "libtimestats",
+        "libui",
+        "libutils",
+    ],
+    export_include_dirs: ["."],
+}

@@ -251,7 +251,7 @@ std::optional<std::vector<std::vector<uint64_t>>> getUidCpuFreqTimes(uint32_t ui
     for (uint32_t i = 0; i <= (maxFreqCount - 1) / FREQS_PER_ENTRY; ++i) {
         key.bucket = i;
         if (findMapEntry(gTisMapFd, &key, vals.data())) {
-            if (errno != ENOENT) return {};
+            if (errno != ENOENT || getFirstMapKey(gTisMapFd, &key)) return {};
             continue;
         }
 
@@ -362,7 +362,7 @@ std::optional<concurrent_time_t> getUidConcurrentTimes(uint32_t uid, bool retry)
     time_key_t key = {.uid = uid};
     for (key.bucket = 0; key.bucket <= (gNCpus - 1) / CPUS_PER_ENTRY; ++key.bucket) {
         if (findMapEntry(gConcurrentMapFd, &key, vals.data())) {
-            if (errno != ENOENT) return {};
+            if (errno != ENOENT || getFirstMapKey(gConcurrentMapFd, &key)) return {};
             continue;
         }
         auto offset = key.bucket * CPUS_PER_ENTRY;
@@ -425,6 +425,7 @@ std::optional<std::unordered_map<uint32_t, concurrent_time_t>> getUidsUpdatedCon
 
     uint64_t newLastUpdate = lastUpdate ? *lastUpdate : 0;
     do {
+        if (key.bucket > (gNCpus - 1) / CPUS_PER_ENTRY) return {};
         if (lastUpdate) {
             auto uidUpdated = uidUpdatedSince(key.uid, *lastUpdate, &newLastUpdate);
             if (!uidUpdated.has_value()) return {};

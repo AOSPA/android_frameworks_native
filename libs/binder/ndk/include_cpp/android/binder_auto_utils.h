@@ -44,9 +44,14 @@ namespace ndk {
 class SpAIBinder {
    public:
     /**
+     * Default constructor.
+     */
+    SpAIBinder() : mBinder(nullptr) {}
+
+    /**
      * Takes ownership of one strong refcount of binder.
      */
-    explicit SpAIBinder(AIBinder* binder = nullptr) : mBinder(binder) {}
+    explicit SpAIBinder(AIBinder* binder) : mBinder(binder) {}
 
     /**
      * Convenience operator for implicitly constructing an SpAIBinder from nullptr. This is not
@@ -189,6 +194,7 @@ class ScopedAParcel : public impl::ScopedAResource<AParcel*, void, AParcel_delet
     explicit ScopedAParcel(AParcel* a = nullptr) : ScopedAResource(a) {}
     ~ScopedAParcel() {}
     ScopedAParcel(ScopedAParcel&&) = default;
+    ScopedAParcel& operator=(ScopedAParcel&&) = default;
 };
 
 /**
@@ -198,6 +204,9 @@ class ScopedAStatus : public impl::ScopedAResource<AStatus*, void, AStatus_delet
    public:
     /**
      * Takes ownership of a.
+     *
+     * WARNING: this constructor is only expected to be used when reading a
+     *     status value. Use `ScopedAStatus::ok()` instead.
      */
     explicit ScopedAStatus(AStatus* a = nullptr) : ScopedAResource(a) {}
     ~ScopedAStatus() {}
@@ -273,6 +282,7 @@ class ScopedAIBinder_DeathRecipient
         : ScopedAResource(a) {}
     ~ScopedAIBinder_DeathRecipient() {}
     ScopedAIBinder_DeathRecipient(ScopedAIBinder_DeathRecipient&&) = default;
+    ScopedAIBinder_DeathRecipient& operator=(ScopedAIBinder_DeathRecipient&&) = default;
 };
 
 /**
@@ -287,6 +297,7 @@ class ScopedAIBinder_Weak
     explicit ScopedAIBinder_Weak(AIBinder_Weak* a = nullptr) : ScopedAResource(a) {}
     ~ScopedAIBinder_Weak() {}
     ScopedAIBinder_Weak(ScopedAIBinder_Weak&&) = default;
+    ScopedAIBinder_Weak& operator=(ScopedAIBinder_Weak&&) = default;
 
     /**
      * See AIBinder_Weak_promote.
@@ -302,9 +313,11 @@ class ScopedFileDescriptor : public impl::ScopedAResource<int, int, close, -1> {
     /**
      * Takes ownership of a.
      */
-    explicit ScopedFileDescriptor(int a = -1) : ScopedAResource(a) {}
+    ScopedFileDescriptor() : ScopedFileDescriptor(-1) {}
+    explicit ScopedFileDescriptor(int a) : ScopedAResource(a) {}
     ~ScopedFileDescriptor() {}
     ScopedFileDescriptor(ScopedFileDescriptor&&) = default;
+    ScopedFileDescriptor& operator=(ScopedFileDescriptor&&) = default;
 };
 
 }  // namespace ndk

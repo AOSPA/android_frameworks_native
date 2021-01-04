@@ -204,8 +204,8 @@ std::optional<compositionengine::LayerFE::LayerSettings> BufferLayer::prepareCli
     layer.frameNumber = mCurrentFrameNumber;
     layer.bufferId = mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getId() : 0;
 
-    // TODO: we could be more subtle with isFixedSize()
-    const bool useFiltering = targetSettings.needsFiltering || mNeedsFiltering || isFixedSize();
+    const bool useFiltering =
+            targetSettings.needsFiltering || mNeedsFiltering || bufferNeedsFiltering();
 
     // Query the texture matrix given our current filtering mode.
     float textureMatrix[16];
@@ -366,7 +366,7 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
         mFrameTracker.setActualPresentFence(std::shared_ptr<FenceTime>(presentFence));
     } else if (!display) {
         // Do nothing.
-    } else if (const auto displayId = display->getId();
+    } else if (const auto displayId = PhysicalDisplayId::tryCast(display->getId());
                displayId && mFlinger->getHwComposer().isConnected(*displayId)) {
         // The HWC doesn't support present fences, so use the refresh
         // timestamp instead.
@@ -392,6 +392,15 @@ void BufferLayer::gatherBufferInfo() {
 bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
                               nsecs_t expectedPresentTime) {
     ATRACE_CALL();
+
+    // If this is not a valid vsync for the layer's uid, return and try again later
+    const bool isVsyncValidForUid =
+            mFlinger->mScheduler->isVsyncValid(expectedPresentTime, mOwnerUid);
+    if (!isVsyncValidForUid) {
+        ATRACE_NAME("!isVsyncValidForUid");
+        mFlinger->setTransactionFlags(eTraversalNeeded);
+        return false;
+    }
 
     bool refreshRequired = latchSidebandStream(recomputeVisibleRegions);
 
@@ -527,10 +536,6 @@ bool BufferLayer::hasReadyFrame() const {
 }
 
 uint32_t BufferLayer::getEffectiveScalingMode() const {
-    if (mOverrideScalingMode >= 0) {
-        return mOverrideScalingMode;
-    }
-
     return mBufferInfo.mScaleMode;
 }
 
@@ -824,6 +829,10 @@ void BufferLayer::setTransformHint(ui::Transform::RotationFlags displayTransform
     if (mTransformHint == ui::Transform::ROT_INVALID) {
         mTransformHint = displayTransformHint;
     }
+}
+
+bool BufferLayer::bufferNeedsFiltering() const {
+    return isFixedSize();
 }
 
 } // namespace android

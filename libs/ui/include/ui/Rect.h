@@ -19,10 +19,10 @@
 
 #include <ostream>
 
+#include <log/log.h>
 #include <utils/Flattenable.h>
 #include <utils/Log.h>
 #include <utils/TypeHelpers.h>
-#include <log/log.h>
 
 #include <ui/FloatRect.h>
 #include <ui/Point.h>
@@ -202,6 +202,15 @@ public:
     // the input.
     Rect transform(uint32_t xform, int32_t width, int32_t height) const;
 
+    Rect scale(float scaleX, float scaleY) const {
+        return Rect(FloatRect(left * scaleX, top * scaleY, right * scaleX, bottom * scaleY));
+    }
+
+    Rect& scaleSelf(float scaleX, float scaleY) {
+        set(scale(scaleX, scaleY));
+        return *this;
+    }
+
     // this calculates (Region(*this) - exclude).bounds() efficiently
     Rect reduce(const Rect& exclude) const;
 
@@ -216,11 +225,10 @@ public:
     }
 };
 
+std::string to_string(const android::Rect& rect);
+
 // Defining PrintTo helps with Google Tests.
-static inline void PrintTo(const Rect& rect, ::std::ostream* os) {
-    *os << "Rect(" << rect.left << ", " << rect.top << ", " << rect.right << ", " << rect.bottom
-        << ")";
-}
+void PrintTo(const Rect& rect, ::std::ostream* os);
 
 ANDROID_BASIC_TYPES_TRAITS(Rect)
 

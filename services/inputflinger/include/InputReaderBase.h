@@ -39,11 +39,6 @@
 // Must be at least 2.
 #define MAX_VIBRATE_PATTERN_SIZE 100
 
-// Maximum allowable delay value in a vibration pattern before
-// which the delay will be truncated.
-#define MAX_VIBRATE_PATTERN_DELAY_NSECS (1000000 * 1000000000LL)
-#define MAX_VIBRATE_PATTERN_DELAY_MSECS (1000000 * 1000LL)
-
 namespace android {
 
 // --- InputReaderInterface ---
@@ -83,7 +78,7 @@ public:
      *
      * This method may be called on any thread (usually by the input manager).
      */
-    virtual void getInputDevices(std::vector<InputDeviceInfo>& outInputDevices) = 0;
+    virtual std::vector<InputDeviceInfo> getInputDevices() const = 0;
 
     /* Query current input state. */
     virtual int32_t getScanCodeState(int32_t deviceId, uint32_t sourceMask,
@@ -346,7 +341,7 @@ public:
     virtual void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) = 0;
 
     /* Gets the keyboard layout for a particular input device. */
-    virtual sp<KeyCharacterMap> getKeyboardLayoutOverlay(
+    virtual std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
             const InputDeviceIdentifier& identifier) = 0;
 
     /* Gets a user-supplied alias for a particular input device, or an empty string if none. */

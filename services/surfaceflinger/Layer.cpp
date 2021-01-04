@@ -39,6 +39,7 @@
 #include <gui/LayerDebugInfo.h>
 #include <gui/Surface.h>
 #include <math.h>
+#include <private/android_filesystem_config.h>
 #include <renderengine/RenderEngine.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -61,6 +62,7 @@
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWComposer.h"
 #include "EffectLayer.h"
+#include "FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
 #include "LayerProtoHelper.h"
 #include "LayerRejecter.h"
@@ -77,6 +79,7 @@ namespace android {
 
 using base::StringAppendF;
 using namespace android::flag_operators;
+using PresentState = frametimeline::SurfaceFrame::PresentState;
 
 std::atomic<int32_t> Layer::sSequence{1};
 
@@ -90,6 +93,8 @@ Layer::Layer(const LayerCreationArgs& args)
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
     if (args.flags & ISurfaceComposerClient::eSecure) layerFlags |= layer_state_t::eLayerSecure;
+    if (args.flags & ISurfaceComposerClient::eSkipScreenshot)
+        layerFlags |= layer_state_t::eLayerSkipScreenshot;
 
     mCurrentState.active_legacy.w = args.w;
     mCurrentState.active_legacy.h = args.h;
@@ -123,6 +128,8 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.shadowRadius = 0.f;
     mCurrentState.treeHasFrameRateVote = false;
     mCurrentState.fixedTransformHint = ui::Transform::ROT_INVALID;
+    mCurrentState.frameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
+    mCurrentState.postTime = -1;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
         // Set an invalid color so there is no color fill.
@@ -141,6 +148,16 @@ Layer::Layer(const LayerCreationArgs& args)
 
     mCallingPid = args.callingPid;
     mCallingUid = args.callingUid;
+
+    if (mCallingUid == AID_GRAPHICS || mCallingUid == AID_SYSTEM) {
+        // If the system didn't send an ownerUid, use the callingUid for the ownerUid.
+        mOwnerUid = args.metadata.getInt32(METADATA_OWNER_UID, mCallingUid);
+        mOwnerPid = args.metadata.getInt32(METADATA_OWNER_PID, mCallingPid);
+    } else {
+        // A create layer request from a non system request cannot specify the owner uid
+        mOwnerUid = mCallingUid;
+        mOwnerPid = mCallingPid;
+    }
 }
 
 void Layer::onFirstRef() {
@@ -469,6 +486,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     compositionState->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     compositionState->alpha = alpha;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+    compositionState->blurRegions = drawingState.blurRegions;
 }
 
 void Layer::prepareGeometryCompositionState() {
@@ -500,8 +518,6 @@ void Layer::prepareGeometryCompositionState() {
     compositionState->isSecureCamera = isSecureCamera();
     compositionState->isScreenshot = isScreenshot();
 
-    compositionState->type = type;
-    compositionState->appId = appId;
     compositionState->layerClass = mLayerClass;
 
     compositionState->metadata.clear();
@@ -544,7 +560,8 @@ void Layer::preparePerFrameCompositionState() {
             isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
 
     // Force client composition for special cases known only to the front-end.
-    if (isHdrY410() || usesRoundedCorners || drawShadows()) {
+    if (isHdrY410() || usesRoundedCorners || drawShadows() ||
+        getDrawingState().blurRegions.size() > 0) {
         compositionState->forceClientComposition = true;
     }
 }
@@ -617,7 +634,7 @@ const char* Layer::getDebugName() const {
 // ---------------------------------------------------------------------------
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientComposition(
-        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
+        compositionengine::LayerFE::ClientCompositionTargetSettings& /* targetSettings */) {
     if (!getCompositionState()) {
         return {};
     }
@@ -627,11 +644,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     compositionengine::LayerFE::LayerSettings layerSettings;
     layerSettings.geometry.boundaries = bounds;
-    if (targetSettings.useIdentityTransform) {
-        layerSettings.geometry.positionTransform = mat4();
-    } else {
-        layerSettings.geometry.positionTransform = getTransform().asMatrix4();
-    }
+    layerSettings.geometry.positionTransform = getTransform().asMatrix4();
 
     if (hasColorTransform()) {
         layerSettings.colorTransform = getColorTransform();
@@ -644,13 +657,14 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
     layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+    layerSettings.blurRegions = getBlurRegions();
     return layerSettings;
 }
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareShadowClientComposition(
-        const LayerFE::LayerSettings& casterLayerSettings, const Rect& displayViewport,
+        const LayerFE::LayerSettings& casterLayerSettings, const Rect& layerStackRect,
         ui::Dataspace outputDataspace) {
-    renderengine::ShadowSettings shadow = getShadowSettings(displayViewport);
+    renderengine::ShadowSettings shadow = getShadowSettings(layerStackRect);
     if (shadow.length <= 0.f) {
         return {};
     }
@@ -776,7 +790,12 @@ bool Layer::addSyncPoint(const std::shared_ptr<SyncPoint>& point) {
 
 bool Layer::isSecure() const {
     const State& s(mDrawingState);
-    return (s.flags & layer_state_t::eLayerSecure);
+    if (s.flags & layer_state_t::eLayerSecure) {
+        return true;
+    }
+
+    const auto p = mDrawingParent.promote();
+    return (p != nullptr) ? p->isSecure() : false;
 }
 
 bool Layer::isSecureDisplay() const {
@@ -819,10 +838,10 @@ void Layer::pushPendingState() {
             // to be applied as per normal (no synchronization).
             mCurrentState.barrierLayer_legacy = nullptr;
         } else {
-            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.frameNumber_legacy, this);
+            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.barrierFrameNumber, this);
             if (barrierLayer->addSyncPoint(syncPoint)) {
                 std::stringstream ss;
-                ss << "Adding sync point " << mCurrentState.frameNumber_legacy;
+                ss << "Adding sync point " << mCurrentState.barrierFrameNumber;
                 ATRACE_NAME(ss.str().c_str());
                 mRemoteSyncPoints.push_back(std::move(syncPoint));
             } else {
@@ -842,8 +861,8 @@ void Layer::pushPendingState() {
 
 void Layer::popPendingState(State* stateToCommit) {
     ATRACE_CALL();
-    *stateToCommit = mPendingStates[0];
 
+    *stateToCommit = mPendingStates[0];
     mPendingStates.removeAt(0);
     ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
 }
@@ -856,14 +875,14 @@ bool Layer::applyPendingStates(State* stateToCommit) {
                 // If we don't have a sync point for this, apply it anyway. It
                 // will be visually wrong, but it should keep us from getting
                 // into too much trouble.
-                ALOGE("[%s] No local sync point found", getDebugName());
+                ALOGV("[%s] No local sync point found", getDebugName());
                 popPendingState(stateToCommit);
                 stateUpdateAvailable = true;
                 continue;
             }
 
             if (mRemoteSyncPoints.front()->getFrameNumber() !=
-                mPendingStates[0].frameNumber_legacy) {
+                mPendingStates[0].barrierFrameNumber) {
                 ALOGE("[%s] Unexpected sync point frame number found", getDebugName());
 
                 // Signal our end of the sync point and then dispose of it
@@ -898,6 +917,25 @@ bool Layer::applyPendingStates(State* stateToCommit) {
     if (!mPendingStates.empty()) {
         setTransactionFlags(eTransactionNeeded);
         mFlinger->setTraversalNeeded();
+    }
+
+    if (stateUpdateAvailable) {
+        const auto vsyncId =
+                stateToCommit->frameTimelineVsyncId == ISurfaceComposer::INVALID_VSYNC_ID
+                ? std::nullopt
+                : std::make_optional(stateToCommit->frameTimelineVsyncId);
+
+        auto surfaceFrame =
+                mFlinger->mFrameTimeline->createSurfaceFrameForToken(getOwnerPid(), getOwnerUid(),
+                                                                     mName, mTransactionName,
+                                                                     vsyncId);
+        surfaceFrame->setActualQueueTime(stateToCommit->postTime);
+        // For transactions we set the acquire fence time to the post time as we
+        // don't have a buffer. For BufferStateLayer it is overridden in
+        // BufferStateLayer::applyPendingStates
+        surfaceFrame->setAcquireFenceTime(stateToCommit->postTime);
+
+        mSurfaceFrame = std::move(surfaceFrame);
     }
 
     mCurrentState.modified = false;
@@ -1019,13 +1057,18 @@ uint32_t Layer::doTransaction(uint32_t flags) {
         this->contentDirty = true;
 
         // we may use linear filtering, if the matrix scales us
-        const uint8_t type = getActiveTransform(c).getType();
-        mNeedsFiltering = (!getActiveTransform(c).preserveRects() || type >= ui::Transform::SCALE);
+        mNeedsFiltering = getActiveTransform(c).needsBilinearFiltering();
     }
 
     if (mCurrentState.inputInfoChanged) {
         flags |= eInputInfoChanged;
         mCurrentState.inputInfoChanged = false;
+    }
+
+    // Add the callbacks from the drawing state into the current state. This is so when the current
+    // state gets copied to drawing, we don't lose the callback handles that are still in drawing.
+    for (auto& handle : s.callbackHandles) {
+        c.callbackHandles.push_back(handle);
     }
 
     // Commit the transaction
@@ -1038,6 +1081,7 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 
 void Layer::commitTransaction(const State& stateToCommit) {
     mDrawingState = stateToCommit;
+    mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mSurfaceFrame), PresentState::Presented);
 }
 
 uint32_t Layer::getTransactionFlags(uint32_t flags) {
@@ -1272,6 +1316,14 @@ bool Layer::setTransparentRegionHint(const Region& transparent) {
     return true;
 }
 
+bool Layer::setBlurRegions(const std::vector<BlurRegion>& blurRegions) {
+    mCurrentState.sequence++;
+    mCurrentState.blurRegions = blurRegions;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
 bool Layer::setFlags(uint8_t flags, uint8_t mask) {
     const uint32_t newFlags = (mCurrentState.flags & ~mask) | (flags & mask);
     if (mCurrentState.flags == newFlags) return false;
@@ -1289,13 +1341,6 @@ bool Layer::setCrop_legacy(const Rect& crop) {
     mCurrentState.crop_legacy = crop;
 
     mCurrentState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setOverrideScalingMode(int32_t scalingMode) {
-    if (scalingMode == mOverrideScalingMode) return false;
-    mOverrideScalingMode = scalingMode;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1454,6 +1499,13 @@ bool Layer::setFrameRate(FrameRate frameRate) {
     return true;
 }
 
+void Layer::setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, nsecs_t postTime) {
+    mCurrentState.frameTimelineVsyncId = frameTimelineVsyncId;
+    mCurrentState.postTime = postTime;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+}
+
 Layer::FrameRate Layer::getFrameRateForLayerTree() const {
     const auto frameRate = getDrawingState().frameRate;
     if (frameRate.rate > 0 || frameRate.type == FrameRateCompatibility::NoVote) {
@@ -1471,14 +1523,21 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
 
 void Layer::deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber) {
     ATRACE_CALL();
+    if (mLayerDetached) {
+        // If the layer is detached, then we don't defer this transaction since we will not
+        // commit the pending state while the layer is detached. Adding sync points may cause
+        // the barrier layer to wait for the states to be committed before dequeuing a buffer.
+        return;
+    }
+
     mCurrentState.barrierLayer_legacy = barrierLayer;
-    mCurrentState.frameNumber_legacy = frameNumber;
+    mCurrentState.barrierFrameNumber = frameNumber;
     // We don't set eTransactionNeeded, because just receiving a deferral
     // request without any other state updates shouldn't actually induce a delay
     mCurrentState.modified = true;
     pushPendingState();
     mCurrentState.barrierLayer_legacy = nullptr;
-    mCurrentState.frameNumber_legacy = 0;
+    mCurrentState.barrierFrameNumber = 0;
     mCurrentState.modified = false;
 }
 
@@ -1694,8 +1753,8 @@ void Layer::dumpFrameEvents(std::string& result) {
 }
 
 void Layer::dumpCallingUidPid(std::string& result) const {
-    StringAppendF(&result, "Layer %s (%s) pid:%d uid:%d\n", getName().c_str(), getType(),
-                  mCallingPid, mCallingUid);
+    StringAppendF(&result, "Layer %s (%s) callingPid:%d callingUid:%d ownerUid:%d\n",
+                  getName().c_str(), getType(), mCallingPid, mCallingUid, mOwnerUid);
 }
 
 void Layer::onDisconnect() {
@@ -1710,7 +1769,7 @@ void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                      FrameEventHistoryDelta* outDelta) {
     if (newTimestamps) {
         mFlinger->mTimeStats->setPostTime(getSequence(), newTimestamps->frameNumber,
-                                          getName().c_str(), newTimestamps->postedTime);
+                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime);
         mFlinger->mTimeStats->setAcquireFence(getSequence(), newTimestamps->frameNumber,
                                               newTimestamps->acquireFence);
     }
@@ -2154,6 +2213,10 @@ int32_t Layer::getBackgroundBlurRadius() const {
     return getDrawingState().backgroundBlurRadius;
 }
 
+const std::vector<BlurRegion>& Layer::getBlurRegions() const {
+    return getDrawingState().blurRegions;
+}
+
 Layer::RoundedCornerState Layer::getRoundedCornerState() const {
     const auto& p = mDrawingParent.promote();
     if (p != nullptr) {
@@ -2178,12 +2241,12 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
             : RoundedCornerState();
 }
 
-renderengine::ShadowSettings Layer::getShadowSettings(const Rect& viewport) const {
+renderengine::ShadowSettings Layer::getShadowSettings(const Rect& layerStackRect) const {
     renderengine::ShadowSettings state = mFlinger->mDrawingState.globalShadowSettings;
 
     // Shift the spot light x-position to the middle of the display and then
     // offset it by casting layer's screen pos.
-    state.lightPos.x = (viewport.width() / 2.f) - mScreenBounds.left;
+    state.lightPos.x = (layerStackRect.width() / 2.f) - mScreenBounds.left;
     state.lightPos.y -= mScreenBounds.top;
 
     state.length = mEffectiveShadowRadius;
@@ -2245,7 +2308,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
 
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
                                      const DisplayDevice* display) {
-    ui::Transform transform = getTransform();
+    const ui::Transform transform = getTransform();
 
     if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
         for (const auto& pendingState : mPendingStatesSnapshot) {
@@ -2253,7 +2316,7 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
             if (barrierLayer != nullptr) {
                 BarrierLayerProto* barrierLayerProto = layerInfo->add_barrier_layer();
                 barrierLayerProto->set_id(barrierLayer->sequence);
-                barrierLayerProto->set_frame_number(pendingState.frameNumber_legacy);
+                barrierLayerProto->set_frame_number(pendingState.barrierFrameNumber);
             }
         }
 
@@ -2368,6 +2431,8 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
         }
 
         layerInfo->set_is_relative_of(state.isRelativeOf);
+
+        layerInfo->set_owner_uid(mOwnerUid);
     }
 
     if (traceFlags & SurfaceTracing::TRACE_INPUT) {
@@ -2427,32 +2492,69 @@ InputWindowInfo Layer::fillInputInfo() {
     const float xScale = t.getScaleX();
     const float yScale = t.getScaleY();
     if (xScale != 1.0f || yScale != 1.0f) {
-        info.touchableRegion.scaleSelf(xScale, yScale);
         xSurfaceInset = std::round(xSurfaceInset * xScale);
         ySurfaceInset = std::round(ySurfaceInset * yScale);
     }
 
-    layerBounds = t.transform(layerBounds);
+    // Transform the layer bounds from layer coordinate space to display coordinate space.
+    Rect transformedLayerBounds = t.transform(layerBounds);
 
     // clamp inset to layer bounds
-    xSurfaceInset = (xSurfaceInset >= 0) ? std::min(xSurfaceInset, layerBounds.getWidth() / 2) : 0;
-    ySurfaceInset = (ySurfaceInset >= 0) ? std::min(ySurfaceInset, layerBounds.getHeight() / 2) : 0;
+    xSurfaceInset = (xSurfaceInset >= 0)
+            ? std::min(xSurfaceInset, transformedLayerBounds.getWidth() / 2)
+            : 0;
+    ySurfaceInset = (ySurfaceInset >= 0)
+            ? std::min(ySurfaceInset, transformedLayerBounds.getHeight() / 2)
+            : 0;
 
-    layerBounds.inset(xSurfaceInset, ySurfaceInset, xSurfaceInset, ySurfaceInset);
+    // inset while protecting from overflow TODO(b/161235021): What is going wrong
+    // in the overflow scenario?
+    {
+    int32_t tmp;
+    if (!__builtin_add_overflow(transformedLayerBounds.left, xSurfaceInset, &tmp))
+        transformedLayerBounds.left = tmp;
+    if (!__builtin_sub_overflow(transformedLayerBounds.right, xSurfaceInset, &tmp))
+        transformedLayerBounds.right = tmp;
+    if (!__builtin_add_overflow(transformedLayerBounds.top, ySurfaceInset, &tmp))
+        transformedLayerBounds.top = tmp;
+    if (!__builtin_sub_overflow(transformedLayerBounds.bottom, ySurfaceInset, &tmp))
+        transformedLayerBounds.bottom = tmp;
+    }
 
-    // Input coordinate should match the layer bounds.
-    info.frameLeft = layerBounds.left;
-    info.frameTop = layerBounds.top;
-    info.frameRight = layerBounds.right;
-    info.frameBottom = layerBounds.bottom;
-
+    // Compute the correct transform to send to input. This will allow it to transform the
+    // input coordinates from display space into window space. Therefore, it needs to use the
+    // final layer frame to create the inverse transform. Since surface insets are added later,
+    // along with the overflow, the best way to ensure we get the correct transform is to use
+    // the final frame calculated.
+    // 1. Take the original transform set on the window and get the inverse transform. This is
+    //    used to get the final bounds in display space (ignorning the transform). Apply the
+    //    inverse transform on the layerBounds to get the untransformed frame (in layer space)
+    // 2. Take the top and left of the untransformed frame to get the real position on screen.
+    //    Apply the layer transform on top/left so it includes any scale or rotation. These will
+    //    be the new translation values for the transform.
+    // 3. Update the translation of the original transform to the new translation values.
+    // 4. Send the inverse transform to input so the coordinates can be transformed back into
+    //    window space.
+    ui::Transform inverseTransform = t.inverse();
+    Rect nonTransformedBounds = inverseTransform.transform(transformedLayerBounds);
+    vec2 translation = t.transform(nonTransformedBounds.left, nonTransformedBounds.top);
     ui::Transform inputTransform(t);
-    inputTransform.set(layerBounds.left, layerBounds.top);
+    inputTransform.set(translation.x, translation.y);
     info.transform = inputTransform.inverse();
+
+    // We need to send the layer bounds cropped to the screenbounds since the layer can be cropped.
+    // The frame should be the area the user sees on screen since it's used for occlusion
+    // detection.
+    Rect screenBounds = Rect{mScreenBounds};
+    transformedLayerBounds.intersect(screenBounds, &transformedLayerBounds);
+    info.frameLeft = transformedLayerBounds.left;
+    info.frameTop = transformedLayerBounds.top;
+    info.frameRight = transformedLayerBounds.right;
+    info.frameBottom = transformedLayerBounds.bottom;
 
     // Position the touchable region relative to frame screen location and restrict it to frame
     // bounds.
-    info.touchableRegion = info.touchableRegion.translate(info.frameLeft, info.frameTop);
+    info.touchableRegion = inputTransform.transform(info.touchableRegion);
     // For compatibility reasons we let layers which can receive input
     // receive input before they have actually submitted a buffer. Because
     // of this we use canReceiveInput instead of isVisible to check the
@@ -2462,6 +2564,7 @@ InputWindowInfo Layer::fillInputInfo() {
     // InputDispatcher, and obviously if they aren't visible they can't occlude
     // anything.
     info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
+    info.alpha = getAlpha();
 
     auto cropLayer = mDrawingState.touchableRegionCrop.promote();
     if (info.replaceTouchableRegionWithCrop) {
@@ -2659,6 +2762,16 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
             LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
             return FrameRateCompatibility::Default;
     }
+}
+
+bool Layer::getPrimaryDisplayOnly() const {
+    const State& s(mDrawingState);
+    if (s.flags & layer_state_t::eLayerSkipScreenshot) {
+        return true;
+    }
+
+    sp<Layer> parent = mDrawingParent.promote();
+    return parent == nullptr ? false : parent->getPrimaryDisplayOnly();
 }
 
 // ---------------------------------------------------------------------------

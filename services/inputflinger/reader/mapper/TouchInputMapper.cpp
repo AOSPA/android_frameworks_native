@@ -18,6 +18,7 @@
 #include "../Macros.h"
 // clang-format on
 
+#include <input/NamedEnum.h>
 #include "TouchInputMapper.h"
 
 #include "CursorButtonAccumulator.h"
@@ -142,12 +143,14 @@ void CookedPointerData::clear() {
     hoveringIdBits.clear();
     touchingIdBits.clear();
     canceledIdBits.clear();
+    validIdBits.clear();
 }
 
 void CookedPointerData::copyFrom(const CookedPointerData& other) {
     pointerCount = other.pointerCount;
     hoveringIdBits = other.hoveringIdBits;
     touchingIdBits = other.touchingIdBits;
+    validIdBits = other.validIdBits;
 
     for (uint32_t i = 0; i < pointerCount; i++) {
         pointerProperties[i].copyFrom(other.pointerProperties[i]);
@@ -168,6 +171,8 @@ TouchInputMapper::TouchInputMapper(InputDeviceContext& deviceContext)
         mRawSurfaceHeight(-1),
         mSurfaceLeft(0),
         mSurfaceTop(0),
+        mSurfaceRight(0),
+        mSurfaceBottom(0),
         mPhysicalWidth(-1),
         mPhysicalHeight(-1),
         mPhysicalLeft(0),
@@ -187,6 +192,20 @@ void TouchInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
         info->addMotionRange(mOrientedRanges.x);
         info->addMotionRange(mOrientedRanges.y);
         info->addMotionRange(mOrientedRanges.pressure);
+
+        if (mDeviceMode == DeviceMode::UNSCALED && mSource == AINPUT_SOURCE_TOUCHPAD) {
+            // Populate RELATIVE_X and RELATIVE_Y motion ranges for touchpad capture mode.
+            //
+            // RELATIVE_X and RELATIVE_Y motion ranges should be the largest possible relative
+            // motion, i.e. the hardware dimensions, as the finger could move completely across the
+            // touchpad in one sample cycle.
+            const InputDeviceInfo::MotionRange& x = mOrientedRanges.x;
+            const InputDeviceInfo::MotionRange& y = mOrientedRanges.y;
+            info->addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_X, mSource, -x.max, x.max, x.flat,
+                                 x.fuzz, x.resolution);
+            info->addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_Y, mSource, -y.max, y.max, y.flat,
+                                 y.fuzz, y.resolution);
+        }
 
         if (mOrientedRanges.haveSize) {
             info->addMotionRange(mOrientedRanges.size);
@@ -239,7 +258,8 @@ void TouchInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
 }
 
 void TouchInputMapper::dump(std::string& dump) {
-    dump += StringPrintf(INDENT2 "Touch Input Mapper (mode - %s):\n", modeToString(mDeviceMode));
+    dump += StringPrintf(INDENT2 "Touch Input Mapper (mode - %s):\n",
+                         NamedEnum::string(mDeviceMode).c_str());
     dumpParameters(dump);
     dumpVirtualKeys(dump);
     dumpRawPointerAxes(dump);
@@ -288,12 +308,14 @@ void TouchInputMapper::dump(std::string& dump) {
         const PointerProperties& pointerProperties =
                 mLastCookedState.cookedPointerData.pointerProperties[i];
         const PointerCoords& pointerCoords = mLastCookedState.cookedPointerData.pointerCoords[i];
-        dump += StringPrintf(INDENT4 "[%d]: id=%d, x=%0.3f, y=%0.3f, pressure=%0.3f, "
-                                     "touchMajor=%0.3f, touchMinor=%0.3f, toolMajor=%0.3f, "
-                                     "toolMinor=%0.3f, "
+        dump += StringPrintf(INDENT4 "[%d]: id=%d, x=%0.3f, y=%0.3f, dx=%0.3f, dy=%0.3f, "
+                                     "pressure=%0.3f, touchMajor=%0.3f, touchMinor=%0.3f, "
+                                     "toolMajor=%0.3f, toolMinor=%0.3f, "
                                      "orientation=%0.3f, tilt=%0.3f, distance=%0.3f, "
                                      "toolType=%d, isHovering=%s\n",
                              i, pointerProperties.id, pointerCoords.getX(), pointerCoords.getY(),
+                             pointerCoords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X),
+                             pointerCoords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y),
                              pointerCoords.getAxisValue(AMOTION_EVENT_AXIS_PRESSURE),
                              pointerCoords.getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MAJOR),
                              pointerCoords.getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR),
@@ -323,22 +345,6 @@ void TouchInputMapper::dump(std::string& dump) {
         dump += StringPrintf(INDENT4 "YZoomScale: %0.3f\n", mPointerYZoomScale);
         dump += StringPrintf(INDENT4 "MaxSwipeWidth: %f\n", mPointerGestureMaxSwipeWidth);
     }
-}
-
-const char* TouchInputMapper::modeToString(DeviceMode deviceMode) {
-    switch (deviceMode) {
-        case DeviceMode::DISABLED:
-            return "disabled";
-        case DeviceMode::DIRECT:
-            return "direct";
-        case DeviceMode::UNSCALED:
-            return "unscaled";
-        case DeviceMode::NAVIGATION:
-            return "navigation";
-        case DeviceMode::POINTER:
-            return "pointer";
-    }
-    return "unknown";
 }
 
 void TouchInputMapper::configure(nsecs_t when, const InputReaderConfiguration* config,
@@ -379,6 +385,7 @@ void TouchInputMapper::configure(nsecs_t when, const InputReaderConfiguration* c
     if (!changes ||
         (changes &
          (InputReaderConfiguration::CHANGE_DISPLAY_INFO |
+          InputReaderConfiguration::CHANGE_POINTER_CAPTURE |
           InputReaderConfiguration::CHANGE_POINTER_GESTURE_ENABLEMENT |
           InputReaderConfiguration::CHANGE_SHOW_TOUCHES |
           InputReaderConfiguration::CHANGE_EXTERNAL_STYLUS_PRESENCE))) {
@@ -491,33 +498,9 @@ void TouchInputMapper::configureParameters() {
 void TouchInputMapper::dumpParameters(std::string& dump) {
     dump += INDENT3 "Parameters:\n";
 
-    switch (mParameters.gestureMode) {
-        case Parameters::GestureMode::SINGLE_TOUCH:
-            dump += INDENT4 "GestureMode: single-touch\n";
-            break;
-        case Parameters::GestureMode::MULTI_TOUCH:
-            dump += INDENT4 "GestureMode: multi-touch\n";
-            break;
-        default:
-            assert(false);
-    }
+    dump += INDENT4 "GestureMode: " + NamedEnum::string(mParameters.gestureMode) + "\n";
 
-    switch (mParameters.deviceType) {
-        case Parameters::DeviceType::TOUCH_SCREEN:
-            dump += INDENT4 "DeviceType: touchScreen\n";
-            break;
-        case Parameters::DeviceType::TOUCH_PAD:
-            dump += INDENT4 "DeviceType: touchPad\n";
-            break;
-        case Parameters::DeviceType::TOUCH_NAVIGATION:
-            dump += INDENT4 "DeviceType: touchNavigation\n";
-            break;
-        case Parameters::DeviceType::POINTER:
-            dump += INDENT4 "DeviceType: pointer\n";
-            break;
-        default:
-            ALOG_ASSERT(false);
-    }
+    dump += INDENT4 "DeviceType: " + NamedEnum::string(mParameters.deviceType) + "\n";
 
     dump += StringPrintf(INDENT4 "AssociatedDisplay: hasAssociatedDisplay=%s, isExternal=%s, "
                                  "displayId='%s'\n",
@@ -562,7 +545,7 @@ bool TouchInputMapper::hasExternalStylus() const {
  * 4. Otherwise, use a non-display viewport.
  */
 std::optional<DisplayViewport> TouchInputMapper::findViewport() {
-    if (mParameters.hasAssociatedDisplay) {
+    if (mParameters.hasAssociatedDisplay && mDeviceMode != DeviceMode::UNSCALED) {
         const std::optional<uint8_t> displayPort = getDeviceContext().getAssociatedDisplayPort();
         if (displayPort) {
             // Find the viewport that contains the same port
@@ -620,7 +603,7 @@ void TouchInputMapper::configureSurface(nsecs_t when, bool* outResetNeeded) {
 
     // Determine device mode.
     if (mParameters.deviceType == Parameters::DeviceType::POINTER &&
-        mConfig.pointerGesturesEnabled) {
+        mConfig.pointerGesturesEnabled && !mConfig.pointerCapture) {
         mSource = AINPUT_SOURCE_MOUSE;
         mDeviceMode = DeviceMode::POINTER;
         if (hasStylus()) {
@@ -1775,7 +1758,8 @@ bool TouchInputMapper::consumeRawTouches(nsecs_t when, uint32_t policyFlags) {
         // Pointer just went down.  Check for virtual key press or off-screen touches.
         uint32_t id = mCurrentRawState.rawPointerData.touchingIdBits.firstMarkedBit();
         const RawPointerData::Pointer& pointer = mCurrentRawState.rawPointerData.pointerForId(id);
-        if (!isPointInsideSurface(pointer.x, pointer.y)) {
+        // Exclude unscaled device for inside surface checking.
+        if (!isPointInsideSurface(pointer.x, pointer.y) && mDeviceMode != DeviceMode::UNSCALED) {
             // If exactly one pointer went down, check for virtual key hit.
             // Otherwise we will drop the entire stroke.
             if (mCurrentRawState.rawPointerData.touchingIdBits.count() == 1) {
@@ -2269,15 +2253,26 @@ void TouchInputMapper::cookPointerData() {
             out.setAxisValue(AMOTION_EVENT_AXIS_TOOL_MINOR, toolMinor);
         }
 
+        // Write output relative fields if applicable.
+        uint32_t id = in.id;
+        if (mSource == AINPUT_SOURCE_TOUCHPAD &&
+            mLastCookedState.cookedPointerData.hasPointerCoordsForId(id)) {
+            const PointerCoords& p = mLastCookedState.cookedPointerData.pointerCoordsForId(id);
+            float dx = xTransformed - p.getAxisValue(AMOTION_EVENT_AXIS_X);
+            float dy = yTransformed - p.getAxisValue(AMOTION_EVENT_AXIS_Y);
+            out.setAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X, dx);
+            out.setAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y, dy);
+        }
+
         // Write output properties.
         PointerProperties& properties = mCurrentCookedState.cookedPointerData.pointerProperties[i];
-        uint32_t id = in.id;
         properties.clear();
         properties.id = id;
         properties.toolType = in.toolType;
 
-        // Write id index.
+        // Write id index and mark id as valid.
         mCurrentCookedState.cookedPointerData.idToIndex[id] = i;
+        mCurrentCookedState.cookedPointerData.validIdBits.markBit(id);
     }
 }
 
@@ -2591,14 +2586,14 @@ bool TouchInputMapper::preparePointerGestures(nsecs_t when, bool* outCancelPrevi
 
     // Update the velocity tracker.
     {
-        VelocityTracker::Position positions[MAX_POINTERS];
-        uint32_t count = 0;
-        for (BitSet32 idBits(mCurrentCookedState.fingerIdBits); !idBits.isEmpty(); count++) {
+        std::vector<VelocityTracker::Position> positions;
+        for (BitSet32 idBits(mCurrentCookedState.fingerIdBits); !idBits.isEmpty();) {
             uint32_t id = idBits.clearFirstMarkedBit();
             const RawPointerData::Pointer& pointer =
                     mCurrentRawState.rawPointerData.pointerForId(id);
-            positions[count].x = pointer.x * mPointerXMovementScale;
-            positions[count].y = pointer.y * mPointerYMovementScale;
+            float x = pointer.x * mPointerXMovementScale;
+            float y = pointer.y * mPointerYMovementScale;
+            positions.push_back({x, y});
         }
         mPointerGesture.velocityTracker.addMovement(when, mCurrentCookedState.fingerIdBits,
                                                     positions);
@@ -3402,7 +3397,6 @@ void TouchInputMapper::abortPointerMouse(nsecs_t when, uint32_t policyFlags) {
 void TouchInputMapper::dispatchPointerSimple(nsecs_t when, uint32_t policyFlags, bool down,
                                              bool hovering) {
     int32_t metaState = getContext()->getGlobalMetaState();
-    int32_t displayId = mViewport.displayId;
 
     if (down || hovering) {
         mPointerController->setPresentation(PointerControllerInterface::Presentation::POINTER);
@@ -3412,7 +3406,7 @@ void TouchInputMapper::dispatchPointerSimple(nsecs_t when, uint32_t policyFlags,
     } else if (!down && !hovering && (mPointerSimple.down || mPointerSimple.hovering)) {
         mPointerController->fade(PointerControllerInterface::Transition::GRADUAL);
     }
-    displayId = mPointerController->getDisplayId();
+    int32_t displayId = mPointerController->getDisplayId();
 
     float xCursorPosition;
     float yCursorPosition;
@@ -3826,9 +3820,9 @@ void TouchInputMapper::assignPointerIds(const RawState* last, RawState* current)
 
 #if DEBUG_POINTER_ASSIGNMENT
                 ALOGD("assignPointerIds - reduced distance min-heap: size=%d", heapSize);
-                for (size_t i = 0; i < heapSize; i++) {
-                    ALOGD("  heap[%zu]: cur=%" PRIu32 ", last=%" PRIu32 ", distance=%" PRIu64, i,
-                          heap[i].currentPointerIndex, heap[i].lastPointerIndex, heap[i].distance);
+                for (size_t j = 0; j < heapSize; j++) {
+                    ALOGD("  heap[%zu]: cur=%" PRIu32 ", last=%" PRIu32 ", distance=%" PRIu64, j,
+                          heap[j].currentPointerIndex, heap[j].lastPointerIndex, heap[j].distance);
                 }
 #endif
             }

@@ -113,13 +113,24 @@ LIBBINDER_NDK30 { # introduced=30
 
 LIBBINDER_NDK31 { # introduced=31
   global:
+    ABinderProcess_handlePolledCommands; # apex
+    ABinderProcess_setupPolling; # apex
     AIBinder_getCallingSid; # apex
     AIBinder_setRequestingSid; # apex
+    AServiceManager_isDeclared; # apex llndk
+    AServiceManager_registerLazyService; # llndk
+    AServiceManager_waitForService; # apex llndk
+
+    AParcel_appendFrom;
+    AParcel_create;
+    AParcel_getDataSize;
+    AParcel_reset;
 };
 
 LIBBINDER_NDK_PLATFORM {
   global:
     AParcel_getAllowFds;
+    AParcel_markSensitive;
     extern "C++" {
         AIBinder_fromPlatformBinder*;
         AIBinder_toPlatformBinder*;

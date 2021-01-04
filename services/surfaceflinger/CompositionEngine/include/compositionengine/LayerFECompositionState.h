@@ -20,6 +20,7 @@
 
 #include <gui/HdrMetadata.h>
 #include <math/mat4.h>
+#include <ui/BlurRegion.h>
 #include <ui/FloatRect.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
@@ -116,7 +117,10 @@ struct LayerFECompositionState {
     FloatRect geomLayerBounds;
 
     // length of the shadow in screen space
-    float shadowRadius;
+    float shadowRadius{0.f};
+
+    // List of regions that require blur
+    std::vector<BlurRegion> blurRegions;
 
     /*
      * Geometry state
@@ -129,16 +133,6 @@ struct LayerFECompositionState {
     Rect geomBufferSize;
     Rect geomContentCrop;
     Rect geomCrop;
-
-    /*
-     * Extra metadata
-     */
-
-    // The type for this layer
-    int type{0};
-
-    // The appId for this layer
-    int appId{0};
 
     GenericLayerMetadataMap metadata;
 

@@ -27,6 +27,7 @@
 #include <math/mat4.h>
 #include <renderengine/RenderEngine.h>
 #include <system/window.h>
+#include <ui/DisplayId.h>
 #include <ui/DisplayInfo.h>
 #include <ui/DisplayState.h>
 #include <ui/GraphicTypes.h>
@@ -94,18 +95,22 @@ public:
 
     static ui::Transform::RotationFlags getPrimaryDisplayRotationFlags();
 
-    ui::Transform::RotationFlags getTransformHint() const {
-        return static_cast<ui::Transform::RotationFlags>(getTransform().getOrientation());
-    }
-
+    ui::Transform::RotationFlags getTransformHint() const;
     const ui::Transform& getTransform() const;
-    const Rect& getViewport() const;
-    const Rect& getFrame() const;
-    const Rect& getSourceClip() const;
+    const Rect& getLayerStackSpaceRect() const;
+    const Rect& getOrientedDisplaySpaceRect() const;
     bool needsFiltering() const;
     ui::LayerStack getLayerStack() const;
 
-    const std::optional<DisplayId>& getId() const;
+    // Returns the physical ID of this display. This function asserts the ID is physical and it
+    // shouldn't be called for other display types, e.g. virtual.
+    PhysicalDisplayId getPhysicalId() const {
+        const auto displayIdOpt = PhysicalDisplayId::tryCast(getId());
+        LOG_FATAL_IF(!displayIdOpt);
+        return *displayIdOpt;
+    }
+
+    DisplayId getId() const;
     const wp<IBinder>& getDisplayToken() const { return mDisplayToken; }
     int32_t getSequenceId() const { return mSequenceId; }
 
@@ -197,7 +202,7 @@ private:
 
 struct DisplayDeviceState {
     struct Physical {
-        DisplayId id;
+        PhysicalDisplayId id;
         DisplayConnectionType type;
         hardware::graphics::composer::hal::HWDisplayId hwcDisplayId;
         std::optional<DeviceProductInfo> deviceProductInfo;
@@ -212,8 +217,8 @@ struct DisplayDeviceState {
     std::optional<Physical> physical;
     sp<IGraphicBufferProducer> surface;
     ui::LayerStack layerStack = ui::NO_LAYER_STACK;
-    Rect viewport;
-    Rect frame;
+    Rect layerStackSpaceRect;
+    Rect orientedDisplaySpaceRect;
     ui::Rotation orientation = ui::ROTATION_0;
     uint32_t width = 0;
     uint32_t height = 0;

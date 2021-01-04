@@ -123,6 +123,11 @@ message LayerProto {
   bool is_relative_of = 51;
   // Layer's background blur radius in pixels.
   int32 background_blur_radius = 52;
+
+  uint32 owner_uid = 53;
+
+  // Regions of a layer, where blur should be applied.
+  repeated BlurRegion blur_regions = 54;
 }
 
 message PositionProto {
@@ -191,8 +196,8 @@ message InputWindowInfoProto {
 
     uint32 surface_inset = 5;
     bool visible = 6;
-    bool can_receive_keys = 7;
-    bool has_focus = 8;
+    bool can_receive_keys = 7  [deprecated=true];
+    bool focusable = 8;
     bool has_wallpaper = 9;
 
     float global_scale_factor = 10;
@@ -208,4 +213,17 @@ message InputWindowInfoProto {
 message ColorTransformProto {
   // This will be a 4x4 matrix of float values
   repeated float val = 1;
+}
+
+message BlurRegion {
+    uint32 blur_radius = 1;
+    uint32 corner_radius_tl = 2;
+    uint32 corner_radius_tr = 3;
+    uint32 corner_radius_bl = 4;
+    float corner_radius_br = 5;
+    float alpha = 6;
+    int32 left = 7;
+    int32 top = 8;
+    int32 right = 9;
+    int32 bottom = 10;
 }

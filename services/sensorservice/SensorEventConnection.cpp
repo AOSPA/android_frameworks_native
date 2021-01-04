@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <log/log.h>
 #include <sys/socket.h>
 #include <utils/threads.h>
 
@@ -28,6 +29,12 @@
 #define UNUSED(x) (void)(x)
 
 namespace android {
+namespace {
+
+// Used as the default value for the target SDK until it's obtained via getTargetSdkVersion.
+constexpr int kTargetSdkUnknown = 0;
+
+}  // namespace
 
 SensorService::SensorEventConnection::SensorEventConnection(
         const sp<SensorService>& service, uid_t uid, String8 packageName, bool isDataInjectionMode,
@@ -35,9 +42,9 @@ SensorService::SensorEventConnection::SensorEventConnection(
     : mService(service), mUid(uid), mWakeLockRefCount(0), mHasLooperCallbacks(false),
       mDead(false), mDataInjectionMode(isDataInjectionMode), mEventCache(nullptr),
       mCacheSize(0), mMaxCacheSize(0), mTimeOfLastEventDrop(0), mEventsDropped(0),
-      mPackageName(packageName), mOpPackageName(opPackageName), mDestroyed(false) {
+      mPackageName(packageName), mOpPackageName(opPackageName), mTargetSdk(kTargetSdkUnknown),
+      mDestroyed(false) {
     mChannel = new BitTube(mService->mSocketBufferSize);
-    mTargetSdk = SensorService::getTargetSdkVersion(opPackageName);
 #if DEBUG_CONNECTIONS
     mEventsReceived = mEventsSentFromCache = mEventsSent = 0;
     mTotalAcksNeeded = mTotalAcksReceived = 0;
@@ -47,20 +54,13 @@ SensorService::SensorEventConnection::SensorEventConnection(
 SensorService::SensorEventConnection::~SensorEventConnection() {
     ALOGD_IF(DEBUG_CONNECTIONS, "~SensorEventConnection(%p)", this);
     destroy();
-}
-
-void SensorService::SensorEventConnection::destroy() {
-    Mutex::Autolock _l(mDestroyLock);
-
-    // destroy once only
-    if (mDestroyed) {
-        return;
-    }
-
     mService->cleanupConnection(this);
     if (mEventCache != nullptr) {
         delete[] mEventCache;
     }
+}
+
+void SensorService::SensorEventConnection::destroy() {
     mDestroyed = true;
 }
 
@@ -161,7 +161,7 @@ bool SensorService::SensorEventConnection::addSensor(int32_t handle) {
     Mutex::Autolock _l(mConnectionLock);
     sp<SensorInterface> si = mService->getSensorInterfaceFromHandle(handle);
     if (si == nullptr ||
-        !canAccessSensor(si->getSensor(), "Tried adding", mOpPackageName) ||
+        !canAccessSensor(si->getSensor(), "Add to SensorEventConnection: ", mOpPackageName) ||
         mSensorInfo.count(handle) > 0) {
         return false;
     }
@@ -445,6 +445,14 @@ bool SensorService::SensorEventConnection::noteOpIfRequired(const sensors_event_
     bool success = true;
     const auto iter = mHandleToAppOp.find(event.sensor);
     if (iter != mHandleToAppOp.end()) {
+        if (mTargetSdk == kTargetSdkUnknown) {
+            // getTargetSdkVersion returns -1 if it fails so this operation should only be run once
+            // per connection and then cached. Perform this here as opposed to in the constructor to
+            // avoid log spam for NDK/VNDK clients that don't use sensors guarded with permissions
+            // and pass in invalid op package names.
+            mTargetSdk = SensorService::getTargetSdkVersion(mOpPackageName);
+        }
+
         // Special handling for step count/detect backwards compatibility: if the app's target SDK
         // is pre-Q, still permit delivering events to the app even if permission isn't granted
         // (since this permission was only introduced in Q)
@@ -452,8 +460,12 @@ bool SensorService::SensorEventConnection::noteOpIfRequired(const sensors_event_
                 mTargetSdk > 0 && mTargetSdk <= __ANDROID_API_P__) {
             success = true;
         } else {
+            int32_t sensorHandle = event.sensor;
+            String16 noteMsg("Sensor event (");
+            noteMsg.append(String16(mService->getSensorStringType(sensorHandle)));
+            noteMsg.append(String16(")"));
             int32_t appOpMode = mService->sAppOpsManager.noteOp(iter->second, mUid,
-                                                                mOpPackageName);
+                                                                mOpPackageName, {}, noteMsg);
             success = (appOpMode == AppOpsManager::MODE_ALLOWED);
         }
     }
@@ -665,6 +677,11 @@ status_t SensorService::SensorEventConnection::enableDisable(
         int handle, bool enabled, nsecs_t samplingPeriodNs, nsecs_t maxBatchReportLatencyNs,
         int reservedFlags)
 {
+    if (mDestroyed) {
+        android_errorWriteLog(0x534e4554, "168211968");
+        return DEAD_OBJECT;
+    }
+
     status_t err;
     if (enabled) {
         err = mService->enable(this, handle, samplingPeriodNs, maxBatchReportLatencyNs,
@@ -679,10 +696,19 @@ status_t SensorService::SensorEventConnection::enableDisable(
 status_t SensorService::SensorEventConnection::setEventRate(
         int handle, nsecs_t samplingPeriodNs)
 {
+    if (mDestroyed) {
+        android_errorWriteLog(0x534e4554, "168211968");
+        return DEAD_OBJECT;
+    }
+
     return mService->setEventRate(this, handle, samplingPeriodNs, mOpPackageName);
 }
 
 status_t  SensorService::SensorEventConnection::flush() {
+    if (mDestroyed) {
+        return DEAD_OBJECT;
+    }
+
     return  mService->flushSensor(this, mOpPackageName);
 }
 

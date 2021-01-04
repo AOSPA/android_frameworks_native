@@ -22,9 +22,7 @@
 
 using android::HWC2::Layer;
 
-namespace android {
-namespace Hwc2 {
-namespace mock {
+namespace android::Hwc2::mock {
 
 namespace hal = android::hardware::graphics::composer::hal;
 
@@ -99,6 +97,4 @@ public:
     MOCK_METHOD1(setDisplayElapseTime, hal::Error(uint64_t));
 };
 
-} // namespace mock
-} // namespace Hwc2
-} // namespace android
+} // namespace android::Hwc2::mock
