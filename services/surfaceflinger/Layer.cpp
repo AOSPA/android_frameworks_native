@@ -145,8 +145,12 @@ Layer::Layer(const LayerCreationArgs& args)
 
     mCallingPid = args.callingPid;
     mCallingUid = args.callingUid;
+#ifdef TARGET_DISPLAY_HAS_NO_MASK_LAYER
+    mDontScreenShot = false;
+#else
     mDontScreenShot = args.metadata.getInt32(METADATA_WINDOW_TYPE_DONT_SCREENSHOT, 0) ?
                       true : false;
+#endif // TARGET_DISPLAY_HAS_NO_MASK_LAYER
 }
 
 void Layer::onFirstRef() {
