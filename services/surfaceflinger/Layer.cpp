@@ -76,6 +76,9 @@
 
 using android::hardware::graphics::common::V1_0::BufferUsage;
 namespace android {
+namespace {
+constexpr int kDumpTableRowLength = 159;
+} // namespace
 
 using base::StringAppendF;
 using namespace android::flag_operators;
@@ -634,7 +637,7 @@ const char* Layer::getDebugName() const {
 // ---------------------------------------------------------------------------
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientComposition(
-        compositionengine::LayerFE::ClientCompositionTargetSettings& /* targetSettings */) {
+        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
     if (!getCompositionState()) {
         return {};
     }
@@ -656,8 +659,12 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
-    layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
-    layerSettings.blurRegions = getBlurRegions();
+    if (!targetSettings.disableBlurs) {
+        layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+        layerSettings.blurRegions = getBlurRegions();
+    }
+    // Record the name of the layer for debugging further down the stack.
+    layerSettings.name = getName();
     return layerSettings;
 }
 
@@ -838,7 +845,8 @@ void Layer::pushPendingState() {
             // to be applied as per normal (no synchronization).
             mCurrentState.barrierLayer_legacy = nullptr;
         } else {
-            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.barrierFrameNumber, this);
+            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.barrierFrameNumber, this,
+                                                         barrierLayer);
             if (barrierLayer->addSyncPoint(syncPoint)) {
                 std::stringstream ss;
                 ss << "Adding sync point " << mCurrentState.barrierFrameNumber;
@@ -863,7 +871,7 @@ void Layer::popPendingState(State* stateToCommit) {
     ATRACE_CALL();
 
     *stateToCommit = mPendingStates[0];
-    mPendingStates.removeAt(0);
+    mPendingStates.pop_front();
     ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
 }
 
@@ -902,6 +910,7 @@ bool Layer::applyPendingStates(State* stateToCommit) {
                 mRemoteSyncPoints.pop_front();
             } else {
                 ATRACE_NAME("!frameIsAvailable");
+                mRemoteSyncPoints.front()->checkTimeoutAndLog();
                 break;
             }
         } else {
@@ -925,17 +934,16 @@ bool Layer::applyPendingStates(State* stateToCommit) {
                 ? std::nullopt
                 : std::make_optional(stateToCommit->frameTimelineVsyncId);
 
-        auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(getOwnerPid(), getOwnerUid(),
-                                                                     mName, mTransactionName,
-                                                                     vsyncId);
-        surfaceFrame->setActualQueueTime(stateToCommit->postTime);
+        mSurfaceFrame =
+                mFlinger->mFrameTimeline->createSurfaceFrameForToken(vsyncId, mOwnerPid, mOwnerUid,
+                                                                     mName, mTransactionName);
+        mSurfaceFrame->setActualQueueTime(stateToCommit->postTime);
         // For transactions we set the acquire fence time to the post time as we
         // don't have a buffer. For BufferStateLayer it is overridden in
         // BufferStateLayer::applyPendingStates
-        surfaceFrame->setAcquireFenceTime(stateToCommit->postTime);
+        mSurfaceFrame->setAcquireFenceTime(stateToCommit->postTime);
 
-        mSurfaceFrame = std::move(surfaceFrame);
+        onSurfaceFrameCreated(mSurfaceFrame);
     }
 
     mCurrentState.modified = false;
@@ -1081,7 +1089,8 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 
 void Layer::commitTransaction(const State& stateToCommit) {
     mDrawingState = stateToCommit;
-    mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mSurfaceFrame), PresentState::Presented);
+    mSurfaceFrame->setPresentState(PresentState::Presented);
+    mFlinger->mFrameTimeline->addSurfaceFrame(mSurfaceFrame);
 }
 
 uint32_t Layer::getTransactionFlags(uint32_t flags) {
@@ -1298,7 +1307,8 @@ bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix,
     t.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
 
     if (!allowNonRectPreservingTransforms && !t.preserveRects()) {
-        ALOGW("Attempt to set rotation matrix without permission ACCESS_SURFACE_FLINGER ignored");
+        ALOGW("Attempt to set rotation matrix without permission ACCESS_SURFACE_FLINGER nor "
+              "ROTATE_SURFACE_FLINGER ignored");
         return false;
     }
     mCurrentState.sequence++;
@@ -1447,7 +1457,8 @@ void Layer::updateTreeHasFrameRateVote() {
     // First traverse the tree and count how many layers has votes
     int layersWithVote = 0;
     traverseTree([&layersWithVote](Layer* layer) {
-        const auto layerVotedWithDefaultCompatibility = layer->mCurrentState.frameRate.rate > 0 &&
+        const auto layerVotedWithDefaultCompatibility =
+                layer->mCurrentState.frameRate.rate.isValid() &&
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::Default;
         const auto layerVotedWithNoVote =
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::NoVote;
@@ -1508,14 +1519,14 @@ void Layer::setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, ns
 
 Layer::FrameRate Layer::getFrameRateForLayerTree() const {
     const auto frameRate = getDrawingState().frameRate;
-    if (frameRate.rate > 0 || frameRate.type == FrameRateCompatibility::NoVote) {
+    if (frameRate.rate.isValid() || frameRate.type == FrameRateCompatibility::NoVote) {
         return frameRate;
     }
 
     // This layer doesn't have a frame rate. If one of its ancestors or successors
     // have a vote, return a NoVote for ancestors/successors to set the vote
     if (getDrawingState().treeHasFrameRateVote) {
-        return {0, FrameRateCompatibility::NoVote};
+        return {Fps(0.0f), FrameRateCompatibility::NoVote};
     }
 
     return frameRate;
@@ -1643,11 +1654,8 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
 }
 
 void Layer::miniDumpHeader(std::string& result) {
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------\n");
+    result.append(kDumpTableRowLength, '-');
+    result.append("\n");
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
@@ -1656,12 +1664,9 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
     result.append("         Source Crop (LTRB) | ");
-    result.append("    Frame Rate (Explicit) [Focused]\n");
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------------------");
-    result.append("-------------------\n");
+    result.append("    Frame Rate (Explicit) (Seamlessness) [Focused]\n");
+    result.append(kDumpTableRowLength, '-');
+    result.append("\n");
 }
 
 std::string Layer::frameRateCompatibilityString(Layer::FrameRateCompatibility compatibility) {
@@ -1711,23 +1716,20 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const FloatRect& crop = outputLayerState.sourceCrop;
     StringAppendF(&result, "%6.1f %6.1f %6.1f %6.1f | ", crop.left, crop.top, crop.right,
                   crop.bottom);
-    if (layerState.frameRate.rate != 0 ||
+    if (layerState.frameRate.rate.isValid() ||
         layerState.frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "% 6.2ffps %15s seamless=%s", layerState.frameRate.rate,
+        StringAppendF(&result, "%s %15s %17s", to_string(layerState.frameRate.rate).c_str(),
                       frameRateCompatibilityString(layerState.frameRate.type).c_str(),
                       toString(layerState.frameRate.seamlessness).c_str());
     } else {
-        StringAppendF(&result, "                         ");
+        result.append(41, ' ');
     }
 
     const auto focused = isLayerFocusedBasedOnPriority(getFrameRateSelectionPriority());
     StringAppendF(&result, "    [%s]\n", focused ? "*" : " ");
 
-    result.append("- - - - - - - - - - - - - - - - ");
-    result.append("- - - - - - - - - - - - - - - - ");
-    result.append("- - - - - - - - - - - - - - - - ");
-    result.append("- - - - - - - - - - - - - - - - ");
-    result.append("- - - - - - - -\n");
+    result.append(kDumpTableRowLength, '-');
+    result.append("\n");
 }
 
 void Layer::dumpFrameStats(std::string& result) const {
@@ -2211,7 +2213,10 @@ half4 Layer::getColor() const {
 }
 
 int32_t Layer::getBackgroundBlurRadius() const {
-    return getDrawingState().backgroundBlurRadius;
+    const auto& p = mDrawingParent.promote();
+
+    half parentAlpha = (p != nullptr) ? p->getAlpha() : 1.0_hf;
+    return parentAlpha * getDrawingState().backgroundBlurRadius;
 }
 
 const std::vector<BlurRegion>& Layer::getBlurRegions() const {
@@ -2460,27 +2465,7 @@ bool Layer::isRemovedFromCurrentState() const  {
     return mRemovedFromCurrentState;
 }
 
-InputWindowInfo Layer::fillInputInfo() {
-    if (!hasInputInfo()) {
-        mDrawingState.inputInfo.name = getName();
-        mDrawingState.inputInfo.ownerUid = mCallingUid;
-        mDrawingState.inputInfo.ownerPid = mCallingPid;
-        mDrawingState.inputInfo.inputFeatures = InputWindowInfo::Feature::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.flags = InputWindowInfo::Flag::NOT_TOUCH_MODAL;
-        mDrawingState.inputInfo.displayId = getLayerStack();
-    }
-
-    InputWindowInfo info = mDrawingState.inputInfo;
-    info.id = sequence;
-
-    if (info.displayId == ADISPLAY_ID_NONE) {
-        info.displayId = getLayerStack();
-    }
-
-    ui::Transform t = getTransform();
-    int32_t xSurfaceInset = info.surfaceInset;
-    int32_t ySurfaceInset = info.surfaceInset;
-
+void Layer::fillInputFrameInfo(InputWindowInfo& info) {
     // Transform layer size to screen space and inset it by surface insets.
     // If this is a portal window, set the touchableRegion to the layerBounds.
     Rect layerBounds = info.portalToDisplayId == ADISPLAY_ID_NONE
@@ -2489,6 +2474,20 @@ InputWindowInfo Layer::fillInputInfo() {
     if (!layerBounds.isValid()) {
         layerBounds = getCroppedBufferSize(getDrawingState());
     }
+
+    if (!layerBounds.isValid()) {
+        // If the layer bounds is empty, set the frame to empty and clear the transform
+        info.frameLeft = 0;
+        info.frameTop = 0;
+        info.frameRight = 0;
+        info.frameBottom = 0;
+        info.transform.reset();
+        return;
+    }
+
+    ui::Transform t = getTransform();
+    int32_t xSurfaceInset = info.surfaceInset;
+    int32_t ySurfaceInset = info.surfaceInset;
 
     const float xScale = t.getScaleX();
     const float yScale = t.getScaleY();
@@ -2556,6 +2555,27 @@ InputWindowInfo Layer::fillInputInfo() {
     // Position the touchable region relative to frame screen location and restrict it to frame
     // bounds.
     info.touchableRegion = inputTransform.transform(info.touchableRegion);
+}
+
+InputWindowInfo Layer::fillInputInfo() {
+    if (!hasInputInfo()) {
+        mDrawingState.inputInfo.name = getName();
+        mDrawingState.inputInfo.ownerUid = mOwnerUid;
+        mDrawingState.inputInfo.ownerPid = mOwnerPid;
+        mDrawingState.inputInfo.inputFeatures = InputWindowInfo::Feature::NO_INPUT_CHANNEL;
+        mDrawingState.inputInfo.flags = InputWindowInfo::Flag::NOT_TOUCH_MODAL;
+        mDrawingState.inputInfo.displayId = getLayerStack();
+    }
+
+    InputWindowInfo info = mDrawingState.inputInfo;
+    info.id = sequence;
+
+    if (info.displayId == ADISPLAY_ID_NONE) {
+        info.displayId = getLayerStack();
+    }
+
+    fillInputFrameInfo(info);
+
     // For compatibility reasons we let layers which can receive input
     // receive input before they have actually submitted a buffer. Because
     // of this we use canReceiveInput instead of isVisible to check the

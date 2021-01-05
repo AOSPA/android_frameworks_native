@@ -55,6 +55,7 @@ public:
                           const sp<GraphicBuffer>&, const bool, base::unique_fd&&,
                           base::unique_fd*));
     MOCK_METHOD0(cleanFramebufferCache, void());
+    MOCK_METHOD0(getContextPriority, int());
 };
 
 } // namespace mock

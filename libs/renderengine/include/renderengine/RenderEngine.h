@@ -31,9 +31,16 @@
 #include <ui/Transform.h>
 
 /**
- * Allows to set RenderEngine backend to GLES (default) or Vulkan (NOT yet supported).
+ * Allows to set RenderEngine backend to GLES (default) or SkiaGL (NOT yet supported).
  */
 #define PROPERTY_DEBUG_RENDERENGINE_BACKEND "debug.renderengine.backend"
+
+/**
+ * Turns on recording of skia commands in SkiaGL version of the RE. This property
+ * defines number of milliseconds for the recording to take place. A non zero value
+ * turns on the recording.
+ */
+#define PROPERTY_DEBUG_RENDERENGINE_CAPTURE_SKIA_MS "debug.renderengine.capture_skia_ms"
 
 struct ANativeWindowBuffer;
 
@@ -68,6 +75,7 @@ public:
         LOW = 1,
         MEDIUM = 2,
         HIGH = 3,
+        REALTIME = 4,
     };
 
     enum class RenderEngineType {
@@ -174,6 +182,10 @@ public:
                                 const sp<GraphicBuffer>& buffer, const bool useFramebufferCache,
                                 base::unique_fd&& bufferFence, base::unique_fd* drawFence) = 0;
     virtual void cleanFramebufferCache() = 0;
+    // Returns the priority this context was actually created with. Note: this may not be
+    // the same as specified at context creation time, due to implementation limits on the
+    // number of contexts that can be created at a specific priority level in the system.
+    virtual int getContextPriority() = 0;
 
 protected:
     friend class threaded::RenderEngineThreaded;

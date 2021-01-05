@@ -36,22 +36,9 @@ struct EventEntry {
         FOCUS,
         KEY,
         MOTION,
+        SENSOR,
+        POINTER_CAPTURE_CHANGED,
     };
-
-    static const char* typeToString(Type type) {
-        switch (type) {
-            case Type::CONFIGURATION_CHANGED:
-                return "CONFIGURATION_CHANGED";
-            case Type::DEVICE_RESET:
-                return "DEVICE_RESET";
-            case Type::FOCUS:
-                return "FOCUS";
-            case Type::KEY:
-                return "KEY";
-            case Type::MOTION:
-                return "MOTION";
-        }
-    }
 
     int32_t id;
     Type type;
@@ -113,6 +100,15 @@ struct FocusEntry : EventEntry {
     std::string getDescription() const override;
 
     virtual ~FocusEntry();
+};
+
+struct PointerCaptureChangedEntry : EventEntry {
+    bool pointerCaptureEnabled;
+
+    PointerCaptureChangedEntry(int32_t id, nsecs_t eventTime, bool hasPointerCapture);
+    std::string getDescription() const override;
+
+    virtual ~PointerCaptureChangedEntry();
 };
 
 struct KeyEntry : EventEntry {
@@ -177,6 +173,25 @@ struct MotionEntry : EventEntry {
     std::string getDescription() const override;
 
     virtual ~MotionEntry();
+};
+
+struct SensorEntry : EventEntry {
+    int32_t deviceId;
+    uint32_t source;
+    InputDeviceSensorType sensorType;
+    InputDeviceSensorAccuracy accuracy;
+    bool accuracyChanged;
+    nsecs_t hwTimestamp;
+
+    std::vector<float> values;
+
+    SensorEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32_t source,
+                uint32_t policyFlags, nsecs_t hwTimestamp, InputDeviceSensorType sensorType,
+                InputDeviceSensorAccuracy accuracy, bool accuracyChanged,
+                std::vector<float> values);
+    std::string getDescription() const override;
+
+    virtual ~SensorEntry();
 };
 
 // Tracks the progress of dispatching a particular event to a particular connection.
@@ -245,6 +260,7 @@ struct CommandEntry {
     sp<Connection> connection;
     nsecs_t eventTime;
     std::shared_ptr<KeyEntry> keyEntry;
+    std::shared_ptr<SensorEntry> sensorEntry;
     std::shared_ptr<InputApplicationHandle> inputApplicationHandle;
     std::string reason;
     int32_t userActivityEventType;
@@ -254,6 +270,7 @@ struct CommandEntry {
     sp<IBinder> oldToken;
     sp<IBinder> newToken;
     std::string obscuringPackage;
+    bool enabled;
 };
 
 } // namespace android::inputdispatcher

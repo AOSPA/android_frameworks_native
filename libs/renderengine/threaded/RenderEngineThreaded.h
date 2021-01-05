@@ -64,6 +64,7 @@ public:
                         base::unique_fd&& bufferFence, base::unique_fd* drawFence) override;
 
     void cleanFramebufferCache() override;
+    int getContextPriority() override;
 
 private:
     void threadMain(CreateInstanceFactory factory);

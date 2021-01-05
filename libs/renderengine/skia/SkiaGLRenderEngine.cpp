@@ -15,19 +15,19 @@
  */
 
 //#define LOG_NDEBUG 0
+#undef LOG_TAG
+#define LOG_TAG "RenderEngine"
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
+
 #include <cstdint>
 #include <memory>
 
 #include "SkImageInfo.h"
 #include "log/log_main.h"
 #include "system/graphics-base-v1.0.h"
-#undef LOG_TAG
-#define LOG_TAG "RenderEngine"
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
-#include <GLES2/gl2.h>
 #include <sync/sync.h>
 #include <ui/BlurRegion.h>
 #include <ui/GraphicBuffer.h>
@@ -35,6 +35,8 @@
 #include "../gl/GLExtensions.h"
 #include "SkiaGLRenderEngine.h"
 #include "filters/BlurFilter.h"
+#include "filters/LinearEffect.h"
+#include "skia/debug/SkiaCapture.h"
 
 #include <GrContextOptions.h>
 #include <SkCanvas.h>
@@ -46,16 +48,8 @@
 #include <SkShadowUtils.h>
 #include <SkSurface.h>
 #include <gl/GrGLInterface.h>
-#include <sync/sync.h>
-#include <ui/GraphicBuffer.h>
-#include <utils/Trace.h>
 
 #include <cmath>
-
-#include "../gl/GLExtensions.h"
-#include "SkiaGLRenderEngine.h"
-#include "filters/BlurFilter.h"
-#include "filters/LinearEffect.h"
 
 bool checkGlError(const char* op, int lineNumber);
 
@@ -175,17 +169,16 @@ std::unique_ptr<SkiaGLRenderEngine> SkiaGLRenderEngine::create(
         config = chooseEglConfig(display, args.pixelFormat, /*logConfig*/ true);
     }
 
-    bool useContextPriority =
-            extensions.hasContextPriority() && args.contextPriority == ContextPriority::HIGH;
     EGLContext protectedContext = EGL_NO_CONTEXT;
+    const std::optional<RenderEngine::ContextPriority> priority = createContextPriority(args);
     if (args.enableProtectedContext && extensions.hasProtectedContent()) {
-        protectedContext = createEglContext(display, config, nullptr, useContextPriority,
-                                            Protection::PROTECTED);
+        protectedContext =
+                createEglContext(display, config, nullptr, priority, Protection::PROTECTED);
         ALOGE_IF(protectedContext == EGL_NO_CONTEXT, "Can't create protected context");
     }
 
-    EGLContext ctxt = createEglContext(display, config, protectedContext, useContextPriority,
-                                       Protection::UNPROTECTED);
+    EGLContext ctxt =
+            createEglContext(display, config, protectedContext, priority, Protection::UNPROTECTED);
 
     // if can't create a GL context, we can only abort.
     LOG_ALWAYS_FATAL_IF(ctxt == EGL_NO_CONTEXT, "EGLContext creation failed");
@@ -482,18 +475,30 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                                                                         : ui::Dataspace::SRGB,
                                                                 mGrContext.get());
 
-    auto canvas = surface->getCanvas();
+    SkCanvas* canvas = mCapture.tryCapture(surface.get());
+    if (canvas == nullptr) {
+        ALOGE("Cannot acquire canvas from Skia.");
+        return BAD_VALUE;
+    }
     // Clear the entire canvas with a transparent black to prevent ghost images.
     canvas->clear(SK_ColorTRANSPARENT);
     canvas->save();
+
+    if (mCapture.isCaptureRunning()) {
+        // Record display settings when capture is running.
+        std::stringstream displaySettings;
+        PrintTo(display, &displaySettings);
+        // Store the DisplaySettings in additional information.
+        canvas->drawAnnotation(SkRect::MakeEmpty(), "DisplaySettings",
+                               SkData::MakeWithCString(displaySettings.str().c_str()));
+    }
 
     // Before doing any drawing, let's make sure that we'll start at the origin of the display.
     // Some displays don't start at 0,0 for example when we're mirroring the screen. Also, virtual
     // displays might have different scaling when compared to the physical screen.
 
     canvas->clipRect(getSkRect(display.physicalDisplay));
-    SkMatrix screenTransform;
-    screenTransform.setTranslate(display.physicalDisplay.left, display.physicalDisplay.top);
+    canvas->translate(display.physicalDisplay.left, display.physicalDisplay.top);
 
     const auto clipWidth = display.clip.width();
     const auto clipHeight = display.clip.height();
@@ -507,31 +512,42 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             static_cast<SkScalar>(rotatedClipWidth);
     const auto scaleY = static_cast<SkScalar>(display.physicalDisplay.height()) /
             static_cast<SkScalar>(rotatedClipHeight);
-    screenTransform.preScale(scaleX, scaleY);
+    canvas->scale(scaleX, scaleY);
 
     // Canvas rotation is done by centering the clip window at the origin, rotating, translating
     // back so that the top left corner of the clip is at (0, 0).
-    screenTransform.preTranslate(rotatedClipWidth / 2, rotatedClipHeight / 2);
-    screenTransform.preRotate(toDegrees(display.orientation));
-    screenTransform.preTranslate(-clipWidth / 2, -clipHeight / 2);
-    screenTransform.preTranslate(-display.clip.left, -display.clip.top);
+    canvas->translate(rotatedClipWidth / 2, rotatedClipHeight / 2);
+    canvas->rotate(toDegrees(display.orientation));
+    canvas->translate(-clipWidth / 2, -clipHeight / 2);
+    canvas->translate(-display.clip.left, -display.clip.top);
     for (const auto& layer : layers) {
-        const SkMatrix drawTransform = getDrawTransform(layer, screenTransform);
+        canvas->save();
+
+        if (mCapture.isCaptureRunning()) {
+            // Record the name of the layer if the capture is running.
+            std::stringstream layerSettings;
+            PrintTo(*layer, &layerSettings);
+            // Store the LayerSettings in additional information.
+            canvas->drawAnnotation(SkRect::MakeEmpty(), layer->name.c_str(),
+                                   SkData::MakeWithCString(layerSettings.str().c_str()));
+        }
+
+        // Layers have a local transform that should be applied to them
+        canvas->concat(getSkM44(layer->geometry.positionTransform).asM33());
 
         SkPaint paint;
         const auto& bounds = layer->geometry.boundaries;
         const auto dest = getSkRect(bounds);
+        const auto layerRect = canvas->getTotalMatrix().mapRect(dest);
         std::unordered_map<uint32_t, sk_sp<SkSurface>> cachedBlurs;
-
         if (mBlurFilter) {
-            const auto layerRect = drawTransform.mapRect(dest);
             if (layer->backgroundBlurRadius > 0) {
                 ATRACE_NAME("BackgroundBlur");
                 auto blurredSurface = mBlurFilter->generate(canvas, surface,
                                                             layer->backgroundBlurRadius, layerRect);
                 cachedBlurs[layer->backgroundBlurRadius] = blurredSurface;
 
-                drawBlurRegion(canvas, getBlurRegion(layer), drawTransform, blurredSurface);
+                drawBlurRegion(canvas, getBlurRegion(layer), layerRect, blurredSurface);
             }
             if (layer->blurRegions.size() > 0) {
                 for (auto region : layer->blurRegions) {
@@ -549,8 +565,6 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         if (layer->source.buffer.buffer) {
             ATRACE_NAME("DrawImage");
             const auto& item = layer->source.buffer;
-            const auto bufferWidth = item.buffer->getBounds().width();
-            const auto bufferHeight = item.buffer->getBounds().height();
             std::shared_ptr<AutoBackendTexture::LocalRef> imageTextureRef = nullptr;
             auto iter = mTextureCache.find(item.buffer->getId());
             if (iter != mTextureCache.end()) {
@@ -582,50 +596,23 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                                                                  ? kPremul_SkAlphaType
                                                                  : kUnpremul_SkAlphaType),
                                         mGrContext.get());
-            SkMatrix matrix;
-            if (layer->geometry.roundedCornersRadius > 0) {
-                const auto roundedRect = getRoundedRect(layer);
-                matrix.setTranslate(roundedRect.getBounds().left() - dest.left(),
-                                    roundedRect.getBounds().top() - dest.top());
-            } else {
-                matrix.setIdentity();
-            }
 
             auto texMatrix = getSkM44(item.textureTransform).asM33();
-
-            // b/171404534, scale to fix the layer
-            matrix.postScale(bounds.getWidth() / bufferWidth, bounds.getHeight() / bufferHeight);
-
             // textureTansform was intended to be passed directly into a shader, so when
             // building the total matrix with the textureTransform we need to first
             // normalize it, then apply the textureTransform, then scale back up.
-            matrix.postScale(1.0f / bufferWidth, 1.0f / bufferHeight);
+            texMatrix.preScale(1.0f / bounds.getWidth(), 1.0f / bounds.getHeight());
+            texMatrix.postScale(image->width(), image->height());
 
-            auto rotatedBufferWidth = bufferWidth;
-            auto rotatedBufferHeight = bufferHeight;
-
-            // Swap the buffer width and height if we're rotating, so that we
-            // scale back up by the correct factors post-rotation.
-            if (texMatrix.getSkewX() <= -0.5f || texMatrix.getSkewX() >= 0.5f) {
-                std::swap(rotatedBufferWidth, rotatedBufferHeight);
-                // TODO: clean this up.
-                // GLESRenderEngine specifies its texture coordinates in
-                // CW orientation under OpenGL conventions, when they probably should have
-                // been CCW instead. The net result is that orientation
-                // transforms are applied in the reverse
-                // direction to render the correct result, because SurfaceFlinger uses the inverse
-                // of the display transform to correct for that. But this means that
-                // the tex transform passed by SkiaGLRenderEngine will rotate
-                // individual layers in the reverse orientation. Hack around it
-                // by injected a 180 degree rotation, but ultimately this is
-                // a bug in how SurfaceFlinger invokes the RenderEngine
-                // interface, so the proper fix should live there, and GLESRenderEngine
-                // should be fixed accordingly.
-                matrix.postRotate(180, 0.5, 0.5);
+            SkMatrix matrix;
+            if (!texMatrix.invert(&matrix)) {
+                matrix = texMatrix;
             }
+            // The shader does not respect the translation, so we add it to the texture
+            // transform for the SkImage. This will make sure that the correct layer contents
+            // are drawn in the correct part of the screen.
+            matrix.postTranslate(layer->geometry.boundaries.left, layer->geometry.boundaries.top);
 
-            matrix.postConcat(texMatrix);
-            matrix.postScale(rotatedBufferWidth, rotatedBufferHeight);
             sk_sp<SkShader> shader;
 
             if (layer->source.buffer.useTextureFiltering) {
@@ -634,7 +621,7 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                                                    {SkFilterMode::kLinear, SkMipmapMode::kNone}),
                                            &matrix);
             } else {
-                shader = image->makeShader(matrix);
+                shader = image->makeShader(SkSamplingOptions(), matrix);
             }
 
             if (mUseColorManagement &&
@@ -677,12 +664,9 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         paint.setColorFilter(SkColorFilters::Matrix(toSkColorMatrix(display.colorTransform)));
 
         for (const auto effectRegion : layer->blurRegions) {
-            drawBlurRegion(canvas, effectRegion, drawTransform,
-                           cachedBlurs[effectRegion.blurRadius]);
+            drawBlurRegion(canvas, effectRegion, layerRect, cachedBlurs[effectRegion.blurRadius]);
         }
 
-        canvas->save();
-        canvas->concat(drawTransform);
         if (layer->shadow.length > 0) {
             const auto rect = layer->geometry.roundedCornersRadius > 0
                     ? getSkRect(layer->geometry.roundedCornersCrop)
@@ -690,19 +674,19 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             drawShadow(canvas, rect, layer->geometry.roundedCornersRadius, layer->shadow);
         }
 
+        // Push the clipRRect onto the clip stack. Draw the image. Pop the clip.
         if (layer->geometry.roundedCornersRadius > 0) {
-            canvas->drawRRect(getRoundedRect(layer), paint);
-        } else {
-            canvas->drawRect(dest, paint);
+            canvas->clipRRect(getRoundedRect(layer), true);
         }
-
+        canvas->drawRect(dest, paint);
         canvas->restore();
     }
+    canvas->restore();
+    mCapture.endCapture();
     {
         ATRACE_NAME("flush surface");
         surface->flush();
     }
-    canvas->restore();
 
     if (drawFence != nullptr) {
         *drawFence = flush();
@@ -738,7 +722,7 @@ inline SkRect SkiaGLRenderEngine::getSkRect(const Rect& rect) {
 }
 
 inline SkRRect SkiaGLRenderEngine::getRoundedRect(const LayerSettings* layer) {
-    const auto rect = getSkRect(layer->geometry.boundaries);
+    const auto rect = getSkRect(layer->geometry.roundedCornersCrop);
     const auto cornerRadius = layer->geometry.roundedCornersRadius;
     return SkRRect::MakeRectXY(rect, cornerRadius, cornerRadius);
 }
@@ -767,13 +751,6 @@ inline SkM44 SkiaGLRenderEngine::getSkM44(const mat4& matrix) {
                  matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1],
                  matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2],
                  matrix[0][3], matrix[1][3], matrix[2][3], matrix[3][3]);
-}
-
-inline SkMatrix SkiaGLRenderEngine::getDrawTransform(const LayerSettings* layer,
-                                                     const SkMatrix& screenTransform) {
-    // Layers have a local transform matrix that should be applied to them.
-    const auto layerTransform = getSkM44(layer->geometry.positionTransform).asM33();
-    return SkMatrix::Concat(screenTransform, layerTransform);
 }
 
 inline SkPoint3 SkiaGLRenderEngine::getSkPoint3(const vec3& vector) {
@@ -805,18 +782,20 @@ void SkiaGLRenderEngine::drawShadow(SkCanvas* canvas, const SkRect& casterRect, 
 }
 
 void SkiaGLRenderEngine::drawBlurRegion(SkCanvas* canvas, const BlurRegion& effectRegion,
-                                        const SkMatrix& drawTransform,
-                                        sk_sp<SkSurface> blurredSurface) {
+                                        const SkRect& layerRect, sk_sp<SkSurface> blurredSurface) {
     ATRACE_CALL();
 
     SkPaint paint;
     paint.setAlpha(static_cast<int>(effectRegion.alpha * 255));
-    const auto matrix = mBlurFilter->getShaderMatrix();
-    paint.setShader(blurredSurface->makeImageSnapshot()->makeShader(matrix));
+    const auto matrix = getBlurShaderTransform(canvas, layerRect);
+    paint.setShader(blurredSurface->makeImageSnapshot()->makeShader(
+            SkTileMode::kClamp,
+            SkTileMode::kClamp,
+            SkSamplingOptions({SkFilterMode::kLinear, SkMipmapMode::kNone}),
+            &matrix));
 
     auto rect = SkRect::MakeLTRB(effectRegion.left, effectRegion.top, effectRegion.right,
                                  effectRegion.bottom);
-    drawTransform.mapRect(&rect);
 
     if (effectRegion.cornerRadiusTL > 0 || effectRegion.cornerRadiusTR > 0 ||
         effectRegion.cornerRadiusBL > 0 || effectRegion.cornerRadiusBR > 0) {
@@ -833,8 +812,27 @@ void SkiaGLRenderEngine::drawBlurRegion(SkCanvas* canvas, const BlurRegion& effe
     }
 }
 
+SkMatrix SkiaGLRenderEngine::getBlurShaderTransform(const SkCanvas* canvas,
+                                                    const SkRect& layerRect) {
+    // 1. Apply the blur shader matrix, which scales up the blured surface to its real size
+    auto matrix = mBlurFilter->getShaderMatrix();
+    // 2. Since the blurred surface has the size of the layer, we align it with the
+    // top left corner of the layer position.
+    matrix.postConcat(SkMatrix::Translate(layerRect.fLeft, layerRect.fTop));
+    // 3. Finally, apply the inverse canvas matrix. The snapshot made in the BlurFilter is in the
+    // original surface orientation. The inverse matrix has to be applied to align the blur
+    // surface with the current orientation/position of the canvas.
+    SkMatrix drawInverse;
+    if (canvas->getTotalMatrix().invert(&drawInverse)) {
+        matrix.postConcat(drawInverse);
+    }
+
+    return matrix;
+}
+
 EGLContext SkiaGLRenderEngine::createEglContext(EGLDisplay display, EGLConfig config,
-                                                EGLContext shareContext, bool useContextPriority,
+                                                EGLContext shareContext,
+                                                std::optional<ContextPriority> contextPriority,
                                                 Protection protection) {
     EGLint renderableType = 0;
     if (config == EGL_NO_CONFIG_KHR) {
@@ -857,9 +855,23 @@ EGLContext SkiaGLRenderEngine::createEglContext(EGLDisplay display, EGLConfig co
     contextAttributes.reserve(7);
     contextAttributes.push_back(EGL_CONTEXT_CLIENT_VERSION);
     contextAttributes.push_back(contextClientVersion);
-    if (useContextPriority) {
+    if (contextPriority) {
         contextAttributes.push_back(EGL_CONTEXT_PRIORITY_LEVEL_IMG);
-        contextAttributes.push_back(EGL_CONTEXT_PRIORITY_HIGH_IMG);
+        switch (*contextPriority) {
+            case ContextPriority::REALTIME:
+                contextAttributes.push_back(EGL_CONTEXT_PRIORITY_REALTIME_NV);
+                break;
+            case ContextPriority::MEDIUM:
+                contextAttributes.push_back(EGL_CONTEXT_PRIORITY_MEDIUM_IMG);
+                break;
+            case ContextPriority::LOW:
+                contextAttributes.push_back(EGL_CONTEXT_PRIORITY_LOW_IMG);
+                break;
+            case ContextPriority::HIGH:
+            default:
+                contextAttributes.push_back(EGL_CONTEXT_PRIORITY_HIGH_IMG);
+                break;
+        }
     }
     if (protection == Protection::PROTECTED) {
         contextAttributes.push_back(EGL_PROTECTED_CONTENT_EXT);
@@ -882,6 +894,29 @@ EGLContext SkiaGLRenderEngine::createEglContext(EGLDisplay display, EGLConfig co
     }
 
     return context;
+}
+
+std::optional<RenderEngine::ContextPriority> SkiaGLRenderEngine::createContextPriority(
+        const RenderEngineCreationArgs& args) {
+    if (!gl::GLExtensions::getInstance().hasContextPriority()) {
+        return std::nullopt;
+    }
+
+    switch (args.contextPriority) {
+        case RenderEngine::ContextPriority::REALTIME:
+            if (gl::GLExtensions::getInstance().hasRealtimePriority()) {
+                return RenderEngine::ContextPriority::REALTIME;
+            } else {
+                ALOGI("Realtime priority unsupported, degrading gracefully to high priority");
+                return RenderEngine::ContextPriority::HIGH;
+            }
+        case RenderEngine::ContextPriority::HIGH:
+        case RenderEngine::ContextPriority::MEDIUM:
+        case RenderEngine::ContextPriority::LOW:
+            return args.contextPriority;
+        default:
+            return std::nullopt;
+    }
 }
 
 EGLSurface SkiaGLRenderEngine::createPlaceholderEglPbufferSurface(EGLDisplay display,
@@ -907,6 +942,12 @@ EGLSurface SkiaGLRenderEngine::createPlaceholderEglPbufferSurface(EGLDisplay dis
 }
 
 void SkiaGLRenderEngine::cleanFramebufferCache() {}
+
+int SkiaGLRenderEngine::getContextPriority() {
+    int value;
+    eglQueryContext(mEGLDisplay, mEGLContext, EGL_CONTEXT_PRIORITY_LEVEL_IMG, &value);
+    return value;
+}
 
 } // namespace skia
 } // namespace renderengine

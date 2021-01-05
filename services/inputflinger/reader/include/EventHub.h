@@ -118,6 +118,9 @@ enum class InputDeviceClass : uint32_t {
     /* The input device has a rotary encoder */
     ROTARY_ENCODER = 0x00001000,
 
+    /* The input device has a sensor like accelerometer, gyro, etc */
+    SENSOR = 0x00002000,
+
     /* The input device is virtual (not a real device, not part of UI configuration). */
     VIRTUAL = 0x40000000,
 
@@ -177,6 +180,8 @@ public:
 
     virtual bool hasInputProperty(int32_t deviceId, int property) const = 0;
 
+    virtual bool hasMscEvent(int32_t deviceId, int mscEvent) const = 0;
+
     virtual status_t mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode,
                             int32_t metaState, int32_t* outKeycode, int32_t* outMetaState,
                             uint32_t* outFlags) const = 0;
@@ -201,6 +206,8 @@ public:
      */
     virtual size_t getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSize) = 0;
     virtual std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) = 0;
+    virtual base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(int32_t deviceId,
+                                                                              int32_t absCode) = 0;
 
     /*
      * Query current input state.
@@ -233,6 +240,7 @@ public:
     /* Control the vibrator. */
     virtual void vibrate(int32_t deviceId, const VibrationElement& effect) = 0;
     virtual void cancelVibrate(int32_t deviceId) = 0;
+    virtual std::vector<int32_t> getVibratorIds(int32_t deviceId) = 0;
 
     /* Requests the EventHub to reopen all input devices on the next call to getEvents(). */
     virtual void requestReopenDevices() = 0;
@@ -345,12 +353,17 @@ public:
 
     bool hasInputProperty(int32_t deviceId, int property) const override final;
 
+    bool hasMscEvent(int32_t deviceId, int mscEvent) const override final;
+
     status_t mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode, int32_t metaState,
                     int32_t* outKeycode, int32_t* outMetaState,
                     uint32_t* outFlags) const override final;
 
     status_t mapAxis(int32_t deviceId, int32_t scanCode,
                      AxisInfo* outAxisInfo) const override final;
+
+    base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(
+            int32_t deviceId, int32_t absCode) override final;
 
     void setExcludedDevices(const std::vector<std::string>& devices) override final;
 
@@ -381,6 +394,7 @@ public:
 
     void vibrate(int32_t deviceId, const VibrationElement& effect) override final;
     void cancelVibrate(int32_t deviceId) override final;
+    std::vector<int32_t> getVibratorIds(int32_t deviceId) override final;
 
     void requestReopenDevices() override final;
 
@@ -418,6 +432,7 @@ private:
         BitArray<LED_MAX> ledBitmask;
         BitArray<FF_MAX> ffBitmask;
         BitArray<INPUT_PROP_MAX> propBitmask;
+        BitArray<MSC_MAX> mscBitmask;
 
         std::string configurationFile;
         std::unique_ptr<PropertyMap> configuration;

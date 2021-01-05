@@ -68,6 +68,11 @@ public:
     /* Notifies the system that an input channel is unrecoverably broken. */
     virtual void notifyInputChannelBroken(const sp<IBinder>& token) = 0;
     virtual void notifyFocusChanged(const sp<IBinder>& oldToken, const sp<IBinder>& newToken) = 0;
+    virtual void notifySensorEvent(int32_t deviceId, InputDeviceSensorType sensorType,
+                                   InputDeviceSensorAccuracy accuracy, nsecs_t timestamp,
+                                   const std::vector<float>& values) = 0;
+    virtual void notifySensorAccuracy(int32_t deviceId, InputDeviceSensorType sensorType,
+                                      InputDeviceSensorAccuracy accuracy) = 0;
 
     /* Notifies the system that an untrusted touch occurred. */
     virtual void notifyUntrustedTouch(const std::string& obscuringPackage) = 0;
@@ -134,6 +139,12 @@ public:
      * The touchedToken passed as an argument is the window that received the input event.
      */
     virtual void onPointerDownOutsideFocus(const sp<IBinder>& touchedToken) = 0;
+
+    /* Change the Pointer Capture state in InputReader.
+     *
+     * InputDispatcher is solely responsible for updating the Pointer Capture state.
+     */
+    virtual void setPointerCapture(bool enabled) = 0;
 };
 
 } // namespace android

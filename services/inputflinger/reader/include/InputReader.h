@@ -77,11 +77,23 @@ public:
 
     void requestRefreshConfiguration(uint32_t changes) override;
 
-    void vibrate(int32_t deviceId, const std::vector<VibrationElement>& pattern, ssize_t repeat,
+    void vibrate(int32_t deviceId, const VibrationSequence& sequence, ssize_t repeat,
                  int32_t token) override;
     void cancelVibrate(int32_t deviceId, int32_t token) override;
 
+    bool isVibrating(int32_t deviceId) override;
+
+    std::vector<int32_t> getVibratorIds(int32_t deviceId) override;
+
     bool canDispatchToDisplay(int32_t deviceId, int32_t displayId) override;
+
+    bool enableSensor(int32_t deviceId, InputDeviceSensorType sensorType,
+                      std::chrono::microseconds samplingPeriod,
+                      std::chrono::microseconds maxBatchReportLatency) override;
+
+    void disableSensor(int32_t deviceId, InputDeviceSensorType sensorType) override;
+
+    void flushSensor(int32_t deviceId, InputDeviceSensorType sensorType) override;
 
 protected:
     // These members are protected so they can be instrumented by test cases.
