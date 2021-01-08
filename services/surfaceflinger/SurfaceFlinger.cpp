@@ -950,10 +950,11 @@ void SurfaceFlinger::init() {
             });
 
         std::vector<float> refreshRates;
+
         auto iter = mRefreshRateConfigs->getAllRefreshRates().cbegin();
         while (iter != mRefreshRateConfigs->getAllRefreshRates().cend()) {
-            if (iter->second->getFps() > 0) {
-                refreshRates.push_back(iter->second->getFps());
+            if (iter->second->getFps().getValue() > 0) {
+                refreshRates.push_back(iter->second->getFps().getValue());
             }
             ++iter;
         }
@@ -1261,7 +1262,7 @@ void SurfaceFlinger::setDesiredActiveConfig(const ActiveConfigInfo& info) {
         mRefreshRateOverlay->changeRefreshRate(refreshRate);
     }
 
-    setContentFps(static_cast<uint32_t>(refreshRate.getFps()));
+    setContentFps(static_cast<uint32_t>(refreshRate.getFps().getValue()));
 }
 
 status_t SurfaceFlinger::setActiveConfig(const sp<IBinder>& displayToken, int mode) {
@@ -1881,7 +1882,8 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
 
     auto iter = mRefreshRateConfigs->getAllRefreshRates().cbegin();
     while (iter != mRefreshRateConfigs->getAllRefreshRates().cend()) {
-        if (iter->second->inPolicy(refreshRate, refreshRate)) {
+      //  SBL NEED TO GET FPS DATATYPE VALUE
+        if (iter->second->inPolicy(static_cast<android::Fps>(refreshRate), static_cast<android::Fps>(refreshRate))) {
             break;
         }
         ++iter;
@@ -2076,6 +2078,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     // Add some slop to correct for drift. This should generally be
     // smaller than a typical frame duration, but should not be so small
     // that it reports reasonable drift as a missed frame.
+    // SBL MISSING STATS
     const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(systemTime());
     const nsecs_t frameMissedSlop = stats.vsyncPeriod / 2;
     const nsecs_t previousPresentTime = previousFramePresentTime();
@@ -2145,7 +2148,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         });
         mMaxQueuedFrames = maxQueuedFrames;
         DisplayStatInfo stats;
-        mScheduler->getDisplayStatInfo(&stats, systemTime());
+        mScheduler->getDisplayStatInfo(systemTime());
         if(mDolphinMonitor(maxQueuedFrames, stats.vsyncPeriod)) {
             signalLayerUpdate();
             if (mFrameExtn) {
@@ -2636,7 +2639,7 @@ void SurfaceFlinger::postComposition() {
                 }
             });
 
-            fps = mRefreshRateConfigs->getCurrentRefreshRate().getFps();
+            fps = mRefreshRateConfigs->getCurrentRefreshRate().getFps().getValue();
         }
 
         mSmoMo->UpdateSmomoState(layers, fps);
