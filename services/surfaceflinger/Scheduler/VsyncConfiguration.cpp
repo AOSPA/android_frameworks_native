@@ -16,13 +16,18 @@
 
 #include "VsyncConfiguration.h"
 
-#include <cutils/properties.h>
-
+#include <chrono>
+#include <cinttypes>
 #include <optional>
+
+#include <cutils/properties.h>
+#include <log/log.h>
 
 #include "SurfaceFlingerProperties.h"
 
 namespace {
+
+using namespace std::chrono_literals;
 
 std::optional<nsecs_t> getProperty(const char* name) {
     char value[PROPERTY_VALUE_MAX];
@@ -31,50 +36,26 @@ std::optional<nsecs_t> getProperty(const char* name) {
     return std::nullopt;
 }
 
-bool fpsEqualsWithMargin(float fpsA, float fpsB) {
-    static constexpr float MARGIN = 0.01f;
-    return std::abs(fpsA - fpsB) <= MARGIN;
-}
-
-std::vector<float> getRefreshRatesFromConfigs(
-        const android::scheduler::RefreshRateConfigs& refreshRateConfigs) {
-    const auto& allRefreshRates = refreshRateConfigs.getAllRefreshRates();
-    std::vector<float> refreshRates;
-    refreshRates.reserve(allRefreshRates.size());
-
-    for (const auto& [ignored, refreshRate] : allRefreshRates) {
-        refreshRates.emplace_back(refreshRate->getFps());
-    }
-
-    return refreshRates;
-}
-
 } // namespace
 
 namespace android::scheduler::impl {
 
-VsyncConfiguration::VsyncConfiguration(float currentFps) : mRefreshRateFps(currentFps) {}
+VsyncConfiguration::VsyncConfiguration(Fps currentFps) : mRefreshRateFps(currentFps) {}
 
-PhaseOffsets::VsyncConfigSet VsyncConfiguration::getConfigsForRefreshRate(float fps) const {
-    const auto iter = std::find_if(mOffsets.begin(), mOffsets.end(),
-                                   [&fps](const std::pair<float, VsyncConfigSet>& candidateFps) {
-                                       return fpsEqualsWithMargin(fps, candidateFps.first);
-                                   });
+PhaseOffsets::VsyncConfigSet VsyncConfiguration::getConfigsForRefreshRate(Fps fps) const {
+    std::lock_guard lock(mLock);
+    return getConfigsForRefreshRateLocked(fps);
+}
 
-    if (iter != mOffsets.end()) {
+PhaseOffsets::VsyncConfigSet VsyncConfiguration::getConfigsForRefreshRateLocked(Fps fps) const {
+    const auto iter = mOffsetsCache.find(fps);
+    if (iter != mOffsetsCache.end()) {
         return iter->second;
     }
 
-    // Unknown refresh rate. This might happen if we get a hotplug event for an external display.
-    // In this case just construct the offset.
-    ALOGW("Can't find offset for %.2f fps", fps);
-    return constructOffsets(static_cast<nsecs_t>(1e9f / fps));
-}
-
-void VsyncConfiguration::initializeOffsets(const std::vector<float>& refreshRates) {
-    for (const auto fps : refreshRates) {
-        mOffsets.emplace(fps, constructOffsets(static_cast<nsecs_t>(1e9f / fps)));
-    }
+    const auto offset = constructOffsets(fps.getPeriodNsecs());
+    mOffsetsCache[fps] = offset;
+    return offset;
 }
 
 void VsyncConfiguration::dump(std::string& result) const {
@@ -103,10 +84,8 @@ void VsyncConfiguration::dump(std::string& result) const {
                   earlyGpu.appWorkDuration.count(), earlyGpu.sfWorkDuration.count());
 }
 
-PhaseOffsets::PhaseOffsets(const scheduler::RefreshRateConfigs& refreshRateConfigs)
-      : PhaseOffsets(getRefreshRatesFromConfigs(refreshRateConfigs),
-                     refreshRateConfigs.getCurrentRefreshRate().getFps(),
-                     sysprop::vsync_event_phase_offset_ns(1000000),
+PhaseOffsets::PhaseOffsets(Fps currentRefreshRate)
+      : PhaseOffsets(currentRefreshRate, sysprop::vsync_event_phase_offset_ns(1000000),
                      sysprop::vsync_sf_event_phase_offset_ns(1000000),
                      getProperty("debug.sf.early_phase_offset_ns"),
                      getProperty("debug.sf.early_gl_phase_offset_ns"),
@@ -126,15 +105,17 @@ PhaseOffsets::PhaseOffsets(const scheduler::RefreshRateConfigs& refreshRateConfi
                      getProperty("debug.sf.phase_offset_threshold_for_next_vsync_ns")
                              .value_or(std::numeric_limits<nsecs_t>::max())) {}
 
-PhaseOffsets::PhaseOffsets(
-        const std::vector<float>& refreshRates, float currentFps, nsecs_t vsyncPhaseOffsetNs,
-        nsecs_t sfVSyncPhaseOffsetNs, std::optional<nsecs_t> earlySfOffsetNs,
-        std::optional<nsecs_t> earlyGpuSfOffsetNs, std::optional<nsecs_t> earlyAppOffsetNs,
-        std::optional<nsecs_t> earlyGpuAppOffsetNs, nsecs_t highFpsVsyncPhaseOffsetNs,
-        nsecs_t highFpsSfVSyncPhaseOffsetNs, std::optional<nsecs_t> highFpsEarlySfOffsetNs,
-        std::optional<nsecs_t> highFpsEarlyGpuSfOffsetNs,
-        std::optional<nsecs_t> highFpsEarlyAppOffsetNs,
-        std::optional<nsecs_t> highFpsEarlyGpuAppOffsetNs, nsecs_t thresholdForNextVsync)
+PhaseOffsets::PhaseOffsets(Fps currentFps, nsecs_t vsyncPhaseOffsetNs, nsecs_t sfVSyncPhaseOffsetNs,
+                           std::optional<nsecs_t> earlySfOffsetNs,
+                           std::optional<nsecs_t> earlyGpuSfOffsetNs,
+                           std::optional<nsecs_t> earlyAppOffsetNs,
+                           std::optional<nsecs_t> earlyGpuAppOffsetNs,
+                           nsecs_t highFpsVsyncPhaseOffsetNs, nsecs_t highFpsSfVSyncPhaseOffsetNs,
+                           std::optional<nsecs_t> highFpsEarlySfOffsetNs,
+                           std::optional<nsecs_t> highFpsEarlyGpuSfOffsetNs,
+                           std::optional<nsecs_t> highFpsEarlyAppOffsetNs,
+                           std::optional<nsecs_t> highFpsEarlyGpuAppOffsetNs,
+                           nsecs_t thresholdForNextVsync)
       : VsyncConfiguration(currentFps),
         mVSyncPhaseOffsetNs(vsyncPhaseOffsetNs),
         mSfVSyncPhaseOffsetNs(sfVSyncPhaseOffsetNs),
@@ -148,9 +129,7 @@ PhaseOffsets::PhaseOffsets(
         mHighFpsEarlyGpuSfOffsetNs(highFpsEarlyGpuSfOffsetNs),
         mHighFpsEarlyAppOffsetNs(highFpsEarlyAppOffsetNs),
         mHighFpsEarlyGpuAppOffsetNs(highFpsEarlyGpuAppOffsetNs),
-        mThresholdForNextVsync(thresholdForNextVsync) {
-    initializeOffsets(refreshRates);
-}
+        mThresholdForNextVsync(thresholdForNextVsync) {}
 
 PhaseOffsets::VsyncConfigSet PhaseOffsets::constructOffsets(nsecs_t vsyncDuration) const {
     if (vsyncDuration < std::chrono::nanoseconds(15ms).count()) {
@@ -366,10 +345,8 @@ WorkDuration::VsyncConfigSet WorkDuration::constructOffsets(nsecs_t vsyncDuratio
     };
 }
 
-WorkDuration::WorkDuration(const scheduler::RefreshRateConfigs& refreshRateConfigs)
-      : WorkDuration(getRefreshRatesFromConfigs(refreshRateConfigs),
-                     refreshRateConfigs.getCurrentRefreshRate().getFps(),
-                     getProperty("debug.sf.late.sf.duration").value_or(-1),
+WorkDuration::WorkDuration(Fps currentRefreshRate)
+      : WorkDuration(currentRefreshRate, getProperty("debug.sf.late.sf.duration").value_or(-1),
                      getProperty("debug.sf.late.app.duration").value_or(-1),
                      getProperty("debug.sf.early.sf.duration").value_or(mSfDuration),
                      getProperty("debug.sf.early.app.duration").value_or(mAppDuration),
@@ -378,18 +355,15 @@ WorkDuration::WorkDuration(const scheduler::RefreshRateConfigs& refreshRateConfi
     validateSysprops();
 }
 
-WorkDuration::WorkDuration(const std::vector<float>& refreshRates, float currentFps,
-                           nsecs_t sfDuration, nsecs_t appDuration, nsecs_t sfEarlyDuration,
-                           nsecs_t appEarlyDuration, nsecs_t sfEarlyGpuDuration,
-                           nsecs_t appEarlyGpuDuration)
-      : VsyncConfiguration(currentFps),
+WorkDuration::WorkDuration(Fps currentRefreshRate, nsecs_t sfDuration, nsecs_t appDuration,
+                           nsecs_t sfEarlyDuration, nsecs_t appEarlyDuration,
+                           nsecs_t sfEarlyGpuDuration, nsecs_t appEarlyGpuDuration)
+      : VsyncConfiguration(currentRefreshRate),
         mSfDuration(sfDuration),
         mAppDuration(appDuration),
         mSfEarlyDuration(sfEarlyDuration),
         mAppEarlyDuration(appEarlyDuration),
         mSfEarlyGpuDuration(sfEarlyGpuDuration),
-        mAppEarlyGpuDuration(appEarlyGpuDuration) {
-    initializeOffsets(refreshRates);
-}
+        mAppEarlyGpuDuration(appEarlyGpuDuration) {}
 
 } // namespace android::scheduler::impl

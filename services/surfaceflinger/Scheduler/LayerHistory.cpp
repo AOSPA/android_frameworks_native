@@ -41,7 +41,7 @@ namespace {
 
 bool isLayerActive(const Layer& layer, const LayerInfo& info, nsecs_t threshold) {
     // Layers with an explicit vote are always kept active
-    if (layer.getFrameRateForLayerTree().rate > 0) {
+    if (layer.getFrameRateForLayerTree().rate.isValid()) {
         return true;
     }
 
@@ -86,10 +86,8 @@ LayerHistory::LayerHistory(const RefreshRateConfigs& refreshRateConfigs)
 
 LayerHistory::~LayerHistory() = default;
 
-void LayerHistory::registerLayer(Layer* layer, float /*lowRefreshRate*/, float highRefreshRate,
-                                 LayerVoteType type) {
-    const nsecs_t highRefreshRatePeriod = static_cast<nsecs_t>(1e9f / highRefreshRate);
-    auto info = std::make_unique<LayerInfo>(layer->getName(), highRefreshRatePeriod, type);
+void LayerHistory::registerLayer(Layer* layer, LayerVoteType type) {
+    auto info = std::make_unique<LayerInfo>(layer->getName(), type);
     std::lock_guard lock(mLock);
     mLayerInfos.emplace_back(layer, std::move(info));
 }
@@ -144,11 +142,11 @@ LayerHistory::Summary LayerHistory::summarize(nsecs_t now) {
 
         const float layerArea = transformed.getWidth() * transformed.getHeight();
         float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
-        summary.push_back(
-                {strong->getName(), vote.type, vote.fps, vote.seamlessness, weight, layerFocused});
+        summary.push_back({strong->getName(), strong->getOwnerUid(), vote.type, vote.fps,
+                           vote.seamlessness, weight, layerFocused});
 
         if (CC_UNLIKELY(mTraceEnabled)) {
-            trace(layer, *info, vote.type, static_cast<int>(std::round(vote.fps)));
+            trace(layer, *info, vote.type, vote.fps.getIntValue());
         }
     }
 
@@ -177,7 +175,7 @@ void LayerHistory::partitionLayers(nsecs_t now) {
                 }
             }();
 
-            if (frameRate.rate > 0 || voteType == LayerVoteType::NoVote) {
+            if (frameRate.rate.isValid() || voteType == LayerVoteType::NoVote) {
                 const auto type = layer->isVisible() ? voteType : LayerVoteType::NoVote;
                 info->setLayerVote({type, frameRate.rate, frameRate.seamlessness});
             } else {

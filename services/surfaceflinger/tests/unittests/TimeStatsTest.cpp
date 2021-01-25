@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 #undef LOG_TAG
 #define LOG_TAG "LibSurfaceFlingerUnittests"
@@ -356,9 +357,9 @@ TEST_F(TimeStatsTest, canIncreaseJankyFrames) {
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
 
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
-    mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerDeadlineMissed);
+    mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerCpuDeadlineMissed);
     mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerGpuDeadlineMissed);
-    mTimeStats->incrementJankyFrames(JankType::Display);
+    mTimeStats->incrementJankyFrames(JankType::DisplayHAL);
     mTimeStats->incrementJankyFrames(JankType::AppDeadlineMissed);
     mTimeStats->incrementJankyFrames(JankType::None);
 
@@ -383,10 +384,10 @@ TEST_F(TimeStatsTest, canIncreaseJankyFramesForLayer) {
 
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
-                                     JankType::SurfaceFlingerDeadlineMissed);
+                                     JankType::SurfaceFlingerCpuDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::SurfaceFlingerGpuDeadlineMissed);
-    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::Display);
+    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::DisplayHAL);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::AppDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::None);
@@ -848,10 +849,10 @@ TEST_F(TimeStatsTest, canClearDumpOnlyTimeStats) {
             std::chrono::duration_cast<std::chrono::nanoseconds>(1ms).count()));
 
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
-                                     JankType::SurfaceFlingerDeadlineMissed);
+                                     JankType::SurfaceFlingerCpuDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::SurfaceFlingerGpuDeadlineMissed);
-    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::Display);
+    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::DisplayHAL);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::AppDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::None);
@@ -987,9 +988,9 @@ TEST_F(TimeStatsTest, globalStatsCallback) {
     mTimeStats->setPresentFenceGlobal(std::make_shared<FenceTime>(3000000));
     mTimeStats->setPresentFenceGlobal(std::make_shared<FenceTime>(5000000));
 
-    mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerDeadlineMissed);
+    mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerCpuDeadlineMissed);
     mTimeStats->incrementJankyFrames(JankType::SurfaceFlingerGpuDeadlineMissed);
-    mTimeStats->incrementJankyFrames(JankType::Display);
+    mTimeStats->incrementJankyFrames(JankType::DisplayHAL);
     mTimeStats->incrementJankyFrames(JankType::AppDeadlineMissed);
     mTimeStats->incrementJankyFrames(JankType::None);
 
@@ -1062,10 +1063,10 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsAllAndClears) {
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
 
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
-                                     JankType::SurfaceFlingerDeadlineMissed);
+                                     JankType::SurfaceFlingerCpuDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::SurfaceFlingerGpuDeadlineMissed);
-    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::Display);
+    mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::DisplayHAL);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0),
                                      JankType::AppDeadlineMissed);
     mTimeStats->incrementJankyFrames(UID_0, genLayerName(LAYER_ID_0), JankType::None);
@@ -1320,4 +1321,4 @@ TEST_F(TimeStatsTest, canSurviveMonkey) {
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

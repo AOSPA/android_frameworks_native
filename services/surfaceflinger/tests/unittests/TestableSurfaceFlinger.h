@@ -78,7 +78,7 @@ public:
     }
 
     std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
-            const scheduler::RefreshRateConfigs& /*refreshRateConfigs*/) override {
+            Fps /*currentRefreshRate*/) override {
         return std::make_unique<scheduler::FakePhaseOffsets>();
     }
 
@@ -156,8 +156,8 @@ public:
     }
 
     std::unique_ptr<frametimeline::FrameTimeline> createFrameTimeline(
-            std::shared_ptr<TimeStats> timeStats) override {
-        return std::make_unique<mock::FrameTimeline>(timeStats);
+            std::shared_ptr<TimeStats> timeStats, pid_t surfaceFlingerPid = 0) override {
+        return std::make_unique<mock::FrameTimeline>(timeStats, surfaceFlingerPid);
     }
 
     using CreateBufferQueueFunction =
@@ -223,14 +223,15 @@ public:
                                          .build());
         }
 
-        mFlinger->mRefreshRateConfigs = std::make_unique<
-                scheduler::RefreshRateConfigs>(configs, /*currentConfig=*/HwcConfigIndexType(0));
-        mFlinger->mRefreshRateStats = std::make_unique<
-                scheduler::RefreshRateStats>(*mFlinger->mRefreshRateConfigs, *mFlinger->mTimeStats,
-                                             /*currentConfig=*/HwcConfigIndexType(0),
-                                             /*powerMode=*/hal::PowerMode::OFF);
-        mFlinger->mVsyncConfiguration =
-                mFactory.createVsyncConfiguration(*mFlinger->mRefreshRateConfigs);
+        const auto currConfig = HwcConfigIndexType(0);
+        mFlinger->mRefreshRateConfigs =
+                std::make_unique<scheduler::RefreshRateConfigs>(configs, currConfig);
+        const auto currFps =
+                mFlinger->mRefreshRateConfigs->getRefreshRateFromConfigId(currConfig).getFps();
+        mFlinger->mRefreshRateStats =
+                std::make_unique<scheduler::RefreshRateStats>(*mFlinger->mTimeStats, currFps,
+                                                              /*powerMode=*/hal::PowerMode::OFF);
+        mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(currFps);
         mFlinger->mVsyncModulator.emplace(mFlinger->mVsyncConfiguration->getCurrentConfigs());
 
         mScheduler = new TestableScheduler(std::move(vsyncController), std::move(vsyncTracker),
@@ -370,14 +371,14 @@ public:
                              const Vector<DisplayState>& displays, uint32_t flags,
                              const sp<IBinder>& applyToken,
                              const InputWindowCommands& inputWindowCommands,
-                             int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
-                             bool hasListenerCallbacks,
+                             int64_t desiredPresentTime, bool isAutoTimestamp,
+                             const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
                              std::vector<ListenerCallbacks>& listenerCallbacks,
                              uint64_t transactionId) {
         return mFlinger->setTransactionState(frameTimelineVsyncId, states, displays, flags,
                                              applyToken, inputWindowCommands, desiredPresentTime,
-                                             uncacheBuffer, hasListenerCallbacks, listenerCallbacks,
-                                             transactionId);
+                                             isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,
+                                             listenerCallbacks, transactionId);
     }
 
     auto flushTransactionQueues() { return mFlinger->flushTransactionQueues(); };
@@ -385,6 +386,8 @@ public:
     auto onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) {
         return mFlinger->onTransact(code, data, reply, flags);
     }
+
+    auto getGPUContextPriority() { return mFlinger->getGPUContextPriority(); }
 
     /* ------------------------------------------------------------------------
      * Read-only access to private data to assert post-conditions.
@@ -558,8 +561,15 @@ public:
                 const auto physicalId = PhysicalDisplayId::tryCast(mDisplayId);
                 LOG_ALWAYS_FATAL_IF(!physicalId);
                 flinger->mutableHwcPhysicalDisplayIdMap().emplace(mHwcDisplayId, *physicalId);
-                (mIsPrimary ? flinger->mutableInternalHwcDisplayId()
-                            : flinger->mutableExternalHwcDisplayId()) = mHwcDisplayId;
+                if (mIsPrimary) {
+                    flinger->mutableInternalHwcDisplayId() = mHwcDisplayId;
+                } else {
+                    // If there is an external HWC display there should always be an internal ID
+                    // as well. Set it to some arbitrary value.
+                    auto& internalId = flinger->mutableInternalHwcDisplayId();
+                    if (!internalId) internalId = mHwcDisplayId - 1;
+                    flinger->mutableExternalHwcDisplayId() = mHwcDisplayId;
+                }
             }
         }
 
@@ -688,6 +698,7 @@ private:
     void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ConfigEvent) override {}
     void repaintEverythingForHWC() override {}
     void kernelTimerChanged(bool) override {}
+    void triggerOnFrameRateOverridesChanged() {}
 
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);

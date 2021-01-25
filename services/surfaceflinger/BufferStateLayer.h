@@ -70,8 +70,8 @@ public:
     bool setCrop(const Rect& crop) override;
     bool setFrame(const Rect& frame) override;
     bool setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence, nsecs_t postTime,
-                   nsecs_t desiredPresentTime, const client_cache_t& clientCacheId,
-                   uint64_t frameNumber) override;
+                   nsecs_t desiredPresentTime, bool isAutoTimestamp,
+                   const client_cache_t& clientCacheId, uint64_t frameNumber) override;
     bool setAcquireFence(const sp<Fence>& fence) override;
     bool setDataspace(ui::Dataspace dataspace) override;
     bool setHdrMetadata(const HdrMetadata& hdrMetadata) override;
@@ -112,15 +112,24 @@ public:
     bool onPreComposition(nsecs_t refreshStartTime) override;
     uint32_t getEffectiveScalingMode() const override;
 
+    // See mPendingBufferTransactions
+    void incrementPendingBufferCount() override;
+    void decrementPendingBufferCount();
+    uint32_t doTransaction(uint32_t flags) override;
+
 protected:
     void gatherBufferInfo() override;
     uint64_t getHeadFrameNumber(nsecs_t expectedPresentTime) const;
+    void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame);
 
 private:
     friend class SlotGenerationTest;
+    inline void tracePendingBufferCount();
 
     bool updateFrameEventHistory(const sp<Fence>& acquireFence, nsecs_t postedTime,
                                  nsecs_t requestedPresentTime);
+
+    status_t addReleaseFence(const sp<CallbackHandle>& ch, const sp<Fence>& releaseFence);
 
     uint64_t getFrameNumber(nsecs_t expectedPresentTime) const override;
 
@@ -143,6 +152,8 @@ private:
 
     bool bufferNeedsFiltering() const override;
 
+    nsecs_t nextPredictedPresentTime() const override;
+
     static const std::array<float, 16> IDENTITY_MATRIX;
 
     std::unique_ptr<renderengine::Image> mTextureImage;
@@ -157,6 +168,20 @@ private:
     mutable bool mCurrentStateModified = false;
     bool mReleasePreviousBuffer = false;
     nsecs_t mCallbackHandleAcquireTime = -1;
+
+    std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;
+
+    const std::string mBlastTransactionName{"BufferTX - " + mName};
+    // This integer is incremented everytime a buffer arrives at the server for this layer,
+    // and decremented when a buffer is dropped or latched. When changed the integer is exported
+    // to systrace with ATRACE_INT and mBlastTransactionName. This way when debugging perf it is
+    // possible to see when a buffer arrived at the server, and in which frame it latched.
+    //
+    // You can understand the trace this way:
+    //     - If the integer increases, a buffer arrived at the server.
+    //     - If the integer decreases in latchBuffer, that buffer was latched
+    //     - If the integer decreases in setBuffer or doTransaction, a buffer was dropped
+    uint64_t mPendingBufferTransactions{0};
 
     // TODO(marissaw): support sticky transform for LEGACY camera mode
 

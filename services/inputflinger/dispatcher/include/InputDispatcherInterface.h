@@ -25,6 +25,7 @@
 #include <android/os/InputEventInjectionResult.h>
 #include <android/os/InputEventInjectionSync.h>
 #include <input/InputApplication.h>
+#include <input/InputDevice.h>
 #include <input/InputTransport.h>
 #include <input/InputWindow.h>
 #include <unordered_map>
@@ -172,8 +173,10 @@ public:
      *
      * This method may be called on any thread (usually by the input manager).
      */
-    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(
-            int32_t displayId, bool gestureMonitor, const std::string& name) = 0;
+    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(int32_t displayId,
+                                                                           bool gestureMonitor,
+                                                                           const std::string& name,
+                                                                           int32_t pid) = 0;
 
     /* Removes input channels that will no longer receive input events.
      *
@@ -186,6 +189,18 @@ public:
      * This method may be called on any thread (usually by the input manager).
      */
     virtual status_t pilferPointers(const sp<IBinder>& token) = 0;
+
+    /**
+     * Enables Pointer Capture on the specified window if the window has focus.
+     *
+     * InputDispatcher is the source of truth of Pointer Capture.
+     */
+    virtual void requestPointerCapture(const sp<IBinder>& windowToken, bool enabled) = 0;
+    /* Flush input device motion sensor.
+     *
+     * Returns true on success.
+     */
+    virtual bool flushSensor(int deviceId, InputDeviceSensorType sensorType) = 0;
 };
 
 } // namespace android

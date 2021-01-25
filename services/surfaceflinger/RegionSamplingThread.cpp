@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 //#define LOG_NDEBUG 0
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -28,6 +29,7 @@
 #include <compositionengine/Display.h>
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <cutils/properties.h>
+#include <ftl/future.h>
 #include <gui/IRegionSamplingListener.h>
 #include <gui/SyncScreenCaptureListener.h>
 #include <ui/DisplayStatInfo.h>
@@ -38,7 +40,6 @@
 #include "DisplayDevice.h"
 #include "DisplayRenderArea.h"
 #include "Layer.h"
-#include "Promise.h"
 #include "Scheduler/VsyncController.h"
 #include "SurfaceFlinger.h"
 
@@ -250,8 +251,7 @@ void RegionSamplingThread::doSample() {
         // If there is relatively little time left for surfaceflinger
         // until the next vsync deadline, defer this sampling work
         // to a later frame, when hopefully there will be more time.
-        DisplayStatInfo stats;
-        mScheduler.getDisplayStatInfo(&stats, systemTime());
+        const DisplayStatInfo stats = mScheduler.getDisplayStatInfo(systemTime());
         if (std::chrono::nanoseconds(stats.vsyncTime) - now < timeForRegionSampling) {
             ATRACE_INT(lumaSamplingStepTag, static_cast<int>(samplingStep::waitForQuietFrame));
             mDiscardedFrames++;
@@ -389,7 +389,7 @@ void RegionSamplingThread::captureSample() {
 
     const Rect sampledBounds = sampleRegion.bounds();
 
-    SurfaceFlinger::RenderAreaFuture renderAreaFuture = promise::defer([=] {
+    SurfaceFlinger::RenderAreaFuture renderAreaFuture = ftl::defer([=] {
         return DisplayRenderArea::create(displayWeak, screencapRegion.bounds(),
                                          sampledBounds.getSize(), ui::Dataspace::V0_SRGB,
                                          orientation);
@@ -501,4 +501,4 @@ void RegionSamplingThread::threadMain() NO_THREAD_SAFETY_ANALYSIS {
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

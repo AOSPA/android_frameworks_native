@@ -166,7 +166,7 @@ public:
             int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
             const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
             const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
-            const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
+            bool isAutoTimestamp, const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
             const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) = 0;
 
     /* signal that we're done booting.
@@ -504,6 +504,11 @@ public:
      */
     virtual status_t addTransactionTraceListener(
             const sp<gui::ITransactionTraceListener>& listener) = 0;
+
+    /**
+     * Gets priority of the RenderEngine in SurfaceFlinger.
+     */
+    virtual int getGPUContextPriority() = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -565,6 +570,7 @@ public:
         ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN,
         SET_FRAME_TIMELINE_VSYNC,
         ADD_TRANSACTION_TRACE_LISTENER,
+        GET_GPU_CONTEXT_PRIORITY,
         // Always append new enum to the end.
     };
 

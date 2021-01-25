@@ -32,6 +32,7 @@
 #include "TouchedWindow.h"
 
 #include <attestation/HmacKeyManager.h>
+#include <com/android/internal/compat/IPlatformCompatNative.h>
 #include <input/Input.h>
 #include <input/InputApplication.h>
 #include <input/InputTransport.h>
@@ -93,6 +94,7 @@ public:
     virtual void notifyKey(const NotifyKeyArgs* args) override;
     virtual void notifyMotion(const NotifyMotionArgs* args) override;
     virtual void notifySwitch(const NotifySwitchArgs* args) override;
+    virtual void notifySensor(const NotifySensorArgs* args) override;
     virtual void notifyDeviceReset(const NotifyDeviceResetArgs* args) override;
     virtual void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) override;
 
@@ -122,10 +124,14 @@ public:
     virtual base::Result<std::unique_ptr<InputChannel>> createInputChannel(
             const std::string& name) override;
     virtual void setFocusedWindow(const FocusRequest&) override;
-    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(
-            int32_t displayId, bool isGestureMonitor, const std::string& name) override;
+    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(int32_t displayId,
+                                                                           bool isGestureMonitor,
+                                                                           const std::string& name,
+                                                                           int32_t pid) override;
     virtual status_t removeInputChannel(const sp<IBinder>& connectionToken) override;
     virtual status_t pilferPointers(const sp<IBinder>& token) override;
+    virtual void requestPointerCapture(const sp<IBinder>& windowToken, bool enabled) override;
+    virtual bool flushSensor(int deviceId, InputDeviceSensorType sensorType) override;
 
     std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
 
@@ -137,6 +143,7 @@ private:
         DISABLED,
         BLOCKED,
         STALE,
+        NO_POINTER_CAPTURE,
     };
 
     enum class FocusResult {
@@ -350,6 +357,21 @@ private:
     // Top focused display.
     int32_t mFocusedDisplayId GUARDED_BY(mLock);
 
+    // Whether the focused window on the focused display has requested Pointer Capture.
+    // The state of this variable should always be in sync with the state of Pointer Capture in the
+    // policy, which is updated through setPointerCaptureLocked(enabled).
+    bool mFocusedWindowRequestedPointerCapture GUARDED_BY(mLock);
+
+    // The window token that has Pointer Capture.
+    // This should be in sync with PointerCaptureChangedEvents dispatched to the input channel.
+    sp<IBinder> mWindowTokenWithPointerCapture GUARDED_BY(mLock);
+
+    // Disable Pointer Capture as a result of loss of window focus.
+    void disablePointerCaptureForcedLocked() REQUIRES(mLock);
+
+    // Set the Pointer Capture state in the Policy.
+    void setPointerCaptureLocked(bool enabled) REQUIRES(mLock);
+
     // Dispatcher state at time of last ANR.
     std::string mLastAnrState GUARDED_BY(mLock);
 
@@ -369,9 +391,13 @@ private:
                               DropReason* dropReason, nsecs_t* nextWakeupTime) REQUIRES(mLock);
     void dispatchFocusLocked(nsecs_t currentTime, std::shared_ptr<FocusEntry> entry)
             REQUIRES(mLock);
+    void dispatchPointerCaptureChangedLocked(
+            nsecs_t currentTime, const std::shared_ptr<PointerCaptureChangedEntry>& entry,
+            DropReason& dropReason) REQUIRES(mLock);
     void dispatchEventLocked(nsecs_t currentTime, std::shared_ptr<EventEntry> entry,
                              const std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
-
+    void dispatchSensorLocked(nsecs_t currentTime, std::shared_ptr<SensorEntry> entry,
+                              DropReason* dropReason, nsecs_t* nextWakeupTime) REQUIRES(mLock);
     void logOutboundKeyDetails(const char* prefix, const KeyEntry& entry);
     void logOutboundMotionDetails(const char* prefix, const MotionEntry& entry);
 
@@ -532,6 +558,7 @@ private:
     void logDispatchStateLocked() REQUIRES(mLock);
     std::string dumpFocusedWindowsLocked() REQUIRES(mLock);
     std::string dumpPendingFocusRequestsLocked() REQUIRES(mLock);
+    std::string dumpPointerCaptureStateLocked() REQUIRES(mLock);
 
     // Registration.
     void removeMonitorChannelLocked(const sp<IBinder>& connectionToken) REQUIRES(mLock);
@@ -570,10 +597,12 @@ private:
             REQUIRES(mLock);
     void doNotifyConnectionResponsiveLockedInterruptible(CommandEntry* commandEntry)
             REQUIRES(mLock);
+    void doNotifySensorLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doNotifyUntrustedTouchLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doInterceptKeyBeforeDispatchingLockedInterruptible(CommandEntry* commandEntry)
             REQUIRES(mLock);
     void doDispatchCycleFinishedLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
+    void doSetPointerCaptureLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     bool afterKeyEventLockedInterruptible(const sp<Connection>& connection,
                                           DispatchEntry* dispatchEntry, KeyEntry& keyEntry,
                                           bool handled) REQUIRES(mLock);
@@ -581,7 +610,6 @@ private:
                                              DispatchEntry* dispatchEntry, MotionEntry& motionEntry,
                                              bool handled) REQUIRES(mLock);
     void doPokeUserActivityLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
-    KeyEvent createKeyEvent(const KeyEntry& entry);
     void doOnPointerDownOutsideFocusLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
 
     // Statistics gathering.
@@ -596,6 +624,7 @@ private:
     void traceWaitQueueLength(const sp<Connection>& connection);
 
     sp<InputReporterInterface> mReporter;
+    sp<com::android::internal::compat::IPlatformCompatNative> mCompatService;
 };
 
 } // namespace android::inputdispatcher

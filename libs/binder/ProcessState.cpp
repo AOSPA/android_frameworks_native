@@ -124,13 +124,13 @@ sp<IBinder> ProcessState::getContextObject(const sp<IBinder>& /*caller*/)
 {
     sp<IBinder> context = getStrongProxyForHandle(0);
 
-    if (context == nullptr) {
-       ALOGW("Not able to get context object on %s.", mDriverName.c_str());
+    if (context) {
+        // The root object is special since we get it directly from the driver, it is never
+        // written by Parcell::writeStrongBinder.
+        internal::Stability::markCompilationUnit(context.get());
+    } else {
+        ALOGW("Not able to get context object on %s.", mDriverName.c_str());
     }
-
-    // The root object is special since we get it directly from the driver, it is never
-    // written by Parcell::writeStrongBinder.
-    internal::Stability::markCompilationUnit(context.get());
 
     return context;
 }
@@ -204,11 +204,11 @@ ssize_t ProcessState::getKernelReferences(size_t buf_count, uintptr_t* buf)
 // that the handle points to. Can only be used by the servicemanager.
 //
 // Returns -1 in case of failure, otherwise the strong reference count.
-ssize_t ProcessState::getStrongRefCountForNodeByHandle(int32_t handle) {
+ssize_t ProcessState::getStrongRefCountForNode(const sp<BpBinder>& binder) {
     binder_node_info_for_ref info;
     memset(&info, 0, sizeof(binder_node_info_for_ref));
 
-    info.handle = handle;
+    info.handle = binder->getPrivateAccessorForHandle().handle();
 
     status_t result = ioctl(mDriverFD, BINDER_GET_NODE_INFO_FOR_REF, &info);
 

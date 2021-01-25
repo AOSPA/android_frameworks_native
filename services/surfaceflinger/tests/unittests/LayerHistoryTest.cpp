@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wextra"
+
 #undef LOG_TAG
 #define LOG_TAG "LayerHistoryTest"
 
@@ -32,7 +36,9 @@
 using testing::_;
 using testing::Return;
 
-namespace android::scheduler {
+namespace android {
+
+namespace scheduler {
 
 class LayerHistoryTest : public testing::Test {
 protected:
@@ -43,11 +49,11 @@ protected:
     static constexpr auto REFRESH_RATE_AVERAGE_HISTORY_DURATION =
             LayerInfo::RefreshRateHistory::HISTORY_DURATION;
 
-    static constexpr float LO_FPS = 30.f;
-    static constexpr auto LO_FPS_PERIOD = static_cast<nsecs_t>(1e9f / LO_FPS);
+    static constexpr Fps LO_FPS{30.f};
+    static constexpr auto LO_FPS_PERIOD = LO_FPS.getPeriodNsecs();
 
-    static constexpr float HI_FPS = 90.f;
-    static constexpr auto HI_FPS_PERIOD = static_cast<nsecs_t>(1e9f / HI_FPS);
+    static constexpr Fps HI_FPS{90.f};
+    static constexpr auto HI_FPS_PERIOD = HI_FPS.getPeriodNsecs();
 
     LayerHistoryTest() { mFlinger.resetScheduler(mScheduler); }
 
@@ -88,20 +94,19 @@ protected:
         return sp<mock::MockLayer>(new mock::MockLayer(mFlinger.flinger(), std::move(name)));
     }
 
-    void recordFramesAndExpect(const sp<mock::MockLayer>& layer, nsecs_t& time, float frameRate,
-                               float desiredRefreshRate, int numFrames) {
-        const nsecs_t framePeriod = static_cast<nsecs_t>(1e9f / frameRate);
+    void recordFramesAndExpect(const sp<mock::MockLayer>& layer, nsecs_t& time, Fps frameRate,
+                               Fps desiredRefreshRate, int numFrames) {
         LayerHistory::Summary summary;
         for (int i = 0; i < numFrames; i++) {
             history().record(layer.get(), time, time, LayerHistory::LayerUpdateType::Buffer);
-            time += framePeriod;
+            time += frameRate.getPeriodNsecs();
 
             summary = history().summarize(time);
         }
 
         ASSERT_EQ(1, summary.size());
         ASSERT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-        ASSERT_FLOAT_EQ(desiredRefreshRate, summary[0].desiredRefreshRate)
+        ASSERT_TRUE(desiredRefreshRate.equalsWithMargin(summary[0].desiredRefreshRate))
                 << "Frame rate is " << frameRate;
     }
 
@@ -196,7 +201,7 @@ TEST_F(LayerHistoryTest, explicitTimestamp) {
 
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 }
@@ -289,7 +294,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVote) {
     EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
     EXPECT_CALL(*layer, getFrameRateForLayerTree())
             .WillRepeatedly(
-                    Return(Layer::FrameRate(73.4f, Layer::FrameRateCompatibility::Default)));
+                    Return(Layer::FrameRate(Fps(73.4f), Layer::FrameRateCompatibility::Default)));
 
     EXPECT_EQ(1, layerCount());
     EXPECT_EQ(0, activeLayerCount());
@@ -302,7 +307,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVote) {
 
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitDefault, history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(73.4f, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(Fps(73.4f).equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
@@ -311,7 +316,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVote) {
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitDefault, history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(73.4f, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(Fps(73.4f).equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(0, frequentLayerCount(time));
 }
@@ -321,7 +326,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitExactVote) {
     EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
     EXPECT_CALL(*layer, getFrameRateForLayerTree())
             .WillRepeatedly(Return(
-                    Layer::FrameRate(73.4f, Layer::FrameRateCompatibility::ExactOrMultiple)));
+                    Layer::FrameRate(Fps(73.4f), Layer::FrameRateCompatibility::ExactOrMultiple)));
 
     EXPECT_EQ(1, layerCount());
     EXPECT_EQ(0, activeLayerCount());
@@ -335,7 +340,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitExactVote) {
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitExactOrMultiple,
               history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(73.4f, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(Fps(73.4f).equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
@@ -345,7 +350,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitExactVote) {
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitExactOrMultiple,
               history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(73.4f, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(Fps(73.4f).equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(0, frequentLayerCount(time));
 }
@@ -397,7 +402,8 @@ TEST_F(LayerHistoryTest, multipleLayers) {
     ASSERT_EQ(2, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Min, summary[0].vote);
     ASSERT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[1].vote);
-    EXPECT_FLOAT_EQ(HI_FPS, history().summarize(time)[1].desiredRefreshRate);
+    EXPECT_TRUE(HI_FPS.equalsWithMargin(history().summarize(time)[1].desiredRefreshRate));
+
     EXPECT_EQ(2, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
@@ -411,7 +417,7 @@ TEST_F(LayerHistoryTest, multipleLayers) {
 
     ASSERT_EQ(1, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
@@ -430,7 +436,7 @@ TEST_F(LayerHistoryTest, multipleLayers) {
 
     ASSERT_EQ(2, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(LayerHistory::LayerVoteType::Max, summary[1].vote);
     EXPECT_EQ(2, activeLayerCount());
     EXPECT_EQ(2, frequentLayerCount(time));
@@ -440,9 +446,9 @@ TEST_F(LayerHistoryTest, multipleLayers) {
     summary = history().summarize(time);
     ASSERT_EQ(2, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[1].vote);
-    EXPECT_FLOAT_EQ(HI_FPS, summary[1].desiredRefreshRate);
+    EXPECT_TRUE(HI_FPS.equalsWithMargin(summary[1].desiredRefreshRate));
     EXPECT_EQ(2, activeLayerCount());
     EXPECT_EQ(2, frequentLayerCount(time));
 
@@ -452,9 +458,9 @@ TEST_F(LayerHistoryTest, multipleLayers) {
     ASSERT_EQ(2, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[1].vote);
-    EXPECT_FLOAT_EQ(HI_FPS, summary[1].desiredRefreshRate);
+    EXPECT_TRUE(HI_FPS.equalsWithMargin(summary[1].desiredRefreshRate));
     EXPECT_EQ(2, layerCount());
     EXPECT_EQ(2, activeLayerCount());
     EXPECT_EQ(2, frequentLayerCount(time));
@@ -469,7 +475,7 @@ TEST_F(LayerHistoryTest, multipleLayers) {
 
     ASSERT_EQ(1, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(LO_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(LO_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
@@ -490,7 +496,7 @@ TEST_F(LayerHistoryTest, multipleLayers) {
 
     ASSERT_EQ(1, summary.size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Heuristic, summary[0].vote);
-    EXPECT_FLOAT_EQ(HI_FPS, summary[0].desiredRefreshRate);
+    EXPECT_TRUE(HI_FPS.equalsWithMargin(summary[0].desiredRefreshRate));
     EXPECT_EQ(1, layerCount());
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
@@ -567,12 +573,12 @@ TEST_F(LayerHistoryTest, invisibleExplicitLayer) {
     EXPECT_CALL(*explicitVisiblelayer, isVisible()).WillRepeatedly(Return(true));
     EXPECT_CALL(*explicitVisiblelayer, getFrameRateForLayerTree())
             .WillRepeatedly(Return(
-                    Layer::FrameRate(60.0f, Layer::FrameRateCompatibility::ExactOrMultiple)));
+                    Layer::FrameRate(Fps(60.0f), Layer::FrameRateCompatibility::ExactOrMultiple)));
 
     EXPECT_CALL(*explicitInvisiblelayer, isVisible()).WillRepeatedly(Return(false));
     EXPECT_CALL(*explicitInvisiblelayer, getFrameRateForLayerTree())
             .WillRepeatedly(Return(
-                    Layer::FrameRate(90.0f, Layer::FrameRateCompatibility::ExactOrMultiple)));
+                    Layer::FrameRate(Fps(90.0f), Layer::FrameRateCompatibility::ExactOrMultiple)));
 
     nsecs_t time = systemTime();
 
@@ -585,7 +591,7 @@ TEST_F(LayerHistoryTest, invisibleExplicitLayer) {
     ASSERT_EQ(1, history().summarize(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitExactOrMultiple,
               history().summarize(time)[0].vote);
-    EXPECT_FLOAT_EQ(60.0f, history().summarize(time)[0].desiredRefreshRate);
+    EXPECT_TRUE(Fps(60.0f).equalsWithMargin(history().summarize(time)[0].desiredRefreshRate));
     EXPECT_EQ(2, activeLayerCount());
     EXPECT_EQ(2, frequentLayerCount(time));
 }
@@ -643,7 +649,7 @@ TEST_F(LayerHistoryTest, heuristicLayer60Hz) {
 
     nsecs_t time = systemTime();
     for (float fps = 54.0f; fps < 65.0f; fps += 0.1f) {
-        recordFramesAndExpect(layer, time, fps, 60.0f, PRESENT_TIME_HISTORY_SIZE);
+        recordFramesAndExpect(layer, time, Fps(fps), Fps(60.0f), PRESENT_TIME_HISTORY_SIZE);
     }
 }
 
@@ -653,13 +659,13 @@ TEST_F(LayerHistoryTest, heuristicLayer60_30Hz) {
     EXPECT_CALL(*layer, getFrameRateForLayerTree()).WillRepeatedly(Return(Layer::FrameRate()));
 
     nsecs_t time = systemTime();
-    recordFramesAndExpect(layer, time, 60.0f, 60.0f, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(60.0f), Fps(60.0f), PRESENT_TIME_HISTORY_SIZE);
 
-    recordFramesAndExpect(layer, time, 60.0f, 60.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 30.0f, 60.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 30.0f, 30.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 60.0f, 30.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 60.0f, 60.0f, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(60.0f), Fps(60.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(30.0f), Fps(60.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(30.0f), Fps(30.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(60.0f), Fps(30.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(60.0f), Fps(60.0f), PRESENT_TIME_HISTORY_SIZE);
 }
 
 TEST_F(LayerHistoryTest, heuristicLayerNotOscillating) {
@@ -669,11 +675,11 @@ TEST_F(LayerHistoryTest, heuristicLayerNotOscillating) {
 
     nsecs_t time = systemTime();
 
-    recordFramesAndExpect(layer, time, 27.10f, 30.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 26.90f, 30.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 26.00f, 24.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 26.90f, 24.0f, PRESENT_TIME_HISTORY_SIZE);
-    recordFramesAndExpect(layer, time, 27.10f, 30.0f, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(27.10f), Fps(30.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(26.90f), Fps(30.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(26.00f), Fps(24.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(26.90f), Fps(24.0f), PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, Fps(27.10f), Fps(30.0f), PRESENT_TIME_HISTORY_SIZE);
 }
 
 class LayerHistoryTestParameterized : public LayerHistoryTest,
@@ -724,7 +730,7 @@ TEST_P(LayerHistoryTestParameterized, HeuristicLayerWithInfrequentLayer) {
 
             bool max = false;
             bool min = false;
-            float heuristic = 0;
+            Fps heuristic{0.0};
             for (const auto& layer : history().summarize(time)) {
                 if (layer.vote == LayerHistory::LayerVoteType::Heuristic) {
                     heuristic = layer.desiredRefreshRate;
@@ -736,7 +742,7 @@ TEST_P(LayerHistoryTestParameterized, HeuristicLayerWithInfrequentLayer) {
             }
 
             if (infrequentLayerUpdates > FREQUENT_LAYER_WINDOW_SIZE) {
-                EXPECT_FLOAT_EQ(24.0f, heuristic);
+                EXPECT_TRUE(Fps(24.0f).equalsWithMargin(heuristic));
                 EXPECT_FALSE(max);
                 if (history().summarize(time).size() == 2) {
                     EXPECT_TRUE(min);
@@ -750,4 +756,8 @@ INSTANTIATE_TEST_CASE_P(LeapYearTests, LayerHistoryTestParameterized,
                         ::testing::Values(1s, 2s, 3s, 4s, 5s));
 
 } // namespace
-} // namespace android::scheduler
+} // namespace scheduler
+} // namespace android
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wextra"

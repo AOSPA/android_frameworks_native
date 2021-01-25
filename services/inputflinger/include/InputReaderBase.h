@@ -101,12 +101,27 @@ public:
     virtual void requestRefreshConfiguration(uint32_t changes) = 0;
 
     /* Controls the vibrator of a particular input device. */
-    virtual void vibrate(int32_t deviceId, const std::vector<VibrationElement>& pattern,
-                         ssize_t repeat, int32_t token) = 0;
+    virtual void vibrate(int32_t deviceId, const VibrationSequence& sequence, ssize_t repeat,
+                         int32_t token) = 0;
     virtual void cancelVibrate(int32_t deviceId, int32_t token) = 0;
+
+    virtual bool isVibrating(int32_t deviceId) = 0;
+
+    virtual std::vector<int32_t> getVibratorIds(int32_t deviceId) = 0;
 
     /* Return true if the device can send input events to the specified display. */
     virtual bool canDispatchToDisplay(int32_t deviceId, int32_t displayId) = 0;
+
+    /* Enable sensor in input reader mapper. */
+    virtual bool enableSensor(int32_t deviceId, InputDeviceSensorType sensorType,
+                              std::chrono::microseconds samplingPeriod,
+                              std::chrono::microseconds maxBatchReportLatency) = 0;
+
+    /* Disable sensor in input reader mapper. */
+    virtual void disableSensor(int32_t deviceId, InputDeviceSensorType sensorType) = 0;
+
+    /* Flush sensor data in input reader mapper. */
+    virtual void flushSensor(int32_t deviceId, InputDeviceSensorType sensorType) = 0;
 };
 
 // --- InputReaderConfiguration ---

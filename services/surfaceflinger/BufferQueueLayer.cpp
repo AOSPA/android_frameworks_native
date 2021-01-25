@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 #undef LOG_TAG
 #define LOG_TAG "BufferQueueLayer"
@@ -241,6 +242,21 @@ bool BufferQueueLayer::hasFrameUpdate() const {
     return mQueuedFrames > 0;
 }
 
+nsecs_t BufferQueueLayer::nextPredictedPresentTime() const {
+    Mutex::Autolock lock(mQueueItemLock);
+    if (mQueueItems.empty()) {
+        return 0;
+    }
+
+    const auto& bufferData = mQueueItems[0];
+
+    if (!bufferData.item.mIsAutoTimestamp || !bufferData.surfaceFrame) {
+        return 0;
+    }
+
+    return bufferData.surfaceFrame->getPredictions().presentTime;
+}
+
 status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
                                           nsecs_t expectedPresentTime) {
     // This boolean is used to make sure that SurfaceFlinger's shadow copy
@@ -293,8 +309,8 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             mConsumer->mergeSurfaceDamage(mQueueItems[0].item.mSurfaceDamage);
             mFlinger->mTimeStats->removeTimeRecord(layerId, mQueueItems[0].item.mFrameNumber);
             if (mQueueItems[0].surfaceFrame) {
-                mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mQueueItems[0].surfaceFrame),
-                                                          PresentState::Dropped);
+                mQueueItems[0].surfaceFrame->setPresentState(PresentState::Dropped);
+                mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
             }
             mQueueItems.erase(mQueueItems.begin());
             mQueuedFrames--;
@@ -309,8 +325,8 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             Mutex::Autolock lock(mQueueItemLock);
             for (auto& [item, surfaceFrame] : mQueueItems) {
                 if (surfaceFrame) {
-                    mFlinger->mFrameTimeline->addSurfaceFrame(std::move(surfaceFrame),
-                                                              PresentState::Dropped);
+                    surfaceFrame->setPresentState(PresentState::Dropped);
+                    mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
                 }
             }
             mQueueItems.clear();
@@ -340,8 +356,8 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             mConsumer->mergeSurfaceDamage(mQueueItems[0].item.mSurfaceDamage);
             mFlinger->mTimeStats->removeTimeRecord(layerId, mQueueItems[0].item.mFrameNumber);
             if (mQueueItems[0].surfaceFrame) {
-                mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mQueueItems[0].surfaceFrame),
-                                                          PresentState::Dropped);
+                mQueueItems[0].surfaceFrame->setPresentState(PresentState::Dropped);
+                mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
             }
             mQueueItems.erase(mQueueItems.begin());
             mQueuedFrames--;
@@ -355,8 +371,9 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
         if (mQueueItems[0].surfaceFrame) {
             mQueueItems[0].surfaceFrame->setAcquireFenceTime(
                     mQueueItems[0].item.mFenceTime->getSignalTime());
-            mFlinger->mFrameTimeline->addSurfaceFrame(std::move(mQueueItems[0].surfaceFrame),
-                                                      PresentState::Presented);
+            mQueueItems[0].surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
+            mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
+            mLastLatchTime = latchTime;
         }
         mQueueItems.erase(mQueueItems.begin());
     }
@@ -455,11 +472,12 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
         }
 
         auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mOwnerPid, mOwnerUid, mName,
-                                                                     mName, mFrameTimelineVsyncId);
+                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mFrameTimelineVsyncId,
+                                                                     mOwnerPid, mOwnerUid, mName,
+                                                                     mName);
         surfaceFrame->setActualQueueTime(systemTime());
 
-        mQueueItems.push_back({item, std::move(surfaceFrame)});
+        mQueueItems.push_back({item, surfaceFrame});
         mQueuedFrames++;
 
         // Wake up any pending callbacks
@@ -525,8 +543,9 @@ void BufferQueueLayer::onFrameReplaced(const BufferItem& item) {
         }
 
         auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mOwnerPid, mOwnerUid, mName,
-                                                                     mName, mFrameTimelineVsyncId);
+                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mFrameTimelineVsyncId,
+                                                                     mOwnerPid, mOwnerUid, mName,
+                                                                     mName);
         surfaceFrame->setActualQueueTime(systemTime());
         mQueueItems[mQueueItems.size() - 1].item = item;
         mQueueItems[mQueueItems.size() - 1].surfaceFrame = std::move(surfaceFrame);
@@ -697,4 +716,4 @@ void BufferQueueLayer::ContentsChangedListener::abandon() {
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

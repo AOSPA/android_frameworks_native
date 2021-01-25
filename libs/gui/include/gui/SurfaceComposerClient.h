@@ -185,6 +185,11 @@ public:
     static bool getProtectedContentSupport();
 
     /**
+     * Gets the context priority of surface flinger's render engine.
+     */
+    static int getGPUContextPriority();
+
+    /**
      * Uncaches a buffer in ISurfaceComposer. It must be uncached via a transaction so that it is
      * in order with other transactions that use buffers.
      */
@@ -368,13 +373,17 @@ public:
         // to be presented. When it is not possible to present at exactly that time, it will be
         // presented after the time has passed.
         //
+        // If the client didn't pass a desired presentation time, mDesiredPresentTime will be
+        // populated to the time setBuffer was called, and mIsAutoTimestamp will be set to true.
+        //
         // Desired present times that are more than 1 second in the future may be ignored.
         // When a desired present time has already passed, the transaction will be presented as soon
         // as possible.
         //
         // Transactions from the same process are presented in the same order that they are applied.
         // The desired present time does not affect this ordering.
-        int64_t mDesiredPresentTime = -1;
+        int64_t mDesiredPresentTime = 0;
+        bool mIsAutoTimestamp = true;
 
         // The vsync Id provided by Choreographer.getVsyncId
         int64_t mFrameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
@@ -619,6 +628,12 @@ public:
 
 // ---------------------------------------------------------------------------
 
+class JankDataListener : public VirtualLightRefBase {
+public:
+    virtual ~JankDataListener() = 0;
+    virtual void onJankDataAvailable(const std::vector<JankData>& jankData) = 0;
+};
+
 class TransactionCompletedListener : public BnTransactionCompletedListener {
     TransactionCompletedListener();
 
@@ -637,6 +652,7 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
     };
 
     std::unordered_map<CallbackId, CallbackTranslation> mCallbacks GUARDED_BY(mMutex);
+    std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners GUARDED_BY(mMutex);
 
 public:
     static sp<TransactionCompletedListener> getInstance();
@@ -651,6 +667,18 @@ public:
 
     void addSurfaceControlToCallbacks(const sp<SurfaceControl>& surfaceControl,
                                       const std::unordered_set<CallbackId>& callbackIds);
+
+    /*
+     * Adds a jank listener to be informed about SurfaceFlinger's jank classification for a specific
+     * surface. Jank classifications arrive as part of the transaction callbacks about previous
+     * frames submitted to this Surface.
+     */
+    void addJankListener(const sp<JankDataListener>& listener, sp<SurfaceControl> surfaceControl);
+
+    /**
+     * Removes a jank listener previously added to addJankCallback.
+     */
+    void removeJankListener(const sp<JankDataListener>& listener);
 
     // Overrides BnTransactionCompletedListener's onTransactionCompleted
     void onTransactionCompleted(ListenerStats stats) override;
