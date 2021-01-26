@@ -41,6 +41,9 @@ std::unique_ptr<RenderEngine> RenderEngine::create(const RenderEngineCreationArg
     if (strcmp(prop, "skiagl") == 0) {
         renderEngineType = RenderEngineType::SKIA_GL;
     }
+    if (strcmp(prop, "skiaglthreaded") == 0) {
+        renderEngineType = RenderEngineType::SKIA_GL_THREADED;
+    }
 
     switch (renderEngineType) {
         case RenderEngineType::THREADED:
@@ -48,7 +51,28 @@ std::unique_ptr<RenderEngine> RenderEngine::create(const RenderEngineCreationArg
             return renderengine::threaded::RenderEngineThreaded::create(
                     [args]() { return android::renderengine::gl::GLESRenderEngine::create(args); });
         case RenderEngineType::SKIA_GL:
+            ALOGD("RenderEngine with SkiaGL Backend");
             return renderengine::skia::SkiaGLRenderEngine::create(args);
+        case RenderEngineType::SKIA_GL_THREADED: {
+            // These need to be recreated, since they are a constant reference, and we need to
+            // let SkiaRE know that it's running as threaded, and all GL operation will happen on
+            // the same thread.
+            RenderEngineCreationArgs skiaArgs =
+                    RenderEngineCreationArgs::Builder()
+                            .setPixelFormat(args.pixelFormat)
+                            .setImageCacheSize(args.imageCacheSize)
+                            .setUseColorManagerment(args.useColorManagement)
+                            .setEnableProtectedContext(args.enableProtectedContext)
+                            .setPrecacheToneMapperShaderOnly(args.precacheToneMapperShaderOnly)
+                            .setSupportsBackgroundBlur(args.supportsBackgroundBlur)
+                            .setContextPriority(args.contextPriority)
+                            .setRenderEngineType(RenderEngineType::SKIA_GL_THREADED)
+                            .build();
+            ALOGD("Threaded RenderEngine with SkiaGL Backend");
+            return renderengine::threaded::RenderEngineThreaded::create([skiaArgs]() {
+                return android::renderengine::skia::SkiaGLRenderEngine::create(skiaArgs);
+            });
+        }
         case RenderEngineType::GLES:
         default:
             ALOGD("RenderEngine with GLES Backend");

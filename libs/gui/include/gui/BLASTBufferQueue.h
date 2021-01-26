@@ -78,6 +78,8 @@ public:
     void onBufferFreed(const wp<GraphicBuffer>&/* graphicBuffer*/) override { /* TODO */ }
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
+    void onFrameDequeued(const uint64_t) override;
+    void onFrameCancelled(const uint64_t) override;
 
     void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
             const std::vector<SurfaceControlStats>& stats);
@@ -165,6 +167,18 @@ private:
 
     std::function<void(int64_t)> mTransactionCompleteCallback GUARDED_BY(mMutex) = nullptr;
     uint64_t mTransactionCompleteFrameNumber GUARDED_BY(mMutex){0};
+
+    // Queues up transactions using this token in SurfaceFlinger. This prevents queued up
+    // transactions from other parts of the client from blocking this transaction.
+    const sp<IBinder> mApplyToken GUARDED_BY(mMutex) = new BBinder();
+
+    // Guards access to mDequeueTimestamps since we cannot hold to mMutex in onFrameDequeued or
+    // we will deadlock.
+    std::mutex mTimestampMutex;
+    // Tracks buffer dequeue times by the client. This info is sent to SurfaceFlinger which uses
+    // it for debugging purposes.
+    std::unordered_map<uint64_t /* bufferId */, nsecs_t> mDequeueTimestamps
+            GUARDED_BY(mTimestampMutex);
 };
 
 } // namespace android

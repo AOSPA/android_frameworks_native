@@ -354,6 +354,16 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
         t->setAutoRefresh(mSurfaceControl, bufferItem.mAutoRefresh);
         mAutoRefresh = bufferItem.mAutoRefresh;
     }
+    {
+        std::unique_lock _lock{mTimestampMutex};
+        auto dequeueTime = mDequeueTimestamps.find(buffer->getId());
+        if (dequeueTime != mDequeueTimestamps.end()) {
+            Parcel p;
+            p.writeInt64(dequeueTime->second);
+            t->setMetadata(mSurfaceControl, METADATA_DEQUEUE_TIME, p);
+            mDequeueTimestamps.erase(dequeueTime);
+        }
+    }
 
     auto mergeTransaction =
             [&t, currentFrameNumber = bufferItem.mFrameNumber](
@@ -371,7 +381,7 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
                                mPendingTransactions.end());
 
     if (applyTransaction) {
-        t->apply();
+        t->setApplyToken(mApplyToken).apply();
     }
 
     BQA_LOGV("processNextBufferLocked size=%dx%d mFrameNumber=%" PRIu64
@@ -411,6 +421,16 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
     BQA_LOGV("onFrameReplaced framenumber=%" PRIu64, item.mFrameNumber);
     // Do nothing since we are not storing unacquired buffer items locally.
 }
+
+void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
+    std::unique_lock _lock{mTimestampMutex};
+    mDequeueTimestamps[bufferId] = systemTime();
+};
+
+void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {
+    std::unique_lock _lock{mTimestampMutex};
+    mDequeueTimestamps.erase(bufferId);
+};
 
 void BLASTBufferQueue::setNextTransaction(SurfaceComposerClient::Transaction* t) {
     std::lock_guard _lock{mMutex};
@@ -599,6 +619,14 @@ public:
 
         return BufferQueueProducer::connect(new AsyncProducerListener(listener), api,
                                             producerControlledByApp, output);
+    }
+
+    int query(int what, int* value) override {
+        if (what == NATIVE_WINDOW_QUEUES_TO_WINDOW_COMPOSER) {
+            *value = 1;
+            return NO_ERROR;
+        }
+        return BufferQueueProducer::query(what, value);
     }
 };
 
