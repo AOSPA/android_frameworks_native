@@ -606,7 +606,12 @@ public:
 
     // Used to enable/disable buffer drop behavior of queueBuffer.
     // If it's not used, legacy drop behavior will be retained.
+#ifndef NO_BINDER
     virtual status_t setLegacyBufferDrop(bool drop);
+#else
+    // TODO(b/178502863) sdllvm isn't able to optimize away this function.
+    virtual status_t setLegacyBufferDrop(bool) { return INVALID_OPERATION; }
+#endif
 
     // Returns the last queued buffer along with a fence which must signal
     // before the contents of the buffer are read. If there are no buffers in
@@ -637,7 +642,12 @@ public:
     // When buffer size is driven by the consumer and the transform hint
     // specifies a 90 or 270 degree rotation, if auto prerotation is enabled,
     // the width and height used for dequeueBuffer will be additionally swapped.
+#ifndef NO_BINDER
     virtual status_t setAutoPrerotation(bool autoPrerotation);
+#else
+    // TODO(b/178502863) sdllvm isn't able to optimize away this function.
+    virtual status_t setAutoPrerotation(bool) { return INVALID_OPERATION; }
+#endif
 
 #ifndef NO_BINDER
     // Static method exports any IGraphicBufferProducer object to a parcel. It
