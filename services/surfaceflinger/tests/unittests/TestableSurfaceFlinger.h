@@ -30,6 +30,7 @@
 #include "DisplayDevice.h"
 #include "EffectLayer.h"
 #include "FakeVsyncConfiguration.h"
+#include "FrameTracer/FrameTracer.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "Scheduler/MessageQueue.h"
@@ -41,6 +42,8 @@
 #include "TestableScheduler.h"
 #include "mock/DisplayHardware/MockDisplay.h"
 #include "mock/MockDisplayIdGenerator.h"
+#include "mock/MockFrameTimeline.h"
+#include "mock/MockFrameTracer.h"
 
 namespace android {
 
@@ -148,6 +151,15 @@ public:
         return nullptr;
     }
 
+    std::unique_ptr<FrameTracer> createFrameTracer() override {
+        return std::make_unique<mock::FrameTracer>();
+    }
+
+    std::unique_ptr<frametimeline::FrameTimeline> createFrameTimeline(
+            std::shared_ptr<TimeStats> timeStats) override {
+        return std::make_unique<mock::FrameTimeline>(timeStats);
+    }
+
     using CreateBufferQueueFunction =
             std::function<void(sp<IGraphicBufferProducer>* /* outProducer */,
                                sp<IGraphicBufferConsumer>* /* outConsumer */,
@@ -221,10 +233,8 @@ public:
                 mFactory.createVsyncConfiguration(*mFlinger->mRefreshRateConfigs);
         mFlinger->mVsyncModulator.emplace(mFlinger->mVsyncConfiguration->getCurrentConfigs());
 
-        constexpr bool kUseContentDetectionV2 = false;
         mScheduler = new TestableScheduler(std::move(vsyncController), std::move(vsyncTracker),
-                                           *mFlinger->mRefreshRateConfigs, *(callback ?: this),
-                                           kUseContentDetectionV2);
+                                           *mFlinger->mRefreshRateConfigs, *(callback ?: this));
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
         mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));

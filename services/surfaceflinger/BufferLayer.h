@@ -153,6 +153,9 @@ protected:
     bool onPreComposition(nsecs_t) override;
     void preparePerFrameCompositionState() override;
 
+    // Loads the corresponding system property once per process
+    static bool latchUnsignaledBuffers();
+
     // Check all of the local sync points to ensure that all transactions
     // which need to have been applied prior to the frame which is about to
     // be latched have signaled
@@ -178,13 +181,17 @@ protected:
     /// the mStateLock.
     ui::Transform::RotationFlags mTransformHint = ui::Transform::ROT_0;
 
+    bool getAutoRefresh() const { return mAutoRefresh; }
+    bool getSidebandStreamChanged() const { return mSidebandStreamChanged; }
+
+    std::atomic<bool> mAutoRefresh{false};
+    std::atomic<bool> mSidebandStreamChanged{false};
+
 private:
     virtual bool fenceHasSignaled() const = 0;
     virtual bool framePresentTimeIsCurrent(nsecs_t expectedPresentTime) const = 0;
     virtual uint64_t getFrameNumber(nsecs_t expectedPresentTime) const = 0;
 
-    virtual bool getAutoRefresh() const = 0;
-    virtual bool getSidebandStreamChanged() const = 0;
 
     // Latch sideband stream and returns true if the dirty region should be updated.
     virtual bool latchSidebandStream(bool& recomputeVisibleRegions) = 0;

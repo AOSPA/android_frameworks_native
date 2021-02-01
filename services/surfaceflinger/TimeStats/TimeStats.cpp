@@ -681,21 +681,21 @@ static void updateJankPayload(T& t, int32_t reasons) {
     t.jankPayload.totalFrames++;
 
     static const constexpr int32_t kValidJankyReason =
-            TimeStats::JankType::SurfaceFlingerDeadlineMissed |
-            TimeStats::JankType::SurfaceFlingerGpuDeadlineMissed |
-            TimeStats::JankType::AppDeadlineMissed | TimeStats::JankType::Display;
+            JankType::SurfaceFlingerDeadlineMissed |
+            JankType::SurfaceFlingerGpuDeadlineMissed |
+            JankType::AppDeadlineMissed | JankType::Display;
     if (reasons & kValidJankyReason) {
         t.jankPayload.totalJankyFrames++;
-        if ((reasons & TimeStats::JankType::SurfaceFlingerDeadlineMissed) != 0) {
+        if ((reasons & JankType::SurfaceFlingerDeadlineMissed) != 0) {
             t.jankPayload.totalSFLongCpu++;
         }
-        if ((reasons & TimeStats::JankType::SurfaceFlingerGpuDeadlineMissed) != 0) {
+        if ((reasons & JankType::SurfaceFlingerGpuDeadlineMissed) != 0) {
             t.jankPayload.totalSFLongGpu++;
         }
-        if ((reasons & TimeStats::JankType::Display) != 0) {
+        if ((reasons & JankType::Display) != 0) {
             t.jankPayload.totalSFUnattributed++;
         }
-        if ((reasons & TimeStats::JankType::AppDeadlineMissed) != 0) {
+        if ((reasons & JankType::AppDeadlineMissed) != 0) {
             t.jankPayload.totalAppUnattributed++;
         }
     }
@@ -716,23 +716,27 @@ void TimeStats::incrementJankyFrames(uid_t uid, const std::string& layerName, in
     ATRACE_CALL();
     std::lock_guard<std::mutex> lock(mMutex);
 
-    // Only update layer stats if we're allowed to do so.
+    // Only update layer stats if we're already tracking the layer in TimeStats.
+    // Otherwise, continue tracking the statistic but use a default layer name instead.
     // As an implementation detail, we do this because this method is expected to be
-    // called from FrameTimeline, which is allowed to do jank analysis well after a frame is
-    // presented. This means that we can't rely on TimeStats to flush layer records over to the
-    // aggregated stats.
-    if (!canAddNewAggregatedStats(uid, layerName)) {
-        return;
-    }
+    // called from FrameTimeline, whose jank classification includes transaction jank
+    // that occurs without a buffer. But, in general those layer names are not suitable as
+    // aggregation keys: e.g., it's normal and expected for Window Manager to include the hash code
+    // for an animation leash. So while we can show that jank in dumpsys, aggregating based on the
+    // layer blows up the stats size, so as a workaround drop those stats. This assumes that
+    // TimeStats will flush the first present fence for a layer *before* FrameTimeline does so that
+    // the first jank record is not dropped.
 
-    // Defensively initialize the stats in case FrameTimeline flushes its signaled present fences
-    // before TimeStats does.
+    bool useDefaultLayerKey = false;
+    static const std::string kDefaultLayerName = "none";
     if (!mTimeStats.stats.count({uid, layerName})) {
-        mTimeStats.stats[{uid, layerName}].uid = uid;
-        mTimeStats.stats[{uid, layerName}].layerName = layerName;
+        mTimeStats.stats[{uid, kDefaultLayerName}].uid = uid;
+        mTimeStats.stats[{uid, kDefaultLayerName}].layerName = kDefaultLayerName;
+        useDefaultLayerKey = true;
     }
 
-    TimeStatsHelper::TimeStatsLayer& timeStatsLayer = mTimeStats.stats[{uid, layerName}];
+    TimeStatsHelper::TimeStatsLayer& timeStatsLayer =
+            mTimeStats.stats[{uid, useDefaultLayerKey ? kDefaultLayerName : layerName}];
     updateJankPayload<TimeStatsHelper::TimeStatsLayer>(timeStatsLayer, reasons);
 }
 

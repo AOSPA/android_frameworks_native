@@ -429,8 +429,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
       : mFactory(factory),
         mInterceptor(mFactory.createSurfaceInterceptor()),
         mTimeStats(std::make_shared<impl::TimeStats>()),
-        mFrameTracer(std::make_unique<FrameTracer>()),
-        mFrameTimeline(std::make_unique<frametimeline::impl::FrameTimeline>(mTimeStats)),
+        mFrameTracer(mFactory.createFrameTracer()),
+        mFrameTimeline(mFactory.createFrameTimeline(mTimeStats)),
         mEventQueue(mFactory.createMessageQueue()),
         mCompositionEngine(mFactory.createCompositionEngine()),
         mInternalDisplayDensity(getDensityFromProperty("ro.sf.lcd_density", true)),
@@ -512,6 +512,10 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.ddms", value, "0");
     int debugDdms = atoi(value);
     ALOGI_IF(debugDdms, "DDMS debugging not supported");
+
+    property_get("debug.sf.disable_backpressure", value, "0");
+    mPropagateBackpressure = !atoi(value);
+    ALOGI_IF(!mPropagateBackpressure, "Disabling backpressure propagation");
 
     property_get("debug.sf.enable_gl_backpressure", value, "0");
     mPropagateBackpressureClientComposition = atoi(value);
@@ -775,8 +779,7 @@ compositionengine::CompositionEngine& SurfaceFlinger::getCompositionEngine() con
     return *mCompositionEngine.get();
 }
 
-void SurfaceFlinger::bootFinished()
-{
+void SurfaceFlinger::bootFinished() {
     if (mBootFinished == true) {
         ALOGE("Extra call to bootFinished");
         return;
@@ -791,6 +794,7 @@ void SurfaceFlinger::bootFinished()
 
     mFrameTracer->initialize();
     mTimeStats->onBootFinished();
+    mFrameTimeline->onBootFinished();
 
     // wait patiently for the window manager death
     const String16 name("window");
@@ -1773,11 +1777,12 @@ status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
 // ----------------------------------------------------------------------------
 
 sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
-        ISurfaceComposer::VsyncSource vsyncSource, ISurfaceComposer::ConfigChanged configChanged) {
+        ISurfaceComposer::VsyncSource vsyncSource,
+        ISurfaceComposer::EventRegistrationFlags eventRegistration) {
     const auto& handle =
             vsyncSource == eVsyncSourceSurfaceFlinger ? mSfConnectionHandle : mAppConnectionHandle;
 
-    return mScheduler->createDisplayEventConnection(handle, configChanged);
+    return mScheduler->createDisplayEventConnection(handle, eventRegistration);
 }
 
 void SurfaceFlinger::signalTransaction() {
@@ -2045,7 +2050,10 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     // for the present fence to fire instead of just giving up on this frame to handle cases
     // where present fence is just about to get signaled.
     const int graceTimeForPresentFenceMs =
-            (mPropagateBackpressureClientComposition || !mHadClientComposition) ? 1 : 0;
+            (mPropagateBackpressure &&
+             (mPropagateBackpressureClientComposition || !mHadClientComposition))
+            ? 1
+            : 0;
 
     // Pending frames may trigger backpressure propagation.
     const TracedOrdinal<bool> framePending = {"PrevFramePending",
@@ -2104,7 +2112,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         ON_MAIN_THREAD(setActiveConfigInternal());
     }
 
-    if (framePending) {
+    if (framePending && mPropagateBackpressure) {
         if ((hwcFrameMissed && !gpuFrameMissed) || mPropagateBackpressureClientComposition) {
             signalLayerUpdate();
             return;
@@ -2449,13 +2457,12 @@ void SurfaceFlinger::setCompositorTimingSnapped(const DisplayStatInfo& stats,
     getBE().mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
 }
 
-void SurfaceFlinger::postComposition()
-{
+void SurfaceFlinger::postComposition() {
     ATRACE_CALL();
     ALOGV("postComposition");
 
     nsecs_t dequeueReadyTime = systemTime();
-    for (auto layer : mLayersWithQueuedFrames) {
+    for (const auto& layer : mLayersWithQueuedFrames) {
         layer->releasePendingBuffer(dequeueReadyTime);
     }
 
@@ -2729,8 +2736,7 @@ void SurfaceFlinger::postFrame() {
     }
 }
 
-void SurfaceFlinger::handleTransaction(uint32_t transactionFlags)
-{
+void SurfaceFlinger::handleTransaction(uint32_t transactionFlags) {
     ATRACE_CALL();
 
     // here we keep a copy of the drawing state (that is the state that's
@@ -3186,8 +3192,7 @@ void SurfaceFlinger::processDisplayChangesLocked() {
     mDrawingState.displays = mCurrentState.displays;
 }
 
-void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
-{
+void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags) {
     const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
 
     // Notify all layers of available frames
@@ -3538,8 +3543,7 @@ void SurfaceFlinger::invalidateLayerStack(const sp<const Layer>& layer, const Re
     }
 }
 
-bool SurfaceFlinger::handlePageFlip()
-{
+bool SurfaceFlinger::handlePageFlip() {
     ATRACE_CALL();
     ALOGV("handlePageFlip");
 
@@ -3595,7 +3599,7 @@ bool SurfaceFlinger::handlePageFlip()
         // writes to Layer current state. See also b/119481871
         Mutex::Autolock lock(mStateLock);
 
-        for (auto& layer : mLayersWithQueuedFrames) {
+        for (const auto& layer : mLayersWithQueuedFrames) {
             if (layer->latchBuffer(visibleRegions, latchTime, expectedPresentTime)) {
                 mLayersPendingRefresh.push_back(layer);
             }
@@ -3627,8 +3631,7 @@ bool SurfaceFlinger::handlePageFlip()
     return !mLayersWithQueuedFrames.empty() && newDataLatched;
 }
 
-void SurfaceFlinger::invalidateHwcGeometry()
-{
+void SurfaceFlinger::invalidateHwcGeometry() {
     mGeometryInvalid = true;
 }
 
@@ -4317,7 +4320,8 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                               "SurfaceFlinger::setClientStateLocked") &&
             layer->setFrameRate(Layer::FrameRate(s.frameRate,
                                                  Layer::FrameRate::convertCompatibility(
-                                                         s.frameRateCompatibility)))) {
+                                                         s.frameRateCompatibility),
+                                                 s.shouldBeSeamless))) {
             flags |= eTraversalNeeded;
         }
     }
@@ -4330,6 +4334,9 @@ uint32_t SurfaceFlinger::setClientStateLocked(
         if (layer->setFixedTransformHint(s.fixedTransformHint)) {
             flags |= eTraversalNeeded | eTransformHintUpdateNeeded;
         }
+    }
+    if (what & layer_state_t::eAutoRefreshChanged) {
+        layer->setAutoRefresh(s.autoRefresh);
     }
     // This has to happen after we reparent children because when we reparent to null we remove
     // child layers from current state and remove its relative z. If the children are reparented in
@@ -4572,7 +4579,14 @@ status_t SurfaceFlinger::createBufferStateLayer(const sp<Client>& client, std::s
                                                 sp<Layer>* outLayer) {
     LayerCreationArgs args(this, client, std::move(name), w, h, flags, std::move(metadata));
     args.textureName = getNewTexture();
-    sp<BufferStateLayer> layer = getFactory().createBufferStateLayer(args);
+    sp<BufferStateLayer> layer;
+    {
+        // TODO (b/173538294): Investigate why we need mStateLock here and above in
+        // createBufferQueue layer. Is it the renderengine::Image?
+        Mutex::Autolock lock(mStateLock);
+        layer = getFactory().createBufferStateLayer(args);
+
+    }
     *handle = layer->getHandle();
     *outLayer = layer;
 
@@ -4604,8 +4618,7 @@ void SurfaceFlinger::markLayerPendingRemovalLocked(const sp<Layer>& layer) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer)
-{
+void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer) {
     Mutex::Autolock lock(mStateLock);
     // If a layer has a parent, we allow it to out-live it's handle
     // with the idea that the parent holds a reference and will eventually
@@ -4814,6 +4827,12 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     }
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
+    if (mode < 0 || mode > (int)hal::PowerMode::DOZE_SUSPEND) {
+        ALOGW("Attempt to set invalid power mode %d", mode);
+        return;
+    }
+
+    hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
     const auto displayId = display->getId();
     const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
     if (!physicalDisplayId) {
@@ -5001,16 +5020,10 @@ void SurfaceFlinger::dumpVSync(std::string& result) const {
                   "      present offset: %9" PRId64 " ns\t     VSYNC period: %9" PRId64 " ns\n\n",
                   dispSyncPresentTimeOffset, getVsyncPeriodFromHWC());
 
-    scheduler::RefreshRateConfigs::Policy policy = mRefreshRateConfigs->getDisplayManagerPolicy();
-    StringAppendF(&result, "DesiredDisplayConfigSpecs (DisplayManager): %s\n\n",
-                  policy.toString().c_str());
+    mRefreshRateConfigs->dump(result);
+
     StringAppendF(&result, "(config override by backdoor: %s)\n\n",
                   mDebugDisplayConfigSetByBackdoor ? "yes" : "no");
-    scheduler::RefreshRateConfigs::Policy currentPolicy = mRefreshRateConfigs->getCurrentPolicy();
-    if (currentPolicy != policy) {
-        StringAppendF(&result, "DesiredDisplayConfigSpecs (Override): %s\n\n",
-                      currentPolicy.toString().c_str());
-    }
 
     mScheduler->dump(mAppConnectionHandle, result);
     mScheduler->dumpVsync(result);
@@ -5907,10 +5920,18 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 return NO_ERROR;
             }
             case 1039: {
-                // The first parameter is the uid
-                n = data.readInt32();
-                const float refreshRateHz = data.readFloat();
-                mRefreshRateConfigs->setPreferredRefreshRateForUid(n, refreshRateHz);
+                PhysicalDisplayId displayId = [&]() {
+                    Mutex::Autolock lock(mStateLock);
+                    return getDefaultDisplayDeviceLocked()->getPhysicalId();
+                }();
+
+                auto inUid = static_cast<uid_t>(data.readInt32());
+                const auto refreshRate = data.readFloat();
+                mRefreshRateConfigs->setPreferredRefreshRateForUid(
+                        FrameRateOverride{inUid, refreshRate});
+                const auto mappings = mRefreshRateConfigs->getFrameRateOverrides();
+                mScheduler->onFrameRateOverridesChanged(mAppConnectionHandle, displayId,
+                                                        std::move(mappings));
                 return NO_ERROR;
             }
             case 20000: {
@@ -5920,7 +5941,6 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
               setPowerMode(getPhysicalDisplayToken(PhysicalDisplayId{disp}), mode);
               return NO_ERROR;
             }
-                return NO_ERROR;
         }
     }
     return err;
@@ -6296,9 +6316,14 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     const bool supportsProtected = getRenderEngine().supportsProtectedContent();
     bool hasProtectedLayer = false;
     if (allowProtected && supportsProtected) {
-        traverseLayers([&](Layer* layer) {
-            hasProtectedLayer = hasProtectedLayer || (layer->isVisible() && layer->isProtected());
-        });
+        hasProtectedLayer = schedule([=]() {
+                                bool protectedLayerFound = false;
+                                traverseLayers([&](Layer* layer) {
+                                    protectedLayerFound = protectedLayerFound ||
+                                            (layer->isVisible() && layer->isProtected());
+                                });
+                                return protectedLayerFound;
+                            }).get();
     }
 
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
@@ -6810,7 +6835,7 @@ const std::unordered_map<std::string, uint32_t>& SurfaceFlinger::getGenericLayer
 }
 
 status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                                      int8_t compatibility) {
+                                      int8_t compatibility, bool shouldBeSeamless) {
     if (!ValidateFrameRate(frameRate, compatibility, "SurfaceFlinger::setFrameRate")) {
         return BAD_VALUE;
     }
@@ -6823,10 +6848,10 @@ status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface,
                 ALOGE("Attempt to set frame rate on a layer that no longer exists");
                 return BAD_VALUE;
             }
-
             if (layer->setFrameRate(
                         Layer::FrameRate(frameRate,
-                                         Layer::FrameRate::convertCompatibility(compatibility)))) {
+                                         Layer::FrameRate::convertCompatibility(compatibility),
+                                         shouldBeSeamless))) {
                 setTransactionFlags(eTraversalNeeded);
             }
         } else {

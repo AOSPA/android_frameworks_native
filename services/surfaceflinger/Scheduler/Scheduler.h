@@ -79,8 +79,8 @@ public:
                                       std::chrono::nanoseconds readyDuration,
                                       impl::EventThread::InterceptVSyncsCallback);
 
-    sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle,
-                                                             ISurfaceComposer::ConfigChanged);
+    sp<IDisplayEventConnection> createDisplayEventConnection(
+            ConnectionHandle, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -92,6 +92,9 @@ public:
                                           HwcConfigIndexType configId, nsecs_t vsyncPeriod);
     void onScreenAcquired(ConnectionHandle);
     void onScreenReleased(ConnectionHandle);
+
+    void onFrameRateOverridesChanged(ConnectionHandle, PhysicalDisplayId,
+                                     std::vector<FrameRateOverride>);
 
     // Modifies work duration in the event thread.
     void setDuration(ConnectionHandle, std::chrono::nanoseconds workDuration,
@@ -180,8 +183,6 @@ private:
         bool supportKernelTimer;
         // Whether to use content detection at all.
         bool useContentDetection;
-        // Whether to use improved content detection.
-        bool useContentDetectionV2;
     };
 
     struct VsyncSchedule {
@@ -198,13 +199,12 @@ private:
               std::unique_ptr<LayerHistory>, Options);
 
     static VsyncSchedule createVsyncSchedule(bool supportKernelIdleTimer);
-    static std::unique_ptr<LayerHistory> createLayerHistory(const scheduler::RefreshRateConfigs&,
-                                                            bool useContentDetectionV2);
+    static std::unique_ptr<LayerHistory> createLayerHistory(const scheduler::RefreshRateConfigs&);
 
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>);
-    sp<EventThreadConnection> createConnectionInternal(EventThread*,
-                                                       ISurfaceComposer::ConfigChanged);
+    sp<EventThreadConnection> createConnectionInternal(
+            EventThread*, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState);
@@ -267,7 +267,6 @@ private:
     std::mutex mFeatureStateLock;
 
     struct {
-        ContentDetectionState contentDetectionV1 = ContentDetectionState::Off;
         TimerState idleTimer = TimerState::Reset;
         TouchState touch = TouchState::Inactive;
         TimerState displayPowerTimer = TimerState::Expired;

@@ -524,7 +524,7 @@ public:
         Transaction& setShadowRadius(const sp<SurfaceControl>& sc, float cornerRadius);
 
         Transaction& setFrameRate(const sp<SurfaceControl>& sc, float frameRate,
-                                  int8_t compatibility);
+                                  int8_t compatibility, bool shouldBeSeamless);
 
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that
@@ -540,6 +540,11 @@ public:
         // Variant that only applies to a specific SurfaceControl.
         Transaction& setFrameTimelineVsync(const sp<SurfaceControl>& sc,
                 int64_t frameTimelineVsyncId);
+
+        // Indicates that the consumer should acquire the next frame as soon as it
+        // can and not wait for a frame to become available. This is only relevant
+        // in shared buffer mode.
+        Transaction& setAutoRefresh(const sp<SurfaceControl>& sc, bool autoRefresh);
 
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);

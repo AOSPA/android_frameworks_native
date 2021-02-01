@@ -130,6 +130,7 @@ struct layer_state_t {
         eFrameNumberChanged = 0x400'00000000,
         eFrameTimelineVsyncChanged = 0x800'00000000,
         eBlurRegionsChanged = 0x1000'00000000,
+        eAutoRefreshChanged = 0x2000'00000000,
     };
 
     layer_state_t();
@@ -218,6 +219,7 @@ struct layer_state_t {
     // Layer frame rate and compatibility. See ANativeWindow_setFrameRate().
     float frameRate;
     int8_t frameRateCompatibility;
+    bool shouldBeSeamless;
 
     // Set by window manager indicating the layer and all its children are
     // in a different orientation than the display. The hint suggests that
@@ -233,6 +235,11 @@ struct layer_state_t {
     uint64_t frameNumber;
 
     int64_t frameTimelineVsyncId;
+
+    // Indicates that the consumer should acquire the next frame as soon as it
+    // can and not wait for a frame to become available. This is only relevant
+    // in shared buffer mode.
+    bool autoRefresh;
 };
 
 struct ComposerState {

@@ -54,6 +54,9 @@ public:
     sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs& args) override;
     sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) override;
     sp<ContainerLayer> createContainerLayer(const LayerCreationArgs& args) override;
+    std::unique_ptr<FrameTracer> createFrameTracer() override;
+    std::unique_ptr<frametimeline::FrameTimeline> createFrameTimeline(
+            std::shared_ptr<TimeStats> timeStats) override;
 };
 
 } // namespace android::surfaceflinger

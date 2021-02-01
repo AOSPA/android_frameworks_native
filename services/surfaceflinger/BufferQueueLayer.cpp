@@ -147,6 +147,10 @@ bool BufferQueueLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
 // -----------------------------------------------------------------------
 
 bool BufferQueueLayer::fenceHasSignaled() const {
+    if (latchUnsignaledBuffers()) {
+        return true;
+    }
+
     if (!hasFrameUpdate()) {
         return true;
     }
@@ -211,14 +215,6 @@ uint64_t BufferQueueLayer::getFrameNumber(nsecs_t expectedPresentTime) const {
     return frameNumber;
 }
 
-bool BufferQueueLayer::getAutoRefresh() const {
-    return mAutoRefresh;
-}
-
-bool BufferQueueLayer::getSidebandStreamChanged() const {
-    return mSidebandStreamChanged;
-}
-
 bool BufferQueueLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
     // We need to update the sideband stream if the layer has both a buffer and a sideband stream.
     const bool updateSidebandStream = hasFrameUpdate() && mSidebandStream.get();
@@ -280,8 +276,10 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
     const uint64_t maxFrameNumberToAcquire =
             std::min(mLastFrameNumberReceived.load(), lastSignaledFrameNumber);
 
-    status_t updateResult = mConsumer->updateTexImage(&r, expectedPresentTime, &mAutoRefresh,
+    bool autoRefresh;
+    status_t updateResult = mConsumer->updateTexImage(&r, expectedPresentTime, &autoRefresh,
                                                       &queuedBuffer, maxFrameNumberToAcquire);
+    mAutoRefresh = autoRefresh;
     if (updateResult == BufferQueue::PRESENT_LATER) {
         // Producer doesn't want buffer to be displayed yet.  Signal a
         // layer update so we check again at the next opportunity.

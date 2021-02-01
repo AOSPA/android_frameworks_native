@@ -28,6 +28,7 @@
 #include "ContainerLayer.h"
 #include "DisplayDevice.h"
 #include "EffectLayer.h"
+#include "FrameTracer/FrameTracer.h"
 #include "Layer.h"
 #include "MonitoredProducer.h"
 #include "NativeWindowSurface.h"
@@ -128,6 +129,15 @@ sp<BufferStateLayer> DefaultFactory::createBufferStateLayer(const LayerCreationA
 
 sp<EffectLayer> DefaultFactory::createEffectLayer(const LayerCreationArgs& args) {
     return new EffectLayer(args);
+}
+
+std::unique_ptr<FrameTracer> DefaultFactory::createFrameTracer() {
+    return std::make_unique<FrameTracer>();
+}
+
+std::unique_ptr<frametimeline::FrameTimeline> DefaultFactory::createFrameTimeline(
+        std::shared_ptr<TimeStats> timeStats) {
+    return std::make_unique<frametimeline::impl::FrameTimeline>(timeStats);
 }
 
 } // namespace android::surfaceflinger

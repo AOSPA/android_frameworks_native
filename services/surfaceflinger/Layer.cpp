@@ -1713,8 +1713,9 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
                   crop.bottom);
     if (layerState.frameRate.rate != 0 ||
         layerState.frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "% 6.2ffps %15s", layerState.frameRate.rate,
-                      frameRateCompatibilityString(layerState.frameRate.type).c_str());
+        StringAppendF(&result, "% 6.2ffps %15s seamless=%s", layerState.frameRate.rate,
+                      frameRateCompatibilityString(layerState.frameRate.type).c_str(),
+                      toString(layerState.frameRate.seamlessness).c_str());
     } else {
         StringAppendF(&result, "                         ");
     }
@@ -2775,6 +2776,12 @@ bool Layer::getPrimaryDisplayOnly() const {
 }
 
 // ---------------------------------------------------------------------------
+
+std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate) {
+    return stream << "{rate=" << rate.rate
+                  << " type=" << Layer::frameRateCompatibilityString(rate.type)
+                  << " seamlessness=" << toString(rate.seamlessness) << "}";
+}
 
 }; // namespace android
 

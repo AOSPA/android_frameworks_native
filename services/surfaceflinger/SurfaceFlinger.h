@@ -605,8 +605,7 @@ private:
     status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const override;
     sp<IDisplayEventConnection> createDisplayEventConnection(
             ISurfaceComposer::VsyncSource vsyncSource = eVsyncSourceApp,
-            ISurfaceComposer::ConfigChanged configChanged =
-                    ISurfaceComposer::eConfigChangedSuppress) override;
+            ISurfaceComposer::EventRegistrationFlags eventRegistration = {}) override;
     status_t captureDisplay(const DisplayCaptureArgs& args,
                             const sp<IScreenCaptureListener>& captureListener) override;
     status_t captureDisplay(uint64_t displayOrLayerStack,
@@ -675,7 +674,7 @@ private:
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                          int8_t compatibility) override;
+                          int8_t compatibility, bool shouldBeSeamless) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
 
@@ -1202,9 +1201,8 @@ private:
     bool mAnimCompositionPending = false;
 
     // Tracks layers that have pending frames which are candidates for being
-    // latched. Because this contains a set of raw layer pointers, can only be
-    // mutated on the main thread.
-    std::unordered_set<Layer*> mLayersWithQueuedFrames;
+    // latched.
+    std::unordered_set<sp<Layer>, ISurfaceComposer::SpHash<Layer>> mLayersWithQueuedFrames;
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
     std::array<sp<Fence>, 2> mPreviousPresentFences = {Fence::NO_FENCE, Fence::NO_FENCE};
@@ -1240,6 +1238,7 @@ private:
     bool mDebugDisableTransformHint = false;
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
+    bool mPropagateBackpressure = true;
     bool mPropagateBackpressureClientComposition = false;
     sp<SurfaceInterceptor> mInterceptor;
 

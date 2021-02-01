@@ -28,6 +28,7 @@
 
 #include <system/window.h>
 #include <thread>
+#include <queue>
 
 namespace android {
 
@@ -85,7 +86,7 @@ public:
     void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height);
     void flushShadowQueue() { mFlushShadowQueue = true; }
 
-    status_t setFrameRate(float frameRate, int8_t compatibility);
+    status_t setFrameRate(float frameRate, int8_t compatibility, bool shouldBeSeamless);
     status_t setFrameTimelineVsync(int64_t frameTimelineVsyncId);
 
     virtual ~BLASTBufferQueue() = default;
@@ -100,7 +101,7 @@ private:
     void processNextBufferLocked(bool useNextTransaction) REQUIRES(mMutex);
     Rect computeCrop(const BufferItem& item) REQUIRES(mMutex);
     // Return true if we need to reject the buffer based on the scaling mode and the buffer size.
-    bool rejectBuffer(const BufferItem& item) const REQUIRES(mMutex);
+    bool rejectBuffer(const BufferItem& item) REQUIRES(mMutex);
     bool maxBuffersAcquired() const REQUIRES(mMutex);
 
     std::string mName;
@@ -126,8 +127,8 @@ private:
     // is ready to be presented.
     PendingReleaseItem mPendingReleaseItem GUARDED_BY(mMutex);
 
-    uint32_t mWidth GUARDED_BY(mMutex);
-    uint32_t mHeight GUARDED_BY(mMutex);
+    ui::Size mSize GUARDED_BY(mMutex);
+    ui::Size mRequestedSize GUARDED_BY(mMutex);
 
     uint32_t mTransformHint GUARDED_BY(mMutex);
 
@@ -139,6 +140,17 @@ private:
     // If set to true, the next queue buffer will wait until the shadow queue has been processed by
     // the adapter.
     bool mFlushShadowQueue = false;
+    // Last requested auto refresh state set by the producer. The state indicates that the consumer
+    // should acquire the next frame as soon as it can and not wait for a frame to become available.
+    // This is only relevant for shared buffer mode.
+    bool mAutoRefresh GUARDED_BY(mMutex) = false;
+
+    std::queue<int64_t> mNextFrameTimelineVsyncIdQueue GUARDED_BY(mMutex);
+
+    // Last acquired buffer's scaling mode. This is used to check if we should update the blast
+    // layer size immediately or wait until we get the next buffer. This will support scenarios
+    // where the layer can change sizes and the buffer will scale to fit the new size.
+    uint32_t mLastBufferScalingMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
 };
 
 } // namespace android

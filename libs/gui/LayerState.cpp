@@ -59,8 +59,11 @@ layer_state_t::layer_state_t()
         frameRateSelectionPriority(-1),
         frameRate(0.0f),
         frameRateCompatibility(ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT),
+        shouldBeSeamless(true),
         fixedTransformHint(ui::Transform::ROT_INVALID),
-        frameNumber(0) {
+        frameNumber(0),
+        frameTimelineVsyncId(ISurfaceComposer::INVALID_VSYNC_ID),
+        autoRefresh(false) {
     matrix.dsdx = matrix.dtdy = 1.0f;
     matrix.dsdy = matrix.dtdx = 0.0f;
     hdrMetadata.validTypes = 0;
@@ -144,9 +147,11 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeInt32, frameRateSelectionPriority);
     SAFE_PARCEL(output.writeFloat, frameRate);
     SAFE_PARCEL(output.writeByte, frameRateCompatibility);
+    SAFE_PARCEL(output.writeBool, shouldBeSeamless);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeUint64, frameNumber);
     SAFE_PARCEL(output.writeInt64, frameTimelineVsyncId);
+    SAFE_PARCEL(output.writeBool, autoRefresh);
 
     SAFE_PARCEL(output.writeUint32, blurRegions.size());
     for (auto region : blurRegions) {
@@ -262,10 +267,12 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readInt32, &frameRateSelectionPriority);
     SAFE_PARCEL(input.readFloat, &frameRate);
     SAFE_PARCEL(input.readByte, &frameRateCompatibility);
+    SAFE_PARCEL(input.readBool, &shouldBeSeamless);
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readUint64, &frameNumber);
     SAFE_PARCEL(input.readInt64, &frameTimelineVsyncId);
+    SAFE_PARCEL(input.readBool, &autoRefresh);
 
     uint32_t numRegions = 0;
     SAFE_PARCEL(input.readUint32, &numRegions);
@@ -521,6 +528,7 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eFrameRateChanged;
         frameRate = other.frameRate;
         frameRateCompatibility = other.frameRateCompatibility;
+        shouldBeSeamless = other.shouldBeSeamless;
     }
     if (other.what & eFixedTransformHintChanged) {
         what |= eFixedTransformHintChanged;
@@ -529,6 +537,20 @@ void layer_state_t::merge(const layer_state_t& other) {
     if (other.what & eFrameNumberChanged) {
         what |= eFrameNumberChanged;
         frameNumber = other.frameNumber;
+    }
+    if (other.what & eFrameTimelineVsyncChanged) {
+        // When merging vsync Ids we take the oldest valid one
+        if (frameTimelineVsyncId != ISurfaceComposer::INVALID_VSYNC_ID &&
+            other.frameTimelineVsyncId != ISurfaceComposer::INVALID_VSYNC_ID) {
+            frameTimelineVsyncId = std::max(frameTimelineVsyncId, other.frameTimelineVsyncId);
+        } else if (frameTimelineVsyncId == ISurfaceComposer::INVALID_VSYNC_ID) {
+            frameTimelineVsyncId = other.frameTimelineVsyncId;
+        }
+        what |= eFrameTimelineVsyncChanged;
+    }
+    if (other.what & eAutoRefreshChanged) {
+        what |= eAutoRefreshChanged;
+        autoRefresh = other.autoRefresh;
     }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "

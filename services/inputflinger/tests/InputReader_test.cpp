@@ -1030,8 +1030,9 @@ public:
     using InputReader::loopOnce;
 
 protected:
-    virtual std::shared_ptr<InputDevice> createDeviceLocked(
-            int32_t eventHubId, const InputDeviceIdentifier& identifier) {
+    virtual std::shared_ptr<InputDevice> createDeviceLocked(int32_t eventHubId,
+                                                            const InputDeviceIdentifier& identifier)
+            REQUIRES(mLock) {
         if (!mNextDevices.empty()) {
             std::shared_ptr<InputDevice> device(std::move(mNextDevices.front()));
             mNextDevices.pop();
@@ -1790,6 +1791,29 @@ TEST_F(InputReaderTest, GetKeyCodeState_ForwardsRequestsToSubdeviceMappers) {
               mReader->getKeyCodeState(deviceId, AINPUT_SOURCE_KEYBOARD, AKEYCODE_B));
     ASSERT_EQ(AKEY_STATE_UNKNOWN,
               mReader->getKeyCodeState(deviceId, AINPUT_SOURCE_KEYBOARD, AKEYCODE_C));
+}
+
+TEST_F(InputReaderTest, ChangingPointerCaptureNotifiesInputListener) {
+    NotifyPointerCaptureChangedArgs args;
+
+    mFakePolicy->setPointerCapture(true);
+    mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
+    mReader->loopOnce();
+    mFakeListener->assertNotifyCaptureWasCalled(&args);
+    ASSERT_TRUE(args.enabled) << "Pointer Capture should be enabled.";
+
+    mFakePolicy->setPointerCapture(false);
+    mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
+    mReader->loopOnce();
+    mFakeListener->assertNotifyCaptureWasCalled(&args);
+    ASSERT_FALSE(args.enabled) << "Pointer Capture should be disabled.";
+
+    // Verify that the Pointer Capture state is re-configured correctly when the configuration value
+    // does not change.
+    mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
+    mReader->loopOnce();
+    mFakeListener->assertNotifyCaptureWasCalled(&args);
+    ASSERT_FALSE(args.enabled) << "Pointer Capture should be disabled.";
 }
 
 // --- InputReaderIntegrationTest ---
