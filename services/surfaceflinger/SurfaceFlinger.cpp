@@ -4811,7 +4811,6 @@ void SurfaceFlinger::setPowerModeOnMainThread(const sp<IBinder>& displayToken, i
 }
 
 void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
-    hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
     sp<DisplayDevice> display = nullptr;
     {
         Mutex::Autolock lock(mStateLock);
