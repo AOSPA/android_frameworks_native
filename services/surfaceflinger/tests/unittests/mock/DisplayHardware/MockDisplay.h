@@ -42,7 +42,7 @@ public:
     MOCK_METHOD1(createLayer, hal::Error(Layer**));
     MOCK_METHOD1(destroyLayer, hal::Error(Layer*));
     MOCK_CONST_METHOD1(getActiveConfig, hal::Error(std::shared_ptr<const Config>*));
-    MOCK_CONST_METHOD1(getActiveConfigIndex, hal::Error(int* outIndex));
+    MOCK_CONST_METHOD1(getActiveMode, hal::Error(int* outIndex));
     MOCK_METHOD1(getChangedCompositionTypes,
                  hal::Error(std::unordered_map<Layer*, hal::Composition>*));
     MOCK_CONST_METHOD1(getColorModes, hal::Error(std::vector<hal::ColorMode>*));

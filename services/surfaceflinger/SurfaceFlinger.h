@@ -124,6 +124,8 @@ class RenderArea;
 class TimeStats;
 class FrameTracer;
 
+using gui::ScreenCaptureResults;
+
 namespace frametimeline {
 class FrameTimeline;
 }
@@ -417,8 +419,8 @@ protected:
     virtual uint32_t setClientStateLocked(
             int64_t frameTimelineVsyncId, const ComposerState& composerState,
             int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime, bool privileged,
-            std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
-            REQUIRES(mStateLock);
+            std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks,
+            int originPid, int originUid) REQUIRES(mStateLock);
     virtual void commitTransactionLocked();
 
     // Used internally by computeLayerBounds() to gets the clip rectangle to use for the

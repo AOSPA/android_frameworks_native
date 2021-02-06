@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mount.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
@@ -174,6 +175,7 @@ void add_mountinfo();
 #define SNAPSHOTCTL_LOG_DIR "/data/misc/snapshotctl_log"
 #define LINKERCONFIG_DIR "/linkerconfig"
 #define PACKAGE_DEX_USE_LIST "/data/system/package-dex-usage.list"
+#define SYSTEM_TRACE_SNAPSHOT "/data/misc/perfetto-traces/bugreport/systrace.pftrace"
 
 // TODO(narayan): Since this information has to be kept in sync
 // with tombstoned, we should just put it in a common header.
@@ -227,7 +229,6 @@ static const std::string DUMP_INCIDENT_REPORT_TASK = "INCIDENT REPORT";
 static const std::string DUMP_HALS_TASK = "DUMP HALS";
 static const std::string DUMP_BOARD_TASK = "dumpstate_board()";
 static const std::string DUMP_CHECKINS_TASK = "DUMP CHECKINS";
-static const std::string DUMP_APP_INFOS_TASK = "DUMP APP INFOS";
 
 namespace android {
 namespace os {
@@ -1053,6 +1054,24 @@ static void DumpIncidentReport() {
     }
 }
 
+static void MaybeAddSystemTraceToZip() {
+    // This function copies into the .zip the system trace that was snapshotted
+    // by the early call to MaybeSnapshotSystemTrace(), if any background
+    // tracing was happening.
+    if (!ds.IsZipping()) {
+        MYLOGD("Not dumping system trace because it's not a zipped bugreport\n");
+        return;
+    }
+    if (!ds.has_system_trace_) {
+        // No background trace was happening at the time dumpstate was invoked.
+        return;
+    }
+    ds.AddZipEntry(
+            ZIP_ROOT_DIR + SYSTEM_TRACE_SNAPSHOT,
+            SYSTEM_TRACE_SNAPSHOT);
+    android::os::UnlinkAndLogOnError(SYSTEM_TRACE_SNAPSHOT);
+}
+
 static void DumpVisibleWindowViews() {
     if (!ds.IsZipping()) {
         MYLOGD("Not dumping visible views because it's not a zipped bugreport\n");
@@ -1550,7 +1569,7 @@ static void DumpAppInfos(int out_fd = STDOUT_FILENO) {
     dprintf(out_fd, "========================================================\n");
 
     RunDumpsys("APP PROVIDERS PLATFORM", {"activity", "provider", "all-platform"},
-            DUMPSYS_COMPONENTS_OPTIONS, out_fd);
+            DUMPSYS_COMPONENTS_OPTIONS, 0, out_fd);
 
     dprintf(out_fd, "========================================================\n");
     dprintf(out_fd, "== Running Application Providers (non-platform)\n");
@@ -1577,7 +1596,6 @@ static Dumpstate::RunStatus dumpstate() {
         ds.dump_pool_->enqueueTask(DUMP_INCIDENT_REPORT_TASK, &DumpIncidentReport);
         ds.dump_pool_->enqueueTaskWithFd(DUMP_BOARD_TASK, &Dumpstate::DumpstateBoard, &ds, _1);
         ds.dump_pool_->enqueueTaskWithFd(DUMP_CHECKINS_TASK, &DumpCheckins, _1);
-        ds.dump_pool_->enqueueTaskWithFd(DUMP_APP_INFOS_TASK, &DumpAppInfos, _1);
     }
 
     // Dump various things. Note that anything that takes "long" (i.e. several seconds) should
@@ -1650,6 +1668,8 @@ static Dumpstate::RunStatus dumpstate() {
     }
 
     AddAnrTraceFiles();
+
+    MaybeAddSystemTraceToZip();
 
     // NOTE: tombstones are always added as separate entries in the zip archive
     // and are not interspersed with the main report.
@@ -1730,11 +1750,7 @@ static Dumpstate::RunStatus dumpstate() {
         RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK_AND_LOG(DUMP_CHECKINS_TASK, DumpCheckins);
     }
 
-    if (ds.dump_pool_) {
-        WAIT_TASK_WITH_CONSENT_CHECK(DUMP_APP_INFOS_TASK, ds.dump_pool_);
-    } else {
-        RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK_AND_LOG(DUMP_APP_INFOS_TASK, DumpAppInfos);
-    }
+    RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(DumpAppInfos);
 
     printf("========================================================\n");
     printf("== Dropbox crashes\n");
@@ -2163,6 +2179,22 @@ void Dumpstate::DumpstateBoard(int out_fd) {
         return;
     }
 
+    /*
+     * mount debugfs for non-user builds which launch with S and unmount it
+     * after invoking dumpstateBoard_* methods. This is to enable debug builds
+     * to not have debugfs mounted during runtime. It will also ensure that
+     * debugfs is only accessed by the dumpstate HAL.
+     */
+    auto api_level = android::base::GetIntProperty("ro.product.first_api_level", 0);
+    bool mount_debugfs = !PropertiesHelper::IsUserBuild() && api_level >= 31;
+
+    if (mount_debugfs) {
+        RunCommand("mount debugfs", {"mount", "-t", "debugfs", "debugfs", "/sys/kernel/debug"},
+                   AS_ROOT_20);
+        RunCommand("chmod debugfs", {"chmod", "0755", "/sys/kernel/debug"},
+                   AS_ROOT_20);
+    }
+
     std::vector<std::string> paths;
     std::vector<android::base::ScopeGuard<std::function<void()>>> remover;
     for (int i = 0; i < NUM_OF_DUMPS; i++) {
@@ -2260,6 +2292,10 @@ void Dumpstate::DumpstateBoard(int out_fd) {
     if (result.wait_for(std::chrono::seconds(killing_timeout_sec)) != std::future_status::ready) {
         MYLOGE("killing dumpstateBoard timed out after %zus, continue and "
                "there might be racing in content\n", killing_timeout_sec);
+    }
+
+    if (mount_debugfs) {
+        RunCommand("unmount debugfs", {"umount", "/sys/kernel/debug"}, AS_ROOT_20);
     }
 
     auto file_sizes = std::make_unique<ssize_t[]>(paths.size());
@@ -2872,6 +2908,13 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
         RunDumpsysCritical();
     }
     MaybeTakeEarlyScreenshot();
+
+    if (!is_dumpstate_restricted) {
+        // Snapshot the system trace now (if running) to avoid that dumpstate's
+        // own activity pushes out interesting data from the trace ring buffer.
+        // The trace file is added to the zip by MaybeAddSystemTraceToZip().
+        MaybeSnapshotSystemTrace();
+    }
     onUiIntensiveBugreportDumpsFinished(calling_uid);
     MaybeCheckUserConsent(calling_uid, calling_package);
     if (options_->telephony_only) {
@@ -2960,6 +3003,26 @@ void Dumpstate::MaybeTakeEarlyScreenshot() {
     }
 
     TakeScreenshot();
+}
+
+void Dumpstate::MaybeSnapshotSystemTrace() {
+    // If a background system trace is happening and is marked as "suitable for
+    // bugreport" (i.e. bugreport_score > 0 in the trace config), this command
+    // will stop it and serialize into SYSTEM_TRACE_SNAPSHOT. In the (likely)
+    // case that no trace is ongoing, this command is a no-op.
+    // Note: this should not be enqueued as we need to freeze the trace before
+    // dumpstate starts. Otherwise the trace ring buffers will contain mostly
+    // the dumpstate's own activity which is irrelevant.
+    int res = RunCommand(
+        "SERIALIZE PERFETTO TRACE",
+        {"perfetto", "--save-for-bugreport"},
+        CommandOptions::WithTimeout(10)
+            .DropRoot()
+            .CloseAllFileDescriptorsOnExec()
+            .Build());
+    has_system_trace_ = res == 0;
+    // MaybeAddSystemTraceToZip() will take care of copying the trace in the zip
+    // file in the later stages.
 }
 
 void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
