@@ -34,14 +34,15 @@
 #include <ui/HdrCapabilities.h>
 #include <ui/Region.h>
 #include <ui/Transform.h>
+#include <utils/Errors.h>
 #include <utils/Mutex.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
 #include "DisplayHardware/DisplayIdentification.h"
+#include "DisplayHardware/DisplayMode.h"
 #include "DisplayHardware/Hal.h"
 #include "DisplayHardware/PowerAdvisor.h"
-#include "Scheduler/HwcStrongTypes.h"
 
 namespace android {
 
@@ -157,10 +158,27 @@ public:
     ui::Dataspace getCompositionDataSpace() const;
 
     /* ------------------------------------------------------------------------
-     * Display active config management.
+     * Display mode management.
      */
-    HwcConfigIndexType getActiveConfig() const;
-    void setActiveConfig(HwcConfigIndexType mode);
+    const DisplayModePtr& getActiveMode() const;
+    void setActiveMode(DisplayModeId);
+    status_t initiateModeChange(DisplayModeId modeId,
+                                const hal::VsyncPeriodChangeConstraints& constraints,
+                                hal::VsyncPeriodChangeTimeline* outTimeline) const;
+
+    // Return the immutable list of supported display modes. The HWC may report different modes
+    // after a hotplug reconnect event, in which case the DisplayDevice object will be recreated.
+    // Hotplug reconnects are common for external displays.
+    const DisplayModes& getSupportedModes() const;
+
+    // Returns nullptr if the given mode ID is not supported. A previously
+    // supported mode may be no longer supported for some devices like TVs and
+    // set-top boxes after a hotplug reconnect.
+    DisplayModePtr getMode(DisplayModeId) const;
+
+    void onVsync(nsecs_t timestamp);
+    nsecs_t getVsyncPeriodFromHWC() const;
+    nsecs_t getRefreshTimestamp() const;
 
     void setPowerModeOverrideConfig(bool supported);
     bool getPowerModeOverrideConfig() const;
@@ -176,6 +194,7 @@ public:
 
 private:
     const sp<SurfaceFlinger> mFlinger;
+    HWComposer& mHwComposer;
     const wp<IBinder> mDisplayToken;
     const int32_t mSequenceId;
     const std::optional<DisplayConnectionType> mConnectionType;
@@ -191,7 +210,10 @@ private:
 
     hardware::graphics::composer::hal::PowerMode mPowerMode =
             hardware::graphics::composer::hal::PowerMode::OFF;
-    HwcConfigIndexType mActiveConfig;
+    DisplayModeId mActiveModeId;
+    const DisplayModes mSupportedModes;
+
+    std::atomic<nsecs_t> mLastHwVsync = 0;
 
     // TODO(b/74619554): Remove special cases for primary display.
     const bool mIsPrimary;
@@ -206,6 +228,9 @@ struct DisplayDeviceState {
         DisplayConnectionType type;
         hardware::graphics::composer::hal::HWDisplayId hwcDisplayId;
         std::optional<DeviceProductInfo> deviceProductInfo;
+        DisplayModes supportedModes;
+        DisplayModePtr activeMode;
+
         bool operator==(const Physical& other) const {
             return id == other.id && type == other.type && hwcDisplayId == other.hwcDisplayId;
         }
@@ -232,9 +257,11 @@ private:
 struct DisplayDeviceCreationArgs {
     // We use a constructor to ensure some of the values are set, without
     // assuming a default value.
-    DisplayDeviceCreationArgs(const sp<SurfaceFlinger>&, const wp<IBinder>& displayToken,
+    DisplayDeviceCreationArgs(const sp<SurfaceFlinger>&, HWComposer& hwComposer,
+                              const wp<IBinder>& displayToken,
                               std::shared_ptr<compositionengine::Display>);
     const sp<SurfaceFlinger> flinger;
+    HWComposer& hwComposer;
     const wp<IBinder> displayToken;
     const std::shared_ptr<compositionengine::Display> compositionDisplay;
 
@@ -251,6 +278,7 @@ struct DisplayDeviceCreationArgs {
     hardware::graphics::composer::hal::PowerMode initialPowerMode{
             hardware::graphics::composer::hal::PowerMode::ON};
     bool isPrimary{false};
+    DisplayModes supportedModes;
 };
 
 } // namespace android

@@ -82,6 +82,10 @@ struct layer_state_t {
         eLayerOpaque = 0x02,         // SURFACE_OPAQUE
         eLayerSkipScreenshot = 0x40, // SKIP_SCREENSHOT
         eLayerSecure = 0x80,         // SECURE
+        // Queue up BufferStateLayer buffers instead of dropping the oldest buffer when this flag is
+        // set. This blocks the client until all the buffers have been presented. If the buffers
+        // have presentation timestamps, then we may drop buffers.
+        eEnableBackpressure = 0x100, // ENABLE_BACKPRESSURE
     };
 
     enum {
@@ -98,7 +102,7 @@ struct layer_state_t {
         /* was ScalingModeChanged, now available 0x00000400, */
         eShadowRadiusChanged = 0x00000800,
         eReparentChildren = 0x00001000,
-        eDetachChildren = 0x00002000,
+        /* was eDetachChildren, now available 0x00002000, */
         eRelativeLayerChanged = 0x00004000,
         eReparent = 0x00008000,
         eColorChanged = 0x00010000,
@@ -128,7 +132,7 @@ struct layer_state_t {
         eProducerDisconnect = 0x100'00000000,
         eFixedTransformHintChanged = 0x200'00000000,
         eFrameNumberChanged = 0x400'00000000,
-        eFrameTimelineVsyncChanged = 0x800'00000000,
+        eFrameTimelineInfoChanged = 0x800'00000000,
         eBlurRegionsChanged = 0x1000'00000000,
         eAutoRefreshChanged = 0x2000'00000000,
     };
@@ -157,8 +161,8 @@ struct layer_state_t {
     uint32_t h;
     uint32_t layerStack;
     float alpha;
-    uint8_t flags;
-    uint8_t mask;
+    uint32_t flags;
+    uint32_t mask;
     uint8_t reserved;
     matrix22_t matrix;
     Rect crop_legacy;
@@ -234,7 +238,7 @@ struct layer_state_t {
     // graphics producer.
     uint64_t frameNumber;
 
-    int64_t frameTimelineVsyncId;
+    FrameTimelineInfo frameTimelineInfo;
 
     // Indicates that the consumer should acquire the next frame as soon as it
     // can and not wait for a frame to become available. This is only relevant
@@ -309,11 +313,14 @@ static inline int compare_type(const DisplayState& lhs, const DisplayState& rhs)
     return compare_type(lhs.token, rhs.token);
 }
 
-// Returns true if the frameRate and compatibility are valid values, false
-// othwerise. If either of the params are invalid, an error log is printed, and
-// functionName is added to the log to indicate which function call failed.
-// functionName can be null.
-bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* functionName);
+// Returns true if the frameRate is valid.
+//
+// @param frameRate the frame rate in Hz
+// @param compatibility a ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_*
+// @param functionName calling function or nullptr. Used for logging
+// @param privileged whether caller has unscoped surfaceflinger access
+bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* functionName,
+                       bool privileged = false);
 
 struct CaptureArgs {
     const static int32_t UNSET_UID = -1;
@@ -321,7 +328,8 @@ struct CaptureArgs {
 
     ui::PixelFormat pixelFormat{ui::PixelFormat::RGBA_8888};
     Rect sourceCrop;
-    float frameScale{1};
+    float frameScaleX{1};
+    float frameScaleY{1};
     bool captureSecureLayers{false};
     int32_t uid{UNSET_UID};
     // Force capture to be in a color space. If the value is ui::Dataspace::UNKNOWN, the captured
@@ -338,6 +346,8 @@ struct CaptureArgs {
     // secure property of the surface, which is specified by the application explicitly to avoid
     // the contents being accessed/captured by screenshot or unsecure display.
     bool allowProtected = false;
+
+    bool grayscale = false;
 
     virtual status_t write(Parcel& output) const;
     virtual status_t read(const Parcel& input);
