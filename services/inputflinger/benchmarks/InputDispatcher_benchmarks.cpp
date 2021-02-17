@@ -66,6 +66,13 @@ private:
 
     void notifyFocusChanged(const sp<IBinder>&, const sp<IBinder>&) override {}
 
+    void notifySensorEvent(int32_t deviceId, InputDeviceSensorType sensorType,
+                           InputDeviceSensorAccuracy accuracy, nsecs_t timestamp,
+                           const std::vector<float>& values) override {}
+
+    void notifySensorAccuracy(int32_t deviceId, InputDeviceSensorType sensorType,
+                              InputDeviceSensorAccuracy accuracy) override {}
+
     void notifyUntrustedTouch(const std::string& obscuringPackage) override {}
 
     void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) override {
@@ -95,6 +102,8 @@ private:
     bool checkInjectEventsPermissionNonReentrant(int32_t, int32_t) override { return false; }
 
     void onPointerDownOutsideFocus(const sp<IBinder>& newToken) override {}
+
+    void setPointerCapture(bool enabled) override {}
 
     InputDispatcherConfiguration mConfig;
 };

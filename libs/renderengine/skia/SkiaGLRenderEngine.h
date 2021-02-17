@@ -35,6 +35,7 @@
 #include "SkiaRenderEngine.h"
 #include "android-base/macros.h"
 #include "filters/BlurFilter.h"
+#include "skia/debug/SkiaCapture.h"
 #include "skia/filters/LinearEffect.h"
 
 namespace android {
@@ -55,6 +56,7 @@ public:
                         const sp<GraphicBuffer>& buffer, const bool useFramebufferCache,
                         base::unique_fd&& bufferFence, base::unique_fd* drawFence) override;
     void cleanFramebufferCache() override;
+    int getContextPriority() override;
     bool isProtected() const override { return mInProtectedContext; }
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
@@ -67,8 +69,11 @@ protected:
 private:
     static EGLConfig chooseEglConfig(EGLDisplay display, int format, bool logConfig);
     static EGLContext createEglContext(EGLDisplay display, EGLConfig config,
-                                       EGLContext shareContext, bool useContextPriority,
+                                       EGLContext shareContext,
+                                       std::optional<ContextPriority> contextPriority,
                                        Protection protection);
+    static std::optional<RenderEngine::ContextPriority> createContextPriority(
+            const RenderEngineCreationArgs& args);
     static EGLSurface createPlaceholderEglPbufferSurface(EGLDisplay display, EGLConfig config,
                                                          int hwcFormat, Protection protection);
     inline SkRect getSkRect(const FloatRect& layer);
@@ -77,15 +82,15 @@ private:
     inline BlurRegion getBlurRegion(const LayerSettings* layer);
     inline SkColor getSkColor(const vec4& color);
     inline SkM44 getSkM44(const mat4& matrix);
-    inline SkMatrix getDrawTransform(const LayerSettings* layer, const SkMatrix& screenTransform);
     inline SkPoint3 getSkPoint3(const vec3& vector);
 
     base::unique_fd flush();
     bool waitFence(base::unique_fd fenceFd);
     void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
                     const ShadowSettings& shadowSettings);
-    void drawBlurRegion(SkCanvas* canvas, const BlurRegion& blurRegion,
-                        const SkMatrix& drawTransform, sk_sp<SkSurface> blurrendSurface);
+    void drawBlurRegion(SkCanvas* canvas, const BlurRegion& blurRegion, const SkRect& layerRect,
+                        sk_sp<SkSurface> blurredSurface);
+    SkMatrix getBlurShaderTransform(const SkCanvas* canvas, const SkRect& layerRect);
 
     EGLDisplay mEGLDisplay;
     EGLContext mEGLContext;
@@ -116,6 +121,8 @@ private:
     sk_sp<GrDirectContext> mProtectedGrContext;
 
     bool mInProtectedContext = false;
+    // Object to capture commands send to Skia.
+    SkiaCapture mCapture;
 };
 
 } // namespace skia

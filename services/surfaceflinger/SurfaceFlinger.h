@@ -416,7 +416,7 @@ protected:
 
     virtual uint32_t setClientStateLocked(
             int64_t frameTimelineVsyncId, const ComposerState& composerState,
-            int64_t desiredPresentTime, int64_t postTime, bool privileged,
+            int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime, bool privileged,
             std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
             REQUIRES(mStateLock);
     virtual void commitTransactionLocked();
@@ -509,8 +509,9 @@ private:
     struct TransactionState {
         TransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& composerStates,
                          const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
-                         int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
-                         int64_t postTime, bool privileged, bool hasListenerCallbacks,
+                         int64_t desiredPresentTime, bool isAutoTimestamp,
+                         const client_cache_t& uncacheBuffer, int64_t postTime, bool privileged,
+                         bool hasListenerCallbacks,
                          std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
                          int originUid, uint64_t transactionId)
               : frameTimelineVsyncId(frameTimelineVsyncId),
@@ -518,6 +519,7 @@ private:
                 displays(displayStates),
                 flags(transactionFlags),
                 desiredPresentTime(desiredPresentTime),
+                isAutoTimestamp(isAutoTimestamp),
                 buffer(uncacheBuffer),
                 postTime(postTime),
                 privileged(privileged),
@@ -532,6 +534,7 @@ private:
         Vector<DisplayState> displays;
         uint32_t flags;
         const int64_t desiredPresentTime;
+        const bool isAutoTimestamp;
         client_cache_t buffer;
         const int64_t postTime;
         bool privileged;
@@ -595,8 +598,8 @@ private:
                                  const Vector<DisplayState>& displays, uint32_t flags,
                                  const sp<IBinder>& applyToken,
                                  const InputWindowCommands& inputWindowCommands,
-                                 int64_t desiredPresentTime, const client_cache_t& uncacheBuffer,
-                                 bool hasListenerCallbacks,
+                                 int64_t desiredPresentTime, bool isAutoTimestamp,
+                                 const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
                                  const std::vector<ListenerCallbacks>& listenerCallbacks,
                                  uint64_t transactionId) override;
     void bootFinished() override;
@@ -684,6 +687,8 @@ private:
     status_t addTransactionTraceListener(
             const sp<gui::ITransactionTraceListener>& listener) override;
 
+    int getGPUContextPriority() override;
+
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
 
@@ -716,6 +721,8 @@ private:
     void repaintEverythingForHWC() override;
     // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
     void kernelTimerChanged(bool expired) override;
+    // Called when the frame rate override list changed to trigger an event.
+    void triggerOnFrameRateOverridesChanged() override;
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer();
     // Keeps track of whether the kernel idle timer is currently enabled, so we don't have to
@@ -797,7 +804,7 @@ private:
     void applyTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
                                const Vector<DisplayState>& displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
-                               const int64_t desiredPresentTime,
+                               const int64_t desiredPresentTime, bool isAutoTimestamp,
                                const client_cache_t& uncacheBuffer, const int64_t postTime,
                                bool privileged, bool hasListenerCallbacks,
                                const std::vector<ListenerCallbacks>& listenerCallbacks,
@@ -821,7 +828,8 @@ private:
     void commitTransaction() REQUIRES(mStateLock);
     void commitOffscreenLayers();
     bool transactionIsReadyToBeApplied(int64_t desiredPresentTime,
-                                       const Vector<ComposerState>& states);
+                                       const Vector<ComposerState>& states,
+                                       bool updateTransactionCounters = false) REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
@@ -939,26 +947,12 @@ private:
     /*
      * H/W composer
      */
-
-    // The current hardware composer interface.
-    //
-    // The following thread safety rules apply when accessing mHwc, either
-    // directly or via getHwComposer():
-    //
-    // 1. When recreating mHwc, acquire mStateLock. Recreating mHwc must only be
-    //    done on the main thread.
-    //
-    // 2. When accessing mHwc on the main thread, it's not necessary to acquire
-    //    mStateLock.
-    //
-    // 3. When accessing mHwc on a thread other than the main thread, we always
+    // The following thread safety rules apply when accessing HWComposer:
+    // 1. When reading display state from HWComposer on the main thread, it's not necessary to
+    //    acquire mStateLock.
+    // 2. When accessing HWComposer on a thread other than the main thread, we always
     //    need to acquire mStateLock. This is because the main thread could be
-    //    in the process of destroying the current mHwc instance.
-    //
-    // The above thread safety rules only apply to SurfaceFlinger.cpp. In
-    // SurfaceFlinger_hwc1.cpp we create mHwc at surface flinger init and never
-    // destroy it, so it's always safe to access mHwc from any thread without
-    // acquiring mStateLock.
+    //    in the process of writing display state, e.g. creating or destroying a display.
     HWComposer& getHwComposer() const;
 
     /*
@@ -1030,7 +1024,7 @@ private:
 
     // Calculates the expected present time for this frame. For negative offsets, performs a
     // correction using the predicted vsync for the next frame instead.
-    nsecs_t calculateExpectedPresentTime(nsecs_t now) const;
+    nsecs_t calculateExpectedPresentTime(DisplayStatInfo) const;
 
     /*
      * Display identification

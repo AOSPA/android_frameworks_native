@@ -82,9 +82,15 @@ public:
     int32_t getSwitchState(uint32_t sourceMask, int32_t switchCode);
     bool markSupportedKeyCodes(uint32_t sourceMask, size_t numCodes, const int32_t* keyCodes,
                                uint8_t* outFlags);
-    void vibrate(const std::vector<VibrationElement>& pattern, ssize_t repeat, int32_t token);
+    void vibrate(const VibrationSequence& sequence, ssize_t repeat, int32_t token);
     void cancelVibrate(int32_t token);
+    bool isVibrating();
+    std::vector<int32_t> getVibratorIds();
     void cancelTouch(nsecs_t when);
+    bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
+                      std::chrono::microseconds maxBatchReportLatency);
+    void disableSensor(InputDeviceSensorType sensorType);
+    void flushSensor(InputDeviceSensorType sensorType);
 
     int32_t getMetaState();
     void updateMetaState(int32_t keyCode);
@@ -227,9 +233,12 @@ public:
     inline bool hasRelativeAxis(int32_t code) const {
         return mEventHub->hasRelativeAxis(mId, code);
     }
-    inline bool hasInputProperty(int property) const {
+    inline bool hasInputProperty(int32_t property) const {
         return mEventHub->hasInputProperty(mId, property);
     }
+
+    inline bool hasMscEvent(int mscEvent) const { return mEventHub->hasMscEvent(mId, mscEvent); }
+
     inline status_t mapKey(int32_t scanCode, int32_t usageCode, int32_t metaState,
                            int32_t* outKeycode, int32_t* outMetaState, uint32_t* outFlags) const {
         return mEventHub->mapKey(mId, scanCode, usageCode, metaState, outKeycode, outMetaState,
@@ -238,6 +247,10 @@ public:
     inline status_t mapAxis(int32_t scanCode, AxisInfo* outAxisInfo) const {
         return mEventHub->mapAxis(mId, scanCode, outAxisInfo);
     }
+    inline base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(int32_t absCode) {
+        return mEventHub->mapSensor(mId, absCode);
+    }
+
     inline std::vector<TouchVideoFrame> getVideoFrames() { return mEventHub->getVideoFrames(mId); }
     inline int32_t getScanCodeState(int32_t scanCode) const {
         return mEventHub->getScanCodeState(mId, scanCode);
@@ -271,6 +284,8 @@ public:
         return mEventHub->vibrate(mId, element);
     }
     inline void cancelVibrate() { return mEventHub->cancelVibrate(mId); }
+
+    inline std::vector<int32_t> getVibratorIds() { return mEventHub->getVibratorIds(mId); }
 
     inline bool hasAbsoluteAxis(int32_t code) const {
         RawAbsoluteAxisInfo info;

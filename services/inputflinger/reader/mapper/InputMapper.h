@@ -63,10 +63,16 @@ public:
     virtual int32_t getSwitchState(uint32_t sourceMask, int32_t switchCode);
     virtual bool markSupportedKeyCodes(uint32_t sourceMask, size_t numCodes,
                                        const int32_t* keyCodes, uint8_t* outFlags);
-    virtual void vibrate(const std::vector<VibrationElement>& pattern, ssize_t repeat,
-                         int32_t token);
+    virtual void vibrate(const VibrationSequence& sequence, ssize_t repeat, int32_t token);
     virtual void cancelVibrate(int32_t token);
+    virtual bool isVibrating();
+    virtual std::vector<int32_t> getVibratorIds();
     virtual void cancelTouch(nsecs_t when);
+    virtual bool enableSensor(InputDeviceSensorType sensorType,
+                              std::chrono::microseconds samplingPeriod,
+                              std::chrono::microseconds maxBatchReportLatency);
+    virtual void disableSensor(InputDeviceSensorType sensorType);
+    virtual void flushSensor(InputDeviceSensorType sensorType);
 
     virtual int32_t getMetaState();
     virtual void updateMetaState(int32_t keyCode);

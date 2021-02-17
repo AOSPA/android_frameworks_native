@@ -116,6 +116,8 @@ private:
     // Temporary - Used only for LEGACY camera mode.
     uint32_t getProducerStickyTransform() const;
 
+    nsecs_t nextPredictedPresentTime() const override;
+
     sp<BufferLayerConsumer> mConsumer;
     sp<IGraphicBufferProducer> mProducer;
 
@@ -129,10 +131,10 @@ private:
     Condition mQueueItemCondition;
 
     struct BufferData {
-        BufferData(BufferItem item, std::unique_ptr<frametimeline::SurfaceFrame> surfaceFrame)
-              : item(item), surfaceFrame(std::move(surfaceFrame)) {}
+        BufferData(BufferItem item, std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame)
+              : item(item), surfaceFrame(surfaceFrame) {}
         BufferItem item;
-        std::unique_ptr<frametimeline::SurfaceFrame> surfaceFrame;
+        std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame;
     };
     std::vector<BufferData> mQueueItems;
     std::atomic<uint64_t> mLastFrameNumberReceived{0};
@@ -146,6 +148,12 @@ private:
     // a buffer to correlate the buffer with the vsync id. Can only be accessed
     // with the SF state lock held.
     std::optional<int64_t> mFrameTimelineVsyncId;
+
+    // Keeps track of the time SF latched the last buffer from this layer.
+    // Used in buffer stuffing analysis in FrameTimeline.
+    // TODO(b/176106798): Find a way to do this for BLASTBufferQueue as well.
+    nsecs_t mLastLatchTime = 0;
+
     nsecs_t mLastTimeStamp = -1;
 };
 

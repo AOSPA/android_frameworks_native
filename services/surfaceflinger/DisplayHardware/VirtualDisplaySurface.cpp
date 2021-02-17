@@ -72,6 +72,7 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId d
         mOutputUsage(GRALLOC_USAGE_HW_COMPOSER),
         mProducerSlotSource(0),
         mProducerBuffers(),
+        mProducerSlotNeedReallocation(0),
         mQueueBufferOutput(),
         mSinkBufferWidth(0),
         mSinkBufferHeight(0),
@@ -353,10 +354,14 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
             dbgSourceStr(source), *sslot, pslot, result);
     uint64_t sourceBit = static_cast<uint64_t>(source) << pslot;
 
+    // reset producer slot reallocation flag
+    mProducerSlotNeedReallocation &= ~(1ULL << pslot);
+
     if ((mProducerSlotSource & (1ULL << pslot)) != sourceBit) {
         // This slot was previously dequeued from the other source; must
         // re-request the buffer.
-        result |= BUFFER_NEEDS_REALLOCATION;
+        mProducerSlotNeedReallocation |= 1ULL << pslot;
+
         mProducerSlotSource &= ~(1ULL << pslot);
         mProducerSlotSource |= sourceBit;
     }
@@ -378,6 +383,9 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
                 dbgSourceStr(source), pslot, mProducerBuffers[pslot].get(),
                 mProducerBuffers[pslot]->getPixelFormat(),
                 mProducerBuffers[pslot]->getUsage());
+
+        // propagate reallocation to VDS consumer
+        mProducerSlotNeedReallocation |= 1ULL << pslot;
     }
 
     return result;
@@ -452,6 +460,11 @@ status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence, uint
     if (outBufferAge) {
         *outBufferAge = 0;
     }
+
+    if ((mProducerSlotNeedReallocation & (1ULL << *pslot)) != 0) {
+        result |= BUFFER_NEEDS_REALLOCATION;
+    }
+
     return result;
 }
 

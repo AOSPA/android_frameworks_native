@@ -125,6 +125,9 @@ sp<SurfaceComposerClient> SurfaceComposerClient::getDefault() {
     return DefaultComposerClient::getComposerClient();
 }
 
+JankDataListener::~JankDataListener() {
+}
+
 // ---------------------------------------------------------------------------
 
 // TransactionCompletedListener does not use ANDROID_SINGLETON_STATIC_INSTANCE because it needs
@@ -174,6 +177,23 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
     return callbackId;
 }
 
+void TransactionCompletedListener::addJankListener(const sp<JankDataListener>& listener,
+                                                   sp<SurfaceControl> surfaceControl) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mJankListeners.insert({surfaceControl->getHandle(), listener});
+}
+
+void TransactionCompletedListener::removeJankListener(const sp<JankDataListener>& listener) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    for (auto it = mJankListeners.begin(); it != mJankListeners.end();) {
+        if (it->second == listener) {
+            it = mJankListeners.erase(it);
+        } else {
+            it++;
+        }
+    }
+}
+
 void TransactionCompletedListener::addSurfaceControlToCallbacks(
         const sp<SurfaceControl>& surfaceControl,
         const std::unordered_set<CallbackId>& callbackIds) {
@@ -189,6 +209,7 @@ void TransactionCompletedListener::addSurfaceControlToCallbacks(
 
 void TransactionCompletedListener::onTransactionCompleted(ListenerStats listenerStats) {
     std::unordered_map<CallbackId, CallbackTranslation> callbacksMap;
+    std::multimap<sp<IBinder>, sp<JankDataListener>> jankListenersMap;
     {
         std::lock_guard<std::mutex> lock(mMutex);
 
@@ -204,6 +225,7 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
          * sp<SurfaceControl> that could possibly exist for the callbacks.
          */
         callbacksMap = mCallbacks;
+        jankListenersMap = mJankListeners;
         for (const auto& transactionStats : listenerStats.transactionStats) {
             for (auto& callbackId : transactionStats.callbackIds) {
                 mCallbacks.erase(callbackId);
@@ -235,6 +257,13 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
 
             callbackFunction(transactionStats.latchTime, transactionStats.presentFence,
                              surfaceControlStats);
+        }
+        for (const auto& surfaceStats : transactionStats.surfaceStats) {
+            if (surfaceStats.jankData.empty()) continue;
+            for (auto it = jankListenersMap.find(surfaceStats.surfaceControl);
+                    it != jankListenersMap.end(); it++) {
+                it->second->onJankDataAvailable(surfaceStats.jankData);
+            }
         }
     }
 }
@@ -366,6 +395,7 @@ SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
         mExplicitEarlyWakeupEnd(other.mExplicitEarlyWakeupEnd),
         mContainsBuffer(other.mContainsBuffer),
         mDesiredPresentTime(other.mDesiredPresentTime),
+        mIsAutoTimestamp(other.mIsAutoTimestamp),
         mFrameTimelineVsyncId(other.mFrameTimelineVsyncId) {
     mDisplayStates = other.mDisplayStates;
     mComposerStates = other.mComposerStates;
@@ -395,6 +425,7 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     const bool explicitEarlyWakeupEnd = parcel->readBool();
     const bool containsBuffer = parcel->readBool();
     const int64_t desiredPresentTime = parcel->readInt64();
+    const bool isAutoTimestamp = parcel->readBool();
     const int64_t frameTimelineVsyncId = parcel->readInt64();
 
     size_t count = static_cast<size_t>(parcel->readUint32());
@@ -468,6 +499,7 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     mExplicitEarlyWakeupEnd = explicitEarlyWakeupEnd;
     mContainsBuffer = containsBuffer;
     mDesiredPresentTime = desiredPresentTime;
+    mIsAutoTimestamp = isAutoTimestamp;
     mFrameTimelineVsyncId = frameTimelineVsyncId;
     mDisplayStates = displayStates;
     mListenerCallbacks = listenerCallbacks;
@@ -498,6 +530,7 @@ status_t SurfaceComposerClient::Transaction::writeToParcel(Parcel* parcel) const
     parcel->writeBool(mExplicitEarlyWakeupEnd);
     parcel->writeBool(mContainsBuffer);
     parcel->writeInt64(mDesiredPresentTime);
+    parcel->writeBool(mIsAutoTimestamp);
     parcel->writeInt64(mFrameTimelineVsyncId);
     parcel->writeUint32(static_cast<uint32_t>(mDisplayStates.size()));
     for (auto const& displayState : mDisplayStates) {
@@ -599,7 +632,8 @@ void SurfaceComposerClient::Transaction::clear() {
     mEarlyWakeup = false;
     mExplicitEarlyWakeupStart = false;
     mExplicitEarlyWakeupEnd = false;
-    mDesiredPresentTime = -1;
+    mDesiredPresentTime = 0;
+    mIsAutoTimestamp = true;
     mFrameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
 }
 
@@ -611,8 +645,9 @@ void SurfaceComposerClient::doUncacheBufferTransaction(uint64_t cacheId) {
     uncacheBuffer.id = cacheId;
 
     sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
-    sf->setTransactionState(ISurfaceComposer::INVALID_VSYNC_ID, {}, {}, 0, applyToken, {}, -1,
-                            uncacheBuffer, false, {}, 0 /* Undefined transactionId */);
+    sf->setTransactionState(ISurfaceComposer::INVALID_VSYNC_ID, {}, {}, 0, applyToken, {},
+                            systemTime(), true, uncacheBuffer, false, {},
+                            0 /* Undefined transactionId */);
 }
 
 void SurfaceComposerClient::Transaction::cacheBuffers() {
@@ -730,7 +765,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous) {
 
     sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
     sf->setTransactionState(mFrameTimelineVsyncId, composerStates, displayStates, flags, applyToken,
-                            mInputWindowCommands, mDesiredPresentTime,
+                            mInputWindowCommands, mDesiredPresentTime, mIsAutoTimestamp,
                             {} /*uncacheBuffer - only set in doUncacheBufferTransaction*/,
                             hasListenerCallbacks, listenerCallbacks, mId);
     mId = generateId();
@@ -1172,6 +1207,9 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
     }
     s->what |= layer_state_t::eBufferChanged;
     s->buffer = buffer;
+    if (mIsAutoTimestamp) {
+        mDesiredPresentTime = systemTime();
+    }
 
     registerSurfaceControlForCallback(sc);
 
@@ -1266,6 +1304,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setSideb
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDesiredPresentTime(
         nsecs_t desiredPresentTime) {
     mDesiredPresentTime = desiredPresentTime;
+    mIsAutoTimestamp = false;
     return *this;
 }
 
@@ -1957,6 +1996,10 @@ status_t SurfaceComposerClient::setGlobalShadowSettings(const half4& ambientColo
     return ComposerService::getComposerService()->setGlobalShadowSettings(ambientColor, spotColor,
                                                                           lightPosY, lightPosZ,
                                                                           lightRadius);
+}
+
+int SurfaceComposerClient::getGPUContextPriority() {
+    return ComposerService::getComposerService()->getGPUContextPriority();
 }
 
 // ----------------------------------------------------------------------------

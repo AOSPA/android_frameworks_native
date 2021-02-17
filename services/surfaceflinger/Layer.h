@@ -36,6 +36,7 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
+#include <chrono>
 #include <cstdint>
 #include <list>
 #include <optional>
@@ -45,6 +46,7 @@
 #include "ClientCache.h"
 #include "DisplayHardware/ComposerHal.h"
 #include "DisplayHardware/HWComposer.h"
+#include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
 #include "MonitoredProducer.h"
@@ -155,7 +157,7 @@ public:
     struct FrameRate {
         using Seamlessness = scheduler::Seamlessness;
 
-        float rate;
+        Fps rate;
         FrameRateCompatibility type;
         Seamlessness seamlessness;
 
@@ -163,11 +165,12 @@ public:
               : rate(0),
                 type(FrameRateCompatibility::Default),
                 seamlessness(Seamlessness::Default) {}
-        FrameRate(float rate, FrameRateCompatibility type, bool shouldBeSeamless = true)
+        FrameRate(Fps rate, FrameRateCompatibility type, bool shouldBeSeamless = true)
               : rate(rate), type(type), seamlessness(getSeamlessness(rate, shouldBeSeamless)) {}
 
         bool operator==(const FrameRate& other) const {
-            return rate == other.rate && type == other.type && seamlessness == other.seamlessness;
+            return rate.equalsWithMargin(other.rate) && type == other.type &&
+                    seamlessness == other.seamlessness;
         }
 
         bool operator!=(const FrameRate& other) const { return !(*this == other); }
@@ -177,8 +180,8 @@ public:
         static FrameRateCompatibility convertCompatibility(int8_t compatibility);
 
     private:
-        static Seamlessness getSeamlessness(float rate, bool shouldBeSeamless) {
-            if (rate == 0.0f) {
+        static Seamlessness getSeamlessness(Fps rate, bool shouldBeSeamless) {
+            if (!rate.isValid()) {
                 // Refresh rate of 0 is a special value which should reset the vote to
                 // its default value.
                 return Seamlessness::Default;
@@ -272,7 +275,8 @@ public:
         // recent callback handle.
         std::deque<sp<CallbackHandle>> callbackHandles;
         bool colorSpaceAgnostic;
-        nsecs_t desiredPresentTime = -1;
+        nsecs_t desiredPresentTime = 0;
+        bool isAutoTimestamp = true;
 
         // Length of the cast shadow. If the radius is > 0, a shadow of length shadowRadius will
         // be rendered around the layer.
@@ -441,7 +445,8 @@ public:
     virtual bool setFrame(const Rect& /*frame*/) { return false; };
     virtual bool setBuffer(const sp<GraphicBuffer>& /*buffer*/, const sp<Fence>& /*acquireFence*/,
                            nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
-                           const client_cache_t& /*clientCacheId*/, uint64_t /* frameNumber */) {
+                           bool /*isAutoTimestamp*/, const client_cache_t& /*clientCacheId*/,
+                           uint64_t /* frameNumber */) {
         return false;
     };
     virtual bool setAcquireFence(const sp<Fence>& /*fence*/) { return false; };
@@ -477,6 +482,8 @@ public:
     // one empty rect.
     virtual void useSurfaceDamage() {}
     virtual void useEmptyDamage() {}
+
+    virtual void incrementPendingBufferCount() {}
 
     /*
      * isOpaque - true if this surface is opaque
@@ -746,7 +753,7 @@ public:
      * doTransaction - process the transaction. This is a good place to figure
      * out which attributes of the surface have changed.
      */
-    uint32_t doTransaction(uint32_t transactionFlags);
+    virtual uint32_t doTransaction(uint32_t transactionFlags);
 
     /*
      * Remove relative z for the layer if its relative parent is not part of the
@@ -880,7 +887,7 @@ public:
      */
     bool hasInputInfo() const;
 
-    uid_t getOwnerUid() { return mOwnerUid; }
+    virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
     pid_t getOwnerPid() { return mOwnerPid; }
 
@@ -904,12 +911,13 @@ public:
 protected:
     class SyncPoint {
     public:
-        explicit SyncPoint(uint64_t frameNumber, wp<Layer> requestedSyncLayer)
+        explicit SyncPoint(uint64_t frameNumber, wp<Layer> requestedSyncLayer,
+                           wp<Layer> barrierLayer_legacy)
               : mFrameNumber(frameNumber),
                 mFrameIsAvailable(false),
                 mTransactionIsApplied(false),
-                mRequestedSyncLayer(requestedSyncLayer) {}
-
+                mRequestedSyncLayer(requestedSyncLayer),
+                mBarrierLayer_legacy(barrierLayer_legacy) {}
         uint64_t getFrameNumber() const { return mFrameNumber; }
 
         bool frameIsAvailable() const { return mFrameIsAvailable; }
@@ -922,11 +930,42 @@ protected:
 
         sp<Layer> getRequestedSyncLayer() { return mRequestedSyncLayer.promote(); }
 
+        sp<Layer> getBarrierLayer() const { return mBarrierLayer_legacy.promote(); }
+
+        bool isTimeout() const {
+            using namespace std::chrono_literals;
+            static constexpr std::chrono::nanoseconds TIMEOUT_THRESHOLD = 1s;
+
+            return std::chrono::steady_clock::now() - mCreateTimeStamp > TIMEOUT_THRESHOLD;
+        }
+
+        void checkTimeoutAndLog() {
+            using namespace std::chrono_literals;
+            static constexpr std::chrono::nanoseconds LOG_PERIOD = 1s;
+
+            if (!frameIsAvailable() && isTimeout()) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - mLastLogTime > LOG_PERIOD) {
+                    mLastLogTime = now;
+                    sp<Layer> requestedSyncLayer = getRequestedSyncLayer();
+                    sp<Layer> barrierLayer = getBarrierLayer();
+                    ALOGW("[%s] sync point %" PRIu64 " wait timeout %lld for %s",
+                          requestedSyncLayer ? requestedSyncLayer->getDebugName() : "Removed",
+                          mFrameNumber, (now - mCreateTimeStamp).count(),
+                          barrierLayer ? barrierLayer->getDebugName() : "Removed");
+                }
+            }
+        }
+
     private:
         const uint64_t mFrameNumber;
         std::atomic<bool> mFrameIsAvailable;
         std::atomic<bool> mTransactionIsApplied;
         wp<Layer> mRequestedSyncLayer;
+        wp<Layer> mBarrierLayer_legacy;
+        const std::chrono::time_point<std::chrono::steady_clock> mCreateTimeStamp =
+                std::chrono::steady_clock::now();
+        std::chrono::time_point<std::chrono::steady_clock> mLastLogTime;
     };
 
     friend class impl::SurfaceInterceptor;
@@ -946,6 +985,7 @@ protected:
     virtual void commitTransaction(const State& stateToCommit);
     virtual bool applyPendingStates(State* stateToCommit);
     virtual uint32_t doTransactionResize(uint32_t flags, Layer::State* stateToCommit);
+    virtual void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&) {}
 
     // Returns mCurrentScaling mode (originating from the
     // Client) or mOverrideScalingMode mode (originating from
@@ -1015,12 +1055,12 @@ protected:
     State mDrawingState;
     // Store a copy of the pending state so that the drawing thread can access the
     // states without a lock.
-    Vector<State> mPendingStatesSnapshot;
+    std::deque<State> mPendingStatesSnapshot;
 
     // these are protected by an external lock (mStateLock)
     State mCurrentState;
     std::atomic<uint32_t> mTransactionFlags{0};
-    Vector<State> mPendingStates;
+    std::deque<State> mPendingStates;
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
@@ -1075,7 +1115,7 @@ protected:
     const InputWindowInfo::Type mWindowType;
 
     // Can only be accessed with the SF state lock held.
-    std::unique_ptr<frametimeline::SurfaceFrame> mSurfaceFrame;
+    std::shared_ptr<frametimeline::SurfaceFrame> mSurfaceFrame;
 
     // The owner of the layer. If created from a non system process, it will be the calling uid.
     // If created from a system process, the value can be passed in.
@@ -1119,6 +1159,9 @@ private:
     // Finds the top most layer in the hierarchy. This will find the root Layer where the parent is
     // null.
     sp<Layer> getRootLayer();
+
+    // Fills in the frame and transform info for the InputWindowInfo
+    void fillInputFrameInfo(InputWindowInfo& info);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

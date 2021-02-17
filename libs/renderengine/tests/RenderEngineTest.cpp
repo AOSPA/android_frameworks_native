@@ -20,6 +20,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 #include <chrono>
 #include <condition_variable>
@@ -82,6 +83,45 @@ public:
                         .setSupportsBackgroundBlur(true)
                         .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
                         .setRenderEngineType(renderengine::RenderEngine::RenderEngineType::GLES)
+                        .setUseColorManagerment(true)
+                        .build();
+        return renderengine::gl::GLESRenderEngine::create(reCreationArgs);
+    }
+};
+
+class SkiaGLESRenderEngineFactory : public RenderEngineFactory {
+public:
+    std::string name() override { return "SkiaGLESRenderEngineFactory"; }
+
+    std::unique_ptr<renderengine::gl::GLESRenderEngine> createRenderEngine() override {
+        renderengine::RenderEngineCreationArgs reCreationArgs =
+                renderengine::RenderEngineCreationArgs::Builder()
+                        .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
+                        .setImageCacheSize(1)
+                        .setEnableProtectedContext(false)
+                        .setPrecacheToneMapperShaderOnly(false)
+                        .setSupportsBackgroundBlur(true)
+                        .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
+                        .setRenderEngineType(renderengine::RenderEngine::RenderEngineType::SKIA_GL)
+                        .build();
+        return renderengine::gl::GLESRenderEngine::create(reCreationArgs);
+    }
+};
+
+class SkiaGLESCMRenderEngineFactory : public RenderEngineFactory {
+public:
+    std::string name() override { return "SkiaGLESCMRenderEngineFactory"; }
+
+    std::unique_ptr<renderengine::gl::GLESRenderEngine> createRenderEngine() override {
+        renderengine::RenderEngineCreationArgs reCreationArgs =
+                renderengine::RenderEngineCreationArgs::Builder()
+                        .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
+                        .setImageCacheSize(1)
+                        .setEnableProtectedContext(false)
+                        .setPrecacheToneMapperShaderOnly(false)
+                        .setSupportsBackgroundBlur(true)
+                        .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
+                        .setRenderEngineType(renderengine::RenderEngine::RenderEngineType::SKIA_GL)
                         .setUseColorManagerment(true)
                         .build();
         return renderengine::gl::GLESRenderEngine::create(reCreationArgs);
@@ -365,6 +405,12 @@ public:
 
     template <typename SourceVariant>
     void fillBufferColorTransform();
+
+    template <typename SourceVariant>
+    void fillBufferWithColorTransformZeroLayerAlpha();
+
+    template <typename SourceVariant>
+    void fillBufferColorTransformZeroLayerAlpha();
 
     template <typename SourceVariant>
     void fillRedBufferWithRoundedCorners();
@@ -726,6 +772,36 @@ void RenderEngineTest::fillBufferColorTransform() {
 }
 
 template <typename SourceVariant>
+void RenderEngineTest::fillBufferWithColorTransformZeroLayerAlpha() {
+    renderengine::DisplaySettings settings;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = Rect(1, 1);
+
+    std::vector<const renderengine::LayerSettings*> layers;
+
+    renderengine::LayerSettings layer;
+    layer.geometry.boundaries = Rect(1, 1).toFloatRect();
+    SourceVariant::fillColor(layer, 0.5f, 0.25f, 0.125f, this);
+    layer.alpha = 0;
+
+    // construct a fake color matrix
+    // simple inverse color
+    settings.colorTransform = mat4(-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 1, 1, 1, 1);
+
+    layer.geometry.boundaries = Rect(1, 1).toFloatRect();
+
+    layers.push_back(&layer);
+
+    invokeDraw(settings, layers, mBuffer);
+}
+
+template <typename SourceVariant>
+void RenderEngineTest::fillBufferColorTransformZeroLayerAlpha() {
+    fillBufferWithColorTransformZeroLayerAlpha<SourceVariant>();
+    expectBufferColor(fullscreenRect(), 0, 0, 0, 0);
+}
+
+template <typename SourceVariant>
 void RenderEngineTest::fillRedBufferWithRoundedCorners() {
     renderengine::DisplaySettings settings;
     settings.physicalDisplay = fullscreenRect();
@@ -1045,7 +1121,9 @@ void RenderEngineTest::drawShadow(const renderengine::LayerSettings& castingLaye
 
 INSTANTIATE_TEST_SUITE_P(PerRenderEngineType, RenderEngineTest,
                          testing::Values(std::make_shared<GLESRenderEngineFactory>(),
-                                         std::make_shared<GLESCMRenderEngineFactory>()));
+                                         std::make_shared<GLESCMRenderEngineFactory>(),
+                                         std::make_shared<SkiaGLESRenderEngineFactory>(),
+                                         std::make_shared<SkiaGLESCMRenderEngineFactory>()));
 
 TEST_P(RenderEngineTest, drawLayers_noLayersToDraw) {
     const auto& renderEngineFactory = GetParam();
@@ -1199,6 +1277,13 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferRoundedCorners_colorSource) {
     fillBufferWithRoundedCorners<ColorSourceVariant>();
 }
 
+TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_colorSource) {
+    const auto& renderEngineFactory = GetParam();
+    mRE = renderEngineFactory->createRenderEngine();
+
+    fillBufferColorTransformZeroLayerAlpha<ColorSourceVariant>();
+}
+
 TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_colorSource) {
     const auto& renderEngineFactory = GetParam();
     mRE = renderEngineFactory->createRenderEngine();
@@ -1295,6 +1380,12 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferRoundedCorners_opaqueBufferSource)
     mRE = renderEngineFactory->createRenderEngine();
 
     fillBufferWithRoundedCorners<BufferSourceVariant<ForceOpaqueBufferVariant>>();
+}
+TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_opaqueBufferSource) {
+    const auto& renderEngineFactory = GetParam();
+    mRE = renderEngineFactory->createRenderEngine();
+
+    fillBufferColorTransformZeroLayerAlpha<BufferSourceVariant<ForceOpaqueBufferVariant>>();
 }
 
 TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_opaqueBufferSource) {
@@ -1393,6 +1484,13 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferRoundedCorners_bufferSource) {
     mRE = renderEngineFactory->createRenderEngine();
 
     fillBufferWithRoundedCorners<BufferSourceVariant<RelaxOpaqueBufferVariant>>();
+}
+
+TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_bufferSource) {
+    const auto& renderEngineFactory = GetParam();
+    mRE = renderEngineFactory->createRenderEngine();
+
+    fillBufferColorTransformZeroLayerAlpha<BufferSourceVariant<RelaxOpaqueBufferVariant>>();
 }
 
 TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_bufferSource) {
@@ -1694,7 +1792,57 @@ TEST_P(RenderEngineTest, cleanupPostRender_whenCleaningAll_replacesTextureMemory
     EXPECT_TRUE(mRE->isTextureNameKnownForTesting(texName));
 }
 
+TEST_P(RenderEngineTest, testRoundedCornersCrop) {
+    const auto& renderEngineFactory = GetParam();
+    mRE = renderEngineFactory->createRenderEngine();
+
+    renderengine::DisplaySettings settings;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = fullscreenRect();
+    settings.outputDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+
+    std::vector<const renderengine::LayerSettings*> layers;
+
+    renderengine::LayerSettings redLayer;
+    redLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    redLayer.geometry.boundaries = fullscreenRect().toFloatRect();
+    redLayer.geometry.roundedCornersRadius = 5.0f;
+    redLayer.geometry.roundedCornersCrop = fullscreenRect().toFloatRect();
+    // Red background.
+    redLayer.source.solidColor = half3(1.0f, 0.0f, 0.0f);
+    redLayer.alpha = 1.0f;
+
+    layers.push_back(&redLayer);
+
+    // Green layer with 1/3 size.
+    renderengine::LayerSettings greenLayer;
+    greenLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    greenLayer.geometry.boundaries = fullscreenRect().toFloatRect();
+    greenLayer.geometry.roundedCornersRadius = 5.0f;
+    // Bottom right corner is not going to be rounded.
+    greenLayer.geometry.roundedCornersCrop =
+            Rect(DEFAULT_DISPLAY_WIDTH / 3, DEFAULT_DISPLAY_HEIGHT / 3, DEFAULT_DISPLAY_HEIGHT,
+                 DEFAULT_DISPLAY_HEIGHT)
+                    .toFloatRect();
+    greenLayer.source.solidColor = half3(0.0f, 1.0f, 0.0f);
+    greenLayer.alpha = 1.0f;
+
+    layers.push_back(&greenLayer);
+
+    invokeDraw(settings, layers, mBuffer);
+
+    // Corners should be ignored...
+    // Screen size: width is 128, height is 256.
+    expectBufferColor(Rect(0, 0, 1, 1), 0, 0, 0, 0);
+    expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH - 1, 0, DEFAULT_DISPLAY_WIDTH, 1), 0, 0, 0, 0);
+    expectBufferColor(Rect(0, DEFAULT_DISPLAY_HEIGHT - 1, 1, DEFAULT_DISPLAY_HEIGHT), 0, 0, 0, 0);
+    // Bottom right corner is kept out of the clipping, and it's green.
+    expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH - 1, DEFAULT_DISPLAY_HEIGHT - 1,
+                           DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
+                      0, 255, 0, 255);
+}
+
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

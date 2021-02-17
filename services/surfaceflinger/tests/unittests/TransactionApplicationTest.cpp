@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 #undef LOG_TAG
 #define LOG_TAG "CompositionTest"
@@ -97,7 +98,8 @@ public:
         uint32_t flags = 0;
         sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
         InputWindowCommands inputWindowCommands;
-        int64_t desiredPresentTime = -1;
+        int64_t desiredPresentTime = 0;
+        bool isAutoTimestamp = true;
         int64_t frameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
         client_cache_t uncacheBuffer;
         int64_t id = -1;
@@ -114,11 +116,13 @@ public:
     }
 
     void setupSingle(TransactionInfo& transaction, uint32_t flags, bool syncInputWindows,
-                     int64_t desiredPresentTime, int64_t frameTimelineVsyncId) {
+                     int64_t desiredPresentTime, bool isAutoTimestamp,
+                     int64_t frameTimelineVsyncId) {
         mTransactionNumber++;
         transaction.flags |= flags; // ISurfaceComposer::eSynchronous;
         transaction.inputWindowCommands.syncInputWindows = syncInputWindows;
         transaction.desiredPresentTime = desiredPresentTime;
+        transaction.isAutoTimestamp = isAutoTimestamp;
         transaction.frameTimelineVsyncId = frameTimelineVsyncId;
     }
 
@@ -129,13 +133,15 @@ public:
         EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillOnce(Return(systemTime()));
         TransactionInfo transaction;
         setupSingle(transaction, flags, syncInputWindows,
-                    /*desiredPresentTime*/ -1, ISurfaceComposer::INVALID_VSYNC_ID);
+                    /*desiredPresentTime*/ systemTime(), /*isAutoTimestamp*/ true,
+                    ISurfaceComposer::INVALID_VSYNC_ID);
         nsecs_t applicationTime = systemTime();
         mFlinger.setTransactionState(transaction.frameTimelineVsyncId, transaction.states,
                                      transaction.displays, transaction.flags,
                                      transaction.applyToken, transaction.inputWindowCommands,
-                                     transaction.desiredPresentTime, transaction.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks, transaction.id);
+                                     transaction.desiredPresentTime, transaction.isAutoTimestamp,
+                                     transaction.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
+                                     transaction.id);
 
         // This transaction should not have been placed on the transaction queue.
         // If transaction is synchronous or syncs input windows, SF
@@ -164,13 +170,15 @@ public:
                 .WillOnce(Return(time + nsecs_t(5 * 1e8)));
         TransactionInfo transaction;
         setupSingle(transaction, flags, syncInputWindows,
-                    /*desiredPresentTime*/ time + s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
+                    /*desiredPresentTime*/ time + s2ns(1), false,
+                    ISurfaceComposer::INVALID_VSYNC_ID);
         nsecs_t applicationSentTime = systemTime();
         mFlinger.setTransactionState(transaction.frameTimelineVsyncId, transaction.states,
                                      transaction.displays, transaction.flags,
                                      transaction.applyToken, transaction.inputWindowCommands,
-                                     transaction.desiredPresentTime, transaction.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks, transaction.id);
+                                     transaction.desiredPresentTime, transaction.isAutoTimestamp,
+                                     transaction.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
+                                     transaction.id);
 
         nsecs_t returnedTime = systemTime();
         EXPECT_LE(returnedTime, applicationSentTime + s2ns(5));
@@ -189,20 +197,23 @@ public:
         // transaction that should go on the pending thread
         TransactionInfo transactionA;
         setupSingle(transactionA, /*flags*/ 0, /*syncInputWindows*/ false,
-                    /*desiredPresentTime*/ time + s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
+                    /*desiredPresentTime*/ time + s2ns(1), false,
+                    ISurfaceComposer::INVALID_VSYNC_ID);
 
         // transaction that would not have gone on the pending thread if not
         // blocked
         TransactionInfo transactionB;
         setupSingle(transactionB, flags, syncInputWindows,
-                    /*desiredPresentTime*/ -1, ISurfaceComposer::INVALID_VSYNC_ID);
+                    /*desiredPresentTime*/ systemTime(), /*isAutoTimestamp*/ true,
+                    ISurfaceComposer::INVALID_VSYNC_ID);
 
         nsecs_t applicationSentTime = systemTime();
         mFlinger.setTransactionState(transactionA.frameTimelineVsyncId, transactionA.states,
                                      transactionA.displays, transactionA.flags,
                                      transactionA.applyToken, transactionA.inputWindowCommands,
-                                     transactionA.desiredPresentTime, transactionA.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks, transactionA.id);
+                                     transactionA.desiredPresentTime, transactionA.isAutoTimestamp,
+                                     transactionA.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
+                                     transactionA.id);
 
         // This thread should not have been blocked by the above transaction
         // (5s is the timeout period that applyTransactionState waits for SF to
@@ -213,8 +224,9 @@ public:
         mFlinger.setTransactionState(transactionB.frameTimelineVsyncId, transactionB.states,
                                      transactionB.displays, transactionB.flags,
                                      transactionB.applyToken, transactionB.inputWindowCommands,
-                                     transactionB.desiredPresentTime, transactionB.uncacheBuffer,
-                                     mHasListenerCallbacks, mCallbacks, transactionB.id);
+                                     transactionB.desiredPresentTime, transactionB.isAutoTimestamp,
+                                     transactionB.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
+                                     transactionB.id);
 
         // this thread should have been blocked by the above transaction
         // if this is an animation, this thread should be blocked for 5s
@@ -256,12 +268,12 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
             .WillOnce(Return(s2ns(2)));
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*syncInputWindows*/ false,
-                /*desiredPresentTime*/ s2ns(1), ISurfaceComposer::INVALID_VSYNC_ID);
+                /*desiredPresentTime*/ s2ns(1), false, ISurfaceComposer::INVALID_VSYNC_ID);
     mFlinger.setTransactionState(transactionA.frameTimelineVsyncId, transactionA.states,
                                  transactionA.displays, transactionA.flags, transactionA.applyToken,
                                  transactionA.inputWindowCommands, transactionA.desiredPresentTime,
-                                 transactionA.uncacheBuffer, mHasListenerCallbacks, mCallbacks,
-                                 transactionA.id);
+                                 transactionA.isAutoTimestamp, transactionA.uncacheBuffer,
+                                 mHasListenerCallbacks, mCallbacks, transactionA.id);
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_EQ(1, transactionQueue.size());
@@ -279,8 +291,8 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     empty.applyToken = sp<IBinder>();
     mFlinger.setTransactionState(empty.frameTimelineVsyncId, empty.states, empty.displays,
                                  empty.flags, empty.applyToken, empty.inputWindowCommands,
-                                 empty.desiredPresentTime, empty.uncacheBuffer,
-                                 mHasListenerCallbacks, mCallbacks, empty.id);
+                                 empty.desiredPresentTime, empty.isAutoTimestamp,
+                                 empty.uncacheBuffer, mHasListenerCallbacks, mCallbacks, empty.id);
 
     // flush transaction queue should flush as desiredPresentTime has
     // passed
@@ -333,4 +345,4 @@ TEST_F(TransactionApplicationTest, FromHandle) {
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

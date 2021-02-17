@@ -206,7 +206,7 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder)
             if (proxy == nullptr) {
                 ALOGE("null proxy");
             }
-            const int32_t handle = proxy ? proxy->handle() : 0;
+            const int32_t handle = proxy ? proxy->getPrivateAccessorForHandle().handle() : 0;
             obj.hdr.type = BINDER_TYPE_HANDLE;
             obj.binder = 0; /* Don't pass uninitialized stack data to a remote process */
             obj.handle = handle;
@@ -2509,19 +2509,15 @@ size_t Parcel::ipcObjectsCount() const
 void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
     const binder_size_t* objects, size_t objectsCount, release_func relFunc)
 {
-    binder_size_t minOffset = 0;
-    freeDataNoInit();
-    mError = NO_ERROR;
+    freeData();
+
     mData = const_cast<uint8_t*>(data);
     mDataSize = mDataCapacity = dataSize;
-    //ALOGI("setDataReference Setting data size of %p to %lu (pid=%d)", this, mDataSize, getpid());
-    mDataPos = 0;
-    ALOGV("setDataReference Setting data pos of %p to %zu", this, mDataPos);
     mObjects = const_cast<binder_size_t*>(objects);
     mObjectsSize = mObjectsCapacity = objectsCount;
-    mNextObjectHint = 0;
-    mObjectsSorted = false;
     mOwner = relFunc;
+
+    binder_size_t minOffset = 0;
     for (size_t i = 0; i < mObjectsSize; i++) {
         binder_size_t offset = mObjects[i];
         if (offset < minOffset) {

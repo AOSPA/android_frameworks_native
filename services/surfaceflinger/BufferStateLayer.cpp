@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 //#define LOG_NDEBUG 0
 #undef LOG_TAG
@@ -65,10 +66,70 @@ BufferStateLayer::~BufferStateLayer() {
     }
 }
 
+status_t BufferStateLayer::addReleaseFence(const sp<CallbackHandle>& ch,
+                                           const sp<Fence>& fence) {
+    if (ch == nullptr) {
+        return OK;
+    }
+    if (!ch->previousReleaseFence.get()) {
+        ch->previousReleaseFence = fence;
+        return OK;
+    }
+
+    // Below logic is lifted from ConsumerBase.cpp:
+    // Check status of fences first because merging is expensive.
+    // Merging an invalid fence with any other fence results in an
+    // invalid fence.
+    auto currentStatus = ch->previousReleaseFence->getStatus();
+    if (currentStatus == Fence::Status::Invalid) {
+        ALOGE("Existing fence has invalid state, layer: %s", mName.c_str());
+        return BAD_VALUE;
+    }
+
+    auto incomingStatus = fence->getStatus();
+    if (incomingStatus == Fence::Status::Invalid) {
+        ALOGE("New fence has invalid state, layer: %s", mName.c_str());
+        ch->previousReleaseFence = fence;
+        return BAD_VALUE;
+    }
+
+    // If both fences are signaled or both are unsignaled, we need to merge
+    // them to get an accurate timestamp.
+    if (currentStatus == incomingStatus) {
+        char fenceName[32] = {};
+        snprintf(fenceName, 32, "%.28s", mName.c_str());
+        sp<Fence> mergedFence = Fence::merge(
+                fenceName, ch->previousReleaseFence, fence);
+        if (!mergedFence.get()) {
+            ALOGE("failed to merge release fences, layer: %s", mName.c_str());
+            // synchronization is broken, the best we can do is hope fences
+            // signal in order so the new fence will act like a union
+            ch->previousReleaseFence = fence;
+            return BAD_VALUE;
+        }
+        ch->previousReleaseFence = mergedFence;
+    } else if (incomingStatus == Fence::Status::Unsignaled) {
+        // If one fence has signaled and the other hasn't, the unsignaled
+        // fence will approximately correspond with the correct timestamp.
+        // There's a small race if both fences signal at about the same time
+        // and their statuses are retrieved with unfortunate timing. However,
+        // by this point, they will have both signaled and only the timestamp
+        // will be slightly off; any dependencies after this point will
+        // already have been met.
+        ch->previousReleaseFence = fence;
+    }
+    // else if (currentStatus == Fence::Status::Unsignaled) is a no-op.
+
+    return OK;
+}
+
 // -----------------------------------------------------------------------
 // Interface implementation for Layer
 // -----------------------------------------------------------------------
 void BufferStateLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
+    if (!releaseFence->isValid()) {
+        return;
+    }
     // The previous release fence notifies the client that SurfaceFlinger is done with the previous
     // buffer that was presented on this layer. The first transaction that came in this frame that
     // replaced the previous buffer on this layer needs this release fence, because the fence will
@@ -85,11 +146,16 @@ void BufferStateLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
     // buffer. It replaces the buffer in the second transaction. The buffer in the second
     // transaction will now no longer be presented so it is released immediately and the third
     // transaction doesn't need a previous release fence.
+    sp<CallbackHandle> ch;
     for (auto& handle : mDrawingState.callbackHandles) {
         if (handle->releasePreviousBuffer) {
-            handle->previousReleaseFence = releaseFence;
+            ch = handle;
             break;
         }
+    }
+    auto status = addReleaseFence(ch, releaseFence);
+    if (status != OK) {
+        ALOGE("Failed to add release fence for layer %s", getName().c_str());
     }
 
     mPreviousReleaseFence = releaseFence;
@@ -100,14 +166,30 @@ void BufferStateLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
     }
 }
 
+void BufferStateLayer::onSurfaceFrameCreated(
+        const std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame) {
+    mPendingJankClassifications.emplace_back(surfaceFrame);
+}
+
 void BufferStateLayer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
     for (const auto& handle : mDrawingState.callbackHandles) {
         handle->transformHint = mTransformHint;
         handle->dequeueReadyTime = dequeueReadyTime;
     }
 
+    std::vector<JankData> jankData;
+    jankData.reserve(mPendingJankClassifications.size());
+    while (!mPendingJankClassifications.empty()
+            && mPendingJankClassifications.front()->getJankType()) {
+        std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame =
+                mPendingJankClassifications.front();
+        mPendingJankClassifications.pop_front();
+        jankData.emplace_back(
+                JankData(surfaceFrame->getToken(), surfaceFrame->getJankType().value()));
+    }
+
     mFlinger->getTransactionCompletedThread().finalizePendingCallbackHandles(
-            mDrawingState.callbackHandles);
+            mDrawingState.callbackHandles, jankData);
 
     mDrawingState.callbackHandles = {};
 
@@ -260,12 +342,18 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
 }
 
 bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence,
-                                 nsecs_t postTime, nsecs_t desiredPresentTime,
+                                 nsecs_t postTime, nsecs_t desiredPresentTime, bool isAutoTimestamp,
                                  const client_cache_t& clientCacheId, uint64_t frameNumber) {
     ATRACE_CALL();
 
     if (mCurrentState.buffer) {
         mReleasePreviousBuffer = true;
+        if (mCurrentState.buffer != mDrawingState.buffer) {
+            // If mCurrentState has a buffer, and we are about to update again
+            // before swapping to drawing state, then the first buffer will be
+            // dropped and we should decrement the pending buffer count.
+            decrementPendingBufferCount();
+        }
     }
 
     mCurrentState.frameNumber = frameNumber;
@@ -278,13 +366,13 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mCurrentState.frameNumber, getName().c_str(),
                                       mOwnerUid, postTime);
-    desiredPresentTime = desiredPresentTime <= 0 ? 0 : desiredPresentTime;
     mCurrentState.desiredPresentTime = desiredPresentTime;
+    mCurrentState.isAutoTimestamp = isAutoTimestamp;
 
-    mFlinger->mScheduler->recordLayerHistory(this, desiredPresentTime,
+    mFlinger->mScheduler->recordLayerHistory(this, isAutoTimestamp ? 0 : desiredPresentTime,
                                              LayerHistory::LayerUpdateType::Buffer);
 
-    addFrameEvent(acquireFence, postTime, desiredPresentTime);
+    addFrameEvent(acquireFence, postTime, isAutoTimestamp ? 0 : desiredPresentTime);
     return true;
 }
 
@@ -382,7 +470,7 @@ bool BufferStateLayer::setTransactionCompletedListeners(
 
 void BufferStateLayer::forceSendCallbacks() {
     mFlinger->getTransactionCompletedThread().finalizePendingCallbackHandles(
-            mCurrentState.callbackHandles);
+            mCurrentState.callbackHandles, std::vector<JankData>());
 }
 
 bool BufferStateLayer::setTransparentRegionHint(const Region& transparent) {
@@ -396,6 +484,10 @@ Rect BufferStateLayer::getBufferSize(const State& s) const {
     // for buffer state layers we use the display frame size as the buffer size.
     if (getActiveWidth(s) < UINT32_MAX && getActiveHeight(s) < UINT32_MAX) {
         return Rect(getActiveWidth(s), getActiveHeight(s));
+    }
+
+    if (mBufferInfo.mBuffer == nullptr) {
+        return Rect::INVALID_RECT;
     }
 
     // if the display frame is not defined, use the parent bounds as the buffer size.
@@ -446,7 +538,7 @@ bool BufferStateLayer::framePresentTimeIsCurrent(nsecs_t expectedPresentTime) co
         return true;
     }
 
-    return mCurrentState.desiredPresentTime <= expectedPresentTime;
+    return mCurrentState.isAutoTimestamp || mCurrentState.desiredPresentTime <= expectedPresentTime;
 }
 
 bool BufferStateLayer::onPreComposition(nsecs_t refreshStartTime) {
@@ -514,6 +606,14 @@ bool BufferStateLayer::hasFrameUpdate() const {
     return mCurrentStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
+nsecs_t BufferStateLayer::nextPredictedPresentTime() const {
+    if (!getDrawingState().isAutoTimestamp || !mSurfaceFrame) {
+        return 0;
+    }
+
+    return mSurfaceFrame->getPredictions().presentTime;
+}
+
 status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
                                           nsecs_t /*expectedPresentTime*/) {
     const State& s(getDrawingState());
@@ -548,6 +648,7 @@ status_t BufferStateLayer::updateActiveBuffer() {
     if (s.buffer == nullptr) {
         return BAD_VALUE;
     }
+    decrementPendingBufferCount();
 
     mPreviousBufferId = getCurrentBufferId();
     mBufferInfo.mBuffer = s.buffer;
@@ -745,7 +846,33 @@ bool BufferStateLayer::bufferNeedsFiltering() const {
     const Rect layerSize{getBounds()};
     return layerSize.width() != bufferWidth || layerSize.height() != bufferHeight;
 }
+
+void BufferStateLayer::incrementPendingBufferCount() {
+    mPendingBufferTransactions++;
+    tracePendingBufferCount();
+}
+
+void BufferStateLayer::decrementPendingBufferCount() {
+    mPendingBufferTransactions--;
+    tracePendingBufferCount();
+}
+
+void BufferStateLayer::tracePendingBufferCount() {
+    ATRACE_INT(mBlastTransactionName.c_str(), mPendingBufferTransactions);
+}
+
+uint32_t BufferStateLayer::doTransaction(uint32_t flags) {
+    if (mDrawingState.buffer != nullptr && mDrawingState.buffer != mBufferInfo.mBuffer) {
+        // If we are about to update mDrawingState.buffer but it has not yet latched
+        // then we will drop a buffer and should decrement the pending buffer count.
+        // This logic may not work perfectly in the face of a BufferStateLayer being the
+        // deferred side of a deferred transaction, but we don't expect this use case.
+        decrementPendingBufferCount();
+    }
+    return Layer::doTransaction(flags);
+}
+
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

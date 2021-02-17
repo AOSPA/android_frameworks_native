@@ -17,6 +17,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wextra"
 
 // #define LOG_NDEBUG 0
 #undef LOG_TAG
@@ -27,6 +28,7 @@
 #include "FakeComposerUtils.h"
 #include "MockComposerHal.h"
 
+#include <binder/Parcel.h>
 #include <gui/DisplayEventReceiver.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/LayerDebugInfo.h>
@@ -69,6 +71,7 @@ using ::testing::SetArgPointee;
 
 using Transaction = SurfaceComposerClient::Transaction;
 using Attribute = V2_4::IComposerClient::Attribute;
+using Display = V2_1::Display;
 
 ///////////////////////////////////////////////
 
@@ -868,6 +871,25 @@ protected:
 };
 
 using DisplayTest_2_1 = DisplayTest<FakeComposerService_2_1>;
+
+// Tests that VSYNC injection can be safely toggled while invalidating.
+TEST_F(DisplayTest_2_1, VsyncInjection) {
+    const auto flinger = ComposerService::getComposerService();
+    bool enable = true;
+
+    for (int i = 0; i < 100; i++) {
+        flinger->enableVSyncInjections(enable);
+        enable = !enable;
+
+        constexpr uint32_t kForceInvalidate = 1004;
+        android::Parcel data, reply;
+        data.writeInterfaceToken(String16("android.ui.ISurfaceComposer"));
+        EXPECT_EQ(NO_ERROR,
+                  android::IInterface::asBinder(flinger)->transact(kForceInvalidate, data, &reply));
+
+        std::this_thread::sleep_for(5ms);
+    }
+}
 
 TEST_F(DisplayTest_2_1, HotplugOneConfig) {
     Test_HotplugOneConfig();
@@ -1996,4 +2018,4 @@ int main(int argc, char** argv) {
 }
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion"
+#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
