@@ -68,7 +68,7 @@ class BLASTBufferQueue
 {
 public:
     BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
-                     int height, bool enableTripleBuffering = true);
+                     int height, int32_t format, bool enableTripleBuffering = true);
 
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;
@@ -88,11 +88,11 @@ public:
     void setTransactionCompleteCallback(uint64_t frameNumber,
                                         std::function<void(int64_t)>&& transactionCompleteCallback);
 
-    void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height);
+    void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height, int32_t format);
     void flushShadowQueue() { mFlushShadowQueue = true; }
 
     status_t setFrameRate(float frameRate, int8_t compatibility, bool shouldBeSeamless);
-    status_t setFrameTimelineVsync(int64_t frameTimelineVsyncId);
+    status_t setFrameTimelineInfo(const FrameTimelineInfo& info);
 
     virtual ~BLASTBufferQueue();
 
@@ -109,7 +109,8 @@ private:
     Rect computeCrop(const BufferItem& item) REQUIRES(mMutex);
     // Return true if we need to reject the buffer based on the scaling mode and the buffer size.
     bool rejectBuffer(const BufferItem& item) REQUIRES(mMutex);
-    bool maxBuffersAcquired() const REQUIRES(mMutex);
+    bool maxBuffersAcquired(bool includeExtraAcquire) const REQUIRES(mMutex);
+    static PixelFormat convertBufferFormat(PixelFormat& format);
 
     std::string mName;
     sp<SurfaceControl> mSurfaceControl;
@@ -136,6 +137,7 @@ private:
 
     ui::Size mSize GUARDED_BY(mMutex);
     ui::Size mRequestedSize GUARDED_BY(mMutex);
+    int32_t mFormat GUARDED_BY(mMutex);
 
     uint32_t mTransformHint GUARDED_BY(mMutex);
 
@@ -155,7 +157,7 @@ private:
     // This is only relevant for shared buffer mode.
     bool mAutoRefresh GUARDED_BY(mMutex) = false;
 
-    std::queue<int64_t> mNextFrameTimelineVsyncIdQueue GUARDED_BY(mMutex);
+    std::queue<FrameTimelineInfo> mNextFrameTimelineInfoQueue GUARDED_BY(mMutex);
 
     // Last acquired buffer's scaling mode. This is used to check if we should update the blast
     // layer size immediately or wait until we get the next buffer. This will support scenarios

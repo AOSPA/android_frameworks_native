@@ -17,11 +17,15 @@
 #pragma once
 
 #include "DisplayHardware/Hal.h"
-#include "Scheduler/HwcStrongTypes.h"
+#include "Fps.h"
+#include "Scheduler/StrongTyping.h"
 
+#include <android-base/stringprintf.h>
 #include <android/configuration.h>
+#include <ui/Size.h>
 #include <utils/Timers.h>
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -32,6 +36,7 @@ namespace hal = android::hardware::graphics::composer::hal;
 class DisplayMode;
 using DisplayModePtr = std::shared_ptr<const DisplayMode>;
 using DisplayModes = std::vector<DisplayModePtr>;
+using DisplayModeId = StrongTyping<size_t, struct DisplayModeIdTag, Compare, Hash>;
 
 class DisplayMode {
 public:
@@ -43,7 +48,7 @@ public:
             return std::const_pointer_cast<const DisplayMode>(std::move(mDisplayMode));
         }
 
-        Builder& setId(HwcConfigIndexType id) {
+        Builder& setId(DisplayModeId id) {
             mDisplayMode->mId = id;
             return *this;
         }
@@ -59,7 +64,7 @@ public:
         }
 
         Builder& setVsyncPeriod(int32_t vsyncPeriod) {
-            mDisplayMode->mVsyncPeriod = vsyncPeriod;
+            mDisplayMode->mFps = Fps::fromPeriodNsecs(vsyncPeriod);
             return *this;
         }
 
@@ -104,12 +109,14 @@ public:
         std::shared_ptr<DisplayMode> mDisplayMode;
     };
 
-    HwcConfigIndexType getId() const { return mId; }
+    DisplayModeId getId() const { return mId; }
     hal::HWConfigId getHwcId() const { return mHwcId; }
 
     int32_t getWidth() const { return mWidth; }
     int32_t getHeight() const { return mHeight; }
-    nsecs_t getVsyncPeriod() const { return mVsyncPeriod; }
+    ui::Size getSize() const { return {mWidth, mHeight}; }
+    Fps getFps() const { return mFps; }
+    nsecs_t getVsyncPeriod() const { return mFps.getPeriodNsecs(); }
     float getDpiX() const { return mDpiX; }
     float getDpiY() const { return mDpiY; }
     int32_t getConfigGroup() const { return mConfigGroup; }
@@ -118,14 +125,22 @@ private:
     explicit DisplayMode(hal::HWConfigId id) : mHwcId(id) {}
 
     hal::HWConfigId mHwcId;
-    HwcConfigIndexType mId;
+    DisplayModeId mId;
 
     int32_t mWidth = -1;
     int32_t mHeight = -1;
-    nsecs_t mVsyncPeriod = -1;
+    Fps mFps;
     float mDpiX = -1;
     float mDpiY = -1;
     int32_t mConfigGroup = -1;
 };
+
+inline std::string to_string(const DisplayMode& mode) {
+    return base::StringPrintf("{id=%zu, hwcId=%d, width=%d, height=%d, refreshRate=%s, "
+                              "dpiX=%.2f, dpiY=%.2f, configGroup=%d}",
+                              mode.getId().value(), mode.getHwcId(), mode.getWidth(),
+                              mode.getHeight(), to_string(mode.getFps()).c_str(), mode.getDpiX(),
+                              mode.getDpiY(), mode.getConfigGroup());
+}
 
 } // namespace android

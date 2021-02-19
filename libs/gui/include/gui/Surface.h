@@ -18,6 +18,7 @@
 #define ANDROID_GUI_SURFACE_H
 
 #include <gui/BufferQueueDefs.h>
+#include <gui/FrameTimelineInfo.h>
 #include <gui/HdrMetadata.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/IProducerListener.h>
@@ -190,7 +191,7 @@ public:
     status_t getConsumerUsage(uint64_t* outUsage) const;
 
     virtual status_t setFrameRate(float frameRate, int8_t compatibility, bool shouldBeSeamless);
-    virtual status_t setFrameTimelineVsync(int64_t frameTimelineVsyncId);
+    virtual status_t setFrameTimelineInfo(const FrameTimelineInfo& info);
 
 protected:
     virtual ~Surface();
@@ -276,7 +277,7 @@ private:
     int dispatchAddQueueInterceptor(va_list args);
     int dispatchAddQueryInterceptor(va_list args);
     int dispatchGetLastQueuedBuffer(va_list args);
-    int dispatchSetFrameTimelineVsync(va_list args);
+    int dispatchSetFrameTimelineInfo(va_list args);
     bool transformToDisplayInverse();
 
 protected:

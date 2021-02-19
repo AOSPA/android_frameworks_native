@@ -51,17 +51,22 @@ using android::base::StringAppendF;
 ui::Transform::RotationFlags DisplayDevice::sPrimaryDisplayRotationFlags = ui::Transform::ROT_0;
 
 DisplayDeviceCreationArgs::DisplayDeviceCreationArgs(
-        const sp<SurfaceFlinger>& flinger, const wp<IBinder>& displayToken,
+        const sp<SurfaceFlinger>& flinger, HWComposer& hwComposer, const wp<IBinder>& displayToken,
         std::shared_ptr<compositionengine::Display> compositionDisplay)
-      : flinger(flinger), displayToken(displayToken), compositionDisplay(compositionDisplay) {}
+      : flinger(flinger),
+        hwComposer(hwComposer),
+        displayToken(displayToken),
+        compositionDisplay(compositionDisplay) {}
 
 DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
       : mFlinger(args.flinger),
+        mHwComposer(args.hwComposer),
         mDisplayToken(args.displayToken),
         mSequenceId(args.sequenceId),
         mConnectionType(args.connectionType),
         mCompositionDisplay{args.compositionDisplay},
         mPhysicalOrientation(args.physicalOrientation),
+        mSupportedModes(std::move(args.supportedModes)),
         mIsPrimary(args.isPrimary),
         mIsPowerModeOverride(false){
     mCompositionDisplay->editState().isSecure = args.isSecure;
@@ -140,12 +145,64 @@ bool DisplayDevice::isPoweredOn() const {
     return mPowerMode != hal::PowerMode::OFF;
 }
 
-void DisplayDevice::setActiveConfig(HwcConfigIndexType mode) {
-    mActiveConfig = mode;
+void DisplayDevice::setActiveMode(DisplayModeId id) {
+    LOG_FATAL_IF(id.value() >= mSupportedModes.size(),
+                 "Cannot set active mode which is not supported.");
+    mActiveModeId = id;
 }
 
-HwcConfigIndexType DisplayDevice::getActiveConfig() const {
-    return mActiveConfig;
+status_t DisplayDevice::initiateModeChange(DisplayModeId modeId,
+                                           const hal::VsyncPeriodChangeConstraints& constraints,
+                                           hal::VsyncPeriodChangeTimeline* outTimeline) const {
+    const auto mode = getMode(modeId);
+    if (!mode) {
+        ALOGE("Trying to initiate a mode change to invalid mode %s on display %s",
+              std::to_string(modeId.value()).c_str(), to_string(getId()).c_str());
+        return BAD_VALUE;
+    }
+    return mHwComposer.setActiveModeWithConstraints(getPhysicalId(), mode->getHwcId(), constraints,
+                                                    outTimeline);
+}
+
+const DisplayModePtr& DisplayDevice::getActiveMode() const {
+    return mSupportedModes[mActiveModeId.value()];
+}
+
+const DisplayModes& DisplayDevice::getSupportedModes() const {
+    return mSupportedModes;
+}
+
+DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
+    const auto id = modeId.value();
+    if (id < mSupportedModes.size()) {
+        return mSupportedModes[id];
+    }
+    return nullptr;
+}
+
+nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
+    const auto physicalId = getPhysicalId();
+    if (!mHwComposer.isConnected(physicalId)) {
+        return 0;
+    }
+
+    nsecs_t vsyncPeriod;
+    const auto status = mHwComposer.getDisplayVsyncPeriod(physicalId, &vsyncPeriod);
+    if (status == NO_ERROR) {
+        return vsyncPeriod;
+    }
+
+    return getActiveMode()->getFps().getPeriodNsecs();
+}
+
+nsecs_t DisplayDevice::getRefreshTimestamp() const {
+    const nsecs_t now = systemTime(CLOCK_MONOTONIC);
+    const auto vsyncPeriodNanos = getVsyncPeriodFromHWC();
+    return now - ((now - mLastHwVsync) % vsyncPeriodNanos);
+}
+
+void DisplayDevice::onVsync(nsecs_t timestamp) {
+    mLastHwVsync = timestamp;
 }
 
 void DisplayDevice::setPowerModeOverrideConfig(bool supported) {
@@ -215,17 +272,24 @@ std::string DisplayDevice::getDebugName() const {
 
 void DisplayDevice::dump(std::string& result) const {
     StringAppendF(&result, "+ %s\n", getDebugName().c_str());
-
-    result.append("   ");
-    StringAppendF(&result, "powerMode=%s (%d), ", to_string(mPowerMode).c_str(),
+    StringAppendF(&result, "   powerMode=%s (%d)\n", to_string(mPowerMode).c_str(),
                   static_cast<int32_t>(mPowerMode));
-    StringAppendF(&result, "activeConfig=%zu, ", mActiveConfig.value());
-    StringAppendF(&result, "deviceProductInfo=");
+    StringAppendF(&result, "   activeMode=%s\n", to_string(*getActiveMode()).c_str());
+
+    result.append("   supportedModes=\n");
+
+    for (const auto& mode : mSupportedModes) {
+        result.append("     ");
+        result.append(to_string(*mode));
+        result.append("\n");
+    }
+    StringAppendF(&result, "   deviceProductInfo=");
     if (mDeviceProductInfo) {
         mDeviceProductInfo->dump(result);
     } else {
         result.append("{}");
     }
+    result.append("\n");
     getCompositionDisplay()->dump(result);
 }
 

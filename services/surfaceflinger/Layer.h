@@ -145,6 +145,8 @@ public:
     enum class FrameRateCompatibility {
         Default, // Layer didn't specify any specific handling strategy
 
+        Exact, // Layer needs the exact frame rate.
+
         ExactOrMultiple, // Layer needs the exact frame rate (or a multiple of it) to present the
                          // content properly. Any other value will result in a pull down.
 
@@ -205,7 +207,7 @@ public:
         // to achieve mirroring.
         uint32_t layerStack;
 
-        uint8_t flags;
+        uint32_t flags;
         uint8_t reserved[2];
         int32_t sequence; // changes when visible regions can change
         bool modified;
@@ -302,8 +304,8 @@ public:
         // a fixed transform hint is not set.
         ui::Transform::RotationFlags fixedTransformHint;
 
-        // The vsync id that was used to start the transaction
-        int64_t frameTimelineVsyncId;
+        // The vsync info that was used to start the transaction
+        FrameTimelineInfo frameTimelineInfo;
 
         // When the transaction was posted
         nsecs_t postTime;
@@ -423,7 +425,7 @@ public:
     virtual bool setBackgroundBlurRadius(int backgroundBlurRadius);
     virtual bool setBlurRegions(const std::vector<BlurRegion>& effectRegions);
     virtual bool setTransparentRegionHint(const Region& transparent);
-    virtual bool setFlags(uint8_t flags, uint8_t mask);
+    virtual bool setFlags(uint32_t flags, uint32_t mask);
     virtual bool setLayerStack(uint32_t layerStack);
     virtual uint32_t getLayerStack() const;
     virtual void deferTransactionUntil_legacy(const sp<IBinder>& barrierHandle,
@@ -432,7 +434,6 @@ public:
     virtual bool setMetadata(const LayerMetadata& data);
     virtual void setChildrenDrawingParent(const sp<Layer>&);
     virtual bool reparent(const sp<IBinder>& newParentHandle);
-    virtual bool detachChildren();
     virtual bool setColorTransform(const mat4& matrix);
     virtual mat4 getColorTransform() const;
     virtual bool hasColorTransform() const;
@@ -459,7 +460,6 @@ public:
             const std::vector<sp<CallbackHandle>>& /*handles*/) {
         return false;
     };
-    virtual void forceSendCallbacks() {}
     virtual bool addFrameEvent(const sp<Fence>& /*acquireFence*/, nsecs_t /*postedTime*/,
                                nsecs_t /*requestedPresentTime*/) {
         return false;
@@ -664,8 +664,6 @@ public:
 
     bool reparentChildren(const sp<IBinder>& newParentHandle);
     void reparentChildren(const sp<Layer>& newParent);
-    bool attachChildren();
-    bool isLayerDetached() const { return mLayerDetached; }
     bool setShadowRadius(float shadowRadius);
 
     // Before color management is introduced, contents on Android have to be
@@ -871,8 +869,9 @@ public:
 
     bool setFrameRate(FrameRate);
 
-    virtual void setFrameTimelineVsyncForBuffer(int64_t /*frameTimelineVsyncId*/) {}
-    void setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, nsecs_t postTime);
+    virtual void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& /*info*/) {}
+    void setFrameTimelineInfoForTransaction(const FrameTimelineInfo& frameTimelineInfo,
+                                            nsecs_t postTime);
 
     // Creates a new handle each time, so we only expect
     // this to be called once.
@@ -907,6 +906,8 @@ public:
     int32_t sequence{sSequence++};
 
     bool mPendingHWCDestroy{false};
+
+    bool backpressureEnabled() { return mDrawingState.flags & layer_state_t::eEnableBackpressure; }
 
 protected:
     class SyncPoint {
@@ -1106,8 +1107,6 @@ protected:
     wp<Layer> mCurrentParent;
     wp<Layer> mDrawingParent;
 
-    // Can only be accessed with the SF state lock held.
-    bool mLayerDetached{false};
     // Can only be accessed with the SF state lock held.
     bool mChildrenChanged{false};
 
