@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <../Fps.h>
 #include <../TimeStats/TimeStats.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/JankInfo.h>
@@ -170,34 +171,50 @@ public:
     TimelineItem getPredictions() const { return mPredictions; };
     // Actual timestamps of the app are set individually at different functions.
     // Start time (if the app provides) and Queue time are accessible after queueing the frame,
-    // whereas Acquire Fence time is available only during latch.
+    // whereas Acquire Fence time is available only during latch. Drop time is available at the time
+    // the buffer was dropped.
     void setActualStartTime(nsecs_t actualStartTime);
     void setActualQueueTime(nsecs_t actualQueueTime);
     void setAcquireFenceTime(nsecs_t acquireFenceTime);
+    void setDropTime(nsecs_t dropTime);
     void setPresentState(PresentState presentState, nsecs_t lastLatchTime = 0);
+    void setRenderRate(Fps renderRate);
 
     // Functions called by FrameTimeline
     // BaseTime is the smallest timestamp in this SurfaceFrame.
     // Used for dumping all timestamps relative to the oldest, making it easy to read.
     nsecs_t getBaseTime() const;
     // Sets the actual present time, appropriate metadata and classifies the jank.
-    void onPresent(nsecs_t presentTime, int32_t displayFrameJankType, nsecs_t vsyncPeriod);
+    // displayRefreshRate, displayDeadlineDelta, and displayPresentDelta are propagated from the
+    // display frame.
+    void onPresent(nsecs_t presentTime, int32_t displayFrameJankType, Fps refreshRate,
+                   nsecs_t displayDeadlineDelta, nsecs_t displayPresentDelta);
     // All the timestamps are dumped relative to the baseTime
     void dump(std::string& result, const std::string& indent, nsecs_t baseTime) const;
     // Emits a packet for perfetto tracing. The function body will be executed only if tracing is
     // enabled. The displayFrameToken is needed to link the SurfaceFrame to the corresponding
     // DisplayFrame at the trace processor side.
-    void trace(int64_t displayFrameToken);
+    void trace(int64_t displayFrameToken) const;
 
-    // Getter functions used only by FrameTimelineTests
+    // Getter functions used only by FrameTimelineTests and SurfaceFrame internally
     TimelineItem getActuals() const;
     pid_t getOwnerPid() const { return mOwnerPid; };
-    PredictionState getPredictionState() const { return mPredictionState; };
+    PredictionState getPredictionState() const;
     PresentState getPresentState() const;
     FrameReadyMetadata getFrameReadyMetadata() const;
     FramePresentMetadata getFramePresentMetadata() const;
+    nsecs_t getDropTime() const;
+
+    // For prediction expired frames, this delta is subtracted from the actual end time to get a
+    // start time decent enough to see in traces.
+    // TODO(b/172587309): Remove this when we have actual start times.
+    static constexpr nsecs_t kPredictionExpiredStartTimeDelta =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(2ms).count();
 
 private:
+    void tracePredictions(int64_t displayFrameToken) const;
+    void traceActuals(int64_t displayFrameToken) const;
+
     const int64_t mToken;
     const int32_t mInputEventId;
     const pid_t mOwnerPid;
@@ -211,11 +228,14 @@ private:
     std::shared_ptr<TimeStats> mTimeStats;
     const JankClassificationThresholds mJankClassificationThresholds;
     nsecs_t mActualQueueTime GUARDED_BY(mMutex) = 0;
+    nsecs_t mDropTime GUARDED_BY(mMutex) = 0;
     mutable std::mutex mMutex;
     // Bitmask for the type of jank
     int32_t mJankType GUARDED_BY(mMutex) = JankType::None;
     // Indicates if this frame was composited by the GPU or not
     bool mGpuComposition GUARDED_BY(mMutex) = false;
+    // Rendering rate for this frame.
+    std::optional<Fps> mRenderRate GUARDED_BY(mMutex);
     // Enum for the type of present
     FramePresentMetadata mFramePresentMetadata GUARDED_BY(mMutex) =
             FramePresentMetadata::UnknownPresent;
@@ -255,7 +275,7 @@ public:
 
     // The first function called by SF for the current DisplayFrame. Fetches SF predictions based on
     // the token and sets the actualSfWakeTime for the current DisplayFrame.
-    virtual void setSfWakeUp(int64_t token, nsecs_t wakeupTime, nsecs_t vsyncPeriod) = 0;
+    virtual void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate) = 0;
 
     // Sets the sfPresentTime and finalizes the current DisplayFrame. Tracks the given present fence
     // until it's signaled, and updates the present timestamps of all presented SurfaceFrames in
@@ -325,14 +345,13 @@ public:
         // is enabled.
         void trace(pid_t surfaceFlingerPid) const;
         // Sets the token, vsyncPeriod, predictions and SF start time.
-        void onSfWakeUp(int64_t token, nsecs_t vsyncPeriod, std::optional<TimelineItem> predictions,
+        void onSfWakeUp(int64_t token, Fps refreshRate, std::optional<TimelineItem> predictions,
                         nsecs_t wakeUpTime);
         // Sets the appropriate metadata, classifies the jank and returns the classified jankType.
         void onPresent(nsecs_t signalTime);
         // Adds the provided SurfaceFrame to the current display frame.
         void addSurfaceFrame(std::shared_ptr<SurfaceFrame> surfaceFrame);
 
-        void setTokenAndVsyncPeriod(int64_t token, nsecs_t vsyncPeriod);
         void setPredictions(PredictionState predictionState, TimelineItem predictions);
         void setActualStartTime(nsecs_t actualStartTime);
         void setActualEndTime(nsecs_t actualEndTime);
@@ -353,6 +372,8 @@ public:
 
     private:
         void dump(std::string& result, nsecs_t baseTime) const;
+        void tracePredictions(pid_t surfaceFlingerPid) const;
+        void traceActuals(pid_t surfaceFlingerPid) const;
 
         int64_t mToken = FrameTimelineInfo::INVALID_VSYNC_ID;
 
@@ -382,7 +403,7 @@ public:
         FrameStartMetadata mFrameStartMetadata = FrameStartMetadata::UnknownStart;
         // The refresh rate (vsync period) in nanoseconds as seen by SF during this DisplayFrame's
         // timeline
-        nsecs_t mVsyncPeriod = 0;
+        Fps mRefreshRate;
         // TraceCookieCounter is used to obtain the cookie for sendig trace packets to perfetto.
         // Using a reference here because the counter is owned by FrameTimeline, which outlives
         // DisplayFrame.
@@ -398,7 +419,7 @@ public:
             const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
             std::string layerName, std::string debugName) override;
     void addSurfaceFrame(std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame) override;
-    void setSfWakeUp(int64_t token, nsecs_t wakeupTime, nsecs_t vsyncPeriod) override;
+    void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate) override;
     void setSfPresent(nsecs_t sfPresentTime,
                       const std::shared_ptr<FenceTime>& presentFence) override;
     void parseArgs(const Vector<String16>& args, std::string& result) override;

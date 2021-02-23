@@ -30,6 +30,7 @@ namespace android::frametimeline {
 
 using base::StringAppendF;
 using FrameTimelineEvent = perfetto::protos::pbzero::FrameTimelineEvent;
+using FrameTimelineDataSource = impl::FrameTimeline::FrameTimelineDataSource;
 
 void dumpTable(std::string& result, TimelineItem predictions, TimelineItem actuals,
                const std::string& indent, PredictionState predictionState, nsecs_t baseTime) {
@@ -305,20 +306,40 @@ void SurfaceFrame::setActualQueueTime(nsecs_t actualQueueTime) {
     std::scoped_lock lock(mMutex);
     mActualQueueTime = actualQueueTime;
 }
+
 void SurfaceFrame::setAcquireFenceTime(nsecs_t acquireFenceTime) {
     std::scoped_lock lock(mMutex);
     mActuals.endTime = std::max(acquireFenceTime, mActualQueueTime);
 }
 
+void SurfaceFrame::setDropTime(nsecs_t dropTime) {
+    std::scoped_lock lock(mMutex);
+    mDropTime = dropTime;
+}
+
 void SurfaceFrame::setPresentState(PresentState presentState, nsecs_t lastLatchTime) {
     std::scoped_lock lock(mMutex);
+    LOG_ALWAYS_FATAL_IF(mPresentState != PresentState::Unknown,
+                        "setPresentState called on a SurfaceFrame from Layer - %s, that has a "
+                        "PresentState - %s set already.",
+                        mDebugName.c_str(), toString(mPresentState).c_str());
     mPresentState = presentState;
     mLastLatchTime = lastLatchTime;
 }
 
+void SurfaceFrame::setRenderRate(Fps renderRate) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mRenderRate = renderRate;
+}
+
 std::optional<int32_t> SurfaceFrame::getJankType() const {
     std::scoped_lock lock(mMutex);
+    if (mPresentState == PresentState::Dropped) {
+        // Return no jank if it's a dropped frame since we cannot attribute a jank to a it.
+        return JankType::None;
+    }
     if (mActuals.presentTime == 0) {
+        // Frame hasn't been presented yet.
         return std::nullopt;
     }
     return mJankType;
@@ -332,6 +353,11 @@ nsecs_t SurfaceFrame::getBaseTime() const {
 TimelineItem SurfaceFrame::getActuals() const {
     std::scoped_lock lock(mMutex);
     return mActuals;
+}
+
+PredictionState SurfaceFrame::getPredictionState() const {
+    std::scoped_lock lock(mMutex);
+    return mPredictionState;
 }
 
 SurfaceFrame::PresentState SurfaceFrame::getPresentState() const {
@@ -349,6 +375,11 @@ FrameReadyMetadata SurfaceFrame::getFrameReadyMetadata() const {
     return mFrameReadyMetadata;
 }
 
+nsecs_t SurfaceFrame::getDropTime() const {
+    std::scoped_lock lock(mMutex);
+    return mDropTime;
+}
+
 void SurfaceFrame::dump(std::string& result, const std::string& indent, nsecs_t baseTime) const {
     std::scoped_lock lock(mMutex);
     StringAppendF(&result, "%s", indent.c_str());
@@ -363,8 +394,17 @@ void SurfaceFrame::dump(std::string& result, const std::string& indent, nsecs_t 
     StringAppendF(&result, "%s", indent.c_str());
     StringAppendF(&result, "Owner Pid : %d\n", mOwnerPid);
     StringAppendF(&result, "%s", indent.c_str());
+    StringAppendF(&result, "Scheduled rendering rate: %d fps\n",
+                  mRenderRate ? mRenderRate->getIntValue() : 0);
+    StringAppendF(&result, "%s", indent.c_str());
     StringAppendF(&result, "Present State : %s\n", toString(mPresentState).c_str());
     StringAppendF(&result, "%s", indent.c_str());
+    if (mPresentState == PresentState::Dropped) {
+        std::chrono::nanoseconds dropTime(mDropTime - baseTime);
+        StringAppendF(&result, "Drop time : %10f\n",
+                      std::chrono::duration<double, std::milli>(dropTime).count());
+        StringAppendF(&result, "%s", indent.c_str());
+    }
     StringAppendF(&result, "Prediction State : %s\n", toString(mPredictionState).c_str());
     StringAppendF(&result, "%s", indent.c_str());
     StringAppendF(&result, "Jank Type : %s\n", jankTypeBitmaskToString(mJankType).c_str());
@@ -387,9 +427,10 @@ void SurfaceFrame::dump(std::string& result, const std::string& indent, nsecs_t 
     dumpTable(result, mPredictions, mActuals, indent, mPredictionState, baseTime);
 }
 
-void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType,
-                             nsecs_t vsyncPeriod) {
+void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType, Fps refreshRate,
+                             nsecs_t displayDeadlineDelta, nsecs_t displayPresentDelta) {
     std::scoped_lock lock(mMutex);
+
     if (mPresentState != PresentState::Presented) {
         // No need to update dropped buffers
         return;
@@ -408,13 +449,16 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType,
         mJankType = JankType::Unknown;
         mFramePresentMetadata = FramePresentMetadata::UnknownPresent;
         mFrameReadyMetadata = FrameReadyMetadata::UnknownFinish;
-        mTimeStats->incrementJankyFrames(mOwnerUid, mLayerName, mJankType);
+        const constexpr nsecs_t kAppDeadlineDelta = -1;
+        mTimeStats->incrementJankyFrames({refreshRate, mRenderRate, mOwnerUid, mLayerName,
+                                          mJankType, displayDeadlineDelta, displayPresentDelta,
+                                          kAppDeadlineDelta});
         return;
     }
 
     const nsecs_t presentDelta = mActuals.presentTime - mPredictions.presentTime;
     const nsecs_t deadlineDelta = mActuals.endTime - mPredictions.endTime;
-    const nsecs_t deltaToVsync = std::abs(presentDelta) % vsyncPeriod;
+    const nsecs_t deltaToVsync = std::abs(presentDelta) % refreshRate.getPeriodNsecs();
 
     if (deadlineDelta > mJankClassificationThresholds.deadlineThreshold) {
         mFrameReadyMetadata = FrameReadyMetadata::LateFinish;
@@ -436,7 +480,8 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType,
         if (mFrameReadyMetadata == FrameReadyMetadata::OnTimeFinish) {
             // Finish on time, Present early
             if (deltaToVsync < mJankClassificationThresholds.presentThreshold ||
-                deltaToVsync >= vsyncPeriod - mJankClassificationThresholds.presentThreshold) {
+                deltaToVsync >= refreshRate.getPeriodNsecs() -
+                                mJankClassificationThresholds.presentThreshold) {
                 // Delta factor of vsync
                 mJankType = JankType::SurfaceFlingerScheduling;
             } else {
@@ -459,7 +504,8 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType,
                 mJankType |= displayFrameJankType;
             } else {
                 if (deltaToVsync < mJankClassificationThresholds.presentThreshold ||
-                    deltaToVsync >= vsyncPeriod - mJankClassificationThresholds.presentThreshold) {
+                    deltaToVsync >= refreshRate.getPeriodNsecs() -
+                                    mJankClassificationThresholds.presentThreshold) {
                     // Delta factor of vsync
                     mJankType |= JankType::SurfaceFlingerScheduling;
                 } else {
@@ -478,30 +524,16 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType,
             }
         }
     }
-    mTimeStats->incrementJankyFrames(mOwnerUid, mLayerName, mJankType);
+    mTimeStats->incrementJankyFrames({refreshRate, mRenderRate, mOwnerUid, mLayerName, mJankType,
+                                      displayDeadlineDelta, displayPresentDelta, deadlineDelta});
 }
 
-/**
- * TODO(b/178637512): add inputEventId to the perfetto trace.
- */
-void SurfaceFrame::trace(int64_t displayFrameToken) {
-    using FrameTimelineDataSource = impl::FrameTimeline::FrameTimelineDataSource;
-
+void SurfaceFrame::tracePredictions(int64_t displayFrameToken) const {
     int64_t expectedTimelineCookie = mTraceCookieCounter.getCookieForTracing();
-    bool missingToken = false;
+
     // Expected timeline start
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         std::scoped_lock lock(mMutex);
-        if (mToken == FrameTimelineInfo::INVALID_VSYNC_ID) {
-            ALOGD("Cannot trace SurfaceFrame - %s with invalid token", mLayerName.c_str());
-            missingToken = true;
-            return;
-        } else if (displayFrameToken == FrameTimelineInfo::INVALID_VSYNC_ID) {
-            ALOGD("Cannot trace SurfaceFrame  - %s with invalid displayFrameToken",
-                  mLayerName.c_str());
-            missingToken = true;
-            return;
-        }
         auto packet = ctx.NewTracePacket();
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
         packet->set_timestamp(static_cast<uint64_t>(mPredictions.startTime));
@@ -518,12 +550,6 @@ void SurfaceFrame::trace(int64_t displayFrameToken) {
         expectedSurfaceFrameStartEvent->set_layer_name(mDebugName);
     });
 
-    if (missingToken) {
-        // If one packet can't be traced because of missing token, then no packets can be traced.
-        // Exit early in this case.
-        return;
-    }
-
     // Expected timeline end
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         std::scoped_lock lock(mMutex);
@@ -536,15 +562,26 @@ void SurfaceFrame::trace(int64_t displayFrameToken) {
 
         expectedSurfaceFrameEndEvent->set_cookie(expectedTimelineCookie);
     });
+}
 
+void SurfaceFrame::traceActuals(int64_t displayFrameToken) const {
     int64_t actualTimelineCookie = mTraceCookieCounter.getCookieForTracing();
+
     // Actual timeline start
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         std::scoped_lock lock(mMutex);
         auto packet = ctx.NewTracePacket();
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
         // Actual start time is not yet available, so use expected start instead
-        packet->set_timestamp(static_cast<uint64_t>(mPredictions.startTime));
+        if (mPredictionState == PredictionState::Expired) {
+            // If prediction is expired, we can't use the predicted start time. Instead, just use a
+            // start time a little earlier than the end time so that we have some info about this
+            // frame in the trace.
+            packet->set_timestamp(
+                    static_cast<uint64_t>(mActuals.endTime - kPredictionExpiredStartTimeDelta));
+        } else {
+            packet->set_timestamp(static_cast<uint64_t>(mPredictions.startTime));
+        }
 
         auto* event = packet->set_frame_timeline_event();
         auto* actualSurfaceFrameStartEvent = event->set_actual_surface_frame_start();
@@ -569,18 +606,40 @@ void SurfaceFrame::trace(int64_t displayFrameToken) {
         actualSurfaceFrameStartEvent->set_gpu_composition(mGpuComposition);
         actualSurfaceFrameStartEvent->set_jank_type(jankTypeBitmaskToProto(mJankType));
     });
+
     // Actual timeline end
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         std::scoped_lock lock(mMutex);
         auto packet = ctx.NewTracePacket();
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
-        packet->set_timestamp(static_cast<uint64_t>(mActuals.endTime));
+        if (mPresentState == PresentState::Dropped) {
+            packet->set_timestamp(static_cast<uint64_t>(mDropTime));
+        } else {
+            packet->set_timestamp(static_cast<uint64_t>(mActuals.endTime));
+        }
 
         auto* event = packet->set_frame_timeline_event();
         auto* actualSurfaceFrameEndEvent = event->set_frame_end();
 
         actualSurfaceFrameEndEvent->set_cookie(actualTimelineCookie);
     });
+}
+
+/**
+ * TODO(b/178637512): add inputEventId to the perfetto trace.
+ */
+void SurfaceFrame::trace(int64_t displayFrameToken) const {
+    if (mToken == FrameTimelineInfo::INVALID_VSYNC_ID ||
+        displayFrameToken == FrameTimelineInfo::INVALID_VSYNC_ID) {
+        // No packets can be traced with a missing token.
+        return;
+    }
+    if (getPredictionState() != PredictionState::Expired) {
+        // Expired predictions have zeroed timestamps. This cannot be used in any meaningful way in
+        // a trace.
+        tracePredictions(displayFrameToken);
+    }
+    traceActuals(displayFrameToken);
 }
 
 namespace impl {
@@ -680,10 +739,10 @@ void FrameTimeline::addSurfaceFrame(std::shared_ptr<SurfaceFrame> surfaceFrame) 
     mCurrentDisplayFrame->addSurfaceFrame(surfaceFrame);
 }
 
-void FrameTimeline::setSfWakeUp(int64_t token, nsecs_t wakeUpTime, nsecs_t vsyncPeriod) {
+void FrameTimeline::setSfWakeUp(int64_t token, nsecs_t wakeUpTime, Fps refreshRate) {
     ATRACE_CALL();
     std::scoped_lock lock(mMutex);
-    mCurrentDisplayFrame->onSfWakeUp(token, vsyncPeriod,
+    mCurrentDisplayFrame->onSfWakeUp(token, refreshRate,
                                      mTokenManager.getPredictionsForToken(token), wakeUpTime);
 }
 
@@ -701,11 +760,11 @@ void FrameTimeline::DisplayFrame::addSurfaceFrame(std::shared_ptr<SurfaceFrame> 
     mSurfaceFrames.push_back(surfaceFrame);
 }
 
-void FrameTimeline::DisplayFrame::onSfWakeUp(int64_t token, nsecs_t vsyncPeriod,
+void FrameTimeline::DisplayFrame::onSfWakeUp(int64_t token, Fps refreshRate,
                                              std::optional<TimelineItem> predictions,
                                              nsecs_t wakeUpTime) {
     mToken = token;
-    mVsyncPeriod = vsyncPeriod;
+    mRefreshRate = refreshRate;
     if (!predictions) {
         mPredictionState = PredictionState::Expired;
     } else {
@@ -713,11 +772,6 @@ void FrameTimeline::DisplayFrame::onSfWakeUp(int64_t token, nsecs_t vsyncPeriod,
         mSurfaceFlingerPredictions = *predictions;
     }
     mSurfaceFlingerActuals.startTime = wakeUpTime;
-}
-
-void FrameTimeline::DisplayFrame::setTokenAndVsyncPeriod(int64_t token, nsecs_t vsyncPeriod) {
-    mToken = token;
-    mVsyncPeriod = vsyncPeriod;
 }
 
 void FrameTimeline::DisplayFrame::setPredictions(PredictionState predictionState,
@@ -736,14 +790,21 @@ void FrameTimeline::DisplayFrame::setActualEndTime(nsecs_t actualEndTime) {
 
 void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime) {
     mSurfaceFlingerActuals.presentTime = signalTime;
-    int32_t totalJankReasons = JankType::None;
+    if (mPredictionState == PredictionState::Expired) {
+        // Cannot do jank classification with expired predictions
+        mJankType = JankType::Unknown;
+        return;
+    }
 
     // Delta between the expected present and the actual present
     const nsecs_t presentDelta =
             mSurfaceFlingerActuals.presentTime - mSurfaceFlingerPredictions.presentTime;
+    const nsecs_t deadlineDelta =
+            mSurfaceFlingerActuals.endTime - mSurfaceFlingerPredictions.endTime;
+
     // How far off was the presentDelta when compared to the vsyncPeriod. Used in checking if there
     // was a prediction error or not.
-    nsecs_t deltaToVsync = std::abs(presentDelta) % mVsyncPeriod;
+    nsecs_t deltaToVsync = std::abs(presentDelta) % mRefreshRate.getPeriodNsecs();
     if (std::abs(presentDelta) > mJankClassificationThresholds.presentThreshold) {
         mFramePresentMetadata = presentDelta > 0 ? FramePresentMetadata::LatePresent
                                                  : FramePresentMetadata::EarlyPresent;
@@ -772,8 +833,8 @@ void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime) {
             if (mFrameReadyMetadata == FrameReadyMetadata::OnTimeFinish) {
                 // Finish on time, Present early
                 if (deltaToVsync < mJankClassificationThresholds.presentThreshold ||
-                    deltaToVsync >=
-                            (mVsyncPeriod - mJankClassificationThresholds.presentThreshold)) {
+                    deltaToVsync >= (mRefreshRate.getPeriodNsecs() -
+                                     mJankClassificationThresholds.presentThreshold)) {
                     // Delta is a factor of vsync if its within the presentTheshold on either side
                     // of the vsyncPeriod. Example: 0-2ms and 9-11ms are both within the threshold
                     // of the vsyncPeriod if the threshold was 2ms and the vsyncPeriod was 11ms.
@@ -793,8 +854,8 @@ void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime) {
             if (mFrameReadyMetadata == FrameReadyMetadata::OnTimeFinish) {
                 // Finish on time, Present late
                 if (deltaToVsync < mJankClassificationThresholds.presentThreshold ||
-                    deltaToVsync >=
-                            (mVsyncPeriod - mJankClassificationThresholds.presentThreshold)) {
+                    deltaToVsync >= (mRefreshRate.getPeriodNsecs() -
+                                     mJankClassificationThresholds.presentThreshold)) {
                     // Delta is a factor of vsync if its within the presentTheshold on either side
                     // of the vsyncPeriod. Example: 0-2ms and 9-11ms are both within the threshold
                     // of the vsyncPeriod if the threshold was 2ms and the vsyncPeriod was 11ms.
@@ -815,29 +876,17 @@ void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime) {
             mJankType = JankType::Unknown;
         }
     }
-    totalJankReasons |= mJankType;
-
     for (auto& surfaceFrame : mSurfaceFrames) {
-        surfaceFrame->onPresent(signalTime, mJankType, mVsyncPeriod);
-        auto surfaceFrameJankType = surfaceFrame->getJankType();
-        if (surfaceFrameJankType != std::nullopt) {
-            totalJankReasons |= *surfaceFrameJankType;
-        }
+        surfaceFrame->onPresent(signalTime, mJankType, mRefreshRate, deadlineDelta, deltaToVsync);
     }
-    mTimeStats->incrementJankyFrames(totalJankReasons);
 }
 
-void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
+void FrameTimeline::DisplayFrame::tracePredictions(pid_t surfaceFlingerPid) const {
     int64_t expectedTimelineCookie = mTraceCookieCounter.getCookieForTracing();
-    bool missingToken = false;
+
     // Expected timeline start
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         auto packet = ctx.NewTracePacket();
-        if (mToken == FrameTimelineInfo::INVALID_VSYNC_ID) {
-            ALOGD("Cannot trace DisplayFrame with invalid token");
-            missingToken = true;
-            return;
-        }
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
         packet->set_timestamp(static_cast<uint64_t>(mSurfaceFlingerPredictions.startTime));
 
@@ -850,12 +899,6 @@ void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
         expectedDisplayFrameStartEvent->set_pid(surfaceFlingerPid);
     });
 
-    if (missingToken) {
-        // If one packet can't be traced because of missing token, then no packets can be traced.
-        // Exit early in this case.
-        return;
-    }
-
     // Expected timeline end
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         auto packet = ctx.NewTracePacket();
@@ -867,9 +910,12 @@ void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
 
         expectedDisplayFrameEndEvent->set_cookie(expectedTimelineCookie);
     });
+}
 
+void FrameTimeline::DisplayFrame::traceActuals(pid_t surfaceFlingerPid) const {
     int64_t actualTimelineCookie = mTraceCookieCounter.getCookieForTracing();
-    // Expected timeline start
+
+    // Actual timeline start
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         auto packet = ctx.NewTracePacket();
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
@@ -889,7 +935,8 @@ void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
         actualDisplayFrameStartEvent->set_gpu_composition(mGpuComposition);
         actualDisplayFrameStartEvent->set_jank_type(jankTypeBitmaskToProto(mJankType));
     });
-    // Expected timeline end
+
+    // Actual timeline end
     FrameTimelineDataSource::Trace([&](FrameTimelineDataSource::TraceContext ctx) {
         auto packet = ctx.NewTracePacket();
         packet->set_timestamp_clock_id(perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
@@ -900,6 +947,21 @@ void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
 
         actualDisplayFrameEndEvent->set_cookie(actualTimelineCookie);
     });
+}
+
+void FrameTimeline::DisplayFrame::trace(pid_t surfaceFlingerPid) const {
+    if (mToken == FrameTimelineInfo::INVALID_VSYNC_ID) {
+        // DisplayFrame should not have an invalid token.
+        ALOGE("Cannot trace DisplayFrame with invalid token");
+        return;
+    }
+
+    if (mPredictionState == PredictionState::Valid) {
+        // Expired and unknown predictions have zeroed timestamps. This cannot be used in any
+        // meaningful way in a trace.
+        tracePredictions(surfaceFlingerPid);
+    }
+    traceActuals(surfaceFlingerPid);
 
     for (auto& surfaceFrame : mSurfaceFrames) {
         surfaceFrame->trace(mToken);
@@ -984,7 +1046,7 @@ void FrameTimeline::DisplayFrame::dump(std::string& result, nsecs_t baseTime) co
     StringAppendF(&result, "Present Metadata : %s\n", toString(mFramePresentMetadata).c_str());
     StringAppendF(&result, "Finish Metadata: %s\n", toString(mFrameReadyMetadata).c_str());
     StringAppendF(&result, "Start Metadata: %s\n", toString(mFrameStartMetadata).c_str());
-    std::chrono::nanoseconds vsyncPeriod(mVsyncPeriod);
+    std::chrono::nanoseconds vsyncPeriod(mRefreshRate.getPeriodNsecs());
     StringAppendF(&result, "Vsync Period: %10f\n",
                   std::chrono::duration<double, std::milli>(vsyncPeriod).count());
     nsecs_t presentDelta =
@@ -992,7 +1054,7 @@ void FrameTimeline::DisplayFrame::dump(std::string& result, nsecs_t baseTime) co
     std::chrono::nanoseconds presentDeltaNs(std::abs(presentDelta));
     StringAppendF(&result, "Present delta: %10f\n",
                   std::chrono::duration<double, std::milli>(presentDeltaNs).count());
-    std::chrono::nanoseconds deltaToVsync(std::abs(presentDelta) % mVsyncPeriod);
+    std::chrono::nanoseconds deltaToVsync(std::abs(presentDelta) % mRefreshRate.getPeriodNsecs());
     StringAppendF(&result, "Present delta %% refreshrate: %10f\n",
                   std::chrono::duration<double, std::milli>(deltaToVsync).count());
     dumpTable(result, mSurfaceFlingerPredictions, mSurfaceFlingerActuals, "", mPredictionState,

@@ -1,3 +1,12 @@
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 soong_config_module_type {
       name: "libdisplayconfig_cc_defaults",
       module_type: "cc_defaults",
@@ -147,6 +156,10 @@ cc_defaults {
         thin: true,
     },
     whole_program_vtables: true, // Requires ThinLTO
+    pgo: {
+        sampling: true,
+        profile_file: "surfaceflinger/surfaceflinger.profdata",
+    },
     // TODO(b/131771163): Fix broken fuzzer support with LTO.
     sanitize: {
         fuzzer: false,
@@ -214,7 +227,7 @@ filegroup {
         "SurfaceFlingerDefaultFactory.cpp",
         "SurfaceInterceptor.cpp",
         "SurfaceTracing.cpp",
-        "TransactionCompletedThread.cpp",
+        "TransactionCallbackInvoker.cpp",
     ],
 }
 

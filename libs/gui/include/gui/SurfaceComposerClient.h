@@ -80,6 +80,10 @@ using TransactionCompletedCallbackTakesContext =
 using TransactionCompletedCallback =
         std::function<void(nsecs_t /*latchTime*/, const sp<Fence>& /*presentFence*/,
                            const std::vector<SurfaceControlStats>& /*stats*/)>;
+using SurfaceStatsCallback =
+        std::function<void(void* /*context*/, nsecs_t /*latchTime*/,
+                           const sp<Fence>& /*presentFence*/,
+                           const SurfaceStats& /*stats*/)>;
 
 // ---------------------------------------------------------------------------
 
@@ -110,30 +114,29 @@ public:
     // Get immutable information about given physical display.
     static status_t getDisplayInfo(const sp<IBinder>& display, DisplayInfo*);
 
-    // Get configurations supported by given physical display.
-    static status_t getDisplayConfigs(const sp<IBinder>& display, Vector<DisplayConfig>*);
+    // Get modes supported by given physical display.
+    static status_t getDisplayModes(const sp<IBinder>& display, Vector<ui::DisplayMode>*);
 
-    // Get the ID of the active DisplayConfig, as getDisplayConfigs index.
-    static int getActiveConfig(const sp<IBinder>& display);
+    // Get the ID of the active DisplayMode, as getDisplayModes index.
+    static int getActiveDisplayModeId(const sp<IBinder>& display);
 
-    // Shorthand for getDisplayConfigs element at getActiveConfig index.
-    static status_t getActiveDisplayConfig(const sp<IBinder>& display, DisplayConfig*);
+    // Shorthand for getDisplayModes element at getActiveDisplayModeId index.
+    static status_t getActiveDisplayMode(const sp<IBinder>& display, ui::DisplayMode*);
 
     // Sets the refresh rate boundaries for the display.
-    static status_t setDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                 int32_t defaultConfig, bool allowGroupSwitching,
-                                                 float primaryRefreshRateMin,
-                                                 float primaryRefreshRateMax,
-                                                 float appRequestRefreshRateMin,
-                                                 float appRequestRefreshRateMax);
+    static status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, size_t defaultMode,
+                                               bool allowGroupSwitching,
+                                               float primaryRefreshRateMin,
+                                               float primaryRefreshRateMax,
+                                               float appRequestRefreshRateMin,
+                                               float appRequestRefreshRateMax);
     // Gets the refresh rate boundaries for the display.
-    static status_t getDesiredDisplayConfigSpecs(const sp<IBinder>& displayToken,
-                                                 int32_t* outDefaultConfig,
-                                                 bool* outAllowGroupSwitching,
-                                                 float* outPrimaryRefreshRateMin,
-                                                 float* outPrimaryRefreshRateMax,
-                                                 float* outAppRequestRefreshRateMin,
-                                                 float* outAppRequestRefreshRateMax);
+    static status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                               size_t* outDefaultMode, bool* outAllowGroupSwitching,
+                                               float* outPrimaryRefreshRateMin,
+                                               float* outPrimaryRefreshRateMax,
+                                               float* outAppRequestRefreshRateMin,
+                                               float* outAppRequestRefreshRateMax);
 
     // Gets the list of supported color modes for the given display
     static status_t getDisplayColorModes(const sp<IBinder>& display,
@@ -551,6 +554,10 @@ public:
         // transactions from blocking each other.
         Transaction& setApplyToken(const sp<IBinder>& token);
 
+        Transaction& setStretchEffect(const sp<SurfaceControl>& sc, float left, float top,
+                                      float right, float bottom, float vecX, float vecY,
+                                      float maxAmount);
+
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);
 
@@ -647,8 +654,21 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
                 surfaceControls;
     };
 
+    struct SurfaceStatsCallbackEntry {
+        SurfaceStatsCallbackEntry(void* context, void* cookie, SurfaceStatsCallback callback)
+                : context(context),
+                cookie(cookie),
+                callback(callback) {}
+
+        void* context;
+        void* cookie;
+        SurfaceStatsCallback callback;
+    };
+
     std::unordered_map<CallbackId, CallbackTranslation> mCallbacks GUARDED_BY(mMutex);
     std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners GUARDED_BY(mMutex);
+    std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry>
+                mSurfaceStatsListeners GUARDED_BY(mMutex);
 
 public:
     static sp<TransactionCompletedListener> getInstance();
@@ -675,6 +695,10 @@ public:
      * Removes a jank listener previously added to addJankCallback.
      */
     void removeJankListener(const sp<JankDataListener>& listener);
+
+    void addSurfaceStatsListener(void* context, void* cookie, sp<SurfaceControl> surfaceControl,
+                SurfaceStatsCallback listener);
+    void removeSurfaceStatsListener(void* context, void* cookie);
 
     // Overrides BnTransactionCompletedListener's onTransactionCompleted
     void onTransactionCompleted(ListenerStats stats) override;

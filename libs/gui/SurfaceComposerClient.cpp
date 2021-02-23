@@ -39,7 +39,7 @@
 #include <gui/LayerState.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
-#include <ui/DisplayConfig.h>
+#include <ui/DisplayMode.h>
 
 #ifndef NO_INPUT
 #include <input/InputWindow.h>
@@ -194,6 +194,25 @@ void TransactionCompletedListener::removeJankListener(const sp<JankDataListener>
     }
 }
 
+void TransactionCompletedListener::addSurfaceStatsListener(void* context, void* cookie,
+        sp<SurfaceControl> surfaceControl, SurfaceStatsCallback listener) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mSurfaceStatsListeners.insert({surfaceControl->getHandle(),
+            SurfaceStatsCallbackEntry(context, cookie, listener)});
+}
+
+void TransactionCompletedListener::removeSurfaceStatsListener(void* context, void* cookie) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    for (auto it = mSurfaceStatsListeners.begin(); it != mSurfaceStatsListeners.end();) {
+        auto [itContext, itCookie, itListener] = it->second;
+        if (itContext == context && itCookie == cookie) {
+            it = mSurfaceStatsListeners.erase(it);
+        } else {
+            it++;
+        }
+    }
+}
+
 void TransactionCompletedListener::addSurfaceControlToCallbacks(
         const sp<SurfaceControl>& surfaceControl,
         const std::unordered_set<CallbackId>& callbackIds) {
@@ -210,6 +229,7 @@ void TransactionCompletedListener::addSurfaceControlToCallbacks(
 void TransactionCompletedListener::onTransactionCompleted(ListenerStats listenerStats) {
     std::unordered_map<CallbackId, CallbackTranslation> callbacksMap;
     std::multimap<sp<IBinder>, sp<JankDataListener>> jankListenersMap;
+    std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry> surfaceListeners;
     {
         std::lock_guard<std::mutex> lock(mMutex);
 
@@ -226,6 +246,7 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
          */
         callbacksMap = mCallbacks;
         jankListenersMap = mJankListeners;
+        surfaceListeners = mSurfaceStatsListeners;
         for (const auto& transactionStats : listenerStats.transactionStats) {
             for (auto& callbackId : transactionStats.callbackIds) {
                 mCallbacks.erase(callbackId);
@@ -259,9 +280,16 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                              surfaceControlStats);
         }
         for (const auto& surfaceStats : transactionStats.surfaceStats) {
+            auto listenerRange = surfaceListeners.equal_range(surfaceStats.surfaceControl);
+            for (auto it = listenerRange.first; it != listenerRange.second; it++) {
+                auto entry = it->second;
+                entry.callback(entry.context, transactionStats.latchTime,
+                    transactionStats.presentFence, surfaceStats);
+            }
+
             if (surfaceStats.jankData.empty()) continue;
-            for (auto it = jankListenersMap.find(surfaceStats.surfaceControl);
-                    it != jankListenersMap.end(); it++) {
+            auto jankRange = jankListenersMap.equal_range(surfaceStats.surfaceControl);
+            for (auto it = jankRange.first; it != jankRange.second; it++) {
                 it->second->onJankDataAvailable(surfaceStats.jankData);
             }
         }
@@ -1569,6 +1597,23 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setApply
     return *this;
 }
 
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setStretchEffect(
+        const sp<SurfaceControl>& sc, float left, float top, float right, float bottom, float vecX,
+        float vecY, float maxAmount) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+
+    s->what |= layer_state_t::eStretchChanged;
+    s->stretchEffect = StretchEffect{.area = {left, top, right, bottom},
+                                     .vectorX = vecX,
+                                     .vectorY = vecY,
+                                     .maxAmount = maxAmount};
+    return *this;
+}
+
 // ---------------------------------------------------------------------------
 
 DisplayState& SurfaceComposerClient::Transaction::getDisplayState(const sp<IBinder>& token) {
@@ -1802,52 +1847,51 @@ status_t SurfaceComposerClient::getDisplayInfo(const sp<IBinder>& display, Displ
     return ComposerService::getComposerService()->getDisplayInfo(display, info);
 }
 
-status_t SurfaceComposerClient::getDisplayConfigs(const sp<IBinder>& display,
-                                                  Vector<DisplayConfig>* configs) {
-    return ComposerService::getComposerService()->getDisplayConfigs(display, configs);
+status_t SurfaceComposerClient::getDisplayModes(const sp<IBinder>& display,
+                                                Vector<ui::DisplayMode>* modes) {
+    return ComposerService::getComposerService()->getDisplayModes(display, modes);
 }
 
-status_t SurfaceComposerClient::getActiveDisplayConfig(const sp<IBinder>& display,
-                                                       DisplayConfig* config) {
-    Vector<DisplayConfig> configs;
-    status_t result = getDisplayConfigs(display, &configs);
+status_t SurfaceComposerClient::getActiveDisplayMode(const sp<IBinder>& display,
+                                                     ui::DisplayMode* mode) {
+    Vector<ui::DisplayMode> modes;
+    status_t result = getDisplayModes(display, &modes);
     if (result != NO_ERROR) {
         return result;
     }
 
-    int activeId = getActiveConfig(display);
+    int activeId = getActiveDisplayModeId(display);
     if (activeId < 0) {
-        ALOGE("No active configuration found");
+        ALOGE("No active mode found");
         return NAME_NOT_FOUND;
     }
 
-    *config = configs[static_cast<size_t>(activeId)];
+    *mode = modes[static_cast<size_t>(activeId)];
     return NO_ERROR;
 }
 
-int SurfaceComposerClient::getActiveConfig(const sp<IBinder>& display) {
-    return ComposerService::getComposerService()->getActiveConfig(display);
+int SurfaceComposerClient::getActiveDisplayModeId(const sp<IBinder>& display) {
+    return ComposerService::getComposerService()->getActiveDisplayModeId(display);
 }
 
-status_t SurfaceComposerClient::setDesiredDisplayConfigSpecs(
-        const sp<IBinder>& displayToken, int32_t defaultConfig, bool allowGroupSwitching,
+status_t SurfaceComposerClient::setDesiredDisplayModeSpecs(
+        const sp<IBinder>& displayToken, size_t defaultMode, bool allowGroupSwitching,
         float primaryRefreshRateMin, float primaryRefreshRateMax, float appRequestRefreshRateMin,
         float appRequestRefreshRateMax) {
     return ComposerService::getComposerService()
-            ->setDesiredDisplayConfigSpecs(displayToken, defaultConfig, allowGroupSwitching,
-                                           primaryRefreshRateMin, primaryRefreshRateMax,
-                                           appRequestRefreshRateMin, appRequestRefreshRateMax);
+            ->setDesiredDisplayModeSpecs(displayToken, defaultMode, allowGroupSwitching,
+                                         primaryRefreshRateMin, primaryRefreshRateMax,
+                                         appRequestRefreshRateMin, appRequestRefreshRateMax);
 }
 
-status_t SurfaceComposerClient::getDesiredDisplayConfigSpecs(
-        const sp<IBinder>& displayToken, int32_t* outDefaultConfig, bool* outAllowGroupSwitching,
+status_t SurfaceComposerClient::getDesiredDisplayModeSpecs(
+        const sp<IBinder>& displayToken, size_t* outDefaultMode, bool* outAllowGroupSwitching,
         float* outPrimaryRefreshRateMin, float* outPrimaryRefreshRateMax,
         float* outAppRequestRefreshRateMin, float* outAppRequestRefreshRateMax) {
     return ComposerService::getComposerService()
-            ->getDesiredDisplayConfigSpecs(displayToken, outDefaultConfig, outAllowGroupSwitching,
-                                           outPrimaryRefreshRateMin, outPrimaryRefreshRateMax,
-                                           outAppRequestRefreshRateMin,
-                                           outAppRequestRefreshRateMax);
+            ->getDesiredDisplayModeSpecs(displayToken, outDefaultMode, outAllowGroupSwitching,
+                                         outPrimaryRefreshRateMin, outPrimaryRefreshRateMax,
+                                         outAppRequestRefreshRateMin, outAppRequestRefreshRateMax);
 }
 
 status_t SurfaceComposerClient::getDisplayColorModes(const sp<IBinder>& display,
