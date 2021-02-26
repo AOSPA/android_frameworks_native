@@ -45,7 +45,7 @@ public:
     void finalizeFrameEventHistory(const std::shared_ptr<FenceTime>& glDoneFence,
                                    const CompositorTiming& compositorTiming) override;
 
-    bool shouldPresentNow(nsecs_t expectedPresentTime) const override;
+    bool isBufferDue(nsecs_t /*expectedPresentTime*/) const override { return true; }
 
     uint32_t doTransactionResize(uint32_t flags, Layer::State* /*stateToCommit*/) override {
         return flags;
@@ -71,7 +71,8 @@ public:
     bool setFrame(const Rect& frame) override;
     bool setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence, nsecs_t postTime,
                    nsecs_t desiredPresentTime, bool isAutoTimestamp,
-                   const client_cache_t& clientCacheId, uint64_t frameNumber) override;
+                   const client_cache_t& clientCacheId, uint64_t frameNumber,
+                   std::optional<nsecs_t> dequeueTime) override;
     bool setAcquireFence(const sp<Fence>& fence) override;
     bool setDataspace(ui::Dataspace dataspace) override;
     bool setHdrMetadata(const HdrMetadata& hdrMetadata) override;
@@ -152,7 +153,7 @@ private:
 
     bool bufferNeedsFiltering() const override;
 
-    nsecs_t nextPredictedPresentTime() const override;
+    std::optional<nsecs_t> nextPredictedPresentTime() const override;
 
     static const std::array<float, 16> IDENTITY_MATRIX;
 

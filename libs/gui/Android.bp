@@ -64,7 +64,6 @@ cc_defaults {
         "IGraphicBufferProducer.cpp",
         "IProducerListener.cpp",
         "IRegionSamplingListener.cpp",
-        "IScreenCaptureListener.cpp",
         "ISurfaceComposer.cpp",
         "ISurfaceComposerClient.cpp",
         "ITransactionCompletedListener.cpp",
@@ -73,6 +72,7 @@ cc_defaults {
         "LayerState.cpp",
         "OccupancyTracker.cpp",
         "StreamSplitter.cpp",
+        "ScreenCaptureResults.cpp",
         "Surface.cpp",
         "SurfaceControl.cpp",
         "SurfaceComposerClient.cpp",
@@ -157,6 +157,7 @@ cc_library_static {
 filegroup {
     name: "libgui_bufferqueue_sources",
     srcs: [
+        "BatchBufferOps.cpp",
         "BufferItem.cpp",
         "BufferQueue.cpp",
         "BufferQueueConsumer.cpp",
@@ -167,7 +168,7 @@ filegroup {
         "FrameTimestamps.cpp",
         "GLConsumerUtils.cpp",
         "HdrMetadata.cpp",
-        "QueueBufferInputOutput.cpp",
+        "IGraphicBufferProducerFlattenables.cpp",
         "bufferqueue/1.0/Conversion.cpp",
         "bufferqueue/1.0/H2BProducerListener.cpp",
         "bufferqueue/1.0/WProducerListener.cpp",
@@ -276,9 +277,10 @@ cc_library_static {
 
 cc_library_shared {
     name: "libgui",
-    vendor_available: false,
+    vendor_available: true,
     vndk: {
         enabled: true,
+        private: true,
     },
     defaults: ["libgui_defaults"]
 }

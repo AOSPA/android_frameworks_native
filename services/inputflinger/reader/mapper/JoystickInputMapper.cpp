@@ -206,7 +206,7 @@ JoystickInputMapper::Axis JoystickInputMapper::createAxis(const AxisInfo& axisIn
 }
 
 bool JoystickInputMapper::haveAxis(int32_t axisId) {
-    for (const std::pair<int32_t, Axis>& pair : mAxes) {
+    for (const std::pair<const int32_t, Axis>& pair : mAxes) {
         const Axis& axis = pair.second;
         if (axis.axisInfo.axis == axisId ||
             (axis.axisInfo.mode == AxisInfo::MODE_SPLIT && axis.axisInfo.highAxis == axisId)) {
@@ -337,13 +337,12 @@ void JoystickInputMapper::sync(nsecs_t when, bool force) {
     // TODO: Use the input device configuration to control this behavior more finely.
     uint32_t policyFlags = 0;
 
-    NotifyMotionArgs args(getContext()->getNextId(), when, getDeviceId(), AINPUT_SOURCE_JOYSTICK,
-                          ADISPLAY_ID_NONE, policyFlags, AMOTION_EVENT_ACTION_MOVE, 0, 0, metaState,
-                          buttonState, MotionClassification::NONE, AMOTION_EVENT_EDGE_FLAG_NONE, 1,
-                          &pointerProperties, &pointerCoords, 0, 0,
-                          AMOTION_EVENT_INVALID_CURSOR_POSITION,
-                          AMOTION_EVENT_INVALID_CURSOR_POSITION, 0, /* videoFrames */ {});
-    getListener()->notifyMotion(&args);
+    getContext()->notifyMotion(when, getDeviceId(), AINPUT_SOURCE_JOYSTICK, ADISPLAY_ID_NONE,
+                               policyFlags, AMOTION_EVENT_ACTION_MOVE, 0, 0, metaState, buttonState,
+                               MotionClassification::NONE, AMOTION_EVENT_EDGE_FLAG_NONE, 1,
+                               &pointerProperties, &pointerCoords, 0, 0,
+                               AMOTION_EVENT_INVALID_CURSOR_POSITION,
+                               AMOTION_EVENT_INVALID_CURSOR_POSITION, 0, /* videoFrames */ {});
 }
 
 void JoystickInputMapper::setPointerCoordsAxisValue(PointerCoords* pointerCoords, int32_t axis,
