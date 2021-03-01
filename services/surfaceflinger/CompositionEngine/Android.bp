@@ -42,7 +42,7 @@ libdisplayconfig_cc_defaults {
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
         "libsurfaceflinger_headers",
-        "display_intf_headers",
+        "//vendor/qcom/opensource/commonsys-intf/display:display_intf_headers",
     ],
 }
 
