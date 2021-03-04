@@ -158,6 +158,11 @@ cc_library {
         misc_undefined: ["integer"],
     },
     min_sdk_version: "29",
+
+    pgo: {
+        sampling: true,
+        profile_file: "libbinder/libbinder.profdata",
+    },
 }
 
 // AIDL interface between libbinder and framework.jar
