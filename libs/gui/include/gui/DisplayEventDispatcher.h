@@ -52,20 +52,7 @@ protected:
 private:
     sp<Looper> mLooper;
     DisplayEventReceiver mReceiver;
-    // The state of vsync event registration and whether the client is expecting
-    // an event or not.
-    enum class VsyncState {
-        // The dispatcher is not registered for vsync events.
-        Unregistered,
-        // The dispatcher is registered to receive vsync events but should not dispatch it to the
-        // client as the client is not expecting a vsync event.
-        Registered,
-
-        // The dispatcher is registered to receive vsync events and supposed to dispatch it to
-        // the client.
-        RegisteredAndWaitingForVsync,
-    };
-    VsyncState mVsyncState;
+    bool mWaitingForVsync;
 
     std::vector<FrameRateOverride> mFrameRateOverrides;
 
@@ -73,8 +60,8 @@ private:
                                VsyncEventData vsyncEventData) = 0;
     virtual void dispatchHotplug(nsecs_t timestamp, PhysicalDisplayId displayId,
                                  bool connected) = 0;
-    virtual void dispatchConfigChanged(nsecs_t timestamp, PhysicalDisplayId displayId,
-                                       int32_t configId, nsecs_t vsyncPeriod) = 0;
+    virtual void dispatchModeChanged(nsecs_t timestamp, PhysicalDisplayId displayId, int32_t modeId,
+                                     nsecs_t vsyncPeriod) = 0;
     // AChoreographer-specific hook for processing null-events so that looper
     // can be properly poked.
     virtual void dispatchNullEvent(nsecs_t timestamp, PhysicalDisplayId displayId) = 0;

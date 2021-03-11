@@ -301,8 +301,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             mConsumer->mergeSurfaceDamage(mQueueItems[0].item.mSurfaceDamage);
             mFlinger->mTimeStats->removeTimeRecord(layerId, mQueueItems[0].item.mFrameNumber);
             if (mQueueItems[0].surfaceFrame) {
-                mQueueItems[0].surfaceFrame->setPresentState(PresentState::Dropped);
-                mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
+                addSurfaceFrameDroppedForBuffer(mQueueItems[0].surfaceFrame);
             }
             mQueueItems.erase(mQueueItems.begin());
             mQueuedFrames--;
@@ -317,8 +316,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             Mutex::Autolock lock(mQueueItemLock);
             for (auto& [item, surfaceFrame] : mQueueItems) {
                 if (surfaceFrame) {
-                    surfaceFrame->setPresentState(PresentState::Dropped);
-                    mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
+                    addSurfaceFrameDroppedForBuffer(surfaceFrame);
                 }
             }
             mQueueItems.clear();
@@ -348,8 +346,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
             mConsumer->mergeSurfaceDamage(mQueueItems[0].item.mSurfaceDamage);
             mFlinger->mTimeStats->removeTimeRecord(layerId, mQueueItems[0].item.mFrameNumber);
             if (mQueueItems[0].surfaceFrame) {
-                mQueueItems[0].surfaceFrame->setPresentState(PresentState::Dropped);
-                mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
+                addSurfaceFrameDroppedForBuffer(mQueueItems[0].surfaceFrame);
             }
             mQueueItems.erase(mQueueItems.begin());
             mQueuedFrames--;
@@ -361,11 +358,9 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
                                                FrameTracer::FrameEvent::LATCH);
 
         if (mQueueItems[0].surfaceFrame) {
-            mQueueItems[0].surfaceFrame->setAcquireFenceTime(
-                    mQueueItems[0].item.mFenceTime->getSignalTime());
-            mQueueItems[0].surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
-            mFlinger->mFrameTimeline->addSurfaceFrame(mQueueItems[0].surfaceFrame);
-            mLastLatchTime = latchTime;
+            addSurfaceFramePresentedForBuffer(mQueueItems[0].surfaceFrame,
+                                              mQueueItems[0].item.mFenceTime->getSignalTime(),
+                                              latchTime);
         }
         mQueueItems.erase(mQueueItems.begin());
     }
@@ -463,10 +458,7 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
             }
         }
 
-        auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mFrameTimelineInfo, mOwnerPid,
-                                                                     mOwnerUid, mName, mName);
-        surfaceFrame->setActualQueueTime(systemTime());
+        auto surfaceFrame = createSurfaceFrameForBuffer(mFrameTimelineInfo, systemTime(), mName);
 
         mQueueItems.push_back({item, surfaceFrame});
         mQueuedFrames++;
@@ -533,10 +525,7 @@ void BufferQueueLayer::onFrameReplaced(const BufferItem& item) {
             return;
         }
 
-        auto surfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(mFrameTimelineInfo, mOwnerPid,
-                                                                     mOwnerUid, mName, mName);
-        surfaceFrame->setActualQueueTime(systemTime());
+        auto surfaceFrame = createSurfaceFrameForBuffer(mFrameTimelineInfo, systemTime(), mName);
         mQueueItems[mQueueItems.size() - 1].item = item;
         mQueueItems[mQueueItems.size() - 1].surfaceFrame = std::move(surfaceFrame);
 

@@ -125,6 +125,9 @@ std::vector<sp<GraphicBuffer>> RefreshRateOverlay::SevenSegmentDrawer::drawNumbe
                                   GRALLOC_USAGE_SW_WRITE_RARELY | GRALLOC_USAGE_HW_COMPOSER |
                                           GRALLOC_USAGE_HW_TEXTURE,
                                   "RefreshRateOverlayBuffer");
+        const status_t bufferStatus = buffer->initCheck();
+        LOG_ALWAYS_FATAL_IF(bufferStatus != OK, "RefreshRateOverlay: Buffer failed to allocate: %d",
+                            bufferStatus);
         uint8_t* pixels;
         buffer->lock(GRALLOC_USAGE_SW_WRITE_RARELY, reinterpret_cast<void**>(&pixels));
         // Clear buffer content
@@ -238,7 +241,7 @@ void RefreshRateOverlay::changeRefreshRate(const Fps& fps) {
     auto buffer = getOrCreateBuffers(*mCurrentFps)[mFrame];
     mLayer->setBuffer(buffer, Fence::NO_FENCE, 0, 0, true, {},
                       mLayer->getHeadFrameNumber(-1 /* expectedPresentTime */),
-                      std::nullopt /* dequeueTime */);
+                      std::nullopt /* dequeueTime */, FrameTimelineInfo{});
 
     mFlinger.mTransactionFlags.fetch_or(eTransactionMask);
 }
@@ -251,7 +254,7 @@ void RefreshRateOverlay::onInvalidate() {
     auto buffer = buffers[mFrame];
     mLayer->setBuffer(buffer, Fence::NO_FENCE, 0, 0, true, {},
                       mLayer->getHeadFrameNumber(-1 /* expectedPresentTime */),
-                      std::nullopt /* dequeueTime */);
+                      std::nullopt /* dequeueTime */, FrameTimelineInfo{});
 
     mFlinger.mTransactionFlags.fetch_or(eTransactionMask);
 }

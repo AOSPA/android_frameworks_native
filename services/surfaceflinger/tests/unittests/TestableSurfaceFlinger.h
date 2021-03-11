@@ -210,26 +210,26 @@ public:
                         std::unique_ptr<scheduler::VSyncTracker> vsyncTracker,
                         std::unique_ptr<EventThread> appEventThread,
                         std::unique_ptr<EventThread> sfEventThread,
-                        ISchedulerCallback* callback = nullptr, bool hasMultipleConfigs = false) {
-        DisplayModes configs{DisplayMode::Builder(0)
-                                     .setId(DisplayModeId(0))
-                                     .setVsyncPeriod(16'666'667)
-                                     .setConfigGroup(0)
-                                     .build()};
+                        ISchedulerCallback* callback = nullptr, bool hasMultipleModes = false) {
+        DisplayModes modes{DisplayMode::Builder(0)
+                                   .setId(DisplayModeId(0))
+                                   .setVsyncPeriod(16'666'667)
+                                   .setGroup(0)
+                                   .build()};
 
-        if (hasMultipleConfigs) {
-            configs.emplace_back(DisplayMode::Builder(1)
-                                         .setId(DisplayModeId(1))
-                                         .setVsyncPeriod(11'111'111)
-                                         .setConfigGroup(0)
-                                         .build());
+        if (hasMultipleModes) {
+            modes.emplace_back(DisplayMode::Builder(1)
+                                       .setId(DisplayModeId(1))
+                                       .setVsyncPeriod(11'111'111)
+                                       .setGroup(0)
+                                       .build());
         }
 
-        const auto currConfig = DisplayModeId(0);
+        const auto currMode = DisplayModeId(0);
         mFlinger->mRefreshRateConfigs =
-                std::make_unique<scheduler::RefreshRateConfigs>(configs, currConfig);
+                std::make_unique<scheduler::RefreshRateConfigs>(modes, currMode);
         const auto currFps =
-                mFlinger->mRefreshRateConfigs->getRefreshRateFromConfigId(currConfig).getFps();
+                mFlinger->mRefreshRateConfigs->getRefreshRateFromModeId(currMode).getFps();
         mFlinger->mRefreshRateStats =
                 std::make_unique<scheduler::RefreshRateStats>(*mFlinger->mTimeStats, currFps,
                                                               /*powerMode=*/hal::PowerMode::OFF);
@@ -391,6 +391,11 @@ public:
 
     auto getGPUContextPriority() { return mFlinger->getGPUContextPriority(); }
 
+    auto calculateExtraBufferCount(Fps maxSupportedRefreshRate,
+                                   std::chrono::nanoseconds presentLatency) const {
+        return SurfaceFlinger::calculateExtraBufferCount(maxSupportedRefreshRate, presentLatency);
+    }
+
     /* ------------------------------------------------------------------------
      * Read-only access to private data to assert post-conditions.
      */
@@ -404,6 +409,10 @@ public:
     auto& getCompositionEngine() const { return mFlinger->getCompositionEngine(); }
 
     const auto& getCompositorTiming() const { return mFlinger->getBE().mCompositorTiming; }
+
+    mock::FrameTracer* getFrameTracer() const {
+        return static_cast<mock::FrameTracer*>(mFlinger->mFrameTracer.get());
+    }
 
     /* ------------------------------------------------------------------------
      * Read-write access to private data to set up preconditions and assert
@@ -643,7 +652,7 @@ public:
                             .setVsyncPeriod(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD)
                             .setDpiX(FakeHwcDisplayInjector::DEFAULT_DPI)
                             .setDpiY(FakeHwcDisplayInjector::DEFAULT_DPI)
-                            .setConfigGroup(0)
+                            .setGroup(0)
                             .build();
 
             DisplayModes modes{activeMode};
@@ -756,7 +765,7 @@ public:
 
 private:
     void setVsyncEnabled(bool) override {}
-    void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ConfigEvent) override {}
+    void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ModeEvent) override {}
     void repaintEverythingForHWC() override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() {}

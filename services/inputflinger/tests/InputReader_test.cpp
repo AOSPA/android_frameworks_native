@@ -409,7 +409,7 @@ class FakeEventHub : public EventHubInterface {
 
     KeyedVector<int32_t, Device*> mDevices;
     std::vector<std::string> mExcludedDevices;
-    List<RawEvent> mEvents GUARDED_BY(mLock);
+    std::vector<RawEvent> mEvents GUARDED_BY(mLock);
     std::unordered_map<int32_t /*deviceId*/, std::vector<TouchVideoFrame>> mVideoFrames;
     std::vector<int32_t> mVibrators = {0, 1};
 
@@ -722,16 +722,15 @@ private:
         mExcludedDevices = devices;
     }
 
-    size_t getEvents(int, RawEvent* buffer, size_t) override {
-        std::scoped_lock<std::mutex> lock(mLock);
-        if (mEvents.empty()) {
-            return 0;
-        }
+    size_t getEvents(int, RawEvent* buffer, size_t bufferSize) override {
+        std::scoped_lock lock(mLock);
 
-        *buffer = *mEvents.begin();
-        mEvents.erase(mEvents.begin());
+        const size_t filledSize = std::min(mEvents.size(), bufferSize);
+        std::copy(mEvents.begin(), mEvents.begin() + filledSize, buffer);
+
+        mEvents.erase(mEvents.begin(), mEvents.begin() + filledSize);
         mEventsCondition.notify_all();
-        return 1;
+        return filledSize;
     }
 
     std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) override {
@@ -2678,6 +2677,7 @@ TEST_F(VibratorInputMapperTest, GetVibratorIds) {
 
 TEST_F(VibratorInputMapperTest, Vibrate) {
     constexpr uint8_t DEFAULT_AMPLITUDE = 192;
+    constexpr int32_t VIBRATION_TOKEN = 100;
     VibratorInputMapper& mapper = addMapperAndConfigure<VibratorInputMapper>();
 
     VibrationElement pattern(2);
@@ -2695,8 +2695,23 @@ TEST_F(VibratorInputMapperTest, Vibrate) {
     std::vector<uint8_t> amplitudes = {DEFAULT_AMPLITUDE, DEFAULT_AMPLITUDE / 2};
 
     ASSERT_FALSE(mapper.isVibrating());
-    mapper.vibrate(sequence, -1 /* repeat */, 0 /* token */);
+    // Start vibrating
+    mapper.vibrate(sequence, -1 /* repeat */, VIBRATION_TOKEN);
     ASSERT_TRUE(mapper.isVibrating());
+    // Verify vibrator state listener was notified.
+    mReader->loopOnce();
+    NotifyVibratorStateArgs args;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyVibratorStateWasCalled(&args));
+    ASSERT_EQ(DEVICE_ID, args.deviceId);
+    ASSERT_TRUE(args.isOn);
+    // Stop vibrating
+    mapper.cancelVibrate(VIBRATION_TOKEN);
+    ASSERT_FALSE(mapper.isVibrating());
+    // Verify vibrator state listener was notified.
+    mReader->loopOnce();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyVibratorStateWasCalled(&args));
+    ASSERT_EQ(DEVICE_ID, args.deviceId);
+    ASSERT_FALSE(args.isOn);
 }
 
 // --- SensorInputMapperTest ---

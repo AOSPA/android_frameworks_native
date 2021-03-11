@@ -91,9 +91,9 @@ std::string toString(const DisplayEventReceiver::Event& event) {
             return StringPrintf("VSync{displayId=%s, count=%u, expectedVSyncTimestamp=%" PRId64 "}",
                                 to_string(event.header.displayId).c_str(), event.vsync.count,
                                 event.vsync.expectedVSyncTimestamp);
-        case DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED:
-            return StringPrintf("ConfigChanged{displayId=%s, configId=%u}",
-                                to_string(event.header.displayId).c_str(), event.config.configId);
+        case DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE:
+            return StringPrintf("ModeChanged{displayId=%s, modeId=%u}",
+                                to_string(event.header.displayId).c_str(), event.modeChange.modeId);
         default:
             return "Event{}";
     }
@@ -119,12 +119,12 @@ DisplayEventReceiver::Event makeVSync(PhysicalDisplayId displayId, nsecs_t times
     return event;
 }
 
-DisplayEventReceiver::Event makeConfigChanged(PhysicalDisplayId displayId, DisplayModeId configId,
-                                              nsecs_t vsyncPeriod) {
+DisplayEventReceiver::Event makeModeChanged(PhysicalDisplayId displayId, DisplayModeId modeId,
+                                            nsecs_t vsyncPeriod) {
     DisplayEventReceiver::Event event;
-    event.header = {DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED, displayId, systemTime()};
-    event.config.configId = configId.value();
-    event.config.vsyncPeriod = vsyncPeriod;
+    event.header = {DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE, displayId, systemTime()};
+    event.modeChange.modeId = modeId.value();
+    event.modeChange.vsyncPeriod = vsyncPeriod;
     return event;
 }
 
@@ -314,10 +314,6 @@ void EventThread::setVsyncRate(uint32_t rate, const sp<EventThreadConnection>& c
     std::lock_guard<std::mutex> lock(mMutex);
 
     const auto request = rate == 0 ? VSyncRequest::None : static_cast<VSyncRequest>(rate);
-    if (request != VSyncRequest::None && connection->resyncCallback) {
-        connection->resyncCallback();
-    }
-
     if (connection->vsyncRequest != request) {
         connection->vsyncRequest = request;
         mCondition.notify_all();
@@ -384,11 +380,11 @@ void EventThread::onHotplugReceived(PhysicalDisplayId displayId, bool connected)
     mCondition.notify_all();
 }
 
-void EventThread::onConfigChanged(PhysicalDisplayId displayId, DisplayModeId configId,
-                                  nsecs_t vsyncPeriod) {
+void EventThread::onModeChanged(PhysicalDisplayId displayId, DisplayModeId modeId,
+                                nsecs_t vsyncPeriod) {
     std::lock_guard<std::mutex> lock(mMutex);
 
-    mPendingEvents.push_back(makeConfigChanged(displayId, configId, vsyncPeriod));
+    mPendingEvents.push_back(makeModeChanged(displayId, modeId, vsyncPeriod));
     mCondition.notify_all();
 }
 
@@ -547,9 +543,9 @@ bool EventThread::shouldConsumeEvent(const DisplayEventReceiver::Event& event,
         case DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG:
             return true;
 
-        case DisplayEventReceiver::DISPLAY_EVENT_CONFIG_CHANGED: {
+        case DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE: {
             return connection->mEventRegistration.test(
-                    ISurfaceComposer::EventRegistration::configChanged);
+                    ISurfaceComposer::EventRegistration::modeChanged);
         }
 
         case DisplayEventReceiver::DISPLAY_EVENT_VSYNC:

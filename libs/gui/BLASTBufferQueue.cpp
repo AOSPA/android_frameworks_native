@@ -55,7 +55,7 @@ namespace android {
     ALOGE("[%s](f:%u,a:%u) " x, mName.c_str(), mNumFrameAvailable, mNumAcquired, ##__VA_ARGS__)
 
 void BLASTBufferItemConsumer::onDisconnect() {
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    Mutex::Autolock lock(mMutex);
     mPreviouslyConnected = mCurrentlyConnected;
     mCurrentlyConnected = false;
     if (mPreviouslyConnected) {
@@ -66,7 +66,7 @@ void BLASTBufferItemConsumer::onDisconnect() {
 
 void BLASTBufferItemConsumer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                                        FrameEventHistoryDelta* outDelta) {
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    Mutex::Autolock lock(mMutex);
     if (newTimestamps) {
         // BufferQueueProducer only adds a new timestamp on
         // queueBuffer
@@ -90,7 +90,7 @@ void BLASTBufferItemConsumer::updateFrameTimestamps(uint64_t frameNumber, nsecs_
                                                     const sp<Fence>& prevReleaseFence,
                                                     CompositorTiming compositorTiming,
                                                     nsecs_t latchTime, nsecs_t dequeueReadyTime) {
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    Mutex::Autolock lock(mMutex);
 
     // if the producer is not connected, don't bother updating,
     // the next producer that connects won't access this frame event
@@ -108,12 +108,25 @@ void BLASTBufferItemConsumer::updateFrameTimestamps(uint64_t frameNumber, nsecs_
 
 void BLASTBufferItemConsumer::getConnectionEvents(uint64_t frameNumber, bool* needsDisconnect) {
     bool disconnect = false;
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
+    Mutex::Autolock lock(mMutex);
     while (!mDisconnectEvents.empty() && mDisconnectEvents.front() <= frameNumber) {
         disconnect = true;
         mDisconnectEvents.pop();
     }
     if (needsDisconnect != nullptr) *needsDisconnect = disconnect;
+}
+
+void BLASTBufferItemConsumer::setBlastBufferQueue(BLASTBufferQueue* blastbufferqueue) {
+    Mutex::Autolock lock(mMutex);
+    mBLASTBufferQueue = blastbufferqueue;
+}
+
+void BLASTBufferItemConsumer::onSidebandStreamChanged() {
+    Mutex::Autolock lock(mMutex);
+    if (mBLASTBufferQueue != nullptr) {
+        sp<NativeHandle> stream = getSidebandStream();
+        mBLASTBufferQueue->setSidebandStream(stream);
+    }
 }
 
 BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface,
@@ -133,8 +146,10 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     if (enableTripleBuffering) {
         mProducer->setMaxDequeuedBufferCount(2);
     }
-    mBufferItemConsumer =
-        new BLASTBufferItemConsumer(mConsumer, GraphicBuffer::USAGE_HW_COMPOSER, 1, false);
+    mBufferItemConsumer = new BLASTBufferItemConsumer(mConsumer,
+                                                      GraphicBuffer::USAGE_HW_COMPOSER |
+                                                              GraphicBuffer::USAGE_HW_TEXTURE,
+                                                      1, false);
     static int32_t id = 0;
     auto consumerName = mName + "(BLAST Consumer)" + std::to_string(id);
     id++;
@@ -143,6 +158,7 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     mBufferItemConsumer->setBufferFreedListener(this);
     mBufferItemConsumer->setDefaultBufferSize(mSize.width, mSize.height);
     mBufferItemConsumer->setDefaultBufferFormat(convertBufferFormat(format));
+    mBufferItemConsumer->setBlastBufferQueue(this);
 
     mTransformHint = mSurfaceControl->getTransformHint();
     mBufferItemConsumer->setTransformHint(mTransformHint);
@@ -158,6 +174,7 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
 }
 
 BLASTBufferQueue::~BLASTBufferQueue() {
+    mBufferItemConsumer->setBlastBufferQueue(nullptr);
     if (mPendingTransactions.empty()) {
         return;
     }
@@ -553,6 +570,13 @@ status_t BLASTBufferQueue::setFrameTimelineInfo(const FrameTimelineInfo& frameTi
     std::unique_lock _lock{mMutex};
     mNextFrameTimelineInfoQueue.push(frameTimelineInfo);
     return OK;
+}
+
+void BLASTBufferQueue::setSidebandStream(const sp<NativeHandle>& stream) {
+    std::unique_lock _lock{mMutex};
+    SurfaceComposerClient::Transaction t;
+
+    t.setSidebandStream(mSurfaceControl, stream).apply();
 }
 
 sp<Surface> BLASTBufferQueue::getSurface(bool includeSurfaceControlHandle) {
