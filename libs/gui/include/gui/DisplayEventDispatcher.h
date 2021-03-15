@@ -25,7 +25,7 @@ struct VsyncEventData {
     // The Vsync Id corresponsing to this vsync event. This will be used to
     // populate ISurfaceComposer::setFrameTimelineVsync and
     // SurfaceComposerClient::setFrameTimelineVsync
-    int64_t id = ISurfaceComposer::INVALID_VSYNC_ID;
+    int64_t id = FrameTimelineInfo::INVALID_VSYNC_ID;
 
     // The deadline in CLOCK_MONOTONIC that the app needs to complete its
     // frame by (both on the CPU and the GPU)
@@ -52,7 +52,20 @@ protected:
 private:
     sp<Looper> mLooper;
     DisplayEventReceiver mReceiver;
-    bool mWaitingForVsync;
+    // The state of vsync event registration and whether the client is expecting
+    // an event or not.
+    enum class VsyncState {
+        // The dispatcher is not registered for vsync events.
+        Unregistered,
+        // The dispatcher is registered to receive vsync events but should not dispatch it to the
+        // client as the client is not expecting a vsync event.
+        Registered,
+
+        // The dispatcher is registered to receive vsync events and supposed to dispatch it to
+        // the client.
+        RegisteredAndWaitingForVsync,
+    };
+    VsyncState mVsyncState;
 
     std::vector<FrameRateOverride> mFrameRateOverrides;
 

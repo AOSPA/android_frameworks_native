@@ -54,6 +54,7 @@
 #include "DisplayHardware/PowerAdvisor.h"
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
+#include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
 #include "Scheduler/RefreshRateConfigs.h"
@@ -417,10 +418,10 @@ protected:
     virtual ~SurfaceFlinger();
 
     virtual uint32_t setClientStateLocked(
-            int64_t frameTimelineVsyncId, const ComposerState& composerState,
+            const FrameTimelineInfo& info, const ComposerState& composerState,
             int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime, bool privileged,
-            std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks,
-            int originPid, int originUid) REQUIRES(mStateLock);
+            std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
+            REQUIRES(mStateLock);
     virtual void commitTransactionLocked();
 
     // Used internally by computeLayerBounds() to gets the clip rectangle to use for the
@@ -489,7 +490,7 @@ private:
     };
 
     struct ActiveConfigInfo {
-        HwcConfigIndexType configId;
+        DisplayModeId configId;
         Scheduler::ConfigEvent event = Scheduler::ConfigEvent::None;
 
         bool operator!=(const ActiveConfigInfo& other) const {
@@ -509,17 +510,21 @@ private:
     };
 
     struct TransactionState {
-        TransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& composerStates,
+        TransactionState(const FrameTimelineInfo& frameTimelineInfo,
+                         const Vector<ComposerState>& composerStates,
                          const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
-                         int64_t desiredPresentTime, bool isAutoTimestamp,
-                         const client_cache_t& uncacheBuffer, int64_t postTime, bool privileged,
-                         bool hasListenerCallbacks,
+                         const sp<IBinder>& applyToken,
+                         const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
+                         bool isAutoTimestamp, const client_cache_t& uncacheBuffer,
+                         int64_t postTime, bool privileged, bool hasListenerCallbacks,
                          std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
                          int originUid, uint64_t transactionId)
-              : frameTimelineVsyncId(frameTimelineVsyncId),
+              : frameTimelineInfo(frameTimelineInfo),
                 states(composerStates),
                 displays(displayStates),
                 flags(transactionFlags),
+                applyToken(applyToken),
+                inputWindowCommands(inputWindowCommands),
                 desiredPresentTime(desiredPresentTime),
                 isAutoTimestamp(isAutoTimestamp),
                 buffer(uncacheBuffer),
@@ -531,10 +536,12 @@ private:
                 originUid(originUid),
                 id(transactionId) {}
 
-        int64_t frameTimelineVsyncId;
+        FrameTimelineInfo frameTimelineInfo;
         Vector<ComposerState> states;
         Vector<DisplayState> displays;
         uint32_t flags;
+        sp<IBinder> applyToken;
+        InputWindowCommands inputWindowCommands;
         const int64_t desiredPresentTime;
         const bool isAutoTimestamp;
         client_cache_t buffer;
@@ -596,7 +603,8 @@ private:
     void destroyDisplay(const sp<IBinder>& displayToken) override;
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const override;
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const override;
-    status_t setTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
+    status_t setTransactionState(const FrameTimelineInfo& frameTimelineInfo,
+                                 const Vector<ComposerState>& state,
                                  const Vector<DisplayState>& displays, uint32_t flags,
                                  const sp<IBinder>& applyToken,
                                  const InputWindowCommands& inputWindowCommands,
@@ -683,8 +691,8 @@ private:
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
 
-    status_t setFrameTimelineVsync(const sp<IGraphicBufferProducer>& surface,
-                                   int64_t frameTimelineVsyncId) override;
+    status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
+                                  const FrameTimelineInfo& frameTimelineInfo) override;
 
     status_t addTransactionTraceListener(
             const sp<gui::ITransactionTraceListener>& listener) override;
@@ -744,7 +752,7 @@ private:
     void signalLayerUpdate();
     void signalRefresh();
 
-    // called on the main thread in response to initializeDisplays()
+    // Called on the main thread in response to initializeDisplays()
     void onInitializeDisplays() REQUIRES(mStateLock);
     // Sets the desired active config bit. It obtains the lock, and sets mDesiredActiveConfig.
     void setDesiredActiveConfig(const ActiveConfigInfo& info) REQUIRES(mStateLock);
@@ -755,9 +763,10 @@ private:
     // Calls to setActiveConfig on the main thread if there is a pending config
     // that needs to be applied.
     void performSetActiveConfig() REQUIRES(mStateLock);
+    void clearDesiredActiveConfigState() REQUIRES(mStateLock) EXCLUDES(mActiveConfigLock);
     // Called when active config is no longer is progress
     void desiredActiveConfigChangeDone() REQUIRES(mStateLock);
-    // called on the main thread in response to setPowerMode()
+    // Called on the main thread in response to setPowerMode()
     void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock);
 
@@ -790,8 +799,8 @@ private:
     void updateCursorAsync();
     void updateFrameScheduler();
 
-    void initScheduler(PhysicalDisplayId primaryDisplayId);
-    void updatePhaseConfiguration(const RefreshRate&);
+    void initScheduler(const DisplayDeviceState&) REQUIRES(mStateLock);
+    void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
     void setVsyncConfig(const VsyncModulator::VsyncConfig&, nsecs_t vsyncPeriod);
 
     /* handlePageFlip - latch a new buffer if available and compute the dirty
@@ -803,17 +812,17 @@ private:
     /*
      * Transactions
      */
-    void applyTransactionState(int64_t frameTimelineVsyncId, const Vector<ComposerState>& state,
+    void applyTransactionState(const FrameTimelineInfo& info, const Vector<ComposerState>& state,
                                const Vector<DisplayState>& displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime, bool isAutoTimestamp,
                                const client_cache_t& uncacheBuffer, const int64_t postTime,
                                bool privileged, bool hasListenerCallbacks,
                                const std::vector<ListenerCallbacks>& listenerCallbacks,
-                               int originPid, int originUid, uint64_t transactionId,
-                               bool isMainThread = false) REQUIRES(mStateLock);
-    // Returns true if at least one transaction was flushed
-    bool flushTransactionQueues();
+                               int originPid, int originUid, uint64_t transactionId)
+            REQUIRES(mStateLock);
+    // flush pending transaction that was presented after desiredPresentTime.
+    void flushTransactionQueues();
     // Returns true if there is at least one transaction that needs to be flushed
     bool transactionFlushNeeded();
     uint32_t getTransactionFlags(uint32_t flags);
@@ -829,9 +838,11 @@ private:
     uint32_t setTransactionFlags(uint32_t flags, TransactionSchedule);
     void commitTransaction() REQUIRES(mStateLock);
     void commitOffscreenLayers();
-    bool transactionIsReadyToBeApplied(int64_t desiredPresentTime,
-                                       const Vector<ComposerState>& states,
-                                       bool updateTransactionCounters = false) REQUIRES(mStateLock);
+    bool transactionIsReadyToBeApplied(
+            bool isAutoTimestamp, int64_t desiredPresentTime, const Vector<ComposerState>& states,
+            bool updateTransactionCounters,
+            std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers)
+            REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
@@ -886,13 +897,14 @@ private:
     void startBootAnim();
 
     status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
-                                 ui::PixelFormat, const bool allowProtected,
+                                 ui::PixelFormat, bool allowProtected, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
     status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, sp<GraphicBuffer>&,
-                                 bool regionSampling, const sp<IScreenCaptureListener>&);
+                                 bool regionSampling, bool grayscale,
+                                 const sp<IScreenCaptureListener>&);
     status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
-                                    const sp<GraphicBuffer>&, bool forSystem, int* outSyncFd,
-                                    bool regionSampling, ScreenCaptureResults&);
+                                    const sp<GraphicBuffer>&, bool forSystem, bool regionSampling,
+                                    bool grayscale, ScreenCaptureResults&);
 
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayByLayerStack(uint64_t layerStack) REQUIRES(mStateLock);
@@ -976,6 +988,7 @@ private:
     /*
      * Display management
      */
+    DisplayModes loadSupportedDisplayModes(PhysicalDisplayId) const;
     sp<DisplayDevice> setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
             std::shared_ptr<compositionengine::Display> compositionDisplay,
@@ -1004,9 +1017,10 @@ private:
     // the desired refresh rate.
     void changeRefreshRateLocked(const RefreshRate&, Scheduler::ConfigEvent) REQUIRES(mStateLock);
 
+
     void setRefreshRateTo(int32_t refreshRate);
 
-    bool isDisplayConfigAllowed(HwcConfigIndexType configId) const REQUIRES(mStateLock);
+    bool isDisplayConfigAllowed(DisplayModeId configId) const REQUIRES(mStateLock);
 
     // Gets the fence for the previous frame.
     // Must be called on the main thread.
@@ -1124,6 +1138,8 @@ private:
     void updateInternalDisplaysPresentationMode();
 
     void setupEarlyWakeUpFeature();
+
+    static mat4 calculateColorMatrix(float saturation);
 
     void updateColorMatrixLocked();
 
@@ -1284,8 +1300,11 @@ private:
     uint32_t mTexturePoolSize = 0;
     std::vector<uint32_t> mTexturePool;
 
-    std::unordered_map<sp<IBinder>, std::queue<TransactionState>, IListenerHash> mTransactionQueues;
-
+    mutable Mutex mQueueLock;
+    Condition mTransactionQueueCV;
+    std::unordered_map<sp<IBinder>, std::queue<TransactionState>, IListenerHash>
+            mPendingTransactionQueues GUARDED_BY(mQueueLock);
+    std::queue<TransactionState> mTransactionQueue GUARDED_BY(mQueueLock);
     /*
      * Feature prototyping
      */
@@ -1343,6 +1362,7 @@ private:
     std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
 
     std::atomic<nsecs_t> mExpectedPresentTime = 0;
+    nsecs_t mScheduledPresentTime = 0;
     hal::Vsync mHWCVsyncPendingState = hal::Vsync::DISABLE;
 
     std::mutex mActiveConfigLock;
@@ -1366,7 +1386,6 @@ private:
     const float mEmulatedDisplayDensity;
 
     sp<os::IInputFlinger> mInputFlinger;
-    InputWindowCommands mPendingInputWindowCommands GUARDED_BY(mStateLock);
     // Should only be accessed by the main thread.
     InputWindowCommands mInputWindowCommands;
 

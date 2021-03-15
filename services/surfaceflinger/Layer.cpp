@@ -131,7 +131,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.shadowRadius = 0.f;
     mCurrentState.treeHasFrameRateVote = false;
     mCurrentState.fixedTransformHint = ui::Transform::ROT_INVALID;
-    mCurrentState.frameTimelineVsyncId = ISurfaceComposer::INVALID_VSYNC_ID;
+    mCurrentState.frameTimelineInfo = {};
     mCurrentState.postTime = -1;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
@@ -931,14 +931,10 @@ bool Layer::applyPendingStates(State* stateToCommit) {
     }
 
     if (stateUpdateAvailable) {
-        const auto vsyncId =
-                stateToCommit->frameTimelineVsyncId == ISurfaceComposer::INVALID_VSYNC_ID
-                ? std::nullopt
-                : std::make_optional(stateToCommit->frameTimelineVsyncId);
-
         mSurfaceFrame =
-                mFlinger->mFrameTimeline->createSurfaceFrameForToken(vsyncId, mOwnerPid, mOwnerUid,
-                                                                     mName, mTransactionName);
+                mFlinger->mFrameTimeline
+                        ->createSurfaceFrameForToken(stateToCommit->frameTimelineInfo, mOwnerPid,
+                                                     mOwnerUid, mName, mTransactionName);
         mSurfaceFrame->setActualQueueTime(stateToCommit->postTime);
         // For transactions we set the acquire fence time to the post time as we
         // don't have a buffer. For BufferStateLayer it is overridden in
@@ -1027,19 +1023,6 @@ uint32_t Layer::doTransactionResize(uint32_t flags, State* stateToCommit) {
 
 uint32_t Layer::doTransaction(uint32_t flags) {
     ATRACE_CALL();
-
-    if (mLayerDetached) {
-        // Ensure BLAST buffer callbacks are processed.
-        // detachChildren and mLayerDetached were implemented to avoid geometry updates
-        // to layers in the cases of animation. For BufferQueue layers buffers are still
-        // consumed as normal. This is useful as otherwise the client could get hung
-        // inevitably waiting on a buffer to return. We recreate this semantic for BufferQueue
-        // even though it is a little consistent. detachChildren is shortly slated for removal
-        // by the hierarchy mirroring work so we don't need to worry about it too much.
-        forceSendCallbacks();
-        mCurrentState.callbackHandles = {};
-        return flags;
-    }
 
     if (mChildrenChanged) {
         flags |= eVisibleRegion;
@@ -1336,7 +1319,7 @@ bool Layer::setBlurRegions(const std::vector<BlurRegion>& blurRegions) {
     return true;
 }
 
-bool Layer::setFlags(uint8_t flags, uint8_t mask) {
+bool Layer::setFlags(uint32_t flags, uint32_t mask) {
     const uint32_t newFlags = (mCurrentState.flags & ~mask) | (flags & mask);
     if (mCurrentState.flags == newFlags) return false;
     mCurrentState.sequence++;
@@ -1456,21 +1439,28 @@ void Layer::updateTreeHasFrameRateVote() {
     };
 
     // update parents and children about the vote
-    // First traverse the tree and count how many layers has votes
+    // First traverse the tree and count how many layers has votes. In addition
+    // activate the layers in Scheduler's LayerHistory for it to check for changes
     int layersWithVote = 0;
-    traverseTree([&layersWithVote](Layer* layer) {
+    traverseTree([&layersWithVote, this](Layer* layer) {
         const auto layerVotedWithDefaultCompatibility =
                 layer->mCurrentState.frameRate.rate.isValid() &&
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::Default;
         const auto layerVotedWithNoVote =
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::NoVote;
+        const auto layerVotedWithExactCompatibility =
+                layer->mCurrentState.frameRate.type == FrameRateCompatibility::Exact;
 
         // We do not count layers that are ExactOrMultiple for the same reason
         // we are allowing touch boost for those layers. See
         // RefreshRateConfigs::getBestRefreshRate for more details.
-        if (layerVotedWithDefaultCompatibility || layerVotedWithNoVote) {
+        if (layerVotedWithDefaultCompatibility || layerVotedWithNoVote ||
+            layerVotedWithExactCompatibility) {
             layersWithVote++;
         }
+
+        mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
+                                                 LayerHistory::LayerUpdateType::SetFrameRate);
     });
 
     // Now update the other layers
@@ -1498,10 +1488,6 @@ bool Layer::setFrameRate(FrameRate frameRate) {
         return false;
     }
 
-    // Activate the layer in Scheduler's LayerHistory
-    mFlinger->mScheduler->recordLayerHistory(this, systemTime(),
-                                             LayerHistory::LayerUpdateType::SetFrameRate);
-
     mCurrentState.sequence++;
     mCurrentState.frameRate = frameRate;
     mCurrentState.modified = true;
@@ -1512,8 +1498,8 @@ bool Layer::setFrameRate(FrameRate frameRate) {
     return true;
 }
 
-void Layer::setFrameTimelineVsyncForTransaction(int64_t frameTimelineVsyncId, nsecs_t postTime) {
-    mCurrentState.frameTimelineVsyncId = frameTimelineVsyncId;
+void Layer::setFrameTimelineInfoForTransaction(const FrameTimelineInfo& info, nsecs_t postTime) {
+    mCurrentState.frameTimelineInfo = info;
     mCurrentState.postTime = postTime;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -1525,8 +1511,16 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
         return frameRate;
     }
 
-    // This layer doesn't have a frame rate. If one of its ancestors or successors
-    // have a vote, return a NoVote for ancestors/successors to set the vote
+    // This layer doesn't have a frame rate. Check if its ancestors have a vote
+    if (sp<Layer> parent = getParent(); parent) {
+        if (const auto parentFrameRate = parent->getFrameRateForLayerTree();
+            parentFrameRate.rate.isValid()) {
+            return parentFrameRate;
+        }
+    }
+
+    // This layer and its ancestors don't have a frame rate. If one of successors
+    // has a vote, return a NoVote for successors to set the vote
     if (getDrawingState().treeHasFrameRateVote) {
         return {Fps(0.0f), FrameRateCompatibility::NoVote};
     }
@@ -1536,12 +1530,6 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
 
 void Layer::deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber) {
     ATRACE_CALL();
-    if (mLayerDetached) {
-        // If the layer is detached, then we don't defer this transaction since we will not
-        // commit the pending state while the layer is detached. Adding sync points may cause
-        // the barrier layer to wait for the states to be committed before dequeuing a buffer.
-        return;
-    }
 
     mCurrentState.barrierLayer_legacy = barrierLayer;
     mCurrentState.barrierFrameNumber = frameNumber;
@@ -1679,6 +1667,8 @@ std::string Layer::frameRateCompatibilityString(Layer::FrameRateCompatibility co
             return "ExactOrMultiple";
         case FrameRateCompatibility::NoVote:
             return "NoVote";
+        case FrameRateCompatibility::Exact:
+            return "Exact";
     }
 }
 
@@ -1718,11 +1708,11 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const FloatRect& crop = outputLayerState.sourceCrop;
     StringAppendF(&result, "%6.1f %6.1f %6.1f %6.1f | ", crop.left, crop.top, crop.right,
                   crop.bottom);
-    if (layerState.frameRate.rate.isValid() ||
-        layerState.frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "%s %15s %17s", to_string(layerState.frameRate.rate).c_str(),
-                      frameRateCompatibilityString(layerState.frameRate.type).c_str(),
-                      toString(layerState.frameRate.seamlessness).c_str());
+    const auto frameRate = getFrameRateForLayerTree();
+    if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
+        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
+                      frameRateCompatibilityString(frameRate.type).c_str(),
+                      toString(frameRate.seamlessness).c_str());
     } else {
         result.append(41, ' ');
     }
@@ -1827,10 +1817,6 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
 }
 
 void Layer::reparentChildren(const sp<Layer>& newParent) {
-    if (attachChildren()) {
-        setTransactionFlags(eTransactionNeeded);
-    }
-
     for (const sp<Layer>& child : mCurrentChildren) {
         newParent->addChild(child);
     }
@@ -1866,17 +1852,6 @@ void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
 }
 
 bool Layer::reparent(const sp<IBinder>& newParentHandle) {
-    bool callSetTransactionFlags = false;
-
-    // While layers are detached, we allow most operations
-    // and simply halt performing the actual transaction. However
-    // for reparent != null we would enter the mRemovedFromCurrentState
-    // state, regardless of whether doTransaction was called, and
-    // so we need to prevent the update here.
-    if (mLayerDetached && newParentHandle == nullptr) {
-        return false;
-    }
-
     sp<Layer> newParent;
     if (newParentHandle != nullptr) {
         auto handle = static_cast<Handle*>(newParentHandle.get());
@@ -1903,50 +1878,11 @@ bool Layer::reparent(const sp<IBinder>& newParentHandle) {
         } else {
             onRemovedFromCurrentState();
         }
-
-        if (mLayerDetached) {
-            mLayerDetached = false;
-            callSetTransactionFlags = true;
-        }
     } else {
         onRemovedFromCurrentState();
     }
 
-    if (attachChildren() || callSetTransactionFlags) {
-        setTransactionFlags(eTransactionNeeded);
-    }
     return true;
-}
-
-bool Layer::detachChildren() {
-    for (const sp<Layer>& child : mCurrentChildren) {
-        sp<Client> parentClient = mClientRef.promote();
-        sp<Client> client(child->mClientRef.promote());
-        if (client != nullptr && parentClient != client) {
-            child->mLayerDetached = true;
-            child->detachChildren();
-            child->removeRemoteSyncPoints();
-        }
-    }
-
-    return true;
-}
-
-bool Layer::attachChildren() {
-    bool changed = false;
-    for (const sp<Layer>& child : mCurrentChildren) {
-        sp<Client> parentClient = mClientRef.promote();
-        sp<Client> client(child->mClientRef.promote());
-        if (client != nullptr && parentClient != client) {
-            if (child->mLayerDetached) {
-                child->mLayerDetached = false;
-                child->attachChildren();
-                changed = true;
-            }
-        }
-    }
-
-    return changed;
 }
 
 bool Layer::setColorTransform(const mat4& matrix) {
@@ -2781,6 +2717,8 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
             return FrameRateCompatibility::Default;
         case ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE:
             return FrameRateCompatibility::ExactOrMultiple;
+        case ANATIVEWINDOW_FRAME_RATE_EXACT:
+            return FrameRateCompatibility::Exact;
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
             return FrameRateCompatibility::Default;
