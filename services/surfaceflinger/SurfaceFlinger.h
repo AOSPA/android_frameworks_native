@@ -788,6 +788,9 @@ private:
     // the Composer HAL for presentation
     void onMessageRefresh();
 
+    void beginDraw(const sp<DisplayDevice>& displayDevice);
+    void endDraw();
+
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();
 

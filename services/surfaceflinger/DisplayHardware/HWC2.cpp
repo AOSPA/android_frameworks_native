@@ -406,6 +406,9 @@ Error Display::setClientTarget(uint32_t slot, const sp<GraphicBuffer>& target,
         const sp<Fence>& acquireFence, Dataspace dataspace)
 {
     // TODO: Properly encode client target surface damage
+    if (mSetClient_3_1) {
+        return Error::NONE;
+    }
     int32_t fenceFd = acquireFence->dup();
     auto intError = mComposer.setClientTarget(mId, slot, target,
             fenceFd, dataspace, std::vector<Hwc2::IComposerClient::Rect>());
@@ -438,6 +441,27 @@ Error Display::setDisplayElapseTime(uint64_t timeStamp)
     auto intError = mComposer.setDisplayElapseTime(mId, timeStamp);
     return static_cast<Error>(intError);
 }
+
+#ifdef QTI_UNIFIED_DRAW
+Error Display::setClientTarget_3_1(int32_t slot, const sp<Fence>& acquireFence,
+        Dataspace dataspace)
+{
+    if (slot == -1) {
+        mSetClient_3_1 = false;
+        return Error::NONE;
+    }
+    mSetClient_3_1 = true;
+    int32_t fenceFd = acquireFence->dup();
+    auto intError = mComposer.setClientTarget_3_1(mId, slot, fenceFd, dataspace);
+    return static_cast<Error>(intError);
+}
+
+Error Display::tryDrawMethod(IQtiComposerClient::DrawMethod drawMethod)
+{
+    auto intError = mComposer.tryDrawMethod(mId, drawMethod);
+    return static_cast<Error>(intError);
+}
+#endif
 
 Error Display::setPowerMode(PowerMode mode)
 {
@@ -833,6 +857,21 @@ Error Layer::setLayerGenericMetadata(const std::string& name, bool mandatory,
     return static_cast<Error>(intError);
 }
 
+#ifdef QTI_UNIFIED_DRAW
+Error Layer::setLayerFlag(IQtiComposerClient::LayerFlag layerFlag)
+{
+    if (mLayerFlag == layerFlag) {
+        return Error::NONE;
+    }
+    auto intError = mComposer.setLayerFlag(mDisplayId, mId, layerFlag);
+    Error error = static_cast<Error>(intError);
+    if (error != Error::NONE) {
+        return error;
+    }
+    mLayerFlag = layerFlag;
+    return error;
+}
+#endif
 } // namespace impl
 } // namespace HWC2
 } // namespace android

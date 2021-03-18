@@ -93,6 +93,8 @@ public:
     virtual void dumpAsString(String8& result) const;
     virtual void resizeBuffers(const ui::Size&) override;
     virtual const sp<Fence>& getClientTargetAcquireFence() const override;
+    virtual int getClientTargetCurrentSlot() override;
+    virtual ui::Dataspace getClientTargetCurrentDataspace() override;
 
 private:
     enum Source {SOURCE_SINK = 0, SOURCE_SCRATCH = 1};

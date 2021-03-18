@@ -56,6 +56,8 @@ public:
     // Gets the latest fence to pass to the HWC to signal that the surface
     // buffer is done rendering
     virtual const sp<Fence>& getClientTargetAcquireFence() const = 0;
+    virtual int getClientTargetCurrentSlot() = 0;
+    virtual ui::Dataspace getClientTargetCurrentDataspace() = 0;
 
     // Sets the size of the surface
     virtual void setDisplaySize(const ui::Size&) = 0;

@@ -21,6 +21,12 @@
 #include <utils/RefBase.h>
 #include <utils/StrongPointer.h>
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+#include <ui/GraphicTypes.h>
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"
 namespace android {
 
 class Fence;
@@ -75,6 +81,8 @@ public:
     virtual void resizeBuffers(const ui::Size&) = 0;
 
     virtual const sp<Fence>& getClientTargetAcquireFence() const = 0;
+    virtual int getClientTargetCurrentSlot() = 0;
+    virtual ui::Dataspace getClientTargetCurrentDataspace() = 0;
 };
 
 } // namespace compositionengine

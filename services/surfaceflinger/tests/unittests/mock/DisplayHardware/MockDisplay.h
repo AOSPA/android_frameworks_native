@@ -25,7 +25,9 @@ using android::HWC2::Layer;
 namespace android::Hwc2::mock {
 
 namespace hal = android::hardware::graphics::composer::hal;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 class Display : public HWC2::Display {
 public:
     using Layer = ::Layer;
@@ -72,6 +74,11 @@ public:
     MOCK_METHOD4(setClientTarget,
                  hal::Error(uint32_t, const android::sp<android::GraphicBuffer>&,
                             const android::sp<android::Fence>&, hal::Dataspace));
+#ifdef QTI_UNIFIED_DRAW
+    MOCK_METHOD3(setClientTarget_3_1,
+                 hal::Error(int32_t, const android::sp<android::Fence>&, hal::Dataspace));
+    MOCK_METHOD1(tryDrawMethod, hal::Error(IQtiComposerClient::DrawMethod));
+#endif
     MOCK_METHOD2(setColorMode, hal::Error(hal::ColorMode, hal::RenderIntent));
     MOCK_METHOD2(setColorTransform, hal::Error(const android::mat4&, hal::ColorTransform));
     MOCK_METHOD2(setOutputBuffer,

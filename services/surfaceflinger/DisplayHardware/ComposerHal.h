@@ -37,7 +37,9 @@
 #include <ui/DisplayedFrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
-
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -45,6 +47,9 @@ namespace android {
 
 namespace Hwc2 {
 
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 namespace types = hardware::graphics::common;
 
 namespace V2_1 = hardware::graphics::composer::V2_1;
@@ -231,6 +236,13 @@ public:
     virtual Error getClientTargetProperty(
             Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty) = 0;
     virtual Error setDisplayElapseTime(Display display, uint64_t timeStamp) = 0;
+#ifdef QTI_UNIFIED_DRAW
+    virtual Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) = 0;
+    virtual Error setLayerFlag(Display display, Layer layer,
+                               IQtiComposerClient::LayerFlag layerFlag) = 0;
+    virtual Error setClientTarget_3_1(Display display, int32_t slot,
+                                      int acquireFence, Dataspace dataspace) = 0;
+#endif
 };
 
 namespace impl {
@@ -472,7 +484,13 @@ public:
     Error getClientTargetProperty(
             Display display,
             IComposerClient::ClientTargetProperty* outClientTargetProperty) override;
-
+#ifdef QTI_UNIFIED_DRAW
+    Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
+    Error setLayerFlag(Display display, Layer layer,
+                       IQtiComposerClient::LayerFlag layerFlag) override;
+    Error setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
+                              Dataspace dataspace) override;
+#endif
 private:
     class CommandWriter : public CommandWriterBase {
     public:
@@ -481,6 +499,10 @@ private:
 
         void setDisplayElapseTime(uint64_t time);
         void setLayerType(uint32_t type);
+#ifdef QTI_UNIFIED_DRAW
+        void setLayerFlag(uint32_t type);
+        void setClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
+#endif
     };
 
     // Many public functions above simply write a command into the command
@@ -494,7 +516,9 @@ private:
     sp<V2_2::IComposerClient> mClient_2_2;
     sp<V2_3::IComposerClient> mClient_2_3;
     sp<IComposerClient> mClient_2_4;
-
+#ifdef QTI_UNIFIED_DRAW
+    sp<IQtiComposerClient> mClient_3_1;
+#endif
     // 64KiB minus a small space for metadata such as read/write pointers
     static constexpr size_t kWriterInitialSize =
         64 * 1024 / sizeof(uint32_t) - 16;

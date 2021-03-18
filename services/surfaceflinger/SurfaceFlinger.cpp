@@ -982,6 +982,18 @@ void SurfaceFlinger::init() {
         if (ret) {
             ALOGI("Unable to create display extension");
         }
+
+#ifdef QTI_UNIFIED_DRAW
+        const auto id = HalDisplayId::tryCast(display->getId());
+        if (mDisplayExtnIntf && id) {
+            uint32_t hwcDisplayId;
+            getHwcDisplayId(display, &hwcDisplayId);
+            if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
+                getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+            }
+        }
+#endif
+
     }
     ALOGV("Done initializing");
 }
@@ -2309,6 +2321,76 @@ bool SurfaceFlinger::handleMessageTransaction() {
     return runHandleTransaction;
 }
 
+void SurfaceFlinger::beginDraw(const sp<DisplayDevice>& displayDevice) {
+#ifdef QTI_UNIFIED_DRAW
+    ATRACE_CALL();
+    composer::FBTLayerInfo fbtLayerInfo;
+    composer::FBTSlotInfo current;
+    composer::FBTSlotInfo future;
+    std::vector<composer::LayerFlags> displayLayerFlags;
+    ui::Dataspace dataspace;
+    uint32_t hwcDisplayId;
+    getHwcDisplayId(displayDevice, &hwcDisplayId);
+    const auto id = HalDisplayId::tryCast(displayDevice->getId());
+    for (const auto& layer : mDrawingState.layersSortedByZ) {
+         if (layer->getLayerStack() == displayDevice->getLayerStack()) {
+             composer::LayerFlags layerFlags;
+             layerFlags.secure_camera = layer->isSecureCamera();
+             layerFlags.secure_ui     = layer->isSecureDisplay();
+             layerFlags.secure_video  = layer->isProtected();
+             displayLayerFlags.push_back(layerFlags);
+         }
+    }
+    fbtLayerInfo.width = displayDevice->getWidth();
+    fbtLayerInfo.height = displayDevice->getHeight();
+    current.index = displayDevice->getCompositionDisplay()
+                                 ->getRenderSurface()
+                                 ->getClientTargetCurrentSlot();
+    dataspace = displayDevice->getCompositionDisplay()
+                             ->getRenderSurface()
+                             ->getClientTargetCurrentDataspace();
+    fbtLayerInfo.secure = displayDevice->getCompositionDisplay()
+                                       ->getRenderSurface()
+                                       ->isProtected();
+    fbtLayerInfo.dataspace = static_cast<int>(dataspace);
+
+    if (current.index >= 0){
+        if (!mDisplayExtnIntf->BeginDraw(
+            hwcDisplayId, displayLayerFlags, fbtLayerInfo,
+            current, future)) {
+            getHwComposer().setClientTarget_3_1(*id, future.index, future.fence, dataspace);
+        } else if (future.predicted == false) {
+            getHwComposer().setClientTarget_3_1(*id, -1, future.fence, dataspace);
+        }
+    }
+#endif
+}
+
+void SurfaceFlinger::endDraw() {
+#ifdef QTI_UNIFIED_DRAW
+     ATRACE_CALL();
+     Mutex::Autolock lock(mStateLock);
+     for (const auto& [_, displayDevice ] : mDisplays) {
+          uint32_t hwcDisplayId;
+          getHwcDisplayId(displayDevice, &hwcDisplayId);
+          if (HalDisplayId::tryCast(displayDevice->getId()) &&
+              displayDevice->getCompositionDisplay()
+                           ->getState().usesClientComposition) {
+              composer::FBTSlotInfo current;
+              current.index = displayDevice->getCompositionDisplay()
+                                           ->getRenderSurface()
+                                           ->getClientTargetCurrentSlot();
+              const sp<Fence>glCompositionDoneFence =
+                      displayDevice->getCompositionDisplay()
+                                   ->getRenderSurface()
+                                   ->getClientTargetAcquireFence();
+              current.fence = glCompositionDoneFence;
+              mDisplayExtnIntf->EndDraw(hwcDisplayId, current);
+          }
+    }
+#endif
+}
+
 void SurfaceFlinger::onMessageRefresh() {
     ATRACE_CALL();
 
@@ -2359,20 +2441,28 @@ void SurfaceFlinger::onMessageRefresh() {
     // Store the present time just before calling to the composition engine so we could notify
     // the scheduler.
     const auto presentTime = systemTime();
-
     {
-        Mutex::Autolock lock(mStateLock);
-        for (const auto& [_, display] : mDisplays) {
-            setDisplayElapseTime(display);
-        }
+      Mutex::Autolock lock(mStateLock);
+      for (const auto& [_, display] : mDisplays) {
+           setDisplayElapseTime(display);
+#ifdef QTI_UNIFIED_DRAW
+           if (HalDisplayId::tryCast(display->getId())) {
+               if (mDisplayExtnIntf) {
+                   beginDraw(display);
+               }
+           }
+#endif
+      }
     }
-
     mCompositionEngine->present(refreshArgs);
-
     mTimeStats->recordFrameDuration(mFrameStartTime, systemTime());
     // Reset the frame start time now that we've recorded this frame.
     mFrameStartTime = 0;
-
+#ifdef QTI_UNIFIED_DRAW
+    if (mDisplayExtnIntf) {
+        endDraw();
+    }
+#endif
     mScheduler->onDisplayRefreshed(presentTime);
 
     postFrame();
@@ -3123,6 +3213,16 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     if (display->isPrimary()) {
         mScheduler->onPrimaryDisplayAreaChanged(display->getWidth() * display->getHeight());
     }
+#ifdef QTI_UNIFIED_DRAW
+    const auto id = HalDisplayId::tryCast(display->getId());
+    if (mDisplayExtnIntf && id) {
+        uint32_t hwcDisplayId;
+        getHwcDisplayId(display, &hwcDisplayId);
+        if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
+            getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+        }
+    }
+#endif
 }
 
 void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
@@ -6761,7 +6861,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
     LOG_ALWAYS_FATAL_IF(!policy && !overridePolicy, "Can only clear the override policy");
 
     if (!display->isPrimary()) {
-	return NO_ERROR;
+        return NO_ERROR;
 
         // TODO(b/144711714): For non-primary displays we should be able to set an active mode
         // as well. For now, just call directly to initiateModeChange but ideally
