@@ -24,8 +24,9 @@ package {
 cc_test {
     name: "libsurfaceflinger_unittest",
     defaults: [
+        "libdisplayconfig_defaults",
+        "unfieddraw_defaults",
         "surfaceflinger_defaults",
-        "libsurfaceflinger_qti_defaults",
     ],
     test_suites: ["device-tests"],
     sanitize: {
@@ -132,6 +133,7 @@ cc_test {
         "libtimestats_proto",
         "libtrace_proto",
         "perfetto_trace_protos",
+        "vendor.qti.hardware.display.composer@3.0",
     ],
     shared_libs: [
         "android.hardware.configstore-utils",
@@ -169,6 +171,7 @@ cc_test {
         "android.hardware.graphics.composer@2.2-command-buffer",
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
+        "display_intf_headers",
         "libsurfaceflinger_headers",
     ],
 }
