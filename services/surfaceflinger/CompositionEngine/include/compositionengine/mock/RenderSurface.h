@@ -33,6 +33,8 @@ public:
     MOCK_CONST_METHOD0(getSize, const ui::Size&());
     MOCK_CONST_METHOD0(isProtected, bool());
     MOCK_CONST_METHOD0(getClientTargetAcquireFence, const sp<Fence>&());
+    MOCK_METHOD0(getClientTargetCurrentSlot, int());
+    MOCK_METHOD0(getClientTargetCurrentDataspace, ui::Dataspace());
     MOCK_METHOD1(setDisplaySize, void(const ui::Size&));
     MOCK_METHOD1(setProtected, void(bool));
     MOCK_METHOD1(setBufferDataspace, void(ui::Dataspace));

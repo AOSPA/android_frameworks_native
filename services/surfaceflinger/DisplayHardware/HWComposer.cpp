@@ -990,6 +990,28 @@ status_t HWComposer::setDisplayElapseTime(HalDisplayId displayId, uint64_t timeS
     return NO_ERROR;
 }
 
+#ifdef QTI_UNIFIED_DRAW
+status_t HWComposer::setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
+         const sp<Fence>& acquireFence, ui::Dataspace dataspace) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto& displayData = mDisplayData[displayId];
+
+    auto error = displayData.hwcDisplay->setClientTarget_3_1(slot, acquireFence, dataspace);
+    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    return NO_ERROR;
+}
+
+status_t HWComposer::tryDrawMethod(HalDisplayId displayId,
+         IQtiComposerClient::DrawMethod drawMethod) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto& displayData = mDisplayData[displayId];
+
+    auto error = displayData.hwcDisplay->tryDrawMethod(drawMethod);
+    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    return NO_ERROR;
+}
+#endif
+
 } // namespace impl
 } // namespace android
 

@@ -14,7 +14,10 @@ soong_config_module_type_import {
 
 libdisplayconfig_cc_defaults {
     name: "libcompositionengine_defaults",
-    defaults: ["surfaceflinger_defaults", "libdisplayconfig_defaults"],
+    defaults: ["surfaceflinger_defaults",
+               "libdisplayconfig_defaults",
+               "unfieddraw_defaults",
+              ],
     cflags: [
         "-DLOG_TAG=\"CompositionEngine\"",
         "-DATRACE_TAG=ATRACE_TAG_GRAPHICS",
