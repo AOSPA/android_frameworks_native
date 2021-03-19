@@ -2184,7 +2184,9 @@ void Dumpstate::DumpstateBoard(int out_fd) {
      * debugfs is only accessed by the dumpstate HAL.
      */
     auto api_level = android::base::GetIntProperty("ro.product.first_api_level", 0);
-    bool mount_debugfs = !PropertiesHelper::IsUserBuild() && api_level >= 31;
+    auto api_level_override = android::base::GetBoolProperty("debug.mount_debugfs", false);
+    bool mount_debugfs = !PropertiesHelper::IsUserBuild() &&
+            ((api_level >= 31) || api_level_override);
 
     if (mount_debugfs) {
         RunCommand("mount debugfs", {"mount", "-t", "debugfs", "debugfs", "/sys/kernel/debug"},

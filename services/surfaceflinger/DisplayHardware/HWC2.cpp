@@ -512,6 +512,14 @@ Error Display::presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
     }
+
+    // Validate and present display succeeded with comp changes.
+    if (*state == 2) {
+        *outNumTypes = numTypes;
+        *outNumRequests = numRequests;
+        *outPresentFence = new Fence(presentFenceFd);
+    }
+
     return error;
 }
 
