@@ -32,15 +32,25 @@
 #include <gui/BufferQueue.h>
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/HidlTransportUtils.h>
+
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposer.h>
+#else
 #include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
+#endif
 
 namespace android {
 
 using hardware::Return;
 using hardware::hidl_vec;
 using hardware::hidl_handle;
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposer;
+#else
 using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
-
+#endif
 namespace Hwc2 {
 
 Composer::~Composer() = default;
@@ -139,6 +149,32 @@ void Composer::CommandWriter::setDisplayElapseTime(uint64_t time)
     endCommand();
 }
 
+#ifdef QTI_UNIFIED_DRAW
+void Composer::CommandWriter::setClientTarget_3_1(
+        int32_t slot, int acquireFence, Dataspace dataspace)
+{
+    constexpr uint16_t  KSetClientTargetLength = 3;
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                 IQtiComposerClient::Command::SET_CLIENT_TARGET_3_1),
+                 KSetClientTargetLength);
+    write(slot);
+    writeFence(acquireFence);
+    writeSigned(static_cast<int32_t>(dataspace));
+    endCommand();
+
+}
+
+void Composer::CommandWriter::setLayerFlag(uint32_t type)
+{
+    constexpr uint16_t kSetLayerFlagLength = 1;
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                 IQtiComposerClient::Command::SET_LAYER_FLAG_3_1),
+                 kSetLayerFlagLength);
+    write(type);
+    endCommand();
+}
+#endif
+
 Composer::Composer(const std::string& serviceName) : mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);
 
@@ -146,6 +182,19 @@ Composer::Composer(const std::string& serviceName) : mWriter(kWriterInitialSize)
         LOG_ALWAYS_FATAL("failed to get hwcomposer service");
     }
 
+#ifdef QTI_UNIFIED_DRAW
+    if (sp<IQtiComposer> composer_3_1 = IQtiComposer::castFrom(mComposer)) {
+        composer_3_1->createClient_3_1([&](const auto& tmpError, const auto& tmpClient) {
+            if (tmpError == V2_1::Error::NONE) {
+                mClient_3_1 = tmpClient;
+                mClient = tmpClient;
+                mClient_2_2 = tmpClient;
+                mClient_2_3 = tmpClient;
+                mClient_2_4 = tmpClient;
+           }
+       });
+   } else
+#endif
     if (sp<IComposer> composer_2_4 = IComposer::castFrom(mComposer)) {
         composer_2_4->createClient_2_4([&](const auto& tmpError, const auto& tmpClient) {
             if (tmpError == V2_4::Error::NONE) {
@@ -184,6 +233,17 @@ Composer::Composer(const std::string& serviceName) : mWriter(kWriterInitialSize)
 }
 
 Composer::~Composer() = default;
+
+#ifdef QTI_UNIFIED_DRAW
+Error Composer::tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod)
+{
+    if (mClient_3_1) {
+      return mClient_3_1->tryDrawMethod(display, drawMethod);
+    }
+
+    return kDefaultError;
+}
+#endif
 
 std::vector<IComposer::Capability> Composer::getCapabilities()
 {
@@ -587,6 +647,25 @@ Error Composer::setDisplayElapseTime(Display display, uint64_t timeStamp)
     mWriter.setDisplayElapseTime(timeStamp);
     return Error::NONE;
 }
+
+#ifdef QTI_UNIFIED_DRAW
+Error Composer::setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
+        Dataspace dataspace)
+{
+    mWriter.selectDisplay(display);
+    mWriter.setClientTarget_3_1(slot, acquireFence, dataspace);
+    return Error::NONE;
+}
+
+Error Composer::setLayerFlag(Display display, Layer layer,
+        IQtiComposerClient::LayerFlag layerFlag)
+{
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerFlag(static_cast<uint32_t>(layerFlag));
+    return Error::NONE;
+}
+#endif
 
 Error Composer::setPowerMode(Display display, IComposerClient::PowerMode mode) {
     Return<Error> ret(Error::UNSUPPORTED);

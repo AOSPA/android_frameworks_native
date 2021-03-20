@@ -95,6 +95,14 @@ const sp<Fence>& RenderSurface::getClientTargetAcquireFence() const {
     return mDisplaySurface->getClientTargetAcquireFence();
 }
 
+int RenderSurface::getClientTargetCurrentSlot() {
+    return mDisplaySurface->getClientTargetCurrentSlot();
+}
+
+ui::Dataspace RenderSurface::getClientTargetCurrentDataspace() {
+    return mDisplaySurface->getClientTargetCurrentDataspace();
+}
+
 void RenderSurface::setDisplaySize(const ui::Size& size) {
     mDisplaySurface->resizeBuffers(size);
     mSize = size;

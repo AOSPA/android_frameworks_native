@@ -41,7 +41,9 @@
 #include <ui/DebugUtils.h>
 #include <ui/HdrCapabilities.h>
 #include <utils/Trace.h>
-
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 #include "TracedOrdinal.h"
 
 namespace android::compositionengine {
@@ -83,7 +85,9 @@ ScaleVector getScale(const Rect& from, const Rect& to) {
 }
 
 } // namespace
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 std::shared_ptr<Output> createOutput(
         const compositionengine::CompositionEngine& compositionEngine) {
     return createOutputTemplated<Output>(compositionEngine);
@@ -644,6 +648,20 @@ void Output::updateAndWriteCompositionState(
     mLayerRequestingBackgroundBlur = findLayerRequestingBackgroundComposition();
     bool forceClientComposition = mLayerRequestingBackgroundBlur != nullptr;
 
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+         if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+             hasSecureCamera = true;
+         }
+         if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+             hasSecureDisplay = true;
+         }
+         if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+             needsProtected = true;
+         }
+    }
     for (auto* layer : getOutputLayersOrderedByZ()) {
         layer->updateCompositionState(refreshArgs.updatingGeometryThisFrame,
                                       refreshArgs.devOptForceClientComposition ||
@@ -656,6 +674,14 @@ void Output::updateAndWriteCompositionState(
 
         // Send the updated state to the HWC, if appropriate.
         layer->writeStateToHWC(refreshArgs.updatingGeometryThisFrame);
+#ifdef QTI_UNIFIED_DRAW
+        if (hasSecureCamera || hasSecureDisplay || needsProtected) {
+            layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::DEFAULT);
+        } else {
+            layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::COMPATIBLE);
+        }
+#endif
+
     }
 }
 

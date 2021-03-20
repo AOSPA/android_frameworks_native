@@ -216,6 +216,14 @@ const sp<Fence>& FramebufferSurface::getClientTargetAcquireFence() const {
     return mCurrentFence;
 }
 
+int FramebufferSurface::getClientTargetCurrentSlot(){
+    return mCurrentBufferSlot;
+}
+
+ui::Dataspace FramebufferSurface::getClientTargetCurrentDataspace(){
+    return mDataSpace;
+}
+
 // ----------------------------------------------------------------------------
 }; // namespace android
 // ----------------------------------------------------------------------------
