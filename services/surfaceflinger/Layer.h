@@ -501,8 +501,7 @@ public:
     // one empty rect.
     virtual void useSurfaceDamage() {}
     virtual void useEmptyDamage() {}
-
-    virtual void incrementPendingBufferCount() {}
+    Region getVisibleRegion(const DisplayDevice*) const;
 
     /*
      * isOpaque - true if this surface is opaque
@@ -723,7 +722,7 @@ public:
     // Returns the bounds of the layer without any buffer scaling.
     FloatRect getBoundsPreScaling(const ui::Transform& bufferScaleTransform) const;
 
-    int32_t getSequence() const { return sequence; }
+    int32_t getSequence() const override { return sequence; }
 
     // For tracing.
     // TODO: Replace with raw buffer id from buffer metadata when that becomes available.
@@ -927,6 +926,10 @@ public:
 
     pid_t getOwnerPid() { return mOwnerPid; }
 
+    virtual bool frameIsEarly(nsecs_t /*expectedPresentTime*/, int64_t /*vsyncId*/) const {
+        return false;
+    }
+
     // This layer is not a clone, but it's the parent to the cloned hierarchy. The
     // variable mClonedChild represents the top layer that will be cloned so this
     // layer will be the parent of mClonedChild.
@@ -947,6 +950,10 @@ public:
     bool backpressureEnabled() { return mDrawingState.flags & layer_state_t::eEnableBackpressure; }
 
     bool setStretchEffect(const StretchEffect& effect);
+    StretchEffect getStretchEffect() const;
+
+    virtual std::atomic<int32_t>* getPendingBufferCounter() { return nullptr; }
+    virtual std::string getPendingBufferCounterName() { return ""; }
 
 protected:
     class SyncPoint {
@@ -1012,6 +1019,7 @@ protected:
 
     // For unit tests
     friend class TestableSurfaceFlinger;
+    friend class FpsReporterTest;
     friend class RefreshRateSelectionTest;
     friend class SetFrameRateTest;
     friend class TransactionFrameTracerTest;
@@ -1173,7 +1181,6 @@ private:
     virtual bool canDrawShadows() const { return true; }
 
     Hwc2::IComposerClient::Composition getCompositionType(const DisplayDevice&) const;
-    Region getVisibleRegion(const DisplayDevice*) const;
 
     /**
      * Returns an unsorted vector of all layers that are part of this tree.

@@ -40,6 +40,7 @@ using ProtoActualSurfaceFrameStart = perfetto::protos::FrameTimelineEvent_Actual
 using ProtoFrameEnd = perfetto::protos::FrameTimelineEvent_FrameEnd;
 using ProtoPresentType = perfetto::protos::FrameTimelineEvent_PresentType;
 using ProtoJankType = perfetto::protos::FrameTimelineEvent_JankType;
+using ProtoPredictionType = perfetto::protos::FrameTimelineEvent_PredictionType;
 
 namespace android::frametimeline {
 
@@ -67,7 +68,7 @@ public:
     void SetUp() override {
         mTimeStats = std::make_shared<mock::TimeStats>();
         mFrameTimeline = std::make_unique<impl::FrameTimeline>(mTimeStats, kSurfaceFlingerPid,
-                                                               kTestThresholds);
+                                                               kTestThresholds, kHwcDuration);
         mFrameTimeline->registerDataSource();
         mTokenManager = &mFrameTimeline->mTokenManager;
         mTraceCookieCounter = &mFrameTimeline->mTraceCookieCounter;
@@ -162,6 +163,7 @@ public:
     static constexpr JankClassificationThresholds kTestThresholds{kPresentThreshold,
                                                                   kDeadlineThreshold,
                                                                   kStartThreshold};
+    static constexpr nsecs_t kHwcDuration = std::chrono::nanoseconds(3ns).count();
 };
 
 static const std::string sLayerNameOne = "layer1";
@@ -170,6 +172,8 @@ static constexpr const uid_t sUidOne = 0;
 static constexpr pid_t sPidOne = 10;
 static constexpr pid_t sPidTwo = 20;
 static constexpr int32_t sInputEventId = 5;
+static constexpr int32_t sLayerIdOne = 1;
+static constexpr int32_t sLayerIdTwo = 2;
 
 TEST_F(FrameTimelineTest, tokenManagerRemovesStalePredictions) {
     int64_t token1 = mTokenManager->generateTokenForPredictions({0, 0, 0});
@@ -187,17 +191,20 @@ TEST_F(FrameTimelineTest, tokenManagerRemovesStalePredictions) {
 }
 
 TEST_F(FrameTimelineTest, createSurfaceFrameForToken_getOwnerPidReturnsCorrectPid) {
-    auto surfaceFrame1 = mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne,
-                                                                    sLayerNameOne, sLayerNameOne);
-    auto surfaceFrame2 = mFrameTimeline->createSurfaceFrameForToken({}, sPidTwo, sUidOne,
-                                                                    sLayerNameOne, sLayerNameOne);
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                       sLayerNameOne, sLayerNameOne);
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken({}, sPidTwo, sUidOne, sLayerIdOne,
+                                                       sLayerNameOne, sLayerNameOne);
     EXPECT_EQ(surfaceFrame1->getOwnerPid(), sPidOne);
     EXPECT_EQ(surfaceFrame2->getOwnerPid(), sPidTwo);
 }
 
 TEST_F(FrameTimelineTest, createSurfaceFrameForToken_noToken) {
-    auto surfaceFrame = mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne,
-                                                                   sLayerNameOne, sLayerNameOne);
+    auto surfaceFrame =
+            mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                       sLayerNameOne, sLayerNameOne);
     EXPECT_EQ(surfaceFrame->getPredictionState(), PredictionState::None);
 }
 
@@ -206,7 +213,7 @@ TEST_F(FrameTimelineTest, createSurfaceFrameForToken_expiredToken) {
     flushTokens(systemTime() + maxTokenRetentionTime);
     auto surfaceFrame =
             mFrameTimeline->createSurfaceFrameForToken({token1, sInputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     EXPECT_EQ(surfaceFrame->getPredictionState(), PredictionState::Expired);
 }
@@ -215,7 +222,7 @@ TEST_F(FrameTimelineTest, createSurfaceFrameForToken_validToken) {
     int64_t token1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
     auto surfaceFrame =
             mFrameTimeline->createSurfaceFrameForToken({token1, sInputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     EXPECT_EQ(surfaceFrame->getPredictionState(), PredictionState::Valid);
     EXPECT_EQ(compareTimelineItems(surfaceFrame->getPredictions(), TimelineItem(10, 20, 30)), true);
@@ -226,7 +233,7 @@ TEST_F(FrameTimelineTest, createSurfaceFrameForToken_validInputEventId) {
     constexpr int32_t inputEventId = 1;
     auto surfaceFrame =
             mFrameTimeline->createSurfaceFrameForToken({token1, inputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     EXPECT_EQ(inputEventId, surfaceFrame->getInputEventId());
 }
@@ -236,7 +243,7 @@ TEST_F(FrameTimelineTest, presentFenceSignaled_droppedFramesNotUpdated) {
     int64_t token1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({token1, sInputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     // Set up the display frame
     mFrameTimeline->setSfWakeUp(token1, 20, Fps::fromPeriodNsecs(11));
@@ -263,10 +270,12 @@ TEST_F(FrameTimelineTest, presentFenceSignaled_presentedFramesUpdated) {
     int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 30});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameTwo, sLayerNameTwo);
+                                                       sUidOne, sLayerIdTwo, sLayerNameTwo,
+                                                       sLayerNameTwo);
     mFrameTimeline->setSfWakeUp(sfToken1, 22, Fps::fromPeriodNsecs(11));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
@@ -307,8 +316,8 @@ TEST_F(FrameTimelineTest, displayFramesSlidingWindowMovesAfterLimit) {
                 {22 + frameTimeFactor, 26 + frameTimeFactor, 30 + frameTimeFactor});
         auto surfaceFrame =
                 mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, sInputEventId},
-                                                           sPidOne, sUidOne, sLayerNameOne,
-                                                           sLayerNameOne);
+                                                           sPidOne, sUidOne, sLayerIdOne,
+                                                           sLayerNameOne, sLayerNameOne);
         mFrameTimeline->setSfWakeUp(sfToken, 22 + frameTimeFactor, Fps::fromPeriodNsecs(11));
         surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
         mFrameTimeline->addSurfaceFrame(surfaceFrame);
@@ -329,7 +338,8 @@ TEST_F(FrameTimelineTest, displayFramesSlidingWindowMovesAfterLimit) {
             {22 + frameTimeFactor, 26 + frameTimeFactor, 30 + frameTimeFactor});
     auto surfaceFrame =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     mFrameTimeline->setSfWakeUp(sfToken, 22 + frameTimeFactor, Fps::fromPeriodNsecs(11));
     surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame);
@@ -343,18 +353,18 @@ TEST_F(FrameTimelineTest, displayFramesSlidingWindowMovesAfterLimit) {
 }
 
 TEST_F(FrameTimelineTest, surfaceFrameEndTimeAcquireFenceAfterQueue) {
-    auto surfaceFrame =
-            mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, 0, "acquireFenceAfterQueue",
-                                                       "acquireFenceAfterQueue");
+    auto surfaceFrame = mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, 0, sLayerIdOne,
+                                                                   "acquireFenceAfterQueue",
+                                                                   "acquireFenceAfterQueue");
     surfaceFrame->setActualQueueTime(123);
     surfaceFrame->setAcquireFenceTime(456);
     EXPECT_EQ(surfaceFrame->getActuals().endTime, 456);
 }
 
 TEST_F(FrameTimelineTest, surfaceFrameEndTimeAcquireFenceBeforeQueue) {
-    auto surfaceFrame =
-            mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, 0, "acquireFenceAfterQueue",
-                                                       "acquireFenceAfterQueue");
+    auto surfaceFrame = mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, 0, sLayerIdOne,
+                                                                   "acquireFenceAfterQueue",
+                                                                   "acquireFenceAfterQueue");
     surfaceFrame->setActualQueueTime(456);
     surfaceFrame->setAcquireFenceTime(123);
     EXPECT_EQ(surfaceFrame->getActuals().endTime, 456);
@@ -367,8 +377,8 @@ TEST_F(FrameTimelineTest, setMaxDisplayFramesSetsSizeProperly) {
     // Size shouldn't exceed maxDisplayFrames - 64
     for (size_t i = 0; i < *maxDisplayFrames + 10; i++) {
         auto surfaceFrame =
-                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerNameOne,
-                                                           sLayerNameOne);
+                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                           sLayerNameOne, sLayerNameOne);
         int64_t sfToken = mTokenManager->generateTokenForPredictions({22, 26, 30});
         mFrameTimeline->setSfWakeUp(sfToken, 22, Fps::fromPeriodNsecs(11));
         surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -383,8 +393,8 @@ TEST_F(FrameTimelineTest, setMaxDisplayFramesSetsSizeProperly) {
 
     for (size_t i = 0; i < *maxDisplayFrames + 10; i++) {
         auto surfaceFrame =
-                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerNameOne,
-                                                           sLayerNameOne);
+                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                           sLayerNameOne, sLayerNameOne);
         int64_t sfToken = mTokenManager->generateTokenForPredictions({22, 26, 30});
         mFrameTimeline->setSfWakeUp(sfToken, 22, Fps::fromPeriodNsecs(11));
         surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -399,8 +409,8 @@ TEST_F(FrameTimelineTest, setMaxDisplayFramesSetsSizeProperly) {
 
     for (size_t i = 0; i < *maxDisplayFrames + 10; i++) {
         auto surfaceFrame =
-                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerNameOne,
-                                                           sLayerNameOne);
+                mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                           sLayerNameOne, sLayerNameOne);
         int64_t sfToken = mTokenManager->generateTokenForPredictions({22, 26, 30});
         mFrameTimeline->setSfWakeUp(sfToken, 22, Fps::fromPeriodNsecs(11));
         surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -412,36 +422,29 @@ TEST_F(FrameTimelineTest, setMaxDisplayFramesSetsSizeProperly) {
 
 // Tests related to TimeStats
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsLongSfCpu) {
-    Fps refreshRate = Fps(11);
+    Fps refreshRate = Fps::fromPeriodNsecs(11);
+    // Deadline delta is 2ms because, sf's adjusted deadline is 60 - composerTime(3) = 57ms.
     EXPECT_CALL(*mTimeStats,
                 incrementJankyFrames(
                         TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
                                                    sLayerNameOne,
-                                                   JankType::SurfaceFlingerCpuDeadlineMissed,
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(3ms)
-                                                           .count(),
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(10ms)
-                                                           .count(),
+                                                   JankType::SurfaceFlingerCpuDeadlineMissed, 2, 10,
                                                    0}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(10ms).count(), std::chrono::nanoseconds(20ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(52ms).count(), std::chrono::nanoseconds(56ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 60});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(20ms).count());
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
+    surfaceFrame1->setAcquireFenceTime(20);
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(70ms).count());
+    presentFence1->signalForTest(70);
 
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(59ms).count(), presentFence1);
+    mFrameTimeline->setSfPresent(59, presentFence1);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsDisplayMiss) {
@@ -449,180 +452,153 @@ TEST_F(FrameTimelineTest, presentFenceSignaled_reportsDisplayMiss) {
     EXPECT_CALL(*mTimeStats,
                 incrementJankyFrames(TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
                                                                 sLayerNameOne, JankType::DisplayHAL,
-                                                                0, 0, 0}));
+                                                                -1, 0, 0}));
 
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(10ms).count(), std::chrono::nanoseconds(20ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(52ms).count(), std::chrono::nanoseconds(56ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 60});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(20ms).count());
+    surfaceFrame1->setAcquireFenceTime(20);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(90ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(56ms).count(), presentFence1);
+    presentFence1->signalForTest(90);
+    mFrameTimeline->setSfPresent(56, presentFence1);
     EXPECT_EQ(surfaceFrame1->getJankType(), JankType::DisplayHAL);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsAppMiss) {
     Fps refreshRate = Fps(11.0);
     EXPECT_CALL(*mTimeStats,
-                incrementJankyFrames(
-                        TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
-                                                   sLayerNameOne, JankType::AppDeadlineMissed, 0, 0,
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(25ms)
-                                                           .count()}));
+                incrementJankyFrames(TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
+                                                                sLayerNameOne,
+                                                                JankType::AppDeadlineMissed, -1, 0,
+                                                                25}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(10ms).count(), std::chrono::nanoseconds(20ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(82ms).count(), std::chrono::nanoseconds(86ms).count(),
-             std::chrono::nanoseconds(90ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 60});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({82, 90, 90});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(45ms).count());
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(45);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
 
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(90ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(86ms).count(), presentFence1);
+    presentFence1->signalForTest(90);
+    mFrameTimeline->setSfPresent(86, presentFence1);
 
     EXPECT_EQ(surfaceFrame1->getJankType(), JankType::AppDeadlineMissed);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsSfScheduling) {
-    Fps refreshRate = Fps::fromPeriodNsecs(std::chrono::nanoseconds(32ms).count());
+    Fps refreshRate = Fps::fromPeriodNsecs(32);
     EXPECT_CALL(*mTimeStats,
-                incrementJankyFrames(
-                        TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
-                                                   sLayerNameOne,
-                                                   JankType::SurfaceFlingerScheduling, 0, 0,
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(-10ms)
-                                                           .count()}));
+                incrementJankyFrames(TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
+                                                                sLayerNameOne,
+                                                                JankType::SurfaceFlingerScheduling,
+                                                                -1, 0, -10}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(40ms).count(), std::chrono::nanoseconds(60ms).count(),
-             std::chrono::nanoseconds(92ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(52ms).count(), std::chrono::nanoseconds(56ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({40, 60, 92});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(50ms).count());
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(50);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
 
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(60ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(56ms).count(), presentFence1);
+    presentFence1->signalForTest(60);
+    mFrameTimeline->setSfPresent(56, presentFence1);
 
     EXPECT_EQ(surfaceFrame1->getJankType(), JankType::SurfaceFlingerScheduling);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsSfPredictionError) {
-    Fps refreshRate = Fps(16.66f);
+    Fps refreshRate = Fps::fromPeriodNsecs(16);
     EXPECT_CALL(*mTimeStats,
-                incrementJankyFrames(
-                        TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
-                                                   sLayerNameOne, JankType::PredictionError, 0,
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(5ms)
-                                                           .count(),
-                                                   0}));
+                incrementJankyFrames(TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
+                                                                sLayerNameOne,
+                                                                JankType::PredictionError, -1, 5,
+                                                                0}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(30ms).count(), std::chrono::nanoseconds(40ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(52ms).count(), std::chrono::nanoseconds(56ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({30, 40, 60});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(40ms).count());
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(40);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
 
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(65ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(56ms).count(), presentFence1);
+    presentFence1->signalForTest(65);
+    mFrameTimeline->setSfPresent(56, presentFence1);
 
     EXPECT_EQ(surfaceFrame1->getJankType(), JankType::PredictionError);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsAppBufferStuffing) {
-    Fps refreshRate = Fps::fromPeriodNsecs(std::chrono::nanoseconds(32ms).count());
+    Fps refreshRate = Fps::fromPeriodNsecs(32);
     EXPECT_CALL(*mTimeStats,
-                incrementJankyFrames(
-                        TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
-                                                   sLayerNameOne,
-                                                   JankType::BufferStuffing |
-                                                           JankType::SurfaceFlingerScheduling,
-                                                   0, 0, 0}));
+                incrementJankyFrames(TimeStats::JankyFramesInfo{refreshRate, std::nullopt, sUidOne,
+                                                                sLayerNameOne,
+                                                                JankType::BufferStuffing, -1, 0,
+                                                                0}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(30ms).count(), std::chrono::nanoseconds(40ms).count(),
-             std::chrono::nanoseconds(58ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(82ms).count(), std::chrono::nanoseconds(86ms).count(),
-             std::chrono::nanoseconds(90ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({30, 40, 58});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({82, 90, 90});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(40ms).count());
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(82ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(40);
+    mFrameTimeline->setSfWakeUp(sfToken1, 82, refreshRate);
 
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented,
-                                   /*previousLatchTime*/
-                                   std::chrono::nanoseconds(56ms).count());
+                                   /*previousLatchTime*/ 56);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(90ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(86ms).count(), presentFence1);
+    presentFence1->signalForTest(90);
+    mFrameTimeline->setSfPresent(86, presentFence1);
 
-    EXPECT_EQ(surfaceFrame1->getJankType(),
-              JankType::BufferStuffing | JankType::SurfaceFlingerScheduling);
+    EXPECT_EQ(surfaceFrame1->getJankType(), JankType::BufferStuffing);
 }
 
 TEST_F(FrameTimelineTest, presentFenceSignaled_reportsAppMissWithRenderRate) {
-    Fps refreshRate = Fps(11.0);
-    Fps renderRate = Fps(30.0);
+    Fps refreshRate = Fps::fromPeriodNsecs(11);
+    Fps renderRate = Fps::fromPeriodNsecs(30);
     EXPECT_CALL(*mTimeStats,
                 incrementJankyFrames(
                         TimeStats::JankyFramesInfo{refreshRate, renderRate, sUidOne, sLayerNameOne,
-                                                   JankType::AppDeadlineMissed, 0, 0,
-                                                   std::chrono::duration_cast<
-                                                           std::chrono::nanoseconds>(25ms)
-                                                           .count()}));
+                                                   JankType::AppDeadlineMissed, -1, 0, 25}));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(10ms).count(), std::chrono::nanoseconds(20ms).count(),
-             std::chrono::nanoseconds(60ms).count()});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions(
-            {std::chrono::nanoseconds(82ms).count(), std::chrono::nanoseconds(86ms).count(),
-             std::chrono::nanoseconds(90ms).count()});
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 60});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({82, 90, 90});
+
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
-    surfaceFrame1->setAcquireFenceTime(std::chrono::nanoseconds(45ms).count());
-    mFrameTimeline->setSfWakeUp(sfToken1, std::chrono::nanoseconds(52ms).count(), refreshRate);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(45);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, refreshRate);
 
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     surfaceFrame1->setRenderRate(renderRate);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    presentFence1->signalForTest(std::chrono::nanoseconds(90ms).count());
-    mFrameTimeline->setSfPresent(std::chrono::nanoseconds(86ms).count(), presentFence1);
+    presentFence1->signalForTest(90);
+    mFrameTimeline->setSfPresent(86, presentFence1);
 
     EXPECT_EQ(surfaceFrame1->getJankType(), JankType::AppDeadlineMissed);
 }
@@ -641,7 +617,7 @@ TEST_F(FrameTimelineTest, tracing_noPacketsSentWithoutTraceStart) {
     int64_t token1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({token1, sInputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     // Set up the display frame
     mFrameTimeline->setSfWakeUp(token1, 20, Fps::fromPeriodNsecs(11));
@@ -667,7 +643,7 @@ TEST_F(FrameTimelineTest, tracing_sanityTest) {
     int64_t token2 = mTokenManager->generateTokenForPredictions({40, 50, 60});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({token1, sInputEventId}, sPidOne, sUidOne,
-                                                       sLayerNameOne, sLayerNameOne);
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
 
     // Set up the display frame
     mFrameTimeline->setSfWakeUp(token2, 20, Fps::fromPeriodNsecs(11));
@@ -710,8 +686,9 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_invalidTokenDoesNotEmitTracePacket) 
 
     tracingSession->StartBlocking();
     int64_t token1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
-    auto surfaceFrame1 = mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne,
-                                                                    sLayerNameOne, sLayerNameOne);
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken({}, sPidOne, sUidOne, sLayerIdOne,
+                                                       sLayerNameOne, sLayerNameOne);
 
     // Set up the display frame
     mFrameTimeline->setSfWakeUp(token1, 20, Fps::fromPeriodNsecs(11));
@@ -741,7 +718,7 @@ ProtoExpectedDisplayFrameStart createProtoExpectedDisplayFrameStart(int64_t cook
 
 ProtoActualDisplayFrameStart createProtoActualDisplayFrameStart(
         int64_t cookie, int64_t token, pid_t pid, ProtoPresentType presentType, bool onTimeFinish,
-        bool gpuComposition, ProtoJankType jankType) {
+        bool gpuComposition, ProtoJankType jankType, ProtoPredictionType predictionType) {
     ProtoActualDisplayFrameStart proto;
     proto.set_cookie(cookie);
     proto.set_token(token);
@@ -750,6 +727,7 @@ ProtoActualDisplayFrameStart createProtoActualDisplayFrameStart(
     proto.set_on_time_finish(onTimeFinish);
     proto.set_gpu_composition(gpuComposition);
     proto.set_jank_type(jankType);
+    proto.set_prediction_type(predictionType);
     return proto;
 }
 
@@ -769,7 +747,7 @@ ProtoExpectedSurfaceFrameStart createProtoExpectedSurfaceFrameStart(int64_t cook
 ProtoActualSurfaceFrameStart createProtoActualSurfaceFrameStart(
         int64_t cookie, int64_t token, int64_t displayFrameToken, pid_t pid, std::string layerName,
         ProtoPresentType presentType, bool onTimeFinish, bool gpuComposition,
-        ProtoJankType jankType) {
+        ProtoJankType jankType, ProtoPredictionType predictionType) {
     ProtoActualSurfaceFrameStart proto;
     proto.set_cookie(cookie);
     proto.set_token(token);
@@ -780,6 +758,7 @@ ProtoActualSurfaceFrameStart createProtoActualSurfaceFrameStart(
     proto.set_on_time_finish(onTimeFinish);
     proto.set_gpu_composition(gpuComposition);
     proto.set_jank_type(jankType);
+    proto.set_prediction_type(predictionType);
     return proto;
 }
 
@@ -820,6 +799,8 @@ void validateTraceEvent(const ProtoActualDisplayFrameStart& received,
     EXPECT_EQ(received.gpu_composition(), source.gpu_composition());
     ASSERT_TRUE(received.has_jank_type());
     EXPECT_EQ(received.jank_type(), source.jank_type());
+    ASSERT_TRUE(received.has_prediction_type());
+    EXPECT_EQ(received.prediction_type(), source.prediction_type());
 }
 
 void validateTraceEvent(const ProtoExpectedSurfaceFrameStart& received,
@@ -865,6 +846,8 @@ void validateTraceEvent(const ProtoActualSurfaceFrameStart& received,
     EXPECT_EQ(received.gpu_composition(), source.gpu_composition());
     ASSERT_TRUE(received.has_jank_type());
     EXPECT_EQ(received.jank_type(), source.jank_type());
+    ASSERT_TRUE(received.has_prediction_type());
+    EXPECT_EQ(received.prediction_type(), source.prediction_type());
 }
 
 void validateTraceEvent(const ProtoFrameEnd& received, const ProtoFrameEnd& source) {
@@ -877,7 +860,7 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_emitsValidTracePacket) {
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
 
     tracingSession->StartBlocking();
-    int64_t displayFrameToken1 = mTokenManager->generateTokenForPredictions({10, 25, 30});
+    int64_t displayFrameToken1 = mTokenManager->generateTokenForPredictions({10, 30, 30});
 
     // Set up the display frame
     mFrameTimeline->setSfWakeUp(displayFrameToken1, 20, Fps::fromPeriodNsecs(11));
@@ -893,7 +876,8 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_emitsValidTracePacket) {
             createProtoActualDisplayFrameStart(traceCookie + 2, displayFrameToken1,
                                                kSurfaceFlingerPid,
                                                FrameTimelineEvent::PRESENT_ON_TIME, true, false,
-                                               FrameTimelineEvent::JANK_NONE);
+                                               FrameTimelineEvent::JANK_NONE,
+                                               FrameTimelineEvent::PREDICTION_VALID);
     auto protoActualDisplayFrameEnd = createProtoFrameEnd(traceCookie + 2);
 
     addEmptyDisplayFrame();
@@ -917,7 +901,7 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_emitsValidTracePacket) {
     // Packet - 1 : FrameEnd (ExpectedDisplayFrame)
     const auto& packet1 = packets[1];
     ASSERT_TRUE(packet1.has_timestamp());
-    EXPECT_EQ(packet1.timestamp(), 25u);
+    EXPECT_EQ(packet1.timestamp(), 30u);
     ASSERT_TRUE(packet1.has_frame_timeline_event());
 
     const auto& event1 = packet1.frame_timeline_event();
@@ -939,7 +923,7 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_emitsValidTracePacket) {
     // Packet - 3 : FrameEnd (ActualDisplayFrame)
     const auto& packet3 = packets[3];
     ASSERT_TRUE(packet3.has_timestamp());
-    EXPECT_EQ(packet3.timestamp(), 26u);
+    EXPECT_EQ(packet3.timestamp(), 31u);
     ASSERT_TRUE(packet3.has_frame_timeline_event());
 
     const auto& event3 = packet3.frame_timeline_event();
@@ -968,7 +952,8 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_predictionExpiredDoesNotTraceExpecte
             createProtoActualDisplayFrameStart(traceCookie + 1, displayFrameToken1,
                                                kSurfaceFlingerPid,
                                                FrameTimelineEvent::PRESENT_UNSPECIFIED, false,
-                                               false, FrameTimelineEvent::JANK_UNKNOWN);
+                                               false, FrameTimelineEvent::JANK_UNKNOWN,
+                                               FrameTimelineEvent::PREDICTION_EXPIRED);
     auto protoActualDisplayFrameEnd = createProtoFrameEnd(traceCookie + 1);
 
     addEmptyDisplayFrame();
@@ -993,7 +978,7 @@ TEST_F(FrameTimelineTest, traceDisplayFrame_predictionExpiredDoesNotTraceExpecte
     // Packet - 1 : FrameEnd (ActualDisplayFrame)
     const auto& packet1 = packets[1];
     ASSERT_TRUE(packet1.has_timestamp());
-    EXPECT_EQ(packet1.timestamp(), 26u);
+    EXPECT_EQ(packet1.timestamp(), 31u);
     ASSERT_TRUE(packet1.has_frame_timeline_event());
 
     const auto& event1 = packet1.frame_timeline_event();
@@ -1015,10 +1000,12 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_emitsValidTracePacket) {
 
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setActualQueueTime(10);
     surfaceFrame1->setDropTime(15);
 
@@ -1036,7 +1023,8 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_emitsValidTracePacket) {
             createProtoActualSurfaceFrameStart(traceCookie + 2, surfaceFrameToken,
                                                displayFrameToken1, sPidOne, sLayerNameOne,
                                                FrameTimelineEvent::PRESENT_DROPPED, false, false,
-                                               FrameTimelineEvent::JANK_NONE);
+                                               FrameTimelineEvent::JANK_NONE,
+                                               FrameTimelineEvent::PREDICTION_VALID);
     auto protoDroppedSurfaceFrameActualEnd = createProtoFrameEnd(traceCookie + 2);
 
     auto protoPresentedSurfaceFrameExpectedStart =
@@ -1047,7 +1035,8 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_emitsValidTracePacket) {
             createProtoActualSurfaceFrameStart(traceCookie + 4, surfaceFrameToken,
                                                displayFrameToken1, sPidOne, sLayerNameOne,
                                                FrameTimelineEvent::PRESENT_ON_TIME, true, false,
-                                               FrameTimelineEvent::JANK_NONE);
+                                               FrameTimelineEvent::JANK_NONE,
+                                               FrameTimelineEvent::PREDICTION_VALID);
     auto protoPresentedSurfaceFrameActualEnd = createProtoFrameEnd(traceCookie + 4);
 
     // Set up the display frame
@@ -1161,12 +1150,9 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_predictionExpiredDoesNotTraceExpecte
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
 
     tracingSession->StartBlocking();
-    constexpr nsecs_t appStartTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(10ms).count();
-    constexpr nsecs_t appEndTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(20ms).count();
-    constexpr nsecs_t appPresentTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(30ms).count();
+    constexpr nsecs_t appStartTime = std::chrono::nanoseconds(10ms).count();
+    constexpr nsecs_t appEndTime = std::chrono::nanoseconds(20ms).count();
+    constexpr nsecs_t appPresentTime = std::chrono::nanoseconds(30ms).count();
     int64_t surfaceFrameToken =
             mTokenManager->generateTokenForPredictions({appStartTime, appEndTime, appPresentTime});
 
@@ -1174,17 +1160,14 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_predictionExpiredDoesNotTraceExpecte
     flushTokens(systemTime() + maxTokenRetentionTime);
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, /*inputEventId*/ 0},
-                                                       sPidOne, sUidOne, sLayerNameOne,
+                                                       sPidOne, sUidOne, sLayerIdOne, sLayerNameOne,
                                                        sLayerNameOne);
     surfaceFrame1->setActualQueueTime(appEndTime);
     surfaceFrame1->setAcquireFenceTime(appEndTime);
 
-    constexpr nsecs_t sfStartTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(20ms).count();
-    constexpr nsecs_t sfEndTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(30ms).count();
-    constexpr nsecs_t sfPresentTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(30ms).count();
+    constexpr nsecs_t sfStartTime = std::chrono::nanoseconds(20ms).count();
+    constexpr nsecs_t sfEndTime = std::chrono::nanoseconds(30ms).count();
+    constexpr nsecs_t sfPresentTime = std::chrono::nanoseconds(30ms).count();
     int64_t displayFrameToken =
             mTokenManager->generateTokenForPredictions({sfStartTime, sfEndTime, sfPresentTime});
 
@@ -1195,7 +1178,8 @@ TEST_F(FrameTimelineTest, traceSurfaceFrame_predictionExpiredDoesNotTraceExpecte
             createProtoActualSurfaceFrameStart(traceCookie + 1, surfaceFrameToken,
                                                displayFrameToken, sPidOne, sLayerNameOne,
                                                FrameTimelineEvent::PRESENT_UNSPECIFIED, false,
-                                               false, FrameTimelineEvent::JANK_UNKNOWN);
+                                               false, FrameTimelineEvent::JANK_UNKNOWN,
+                                               FrameTimelineEvent::PREDICTION_EXPIRED);
     auto protoActualSurfaceFrameEnd = createProtoFrameEnd(traceCookie + 1);
 
     // Set up the display frame
@@ -1243,10 +1227,11 @@ TEST_F(FrameTimelineTest, jankClassification_presentOnTimeDoesNotClassify) {
     EXPECT_CALL(*mTimeStats, incrementJankyFrames(_));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
     int64_t surfaceFrameToken = mTokenManager->generateTokenForPredictions({10, 20, 30});
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 30});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 30, 30});
     auto surfaceFrame =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     mFrameTimeline->setSfWakeUp(sfToken1, 22, Fps::fromPeriodNsecs(11));
     surfaceFrame->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame);
@@ -1273,8 +1258,8 @@ TEST_F(FrameTimelineTest, jankClassification_presentOnTimeDoesNotClassify) {
 TEST_F(FrameTimelineTest, jankClassification_displayFrameOnTimeFinishEarlyPresent) {
     Fps vsyncRate = Fps::fromPeriodNsecs(11);
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 40});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 56, 70});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 30, 40});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 60, 70});
     mFrameTimeline->setSfWakeUp(sfToken1, 22, vsyncRate);
     mFrameTimeline->setSfPresent(26, presentFence1);
     auto displayFrame = getDisplayFrame(0);
@@ -1312,8 +1297,8 @@ TEST_F(FrameTimelineTest, jankClassification_displayFrameOnTimeFinishEarlyPresen
 TEST_F(FrameTimelineTest, jankClassification_displayFrameOnTimeFinishLatePresent) {
     Fps vsyncRate = Fps::fromPeriodNsecs(11);
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 40});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 56, 70});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 30, 40});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 60, 70});
     mFrameTimeline->setSfWakeUp(sfToken1, 22, vsyncRate);
     mFrameTimeline->setSfPresent(26, presentFence1);
     auto displayFrame = getDisplayFrame(0);
@@ -1392,21 +1377,44 @@ TEST_F(FrameTimelineTest, jankClassification_displayFrameLateFinishLatePresent) 
     EXPECT_EQ(displayFrame->getJankType(), JankType::SurfaceFlingerCpuDeadlineMissed);
 }
 
+TEST_F(FrameTimelineTest, jankClassification_displayFrameLateStartLateFinishLatePresent) {
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 40});
+    mFrameTimeline->setSfWakeUp(sfToken1, 26, Fps::fromPeriodNsecs(11));
+    mFrameTimeline->setSfPresent(36, presentFence1);
+    auto displayFrame = getDisplayFrame(0);
+    presentFence1->signalForTest(52);
+
+    // Fences haven't been flushed yet, so it should be 0
+    EXPECT_EQ(displayFrame->getActuals().presentTime, 0);
+
+    addEmptyDisplayFrame();
+    displayFrame = getDisplayFrame(0);
+
+    // Fences have flushed, so the present timestamps should be updated
+    EXPECT_EQ(displayFrame->getActuals().presentTime, 52);
+    EXPECT_EQ(displayFrame->getFrameStartMetadata(), FrameStartMetadata::LateStart);
+    EXPECT_EQ(displayFrame->getFramePresentMetadata(), FramePresentMetadata::LatePresent);
+    EXPECT_EQ(displayFrame->getFrameReadyMetadata(), FrameReadyMetadata::LateFinish);
+    EXPECT_EQ(displayFrame->getJankType(), JankType::SurfaceFlingerScheduling);
+}
+
 TEST_F(FrameTimelineTest, jankClassification_surfaceFrameOnTimeFinishEarlyPresent) {
     EXPECT_CALL(*mTimeStats, incrementJankyFrames(_));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 40});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 56, 70});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 30, 40});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 60, 70});
     int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({5, 16, 40});
     int64_t surfaceFrameToken2 = mTokenManager->generateTokenForPredictions({25, 36, 70});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setAcquireFenceTime(16);
     mFrameTimeline->setSfWakeUp(sfToken1, 22, Fps::fromPeriodNsecs(11));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame1);
-    mFrameTimeline->setSfPresent(26, presentFence1);
+    mFrameTimeline->setSfPresent(27, presentFence1);
     auto displayFrame1 = getDisplayFrame(0);
     auto& presentedSurfaceFrame1 = getSurfaceFrame(0, 0);
     presentFence1->signalForTest(30);
@@ -1420,12 +1428,13 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameOnTimeFinishEarlyPresen
     auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken2, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame2->setAcquireFenceTime(36);
     mFrameTimeline->setSfWakeUp(sfToken2, 52, Fps::fromPeriodNsecs(11));
     surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame2);
-    mFrameTimeline->setSfPresent(56, presentFence2);
+    mFrameTimeline->setSfPresent(57, presentFence2);
     auto displayFrame2 = getDisplayFrame(1);
     auto& presentedSurfaceFrame2 = getSurfaceFrame(1, 0);
 
@@ -1473,13 +1482,14 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameOnTimeFinishEarlyPresen
 TEST_F(FrameTimelineTest, jankClassification_surfaceFrameOnTimeFinishLatePresent) {
     EXPECT_CALL(*mTimeStats, incrementJankyFrames(_));
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 26, 40});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 56, 70});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({22, 30, 40});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({52, 60, 70});
     int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({5, 16, 40});
     int64_t surfaceFrameToken2 = mTokenManager->generateTokenForPredictions({25, 36, 70});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setAcquireFenceTime(16);
     mFrameTimeline->setSfWakeUp(sfToken1, 22, Fps::fromPeriodNsecs(11));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -1498,12 +1508,13 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameOnTimeFinishLatePresent
     auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken2, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame2->setAcquireFenceTime(36);
     mFrameTimeline->setSfWakeUp(sfToken2, 52, Fps::fromPeriodNsecs(11));
     surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
     mFrameTimeline->addSurfaceFrame(surfaceFrame2);
-    mFrameTimeline->setSfPresent(56, presentFence2);
+    mFrameTimeline->setSfPresent(57, presentFence2);
     auto displayFrame2 = getDisplayFrame(1);
     auto& presentedSurfaceFrame2 = getSurfaceFrame(1, 0);
 
@@ -1552,11 +1563,12 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameLateFinishEarlyPresent)
     EXPECT_CALL(*mTimeStats, incrementJankyFrames(_));
 
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({42, 46, 50});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({42, 50, 50});
     int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({5, 26, 60});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setAcquireFenceTime(40);
     mFrameTimeline->setSfWakeUp(sfToken1, 42, Fps::fromPeriodNsecs(11));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -1593,13 +1605,14 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameLateFinishLatePresent) 
 
     EXPECT_CALL(*mTimeStats, incrementJankyFrames(_)).Times(2);
     auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({32, 36, 40});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({42, 46, 50});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({32, 40, 40});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({42, 50, 50});
     int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({5, 16, 30});
     int64_t surfaceFrameToken2 = mTokenManager->generateTokenForPredictions({25, 36, 50});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setAcquireFenceTime(26);
     mFrameTimeline->setSfWakeUp(sfToken1, 32, Fps::fromPeriodNsecs(11));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -1618,7 +1631,8 @@ TEST_F(FrameTimelineTest, jankClassification_surfaceFrameLateFinishLatePresent) 
     auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken2, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame2->setAcquireFenceTime(40);
     mFrameTimeline->setSfWakeUp(sfToken2, 43, Fps::fromPeriodNsecs(11));
     surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -1667,11 +1681,12 @@ TEST_F(FrameTimelineTest, jankClassification_multiJankBufferStuffingAndAppDeadli
     int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
     int64_t surfaceFrameToken2 = mTokenManager->generateTokenForPredictions({40, 50, 60});
 
-    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 56, 60});
-    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({112, 116, 120});
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({112, 120, 120});
     auto surfaceFrame1 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame1->setAcquireFenceTime(50);
     mFrameTimeline->setSfWakeUp(sfToken1, 52, Fps::fromPeriodNsecs(30));
     surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
@@ -1690,7 +1705,8 @@ TEST_F(FrameTimelineTest, jankClassification_multiJankBufferStuffingAndAppDeadli
     auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
     auto surfaceFrame2 =
             mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken2, sInputEventId}, sPidOne,
-                                                       sUidOne, sLayerNameOne, sLayerNameOne);
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
     surfaceFrame2->setAcquireFenceTime(84);
     mFrameTimeline->setSfWakeUp(sfToken2, 112, Fps::fromPeriodNsecs(30));
     surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented, 54);
@@ -1735,4 +1751,229 @@ TEST_F(FrameTimelineTest, jankClassification_multiJankBufferStuffingAndAppDeadli
     EXPECT_EQ(presentedSurfaceFrame2.getJankType(),
               JankType::AppDeadlineMissed | JankType::BufferStuffing);
 }
+
+TEST_F(FrameTimelineTest, jankClassification_appDeadlineAdjustedForBufferStuffing) {
+    // Layer specific increment
+    EXPECT_CALL(*mTimeStats, incrementJankyFrames(_)).Times(2);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    int64_t surfaceFrameToken1 = mTokenManager->generateTokenForPredictions({10, 20, 30});
+    int64_t surfaceFrameToken2 = mTokenManager->generateTokenForPredictions({40, 50, 60});
+
+    int64_t sfToken1 = mTokenManager->generateTokenForPredictions({52, 60, 60});
+    int64_t sfToken2 = mTokenManager->generateTokenForPredictions({82, 90, 90});
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken1, sInputEventId}, sPidOne,
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame1->setAcquireFenceTime(50);
+    mFrameTimeline->setSfWakeUp(sfToken1, 52, Fps::fromPeriodNsecs(30));
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    mFrameTimeline->setSfPresent(56, presentFence1);
+    auto displayFrame1 = getDisplayFrame(0);
+    auto& presentedSurfaceFrame1 = getSurfaceFrame(0, 0);
+    presentFence1->signalForTest(60);
+
+    // Fences for the first frame haven't been flushed yet, so it should be 0
+    EXPECT_EQ(displayFrame1->getActuals().presentTime, 0);
+    auto actuals1 = presentedSurfaceFrame1.getActuals();
+    EXPECT_EQ(actuals1.presentTime, 0);
+
+    // Trigger a flush by finalizing the next DisplayFrame
+    auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken({surfaceFrameToken2, sInputEventId}, sPidOne,
+                                                       sUidOne, sLayerIdOne, sLayerNameOne,
+                                                       sLayerNameOne);
+    surfaceFrame2->setAcquireFenceTime(80);
+    mFrameTimeline->setSfWakeUp(sfToken2, 82, Fps::fromPeriodNsecs(30));
+    // Setting previous latch time to 54, adjusted deadline will be 54 + vsyncTime(30) = 84
+    surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented, 54);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame2);
+    mFrameTimeline->setSfPresent(86, presentFence2);
+    auto displayFrame2 = getDisplayFrame(1);
+    auto& presentedSurfaceFrame2 = getSurfaceFrame(1, 0);
+    presentFence2->signalForTest(90);
+
+    // Fences for the first frame have flushed, so the present timestamps should be updated
+    EXPECT_EQ(displayFrame1->getActuals().presentTime, 60);
+    actuals1 = presentedSurfaceFrame1.getActuals();
+    EXPECT_EQ(actuals1.endTime, 50);
+    EXPECT_EQ(actuals1.presentTime, 60);
+
+    EXPECT_EQ(displayFrame1->getFramePresentMetadata(), FramePresentMetadata::OnTimePresent);
+    EXPECT_EQ(displayFrame1->getFrameReadyMetadata(), FrameReadyMetadata::OnTimeFinish);
+    EXPECT_EQ(displayFrame1->getJankType(), JankType::None);
+
+    EXPECT_EQ(presentedSurfaceFrame1.getFramePresentMetadata(), FramePresentMetadata::LatePresent);
+    EXPECT_EQ(presentedSurfaceFrame1.getFrameReadyMetadata(), FrameReadyMetadata::LateFinish);
+    EXPECT_EQ(presentedSurfaceFrame1.getJankType(), JankType::AppDeadlineMissed);
+
+    // Fences for the second frame haven't been flushed yet, so it should be 0
+    EXPECT_EQ(displayFrame2->getActuals().presentTime, 0);
+    auto actuals2 = presentedSurfaceFrame2.getActuals();
+    EXPECT_EQ(actuals2.presentTime, 0);
+
+    addEmptyDisplayFrame();
+
+    // Fences for the second frame have flushed, so the present timestamps should be updated
+    EXPECT_EQ(displayFrame2->getActuals().presentTime, 90);
+    actuals2 = presentedSurfaceFrame2.getActuals();
+    EXPECT_EQ(actuals2.presentTime, 90);
+
+    EXPECT_EQ(displayFrame2->getFramePresentMetadata(), FramePresentMetadata::OnTimePresent);
+    EXPECT_EQ(displayFrame2->getFrameReadyMetadata(), FrameReadyMetadata::OnTimeFinish);
+    EXPECT_EQ(displayFrame2->getJankType(), JankType::None);
+
+    EXPECT_EQ(presentedSurfaceFrame2.getFramePresentMetadata(), FramePresentMetadata::LatePresent);
+    EXPECT_EQ(presentedSurfaceFrame2.getFrameReadyMetadata(), FrameReadyMetadata::OnTimeFinish);
+    EXPECT_EQ(presentedSurfaceFrame2.getJankType(), JankType::BufferStuffing);
+}
+
+TEST_F(FrameTimelineTest, computeFps_noLayerIds_returnsZero) {
+    EXPECT_EQ(mFrameTimeline->computeFps({}), 0.0f);
+}
+
+TEST_F(FrameTimelineTest, computeFps_singleDisplayFrame_returnsZero) {
+    const auto oneHundredMs = std::chrono::nanoseconds(100ms).count();
+
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    presentFence1->signalForTest(oneHundredMs);
+    mFrameTimeline->setSfPresent(oneHundredMs, presentFence1);
+
+    EXPECT_EQ(mFrameTimeline->computeFps({sLayerIdOne}), 0.0f);
+}
+
+TEST_F(FrameTimelineTest, computeFps_twoDisplayFrames_oneLayer) {
+    const auto oneHundredMs = std::chrono::nanoseconds(100ms).count();
+    const auto twoHundredMs = std::chrono::nanoseconds(200ms).count();
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    presentFence1->signalForTest(oneHundredMs);
+    mFrameTimeline->setSfPresent(oneHundredMs, presentFence1);
+
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame2);
+    presentFence2->signalForTest(twoHundredMs);
+    mFrameTimeline->setSfPresent(twoHundredMs, presentFence2);
+
+    EXPECT_EQ(mFrameTimeline->computeFps({sLayerIdOne}), 10.0);
+}
+
+TEST_F(FrameTimelineTest, computeFps_twoDisplayFrames_twoLayers) {
+    const auto oneHundredMs = std::chrono::nanoseconds(100ms).count();
+    const auto twoHundredMs = std::chrono::nanoseconds(200ms).count();
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    presentFence1->signalForTest(oneHundredMs);
+    mFrameTimeline->setSfPresent(oneHundredMs, presentFence1);
+
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdTwo, sLayerNameTwo, sLayerNameTwo);
+    auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame2);
+    presentFence2->signalForTest(twoHundredMs);
+    mFrameTimeline->setSfPresent(twoHundredMs, presentFence2);
+
+    EXPECT_EQ(mFrameTimeline->computeFps({sLayerIdOne, sLayerIdTwo}), 10.0f);
+}
+
+TEST_F(FrameTimelineTest, computeFps_filtersOutLayers) {
+    const auto oneHundredMs = std::chrono::nanoseconds(100ms).count();
+    const auto twoHundredMs = std::chrono::nanoseconds(200ms).count();
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    presentFence1->signalForTest(oneHundredMs);
+    mFrameTimeline->setSfPresent(oneHundredMs, presentFence1);
+
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdTwo, sLayerNameTwo, sLayerNameTwo);
+    auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame2);
+    presentFence2->signalForTest(twoHundredMs);
+    mFrameTimeline->setSfPresent(twoHundredMs, presentFence2);
+
+    EXPECT_EQ(mFrameTimeline->computeFps({sLayerIdOne}), 0.0f);
+}
+
+TEST_F(FrameTimelineTest, computeFps_averagesOverMultipleFrames) {
+    const auto oneHundredMs = std::chrono::nanoseconds(100ms).count();
+    const auto twoHundredMs = std::chrono::nanoseconds(200ms).count();
+    const auto threeHundredMs = std::chrono::nanoseconds(300ms).count();
+    const auto fiveHundredMs = std::chrono::nanoseconds(500ms).count();
+    const auto sixHundredMs = std::chrono::nanoseconds(600ms).count();
+    auto surfaceFrame1 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence1 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame1->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame1);
+    presentFence1->signalForTest(oneHundredMs);
+    mFrameTimeline->setSfPresent(oneHundredMs, presentFence1);
+
+    auto surfaceFrame2 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence2 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame2->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame2);
+    presentFence2->signalForTest(twoHundredMs);
+    mFrameTimeline->setSfPresent(twoHundredMs, presentFence2);
+
+    auto surfaceFrame3 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdTwo, sLayerNameTwo, sLayerNameTwo);
+    auto presentFence3 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame3->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame3);
+    presentFence3->signalForTest(threeHundredMs);
+    mFrameTimeline->setSfPresent(threeHundredMs, presentFence3);
+
+    auto surfaceFrame4 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence4 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    surfaceFrame4->setPresentState(SurfaceFrame::PresentState::Presented);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame4);
+    presentFence4->signalForTest(fiveHundredMs);
+    mFrameTimeline->setSfPresent(fiveHundredMs, presentFence4);
+
+    auto surfaceFrame5 =
+            mFrameTimeline->createSurfaceFrameForToken(FrameTimelineInfo(), sPidOne, sUidOne,
+                                                       sLayerIdOne, sLayerNameOne, sLayerNameOne);
+    auto presentFence5 = fenceFactory.createFenceTimeForTest(Fence::NO_FENCE);
+    // Dropped frames will be excluded from fps computation
+    surfaceFrame5->setPresentState(SurfaceFrame::PresentState::Dropped);
+    mFrameTimeline->addSurfaceFrame(surfaceFrame5);
+    presentFence5->signalForTest(sixHundredMs);
+    mFrameTimeline->setSfPresent(sixHundredMs, presentFence5);
+
+    EXPECT_EQ(mFrameTimeline->computeFps({sLayerIdOne}), 5.0f);
+}
+
 } // namespace android::frametimeline

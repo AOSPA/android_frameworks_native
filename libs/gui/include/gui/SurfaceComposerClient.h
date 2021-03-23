@@ -112,57 +112,41 @@ public:
     static status_t getDisplayState(const sp<IBinder>& display, ui::DisplayState*);
 
     // Get immutable information about given physical display.
-    static status_t getDisplayInfo(const sp<IBinder>& display, DisplayInfo*);
+    static status_t getStaticDisplayInfo(const sp<IBinder>& display, ui::StaticDisplayInfo*);
 
-    // Get modes supported by given physical display.
-    static status_t getDisplayModes(const sp<IBinder>& display, Vector<ui::DisplayMode>*);
+    // Get dynamic information about given physical display.
+    static status_t getDynamicDisplayInfo(const sp<IBinder>& display, ui::DynamicDisplayInfo*);
 
-    // Get the ID of the active DisplayMode, as getDisplayModes index.
-    static int getActiveDisplayModeId(const sp<IBinder>& display);
-
-    // Shorthand for getDisplayModes element at getActiveDisplayModeId index.
+    // Shorthand for the active display mode from getDynamicDisplayInfo().
+    // TODO(b/180391891): Update clients to use getDynamicDisplayInfo and remove this function.
     static status_t getActiveDisplayMode(const sp<IBinder>& display, ui::DisplayMode*);
 
     // Sets the refresh rate boundaries for the display.
-    static status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, size_t defaultMode,
-                                               bool allowGroupSwitching,
-                                               float primaryRefreshRateMin,
-                                               float primaryRefreshRateMax,
-                                               float appRequestRefreshRateMin,
-                                               float appRequestRefreshRateMax);
+    static status_t setDesiredDisplayModeSpecs(
+            const sp<IBinder>& displayToken, ui::DisplayModeId defaultMode,
+            bool allowGroupSwitching, float primaryRefreshRateMin, float primaryRefreshRateMax,
+            float appRequestRefreshRateMin, float appRequestRefreshRateMax);
     // Gets the refresh rate boundaries for the display.
     static status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
-                                               size_t* outDefaultMode, bool* outAllowGroupSwitching,
+                                               ui::DisplayModeId* outDefaultMode,
+                                               bool* outAllowGroupSwitching,
                                                float* outPrimaryRefreshRateMin,
                                                float* outPrimaryRefreshRateMax,
                                                float* outAppRequestRefreshRateMin,
                                                float* outAppRequestRefreshRateMax);
 
-    // Gets the list of supported color modes for the given display
-    static status_t getDisplayColorModes(const sp<IBinder>& display,
-            Vector<ui::ColorMode>* outColorModes);
-
     // Get the coordinates of the display's native color primaries
     static status_t getDisplayNativePrimaries(const sp<IBinder>& display,
             ui::DisplayPrimaries& outPrimaries);
-
-    // Gets the active color mode for the given display
-    static ui::ColorMode getActiveColorMode(const sp<IBinder>& display);
 
     // Sets the active color mode for the given display
     static status_t setActiveColorMode(const sp<IBinder>& display,
             ui::ColorMode colorMode);
 
-    // Reports whether the connected display supports Auto Low Latency Mode
-    static bool getAutoLowLatencyModeSupport(const sp<IBinder>& display);
-
     // Switches on/off Auto Low Latency Mode on the connected display. This should only be
     // called if the connected display supports Auto Low Latency Mode as reported by
     // #getAutoLowLatencyModeSupport
     static void setAutoLowLatencyMode(const sp<IBinder>& display, bool on);
-
-    // Reports whether the connected display supports Game content type
-    static bool getGameContentTypeSupport(const sp<IBinder>& display);
 
     // Turns Game mode on/off on the connected display. This should only be called
     // if the display supports Game content type, as reported by #getGameContentTypeSupport
@@ -587,9 +571,6 @@ public:
     static status_t clearAnimationFrameStats();
     static status_t getAnimationFrameStats(FrameStats* outStats);
 
-    static status_t getHdrCapabilities(const sp<IBinder>& display,
-            HdrCapabilities* outCapabilities);
-
     static void setDisplayProjection(const sp<IBinder>& token, ui::Rotation orientation,
                                      const Rect& layerStackRect, const Rect& displayRect);
 
@@ -608,6 +589,8 @@ public:
                                               const sp<IBinder>& stopLayerHandle,
                                               const sp<IRegionSamplingListener>& listener);
     static status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener);
+    static status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener);
+    static status_t removeFpsListener(const sp<gui::IFpsListener>& listener);
 
 private:
     virtual void onFirstRef();

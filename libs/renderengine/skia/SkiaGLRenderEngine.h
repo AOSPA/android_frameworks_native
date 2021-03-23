@@ -92,11 +92,12 @@ private:
     void initCanvas(SkCanvas* canvas, const DisplaySettings& display);
     void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
                     const ShadowSettings& shadowSettings);
-    // If mUseColorManagement is correct and layer needsLinearEffect, it returns a linear runtime
-    // shader. Otherwise it returns the input shader.
+    // If requiresLinearEffect is true or the layer has a stretchEffect a new shader is returned.
+    // Otherwise it returns the input shader.
     sk_sp<SkShader> createRuntimeEffectShader(sk_sp<SkShader> shader, const LayerSettings* layer,
                                               const DisplaySettings& display,
-                                              bool undoPremultipliedAlpha);
+                                              bool undoPremultipliedAlpha,
+                                              bool requiresLinearEffect);
 
     EGLDisplay mEGLDisplay;
     EGLContext mEGLContext;
@@ -129,10 +130,6 @@ private:
     bool mInProtectedContext = false;
     // Object to capture commands send to Skia.
     std::unique_ptr<SkiaCapture> mCapture;
-
-    // Keep this information as a local variable to determine whether the access of the GL
-    // operations is working on the same threads.
-    const RenderEngineType mRenderEngineType = RenderEngineType::SKIA_GL;
 };
 
 } // namespace skia

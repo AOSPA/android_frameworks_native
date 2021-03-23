@@ -27,6 +27,9 @@
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
+#include <compositionengine/impl/planner/Planner.h>
+
+#include <SurfaceFlingerProperties.sysprop.h>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -38,6 +41,7 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
 
+#include <android-base/properties.h>
 #include <ui/DebugUtils.h>
 #include <ui/HdrCapabilities.h>
 #include <utils/Trace.h>
@@ -51,6 +55,18 @@ namespace android::compositionengine {
 Output::~Output() = default;
 
 namespace impl {
+
+Output::Output() {
+    const bool enableLayerCaching = [] {
+        const bool enable =
+                android::sysprop::SurfaceFlingerProperties::enable_layer_caching().value_or(false);
+        return base::GetBoolProperty(std::string("debug.sf.enable_layer_caching"), enable);
+    }();
+
+    if (enableLayerCaching) {
+        mPlanner = std::make_unique<planner::Planner>();
+    }
+}
 
 namespace {
 
@@ -186,6 +202,10 @@ void Output::setDisplaySize(const ui::Size& size) {
     const Rect newOrientedBounds(orientedSize);
     state.orientedDisplaySpace.bounds = newOrientedBounds;
 
+    if (mPlanner) {
+        mPlanner->setDisplaySize(size);
+    }
+
     dirtyEntireOutput();
 }
 
@@ -273,6 +293,15 @@ void Output::dumpBase(std::string& out) const {
     }
 }
 
+void Output::dumpPlannerInfo(const Vector<String16>& args, std::string& out) const {
+    if (!mPlanner) {
+        base::StringAppendF(&out, "Planner is disabled\n");
+        return;
+    }
+    base::StringAppendF(&out, "Planner info for display [%s]\n", mName.c_str());
+    mPlanner->dump(args, out);
+}
+
 compositionengine::DisplayColorProfile* Output::getDisplayColorProfile() const {
     return mDisplayColorProfile.get();
 }
@@ -296,7 +325,11 @@ compositionengine::RenderSurface* Output::getRenderSurface() const {
 
 void Output::setRenderSurface(std::unique_ptr<compositionengine::RenderSurface> surface) {
     mRenderSurface = std::move(surface);
-    editState().framebufferSpace.bounds = Rect(mRenderSurface->getSize());
+    const auto size = mRenderSurface->getSize();
+    editState().framebufferSpace.bounds = Rect(size);
+    if (mPlanner) {
+        mPlanner->setDisplaySize(size);
+    }
     dirtyEntireOutput();
 }
 
@@ -372,13 +405,16 @@ void Output::present(const compositionengine::CompositionRefreshArgs& refreshArg
     ALOGV(__FUNCTION__);
 
     updateColorProfile(refreshArgs);
-    updateAndWriteCompositionState(refreshArgs);
+    updateCompositionState(refreshArgs);
+    planComposition();
+    writeCompositionState(refreshArgs);
     setColorTransform(refreshArgs);
     beginFrame();
     prepareFrame();
     devOptRepaintFlash(refreshArgs);
     finishFrame(refreshArgs);
     postFramebuffer();
+    renderCachedSets();
 }
 
 void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs& refreshArgs,
@@ -636,8 +672,7 @@ void Output::updateLayerStateFromFE(const CompositionRefreshArgs& args) const {
     }
 }
 
-void Output::updateAndWriteCompositionState(
-        const compositionengine::CompositionRefreshArgs& refreshArgs) {
+void Output::updateCompositionState(const compositionengine::CompositionRefreshArgs& refreshArgs) {
     ATRACE_CALL();
     ALOGV(__FUNCTION__);
 
@@ -671,9 +706,45 @@ void Output::updateAndWriteCompositionState(
         if (mLayerRequestingBackgroundBlur == layer) {
             forceClientComposition = false;
         }
+    }
+}
 
-        // Send the updated state to the HWC, if appropriate.
-        layer->writeStateToHWC(refreshArgs.updatingGeometryThisFrame);
+void Output::planComposition() {
+    if (!mPlanner || !getState().isEnabled) {
+        return;
+    }
+
+    ATRACE_CALL();
+    ALOGV(__FUNCTION__);
+
+    mPlanner->plan(getOutputLayersOrderedByZ());
+}
+
+void Output::writeCompositionState(const compositionengine::CompositionRefreshArgs& refreshArgs) {
+    ATRACE_CALL();
+    ALOGV(__FUNCTION__);
+
+    if (!getState().isEnabled) {
+        return;
+    }
+
+    sp<GraphicBuffer> previousOverride = nullptr;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        bool skipLayer = false;
+        if (layer->getState().overrideInfo.buffer != nullptr) {
+            if (previousOverride != nullptr &&
+                layer->getState().overrideInfo.buffer == previousOverride) {
+                ALOGV("Skipping redundant buffer");
+                skipLayer = true;
+            }
+            previousOverride = layer->getState().overrideInfo.buffer;
+        }
+
+        // TODO(b/181172795): We now update geometry for all flattened layers. We should update it
+        // only when the geometry actually changes
+        const bool includeGeometry = refreshArgs.updatingGeometryThisFrame ||
+                layer->getState().overrideInfo.buffer != nullptr || skipLayer;
+        layer->writeStateToHWC(includeGeometry, skipLayer);
 #ifdef QTI_UNIFIED_DRAW
         if (hasSecureCamera || hasSecureDisplay || needsProtected) {
             layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::DEFAULT);
@@ -681,7 +752,6 @@ void Output::updateAndWriteCompositionState(
             layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::COMPATIBLE);
         }
 #endif
-
     }
 }
 
@@ -862,6 +932,10 @@ void Output::prepareFrame() {
     }
 
     chooseCompositionStrategy();
+
+    if (mPlanner) {
+        mPlanner->reportFinalPlan(getOutputLayersOrderedByZ());
+    }
 
     mRenderSurface->prepareFrame(outputState.usesClientComposition,
                                  outputState.usesDeviceComposition);
@@ -1121,10 +1195,16 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                    .realContentIsVisible = realContentIsVisible,
                                    .clearContent = !clientComposition,
                                    .disableBlurs = disableBlurs};
-            std::vector<LayerFE::LayerSettings> results =
-                    layerFE.prepareClientCompositionList(targetSettings);
-            if (realContentIsVisible && !results.empty()) {
-                layer->editState().clientCompositionTimestamp = systemTime();
+
+            std::vector<LayerFE::LayerSettings> results;
+            if (layer->getState().overrideInfo.buffer != nullptr) {
+                results = layer->getOverrideCompositionList();
+                ALOGV("Replacing [%s] with override in RE", layer->getLayerFE().getDebugName());
+            } else {
+                results = layerFE.prepareClientCompositionList(targetSettings);
+                if (realContentIsVisible && !results.empty()) {
+                    layer->editState().clientCompositionTimestamp = systemTime();
+                }
             }
 
             clientCompositionLayers.insert(clientCompositionLayers.end(),
@@ -1213,6 +1293,12 @@ void Output::postFramebuffer() {
 
     // Clear out the released layers now that we're done with them.
     mReleasedLayers.clear();
+}
+
+void Output::renderCachedSets() {
+    if (mPlanner) {
+        mPlanner->renderCachedSets(getCompositionEngine().getRenderEngine());
+    }
 }
 
 void Output::dirtyEntireOutput() {

@@ -95,6 +95,12 @@ public:
         int32_t dpiX = -1;
         int32_t dpiY = -1;
         int32_t configGroup = -1;
+
+        friend std::ostream& operator<<(std::ostream& os, const HWCDisplayMode& mode) {
+            return os << "id=" << mode.hwcId << " res=" << mode.width << "x" << mode.height
+                      << " vsyncPeriod=" << mode.vsyncPeriod << " dpi=" << mode.dpiX << "x"
+                      << mode.dpiY << " group=" << mode.configGroup;
+        }
     };
 
     virtual ~HWComposer();
@@ -208,7 +214,7 @@ public:
                                         ui::RenderIntent) = 0;
 
     // Composer 2.4
-    virtual DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const = 0;
+    virtual ui::DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const = 0;
     virtual bool isVsyncPeriodSwitchSupported(PhysicalDisplayId) const = 0;
     virtual status_t getDisplayVsyncPeriod(PhysicalDisplayId displayId,
                                            nsecs_t* outVsyncPeriod) const = 0;
@@ -347,7 +353,7 @@ public:
     status_t setActiveColorMode(PhysicalDisplayId, ui::ColorMode, ui::RenderIntent) override;
 
     // Composer 2.4
-    DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const override;
+    ui::DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const override;
     bool isVsyncPeriodSwitchSupported(PhysicalDisplayId) const override;
     status_t getDisplayVsyncPeriod(PhysicalDisplayId displayId,
                                    nsecs_t* outVsyncPeriod) const override;

@@ -175,8 +175,10 @@ class OTAPreoptService {
 private:
 
     bool ReadSystemProperties() {
+        // TODO This file does not have a stable format. It should be read by
+        // code shared by init and otapreopt. See b/181182967#comment80
         static constexpr const char* kPropertyFiles[] = {
-                "/default.prop", "/system/build.prop"
+                "/system/build.prop"
         };
 
         for (size_t i = 0; i < arraysize(kPropertyFiles); ++i) {
@@ -193,28 +195,38 @@ private:
         //   export NAME VALUE
         // For simplicity, don't respect string quotation. The values we are interested in can be
         // encoded without them.
+        // init.environ.rc and etc/classpath have the same format for
+        // environment variable exports and can be matched by the same regex.
+        // TODO Just like with the system-properties above we really should have
+        // common code between init and otapreopt to deal with reading these
+        // things. See b/181182967
+        static constexpr const char* kEnvironmentVariableSources[] = {
+                "/init.environ.rc", "/etc/classpath"
+        };
+
         std::regex export_regex("\\s*export\\s+(\\S+)\\s+(\\S+)");
-        bool parse_result = ParseFile("/init.environ.rc", [&](const std::string& line) {
-            std::smatch export_match;
-            if (!std::regex_match(line, export_match, export_regex)) {
+        for (const char* env_vars_file : kEnvironmentVariableSources) {
+            bool parse_result = ParseFile(env_vars_file, [&](const std::string& line) {
+                std::smatch export_match;
+                if (!std::regex_match(line, export_match, export_regex)) {
+                    return true;
+                }
+
+                if (export_match.size() != 3) {
+                    return true;
+                }
+
+                std::string name = export_match[1].str();
+                std::string value = export_match[2].str();
+
+                system_properties_.SetProperty(name, value);
+
                 return true;
+            });
+            if (!parse_result) {
+                return false;
             }
-
-            if (export_match.size() != 3) {
-                return true;
-            }
-
-            std::string name = export_match[1].str();
-            std::string value = export_match[2].str();
-
-            system_properties_.SetProperty(name, value);
-
-            return true;
-        });
-        if (!parse_result) {
-            return false;
         }
-
         if (system_properties_.GetProperty(kAndroidDataPathPropertyName) == nullptr) {
             return false;
         }
@@ -337,9 +349,6 @@ private:
             }
         }
 
-        // Clear cached artifacts.
-        ClearDirectory(isa_path);
-
         // Check whether we have a boot image.
         // TODO: check that the files are correct wrt/ jars.
         std::string preopted_boot_art_path =
@@ -381,37 +390,6 @@ private:
         }
         PLOG(ERROR) << "Could not create " << path;
         return false;
-    }
-
-    static void ClearDirectory(const std::string& dir) {
-        DIR* c_dir = opendir(dir.c_str());
-        if (c_dir == nullptr) {
-            PLOG(WARNING) << "Unable to open " << dir << " to delete it's contents";
-            return;
-        }
-
-        for (struct dirent* de = readdir(c_dir); de != nullptr; de = readdir(c_dir)) {
-            const char* name = de->d_name;
-            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-                continue;
-            }
-            // We only want to delete regular files and symbolic links.
-            std::string file = StringPrintf("%s/%s", dir.c_str(), name);
-            if (de->d_type != DT_REG && de->d_type != DT_LNK) {
-                LOG(WARNING) << "Unexpected file "
-                             << file
-                             << " of type "
-                             << std::hex
-                             << de->d_type
-                             << " encountered.";
-            } else {
-                // Try to unlink the file.
-                if (unlink(file.c_str()) != 0) {
-                    PLOG(ERROR) << "Unable to unlink " << file;
-                }
-            }
-        }
-        CHECK_EQ(0, closedir(c_dir)) << "Unable to close directory.";
     }
 
     static const char* ParseNull(const char* arg) {
@@ -473,24 +451,29 @@ private:
     // Run dexopt with the parameters of parameters_.
     // TODO(calin): embed the profile name in the parameters.
     int Dexopt() {
-        std::string dummy;
-        return dexopt(parameters_.apk_path,
-                      parameters_.uid,
-                      parameters_.pkgName,
-                      parameters_.instruction_set,
-                      parameters_.dexopt_needed,
-                      parameters_.oat_dir,
-                      parameters_.dexopt_flags,
-                      parameters_.compiler_filter,
-                      parameters_.volume_uuid,
-                      parameters_.shared_libraries,
-                      parameters_.se_info,
-                      parameters_.downgrade,
-                      parameters_.target_sdk_version,
-                      parameters_.profile_name,
-                      parameters_.dex_metadata_path,
-                      parameters_.compilation_reason,
-                      &dummy);
+        std::string error;
+        int res = dexopt(parameters_.apk_path,
+                         parameters_.uid,
+                         parameters_.pkgName,
+                         parameters_.instruction_set,
+                         parameters_.dexopt_needed,
+                         parameters_.oat_dir,
+                         parameters_.dexopt_flags,
+                         parameters_.compiler_filter,
+                         parameters_.volume_uuid,
+                         parameters_.shared_libraries,
+                         parameters_.se_info,
+                         parameters_.downgrade,
+                         parameters_.target_sdk_version,
+                         parameters_.profile_name,
+                         parameters_.dex_metadata_path,
+                         parameters_.compilation_reason,
+                         &error);
+        if (res != 0) {
+            LOG(ERROR) << "During preopt of " << parameters_.apk_path << " got result " << res
+                       << " error: " << error;
+        }
+        return res;
     }
 
     int RunPreopt() {

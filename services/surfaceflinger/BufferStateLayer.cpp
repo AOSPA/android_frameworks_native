@@ -171,6 +171,14 @@ void BufferStateLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
 
 void BufferStateLayer::onSurfaceFrameCreated(
         const std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame) {
+    while (mPendingJankClassifications.size() >= kPendingClassificationMaxSurfaceFrames) {
+        // Too many SurfaceFrames pending classification. The front of the deque is probably not
+        // tracked by FrameTimeline and will never be presented. This will only result in a memory
+        // leak.
+        ALOGW("Removing the front of pending jank deque from layer - %s to prevent memory leak",
+              mName.c_str());
+        mPendingJankClassifications.pop_front();
+    }
     mPendingJankClassifications.emplace_back(surfaceFrame);
 }
 
@@ -370,9 +378,7 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
 
     addFrameEvent(acquireFence, postTime, isAutoTimestamp ? 0 : desiredPresentTime);
 
-    if (info.vsyncId != FrameTimelineInfo::INVALID_VSYNC_ID) {
-        setFrameTimelineVsyncForBufferTransaction(info, postTime);
-    }
+    setFrameTimelineVsyncForBufferTransaction(info, postTime);
 
     if (dequeueTime && *dequeueTime != 0) {
         const uint64_t bufferId = buffer->getId();
@@ -611,13 +617,14 @@ bool BufferStateLayer::hasFrameUpdate() const {
     return mCurrentStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
-std::optional<nsecs_t> BufferStateLayer::nextPredictedPresentTime() const {
-    const State& drawingState(getDrawingState());
-    if (!drawingState.isAutoTimestamp || !drawingState.bufferSurfaceFrameTX) {
+std::optional<nsecs_t> BufferStateLayer::nextPredictedPresentTime(int64_t vsyncId) const {
+    const auto prediction =
+            mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(vsyncId);
+    if (!prediction.has_value()) {
         return std::nullopt;
     }
 
-    return drawingState.bufferSurfaceFrameTX->getPredictions().presentTime;
+    return prediction->presentTime;
 }
 
 status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
@@ -875,18 +882,13 @@ bool BufferStateLayer::bufferNeedsFiltering() const {
     return layerSize.width() != bufferWidth || layerSize.height() != bufferHeight;
 }
 
-void BufferStateLayer::incrementPendingBufferCount() {
-    mPendingBufferTransactions++;
-    tracePendingBufferCount();
-}
-
 void BufferStateLayer::decrementPendingBufferCount() {
-    mPendingBufferTransactions--;
-    tracePendingBufferCount();
+    int32_t pendingBuffers = --mPendingBufferTransactions;
+    tracePendingBufferCount(pendingBuffers);
 }
 
-void BufferStateLayer::tracePendingBufferCount() {
-    ATRACE_INT(mBlastTransactionName.c_str(), mPendingBufferTransactions);
+void BufferStateLayer::tracePendingBufferCount(int32_t pendingBuffers) {
+    ATRACE_INT(mBlastTransactionName.c_str(), pendingBuffers);
 }
 
 uint32_t BufferStateLayer::doTransaction(uint32_t flags) {

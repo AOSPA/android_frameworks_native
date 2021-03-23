@@ -48,6 +48,7 @@ static constexpr bool DEBUG_TOUCH_OCCLUSION = true;
 #define DEBUG_HOVER 0
 
 #include <android-base/chrono_utils.h>
+#include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android/os/IInputConstants.h>
 #include <binder/Binder.h>
@@ -78,6 +79,7 @@ static constexpr bool DEBUG_TOUCH_OCCLUSION = true;
 #define INDENT3 "      "
 #define INDENT4 "        "
 
+using android::base::HwTimeoutMultiplier;
 using android::base::StringPrintf;
 using android::os::BlockUntrustedTouchesMode;
 using android::os::IInputConstants;
@@ -89,8 +91,9 @@ namespace android::inputdispatcher {
 
 // Default input dispatching timeout if there is no focused application or paused window
 // from which to determine an appropriate dispatching timeout.
-constexpr std::chrono::duration DEFAULT_INPUT_DISPATCHING_TIMEOUT =
-        std::chrono::milliseconds(android::os::IInputConstants::DEFAULT_DISPATCHING_TIMEOUT_MILLIS);
+const std::chrono::duration DEFAULT_INPUT_DISPATCHING_TIMEOUT = std::chrono::milliseconds(
+        android::os::IInputConstants::UNMULTIPLIED_DEFAULT_DISPATCHING_TIMEOUT_MILLIS *
+        HwTimeoutMultiplier());
 
 // Amount of time to allow for all pending events to be processed when an app switch
 // key is on the way.  This is used to preempt input dispatch and drop input events
@@ -1439,7 +1442,7 @@ void InputDispatcher::dispatchSensorLocked(nsecs_t currentTime, std::shared_ptr<
     ALOGD("notifySensorEvent eventTime=%" PRId64 ", hwTimestamp=%" PRId64 ", deviceId=%d, "
           "source=0x%x, sensorType=%s",
           entry->eventTime, entry->hwTimestamp, entry->deviceId, entry->source,
-          NamedEnum::string(sensorType).c_str());
+          NamedEnum::string(entry->sensorType).c_str());
 #endif
     std::unique_ptr<CommandEntry> commandEntry =
             std::make_unique<CommandEntry>(&InputDispatcher::doNotifySensorLockedInterruptible);
@@ -2591,6 +2594,7 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry& eventEntry) {
             std::make_unique<CommandEntry>(&InputDispatcher::doPokeUserActivityLockedInterruptible);
     commandEntry->eventTime = eventEntry.eventTime;
     commandEntry->userActivityEventType = eventType;
+    commandEntry->displayId = displayId;
     postCommandLocked(std::move(commandEntry));
 }
 
@@ -5715,7 +5719,8 @@ bool InputDispatcher::afterMotionEventLockedInterruptible(const sp<Connection>& 
 void InputDispatcher::doPokeUserActivityLockedInterruptible(CommandEntry* commandEntry) {
     mLock.unlock();
 
-    mPolicy->pokeUserActivity(commandEntry->eventTime, commandEntry->userActivityEventType);
+    mPolicy->pokeUserActivity(commandEntry->eventTime, commandEntry->userActivityEventType,
+                              commandEntry->displayId);
 
     mLock.lock();
 }

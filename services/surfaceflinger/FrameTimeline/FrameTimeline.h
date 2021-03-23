@@ -156,9 +156,10 @@ public:
     // Only FrameTimeline can construct a SurfaceFrame as it provides Predictions(through
     // TokenManager), Thresholds and TimeStats pointer.
     SurfaceFrame(const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
-                 std::string layerName, std::string debugName, PredictionState predictionState,
-                 TimelineItem&& predictions, std::shared_ptr<TimeStats> timeStats,
-                 JankClassificationThresholds thresholds, TraceCookieCounter* traceCookieCounter);
+                 int32_t layerId, std::string layerName, std::string debugName,
+                 PredictionState predictionState, TimelineItem&& predictions,
+                 std::shared_ptr<TimeStats> timeStats, JankClassificationThresholds thresholds,
+                 TraceCookieCounter* traceCookieCounter);
     ~SurfaceFrame() = default;
 
     // Returns std::nullopt if the frame hasn't been classified yet.
@@ -199,6 +200,7 @@ public:
     // Getter functions used only by FrameTimelineTests and SurfaceFrame internally
     TimelineItem getActuals() const;
     pid_t getOwnerPid() const { return mOwnerPid; };
+    int32_t getLayerId() const { return mLayerId; };
     PredictionState getPredictionState() const;
     PresentState getPresentState() const;
     FrameReadyMetadata getFrameReadyMetadata() const;
@@ -221,6 +223,7 @@ private:
     const uid_t mOwnerUid;
     const std::string mLayerName;
     const std::string mDebugName;
+    const int32_t mLayerId;
     PresentState mPresentState GUARDED_BY(mMutex);
     const PredictionState mPredictionState;
     const TimelineItem mPredictions;
@@ -267,7 +270,7 @@ public:
     // Debug name is the human-readable debugging string for dumpsys.
     virtual std::shared_ptr<SurfaceFrame> createSurfaceFrameForToken(
             const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
-            std::string layerName, std::string debugName) = 0;
+            int32_t layerId, std::string layerName, std::string debugName) = 0;
 
     // Adds a new SurfaceFrame to the current DisplayFrame. Frames from multiple layers can be
     // composited into one display frame.
@@ -291,6 +294,11 @@ public:
 
     // Sets the max number of display frames that can be stored. Called by SF backdoor.
     virtual void setMaxDisplayFrames(uint32_t size);
+
+    // Computes the historical fps for the provided set of layer IDs
+    // The fps is compted from the linear timeline of present timestamps for DisplayFrames
+    // containing at least one layer ID.
+    virtual float computeFps(const std::unordered_set<int32_t>& layerIds);
 
     // Restores the max number of display frames to default. Called by SF backdoor.
     virtual void reset() = 0;
@@ -334,7 +342,7 @@ public:
     class DisplayFrame {
     public:
         DisplayFrame(std::shared_ptr<TimeStats> timeStats, JankClassificationThresholds thresholds,
-                     TraceCookieCounter* traceCookieCounter);
+                     nsecs_t hwcDuration, TraceCookieCounter* traceCookieCounter);
         virtual ~DisplayFrame() = default;
         // Dumpsys interface - dumps only if the DisplayFrame itself is janky or is at least one
         // SurfaceFrame is janky.
@@ -363,6 +371,7 @@ public:
         // Functions to be used only in testing.
         TimelineItem getActuals() const { return mSurfaceFlingerActuals; };
         TimelineItem getPredictions() const { return mSurfaceFlingerPredictions; };
+        FrameStartMetadata getFrameStartMetadata() const { return mFrameStartMetadata; };
         FramePresentMetadata getFramePresentMetadata() const { return mFramePresentMetadata; };
         FrameReadyMetadata getFrameReadyMetadata() const { return mFrameReadyMetadata; };
         int32_t getJankType() const { return mJankType; }
@@ -386,6 +395,7 @@ public:
         TimelineItem mSurfaceFlingerActuals;
         std::shared_ptr<TimeStats> mTimeStats;
         const JankClassificationThresholds mJankClassificationThresholds;
+        const nsecs_t mHwcDuration;
 
         // Collection of predictions and actual values sent over by Layers
         std::vector<std::shared_ptr<SurfaceFrame>> mSurfaceFrames;
@@ -411,19 +421,21 @@ public:
     };
 
     FrameTimeline(std::shared_ptr<TimeStats> timeStats, pid_t surfaceFlingerPid,
-                  JankClassificationThresholds thresholds = {});
+                  JankClassificationThresholds thresholds = {},
+                  nsecs_t hwcDuration = kDefaultHwcDuration);
     ~FrameTimeline() = default;
 
     frametimeline::TokenManager* getTokenManager() override { return &mTokenManager; }
     std::shared_ptr<SurfaceFrame> createSurfaceFrameForToken(
             const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
-            std::string layerName, std::string debugName) override;
+            int32_t layerId, std::string layerName, std::string debugName) override;
     void addSurfaceFrame(std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame) override;
     void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate) override;
     void setSfPresent(nsecs_t sfPresentTime,
                       const std::shared_ptr<FenceTime>& presentFence) override;
     void parseArgs(const Vector<String16>& args, std::string& result) override;
     void setMaxDisplayFrames(uint32_t size) override;
+    float computeFps(const std::unordered_set<int32_t>& layerIds) override;
     void reset() override;
 
     // Sets up the perfetto tracing backend and data source.
@@ -455,6 +467,11 @@ private:
     std::shared_ptr<TimeStats> mTimeStats;
     const pid_t mSurfaceFlingerPid;
     const JankClassificationThresholds mJankClassificationThresholds;
+    // In SF Predictions, both end & present are the same. The predictions consider the time used by
+    // composer as well, but we have no way to estimate how much time the composer needs. We are
+    // assuming an arbitrary time for the composer work.
+    const nsecs_t mHwcDuration;
+    static constexpr nsecs_t kDefaultHwcDuration = std::chrono::nanoseconds(3ms).count();
     static constexpr uint32_t kDefaultMaxDisplayFrames = 64;
     // The initial container size for the vector<SurfaceFrames> inside display frame. Although
     // this number doesn't represent any bounds on the number of surface frames that can go in a

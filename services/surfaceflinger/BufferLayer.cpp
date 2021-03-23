@@ -414,12 +414,6 @@ bool BufferLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
         return true;
     }
 
-    // If the next planned present time is not current, return and try again later
-    if (frameIsEarly(expectedPresentTime)) {
-        ATRACE_NAME("frameIsEarly()");
-        return false;
-    }
-
     // If this layer doesn't have a frame is shouldn't be presented
     if (!hasFrameUpdate()) {
         return false;
@@ -430,12 +424,12 @@ bool BufferLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
     return isBufferDue(expectedPresentTime);
 }
 
-bool BufferLayer::frameIsEarly(nsecs_t expectedPresentTime) const {
+bool BufferLayer::frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) const {
     // TODO(b/169901895): kEarlyLatchVsyncThreshold should be based on the
     // vsync period. We can do this change as soon as ag/13100772 is merged.
     constexpr static std::chrono::nanoseconds kEarlyLatchVsyncThreshold = 5ms;
 
-    const auto presentTime = nextPredictedPresentTime();
+    const auto presentTime = nextPredictedPresentTime(vsyncId);
     if (!presentTime.has_value()) {
         return false;
     }

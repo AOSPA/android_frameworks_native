@@ -77,6 +77,8 @@ public:
     MOCK_METHOD(Status, getSupportedAlwaysOnEffects, (std::vector<Effect> * ret), (override));
     MOCK_METHOD(Status, alwaysOnEnable, (int32_t id, Effect e, EffectStrength s), (override));
     MOCK_METHOD(Status, alwaysOnDisable, (int32_t id), (override));
+    MOCK_METHOD(Status, getQFactor, (float * ret), (override));
+    MOCK_METHOD(Status, getResonantFrequency, (float * ret), (override));
     MOCK_METHOD(int32_t, getInterfaceVersion, (), (override));
     MOCK_METHOD(std::string, getInterfaceHash, (), (override));
     MOCK_METHOD(IBinder*, onAsBinder, (), (override));
@@ -504,10 +506,21 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedEffect) {
         EXPECT_CALL(*mMockHal.get(), compose(Eq(emptyEffects), _))
                 .Times(Exactly(1))
                 .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+
+        EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::CLICK), _))
+                .Times(Exactly(1))
+                .WillRepeatedly(DoAll(SetArgPointee<1>(1), Return(Status())));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(singleEffect), _))
                 .Times(Exactly(1))
                 .WillRepeatedly(Return(
                         Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+
+        EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::SPIN), _))
+                .Times(Exactly(1))
+                .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+        EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::THUD), _))
+                .Times(Exactly(1))
+                .WillRepeatedly(DoAll(SetArgPointee<1>(3), Return(Status())));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(multipleEffects), _))
                 .Times(Exactly(1))
                 .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
@@ -518,6 +531,7 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedEffect) {
 
     auto result = mWrapper->performComposedEffect(emptyEffects, callback);
     ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(0ms, result.value());
     ASSERT_EQ(1, *callbackCounter.get());
 
     result = mWrapper->performComposedEffect(singleEffect, callback);
@@ -529,4 +543,41 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedEffect) {
     ASSERT_TRUE(result.isFailed());
     // Callback not triggered on failure
     ASSERT_EQ(1, *callbackCounter.get());
+}
+
+TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedCachesPrimitiveDurationsAndIgnoresFailures) {
+    std::vector<CompositeEffect> multipleEffects;
+    multipleEffects.push_back(
+            vibrator::TestFactory::createCompositeEffect(CompositePrimitive::SPIN, 10ms, 0.5f));
+    multipleEffects.push_back(
+            vibrator::TestFactory::createCompositeEffect(CompositePrimitive::THUD, 100ms, 1.0f));
+
+    EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::SPIN), _))
+            .Times(Exactly(1))
+            .WillRepeatedly(DoAll(SetArgPointee<1>(1), Return(Status())));
+    EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::THUD), _))
+            .Times(Exactly(2))
+            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
+            .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+    EXPECT_CALL(*mMockHal.get(), compose(Eq(multipleEffects), _))
+            .Times(Exactly(3))
+            .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+
+    std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
+    auto callback = vibrator::TestFactory::createCountingCallback(callbackCounter.get());
+
+    auto result = mWrapper->performComposedEffect(multipleEffects, callback);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(111ms, result.value()); // Failed primitive duration counted as 0.
+    ASSERT_EQ(1, *callbackCounter.get());
+
+    result = mWrapper->performComposedEffect(multipleEffects, callback);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(113ms, result.value()); // Second fetch succeeds and returns primitive duration.
+    ASSERT_EQ(2, *callbackCounter.get());
+
+    result = mWrapper->performComposedEffect(multipleEffects, callback);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(113ms, result.value()); // Cached durations not fetched again, same duration returned.
+    ASSERT_EQ(3, *callbackCounter.get());
 }
