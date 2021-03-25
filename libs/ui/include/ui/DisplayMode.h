@@ -16,15 +16,21 @@
 
 #pragma once
 
+#include <cstdint>
 #include <type_traits>
 
 #include <ui/Size.h>
+#include <utils/Flattenable.h>
 #include <utils/Timers.h>
 
 namespace android::ui {
 
+// This value is going to be serialized over binder so we prefer a fixed width type.
+using DisplayModeId = int32_t;
+
 // Mode supported by physical display.
-struct DisplayMode {
+struct DisplayMode : LightFlattenable<DisplayMode> {
+    DisplayModeId id;
     ui::Size resolution;
     float xDpi = 0;
     float yDpi = 0;
@@ -33,9 +39,12 @@ struct DisplayMode {
     nsecs_t appVsyncOffset = 0;
     nsecs_t sfVsyncOffset = 0;
     nsecs_t presentationDeadline = 0;
-    int group = -1;
-};
+    int32_t group = -1;
 
-static_assert(std::is_trivially_copyable_v<DisplayMode>);
+    bool isFixedSize() const { return false; }
+    size_t getFlattenedSize() const;
+    status_t flatten(void* buffer, size_t size) const;
+    status_t unflatten(const void* buffer, size_t size);
+};
 
 } // namespace android::ui

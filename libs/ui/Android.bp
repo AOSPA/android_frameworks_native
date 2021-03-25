@@ -94,6 +94,7 @@ cc_library_static {
         "libarect",
         "libmath",
     ],
+
 }
 
 cc_library_shared {
@@ -121,7 +122,8 @@ cc_library_shared {
     srcs: [
         "DebugUtils.cpp",
         "DeviceProductInfo.cpp",
-        "DisplayInfo.cpp",
+        "DisplayMode.cpp",
+        "DynamicDisplayInfo.cpp",
         "Fence.cpp",
         "FenceTime.cpp",
         "FrameStats.cpp",
@@ -136,6 +138,7 @@ cc_library_shared {
         "PixelFormat.cpp",
         "PublicFormat.cpp",
         "Size.cpp",
+        "StaticDisplayInfo.cpp",
     ],
 
     include_dirs: [
@@ -236,9 +239,11 @@ cc_library_headers {
     },
     header_libs: [
         "libnativewindow_headers",
+        "libmath_headers",
     ],
     export_header_lib_headers: [
         "libnativewindow_headers",
+        "libmath_headers",
     ],
     min_sdk_version: "29",
 }

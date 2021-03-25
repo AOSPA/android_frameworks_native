@@ -1208,10 +1208,6 @@ static void DumpBlockStatFiles() {
 
 static void DumpPacketStats() {
     DumpFile("NETWORK DEV INFO", "/proc/net/dev");
-    DumpFile("QTAGUID NETWORK INTERFACES INFO", "/proc/net/xt_qtaguid/iface_stat_all");
-    DumpFile("QTAGUID NETWORK INTERFACES INFO (xt)", "/proc/net/xt_qtaguid/iface_stat_fmt");
-    DumpFile("QTAGUID CTRL INFO", "/proc/net/xt_qtaguid/ctrl");
-    DumpFile("QTAGUID STATS INFO", "/proc/net/xt_qtaguid/stats");
 }
 
 static void DumpIpAddrAndRules() {
@@ -1657,8 +1653,6 @@ static Dumpstate::RunStatus dumpstate() {
     for_each_tid(show_wchan, "BLOCKED PROCESS WAIT-CHANNELS");
     for_each_pid(show_showtime, "PROCESS TIMES (pid cmd user system iowait+percentage)");
 
-    /* Dump Bluetooth HCI logs */
-    ds.AddDir("/data/misc/bluetooth/logs", true);
     /* Dump Nfc NCI logs */
     ds.AddDir("/data/misc/nfc/logs", true);
 
@@ -1743,6 +1737,9 @@ static Dumpstate::RunStatus dumpstate() {
     printf("========================================================\n");
 
     RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(RunDumpsysNormal);
+
+    /* Dump Bluetooth HCI logs after getting bluetooth_manager dumpsys */
+    ds.AddDir("/data/misc/bluetooth/logs", true);
 
     if (ds.dump_pool_) {
         WAIT_TASK_WITH_CONSENT_CHECK(DUMP_CHECKINS_TASK, ds.dump_pool_);
@@ -2060,7 +2057,7 @@ static void DumpstateWifiOnly() {
 }
 
 Dumpstate::RunStatus Dumpstate::DumpTraces(const char** path) {
-    const std::string temp_file_pattern = "/data/anr/dumptrace_XXXXXX";
+    const std::string temp_file_pattern = ds.bugreport_internal_dir_ + "/dumptrace_XXXXXX";
     const size_t buf_size = temp_file_pattern.length() + 1;
     std::unique_ptr<char[]> file_name_buf(new char[buf_size]);
     memcpy(file_name_buf.get(), temp_file_pattern.c_str(), buf_size);
@@ -2419,7 +2416,9 @@ static void SendBroadcast(const std::string& action, const std::vector<std::stri
 
 static void Vibrate(int duration_ms) {
     // clang-format off
-    RunCommand("", {"cmd", "vibrator", "vibrate", "-f", std::to_string(duration_ms), "dumpstate"},
+    std::vector<std::string> args = {"cmd", "vibrator_manager", "synced", "-f", "-d", "dumpstate",
+                                     "oneshot", std::to_string(duration_ms)};
+    RunCommand("", args,
                CommandOptions::WithTimeout(10)
                    .Log("Vibrate: '%s'\n")
                    .Always()
@@ -2914,6 +2913,10 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
         // own activity pushes out interesting data from the trace ring buffer.
         // The trace file is added to the zip by MaybeAddSystemTraceToZip().
         MaybeSnapshotSystemTrace();
+
+        // If a winscope trace is running, snapshot it now. It will be pulled into bugreport later
+        // from WMTRACE_DATA_DIR.
+        MaybeSnapshotWinTrace();
     }
     onUiIntensiveBugreportDumpsFinished(calling_uid);
     MaybeCheckUserConsent(calling_uid, calling_package);
@@ -3025,6 +3028,14 @@ void Dumpstate::MaybeSnapshotSystemTrace() {
     // file in the later stages.
 }
 
+void Dumpstate::MaybeSnapshotWinTrace() {
+    RunCommand(
+        // Empty name because it's not intended to be classified as a bugreport section.
+        // Actual tracing files can be found in "/data/misc/wmtrace/" in the bugreport.
+        "", {"cmd", "window", "tracing", "save-for-bugreport"},
+        CommandOptions::WithTimeout(10).Always().DropRoot().RedirectStderr().Build());
+}
+
 void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
     if (calling_uid == AID_SHELL || !CalledByApi()) {
         return;
@@ -3069,6 +3080,9 @@ void Dumpstate::CleanupTmpFiles() {
     android::os::UnlinkAndLogOnError(tmp_path_);
     android::os::UnlinkAndLogOnError(screenshot_path_);
     android::os::UnlinkAndLogOnError(path_);
+    if (dump_traces_path != nullptr) {
+        android::os::UnlinkAndLogOnError(dump_traces_path);
+    }
 }
 
 void Dumpstate::EnableParallelRunIfNeeded() {

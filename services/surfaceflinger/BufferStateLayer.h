@@ -113,9 +113,10 @@ public:
     uint32_t getEffectiveScalingMode() const override;
 
     // See mPendingBufferTransactions
-    void incrementPendingBufferCount() override;
     void decrementPendingBufferCount();
     uint32_t doTransaction(uint32_t flags) override;
+    std::atomic<int32_t>* getPendingBufferCounter() override { return &mPendingBufferTransactions; }
+    std::string getPendingBufferCounterName() override { return mBlastTransactionName; }
 
 protected:
     void gatherBufferInfo() override;
@@ -127,7 +128,7 @@ private:
     friend class TransactionFrameTracerTest;
     friend class TransactionSurfaceFrameTest;
 
-    inline void tracePendingBufferCount();
+    inline void tracePendingBufferCount(int32_t pendingBuffers);
 
     bool updateFrameEventHistory(const sp<Fence>& acquireFence, nsecs_t postedTime,
                                  nsecs_t requestedPresentTime);
@@ -155,7 +156,7 @@ private:
 
     bool bufferNeedsFiltering() const override;
 
-    std::optional<nsecs_t> nextPredictedPresentTime() const override;
+    std::optional<nsecs_t> nextPredictedPresentTime(int64_t vsyncId) const override;
 
     static const std::array<float, 16> IDENTITY_MATRIX;
 
@@ -173,6 +174,8 @@ private:
     nsecs_t mCallbackHandleAcquireTime = -1;
 
     std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;
+    // An upper bound on the number of SurfaceFrames in the pending classifications deque.
+    static constexpr int kPendingClassificationMaxSurfaceFrames = 25;
 
     const std::string mBlastTransactionName{"BufferTX - " + mName};
     // This integer is incremented everytime a buffer arrives at the server for this layer,
@@ -184,7 +187,7 @@ private:
     //     - If the integer increases, a buffer arrived at the server.
     //     - If the integer decreases in latchBuffer, that buffer was latched
     //     - If the integer decreases in setBuffer or doTransaction, a buffer was dropped
-    uint64_t mPendingBufferTransactions{0};
+    std::atomic<int32_t> mPendingBufferTransactions{0};
 
     // TODO(marissaw): support sticky transform for LEGACY camera mode
 

@@ -491,7 +491,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     compositionState->alpha = alpha;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
     compositionState->blurRegions = drawingState.blurRegions;
-    compositionState->stretchEffect = drawingState.stretchEffect;
+    compositionState->stretchEffect = getStretchEffect();
 }
 
 void Layer::prepareGeometryCompositionState() {
@@ -566,7 +566,7 @@ void Layer::preparePerFrameCompositionState() {
 
     // Force client composition for special cases known only to the front-end.
     if (isHdrY410() || usesRoundedCorners || drawShadows() || drawingState.blurRegions.size() > 0 ||
-        drawingState.stretchEffect.hasEffect()) {
+        compositionState->stretchEffect.hasEffect()) {
         compositionState->forceClientComposition = true;
     }
 }
@@ -1363,7 +1363,6 @@ bool Layer::setCrop_legacy(const Rect& crop) {
 
 bool Layer::setMetadata(const LayerMetadata& data) {
     if (!mCurrentState.metadata.merge(data, true /* eraseEmpty */)) return false;
-    mCurrentState.sequence++;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -1461,6 +1460,22 @@ bool Layer::setStretchEffect(const StretchEffect& effect) {
     return true;
 }
 
+StretchEffect Layer::getStretchEffect() const {
+    if (mDrawingState.stretchEffect.hasEffect()) {
+        return mDrawingState.stretchEffect;
+    }
+
+    sp<Layer> parent = getParent();
+    if (parent != nullptr) {
+        auto effect = parent->getStretchEffect();
+        if (effect.hasEffect()) {
+            // TODO(b/179047472): Map it? Or do we make the effect be in global space?
+            return effect;
+        }
+    }
+    return StretchEffect{};
+}
+
 void Layer::updateTreeHasFrameRateVote() {
     const auto traverseTree = [&](const LayerVector::Visitor& visitor) {
         auto parent = getParent();
@@ -1476,7 +1491,7 @@ void Layer::updateTreeHasFrameRateVote() {
     // First traverse the tree and count how many layers has votes. In addition
     // activate the layers in Scheduler's LayerHistory for it to check for changes
     int layersWithVote = 0;
-    traverseTree([&layersWithVote, this](Layer* layer) {
+    traverseTree([&layersWithVote](Layer* layer) {
         const auto layerVotedWithDefaultCompatibility =
                 layer->mCurrentState.frameRate.rate.isValid() &&
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::Default;
@@ -1492,20 +1507,21 @@ void Layer::updateTreeHasFrameRateVote() {
             layerVotedWithExactCompatibility) {
             layersWithVote++;
         }
-
-        mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
-                                                 LayerHistory::LayerUpdateType::SetFrameRate);
     });
 
     // Now update the other layers
     bool transactionNeeded = false;
-    traverseTree([layersWithVote, &transactionNeeded](Layer* layer) {
-        if (layer->mCurrentState.treeHasFrameRateVote != layersWithVote > 0) {
+    traverseTree([layersWithVote, &transactionNeeded, this](Layer* layer) {
+        const bool treeHasFrameRateVote = layersWithVote > 0;
+        if (layer->mCurrentState.treeHasFrameRateVote != treeHasFrameRateVote) {
             layer->mCurrentState.sequence++;
-            layer->mCurrentState.treeHasFrameRateVote = layersWithVote > 0;
+            layer->mCurrentState.treeHasFrameRateVote = treeHasFrameRateVote;
             layer->mCurrentState.modified = true;
             layer->setTransactionFlags(eTransactionNeeded);
             transactionNeeded = true;
+
+            mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
+                                                     LayerHistory::LayerUpdateType::SetFrameRate);
         }
     });
 
@@ -1602,7 +1618,8 @@ void Layer::addSurfaceFramePresentedForBuffer(
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransaction(
         const FrameTimelineInfo& info, nsecs_t postTime) {
     auto surfaceFrame =
-            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid, mName,
+            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
+                                                                 getSequence(), mName,
                                                                  mTransactionName);
     // For Transactions, the post time is considered to be both queue and acquire fence time.
     surfaceFrame->setActualQueueTime(postTime);
@@ -1618,8 +1635,8 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
         const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName) {
     auto surfaceFrame =
-            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid, mName,
-                                                                 debugName);
+            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
+                                                                 getSequence(), mName, debugName);
     // For buffers, acquire fence time will set during latch.
     surfaceFrame->setActualQueueTime(queueTime);
     const auto fps = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
@@ -1766,6 +1783,7 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
     info.mRefreshPending = isBufferLatched();
     info.mIsOpaque = isOpaque(ds);
     info.mContentDirty = contentDirty;
+    info.mStretchEffect = getStretchEffect();
     return info;
 }
 

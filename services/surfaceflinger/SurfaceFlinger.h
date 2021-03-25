@@ -114,6 +114,7 @@ namespace android {
 
 class Client;
 class EventThread;
+class FpsReporter;
 class HWComposer;
 struct SetInputWindowsListener;
 class IGraphicBufferProducer;
@@ -419,7 +420,8 @@ protected:
 
     virtual uint32_t setClientStateLocked(
             const FrameTimelineInfo& info, const ComposerState& composerState,
-            int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime, bool privileged,
+            int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime,
+            uint32_t permissions,
             std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
             REQUIRES(mStateLock);
     virtual void commitTransactionLocked();
@@ -436,6 +438,7 @@ private:
     friend class BufferQueueLayer;
     friend class BufferStateLayer;
     friend class Client;
+    friend class FpsReporter;
     friend class Layer;
     friend class MonitoredProducer;
     friend class RefreshRateOverlay;
@@ -489,6 +492,43 @@ private:
         void traverseInReverseZOrder(const LayerVector::Visitor& visitor) const;
     };
 
+    // Keeps track of pending buffers per layer handle in the transaction queue or current/drawing
+    // state before the buffers are latched. The layer owns the atomic counters and decrements the
+    // count in the main thread when dropping or latching a buffer.
+    //
+    // The binder threads increment the same counter when a new transaction containing a buffer is
+    // added to the transaction queue. The map is updated with the layer handle lifecycle updates.
+    // This is done to avoid lock contention with the main thread.
+    class BufferCountTracker {
+    public:
+        void increment(BBinder* layerHandle) {
+            std::lock_guard<std::mutex> lock(mLock);
+            auto it = mCounterByLayerHandle.find(layerHandle);
+            if (it != mCounterByLayerHandle.end()) {
+                auto [name, pendingBuffers] = it->second;
+                int32_t count = ++(*pendingBuffers);
+                ATRACE_INT(name.c_str(), count);
+            } else {
+                ALOGW("Handle not found! %p", layerHandle);
+            }
+        }
+
+        void add(BBinder* layerHandle, const std::string& name, std::atomic<int32_t>* counter) {
+            std::lock_guard<std::mutex> lock(mLock);
+            mCounterByLayerHandle[layerHandle] = std::make_pair(name, counter);
+        }
+
+        void remove(BBinder* layerHandle) {
+            std::lock_guard<std::mutex> lock(mLock);
+            mCounterByLayerHandle.erase(layerHandle);
+        }
+
+    private:
+        std::mutex mLock;
+        std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
+                mCounterByLayerHandle GUARDED_BY(mLock);
+    };
+
     struct ActiveModeInfo {
         DisplayModeId modeId;
         Scheduler::ModeEvent event = Scheduler::ModeEvent::None;
@@ -516,7 +556,7 @@ private:
                          const sp<IBinder>& applyToken,
                          const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
                          bool isAutoTimestamp, const client_cache_t& uncacheBuffer,
-                         int64_t postTime, bool privileged, bool hasListenerCallbacks,
+                         int64_t postTime, uint32_t permissions, bool hasListenerCallbacks,
                          std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
                          int originUid, uint64_t transactionId)
               : frameTimelineInfo(frameTimelineInfo),
@@ -529,7 +569,7 @@ private:
                 isAutoTimestamp(isAutoTimestamp),
                 buffer(uncacheBuffer),
                 postTime(postTime),
-                privileged(privileged),
+                permissions(permissions),
                 hasListenerCallbacks(hasListenerCallbacks),
                 listenerCallbacks(listenerCallbacks),
                 originPid(originPid),
@@ -546,7 +586,7 @@ private:
         const bool isAutoTimestamp;
         client_cache_t buffer;
         const int64_t postTime;
-        bool privileged;
+        uint32_t permissions;
         bool hasListenerCallbacks;
         std::vector<ListenerCallbacks> listenerCallbacks;
         int originPid;
@@ -627,26 +667,20 @@ private:
                            const sp<IScreenCaptureListener>& captureListener) override;
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats) override;
-    status_t getDisplayState(const sp<IBinder>& displayToken, ui::DisplayState*) override;
-    status_t getDisplayInfo(const sp<IBinder>& displayToken, DisplayInfo*) override;
-    status_t getDisplayModes(const sp<IBinder>& displayToken, Vector<ui::DisplayMode>*) override;
-    int getActiveDisplayModeId(const sp<IBinder>& displayToken) override;
-    status_t getDisplayColorModes(const sp<IBinder>& displayToken, Vector<ui::ColorMode>*) override;
+    status_t getDisplayState(const sp<IBinder>& displayToken, ui::DisplayState*)
+            EXCLUDES(mStateLock) override;
+    status_t getStaticDisplayInfo(const sp<IBinder>& displayToken, ui::StaticDisplayInfo*)
+            EXCLUDES(mStateLock) override;
+    status_t getDynamicDisplayInfo(const sp<IBinder>& displayToken, ui::DynamicDisplayInfo*)
+            EXCLUDES(mStateLock) override;
     status_t getDisplayNativePrimaries(const sp<IBinder>& displayToken,
                                        ui::DisplayPrimaries&) override;
-    ui::ColorMode getActiveColorMode(const sp<IBinder>& displayToken) override;
     status_t setActiveColorMode(const sp<IBinder>& displayToken, ui::ColorMode colorMode) override;
-    status_t getAutoLowLatencyModeSupport(const sp<IBinder>& displayToken,
-                                          bool* outSupported) const override;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on) override;
-    status_t getGameContentTypeSupport(const sp<IBinder>& displayToken,
-                                       bool* outSupported) const override;
     void setGameContentType(const sp<IBinder>& displayToken, bool on) override;
     void setPowerMode(const sp<IBinder>& displayToken, int mode) override;
     status_t clearAnimationFrameStats() override;
     status_t getAnimationFrameStats(FrameStats* outStats) const override;
-    status_t getHdrCapabilities(const sp<IBinder>& displayToken,
-                                HdrCapabilities* outCapabilities) const override;
     status_t enableVSyncInjections(bool enable) override;
     status_t injectVSync(nsecs_t when) override;
     status_t getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) override;
@@ -669,11 +703,15 @@ private:
     status_t addRegionSamplingListener(const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
                                        const sp<IRegionSamplingListener>& listener) override;
     status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) override;
-    status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, size_t displayModeId,
-                                        bool allowGroupSwitching, float primaryRefreshRateMin,
-                                        float primaryRefreshRateMax, float appRequestRefreshRateMin,
+    status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener) override;
+    status_t removeFpsListener(const sp<gui::IFpsListener>& listener) override;
+    status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                        ui::DisplayModeId displayModeId, bool allowGroupSwitching,
+                                        float primaryRefreshRateMin, float primaryRefreshRateMax,
+                                        float appRequestRefreshRateMin,
                                         float appRequestRefreshRateMax) override;
-    status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, size_t* outDefaultMode,
+    status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                        ui::DisplayModeId* outDefaultMode,
                                         bool* outAllowGroupSwitching,
                                         float* outPrimaryRefreshRateMin,
                                         float* outPrimaryRefreshRateMax,
@@ -821,7 +859,7 @@ private:
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime, bool isAutoTimestamp,
                                const client_cache_t& uncacheBuffer, const int64_t postTime,
-                               bool privileged, bool hasListenerCallbacks,
+                               uint32_t permissions, bool hasListenerCallbacks,
                                const std::vector<ListenerCallbacks>& listenerCallbacks,
                                int originPid, int originUid, uint64_t transactionId)
             REQUIRES(mStateLock);
@@ -843,8 +881,8 @@ private:
     void commitTransaction() REQUIRES(mStateLock);
     void commitOffscreenLayers();
     bool transactionIsReadyToBeApplied(
-            bool isAutoTimestamp, int64_t desiredPresentTime, const Vector<ComposerState>& states,
-            bool updateTransactionCounters,
+            const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
+            const Vector<ComposerState>& states,
             std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
@@ -992,7 +1030,8 @@ private:
     /*
      * Display management
      */
-    DisplayModes loadSupportedDisplayModes(PhysicalDisplayId) const;
+    void loadDisplayModes(PhysicalDisplayId displayId, DisplayModes& outModes,
+                          DisplayModePtr& outActiveMode) const REQUIRES(mStateLock);
     sp<DisplayDevice> setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
             std::shared_ptr<compositionengine::Display> compositionDisplay,
@@ -1107,6 +1146,7 @@ private:
     LayersProto dumpProtoFromMainThread(uint32_t traceFlags = SurfaceTracing::TRACE_ALL)
             EXCLUDES(mStateLock);
     void dumpOffscreenLayers(std::string& result) EXCLUDES(mStateLock);
+    void dumpPlannerInfo(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
 
     bool isLayerTripleBufferingDisabled() const {
         return this->mLayerTripleBufferingDisabled;
@@ -1150,6 +1190,10 @@ private:
     // either AID_GRAPHICS or AID_SYSTEM.
     status_t CheckTransactCodeCredentials(uint32_t code);
 
+    // Add transaction to the Transaction Queue
+    void queueTransaction(TransactionState state) EXCLUDES(mQueueLock);
+    void waitForSynchronousTransaction(bool synchronous, bool syncInput) EXCLUDES(mStateLock);
+
     /*
      * Generic Layer Metadata
      */
@@ -1164,6 +1208,9 @@ private:
         if (mDesiredActiveModeChanged) return mDesiredActiveMode;
         return std::nullopt;
     }
+
+    std::vector<ui::ColorMode> getDisplayColorModes(PhysicalDisplayId displayId)
+            REQUIRES(mStateLock);
 
     static int calculateExtraBufferCount(Fps maxSupportedRefreshRate,
                                          std::chrono::nanoseconds presentLatency);
@@ -1386,6 +1433,7 @@ private:
 
     bool mLumaSampling = true;
     sp<RegionSamplingThread> mRegionSamplingThread;
+    sp<FpsReporter> mFpsReporter;
     ui::DisplayPrimaries mInternalDisplayPrimaries;
 
     const float mInternalDisplayDensity;
@@ -1425,6 +1473,8 @@ private:
     int mFrameRateFlexibilityTokenCount = 0;
 
     sp<IBinder> mDebugFrameRateFlexibilityToken;
+
+    BufferCountTracker mBufferCountTracker;
 
     SmomoWrapper mSmoMo;
     LayerExtWrapper mLayerExt;

@@ -28,10 +28,15 @@
 
 namespace android::compositionengine::impl {
 
+namespace planner {
+class Planner;
+} // namespace planner
+
 // The implementation class contains the common implementation, but does not
 // actually contain the final output state.
 class Output : public virtual compositionengine::Output {
 public:
+    Output();
     ~Output() override;
 
     // compositionengine::Output overrides
@@ -48,6 +53,7 @@ public:
     void setColorProfile(const ColorProfile&) override;
 
     void dump(std::string&) const override;
+    void dumpPlannerInfo(const Vector<String16>& args, std::string&) const override;
 
     const std::string& getName() const override;
     void setName(const std::string&) override;
@@ -77,7 +83,9 @@ public:
     void setReleasedLayers(const compositionengine::CompositionRefreshArgs&) override;
 
     void updateLayerStateFromFE(const CompositionRefreshArgs&) const override;
-    void updateAndWriteCompositionState(const compositionengine::CompositionRefreshArgs&) override;
+    void updateCompositionState(const compositionengine::CompositionRefreshArgs&) override;
+    void planComposition() override;
+    void writeCompositionState(const compositionengine::CompositionRefreshArgs&) override;
     void updateColorProfile(const compositionengine::CompositionRefreshArgs&) override;
     void beginFrame() override;
     void prepareFrame() override;
@@ -86,12 +94,14 @@ public:
     std::optional<base::unique_fd> composeSurfaces(
             const Region&, const compositionengine::CompositionRefreshArgs& refreshArgs) override;
     void postFramebuffer() override;
+    void renderCachedSets() override;
     void cacheClientCompositionRequests(uint32_t) override;
 
     // Testing
     const ReleasedLayers& getReleasedLayersForTest() const;
     void setDisplayColorProfileForTest(std::unique_ptr<compositionengine::DisplayColorProfile>);
     void setRenderSurfaceForTest(std::unique_ptr<compositionengine::RenderSurface>);
+    bool plannerEnabled() const { return mPlanner != nullptr; }
 
 protected:
     std::unique_ptr<compositionengine::OutputLayer> createOutputLayer(const sp<LayerFE>&) const;
@@ -130,6 +140,7 @@ private:
     ReleasedLayers mReleasedLayers;
     OutputLayer* mLayerRequestingBackgroundBlur = nullptr;
     std::unique_ptr<ClientCompositionRequestCache> mClientCompositionRequestCache;
+    std::unique_ptr<planner::Planner> mPlanner;
 };
 
 // This template factory function standardizes the implementation details of the

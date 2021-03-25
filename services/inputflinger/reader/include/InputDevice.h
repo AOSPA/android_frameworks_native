@@ -86,7 +86,7 @@ public:
     void cancelVibrate(int32_t token);
     bool isVibrating();
     std::vector<int32_t> getVibratorIds();
-    void cancelTouch(nsecs_t when);
+    void cancelTouch(nsecs_t when, nsecs_t readTime);
     bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
                       std::chrono::microseconds maxBatchReportLatency);
     void disableSensor(InputDeviceSensorType sensorType);
@@ -94,6 +94,11 @@ public:
 
     std::optional<int32_t> getBatteryCapacity();
     std::optional<int32_t> getBatteryStatus();
+
+    bool setLightColor(int32_t lightId, int32_t color);
+    bool setLightPlayerId(int32_t lightId, int32_t playerId);
+    std::optional<int32_t> getLightColor(int32_t lightId);
+    std::optional<int32_t> getLightPlayerId(int32_t lightId);
 
     int32_t getMetaState();
     void updateMetaState(int32_t keyCode);
@@ -254,6 +259,30 @@ public:
         return mEventHub->mapSensor(mId, absCode);
     }
 
+    inline const std::vector<int32_t> getRawLightIds() { return mEventHub->getRawLightIds(mId); }
+
+    inline std::optional<RawLightInfo> getRawLightInfo(int32_t lightId) {
+        return mEventHub->getRawLightInfo(mId, lightId);
+    }
+
+    inline std::optional<int32_t> getLightBrightness(int32_t lightId) {
+        return mEventHub->getLightBrightness(mId, lightId);
+    }
+
+    inline void setLightBrightness(int32_t lightId, int32_t brightness) {
+        return mEventHub->setLightBrightness(mId, lightId, brightness);
+    }
+
+    inline std::optional<std::unordered_map<LightColor, int32_t>> getLightIntensities(
+            int32_t lightId) {
+        return mEventHub->getLightIntensities(mId, lightId);
+    }
+
+    inline void setLightIntensities(int32_t lightId,
+                                    std::unordered_map<LightColor, int32_t> intensities) {
+        return mEventHub->setLightIntensities(mId, lightId, intensities);
+    }
+
     inline std::vector<TouchVideoFrame> getVideoFrames() { return mEventHub->getVideoFrames(mId); }
     inline int32_t getScanCodeState(int32_t scanCode) const {
         return mEventHub->getScanCodeState(mId, scanCode);
@@ -322,7 +351,7 @@ public:
     inline std::optional<DisplayViewport> getAssociatedViewport() const {
         return mDevice.getAssociatedViewport();
     }
-    inline void cancelTouch(nsecs_t when) { mDevice.cancelTouch(when); }
+    inline void cancelTouch(nsecs_t when, nsecs_t readTime) { mDevice.cancelTouch(when, readTime); }
     inline void bumpGeneration() { mDevice.bumpGeneration(); }
     inline const PropertyMap& getConfiguration() { return mDevice.getConfiguration(); }
 

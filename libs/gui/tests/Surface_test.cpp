@@ -32,6 +32,7 @@
 #include <inttypes.h>
 #include <private/gui/ComposerService.h>
 #include <ui/BufferQueueDefs.h>
+#include <ui/DisplayMode.h>
 #include <ui/Rect.h>
 #include <utils/String8.h>
 
@@ -734,10 +735,11 @@ public:
     }
 
     void setPowerMode(const sp<IBinder>& /*display*/, int /*mode*/) override {}
-    status_t getDisplayInfo(const sp<IBinder>& /*display*/, DisplayInfo*) override {
+    status_t getStaticDisplayInfo(const sp<IBinder>& /*display*/, ui::StaticDisplayInfo*) override {
         return NO_ERROR;
     }
-    status_t getDisplayModes(const sp<IBinder>& /*display*/, Vector<ui::DisplayMode>*) override {
+    status_t getDynamicDisplayInfo(const sp<IBinder>& /*display*/,
+                                   ui::DynamicDisplayInfo*) override {
         return NO_ERROR;
     }
     status_t getDisplayState(const sp<IBinder>& /*display*/, ui::DisplayState*) override {
@@ -745,18 +747,9 @@ public:
     }
     status_t getDisplayStats(const sp<IBinder>& /*display*/,
             DisplayStatInfo* /*stats*/) override { return NO_ERROR; }
-    int getActiveDisplayModeId(const sp<IBinder>& /*display*/) override { return 0; }
-    status_t getDisplayColorModes(const sp<IBinder>& /*display*/,
-            Vector<ColorMode>* /*outColorModes*/) override {
-        return NO_ERROR;
-    }
     status_t getDisplayNativePrimaries(const sp<IBinder>& /*display*/,
             ui::DisplayPrimaries& /*primaries*/) override {
         return NO_ERROR;
-    }
-    ColorMode getActiveColorMode(const sp<IBinder>& /*display*/)
-            override {
-        return ColorMode::NATIVE;
     }
     status_t setActiveColorMode(const sp<IBinder>& /*display*/,
         ColorMode /*colorMode*/) override { return NO_ERROR; }
@@ -764,15 +757,7 @@ public:
                             const sp<IScreenCaptureListener>& /* captureListener */) override {
         return NO_ERROR;
     }
-    status_t getAutoLowLatencyModeSupport(const sp<IBinder>& /*display*/,
-                                          bool* /*outSupport*/) const override {
-        return NO_ERROR;
-    }
     void setAutoLowLatencyMode(const sp<IBinder>& /*display*/, bool /*on*/) override {}
-    status_t getGameContentTypeSupport(const sp<IBinder>& /*display*/,
-                                       bool* /*outSupport*/) const override {
-        return NO_ERROR;
-    }
     void setGameContentType(const sp<IBinder>& /*display*/, bool /*on*/) override {}
     status_t captureDisplay(uint64_t /*displayOrLayerStack*/,
                             const sp<IScreenCaptureListener>& /* captureListener */) override {
@@ -785,10 +770,6 @@ public:
     }
     status_t clearAnimationFrameStats() override { return NO_ERROR; }
     status_t getAnimationFrameStats(FrameStats* /*outStats*/) const override {
-        return NO_ERROR;
-    }
-    status_t getHdrCapabilities(const sp<IBinder>& /*display*/,
-            HdrCapabilities* /*outCapabilities*/) const override {
         return NO_ERROR;
     }
     status_t enableVSyncInjections(bool /*enable*/) override {
@@ -843,7 +824,12 @@ public:
             const sp<IRegionSamplingListener>& /*listener*/) override {
         return NO_ERROR;
     }
-    status_t setDesiredDisplayModeSpecs(const sp<IBinder>& /*displayToken*/, size_t /*defaultMode*/,
+    status_t addFpsListener(int32_t /*taskId*/, const sp<gui::IFpsListener>& /*listener*/) {
+        return NO_ERROR;
+    }
+    status_t removeFpsListener(const sp<gui::IFpsListener>& /*listener*/) { return NO_ERROR; }
+    status_t setDesiredDisplayModeSpecs(const sp<IBinder>& /*displayToken*/,
+                                        ui::DisplayModeId /*defaultMode*/,
                                         bool /*allowGroupSwitching*/,
                                         float /*primaryRefreshRateMin*/,
                                         float /*primaryRefreshRateMax*/,
@@ -852,7 +838,7 @@ public:
         return NO_ERROR;
     }
     status_t getDesiredDisplayModeSpecs(const sp<IBinder>& /*displayToken*/,
-                                        size_t* /*outDefaultMode*/,
+                                        ui::DisplayModeId* /*outDefaultMode*/,
                                         bool* /*outAllowGroupSwitching*/,
                                         float* /*outPrimaryRefreshRateMin*/,
                                         float* /*outPrimaryRefreshRateMax*/,

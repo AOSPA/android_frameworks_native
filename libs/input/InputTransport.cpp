@@ -34,6 +34,7 @@ static constexpr bool DEBUG_TRANSPORT_ACTIONS = false;
 #include <utils/Trace.h>
 
 #include <input/InputTransport.h>
+#include <input/NamedEnum.h>
 
 using android::base::StringPrintf;
 
@@ -576,8 +577,8 @@ status_t InputPublisher::publishFocusEvent(uint32_t seq, int32_t eventId, bool h
     msg.header.type = InputMessage::Type::FOCUS;
     msg.header.seq = seq;
     msg.body.focus.eventId = eventId;
-    msg.body.focus.hasFocus = hasFocus ? 1 : 0;
-    msg.body.focus.inTouchMode = inTouchMode ? 1 : 0;
+    msg.body.focus.hasFocus = hasFocus;
+    msg.body.focus.inTouchMode = inTouchMode;
     return mChannel->sendMessage(&msg);
 }
 
@@ -594,7 +595,7 @@ status_t InputPublisher::publishCaptureEvent(uint32_t seq, int32_t eventId,
     msg.header.type = InputMessage::Type::CAPTURE;
     msg.header.seq = seq;
     msg.body.capture.eventId = eventId;
-    msg.body.capture.pointerCaptureEnabled = pointerCaptureEnabled ? 1 : 0;
+    msg.body.capture.pointerCaptureEnabled = pointerCaptureEnabled;
     return mChannel->sendMessage(&msg);
 }
 
@@ -610,11 +611,11 @@ status_t InputPublisher::receiveFinishedSignal(
         return result;
     }
     if (msg.header.type != InputMessage::Type::FINISHED) {
-        ALOGE("channel '%s' publisher ~ Received unexpected message of type %d from consumer",
-                mChannel->getName().c_str(), msg.header.type);
+        ALOGE("channel '%s' publisher ~ Received unexpected %s message from consumer",
+              mChannel->getName().c_str(), NamedEnum::string(msg.header.type).c_str());
         return UNKNOWN_ERROR;
     }
-    callback(msg.header.seq, msg.body.finished.handled == 1, msg.body.finished.consumeTime);
+    callback(msg.header.seq, msg.body.finished.handled, msg.body.finished.consumeTime);
     return OK;
 }
 
@@ -764,8 +765,9 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
             }
 
             case InputMessage::Type::FINISHED: {
-                LOG_ALWAYS_FATAL("Consumed a FINISHED message, which should never be seen by "
-                                 "InputConsumer!");
+                LOG_ALWAYS_FATAL("Consumed a %s message, which should never be seen by "
+                                 "InputConsumer!",
+                                 NamedEnum::string(mMsg.header.type).c_str());
                 break;
             }
 
@@ -1177,7 +1179,7 @@ status_t InputConsumer::sendUnchainedFinishedSignal(uint32_t seq, bool handled) 
     InputMessage msg;
     msg.header.type = InputMessage::Type::FINISHED;
     msg.header.seq = seq;
-    msg.body.finished.handled = handled ? 1 : 0;
+    msg.body.finished.handled = handled;
     msg.body.finished.consumeTime = getConsumeTime(seq);
     status_t result = mChannel->sendMessage(&msg);
     if (result == OK) {
@@ -1237,12 +1239,12 @@ void InputConsumer::initializeKeyEvent(KeyEvent* event, const InputMessage* msg)
 }
 
 void InputConsumer::initializeFocusEvent(FocusEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.focus.eventId, msg->body.focus.hasFocus == 1,
-                      msg->body.focus.inTouchMode == 1);
+    event->initialize(msg->body.focus.eventId, msg->body.focus.hasFocus,
+                      msg->body.focus.inTouchMode);
 }
 
 void InputConsumer::initializeCaptureEvent(CaptureEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.capture.eventId, msg->body.capture.pointerCaptureEnabled == 1);
+    event->initialize(msg->body.capture.eventId, msg->body.capture.pointerCaptureEnabled);
 }
 
 void InputConsumer::initializeMotionEvent(MotionEvent* event, const InputMessage* msg) {
@@ -1310,14 +1312,14 @@ std::string InputConsumer::dump() const {
     out = out + "mChannel = " + mChannel->getName() + "\n";
     out = out + "mMsgDeferred: " + toString(mMsgDeferred) + "\n";
     if (mMsgDeferred) {
-        out = out + "mMsg : " + InputMessage::typeToString(mMsg.header.type) + "\n";
+        out = out + "mMsg : " + NamedEnum::string(mMsg.header.type) + "\n";
     }
     out += "Batches:\n";
     for (const Batch& batch : mBatches) {
         out += "    Batch:\n";
         for (const InputMessage& msg : batch.samples) {
             out += android::base::StringPrintf("        Message %" PRIu32 ": %s ", msg.header.seq,
-                                               InputMessage::typeToString(msg.header.type));
+                                               NamedEnum::string(msg.header.type).c_str());
             switch (msg.header.type) {
                 case InputMessage::Type::KEY: {
                     out += android::base::StringPrintf("action=%s keycode=%" PRId32,
