@@ -6888,7 +6888,9 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
     LOG_ALWAYS_FATAL_IF(!policy && !overridePolicy, "Can only clear the override policy");
 
     if (!display->isPrimary()) {
-        return NO_ERROR;
+        if (!isInternalDisplay(display)) {
+            return NO_ERROR;
+        }
 
         // TODO(b/144711714): For non-primary displays we should be able to set an active mode
         // as well. For now, just call directly to initiateModeChange but ideally
@@ -6913,11 +6915,9 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
         mScheduler->onNonPrimaryDisplayModeChanged(mAppConnectionHandle, displayId,
                                                    policy->defaultMode, vsyncPeriod);
 
-        if (isInternalDisplay(display)) {
-            uint32_t hwcDisplayId;
-            if (getHwcDisplayId(display, &hwcDisplayId)) {
-                setDisplayExtnActiveConfig(hwcDisplayId, policy->defaultMode.value());
-            }
+        uint32_t hwcDisplayId;
+        if (getHwcDisplayId(display, &hwcDisplayId)) {
+            setDisplayExtnActiveConfig(hwcDisplayId, policy->defaultMode.value());
         }
 
         return NO_ERROR;
