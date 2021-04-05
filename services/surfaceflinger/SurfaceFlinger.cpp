@@ -1651,6 +1651,32 @@ status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) 
     return getHwComposer().setDisplayElapseTime(*id, timeStamp);
 }
 
+status_t SurfaceFlinger::isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) {
+    sp<DisplayDevice> display = nullptr;
+    {
+        Mutex::Autolock lock(mStateLock);
+        display = (getDisplayDeviceLocked(displayToken));
+    }
+
+    if (!display) {
+        ALOGE("Attempt to switch config %d for invalid display token %p", config,
+               displayToken.get());
+        return NAME_NOT_FOUND;
+    }
+#if (defined QTI_DISPLAY_CONFIG_ENABLED && defined VALIDATE_CONFIG_SWITCH)
+    const auto displayId = display->getId();
+    const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+    bool supported = false;
+    mDisplayConfigIntf->IsSupportedConfigSwitch(*hwcDisplayId, config, &supported);
+    if (!supported) {
+        ALOGW("Switching to config:%d is not supported", config);
+        return INVALID_OPERATION;
+    }
+#endif
+
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::getDisplayedContentSample(const sp<IBinder>& displayToken,
                                                    uint64_t maxFrames, uint64_t timestamp,
                                                    DisplayedFrameStats* outStats) const {
@@ -6576,6 +6602,23 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             case 1035: {
                 const int modeId = data.readInt32();
                 mDebugDisplayModeSetByBackdoor = false;
+                const auto numConfigs = mRefreshRateConfigs->getAllRefreshRates().size();
+                if ((modeId >= 0) && (modeId < numConfigs)) {
+                    const auto displayId = getInternalDisplayId();
+                    if (!displayId) {
+                        ALOGE("No internal display found.");
+                        return NO_ERROR;
+                    }
+                    if(isSupportedConfigSwitch(getPhysicalDisplayToken(*displayId),
+                    modeId) != NO_ERROR) {
+                       return BAD_VALUE;
+                    }
+                    status_t result = setActiveMode(getPhysicalDisplayToken(*displayId), modeId);
+                    if (result != NO_ERROR) {
+                        return result;
+                    }
+                    mDebugDisplayModeSetByBackdoor = true;
+                }
 
                 const auto displayId = [&]() -> std::optional<PhysicalDisplayId> {
                     uint64_t inputDisplayId = 0;
@@ -6597,13 +6640,6 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     ALOGE("No display found");
                     return NO_ERROR;
                 }
-
-                status_t result = setActiveMode(getPhysicalDisplayToken(*displayId), modeId);
-                if (result != NO_ERROR) {
-                    return result;
-                }
-
-                mDebugDisplayModeSetByBackdoor = true;
 
                 return NO_ERROR;
             }
