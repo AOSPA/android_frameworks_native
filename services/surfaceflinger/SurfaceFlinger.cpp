@@ -999,7 +999,9 @@ void SurfaceFlinger::init() {
         const auto id = HalDisplayId::tryCast(display->getId());
         if (mDisplayExtnIntf && id) {
             uint32_t hwcDisplayId;
-            getHwcDisplayId(display, &hwcDisplayId);
+            if (!getHwcDisplayId(display, &hwcDisplayId)) {
+               return;
+            }
             if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
                 getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
             }
@@ -2272,7 +2274,9 @@ void SurfaceFlinger::beginDraw(const sp<DisplayDevice>& displayDevice) {
     std::vector<composer::LayerFlags> displayLayerFlags;
     ui::Dataspace dataspace;
     uint32_t hwcDisplayId;
-    getHwcDisplayId(displayDevice, &hwcDisplayId);
+    if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
+       return;
+    }
     const auto id = HalDisplayId::tryCast(displayDevice->getId());
     for (const auto& layer : mDrawingState.layersSortedByZ) {
          if (layer->getLayerStack() == displayDevice->getLayerStack()) {
@@ -2314,7 +2318,9 @@ void SurfaceFlinger::endDraw() {
      Mutex::Autolock lock(mStateLock);
      for (const auto& [_, displayDevice ] : mDisplays) {
           uint32_t hwcDisplayId;
-          getHwcDisplayId(displayDevice, &hwcDisplayId);
+          if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
+             continue;
+          }
           if (HalDisplayId::tryCast(displayDevice->getId()) &&
               displayDevice->getCompositionDisplay()
                            ->getState().usesClientComposition) {
@@ -3211,7 +3217,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     const auto id = HalDisplayId::tryCast(display->getId());
     if (mDisplayExtnIntf && id) {
         uint32_t hwcDisplayId;
-        getHwcDisplayId(display, &hwcDisplayId);
+        if (!getHwcDisplayId(display, &hwcDisplayId)) {
+           return;
+        }
         if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
             getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
         }
