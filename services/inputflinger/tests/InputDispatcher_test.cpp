@@ -31,6 +31,7 @@
 using android::base::StringPrintf;
 using android::os::InputEventInjectionResult;
 using android::os::InputEventInjectionSync;
+using android::os::TouchOcclusionMode;
 using namespace android::flag_operators;
 
 namespace android::inputdispatcher {
@@ -330,6 +331,8 @@ private:
 
     void notifySensorAccuracy(int deviceId, InputDeviceSensorType sensorType,
                               InputDeviceSensorAccuracy accuracy) override {}
+
+    void notifyVibratorState(int32_t deviceId, bool isOn) override {}
 
     void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) override {
         *outConfig = mConfig;
@@ -728,8 +731,9 @@ public:
         ASSERT_EQ(OK, status) << mName.c_str() << ": consumer sendFinishedSignal should return OK.";
     }
 
-    void consumeEvent(int32_t expectedEventType, int32_t expectedAction, int32_t expectedDisplayId,
-                      int32_t expectedFlags) {
+    void consumeEvent(int32_t expectedEventType, int32_t expectedAction,
+                      std::optional<int32_t> expectedDisplayId,
+                      std::optional<int32_t> expectedFlags) {
         InputEvent* event = consume();
 
         ASSERT_NE(nullptr, event) << mName.c_str()
@@ -738,19 +742,25 @@ public:
                 << mName.c_str() << " expected " << inputEventTypeToString(expectedEventType)
                 << " event, got " << inputEventTypeToString(event->getType()) << " event";
 
-        EXPECT_EQ(expectedDisplayId, event->getDisplayId());
+        if (expectedDisplayId.has_value()) {
+            EXPECT_EQ(expectedDisplayId, event->getDisplayId());
+        }
 
         switch (expectedEventType) {
             case AINPUT_EVENT_TYPE_KEY: {
                 const KeyEvent& keyEvent = static_cast<const KeyEvent&>(*event);
                 EXPECT_EQ(expectedAction, keyEvent.getAction());
-                EXPECT_EQ(expectedFlags, keyEvent.getFlags());
+                if (expectedFlags.has_value()) {
+                    EXPECT_EQ(expectedFlags.value(), keyEvent.getFlags());
+                }
                 break;
             }
             case AINPUT_EVENT_TYPE_MOTION: {
                 const MotionEvent& motionEvent = static_cast<const MotionEvent&>(*event);
                 EXPECT_EQ(expectedAction, motionEvent.getAction());
-                EXPECT_EQ(expectedFlags, motionEvent.getFlags());
+                if (expectedFlags.has_value()) {
+                    EXPECT_EQ(expectedFlags.value(), motionEvent.getFlags());
+                }
                 break;
             }
             case AINPUT_EVENT_TYPE_FOCUS: {
@@ -855,6 +865,7 @@ public:
         mInfo.name = name;
         mInfo.type = InputWindowInfo::Type::APPLICATION;
         mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
+        mInfo.alpha = 1.0;
         mInfo.frameLeft = 0;
         mInfo.frameTop = 0;
         mInfo.frameRight = WIDTH;
@@ -883,6 +894,12 @@ public:
     }
 
     void setPaused(bool paused) { mInfo.paused = paused; }
+
+    void setAlpha(float alpha) { mInfo.alpha = alpha; }
+
+    void setTouchOcclusionMode(android::os::TouchOcclusionMode mode) {
+        mInfo.touchOcclusionMode = mode;
+    }
 
     void setFrame(const Rect& frame) {
         mInfo.frameLeft = frame.left;
@@ -929,6 +946,11 @@ public:
 
     void consumeMotionDown(int32_t expectedDisplayId = ADISPLAY_ID_DEFAULT,
                            int32_t expectedFlags = 0) {
+        consumeAnyMotionDown(expectedDisplayId, expectedFlags);
+    }
+
+    void consumeAnyMotionDown(std::optional<int32_t> expectedDisplayId = std::nullopt,
+                              std::optional<int32_t> expectedFlags = std::nullopt) {
         consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_DOWN, expectedDisplayId,
                      expectedFlags);
     }
@@ -972,8 +994,9 @@ public:
         mInputReceiver->consumeCaptureEvent(hasCapture);
     }
 
-    void consumeEvent(int32_t expectedEventType, int32_t expectedAction, int32_t expectedDisplayId,
-                      int32_t expectedFlags) {
+    void consumeEvent(int32_t expectedEventType, int32_t expectedAction,
+                      std::optional<int32_t> expectedDisplayId,
+                      std::optional<int32_t> expectedFlags) {
         ASSERT_NE(mInputReceiver, nullptr) << "Invalid consume event on window with no receiver";
         mInputReceiver->consumeEvent(expectedEventType, expectedAction, expectedDisplayId,
                                      expectedFlags);
@@ -4216,6 +4239,289 @@ TEST_F(InputDispatcherPointerCaptureTests, UnexpectedStateChangeDisablesPointerC
     mFakePolicy->waitForSetPointerCapture(false);
     mWindow->consumeCaptureEvent(false);
     mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherPointerCaptureTests, OutOfOrderRequests) {
+    requestAndVerifyPointerCapture(mWindow, true);
+
+    // The first window loses focus.
+    setFocusedWindow(mSecondWindow);
+    mFakePolicy->waitForSetPointerCapture(false);
+    mWindow->consumeCaptureEvent(false);
+
+    // Request Pointer Capture from the second window before the notification from InputReader
+    // arrives.
+    mDispatcher->requestPointerCapture(mSecondWindow->getToken(), true);
+    mFakePolicy->waitForSetPointerCapture(true);
+
+    // InputReader notifies Pointer Capture was disabled (because of the focus change).
+    notifyPointerCaptureChanged(false);
+
+    // InputReader notifies Pointer Capture was enabled (because of mSecondWindow's request).
+    notifyPointerCaptureChanged(true);
+
+    mSecondWindow->consumeFocusEvent(true);
+    mSecondWindow->consumeCaptureEvent(true);
+}
+
+class InputDispatcherUntrustedTouchesTest : public InputDispatcherTest {
+protected:
+    constexpr static const float MAXIMUM_OBSCURING_OPACITY = 0.8;
+    static const int32_t TOUCHED_APP_UID = 10001;
+    static const int32_t APP_B_UID = 10002;
+    static const int32_t APP_C_UID = 10003;
+
+    sp<FakeWindowHandle> mTouchWindow;
+
+    virtual void SetUp() override {
+        InputDispatcherTest::SetUp();
+        mTouchWindow = getWindow(TOUCHED_APP_UID, "Touched");
+        mDispatcher->setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode::BLOCK);
+        mDispatcher->setMaximumObscuringOpacityForTouch(MAXIMUM_OBSCURING_OPACITY);
+    }
+
+    virtual void TearDown() override {
+        InputDispatcherTest::TearDown();
+        mTouchWindow.clear();
+    }
+
+    sp<FakeWindowHandle> getOccludingWindow(int32_t uid, std::string name,
+                                            os::TouchOcclusionMode mode, float alpha = 1.0f) {
+        sp<FakeWindowHandle> window = getWindow(uid, name);
+        window->setFlags(InputWindowInfo::Flag::NOT_TOUCHABLE);
+        window->setTouchOcclusionMode(mode);
+        window->setAlpha(alpha);
+        return window;
+    }
+
+    sp<FakeWindowHandle> getWindow(int32_t uid, std::string name) {
+        std::shared_ptr<FakeApplicationHandle> app = std::make_shared<FakeApplicationHandle>();
+        sp<FakeWindowHandle> window =
+                new FakeWindowHandle(app, mDispatcher, name, ADISPLAY_ID_DEFAULT);
+        // Generate an arbitrary PID based on the UID
+        window->setOwnerInfo(1777 + (uid % 10000), uid);
+        return window;
+    }
+
+    void touch(const std::vector<PointF>& points = {PointF{100, 200}}) {
+        NotifyMotionArgs args =
+                generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                                   ADISPLAY_ID_DEFAULT, points);
+        mDispatcher->notifyMotion(&args);
+    }
+};
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithBlockUntrustedOcclusionMode_BlocksTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::BLOCK_UNTRUSTED);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithAllowOcclusionMode_AllowsTouch) {
+    const sp<FakeWindowHandle>& w = getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::ALLOW);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, TouchOutsideOccludingWindow_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::BLOCK_UNTRUSTED);
+    w->setFrame(Rect(0, 0, 50, 50));
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch({PointF{100, 100}});
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowFromSameUid_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(TOUCHED_APP_UID, "A", TouchOcclusionMode::BLOCK_UNTRUSTED);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithZeroOpacity_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::BLOCK_UNTRUSTED, 0.0f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithOpacityBelowThreshold_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithOpacityAtThreshold_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY,
+                               MAXIMUM_OBSCURING_OPACITY);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowWithOpacityAboveThreshold_BlocksTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowsWithCombinedOpacityAboveThreshold_BlocksTouch) {
+    // Resulting opacity = 1 - (1 - 0.7)*(1 - 0.7) = .91
+    const sp<FakeWindowHandle>& w1 =
+            getOccludingWindow(APP_B_UID, "B1", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    const sp<FakeWindowHandle>& w2 =
+            getOccludingWindow(APP_B_UID, "B2", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w1, w2, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowsWithCombinedOpacityBelowThreshold_AllowsTouch) {
+    // Resulting opacity = 1 - (1 - 0.5)*(1 - 0.5) = .75
+    const sp<FakeWindowHandle>& w1 =
+            getOccludingWindow(APP_B_UID, "B1", TouchOcclusionMode::USE_OPACITY, 0.5f);
+    const sp<FakeWindowHandle>& w2 =
+            getOccludingWindow(APP_B_UID, "B2", TouchOcclusionMode::USE_OPACITY, 0.5f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w1, w2, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest,
+       WindowsFromDifferentAppsEachBelowThreshold_AllowsTouch) {
+    const sp<FakeWindowHandle>& wB =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    const sp<FakeWindowHandle>& wC =
+            getOccludingWindow(APP_C_UID, "C", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {wB, wC, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, WindowsFromDifferentAppsOneAboveThreshold_BlocksTouch) {
+    const sp<FakeWindowHandle>& wB =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    const sp<FakeWindowHandle>& wC =
+            getOccludingWindow(APP_C_UID, "C", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {wB, wC, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest,
+       WindowWithOpacityAboveThresholdAndSelfWindow_BlocksTouch) {
+    const sp<FakeWindowHandle>& wA =
+            getOccludingWindow(TOUCHED_APP_UID, "T", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    const sp<FakeWindowHandle>& wB =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {wA, wB, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest,
+       WindowWithOpacityBelowThresholdAndSelfWindow_AllowsTouch) {
+    const sp<FakeWindowHandle>& wA =
+            getOccludingWindow(TOUCHED_APP_UID, "T", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    const sp<FakeWindowHandle>& wB =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.7f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {wA, wB, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, SelfWindowWithOpacityAboveThreshold_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(TOUCHED_APP_UID, "T", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, SelfWindowWithBlockUntrustedMode_AllowsTouch) {
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(TOUCHED_APP_UID, "T", TouchOcclusionMode::BLOCK_UNTRUSTED);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest,
+       OpacityThresholdIs0AndWindowAboveThreshold_BlocksTouch) {
+    mDispatcher->setMaximumObscuringOpacityForTouch(0.0f);
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.1f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest, OpacityThresholdIs0AndWindowAtThreshold_AllowsTouch) {
+    mDispatcher->setMaximumObscuringOpacityForTouch(0.0f);
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.0f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
+}
+
+TEST_F(InputDispatcherUntrustedTouchesTest,
+       OpacityThresholdIs1AndWindowBelowThreshold_AllowsTouch) {
+    mDispatcher->setMaximumObscuringOpacityForTouch(1.0f);
+    const sp<FakeWindowHandle>& w =
+            getOccludingWindow(APP_B_UID, "B", TouchOcclusionMode::USE_OPACITY, 0.9f);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {w, mTouchWindow}}});
+
+    touch();
+
+    mTouchWindow->consumeAnyMotionDown();
 }
 
 } // namespace android::inputdispatcher

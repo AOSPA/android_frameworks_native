@@ -52,6 +52,9 @@ void VibratorInputMapper::vibrate(const VibrationSequence& sequence, ssize_t rep
     mToken = token;
     mIndex = -1;
 
+    // Request InputReader to notify InputManagerService for vibration started.
+    NotifyVibratorStateArgs args(getContext()->getNextId(), systemTime(), getDeviceId(), true);
+    getListener()->notifyVibratorState(&args);
     nextStep();
 }
 
@@ -84,6 +87,9 @@ void VibratorInputMapper::timeoutExpired(nsecs_t when) {
 }
 
 void VibratorInputMapper::nextStep() {
+#if DEBUG_VIBRATOR
+    ALOGD("nextStep: index=%d, vibrate deviceId=%d", (int)mIndex, getDeviceId());
+#endif
     mIndex += 1;
     if (size_t(mIndex) >= mSequence.pattern.size()) {
         if (mRepeat < 0) {
@@ -124,6 +130,10 @@ void VibratorInputMapper::stopVibrating() {
     ALOGD("stopVibrating: sending cancel vibrate deviceId=%d", getDeviceId());
 #endif
     getDeviceContext().cancelVibrate();
+
+    // Request InputReader to notify InputManagerService for vibration complete.
+    NotifyVibratorStateArgs args(getContext()->getNextId(), systemTime(), getDeviceId(), false);
+    getListener()->notifyVibratorState(&args);
 }
 
 void VibratorInputMapper::dump(std::string& dump) {

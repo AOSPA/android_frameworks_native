@@ -82,6 +82,7 @@ void InputPublisherAndConsumerTest::PublishAndConsumeKeyEvent() {
     constexpr int32_t repeatCount = 1;
     constexpr nsecs_t downTime = 3;
     constexpr nsecs_t eventTime = 4;
+    const nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
     status = mPublisher->publishKeyEvent(seq, eventId, deviceId, source, displayId, hmac, action,
                                          flags, keyCode, scanCode, metaState, repeatCount, downTime,
@@ -126,13 +127,22 @@ void InputPublisherAndConsumerTest::PublishAndConsumeKeyEvent() {
 
     uint32_t finishedSeq = 0;
     bool handled = false;
-    status = mPublisher->receiveFinishedSignal(&finishedSeq, &handled);
+    nsecs_t consumeTime;
+    status = mPublisher->receiveFinishedSignal(
+            [&finishedSeq, &handled, &consumeTime](uint32_t inSeq, bool inHandled,
+                                                   nsecs_t inConsumeTime) -> void {
+                finishedSeq = inSeq;
+                handled = inHandled;
+                consumeTime = inConsumeTime;
+            });
     ASSERT_EQ(OK, status)
             << "publisher receiveFinishedSignal should return OK";
     ASSERT_EQ(seq, finishedSeq)
             << "publisher receiveFinishedSignal should have returned the original sequence number";
     ASSERT_TRUE(handled)
             << "publisher receiveFinishedSignal should have set handled to consumer's reply";
+    ASSERT_GE(consumeTime, publishTime)
+            << "finished signal's consume time should be greater than publish time";
 }
 
 void InputPublisherAndConsumerTest::PublishAndConsumeMotionEvent() {
@@ -164,6 +174,7 @@ void InputPublisherAndConsumerTest::PublishAndConsumeMotionEvent() {
     constexpr nsecs_t downTime = 3;
     constexpr size_t pointerCount = 3;
     constexpr nsecs_t eventTime = 4;
+    const nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
     PointerProperties pointerProperties[pointerCount];
     PointerCoords pointerCoords[pointerCount];
     for (size_t i = 0; i < pointerCount; i++) {
@@ -270,13 +281,22 @@ void InputPublisherAndConsumerTest::PublishAndConsumeMotionEvent() {
 
     uint32_t finishedSeq = 0;
     bool handled = true;
-    status = mPublisher->receiveFinishedSignal(&finishedSeq, &handled);
+    nsecs_t consumeTime;
+    status = mPublisher->receiveFinishedSignal(
+            [&finishedSeq, &handled, &consumeTime](uint32_t inSeq, bool inHandled,
+                                                   nsecs_t inConsumeTime) -> void {
+                finishedSeq = inSeq;
+                handled = inHandled;
+                consumeTime = inConsumeTime;
+            });
     ASSERT_EQ(OK, status)
             << "publisher receiveFinishedSignal should return OK";
     ASSERT_EQ(seq, finishedSeq)
             << "publisher receiveFinishedSignal should have returned the original sequence number";
     ASSERT_FALSE(handled)
             << "publisher receiveFinishedSignal should have set handled to consumer's reply";
+    ASSERT_GE(consumeTime, publishTime)
+            << "finished signal's consume time should be greater than publish time";
 }
 
 void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
@@ -286,6 +306,7 @@ void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
     int32_t eventId = InputEvent::nextId();
     constexpr bool hasFocus = true;
     constexpr bool inTouchMode = true;
+    const nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
     status = mPublisher->publishFocusEvent(seq, eventId, hasFocus, inTouchMode);
     ASSERT_EQ(OK, status) << "publisher publishKeyEvent should return OK";
@@ -314,12 +335,21 @@ void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
 
     uint32_t finishedSeq = 0;
     bool handled = false;
-    status = mPublisher->receiveFinishedSignal(&finishedSeq, &handled);
+    nsecs_t consumeTime;
+    status = mPublisher->receiveFinishedSignal(
+            [&finishedSeq, &handled, &consumeTime](uint32_t inSeq, bool inHandled,
+                                                   nsecs_t inConsumeTime) -> void {
+                finishedSeq = inSeq;
+                handled = inHandled;
+                consumeTime = inConsumeTime;
+            });
     ASSERT_EQ(OK, status) << "publisher receiveFinishedSignal should return OK";
     ASSERT_EQ(seq, finishedSeq)
             << "publisher receiveFinishedSignal should have returned the original sequence number";
     ASSERT_TRUE(handled)
             << "publisher receiveFinishedSignal should have set handled to consumer's reply";
+    ASSERT_GE(consumeTime, publishTime)
+            << "finished signal's consume time should be greater than publish time";
 }
 
 void InputPublisherAndConsumerTest::PublishAndConsumeCaptureEvent() {
@@ -328,6 +358,7 @@ void InputPublisherAndConsumerTest::PublishAndConsumeCaptureEvent() {
     constexpr uint32_t seq = 42;
     int32_t eventId = InputEvent::nextId();
     constexpr bool captureEnabled = true;
+    const nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
     status = mPublisher->publishCaptureEvent(seq, eventId, captureEnabled);
     ASSERT_EQ(OK, status) << "publisher publishKeyEvent should return OK";
@@ -355,12 +386,21 @@ void InputPublisherAndConsumerTest::PublishAndConsumeCaptureEvent() {
 
     uint32_t finishedSeq = 0;
     bool handled = false;
-    status = mPublisher->receiveFinishedSignal(&finishedSeq, &handled);
+    nsecs_t consumeTime;
+    status = mPublisher->receiveFinishedSignal(
+            [&finishedSeq, &handled, &consumeTime](uint32_t inSeq, bool inHandled,
+                                                   nsecs_t inConsumeTime) -> void {
+                finishedSeq = inSeq;
+                handled = inHandled;
+                consumeTime = inConsumeTime;
+            });
     ASSERT_EQ(OK, status) << "publisher receiveFinishedSignal should return OK";
     ASSERT_EQ(seq, finishedSeq)
             << "publisher receiveFinishedSignal should have returned the original sequence number";
     ASSERT_TRUE(handled)
             << "publisher receiveFinishedSignal should have set handled to consumer's reply";
+    ASSERT_GE(consumeTime, publishTime)
+            << "finished signal's consume time should be greater than publish time";
 }
 
 TEST_F(InputPublisherAndConsumerTest, PublishKeyEvent_EndToEnd) {
