@@ -266,6 +266,11 @@ public:
         mPointerCaptureEnabled.reset();
     }
 
+    void assertDropTargetEquals(const sp<IBinder>& targetToken) {
+        std::scoped_lock lock(mLock);
+        ASSERT_EQ(targetToken, mDropTargetWindowToken);
+    }
+
 private:
     std::mutex mLock;
     std::unique_ptr<InputEvent> mFilteredEvent GUARDED_BY(mLock);
@@ -283,6 +288,8 @@ private:
     std::queue<int32_t> mAnrMonitorPids GUARDED_BY(mLock);
     std::queue<int32_t> mResponsiveMonitorPids GUARDED_BY(mLock);
     std::condition_variable mNotifyAnr;
+
+    sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
 
     void notifyConfigurationChanged(nsecs_t when) override {
         std::scoped_lock lock(mLock);
@@ -390,6 +397,11 @@ private:
         std::scoped_lock lock(mLock);
         mPointerCaptureEnabled = {enabled};
         mPointerCaptureChangedCondition.notify_all();
+    }
+
+    void notifyDropWindow(const sp<IBinder>& token, float x, float y) override {
+        std::scoped_lock lock(mLock);
+        mDropTargetWindowToken = token;
     }
 
     void assertFilterInputEventWasCalled(int type, nsecs_t eventTime, int32_t action,
@@ -769,6 +781,9 @@ public:
             case AINPUT_EVENT_TYPE_CAPTURE: {
                 FAIL() << "Use 'consumeCaptureEvent' for CAPTURE events";
             }
+            case AINPUT_EVENT_TYPE_DRAG: {
+                FAIL() << "Use 'consumeDragEvent' for DRAG events";
+            }
             default: {
                 FAIL() << mName.c_str() << ": invalid event type: " << expectedEventType;
             }
@@ -804,6 +819,23 @@ public:
 
         const auto& captureEvent = static_cast<const CaptureEvent&>(*event);
         EXPECT_EQ(hasCapture, captureEvent.getPointerCaptureEnabled());
+    }
+
+    void consumeDragEvent(bool isExiting, float x, float y) {
+        const InputEvent* event = consume();
+        ASSERT_NE(nullptr, event) << mName.c_str()
+                                  << ": consumer should have returned non-NULL event.";
+        ASSERT_EQ(AINPUT_EVENT_TYPE_DRAG, event->getType())
+                << "Got " << inputEventTypeToString(event->getType())
+                << " event instead of DRAG event";
+
+        EXPECT_EQ(ADISPLAY_ID_NONE, event->getDisplayId())
+                << mName.c_str() << ": event displayId should always be NONE.";
+
+        const auto& dragEvent = static_cast<const DragEvent&>(*event);
+        EXPECT_EQ(isExiting, dragEvent.isExiting());
+        EXPECT_EQ(x, dragEvent.getX());
+        EXPECT_EQ(y, dragEvent.getY());
     }
 
     void assertNoEvents() {
@@ -908,7 +940,7 @@ public:
         mInfo.frameTop = frame.top;
         mInfo.frameRight = frame.right;
         mInfo.frameBottom = frame.bottom;
-        mInfo.transform.set(frame.left, frame.top);
+        mInfo.transform.set(-frame.left, -frame.top);
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(frame);
     }
@@ -1004,6 +1036,10 @@ public:
         ASSERT_NE(mInputReceiver, nullptr) << "Invalid consume event on window with no receiver";
         mInputReceiver->consumeEvent(expectedEventType, expectedAction, expectedDisplayId,
                                      expectedFlags);
+    }
+
+    void consumeDragEvent(bool isExiting, float x, float y) {
+        mInputReceiver->consumeDragEvent(isExiting, x, y);
     }
 
     std::optional<uint32_t> receiveEvent(InputEvent** outEvent = nullptr) {
@@ -1132,8 +1168,8 @@ public:
         return *this;
     }
 
-    MotionEventBuilder& buttonState(int32_t actionButton) {
-        mActionButton = actionButton;
+    MotionEventBuilder& buttonState(int32_t buttonState) {
+        mButtonState = buttonState;
         return *this;
     }
 
@@ -2186,7 +2222,7 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_MotionEvent) {
     EXPECT_EQ(motionArgs.buttonState, verifiedMotion.buttonState);
 }
 
-TEST_F(InputDispatcherTest, NonPointerMotionEvent_JoystickNotTransformed) {
+TEST_F(InputDispatcherTest, NonPointerMotionEvent_NotTransformed) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
             new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
@@ -2206,28 +2242,41 @@ TEST_F(InputDispatcherTest, NonPointerMotionEvent_JoystickNotTransformed) {
     // Second, we consume focus event if it is right or wrong according to onFocusChangedLocked.
     window->consumeFocusEvent(true);
 
-    NotifyMotionArgs motionArgs = generateMotionArgs(AMOTION_EVENT_ACTION_MOVE,
-                                                     AINPUT_SOURCE_JOYSTICK, ADISPLAY_ID_DEFAULT);
-    mDispatcher->notifyMotion(&motionArgs);
+    constexpr const std::array nonPointerSources = {AINPUT_SOURCE_TRACKBALL,
+                                                    AINPUT_SOURCE_MOUSE_RELATIVE,
+                                                    AINPUT_SOURCE_JOYSTICK};
+    for (const int source : nonPointerSources) {
+        // Notify motion with a non-pointer source.
+        NotifyMotionArgs motionArgs =
+                generateMotionArgs(AMOTION_EVENT_ACTION_MOVE, source, ADISPLAY_ID_DEFAULT);
+        mDispatcher->notifyMotion(&motionArgs);
 
-    // Third, we consume motion event.
-    InputEvent* event = window->consume();
-    ASSERT_NE(event, nullptr);
-    ASSERT_EQ(AINPUT_EVENT_TYPE_MOTION, event->getType())
-            << name.c_str() << "expected " << inputEventTypeToString(AINPUT_EVENT_TYPE_MOTION)
-            << " event, got " << inputEventTypeToString(event->getType()) << " event";
+        InputEvent* event = window->consume();
+        ASSERT_NE(event, nullptr);
+        ASSERT_EQ(AINPUT_EVENT_TYPE_MOTION, event->getType())
+                << name.c_str() << "expected " << inputEventTypeToString(AINPUT_EVENT_TYPE_MOTION)
+                << " event, got " << inputEventTypeToString(event->getType()) << " event";
 
-    const MotionEvent& motionEvent = static_cast<const MotionEvent&>(*event);
-    EXPECT_EQ(AINPUT_EVENT_TYPE_MOTION, motionEvent.getAction());
+        const MotionEvent& motionEvent = static_cast<const MotionEvent&>(*event);
+        EXPECT_EQ(AMOTION_EVENT_ACTION_MOVE, motionEvent.getAction());
+        EXPECT_EQ(motionArgs.pointerCount, motionEvent.getPointerCount());
 
-    float expectedX = motionArgs.pointerCoords[0].getX();
-    float expectedY = motionArgs.pointerCoords[0].getY();
+        float expectedX = motionArgs.pointerCoords[0].getX();
+        float expectedY = motionArgs.pointerCoords[0].getY();
 
-    // Finally we test if the axis values from the final motion event are not transformed
-    EXPECT_EQ(expectedX, motionEvent.getX(0)) << "expected " << expectedX << " for x coord of "
-                                              << name.c_str() << ", got " << motionEvent.getX(0);
-    EXPECT_EQ(expectedY, motionEvent.getY(0)) << "expected " << expectedY << " for y coord of "
-                                              << name.c_str() << ", got " << motionEvent.getY(0);
+        // Ensure the axis values from the final motion event are not transformed.
+        EXPECT_EQ(expectedX, motionEvent.getX(0))
+                << "expected " << expectedX << " for x coord of " << name.c_str() << ", got "
+                << motionEvent.getX(0);
+        EXPECT_EQ(expectedY, motionEvent.getY(0))
+                << "expected " << expectedY << " for y coord of " << name.c_str() << ", got "
+                << motionEvent.getY(0);
+        // Ensure the raw and transformed axis values for the motion event are the same.
+        EXPECT_EQ(motionEvent.getRawX(0), motionEvent.getX(0))
+                << "expected raw and transformed X-axis values to be equal";
+        EXPECT_EQ(motionEvent.getRawY(0), motionEvent.getY(0))
+                << "expected raw and transformed Y-axis values to be equal";
+    }
 }
 
 /**
@@ -4670,6 +4719,194 @@ TEST_F(InputDispatcherUntrustedTouchesTest,
     touch();
 
     mTouchWindow->consumeAnyMotionDown();
+}
+
+class InputDispatcherDragTests : public InputDispatcherTest {
+protected:
+    std::shared_ptr<FakeApplicationHandle> mApp;
+    sp<FakeWindowHandle> mWindow;
+    sp<FakeWindowHandle> mSecondWindow;
+    sp<FakeWindowHandle> mDragWindow;
+
+    void SetUp() override {
+        InputDispatcherTest::SetUp();
+        mApp = std::make_shared<FakeApplicationHandle>();
+        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow->setFrame(Rect(0, 0, 100, 100));
+        mWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
+
+        mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
+        mSecondWindow->setFrame(Rect(100, 0, 200, 100));
+        mSecondWindow->setFlags(InputWindowInfo::Flag::NOT_TOUCH_MODAL);
+
+        mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
+        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}}});
+    }
+
+    // Start performing drag, we will create a drag window and transfer touch to it.
+    void performDrag() {
+        ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                  injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                   {50, 50}))
+                << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+        // Window should receive motion event.
+        mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+        // The drag window covers the entire display
+        mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
+        mDispatcher->setInputWindows(
+                {{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
+
+        // Transfer touch focus to the drag window
+        mDispatcher->transferTouchFocus(mWindow->getToken(), mDragWindow->getToken(),
+                                        true /* isDragDrop */);
+        mWindow->consumeMotionCancel();
+        mDragWindow->consumeMotionDown();
+    }
+
+    // Start performing drag, we will create a drag window and transfer touch to it.
+    void performStylusDrag() {
+        ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                  injectMotionEvent(mDispatcher,
+                                    MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
+                                                       AINPUT_SOURCE_STYLUS)
+                                            .buttonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY)
+                                            .pointer(PointerBuilder(0,
+                                                                    AMOTION_EVENT_TOOL_TYPE_STYLUS)
+                                                             .x(50)
+                                                             .y(50))
+                                            .build()));
+        mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+        // The drag window covers the entire display
+        mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
+        mDispatcher->setInputWindows(
+                {{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
+
+        // Transfer touch focus to the drag window
+        mDispatcher->transferTouchFocus(mWindow->getToken(), mDragWindow->getToken(),
+                                        true /* isDragDrop */);
+        mWindow->consumeMotionCancel();
+        mDragWindow->consumeMotionDown();
+    }
+};
+
+TEST_F(InputDispatcherDragTests, DragEnterAndDragExit) {
+    performDrag();
+
+    // Move on window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->consumeDragEvent(false, 50, 50);
+
+    // Move back to original window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->consumeDragEvent(true, -50, 50);
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDragTests, DragAndDrop) {
+    performDrag();
+
+    // Move on window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->consumeDragEvent(false, 50, 50);
+
+    // drop to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                             {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mFakePolicy->assertDropTargetEquals(mSecondWindow->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDragTests, StylusDragAndDrop) {
+    performStylusDrag();
+
+    // Move on window and keep button pressed.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_STYLUS)
+                                        .buttonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_STYLUS)
+                                                         .x(50)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window and release button, expect to drop item.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_STYLUS)
+                                        .buttonState(0)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_STYLUS)
+                                                         .x(150)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+    mFakePolicy->assertDropTargetEquals(mSecondWindow->getToken());
+
+    // nothing to the window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_STYLUS)
+                                        .buttonState(0)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_STYLUS)
+                                                         .x(150)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
 }
 
 } // namespace android::inputdispatcher

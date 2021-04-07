@@ -355,6 +355,13 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
         mFlinger->mFrameTracer->traceTimestamp(layerId, getCurrentBufferId(), mCurrentFrameNumber,
                                                clientCompositionTimestamp,
                                                FrameTracer::FrameEvent::FALLBACK_COMPOSITION);
+        // Update the SurfaceFrames in the drawing state
+        if (mDrawingState.bufferSurfaceFrameTX) {
+            mDrawingState.bufferSurfaceFrameTX->setGpuComposition();
+        }
+        for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
+            surfaceFrame->setGpuComposition();
+        }
     }
 
     std::shared_ptr<FenceTime> frameReadyFence = mBufferInfo.mFenceTime;
@@ -422,24 +429,6 @@ bool BufferLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
     // Defer to the derived class to decide whether the next buffer is due for
     // presentation.
     return isBufferDue(expectedPresentTime);
-}
-
-bool BufferLayer::frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) const {
-    // TODO(b/169901895): kEarlyLatchVsyncThreshold should be based on the
-    // vsync period. We can do this change as soon as ag/13100772 is merged.
-    constexpr static std::chrono::nanoseconds kEarlyLatchVsyncThreshold = 5ms;
-
-    const auto presentTime = nextPredictedPresentTime(vsyncId);
-    if (!presentTime.has_value()) {
-        return false;
-    }
-
-    if (std::abs(*presentTime - expectedPresentTime) >= kEarlyLatchMaxThreshold.count()) {
-        return false;
-    }
-
-    return *presentTime >= expectedPresentTime &&
-            *presentTime - expectedPresentTime >= kEarlyLatchVsyncThreshold.count();
 }
 
 bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,

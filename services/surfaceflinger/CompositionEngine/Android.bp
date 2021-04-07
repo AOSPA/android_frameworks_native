@@ -113,6 +113,10 @@ cc_test {
     test_suites: ["device-tests"],
     defaults: ["libcompositionengine_defaults"],
     srcs: [
+        "tests/planner/CachedSetTest.cpp",
+        "tests/planner/FlattenerTest.cpp",
+        "tests/planner/LayerStateTest.cpp",
+        "tests/planner/PredictorTest.cpp",
         "tests/CompositionEngineTest.cpp",
         "tests/DisplayColorProfileTest.cpp",
         "tests/DisplayTest.cpp",

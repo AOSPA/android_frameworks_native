@@ -772,6 +772,10 @@ public:
     status_t getAnimationFrameStats(FrameStats* /*outStats*/) const override {
         return NO_ERROR;
     }
+    status_t overrideHdrTypes(const sp<IBinder>& /*display*/,
+                              const std::vector<ui::Hdr>& /*hdrTypes*/) override {
+        return NO_ERROR;
+    }
     status_t enableVSyncInjections(bool /*enable*/) override {
         return NO_ERROR;
     }
@@ -811,7 +815,7 @@ public:
         return NO_ERROR;
     }
     status_t setDisplayBrightness(const sp<IBinder>& /*displayToken*/,
-                                  float /*brightness*/) override {
+                                  const gui::DisplayBrightness& /*brightness*/) override {
         return NO_ERROR;
     }
 

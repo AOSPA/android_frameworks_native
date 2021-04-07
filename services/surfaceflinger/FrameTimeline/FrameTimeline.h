@@ -159,7 +159,7 @@ public:
                  int32_t layerId, std::string layerName, std::string debugName,
                  PredictionState predictionState, TimelineItem&& predictions,
                  std::shared_ptr<TimeStats> timeStats, JankClassificationThresholds thresholds,
-                 TraceCookieCounter* traceCookieCounter);
+                 TraceCookieCounter* traceCookieCounter, bool isBuffer);
     ~SurfaceFrame() = default;
 
     // Returns std::nullopt if the frame hasn't been classified yet.
@@ -180,6 +180,11 @@ public:
     void setDropTime(nsecs_t dropTime);
     void setPresentState(PresentState presentState, nsecs_t lastLatchTime = 0);
     void setRenderRate(Fps renderRate);
+    void setGpuComposition();
+
+    // When a bufferless SurfaceFrame is promoted to a buffer SurfaceFrame, we also have to update
+    // isBuffer.
+    void promoteToBuffer();
 
     // Functions called by FrameTimeline
     // BaseTime is the smallest timestamp in this SurfaceFrame.
@@ -192,6 +197,8 @@ public:
                    nsecs_t displayDeadlineDelta, nsecs_t displayPresentDelta);
     // All the timestamps are dumped relative to the baseTime
     void dump(std::string& result, const std::string& indent, nsecs_t baseTime) const;
+    // Dumps only the layer, token, is buffer, jank metadata, prediction and present states.
+    std::string miniDump() const;
     // Emits a packet for perfetto tracing. The function body will be executed only if tracing is
     // enabled. The displayFrameToken is needed to link the SurfaceFrame to the corresponding
     // DisplayFrame at the trace processor side.
@@ -206,6 +213,7 @@ public:
     FrameReadyMetadata getFrameReadyMetadata() const;
     FramePresentMetadata getFramePresentMetadata() const;
     nsecs_t getDropTime() const;
+    bool getIsBuffer() const;
 
     // For prediction expired frames, this delta is subtracted from the actual end time to get a
     // start time decent enough to see in traces.
@@ -216,6 +224,8 @@ public:
 private:
     void tracePredictions(int64_t displayFrameToken) const;
     void traceActuals(int64_t displayFrameToken) const;
+    void classifyJankLocked(int32_t displayFrameJankType, const Fps& refreshRate,
+                            nsecs_t& deadlineDelta) REQUIRES(mMutex);
 
     const int64_t mToken;
     const int32_t mInputEventId;
@@ -251,6 +261,9 @@ private:
     // TraceCookieCounter is used to obtain the cookie for sendig trace packets to perfetto. Using a
     // reference here because the counter is owned by FrameTimeline, which outlives SurfaceFrame.
     TraceCookieCounter& mTraceCookieCounter;
+    // Tells if the SurfaceFrame is representing a buffer or a transaction without a
+    // buffer(animations)
+    bool mIsBuffer;
 };
 
 /*
@@ -270,7 +283,7 @@ public:
     // Debug name is the human-readable debugging string for dumpsys.
     virtual std::shared_ptr<SurfaceFrame> createSurfaceFrameForToken(
             const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
-            int32_t layerId, std::string layerName, std::string debugName) = 0;
+            int32_t layerId, std::string layerName, std::string debugName, bool isBuffer) = 0;
 
     // Adds a new SurfaceFrame to the current DisplayFrame. Frames from multiple layers can be
     // composited into one display frame.
@@ -280,11 +293,11 @@ public:
     // the token and sets the actualSfWakeTime for the current DisplayFrame.
     virtual void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate) = 0;
 
-    // Sets the sfPresentTime and finalizes the current DisplayFrame. Tracks the given present fence
-    // until it's signaled, and updates the present timestamps of all presented SurfaceFrames in
-    // that vsync.
-    virtual void setSfPresent(nsecs_t sfPresentTime,
-                              const std::shared_ptr<FenceTime>& presentFence) = 0;
+    // Sets the sfPresentTime, gpuComposition and finalizes the current DisplayFrame. Tracks the
+    // given present fence until it's signaled, and updates the present timestamps of all presented
+    // SurfaceFrames in that vsync.
+    virtual void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
+                              bool gpuComposition) = 0;
 
     // Args:
     // -jank : Dumps only the Display Frames that are either janky themselves
@@ -355,7 +368,7 @@ public:
         // Sets the token, vsyncPeriod, predictions and SF start time.
         void onSfWakeUp(int64_t token, Fps refreshRate, std::optional<TimelineItem> predictions,
                         nsecs_t wakeUpTime);
-        // Sets the appropriate metadata, classifies the jank and returns the classified jankType.
+        // Sets the appropriate metadata and classifies the jank.
         void onPresent(nsecs_t signalTime);
         // Adds the provided SurfaceFrame to the current display frame.
         void addSurfaceFrame(std::shared_ptr<SurfaceFrame> surfaceFrame);
@@ -363,6 +376,7 @@ public:
         void setPredictions(PredictionState predictionState, TimelineItem predictions);
         void setActualStartTime(nsecs_t actualStartTime);
         void setActualEndTime(nsecs_t actualEndTime);
+        void setGpuComposition();
 
         // BaseTime is the smallest timestamp in a DisplayFrame.
         // Used for dumping all timestamps relative to the oldest, making it easy to read.
@@ -383,6 +397,7 @@ public:
         void dump(std::string& result, nsecs_t baseTime) const;
         void tracePredictions(pid_t surfaceFlingerPid) const;
         void traceActuals(pid_t surfaceFlingerPid) const;
+        void classifyJank(nsecs_t& deadlineDelta, nsecs_t& deltaToVsync);
 
         int64_t mToken = FrameTimelineInfo::INVALID_VSYNC_ID;
 
@@ -428,11 +443,11 @@ public:
     frametimeline::TokenManager* getTokenManager() override { return &mTokenManager; }
     std::shared_ptr<SurfaceFrame> createSurfaceFrameForToken(
             const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid,
-            int32_t layerId, std::string layerName, std::string debugName) override;
+            int32_t layerId, std::string layerName, std::string debugName, bool isBuffer) override;
     void addSurfaceFrame(std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame) override;
     void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate) override;
-    void setSfPresent(nsecs_t sfPresentTime,
-                      const std::shared_ptr<FenceTime>& presentFence) override;
+    void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
+                      bool gpuComposition = false) override;
     void parseArgs(const Vector<String16>& args, std::string& result) override;
     void setMaxDisplayFrames(uint32_t size) override;
     float computeFps(const std::unordered_set<int32_t>& layerIds) override;

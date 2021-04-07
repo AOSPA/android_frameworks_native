@@ -121,6 +121,10 @@ cc_library {
         "ParcelFileDescriptor.cpp",
         "PersistableBundle.cpp",
         "ProcessState.cpp",
+        "RpcAddress.cpp",
+        "RpcConnection.cpp",
+        "RpcServer.cpp",
+        "RpcState.cpp",
         "Static.cpp",
         "Stability.cpp",
         "Status.cpp",
@@ -214,6 +218,7 @@ cc_library {
         "-misc-redundant-expression",
         "-misc-unused-using-decls",
         "performance*",
+        "-performance-no-int-to-ptr",
         "portability*",
     ],
 

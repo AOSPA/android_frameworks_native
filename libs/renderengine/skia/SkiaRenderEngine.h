@@ -39,7 +39,7 @@ public:
     SkiaRenderEngine(RenderEngineType type) : RenderEngine(type) {}
     ~SkiaRenderEngine() override {}
 
-    virtual void primeCache() const override{};
+    virtual void primeCache() override{};
     virtual void genTextures(size_t /*count*/, uint32_t* /*names*/) override{};
     virtual void deleteTextures(size_t /*count*/, uint32_t const* /*names*/) override{};
     virtual void cacheExternalTextureBuffer(const sp<GraphicBuffer>& /*buffer*/){};
@@ -58,6 +58,7 @@ public:
     };
     virtual bool cleanupPostRender(CleanupMode) override { return true; };
     virtual int getContextPriority() override { return 0; }
+    virtual void assertShadersCompiled(int numShaders) {}
     void setViewportAndProjection(Rect /*viewPort*/, Rect /*sourceCrop*/) override { }
 };
 

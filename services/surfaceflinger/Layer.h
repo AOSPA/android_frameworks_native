@@ -214,8 +214,8 @@ public:
         bool modified;
 
         // Crop is expressed in layer space coordinate.
-        Rect crop_legacy;
-        Rect requestedCrop_legacy;
+        Rect crop;
+        Rect requestedCrop;
 
         // If set, defers this state update until the identified Layer
         // receives a frame with the given frameNumber
@@ -250,12 +250,13 @@ public:
 
         // The fields below this point are only used by BufferStateLayer
         uint64_t frameNumber;
-        Geometry active;
+        uint32_t width;
+        uint32_t height;
+        ui::Transform transform;
 
-        uint32_t transform;
+        uint32_t bufferTransform;
         bool transformToDisplayInverse;
 
-        Rect crop;
         Region transparentRegionHint;
 
         sp<GraphicBuffer> buffer;
@@ -311,6 +312,7 @@ public:
         // When the transaction was posted
         nsecs_t postTime;
 
+        sp<ITransactionCompletedListener> releaseBufferListener;
         // SurfaceFrame that tracks the timeline of Transactions that contain a Buffer. Only one
         // such SurfaceFrame exists because only one buffer can be presented on the layer per vsync.
         // If multiple buffers are queued, the prior ones will be dropped, along with the
@@ -421,7 +423,7 @@ public:
     // space for top-level layers.
     virtual bool setPosition(float x, float y);
     // Buffer space
-    virtual bool setCrop_legacy(const Rect& crop);
+    virtual bool setCrop(const Rect& crop);
 
     // TODO(b/38182121): Could we eliminate the various latching modes by
     // using the layer hierarchy?
@@ -460,13 +462,13 @@ public:
     // Used only to set BufferStateLayer state
     virtual bool setTransform(uint32_t /*transform*/) { return false; };
     virtual bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/) { return false; };
-    virtual bool setCrop(const Rect& /*crop*/) { return false; };
     virtual bool setFrame(const Rect& /*frame*/) { return false; };
     virtual bool setBuffer(const sp<GraphicBuffer>& /*buffer*/, const sp<Fence>& /*acquireFence*/,
                            nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
                            bool /*isAutoTimestamp*/, const client_cache_t& /*clientCacheId*/,
                            uint64_t /* frameNumber */, std::optional<nsecs_t> /* dequeueTime */,
-                           const FrameTimelineInfo& /*info*/) {
+                           const FrameTimelineInfo& /*info*/,
+                           const sp<ITransactionCompletedListener>& /* releaseBufferListener */) {
         return false;
     };
     virtual bool setAcquireFence(const sp<Fence>& /*fence*/) { return false; };
@@ -547,7 +549,7 @@ public:
     virtual Region getActiveTransparentRegion(const Layer::State& s) const {
         return s.activeTransparentRegion_legacy;
     }
-    virtual Rect getCrop(const Layer::State& s) const { return s.crop_legacy; }
+    virtual Rect getCrop(const Layer::State& s) const { return s.crop; }
     virtual bool needsFiltering(const DisplayDevice*) const { return false; }
 
     // True if this layer requires filtering
@@ -778,6 +780,12 @@ public:
     virtual uint32_t doTransaction(uint32_t transactionFlags);
 
     /*
+     * Called before updating the drawing state buffer. Used by BufferStateLayer to release any
+     * unlatched buffers in the drawing state.
+     */
+    virtual void bufferMayChange(sp<GraphicBuffer>& /* newBuffer */){};
+
+    /*
      * Remove relative z for the layer if its relative parent is not part of the
      * provided layer tree.
      */
@@ -925,10 +933,6 @@ public:
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
     pid_t getOwnerPid() { return mOwnerPid; }
-
-    virtual bool frameIsEarly(nsecs_t /*expectedPresentTime*/, int64_t /*vsyncId*/) const {
-        return false;
-    }
 
     // This layer is not a clone, but it's the parent to the cloned hierarchy. The
     // variable mClonedChild represents the top layer that will be cloned so this

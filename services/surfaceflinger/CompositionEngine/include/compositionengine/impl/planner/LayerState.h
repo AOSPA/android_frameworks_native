@@ -40,6 +40,7 @@ using LayerId = int32_t;
 
 // clang-format off
 enum class LayerStateField : uint32_t {
+    None            = 0u,
     Id              = 1u << 0,
     Name            = 1u << 1,
     DisplayFrame    = 1u << 2,
@@ -173,8 +174,12 @@ public:
     // Returns which fields were updated
     Flags<LayerStateField> update(compositionengine::OutputLayer*);
 
+    // Computes a hash for this LayerState.
+    // The hash is only computed from NonUniqueFields.
     size_t getHash(Flags<LayerStateField> skipFields) const;
 
+    // Returns the bit-set of differing fields between this LayerState and another LayerState.
+    // This bit-set is based on NonUniqueFields only
     Flags<LayerStateField> getDifferingFields(const LayerState& other,
                                               Flags<LayerStateField> skipFields) const;
 
@@ -273,26 +278,14 @@ private:
                            }};
 
     using DataspaceState = OutputLayerState<ui::Dataspace, LayerStateField::Dataspace>;
-    DataspaceState mDataspace{[](auto layer) { return layer->getState().dataspace; },
-                              DataspaceState::getHalToStrings()};
+    DataspaceState mOutputDataspace{[](auto layer) { return layer->getState().dataspace; },
+                                    DataspaceState::getHalToStrings()};
 
     // TODO(b/180638831): Buffer format
 
     // Output-independent per-frame state
 
-    OutputLayerState<mat4, LayerStateField::ColorTransform>
-            mColorTransform{[](auto layer) {
-                                const auto state = layer->getLayerFE().getCompositionState();
-                                return state->colorTransformIsIdentity ? mat4{}
-                                                                       : state->colorTransform;
-                            },
-                            [](const mat4& mat) {
-                                using namespace std::string_literals;
-                                std::vector<std::string> split =
-                                        base::Split(std::string(mat.asString().string()), "\n"s);
-                                split.pop_back(); // Strip the last (empty) line
-                                return split;
-                            }};
+    OutputLayerState<mat4, LayerStateField::ColorTransform> mColorTransform;
 
     // TODO(b/180638831): Surface damage
 
@@ -348,7 +341,7 @@ private:
     std::array<const StateInterface*, 13> getNonUniqueFields() const {
         return {
                 &mDisplayFrame,   &mSourceCrop,      &mZOrder,         &mBufferTransform,
-                &mBlendMode,      &mAlpha,           &mVisibleRegion,  &mDataspace,
+                &mBlendMode,      &mAlpha,           &mVisibleRegion,  &mOutputDataspace,
                 &mColorTransform, &mCompositionType, &mSidebandStream, &mBuffer,
                 &mSolidColor,
         };

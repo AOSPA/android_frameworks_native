@@ -80,6 +80,9 @@ using TransactionCompletedCallbackTakesContext =
 using TransactionCompletedCallback =
         std::function<void(nsecs_t /*latchTime*/, const sp<Fence>& /*presentFence*/,
                            const std::vector<SurfaceControlStats>& /*stats*/)>;
+using ReleaseBufferCallback =
+        std::function<void(uint64_t /* graphicsBufferId */, const sp<Fence>& /*releaseFence*/)>;
+
 using SurfaceStatsCallback =
         std::function<void(void* /*context*/, nsecs_t /*latchTime*/,
                            const sp<Fence>& /*presentFence*/,
@@ -209,7 +212,8 @@ public:
      *      BAD_VALUE         if the brightness value is invalid, or
      *      INVALID_OPERATION if brightness operaetions are not supported.
      */
-    static status_t setDisplayBrightness(const sp<IBinder>& displayToken, float brightness);
+    static status_t setDisplayBrightness(const sp<IBinder>& displayToken,
+                                         const gui::DisplayBrightness& brightness);
 
     /*
      * Sends a power boost to the composer. This function is asynchronous.
@@ -349,9 +353,8 @@ public:
         uint32_t mForceSynchronous = 0;
         uint32_t mTransactionNestCount = 0;
         bool mAnimation = false;
-        bool mEarlyWakeup = false;
-        bool mExplicitEarlyWakeupStart = false;
-        bool mExplicitEarlyWakeupEnd = false;
+        bool mEarlyWakeupStart = false;
+        bool mEarlyWakeupEnd = false;
 
         // Indicates that the Transaction contains a buffer that should be cached
         bool mContainsBuffer = false;
@@ -387,6 +390,8 @@ public:
 
         void cacheBuffers();
         void registerSurfaceControlForCallback(const sp<SurfaceControl>& sc);
+        void setReleaseBufferCallback(layer_state_t* state, ReleaseBufferCallback callback);
+        void removeReleaseBufferCallback(layer_state_t* state);
 
     public:
         Transaction();
@@ -436,7 +441,7 @@ public:
                 float alpha);
         Transaction& setMatrix(const sp<SurfaceControl>& sc,
                 float dsdx, float dtdx, float dtdy, float dsdy);
-        Transaction& setCrop_legacy(const sp<SurfaceControl>& sc, const Rect& crop);
+        Transaction& setCrop(const sp<SurfaceControl>& sc, const Rect& crop);
         Transaction& setCornerRadius(const sp<SurfaceControl>& sc, float cornerRadius);
         Transaction& setBackgroundBlurRadius(const sp<SurfaceControl>& sc,
                                              int backgroundBlurRadius);
@@ -469,9 +474,9 @@ public:
         Transaction& setTransform(const sp<SurfaceControl>& sc, uint32_t transform);
         Transaction& setTransformToDisplayInverse(const sp<SurfaceControl>& sc,
                                                   bool transformToDisplayInverse);
-        Transaction& setCrop(const sp<SurfaceControl>& sc, const Rect& crop);
         Transaction& setFrame(const sp<SurfaceControl>& sc, const Rect& frame);
-        Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer);
+        Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
+                               ReleaseBufferCallback callback = nullptr);
         Transaction& setCachedBuffer(const sp<SurfaceControl>& sc, int32_t bufferId);
         Transaction& setAcquireFence(const sp<SurfaceControl>& sc, const sp<Fence>& fence);
         Transaction& setDataspace(const sp<SurfaceControl>& sc, ui::Dataspace dataspace);
@@ -524,9 +529,6 @@ public:
         // to the transaction, and the input event id that identifies the input event that caused
         // the current frame.
         Transaction& setFrameTimelineInfo(const FrameTimelineInfo& frameTimelineInfo);
-        // Variant that only applies to a specific SurfaceControl.
-        Transaction& setFrameTimelineInfo(const sp<SurfaceControl>& sc,
-                                          const FrameTimelineInfo& frameTimelineInfo);
 
         // Indicates that the consumer should acquire the next frame as soon as it
         // can and not wait for a frame to become available. This is only relevant
@@ -561,15 +563,17 @@ public:
                                   const Rect& layerStackRect, const Rect& displayRect);
         void setDisplaySize(const sp<IBinder>& token, uint32_t width, uint32_t height);
         void setAnimationTransaction();
-        void setEarlyWakeup();
-        void setExplicitEarlyWakeupStart();
-        void setExplicitEarlyWakeupEnd();
+        void setEarlyWakeupStart();
+        void setEarlyWakeupEnd();
     };
 
     status_t clearLayerFrameStats(const sp<IBinder>& token) const;
     status_t getLayerFrameStats(const sp<IBinder>& token, FrameStats* outStats) const;
     static status_t clearAnimationFrameStats();
     static status_t getAnimationFrameStats(FrameStats* outStats);
+
+    static status_t overrideHdrTypes(const sp<IBinder>& display,
+                                     const std::vector<ui::Hdr>& hdrTypes);
 
     static void setDisplayProjection(const sp<IBinder>& token, ui::Rotation orientation,
                                      const Rect& layerStackRect, const Rect& displayRect);
@@ -650,6 +654,8 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
 
     std::unordered_map<CallbackId, CallbackTranslation> mCallbacks GUARDED_BY(mMutex);
     std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners GUARDED_BY(mMutex);
+    std::unordered_map<uint64_t /* graphicsBufferId */, ReleaseBufferCallback>
+            mReleaseBufferCallbacks GUARDED_BY(mMutex);
     std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry>
                 mSurfaceStatsListeners GUARDED_BY(mMutex);
 
@@ -683,8 +689,15 @@ public:
                 SurfaceStatsCallback listener);
     void removeSurfaceStatsListener(void* context, void* cookie);
 
-    // Overrides BnTransactionCompletedListener's onTransactionCompleted
+    void setReleaseBufferCallback(uint64_t /* graphicsBufferId */, ReleaseBufferCallback);
+    void removeReleaseBufferCallback(uint64_t /* graphicsBufferId */);
+
+    // BnTransactionCompletedListener overrides
     void onTransactionCompleted(ListenerStats stats) override;
+    void onReleaseBuffer(uint64_t /* graphicsBufferId */, sp<Fence> releaseFence) override;
+
+private:
+    ReleaseBufferCallback popReleaseBufferCallbackLocked(uint64_t /* graphicsBufferId */);
 };
 
 } // namespace android
