@@ -23,6 +23,7 @@
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "SurfaceFlinger.h"
+#include "TraceUtils.h"
 
 #include <android-base/properties.h>
 #include <android/configuration.h>
@@ -79,7 +80,6 @@
 #include <utils/String16.h>
 #include <utils/String8.h>
 #include <utils/Timers.h>
-#include <utils/Trace.h>
 #include <utils/misc.h>
 
 #include <algorithm>
@@ -543,10 +543,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.enable_hwc_vds", value, "0");
     mUseHwcVirtualDisplays = atoi(value);
     ALOGI_IF(mUseHwcVirtualDisplays, "Enabling HWC virtual displays");
-
-    property_get("ro.sf.disable_triple_buffer", value, "0");
-    mLayerTripleBufferingDisabled = atoi(value);
-    ALOGI_IF(mLayerTripleBufferingDisabled, "Disabling Triple Buffering");
 
     property_get("ro.surface_flinger.supports_background_blur", value, "0");
     bool supportsBlurs = atoi(value);
@@ -1156,11 +1152,6 @@ status_t SurfaceFlinger::getDynamicDisplayInfo(const sp<IBinder>& displayToken,
     }
 
     info->activeDisplayModeId = static_cast<int32_t>(display->getActiveMode()->getId().value());
-    if (display->isPrimary()) {
-        if (const auto mode = getDesiredActiveMode()) {
-            info->activeDisplayModeId = static_cast<int32_t>(mode->modeId.value());
-        }
-    }
 
     const auto& supportedModes = display->getSupportedModes();
     info->supportedDisplayModes.clear();
@@ -1542,6 +1533,21 @@ status_t SurfaceFlinger::getAnimationFrameStats(FrameStats* outStats) const {
     return NO_ERROR;
 }
 
+status_t SurfaceFlinger::overrideHdrTypes(const sp<IBinder>& displayToken,
+                                          const std::vector<ui::Hdr>& hdrTypes) {
+    Mutex::Autolock lock(mStateLock);
+
+    auto display = getDisplayDeviceLocked(displayToken);
+    if (!display) {
+        ALOGE("%s: Invalid display token %p", __FUNCTION__, displayToken.get());
+        return NAME_NOT_FOUND;
+    }
+
+    display->overrideHdrTypes(hdrTypes);
+    dispatchDisplayHotplugEvent(display->getPhysicalId(), true /* connected */);
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::getDisplayedContentSamplingAttributes(const sp<IBinder>& displayToken,
                                                                ui::PixelFormat* outFormat,
                                                                ui::Dataspace* outDataspace,
@@ -1733,14 +1739,16 @@ status_t SurfaceFlinger::getDisplayBrightnessSupport(const sp<IBinder>& displayT
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::setDisplayBrightness(const sp<IBinder>& displayToken, float brightness) {
+status_t SurfaceFlinger::setDisplayBrightness(const sp<IBinder>& displayToken,
+                                              const gui::DisplayBrightness& brightness) {
     if (!displayToken) {
         return BAD_VALUE;
     }
 
     return ftl::chain(schedule([=]() MAIN_THREAD {
                if (const auto displayId = getPhysicalDisplayIdLocked(displayToken)) {
-                   return getHwComposer().setDisplayBrightness(*displayId, brightness);
+                   return getHwComposer().setDisplayBrightness(*displayId,
+                                                               brightness.displayBrightness);
                } else {
                    ALOGE("%s: Invalid display token %p", __FUNCTION__, displayToken.get());
                    return ftl::yield<status_t>(NAME_NOT_FOUND);
@@ -2003,7 +2011,12 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
 }
 
 void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t expectedVSyncTime) {
-    ATRACE_CALL();
+    const auto vsyncIn = [&] {
+        if (!ATRACE_ENABLED()) return 0.f;
+        return (expectedVSyncTime - systemTime()) / 1e6f;
+    }();
+
+    ATRACE_FORMAT("onMessageReceived %" PRId64 " vsyncIn %.2fms", vsyncId, vsyncIn);
     switch (what) {
         case MessageQueue::INVALIDATE: {
             onMessageInvalidate(vsyncId, expectedVSyncTime);
@@ -2235,7 +2248,12 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
             // underestimated.
             mFrameStartTime = frameStart;
         }
-        signalRefresh();
+
+        // Run the refresh immediately after invalidate as there is no point going thru the message
+        // queue again, and to ensure that we actually refresh the screen instead of handling
+        // other messages that were queued us already in the MessageQueue.
+        mRefreshPending = true;
+        onMessageRefresh();
     }
     if (mFrameExtn && mDolphinFuncsEnabled) {
         if (!refreshNeeded) {
@@ -2560,7 +2578,8 @@ void SurfaceFlinger::postComposition() {
     // information from previous' frame classification is already available when sending jank info
     // to clients, so they get jank classification as early as possible.
     mFrameTimeline->setSfPresent(systemTime(),
-                                 std::make_shared<FenceTime>(mPreviousPresentFences[0]));
+                                 std::make_shared<FenceTime>(mPreviousPresentFences[0]),
+                                 glCompositionDoneFenceTime != FenceTime::NO_FENCE);
 
     nsecs_t dequeueReadyTime = systemTime();
     for (const auto& layer : mLayersWithQueuedFrames) {
@@ -3622,7 +3641,7 @@ void SurfaceFlinger::initScheduler(const DisplayDeviceState& displayState) {
     mRefreshRateConfigs = std::make_unique<
             scheduler::RefreshRateConfigs>(displayState.physical->supportedModes,
                                            displayState.physical->activeMode->getId(),
-                                           android::sysprop::enable_frame_rate_override(true));
+                                           android::sysprop::enable_frame_rate_override(false));
     const auto currRefreshRate = displayState.physical->activeMode->getFps();
     mRefreshRateStats = std::make_unique<scheduler::RefreshRateStats>(*mTimeStats, currRefreshRate,
                                                                       hal::PowerMode::OFF);
@@ -3690,9 +3709,8 @@ void SurfaceFlinger::setVsyncConfig(const VsyncModulator::VsyncConfig& config,
 
 void SurfaceFlinger::commitTransaction() {
     commitTransactionLocked();
-    mTransactionPending = false;
+    signalSynchronousTransactions();
     mAnimTransactionPending = false;
-    mTransactionCV.broadcast();
 }
 
 void SurfaceFlinger::commitTransactionLocked() {
@@ -3969,15 +3987,16 @@ void SurfaceFlinger::flushTransactionQueues() {
                 auto& [applyToken, transactionQueue] = *it;
 
                 while (!transactionQueue.empty()) {
-                    const auto& transaction = transactionQueue.front();
+                    auto& transaction = transactionQueue.front();
                     if (!transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
                                                        transaction.isAutoTimestamp,
                                                        transaction.desiredPresentTime,
-                                                       transaction.states, pendingBuffers)) {
+                                                       transaction.originUid, transaction.states,
+                                                       pendingBuffers)) {
                         setTransactionFlags(eTransactionFlushNeeded);
                         break;
                     }
-                    transactions.push_back(transaction);
+                    transactions.emplace_back(std::move(transaction));
                     transactionQueue.pop();
                 }
 
@@ -3994,17 +4013,18 @@ void SurfaceFlinger::flushTransactionQueues() {
             // Case 2: push to pending when there exist a pending queue.
             // Case 3: others are ready to apply.
             while (!mTransactionQueue.empty()) {
-                const auto& transaction = mTransactionQueue.front();
+                auto& transaction = mTransactionQueue.front();
                 bool pendingTransactions = mPendingTransactionQueues.find(transaction.applyToken) !=
                         mPendingTransactionQueues.end();
                 if (!transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
                                                    transaction.isAutoTimestamp,
                                                    transaction.desiredPresentTime,
-                                                   transaction.states, pendingBuffers) ||
+                                                   transaction.originUid, transaction.states,
+                                                   pendingBuffers) ||
                     pendingTransactions) {
-                    mPendingTransactionQueues[transaction.applyToken].push(transaction);
+                    mPendingTransactionQueues[transaction.applyToken].push(std::move(transaction));
                 } else {
-                    transactions.push_back(transaction);
+                    transactions.emplace_back(std::move(transaction));
                 }
                 mTransactionQueue.pop();
                 ATRACE_INT("TransactionQueue", mTransactionQueue.size());
@@ -4020,25 +4040,65 @@ void SurfaceFlinger::flushTransactionQueues() {
                                   transaction.postTime, transaction.permissions,
                                   transaction.hasListenerCallbacks, transaction.listenerCallbacks,
                                   transaction.originPid, transaction.originUid, transaction.id);
+            if (transaction.transactionCommittedSignal) {
+                mTransactionCommittedSignals.emplace_back(
+                        std::move(transaction.transactionCommittedSignal));
+            }
         }
     }
 }
 
 bool SurfaceFlinger::transactionFlushNeeded() {
     Mutex::Autolock _l(mQueueLock);
-    return !mPendingTransactionQueues.empty();
+    return !mPendingTransactionQueues.empty() || !mTransactionQueue.empty();
+}
+
+bool SurfaceFlinger::frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) const {
+    // The amount of time SF can delay a frame if it is considered early based
+    // on the VsyncModulator::VsyncConfig::appWorkDuration
+    constexpr static std::chrono::nanoseconds kEarlyLatchMaxThreshold = 100ms;
+
+    const auto currentVsyncPeriod = mScheduler->getDisplayStatInfo(systemTime()).vsyncPeriod;
+    const auto earlyLatchVsyncThreshold = currentVsyncPeriod / 2;
+
+    const auto prediction = mFrameTimeline->getTokenManager()->getPredictionsForToken(vsyncId);
+    if (!prediction.has_value()) {
+        return false;
+    }
+
+    if (std::abs(prediction->presentTime - expectedPresentTime) >=
+        kEarlyLatchMaxThreshold.count()) {
+        return false;
+    }
+
+    return prediction->presentTime >= expectedPresentTime &&
+            prediction->presentTime - expectedPresentTime >= earlyLatchVsyncThreshold;
 }
 
 bool SurfaceFlinger::transactionIsReadyToBeApplied(
         const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
-        const Vector<ComposerState>& states,
+        uid_t originUid, const Vector<ComposerState>& states,
         std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers) {
+    ATRACE_CALL();
     const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
     bool ready = true;
     // Do not present if the desiredPresentTime has not passed unless it is more than one second
     // in the future. We ignore timestamps more than 1 second in the future for stability reasons.
     if (!isAutoTimestamp && desiredPresentTime >= expectedPresentTime &&
         desiredPresentTime < expectedPresentTime + s2ns(1)) {
+        ATRACE_NAME("not current");
+        ready = false;
+    }
+
+    if (!mScheduler->isVsyncValid(expectedPresentTime, originUid)) {
+        ATRACE_NAME("!isVsyncValid");
+        ready = false;
+    }
+
+    // If the client didn't specify desiredPresentTime, use the vsyncId to determine the expected
+    // present time of this transaction.
+    if (isAutoTimestamp && frameIsEarly(expectedPresentTime, info.vsyncId)) {
+        ATRACE_NAME("frameIsEarly");
         ready = false;
     }
 
@@ -4061,33 +4121,23 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
             continue;
         }
 
-        const bool frameTimelineInfoChanged = (s.what & layer_state_t::eFrameTimelineInfoChanged);
-        const auto vsyncId = frameTimelineInfoChanged ? s.frameTimelineInfo.vsyncId : info.vsyncId;
-        if (isAutoTimestamp && layer->frameIsEarly(expectedPresentTime, vsyncId)) {
-            ATRACE_NAME("frameIsEarly()");
-            return false;
-        }
-
-        if (!mScheduler->isVsyncValid(expectedPresentTime, layer->getOwnerUid())) {
-            ATRACE_NAME("!isVsyncValidForUid");
-            ready = false;
-        }
+        ATRACE_NAME(layer->getName().c_str());
 
         if (acquireFenceChanged) {
             // If backpressure is enabled and we already have a buffer to commit, keep the
             // transaction in the queue.
             const bool hasPendingBuffer = pendingBuffers.find(s.surface) != pendingBuffers.end();
             if (layer->backpressureEnabled() && hasPendingBuffer && isAutoTimestamp) {
+                ATRACE_NAME("hasPendingBuffer");
                 ready = false;
             }
             pendingBuffers.insert(s.surface);
         }
-        pendingBuffers.insert(s.surface);
     }
     return ready;
 }
 
-void SurfaceFlinger::queueTransaction(TransactionState state) {
+void SurfaceFlinger::queueTransaction(TransactionState& state) {
     Mutex::Autolock _l(mQueueLock);
 
     // If its TransactionQueue already has a pending TransactionState or if it is pending
@@ -4107,52 +4157,41 @@ void SurfaceFlinger::queueTransaction(TransactionState state) {
         }
     }
 
+    // Generate a CountDownLatch pending state if this is a synchronous transaction.
+    if ((state.flags & eSynchronous) || state.inputWindowCommands.syncInputWindows) {
+        state.transactionCommittedSignal = std::make_shared<CountDownLatch>(
+                (state.inputWindowCommands.syncInputWindows ? 2 : 1));
+    }
+
     mTransactionQueue.emplace(state);
     ATRACE_INT("TransactionQueue", mTransactionQueue.size());
 
-    // TODO(b/159125966): Remove eEarlyWakeup completely as no client should use this flag
-    if (state.flags & eEarlyWakeup) {
-        ALOGW("eEarlyWakeup is deprecated. Use eExplicitEarlyWakeup[Start|End]");
-    }
-
-    if (!(state.permissions & Permission::ACCESS_SURFACE_FLINGER) &&
-        (state.flags & (eExplicitEarlyWakeupStart | eExplicitEarlyWakeupEnd))) {
-        ALOGE("Only WindowManager is allowed to use eExplicitEarlyWakeup[Start|End] flags");
-        state.flags &= ~(eExplicitEarlyWakeupStart | eExplicitEarlyWakeupEnd);
-    }
-
     const auto schedule = [](uint32_t flags) {
-        if (flags & eEarlyWakeup) return TransactionSchedule::Early;
-        if (flags & eExplicitEarlyWakeupEnd) return TransactionSchedule::EarlyEnd;
-        if (flags & eExplicitEarlyWakeupStart) return TransactionSchedule::EarlyStart;
+        if (flags & eEarlyWakeupEnd) return TransactionSchedule::EarlyEnd;
+        if (flags & eEarlyWakeupStart) return TransactionSchedule::EarlyStart;
         return TransactionSchedule::Late;
     }(state.flags);
 
     setTransactionFlags(eTransactionFlushNeeded, schedule);
 }
 
-void SurfaceFlinger::waitForSynchronousTransaction(bool synchronous, bool syncInput) {
-    Mutex::Autolock _l(mStateLock);
-    if (synchronous) {
-        mTransactionPending = true;
+void SurfaceFlinger::waitForSynchronousTransaction(
+        const CountDownLatch& transactionCommittedSignal) {
+    // applyTransactionState is called on the main SF thread.  While a given process may wish
+    // to wait on synchronous transactions, the main SF thread should apply the transaction and
+    // set the value to notify this after committed.
+    if (!transactionCommittedSignal.wait_until(std::chrono::seconds(5))) {
+        ALOGE("setTransactionState timed out!");
     }
-    if (syncInput) {
-        mPendingSyncInputWindows = true;
-    }
+}
 
-    // applyTransactionState can be called by either the main SF thread or by
-    // another process through setTransactionState.  While a given process may wish
-    // to wait on synchronous transactions, the main SF thread should never
-    // be blocked.  Therefore, we only wait if isMainThread is false.
-    while (mTransactionPending || mPendingSyncInputWindows) {
-        status_t err = mTransactionCV.waitRelative(mStateLock, s2ns(5));
-        if (CC_UNLIKELY(err != NO_ERROR)) {
-            // just in case something goes wrong in SF, return to the
-            // called after a few seconds.
-            ALOGW_IF(err == TIMED_OUT, "setTransactionState timed out!");
-            mTransactionPending = false;
-            mPendingSyncInputWindows = false;
-            break;
+void SurfaceFlinger::signalSynchronousTransactions() {
+    for (auto it = mTransactionCommittedSignals.begin();
+         it != mTransactionCommittedSignals.end();) {
+        if ((*it)->countDown() == 0) {
+            it = mTransactionCommittedSignals.erase(it);
+        } else {
+            it++;
         }
     }
 }
@@ -4181,21 +4220,30 @@ status_t SurfaceFlinger::setTransactionState(
         permissions |= Permission::ROTATE_SURFACE_FLINGER;
     }
 
+    if (!(permissions & Permission::ACCESS_SURFACE_FLINGER) &&
+        (flags & (eEarlyWakeupStart | eEarlyWakeupEnd))) {
+        ALOGE("Only WindowManager is allowed to use eEarlyWakeup[Start|End] flags");
+        flags &= ~(eEarlyWakeupStart | eEarlyWakeupEnd);
+    }
+
     const int64_t postTime = systemTime();
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
     const int originUid = ipc->getCallingUid();
+    TransactionState state{frameTimelineInfo,  states,
+                           displays,           flags,
+                           applyToken,         inputWindowCommands,
+                           desiredPresentTime, isAutoTimestamp,
+                           uncacheBuffer,      postTime,
+                           permissions,        hasListenerCallbacks,
+                           listenerCallbacks,  originPid,
+                           originUid,          transactionId};
+    queueTransaction(state);
 
-    queueTransaction({frameTimelineInfo, states, displays, flags, applyToken, inputWindowCommands,
-                      desiredPresentTime, isAutoTimestamp, uncacheBuffer, postTime, permissions,
-                      hasListenerCallbacks, listenerCallbacks, originPid, originUid,
-                      transactionId});
-
-    const bool synchronous = flags & eSynchronous;
-    const bool syncInput = inputWindowCommands.syncInputWindows;
-    if (synchronous || syncInput) {
-        waitForSynchronousTransaction(synchronous, syncInput);
+    // Check the pending state to make sure the transaction is synchronous.
+    if (state.transactionCommittedSignal) {
+        waitForSynchronousTransaction(*state.transactionCommittedSignal);
     }
 
     return NO_ERROR;
@@ -4493,9 +4541,6 @@ uint32_t SurfaceFlinger::setClientStateLocked(
         if (layer->setFlags(s.flags, s.mask))
             flags |= eTraversalNeeded;
     }
-    if (what & layer_state_t::eCropChanged_legacy) {
-        if (layer->setCrop_legacy(s.crop_legacy)) flags |= eTraversalNeeded;
-    }
     if (what & layer_state_t::eCornerRadiusChanged) {
         if (layer->setCornerRadius(s.cornerRadius))
             flags |= eTraversalNeeded;
@@ -4604,12 +4649,6 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             flags |= eTraversalNeeded;
         }
     }
-    FrameTimelineInfo info;
-    if (what & layer_state_t::eFrameTimelineInfoChanged) {
-        info = s.frameTimelineInfo;
-    } else if (frameTimelineInfo.vsyncId != FrameTimelineInfo::INVALID_VSYNC_ID) {
-        info = frameTimelineInfo;
-    }
     if (what & layer_state_t::eFixedTransformHintChanged) {
         if (layer->setFixedTransformHint(s.fixedTransformHint)) {
             flags |= eTraversalNeeded | eTransformHintUpdateNeeded;
@@ -4672,11 +4711,12 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                 : layer->getHeadFrameNumber(-1 /* expectedPresentTime */) + 1;
 
         if (layer->setBuffer(buffer, s.acquireFence, postTime, desiredPresentTime, isAutoTimestamp,
-                             s.cachedBuffer, frameNumber, dequeueBufferTimestamp, info)) {
+                             s.cachedBuffer, frameNumber, dequeueBufferTimestamp, frameTimelineInfo,
+                             s.releaseBufferListener)) {
             flags |= eTraversalNeeded;
         }
-    } else if (info.vsyncId != FrameTimelineInfo::INVALID_VSYNC_ID) {
-        layer->setFrameTimelineVsyncForBufferlessTransaction(info, postTime);
+    } else if (frameTimelineInfo.vsyncId != FrameTimelineInfo::INVALID_VSYNC_ID) {
+        layer->setFrameTimelineVsyncForBufferlessTransaction(frameTimelineInfo, postTime);
     }
 
     if (layer->setTransactionCompletedListeners(callbackHandles)) flags |= eTraversalNeeded;
@@ -5293,9 +5333,6 @@ void SurfaceFlinger::logFrameStats() {
 void SurfaceFlinger::appendSfConfigString(std::string& result) const {
     result.append(" [sf");
 
-    if (isLayerTripleBufferingDisabled())
-        result.append(" DISABLE_TRIPLE_BUFFERING");
-
     StringAppendF(&result, " PRESENT_TIME_OFFSET=%" PRId64, dispSyncPresentTimeOffset);
     StringAppendF(&result, " FORCE_HWC_FOR_RBG_TO_YUV=%d", useHwcForRgbToYuv);
     StringAppendF(&result, " MAX_VIRT_DISPLAY_DIM=%" PRIu64, maxVirtualDisplaySize);
@@ -5746,6 +5783,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case DESTROY_DISPLAY:
         case ENABLE_VSYNC_INJECTIONS:
         case GET_ANIMATION_FRAME_STATS:
+        case OVERRIDE_HDR_TYPES:
         case GET_HDR_CAPABILITIES:
         case SET_DESIRED_DISPLAY_MODE_SPECS:
         case GET_DESIRED_DISPLAY_MODE_SPECS:
@@ -5762,9 +5800,11 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case NOTIFY_POWER_BOOST:
         case SET_GLOBAL_SHADOW_SETTINGS:
         case ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN: {
-            // ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN is used by CTS tests, which acquire the
-            // necessary permission dynamically. Don't use the permission cache for this check.
-            bool usePermissionCache = code != ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN;
+            // ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN and OVERRIDE_HDR_TYPES are used by CTS tests,
+            // which acquire the necessary permission dynamically. Don't use the permission cache
+            // for this check.
+            bool usePermissionCache =
+                    code != ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN && code != OVERRIDE_HDR_TYPES;
             if (!callingThreadHasUnscopedSurfaceFlingerAccess(usePermissionCache)) {
                 IPCThreadState* ipc = IPCThreadState::self();
                 ALOGE("Permission Denial: can't access SurfaceFlinger pid=%d, uid=%d",
@@ -6842,10 +6882,7 @@ status_t SurfaceFlinger::renderScreenImplLocked(const RenderArea& renderArea,
 
 void SurfaceFlinger::setInputWindowsFinished() {
     Mutex::Autolock _l(mStateLock);
-
-    mPendingSyncInputWindows = false;
-
-    mTransactionCV.broadcast();
+    signalSynchronousTransactions();
 }
 
 // ---------------------------------------------------------------------------

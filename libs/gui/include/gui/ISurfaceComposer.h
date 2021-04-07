@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <android/gui/DisplayBrightness.h>
 #include <android/gui/IFpsListener.h>
 #include <android/gui/IScreenCaptureListener.h>
 #include <android/gui/ITransactionTraceListener.h>
@@ -89,18 +90,15 @@ public:
         eSynchronous = 0x01,
         eAnimation = 0x02,
 
-        // DEPRECATED - use eExplicitEarlyWakeup[Start|End]
-        eEarlyWakeup = 0x04,
-
         // Explicit indication that this transaction and others to follow will likely result in a
         // lot of layers being composed, and thus, SurfaceFlinger should wake-up earlier to avoid
         // missing frame deadlines. In this case SurfaceFlinger will wake up at
         // (sf vsync offset - debug.sf.early_phase_offset_ns). SurfaceFlinger will continue to be
-        // in the early configuration until it receives eExplicitEarlyWakeupEnd. These flags are
+        // in the early configuration until it receives eEarlyWakeupEnd. These flags are
         // expected to be used by WindowManager only and are guarded by
         // android.permission.ACCESS_SURFACE_FLINGER
-        eExplicitEarlyWakeupStart = 0x08,
-        eExplicitEarlyWakeupEnd = 0x10,
+        eEarlyWakeupStart = 0x08,
+        eEarlyWakeupEnd = 0x10,
     };
 
     enum VsyncSource {
@@ -269,6 +267,13 @@ public:
      */
     virtual status_t getAnimationFrameStats(FrameStats* outStats) const = 0;
 
+    /* Overrides the supported HDR modes for the given display device.
+     *
+     * Requires the ACCESS_SURFACE_FLINGER permission.
+     */
+    virtual status_t overrideHdrTypes(const sp<IBinder>& display,
+                                      const std::vector<ui::Hdr>& hdrTypes) = 0;
+
     virtual status_t enableVSyncInjections(bool enable) = 0;
 
     virtual status_t injectVSync(nsecs_t when) = 0;
@@ -415,15 +420,15 @@ public:
      * displayToken
      *      The token of the display whose brightness is set.
      * brightness
-     *      A number between 0.0f (minimum brightness) and 1.0 (maximum brightness), or -1.0f to
-     *      turn the backlight off.
+     *      The DisplayBrightness info to set on the desired display.
      *
      * Returns NO_ERROR upon success. Otherwise,
      *      NAME_NOT_FOUND    if the display is invalid, or
      *      BAD_VALUE         if the brightness is invalid, or
      *      INVALID_OPERATION if brightness operations are not supported.
      */
-    virtual status_t setDisplayBrightness(const sp<IBinder>& displayToken, float brightness) = 0;
+    virtual status_t setDisplayBrightness(const sp<IBinder>& displayToken,
+                                          const gui::DisplayBrightness& brightness) = 0;
 
     /*
      * Sends a power boost to the composer. This function is asynchronous.
@@ -572,6 +577,7 @@ public:
         GET_DYNAMIC_DISPLAY_INFO,
         ADD_FPS_LISTENER,
         REMOVE_FPS_LISTENER,
+        OVERRIDE_HDR_TYPES,
         // Always append new enum to the end.
     };
 

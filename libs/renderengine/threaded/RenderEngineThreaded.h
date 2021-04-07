@@ -42,7 +42,7 @@ public:
 
     RenderEngineThreaded(CreateInstanceFactory factory, RenderEngineType type);
     ~RenderEngineThreaded() override;
-    void primeCache() const override;
+    void primeCache() override;
 
     void dump(std::string& result) override;
 
@@ -74,7 +74,7 @@ private:
     /* ------------------------------------------------------------------------
      * Threading
      */
-    const char* const mThreadName = "RenderEngineThread";
+    const char* const mThreadName = "RenderEngine";
     // Protects the creation and destruction of mThread.
     mutable std::mutex mThreadMutex;
     std::thread mThread GUARDED_BY(mThreadMutex);

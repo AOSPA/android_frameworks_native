@@ -55,11 +55,9 @@ public:
     void pushPendingState() override;*/
     bool applyPendingStates(Layer::State* stateToCommit) override;
 
-    uint32_t getActiveWidth(const Layer::State& s) const override { return s.active.w; }
-    uint32_t getActiveHeight(const Layer::State& s) const override { return s.active.h; }
-    ui::Transform getActiveTransform(const Layer::State& s) const override {
-        return s.active.transform;
-    }
+    uint32_t getActiveWidth(const Layer::State& s) const override { return s.width; }
+    uint32_t getActiveHeight(const Layer::State& s) const override { return s.height; }
+    ui::Transform getActiveTransform(const Layer::State& s) const override { return s.transform; }
     Region getActiveTransparentRegion(const Layer::State& s) const override {
         return s.transparentRegionHint;
     }
@@ -72,7 +70,8 @@ public:
     bool setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence, nsecs_t postTime,
                    nsecs_t desiredPresentTime, bool isAutoTimestamp,
                    const client_cache_t& clientCacheId, uint64_t frameNumber,
-                   std::optional<nsecs_t> dequeueTime, const FrameTimelineInfo& info) override;
+                   std::optional<nsecs_t> dequeueTime, const FrameTimelineInfo& info,
+                   const sp<ITransactionCompletedListener>& transactionListener) override;
     bool setAcquireFence(const sp<Fence>& fence) override;
     bool setDataspace(ui::Dataspace dataspace) override;
     bool setHdrMetadata(const HdrMetadata& hdrMetadata) override;
@@ -91,7 +90,6 @@ public:
                    bool /*allowNonRectPreservingTransforms*/) override {
         return false;
     }
-    bool setCrop_legacy(const Rect& /*crop*/) override { return false; }
     void deferTransactionUntil_legacy(const sp<IBinder>& /*barrierHandle*/,
                                       uint64_t /*frameNumber*/) override {}
     void deferTransactionUntil_legacy(const sp<Layer>& /*barrierLayer*/,
@@ -114,9 +112,11 @@ public:
 
     // See mPendingBufferTransactions
     void decrementPendingBufferCount();
-    uint32_t doTransaction(uint32_t flags) override;
+    void bufferMayChange(sp<GraphicBuffer>& newBuffer) override;
     std::atomic<int32_t>* getPendingBufferCounter() override { return &mPendingBufferTransactions; }
     std::string getPendingBufferCounterName() override { return mBlastTransactionName; }
+
+    bool shouldPresentNow(nsecs_t /*expectedPresentTime*/) const override { return true; }
 
 protected:
     void gatherBufferInfo() override;
@@ -156,8 +156,6 @@ private:
 
     bool bufferNeedsFiltering() const override;
 
-    std::optional<nsecs_t> nextPredictedPresentTime(int64_t vsyncId) const override;
-
     static const std::array<float, 16> IDENTITY_MATRIX;
 
     std::unique_ptr<renderengine::Image> mTextureImage;
@@ -171,6 +169,9 @@ private:
 
     mutable bool mCurrentStateModified = false;
     bool mReleasePreviousBuffer = false;
+
+    // Stores the last set acquire fence signal time used to populate the callback handle's acquire
+    // time.
     nsecs_t mCallbackHandleAcquireTime = -1;
 
     std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;

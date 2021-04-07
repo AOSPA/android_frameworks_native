@@ -199,7 +199,7 @@ public:
         t.setInputWindowInfo(mSurfaceControl, mInputInfo);
         t.setLayer(mSurfaceControl, LAYER_BASE);
         t.setPosition(mSurfaceControl, x, y);
-        t.setCrop_legacy(mSurfaceControl, crop);
+        t.setCrop(mSurfaceControl, crop);
         t.setAlpha(mSurfaceControl, 1);
         t.apply(true);
     }
@@ -674,7 +674,7 @@ TEST_F(InputSurfacesTest, touch_flag_partially_obscured_with_crop) {
     parentSurface->showAt(100, 100);
 
     nonTouchableSurface->doTransaction([&](auto &t, auto &sc) {
-        t.setCrop_legacy(parentSurface->mSurfaceControl, Rect(0, 0, 50, 50));
+        t.setCrop(parentSurface->mSurfaceControl, Rect(0, 0, 50, 50));
         t.reparent(sc, parentSurface->mSurfaceControl);
     });
 
@@ -698,7 +698,7 @@ TEST_F(InputSurfacesTest, touch_not_obscured_with_crop) {
     parentSurface->showAt(50, 50);
 
     nonTouchableSurface->doTransaction([&](auto &t, auto &sc) {
-        t.setCrop_legacy(parentSurface->mSurfaceControl, Rect(0, 0, 50, 50));
+        t.setCrop(parentSurface->mSurfaceControl, Rect(0, 0, 50, 50));
         t.reparent(sc, parentSurface->mSurfaceControl);
     });
 

@@ -33,6 +33,7 @@
 #include <unordered_map>
 
 #include <android-base/chrono_utils.h>
+#include <android-base/result.h>
 #include <android-base/unique_fd.h>
 
 #include <binder/IBinder.h>
@@ -69,6 +70,7 @@ struct InputMessage {
         FINISHED,
         FOCUS,
         CAPTURE,
+        DRAG,
     };
 
     struct Header {
@@ -183,6 +185,16 @@ struct InputMessage {
 
             inline size_t size() const { return sizeof(Capture); }
         } capture;
+
+        struct Drag {
+            int32_t eventId;
+            float x;
+            float y;
+            bool isExiting;
+            uint8_t empty[3];
+
+            inline size_t size() const { return sizeof(Drag); }
+        } drag;
     } __attribute__((aligned(8))) body;
 
     bool isValid(size_t actualSize) const;
@@ -354,20 +366,33 @@ public:
      */
     status_t publishCaptureEvent(uint32_t seq, int32_t eventId, bool pointerCaptureEnabled);
 
-    /* Receives the finished signal from the consumer in reply to the original dispatch signal.
-     * If a signal was received, returns the message sequence number,
-     * whether the consumer handled the message, and the time the event was first read by the
-     * consumer.
-     *
-     * The returned sequence number is never 0 unless the operation failed.
+    /* Publishes a drag event to the input channel.
      *
      * Returns OK on success.
-     * Returns WOULD_BLOCK if there is no signal present.
+     * Returns WOULD_BLOCK if the channel is full.
      * Returns DEAD_OBJECT if the channel's peer has been closed.
      * Other errors probably indicate that the channel is broken.
      */
-    status_t receiveFinishedSignal(
-            const std::function<void(uint32_t seq, bool handled, nsecs_t consumeTime)>& callback);
+    status_t publishDragEvent(uint32_t seq, int32_t eventId, float x, float y, bool isExiting);
+
+    struct Finished {
+        uint32_t seq;
+        bool handled;
+        nsecs_t consumeTime;
+    };
+
+    /* Receives the finished signal from the consumer in reply to the original dispatch signal.
+     * If a signal was received, returns a Finished object.
+     *
+     * The returned sequence number is never 0 unless the operation failed.
+     *
+     * Returned error codes:
+     *         OK on success.
+     *         WOULD_BLOCK if there is no signal present.
+     *         DEAD_OBJECT if the channel's peer has been closed.
+     *         Other errors probably indicate that the channel is broken.
+     */
+    android::base::Result<Finished> receiveFinishedSignal();
 
 private:
     std::shared_ptr<InputChannel> mChannel;
@@ -606,6 +631,7 @@ private:
     static void initializeMotionEvent(MotionEvent* event, const InputMessage* msg);
     static void initializeFocusEvent(FocusEvent* event, const InputMessage* msg);
     static void initializeCaptureEvent(CaptureEvent* event, const InputMessage* msg);
+    static void initializeDragEvent(DragEvent* event, const InputMessage* msg);
     static void addSample(MotionEvent* event, const InputMessage* msg);
     static bool canAddSample(const Batch& batch, const InputMessage* msg);
     static ssize_t findSampleNoLaterThan(const Batch& batch, nsecs_t time);

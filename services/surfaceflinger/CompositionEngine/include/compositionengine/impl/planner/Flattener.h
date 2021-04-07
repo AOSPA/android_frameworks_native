@@ -39,9 +39,11 @@ public:
 
     void setDisplaySize(ui::Size size) { mDisplaySize = size; }
 
-    NonBufferHash flattenLayers(const std::vector<const LayerState*>& layers, NonBufferHash);
+    NonBufferHash flattenLayers(const std::vector<const LayerState*>& layers, NonBufferHash,
+                                std::chrono::steady_clock::time_point now);
 
-    void renderCachedSets(renderengine::RenderEngine&);
+    // Renders the newest cached sets with the supplied output dataspace
+    void renderCachedSets(renderengine::RenderEngine&, ui::Dataspace outputDataspace);
 
     void reset();
 

@@ -97,7 +97,7 @@ public:
     // This interface, while still in use until a suitable replacement is built,
     // should be considered deprecated, minus some methods which still may be
     // used to support legacy behavior.
-    virtual void primeCache() const = 0;
+    virtual void primeCache() = 0;
 
     // dump the extension strings. always call the base class.
     virtual void dump(std::string& result) = 0;
@@ -200,6 +200,9 @@ public:
     // TODO(b/180767535): This is only implemented to allow for backend-specific behavior, which
     // we should not allow in general, so remove this.
     RenderEngineType getRenderEngineType() const { return mRenderEngineType; }
+
+    static void validateInputBufferUsage(const sp<GraphicBuffer>&);
+    static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
 
 protected:
     friend class threaded::RenderEngineThreaded;

@@ -89,7 +89,8 @@ void Planner::plan(
                    });
 
     const NonBufferHash hash = getNonBufferHash(mCurrentLayers);
-    mFlattenedHash = mFlattener.flattenLayers(mCurrentLayers, hash);
+    mFlattenedHash =
+            mFlattener.flattenLayers(mCurrentLayers, hash, std::chrono::steady_clock::now());
     const bool layersWereFlattened = hash != mFlattenedHash;
     ALOGV("[%s] Initial hash %zx flattened hash %zx", __func__, hash, mFlattenedHash);
 
@@ -132,8 +133,9 @@ void Planner::reportFinalPlan(
                             finalPlan);
 }
 
-void Planner::renderCachedSets(renderengine::RenderEngine& renderEngine) {
-    mFlattener.renderCachedSets(renderEngine);
+void Planner::renderCachedSets(renderengine::RenderEngine& renderEngine,
+                               ui::Dataspace outputDataspace) {
+    mFlattener.renderCachedSets(renderEngine, outputDataspace);
 }
 
 void Planner::dump(const Vector<String16>& args, std::string& result) {

@@ -25,6 +25,9 @@
       "name": "binderLibTest"
     },
     {
+      "name": "binderRpcTest"
+    },
+    {
       "name": "binderStabilityTest"
     },
     {
@@ -38,6 +41,9 @@
     },
     {
       "name": "aidl_integration_test"
+    },
+    {
+      "name": "memunreachable_binder_test"
     },
     {
       "name": "libbinderthreadstateutils_test"

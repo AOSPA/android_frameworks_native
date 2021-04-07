@@ -79,10 +79,11 @@ NonBufferHash CachedSet::getNonBufferHash() const {
         return mFingerprint;
     }
 
-    // TODO(b/181192080): Add all fields which contribute to geometry of override layer (e.g.,
-    // dataspace)
+    // TODO(b/182614524): We sometimes match this with LayerState hashes. Determine if that is
+    // necessary (and therefore we need to match implementations).
     size_t hash = 0;
     android::hashCombineSingle(hash, mBounds);
+    android::hashCombineSingle(hash, mOutputDataspace);
     return hash;
 }
 
@@ -126,7 +127,7 @@ bool CachedSet::hasBufferUpdate(std::vector<const LayerState*>::const_iterator l
 }
 
 bool CachedSet::hasReadyBuffer() const {
-    return mBuffer != nullptr && mDrawFence->getStatus() == Fence::Status::Signaled;
+    return mTexture.getBuffer() != nullptr && mDrawFence->getStatus() == Fence::Status::Signaled;
 }
 
 std::vector<CachedSet> CachedSet::decompose() const {
@@ -148,10 +149,11 @@ void CachedSet::updateAge(std::chrono::steady_clock::time_point now) {
     }
 }
 
-void CachedSet::render(renderengine::RenderEngine& renderEngine) {
+void CachedSet::render(renderengine::RenderEngine& renderEngine, ui::Dataspace outputDataspace) {
     renderengine::DisplaySettings displaySettings{
             .physicalDisplay = Rect(0, 0, mBounds.getWidth(), mBounds.getHeight()),
             .clip = mBounds,
+            .outputDataspace = outputDataspace,
     };
 
     Region clearRegion = Region::INVALID_REGION;
@@ -163,8 +165,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine) {
             .supportsProtectedContent = false,
             .clearRegion = clearRegion,
             .viewport = viewport,
-            // TODO(181192086): Propagate the Output's dataspace instead of using UNKNOWN
-            .dataspace = ui::Dataspace::UNKNOWN,
+            .dataspace = outputDataspace,
             .realContentIsVisible = true,
             .clearContent = false,
             .disableBlurs = false,
@@ -209,12 +210,14 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine) {
                                                  HAL_PIXEL_FORMAT_RGBA_8888, 1, usageFlags);
     LOG_ALWAYS_FATAL_IF(buffer->initCheck() != OK);
     base::unique_fd drawFence;
+
     status_t result = renderEngine.drawLayers(displaySettings, layerSettingsPointers, buffer, false,
                                               base::unique_fd(), &drawFence);
 
     if (result == NO_ERROR) {
-        mBuffer = buffer;
+        mTexture.setBuffer(buffer, &renderEngine);
         mDrawFence = new Fence(drawFence.release());
+        mOutputDataspace = outputDataspace;
     }
 }
 

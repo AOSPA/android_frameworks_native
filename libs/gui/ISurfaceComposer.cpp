@@ -28,6 +28,7 @@
 #include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerDebugInfo.h>
 #include <gui/LayerState.h>
+#include <private/gui/ParcelUtils.h>
 #include <stdint.h>
 #include <sys/types.h>
 #include <system/graphics.h>
@@ -474,6 +475,26 @@ public:
         remote()->transact(BnSurfaceComposer::GET_ANIMATION_FRAME_STATS, data, &reply);
         reply.read(*outStats);
         return reply.readInt32();
+    }
+
+    virtual status_t overrideHdrTypes(const sp<IBinder>& display,
+                                      const std::vector<ui::Hdr>& hdrTypes) {
+        Parcel data, reply;
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeStrongBinder, display);
+
+        std::vector<int32_t> hdrTypesVector;
+        for (ui::Hdr i : hdrTypes) {
+            hdrTypesVector.push_back(static_cast<int32_t>(i));
+        }
+        SAFE_PARCEL(data.writeInt32Vector, hdrTypesVector);
+
+        status_t result = remote()->transact(BnSurfaceComposer::OVERRIDE_HDR_TYPES, data, &reply);
+        if (result != NO_ERROR) {
+            ALOGE("overrideHdrTypes failed to transact: %d", result);
+            return result;
+        }
+        return result;
     }
 
     status_t enableVSyncInjections(bool enable) override {
@@ -935,7 +956,8 @@ public:
         return NO_ERROR;
     }
 
-    status_t setDisplayBrightness(const sp<IBinder>& displayToken, float brightness) override {
+    status_t setDisplayBrightness(const sp<IBinder>& displayToken,
+                                  const gui::DisplayBrightness& brightness) override {
         Parcel data, reply;
         status_t error = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         if (error != NO_ERROR) {
@@ -947,7 +969,7 @@ public:
             ALOGE("setDisplayBrightness: failed to write display token: %d", error);
             return error;
         }
-        error = data.writeFloat(brightness);
+        error = data.writeParcelable(brightness);
         if (error != NO_ERROR) {
             ALOGE("setDisplayBrightness: failed to write brightness: %d", error);
             return error;
@@ -1832,8 +1854,8 @@ status_t BnSurfaceComposer::onTransact(
                 ALOGE("setDisplayBrightness: failed to read display token: %d", error);
                 return error;
             }
-            float brightness = -1.0f;
-            error = data.readFloat(&brightness);
+            gui::DisplayBrightness brightness;
+            error = data.readParcelable(&brightness);
             if (error != NO_ERROR) {
                 ALOGE("setDisplayBrightness: failed to read brightness: %d", error);
                 return error;
@@ -1960,6 +1982,20 @@ status_t BnSurfaceComposer::onTransact(
             }
             SAFE_PARCEL(reply->writeInt32, extraBuffers);
             return NO_ERROR;
+        }
+        case OVERRIDE_HDR_TYPES: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IBinder> display = nullptr;
+            SAFE_PARCEL(data.readStrongBinder, &display);
+
+            std::vector<int32_t> hdrTypes;
+            SAFE_PARCEL(data.readInt32Vector, &hdrTypes);
+
+            std::vector<ui::Hdr> hdrTypesVector;
+            for (int i : hdrTypes) {
+                hdrTypesVector.push_back(static_cast<ui::Hdr>(i));
+            }
+            return overrideHdrTypes(display, hdrTypesVector);
         }
         default: {
             return BBinder::onTransact(code, data, reply, flags);

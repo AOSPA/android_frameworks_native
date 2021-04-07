@@ -39,6 +39,7 @@
 #include <gui/LayerState.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
+#include <private/gui/ParcelUtils.h>
 #include <ui/DisplayMode.h>
 #include <ui/DynamicDisplayInfo.h>
 
@@ -195,6 +196,17 @@ void TransactionCompletedListener::removeJankListener(const sp<JankDataListener>
     }
 }
 
+void TransactionCompletedListener::setReleaseBufferCallback(uint64_t graphicBufferId,
+                                                            ReleaseBufferCallback listener) {
+    std::scoped_lock<std::mutex> lock(mMutex);
+    mReleaseBufferCallbacks[graphicBufferId] = listener;
+}
+
+void TransactionCompletedListener::removeReleaseBufferCallback(uint64_t graphicBufferId) {
+    std::scoped_lock<std::mutex> lock(mMutex);
+    mReleaseBufferCallbacks.erase(graphicBufferId);
+}
+
 void TransactionCompletedListener::addSurfaceStatsListener(void* context, void* cookie,
         sp<SurfaceControl> surfaceControl, SurfaceStatsCallback listener) {
     std::lock_guard<std::mutex> lock(mMutex);
@@ -275,6 +287,23 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                             .surfaceControls[surfaceStats.surfaceControl]
                             ->setTransformHint(surfaceStats.transformHint);
                 }
+                // If there is buffer id set, we look up any pending client release buffer callbacks
+                // and call them. This is a performance optimization when we have a transaction
+                // callback and a release buffer callback happening at the same time to avoid an
+                // additional ipc call from the server.
+                if (surfaceStats.previousBufferId) {
+                    ReleaseBufferCallback callback;
+                    {
+                        std::scoped_lock<std::mutex> lock(mMutex);
+                        callback = popReleaseBufferCallbackLocked(surfaceStats.previousBufferId);
+                    }
+                    if (callback) {
+                        callback(surfaceStats.previousBufferId,
+                                 surfaceStats.previousReleaseFence
+                                         ? surfaceStats.previousReleaseFence
+                                         : Fence::NO_FENCE);
+                    }
+                }
             }
 
             callbackFunction(transactionStats.latchTime, transactionStats.presentFence,
@@ -295,6 +324,32 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
             }
         }
     }
+}
+
+void TransactionCompletedListener::onReleaseBuffer(uint64_t graphicBufferId,
+                                                   sp<Fence> releaseFence) {
+    ReleaseBufferCallback callback;
+    {
+        std::scoped_lock<std::mutex> lock(mMutex);
+        callback = popReleaseBufferCallbackLocked(graphicBufferId);
+    }
+    if (!callback) {
+        ALOGE("Could not call release buffer callback, buffer not found %" PRIu64, graphicBufferId);
+        return;
+    }
+    callback(graphicBufferId, releaseFence);
+}
+
+ReleaseBufferCallback TransactionCompletedListener::popReleaseBufferCallbackLocked(
+        uint64_t graphicBufferId) {
+    ReleaseBufferCallback callback;
+    auto itr = mReleaseBufferCallbacks.find(graphicBufferId);
+    if (itr == mReleaseBufferCallbacks.end()) {
+        return nullptr;
+    }
+    callback = itr->second;
+    mReleaseBufferCallbacks.erase(itr);
+    return callback;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,9 +474,8 @@ SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
         mForceSynchronous(other.mForceSynchronous),
         mTransactionNestCount(other.mTransactionNestCount),
         mAnimation(other.mAnimation),
-        mEarlyWakeup(other.mEarlyWakeup),
-        mExplicitEarlyWakeupStart(other.mExplicitEarlyWakeupStart),
-        mExplicitEarlyWakeupEnd(other.mExplicitEarlyWakeupEnd),
+        mEarlyWakeupStart(other.mEarlyWakeupStart),
+        mEarlyWakeupEnd(other.mEarlyWakeupEnd),
         mContainsBuffer(other.mContainsBuffer),
         mDesiredPresentTime(other.mDesiredPresentTime),
         mIsAutoTimestamp(other.mIsAutoTimestamp),
@@ -450,9 +504,8 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     const uint32_t forceSynchronous = parcel->readUint32();
     const uint32_t transactionNestCount = parcel->readUint32();
     const bool animation = parcel->readBool();
-    const bool earlyWakeup = parcel->readBool();
-    const bool explicitEarlyWakeupStart = parcel->readBool();
-    const bool explicitEarlyWakeupEnd = parcel->readBool();
+    const bool earlyWakeupStart = parcel->readBool();
+    const bool earlyWakeupEnd = parcel->readBool();
     const bool containsBuffer = parcel->readBool();
     const int64_t desiredPresentTime = parcel->readInt64();
     const bool isAutoTimestamp = parcel->readBool();
@@ -527,9 +580,8 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     mForceSynchronous = forceSynchronous;
     mTransactionNestCount = transactionNestCount;
     mAnimation = animation;
-    mEarlyWakeup = earlyWakeup;
-    mExplicitEarlyWakeupStart = explicitEarlyWakeupStart;
-    mExplicitEarlyWakeupEnd = explicitEarlyWakeupEnd;
+    mEarlyWakeupStart = earlyWakeupStart;
+    mEarlyWakeupEnd = earlyWakeupEnd;
     mContainsBuffer = containsBuffer;
     mDesiredPresentTime = desiredPresentTime;
     mIsAutoTimestamp = isAutoTimestamp;
@@ -559,9 +611,8 @@ status_t SurfaceComposerClient::Transaction::writeToParcel(Parcel* parcel) const
     parcel->writeUint32(mForceSynchronous);
     parcel->writeUint32(mTransactionNestCount);
     parcel->writeBool(mAnimation);
-    parcel->writeBool(mEarlyWakeup);
-    parcel->writeBool(mExplicitEarlyWakeupStart);
-    parcel->writeBool(mExplicitEarlyWakeupEnd);
+    parcel->writeBool(mEarlyWakeupStart);
+    parcel->writeBool(mEarlyWakeupEnd);
     parcel->writeBool(mContainsBuffer);
     parcel->writeInt64(mDesiredPresentTime);
     parcel->writeBool(mIsAutoTimestamp);
@@ -639,9 +690,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::merge(Tr
     mInputWindowCommands.merge(other.mInputWindowCommands);
 
     mContainsBuffer |= other.mContainsBuffer;
-    mEarlyWakeup = mEarlyWakeup || other.mEarlyWakeup;
-    mExplicitEarlyWakeupStart = mExplicitEarlyWakeupStart || other.mExplicitEarlyWakeupStart;
-    mExplicitEarlyWakeupEnd = mExplicitEarlyWakeupEnd || other.mExplicitEarlyWakeupEnd;
+    mEarlyWakeupStart = mEarlyWakeupStart || other.mEarlyWakeupStart;
+    mEarlyWakeupEnd = mEarlyWakeupEnd || other.mEarlyWakeupEnd;
     mApplyToken = other.mApplyToken;
 
     mFrameTimelineInfo.merge(other.mFrameTimelineInfo);
@@ -659,9 +709,8 @@ void SurfaceComposerClient::Transaction::clear() {
     mForceSynchronous = 0;
     mTransactionNestCount = 0;
     mAnimation = false;
-    mEarlyWakeup = false;
-    mExplicitEarlyWakeupStart = false;
-    mExplicitEarlyWakeupEnd = false;
+    mEarlyWakeupStart = false;
+    mEarlyWakeupEnd = false;
     mDesiredPresentTime = 0;
     mIsAutoTimestamp = true;
     mFrameTimelineInfo.clear();
@@ -780,17 +829,14 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous) {
     if (mAnimation) {
         flags |= ISurfaceComposer::eAnimation;
     }
-    if (mEarlyWakeup) {
-        flags |= ISurfaceComposer::eEarlyWakeup;
-    }
 
-    // If both mExplicitEarlyWakeupStart and mExplicitEarlyWakeupEnd are set
+    // If both mEarlyWakeupStart and mEarlyWakeupEnd are set
     // it is equivalent for none
-    if (mExplicitEarlyWakeupStart && !mExplicitEarlyWakeupEnd) {
-        flags |= ISurfaceComposer::eExplicitEarlyWakeupStart;
+    if (mEarlyWakeupStart && !mEarlyWakeupEnd) {
+        flags |= ISurfaceComposer::eEarlyWakeupStart;
     }
-    if (mExplicitEarlyWakeupEnd && !mExplicitEarlyWakeupStart) {
-        flags |= ISurfaceComposer::eExplicitEarlyWakeupEnd;
+    if (mEarlyWakeupEnd && !mEarlyWakeupStart) {
+        flags |= ISurfaceComposer::eEarlyWakeupEnd;
     }
 
     sp<IBinder> applyToken = mApplyToken
@@ -841,16 +887,12 @@ void SurfaceComposerClient::Transaction::setAnimationTransaction() {
     mAnimation = true;
 }
 
-void SurfaceComposerClient::Transaction::setEarlyWakeup() {
-    mEarlyWakeup = true;
+void SurfaceComposerClient::Transaction::setEarlyWakeupStart() {
+    mEarlyWakeupStart = true;
 }
 
-void SurfaceComposerClient::Transaction::setExplicitEarlyWakeupStart() {
-    mExplicitEarlyWakeupStart = true;
-}
-
-void SurfaceComposerClient::Transaction::setExplicitEarlyWakeupEnd() {
-    mExplicitEarlyWakeupEnd = true;
+void SurfaceComposerClient::Transaction::setEarlyWakeupEnd() {
+    mEarlyWakeupEnd = true;
 }
 
 layer_state_t* SurfaceComposerClient::Transaction::getLayerState(const sp<SurfaceControl>& sc) {
@@ -1048,15 +1090,15 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setMatri
     return *this;
 }
 
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCrop_legacy(
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCrop(
         const sp<SurfaceControl>& sc, const Rect& crop) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
         return *this;
     }
-    s->what |= layer_state_t::eCropChanged_legacy;
-    s->crop_legacy = crop;
+    s->what |= layer_state_t::eCropChanged;
+    s->crop = crop;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -1204,20 +1246,6 @@ SurfaceComposerClient::Transaction::setTransformToDisplayInverse(const sp<Surfac
     return *this;
 }
 
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCrop(
-        const sp<SurfaceControl>& sc, const Rect& crop) {
-    layer_state_t* s = getLayerState(sc);
-    if (!s) {
-        mStatus = BAD_INDEX;
-        return *this;
-    }
-    s->what |= layer_state_t::eCropChanged;
-    s->crop = crop;
-
-    registerSurfaceControlForCallback(sc);
-    return *this;
-}
-
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrame(
         const sp<SurfaceControl>& sc, const Rect& frame) {
     layer_state_t* s = getLayerState(sc);
@@ -1233,22 +1261,53 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrame
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffer(
-        const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer) {
+        const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
+        ReleaseBufferCallback callback) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
         return *this;
     }
+    removeReleaseBufferCallback(s);
     s->what |= layer_state_t::eBufferChanged;
     s->buffer = buffer;
     if (mIsAutoTimestamp) {
         mDesiredPresentTime = systemTime();
     }
+    setReleaseBufferCallback(s, callback);
 
     registerSurfaceControlForCallback(sc);
 
     mContainsBuffer = true;
     return *this;
+}
+
+void SurfaceComposerClient::Transaction::removeReleaseBufferCallback(layer_state_t* s) {
+    if (!s->releaseBufferListener) {
+        return;
+    }
+
+    s->what &= ~static_cast<uint64_t>(layer_state_t::eReleaseBufferListenerChanged);
+    s->releaseBufferListener = nullptr;
+    TransactionCompletedListener::getInstance()->removeReleaseBufferCallback(s->buffer->getId());
+}
+
+void SurfaceComposerClient::Transaction::setReleaseBufferCallback(layer_state_t* s,
+                                                                  ReleaseBufferCallback callback) {
+    if (!callback) {
+        return;
+    }
+
+    if (!s->buffer) {
+        ALOGW("Transaction::setReleaseBufferCallback"
+              "ignored trying to set a callback on a null buffer.");
+        return;
+    }
+
+    s->what |= layer_state_t::eReleaseBufferListenerChanged;
+    s->releaseBufferListener = TransactionCompletedListener::getIInstance();
+    auto listener = TransactionCompletedListener::getInstance();
+    listener->setReleaseBufferCallback(s->buffer->getId(), callback);
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setAcquireFence(
@@ -1458,7 +1517,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setColor
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setGeometry(
         const sp<SurfaceControl>& sc, const Rect& source, const Rect& dst, int transform) {
-    setCrop_legacy(sc, source);
+    setCrop(sc, source);
 
     int x = dst.left;
     int y = dst.top;
@@ -1562,20 +1621,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFixed
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrameTimelineInfo(
         const FrameTimelineInfo& frameTimelineInfo) {
-    mFrameTimelineInfo = frameTimelineInfo;
-    return *this;
-}
-
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrameTimelineInfo(
-        const sp<SurfaceControl>& sc, const FrameTimelineInfo& frameTimelineInfo) {
-    layer_state_t* s = getLayerState(sc);
-    if (!s) {
-        mStatus = BAD_INDEX;
-        return *this;
-    }
-
-    s->what |= layer_state_t::eFrameTimelineInfoChanged;
-    s->frameTimelineInfo = frameTimelineInfo;
+    mFrameTimelineInfo.merge(frameTimelineInfo);
     return *this;
 }
 
@@ -1939,6 +1985,11 @@ status_t SurfaceComposerClient::getAnimationFrameStats(FrameStats* outStats) {
     return ComposerService::getComposerService()->getAnimationFrameStats(outStats);
 }
 
+status_t SurfaceComposerClient::overrideHdrTypes(const sp<IBinder>& display,
+                                                 const std::vector<ui::Hdr>& hdrTypes) {
+    return ComposerService::getComposerService()->overrideHdrTypes(display, hdrTypes);
+}
+
 status_t SurfaceComposerClient::getDisplayedContentSamplingAttributes(const sp<IBinder>& display,
                                                                       ui::PixelFormat* outFormat,
                                                                       ui::Dataspace* outDataspace,
@@ -1998,7 +2049,7 @@ bool SurfaceComposerClient::getDisplayBrightnessSupport(const sp<IBinder>& displ
 }
 
 status_t SurfaceComposerClient::setDisplayBrightness(const sp<IBinder>& displayToken,
-                                                     float brightness) {
+                                                     const gui::DisplayBrightness& brightness) {
     return ComposerService::getComposerService()->setDisplayBrightness(displayToken, brightness);
 }
 

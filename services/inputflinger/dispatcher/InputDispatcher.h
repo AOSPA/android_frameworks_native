@@ -19,6 +19,7 @@
 
 #include "AnrTracker.h"
 #include "CancelationOptions.h"
+#include "DragState.h"
 #include "Entry.h"
 #include "FocusResolver.h"
 #include "InjectionState.h"
@@ -120,8 +121,8 @@ public:
     virtual void setMaximumObscuringOpacityForTouch(float opacity) override;
     virtual void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) override;
 
-    virtual bool transferTouchFocus(const sp<IBinder>& fromToken,
-                                    const sp<IBinder>& toToken) override;
+    virtual bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
+                                    bool isDragDrop = false) override;
 
     virtual base::Result<std::unique_ptr<InputChannel>> createInputChannel(
             const std::string& name) override;
@@ -185,6 +186,9 @@ private:
     // Enqueues a focus event.
     void enqueueFocusEventLocked(const sp<IBinder>& windowToken, bool hasFocus,
                                  const std::string& reason) REQUIRES(mLock);
+    // Enqueues a drag event.
+    void enqueueDragEventLocked(const sp<InputWindowHandle>& windowToken, bool isExiting,
+                                const MotionEntry& motionEntry) REQUIRES(mLock);
 
     // Adds an event to a queue of recent events for debugging purposes.
     void addRecentEventLocked(std::shared_ptr<EventEntry> entry) REQUIRES(mLock);
@@ -204,7 +208,8 @@ private:
     sp<InputWindowHandle> findTouchedWindowAtLocked(int32_t displayId, int32_t x, int32_t y,
                                                     TouchState* touchState,
                                                     bool addOutsideTargets = false,
-                                                    bool addPortalWindows = false) REQUIRES(mLock);
+                                                    bool addPortalWindows = false,
+                                                    bool ignoreDragWindow = false) REQUIRES(mLock);
 
     // All registered connections mapped by channel file descriptor.
     std::unordered_map<int, sp<Connection>> mConnectionsByFd GUARDED_BY(mLock);
@@ -336,6 +341,7 @@ private:
             REQUIRES(mLock);
 
     std::unordered_map<int32_t, TouchState> mTouchStatesByDisplay GUARDED_BY(mLock);
+    std::unique_ptr<DragState> mDragState GUARDED_BY(mLock);
 
     // Focused applications.
     std::unordered_map<int32_t, std::shared_ptr<InputApplicationHandle>>
@@ -387,6 +393,7 @@ private:
                              const std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
     void dispatchSensorLocked(nsecs_t currentTime, std::shared_ptr<SensorEntry> entry,
                               DropReason* dropReason, nsecs_t* nextWakeupTime) REQUIRES(mLock);
+    void dispatchDragLocked(nsecs_t currentTime, std::shared_ptr<DragEntry> entry) REQUIRES(mLock);
     void logOutboundKeyDetails(const char* prefix, const KeyEntry& entry);
     void logOutboundMotionDetails(const char* prefix, const MotionEntry& entry);
 
@@ -489,10 +496,13 @@ private:
                                    std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
     void addGlobalMonitoringTargetsLocked(std::vector<InputTarget>& inputTargets, int32_t displayId,
                                           float xOffset = 0, float yOffset = 0) REQUIRES(mLock);
-
     void pokeUserActivityLocked(const EventEntry& eventEntry) REQUIRES(mLock);
     bool checkInjectionPermission(const sp<InputWindowHandle>& windowHandle,
                                   const InjectionState* injectionState);
+    // Enqueue a drag event if needed, and update the touch state.
+    // Uses findTouchedWindowTargetsLocked to make the decision
+    void addDragEventLocked(const MotionEntry& entry) REQUIRES(mLock);
+    void finishDragAndDrop(int32_t displayId, float x, float y) REQUIRES(mLock);
 
     struct TouchOcclusionInfo {
         bool hasBlockingOcclusion;
@@ -585,6 +595,7 @@ private:
     void onFocusChangedLocked(const FocusResolver::FocusChanges& changes) REQUIRES(mLock);
     void notifyFocusChangedLocked(const sp<IBinder>& oldFocus, const sp<IBinder>& newFocus)
             REQUIRES(mLock);
+    void notifyDropWindowLocked(const sp<IBinder>& token, float x, float y) REQUIRES(mLock);
     void onAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
     void onAnrLocked(std::shared_ptr<InputApplicationHandle> application) REQUIRES(mLock);
     void onUntrustedTouchLocked(const std::string& obscuringPackage) REQUIRES(mLock);
@@ -600,6 +611,8 @@ private:
             REQUIRES(mLock);
     void doNotifyInputChannelBrokenLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doNotifyFocusChangedLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
+    void doNotifyDropWindowLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
+
     // ANR-related callbacks - start
     void doNotifyNoFocusedWindowAnrLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
     void doNotifyWindowUnresponsiveLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);

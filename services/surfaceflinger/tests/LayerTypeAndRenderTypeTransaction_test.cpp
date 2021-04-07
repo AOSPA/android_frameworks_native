@@ -39,6 +39,9 @@ public:
 
 protected:
     LayerRenderPathTestHarness mRenderPathHarness;
+
+    static constexpr int64_t kUsageFlags = BufferUsage::CPU_READ_OFTEN |
+            BufferUsage::CPU_WRITE_OFTEN | BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE;
 };
 
 ::testing::Environment* const binderEnv =
@@ -142,7 +145,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetZNegative) {
     sp<SurfaceControl> parent =
             LayerTransactionTest::createLayer("Parent", 0 /* buffer width */, 0 /* buffer height */,
                                               ISurfaceComposerClient::eFXSurfaceContainer);
-    Transaction().setCrop_legacy(parent, Rect(0, 0, mDisplayWidth, mDisplayHeight)).apply();
+    Transaction().setCrop(parent, Rect(0, 0, mDisplayWidth, mDisplayHeight)).apply();
     sp<SurfaceControl> layerR;
     sp<SurfaceControl> layerG;
     ASSERT_NO_FATAL_FAILURE(layerR = createLayer("test R", 32, 32));
@@ -196,7 +199,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadius) {
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
         Transaction()
                 .setCornerRadius(layer, cornerRadius)
-                .setCrop_legacy(layer, Rect(0, 0, size, size))
+                .setCrop(layer, Rect(0, 0, size, size))
                 .apply();
     } else {
         Transaction()
@@ -233,13 +236,13 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadiusRotated) {
 
     auto transaction = Transaction()
                                .setCornerRadius(parent, cornerRadius)
-                               .setCrop_legacy(parent, Rect(0, 0, size, size))
+                               .setCrop(parent, Rect(0, 0, size, size))
                                .reparent(child, parent)
                                .setPosition(child, 0, size)
                                // Rotate by half PI
                                .setMatrix(child, 0.0f, -1.0f, 1.0f, 0.0f);
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
-        transaction.setCrop_legacy(parent, Rect(0, 0, size, size));
+        transaction.setCrop(parent, Rect(0, 0, size, size));
     } else {
         transaction.setFrame(parent, Rect(0, 0, size, size));
     }
@@ -275,7 +278,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadiusChildCrop) {
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
         Transaction()
                 .setCornerRadius(parent, cornerRadius)
-                .setCrop_legacy(parent, Rect(0, 0, size, size))
+                .setCrop(parent, Rect(0, 0, size, size))
                 .reparent(child, parent)
                 .setPosition(child, 0, size / 2)
                 .apply();
@@ -348,7 +351,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusSimple) {
     Transaction()
             .setLayer(blurLayer, mLayerZBase + 3)
             .setBackgroundBlurRadius(blurLayer, blurRadius)
-            .setCrop_legacy(blurLayer, blurRect)
+            .setCrop(blurLayer, blurRect)
             .setFrame(blurLayer, blurRect)
             .setSize(blurLayer, blurRect.getWidth(), blurRect.getHeight())
             .setAlpha(blurLayer, 0.0f)
@@ -513,7 +516,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
             .setLayer(layer, INT32_MAX - 1)
             .show(layer)
             .setLayerStack(behindLayer, mDisplayLayerStack)
-            .setCrop_legacy(behindLayer, crop)
+            .setCrop(behindLayer, crop)
             .setLayer(behindLayer, INT32_MAX - 2)
             .show(behindLayer)
             .apply();
@@ -521,10 +524,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
     sp<Surface> surface = layer->getSurface();
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(width, height, PIXEL_FORMAT_RGBX_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(width, height, PIXEL_FORMAT_RGBX_8888, 1, kUsageFlags, "test");
     ASSERT_NO_FATAL_FAILURE(
             TransactionUtils::fillGraphicBufferColor(buffer, crop, Color::TRANSPARENT));
 
@@ -540,10 +540,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
         shot->expectColor(crop, Color::BLACK);
     }
 
-    buffer = new GraphicBuffer(width, height, PIXEL_FORMAT_RGBA_8888, 1,
-                               BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                       BufferUsage::COMPOSER_OVERLAY,
-                               "test");
+    buffer = new GraphicBuffer(width, height, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     ASSERT_NO_FATAL_FAILURE(
             TransactionUtils::fillGraphicBufferColor(buffer, crop, Color::TRANSPARENT));
 

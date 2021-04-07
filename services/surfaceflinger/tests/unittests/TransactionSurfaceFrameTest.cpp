@@ -116,6 +116,7 @@ public:
         const auto surfaceFrame = layer->mCurrentState.bufferlessSurfaceFramesTX.at(/*token*/ 1);
         commitTransaction(layer.get());
         EXPECT_EQ(1, surfaceFrame->getToken());
+        EXPECT_EQ(false, surfaceFrame->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, surfaceFrame->getPresentState());
     }
 
@@ -125,7 +126,7 @@ public:
         auto acquireFence = fenceFactory.createFenceTimeForTest(fence);
         sp<GraphicBuffer> buffer{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         layer->setBuffer(buffer, fence, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         acquireFence->signalForTest(12);
 
         commitTransaction(layer.get());
@@ -139,6 +140,7 @@ public:
         layer->updateTexImage(computeVisisbleRegions, 15, 0);
 
         EXPECT_EQ(1, surfaceFrame->getToken());
+        EXPECT_EQ(true, surfaceFrame->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, surfaceFrame->getPresentState());
     }
 
@@ -149,7 +151,7 @@ public:
         auto acquireFence1 = fenceFactory.createFenceTimeForTest(fence1);
         sp<GraphicBuffer> buffer1{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         layer->setBuffer(buffer1, fence1, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         EXPECT_EQ(0u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
         const auto droppedSurfaceFrame = layer->mCurrentState.bufferSurfaceFrameTX;
@@ -159,7 +161,7 @@ public:
         sp<GraphicBuffer> buffer2{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         nsecs_t start = systemTime();
         layer->setBuffer(buffer2, fence2, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         nsecs_t end = systemTime();
         acquireFence2->signalForTest(12);
 
@@ -172,12 +174,14 @@ public:
         layer->updateTexImage(computeVisisbleRegions, 15, 0);
 
         EXPECT_EQ(1, droppedSurfaceFrame->getToken());
+        EXPECT_EQ(true, droppedSurfaceFrame->getIsBuffer());
         EXPECT_EQ(PresentState::Dropped, droppedSurfaceFrame->getPresentState());
         EXPECT_EQ(0u, droppedSurfaceFrame->getActuals().endTime);
         auto dropTime = droppedSurfaceFrame->getDropTime();
         EXPECT_TRUE(dropTime > start && dropTime < end);
 
         EXPECT_EQ(1, presentedSurfaceFrame->getToken());
+        EXPECT_EQ(true, presentedSurfaceFrame->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, presentedSurfaceFrame->getPresentState());
     }
 
@@ -195,7 +199,7 @@ public:
         sp<GraphicBuffer> buffer{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
 
         layer->setBuffer(buffer, fence, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         acquireFence->signalForTest(12);
 
         EXPECT_EQ(0u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
@@ -204,6 +208,7 @@ public:
 
         commitTransaction(layer.get());
         EXPECT_EQ(1, surfaceFrame->getToken());
+        EXPECT_EQ(true, surfaceFrame->getIsBuffer());
         // Buffers are presented only at latch time.
         EXPECT_EQ(PresentState::Unknown, surfaceFrame->getPresentState());
 
@@ -220,7 +225,7 @@ public:
         sp<GraphicBuffer> buffer{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
 
         layer->setBuffer(buffer, fence, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         EXPECT_EQ(0u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
 
@@ -250,7 +255,7 @@ public:
         sp<GraphicBuffer> buffer{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
 
         layer->setBuffer(buffer, fence, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 3, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 3, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         EXPECT_EQ(2u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
         const auto& bufferSurfaceFrameTX = layer->mCurrentState.bufferSurfaceFrameTX;
@@ -260,12 +265,15 @@ public:
         commitTransaction(layer.get());
 
         EXPECT_EQ(1, bufferlessSurfaceFrame1->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame1->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, bufferlessSurfaceFrame1->getPresentState());
 
         EXPECT_EQ(4, bufferlessSurfaceFrame2->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame2->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, bufferlessSurfaceFrame2->getPresentState());
 
         EXPECT_EQ(3, bufferSurfaceFrameTX->getToken());
+        EXPECT_EQ(true, bufferSurfaceFrameTX->getIsBuffer());
         // Buffers are presented only at latch time.
         EXPECT_EQ(PresentState::Unknown, bufferSurfaceFrameTX->getPresentState());
 
@@ -297,10 +305,12 @@ public:
         commitTransaction(layer.get());
 
         EXPECT_EQ(1, bufferlessSurfaceFrame1->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame1->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, bufferlessSurfaceFrame1->getPresentState());
         EXPECT_EQ(10, bufferlessSurfaceFrame1->getActuals().endTime);
 
         EXPECT_EQ(2, bufferlessSurfaceFrame2->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame2->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, bufferlessSurfaceFrame2->getPresentState());
         EXPECT_EQ(12, bufferlessSurfaceFrame2->getActuals().endTime);
     }
@@ -327,9 +337,11 @@ public:
         commitTransaction(layer.get());
 
         EXPECT_EQ(1, bufferlessSurfaceFrame1->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame1->getIsBuffer());
         EXPECT_EQ(PresentState::Unknown, bufferlessSurfaceFrame1->getPresentState());
 
         EXPECT_EQ(1, bufferlessSurfaceFrame2->getToken());
+        EXPECT_EQ(false, bufferlessSurfaceFrame2->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, bufferlessSurfaceFrame2->getPresentState());
         EXPECT_EQ(12, bufferlessSurfaceFrame2->getActuals().endTime);
     }
@@ -341,7 +353,7 @@ public:
         auto acquireFence1 = fenceFactory.createFenceTimeForTest(fence1);
         sp<GraphicBuffer> buffer1{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         layer->setBuffer(buffer1, fence1, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
         const auto droppedSurfaceFrame = layer->mCurrentState.bufferSurfaceFrameTX;
 
@@ -349,7 +361,7 @@ public:
         auto acquireFence2 = fenceFactory.createFenceTimeForTest(fence2);
         sp<GraphicBuffer> buffer2{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         layer->setBuffer(buffer2, fence2, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         acquireFence2->signalForTest(12);
 
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
@@ -376,7 +388,7 @@ public:
         auto acquireFence1 = fenceFactory.createFenceTimeForTest(fence1);
         sp<GraphicBuffer> buffer1{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         layer->setBuffer(buffer1, fence1, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 1, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 1, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         EXPECT_EQ(0u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
         const auto droppedSurfaceFrame1 = layer->mCurrentState.bufferSurfaceFrameTX;
@@ -386,7 +398,8 @@ public:
         sp<GraphicBuffer> buffer2{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         auto dropStartTime1 = systemTime();
         layer->setBuffer(buffer2, fence2, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ FrameTimelineInfo::INVALID_VSYNC_ID, /*inputEventId*/ 0});
+                         {/*vsyncId*/ FrameTimelineInfo::INVALID_VSYNC_ID, /*inputEventId*/ 0},
+                         nullptr /* releaseBufferCallback */);
         auto dropEndTime1 = systemTime();
         EXPECT_EQ(0u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
         ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
@@ -397,7 +410,7 @@ public:
         sp<GraphicBuffer> buffer3{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
         auto dropStartTime2 = systemTime();
         layer->setBuffer(buffer3, fence3, 10, 20, false, mClientCache, 1, std::nullopt,
-                         {/*vsyncId*/ 2, /*inputEventId*/ 0});
+                         {/*vsyncId*/ 2, /*inputEventId*/ 0}, nullptr /* releaseBufferCallback */);
         auto dropEndTime2 = systemTime();
         acquireFence3->signalForTest(12);
 
@@ -410,19 +423,85 @@ public:
         layer->updateTexImage(computeVisisbleRegions, 15, 0);
 
         EXPECT_EQ(1, droppedSurfaceFrame1->getToken());
+        EXPECT_EQ(true, droppedSurfaceFrame1->getIsBuffer());
         EXPECT_EQ(PresentState::Dropped, droppedSurfaceFrame1->getPresentState());
         EXPECT_EQ(0u, droppedSurfaceFrame1->getActuals().endTime);
         auto dropTime1 = droppedSurfaceFrame1->getDropTime();
         EXPECT_TRUE(dropTime1 > dropStartTime1 && dropTime1 < dropEndTime1);
 
         EXPECT_EQ(FrameTimelineInfo::INVALID_VSYNC_ID, droppedSurfaceFrame2->getToken());
+        EXPECT_EQ(true, droppedSurfaceFrame2->getIsBuffer());
         EXPECT_EQ(PresentState::Dropped, droppedSurfaceFrame2->getPresentState());
         EXPECT_EQ(0u, droppedSurfaceFrame2->getActuals().endTime);
         auto dropTime2 = droppedSurfaceFrame2->getDropTime();
         EXPECT_TRUE(dropTime2 > dropStartTime2 && dropTime2 < dropEndTime2);
 
         EXPECT_EQ(2, presentedSurfaceFrame->getToken());
+        EXPECT_EQ(true, presentedSurfaceFrame->getIsBuffer());
         EXPECT_EQ(PresentState::Presented, presentedSurfaceFrame->getPresentState());
+    }
+
+    void MultipleCommitsBeforeLatch() {
+        sp<BufferStateLayer> layer = createBufferStateLayer();
+        uint32_t surfaceFramesPendingClassification = 0;
+        std::vector<std::shared_ptr<frametimeline::SurfaceFrame>> bufferlessSurfaceFrames;
+        for (int i = 0; i < 10; i += 2) {
+            sp<Fence> fence1(new Fence());
+            sp<GraphicBuffer> buffer1{new GraphicBuffer(1, 1, HAL_PIXEL_FORMAT_RGBA_8888, 1, 0)};
+            layer->setBuffer(buffer1, fence1, 10, 20, false, mClientCache, 1, std::nullopt,
+                             {/*vsyncId*/ 1, /*inputEventId*/ 0},
+                             nullptr /* releaseBufferCallback */);
+            layer->setFrameTimelineVsyncForBufferlessTransaction({/*vsyncId*/ 2,
+                                                                  /*inputEventId*/ 0},
+                                                                 10);
+            ASSERT_NE(nullptr, layer->mCurrentState.bufferSurfaceFrameTX);
+            EXPECT_EQ(1u, layer->mCurrentState.bufferlessSurfaceFramesTX.size());
+            auto& bufferlessSurfaceFrame =
+                    layer->mCurrentState.bufferlessSurfaceFramesTX.at(/*vsyncId*/ 2);
+            bufferlessSurfaceFrames.push_back(bufferlessSurfaceFrame);
+
+            commitTransaction(layer.get());
+            surfaceFramesPendingClassification += 2;
+            EXPECT_EQ(surfaceFramesPendingClassification,
+                      layer->mPendingJankClassifications.size());
+        }
+
+        auto presentedBufferSurfaceFrame = layer->mDrawingState.bufferSurfaceFrameTX;
+        bool computeVisisbleRegions;
+        layer->updateTexImage(computeVisisbleRegions, 15, 0);
+        // BufferlessSurfaceFrames are immediately set to presented and added to the DisplayFrame.
+        // Since we don't have access to DisplayFrame here, trigger an onPresent directly.
+        for (auto& surfaceFrame : bufferlessSurfaceFrames) {
+            surfaceFrame->onPresent(20, JankType::None, Fps::fromPeriodNsecs(11),
+                                    /*displayDeadlineDelta*/ 0, /*displayPresentDelta*/ 0);
+        }
+        presentedBufferSurfaceFrame->onPresent(20, JankType::None, Fps::fromPeriodNsecs(11),
+                                               /*displayDeadlineDelta*/ 0,
+                                               /*displayPresentDelta*/ 0);
+
+        // There should be 10 bufferlessSurfaceFrames and 1 bufferSurfaceFrame
+        ASSERT_EQ(10u, surfaceFramesPendingClassification);
+        ASSERT_EQ(surfaceFramesPendingClassification, layer->mPendingJankClassifications.size());
+
+        // For the frames upto 8, the bufferSurfaceFrame should have been dropped while the
+        // bufferlessSurfaceFrame presented
+        for (uint32_t i = 0; i < 8; i += 2) {
+            auto& bufferSurfaceFrame = layer->mPendingJankClassifications[i];
+            auto& bufferlessSurfaceFrame = layer->mPendingJankClassifications[i + 1];
+            EXPECT_EQ(bufferSurfaceFrame->getPresentState(), PresentState::Dropped);
+            EXPECT_EQ(bufferlessSurfaceFrame->getPresentState(), PresentState::Presented);
+        }
+        {
+            auto& bufferSurfaceFrame = layer->mPendingJankClassifications[8u];
+            auto& bufferlessSurfaceFrame = layer->mPendingJankClassifications[9u];
+            EXPECT_EQ(bufferSurfaceFrame->getPresentState(), PresentState::Presented);
+            EXPECT_EQ(bufferlessSurfaceFrame->getPresentState(), PresentState::Presented);
+        }
+
+        layer->releasePendingBuffer(25);
+
+        // There shouldn't be any pending classifications. Everything should have been cleared.
+        EXPECT_EQ(0u, layer->mPendingJankClassifications.size());
     }
 };
 
@@ -467,6 +546,10 @@ TEST_F(TransactionSurfaceFrameTest, PendingSurfaceFramesRemovedAfterClassificati
 TEST_F(TransactionSurfaceFrameTest,
        BufferSurfaceFrame_ReplaceValidTokenBufferWithInvalidTokenBuffer) {
     BufferSurfaceFrame_ReplaceValidTokenBufferWithInvalidTokenBuffer();
+}
+
+TEST_F(TransactionSurfaceFrameTest, MultipleCommitsBeforeLatch) {
+    MultipleCommitsBeforeLatch();
 }
 
 } // namespace android
