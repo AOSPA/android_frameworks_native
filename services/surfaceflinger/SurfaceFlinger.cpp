@@ -601,6 +601,18 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         ALOGE("DisplayConfig HIDL not present\n");
         mDisplayConfigIntf = nullptr;
     }
+
+    if (mDisplayConfigIntf) {
+#ifdef DISPLAY_CONFIG_API_LEVEL_1
+        std::string value = "";
+        std::string qsync_prop = "enable_qsync_idle";
+        ret = mDisplayConfigIntf->GetDebugProperty(qsync_prop, &value);
+        ALOGI("enable_qsync_idle, ret:%d value:%s", ret, value.c_str());
+        if (!ret && (value == "1")) {
+          mDisplayConfigIntf->ControlIdleStatusCallback(true);
+        }
+#endif
+    }
 #endif
     mKernelIdleTimerEnabled = mSupportKernelIdleTimer = sysprop::support_kernel_idle_timer(false);
     base::SetProperty(KERNEL_IDLE_TIMER_PROP, mKernelIdleTimerEnabled ? "true" : "false");
@@ -4107,6 +4119,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
         const bool acquireFenceChanged = (s.what & layer_state_t::eAcquireFenceChanged);
         if (acquireFenceChanged && s.acquireFence &&
             s.acquireFence->getStatus() == Fence::Status::Unsignaled) {
+            ATRACE_NAME("fence unsignaled");
             ready = false;
         }
 
@@ -6687,8 +6700,11 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     const status_t bufferStatus = buffer->initCheck();
     LOG_ALWAYS_FATAL_IF(bufferStatus != OK, "captureScreenCommon: Buffer failed to allocate: %d",
                         bufferStatus);
-    return captureScreenCommon(std::move(renderAreaFuture), traverseLayers, buffer,
-                               false /* regionSampling */, grayscale, captureListener);
+    getRenderEngine().cacheExternalTextureBuffer(buffer);
+    status_t result = captureScreenCommon(std::move(renderAreaFuture), traverseLayers, buffer,
+                                          false /* regionSampling */, grayscale, captureListener);
+    getRenderEngine().unbindExternalTextureBuffer(buffer->getId());
+    return result;
 }
 
 status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
@@ -6727,15 +6743,6 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
             result = renderScreenImplLocked(*renderArea, traverseLayers, buffer, forSystem,
                                             regionSampling, grayscale, captureResults);
         });
-
-        // TODO(b/180767535): Remove this once we optimize buffer lifecycle for RenderEngine
-        // Only do this when we're not doing region sampling, to allow the region sampling thread to
-        // manage buffer lifecycle itself.
-        if (!regionSampling &&
-            getRenderEngine().getRenderEngineType() ==
-                    renderengine::RenderEngine::RenderEngineType::SKIA_GL_THREADED) {
-            getRenderEngine().unbindExternalTextureBuffer(buffer->getId());
-        }
 
         captureResults.result = result;
         captureListener->onScreenCaptureCompleted(captureResults);
