@@ -16,16 +16,17 @@
 
 #pragma once
 
-#include <cstdint>
-#include <optional>
-#include <string>
-
+#include <compositionengine/ProjectionSpace.h>
 #include <compositionengine/impl/HwcBufferCache.h>
 #include <renderengine/Mesh.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicTypes.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -47,6 +48,8 @@ class HWComposer;
 
 namespace compositionengine::impl {
 
+// Note that fields that affect HW composer state may need to be mirrored into
+// android::compositionengine::impl::planner::LayerState
 struct OutputLayerCompositionState {
     // The portion of the layer that is not obscured by opaque layers on top
     Region visibleRegion;
@@ -90,6 +93,9 @@ struct OutputLayerCompositionState {
         sp<Fence> acquireFence = nullptr;
         Rect displayFrame = {};
         ui::Dataspace dataspace{ui::Dataspace::UNKNOWN};
+        ProjectionSpace displaySpace;
+        Region damageRegion = Region::INVALID_REGION;
+        Region visibleRegion;
     } overrideInfo;
 
     /*

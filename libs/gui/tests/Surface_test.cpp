@@ -819,6 +819,16 @@ public:
         return NO_ERROR;
     }
 
+    status_t addHdrLayerInfoListener(const sp<IBinder>&,
+                                     const sp<gui::IHdrLayerInfoListener>&) override {
+        return NO_ERROR;
+    }
+
+    status_t removeHdrLayerInfoListener(const sp<IBinder>&,
+                                        const sp<gui::IHdrLayerInfoListener>&) override {
+        return NO_ERROR;
+    }
+
     status_t addRegionSamplingListener(const Rect& /*samplingArea*/,
                                        const sp<IBinder>& /*stopLayerHandle*/,
                                        const sp<IRegionSamplingListener>& /*listener*/) override {
@@ -859,7 +869,7 @@ public:
     }
 
     status_t setFrameRate(const sp<IGraphicBufferProducer>& /*surface*/, float /*frameRate*/,
-                          int8_t /*compatibility*/, bool /*shouldBeSeamless*/) override {
+                          int8_t /*compatibility*/, int8_t /*changeFrameRateStrategy*/) override {
         return NO_ERROR;
     }
 

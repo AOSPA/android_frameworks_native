@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <android/binder_libbinder.h>
 #include <android/binder_manager.h>
 #include <android/binder_stability.h>
 #include <binder/Binder.h>
@@ -131,15 +132,53 @@ TEST(BinderStability, OnlyVintfStabilityBinderNeedsVintfDeclaration) {
     EXPECT_TRUE(Stability::requiresVintfDeclaration(BadStableBinder::vintf()));
 }
 
-TEST(BinderStability, ForceDowngradeStability) {
+TEST(BinderStability, ForceDowngradeToLocalStability) {
     sp<IBinder> someBinder = BadStableBinder::vintf();
 
     EXPECT_TRUE(Stability::requiresVintfDeclaration(someBinder));
 
     // silly to do this after already using the binder, but it's for the test
-    Stability::forceDowngradeCompilationUnit(someBinder);
+    Stability::forceDowngradeToLocalStability(someBinder);
 
     EXPECT_FALSE(Stability::requiresVintfDeclaration(someBinder));
+}
+
+TEST(BinderStability, NdkForceDowngradeToLocalStability) {
+    sp<IBinder> someBinder = BadStableBinder::vintf();
+
+    EXPECT_TRUE(Stability::requiresVintfDeclaration(someBinder));
+
+    // silly to do this after already using the binder, but it's for the test
+    AIBinder_forceDowngradeToLocalStability(AIBinder_fromPlatformBinder(someBinder));
+
+    EXPECT_FALSE(Stability::requiresVintfDeclaration(someBinder));
+}
+
+TEST(BinderStability, ForceDowngradeToVendorStability) {
+    sp<IBinder> serverBinder = android::defaultServiceManager()->getService(kSystemStabilityServer);
+    auto server = interface_cast<IBinderStabilityTest>(serverBinder);
+
+    ASSERT_NE(nullptr, server.get());
+    ASSERT_NE(nullptr, IInterface::asBinder(server)->remoteBinder());
+
+    {
+        sp<BadStableBinder> binder = BadStableBinder::vintf();
+
+        EXPECT_TRUE(Stability::requiresVintfDeclaration(binder));
+        EXPECT_TRUE(server->sendAndCallBinder(binder).isOk());
+        EXPECT_TRUE(binder->gotUserTransaction);
+    }
+    {
+        sp<BadStableBinder> binder = BadStableBinder::vintf();
+
+        // This method should never be called directly. This is done only for the test.
+        Stability::forceDowngradeToVendorStability(binder);
+
+        // Binder downgraded to vendor stability, cannot be called from system context
+        EXPECT_FALSE(Stability::requiresVintfDeclaration(binder));
+        EXPECT_EQ(BAD_TYPE, server->sendAndCallBinder(binder).exceptionCode());
+        EXPECT_FALSE(binder->gotUserTransaction);
+    }
 }
 
 TEST(BinderStability, VintfStabilityServerMustBeDeclaredInManifest) {

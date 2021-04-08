@@ -359,7 +359,8 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(
 
     Rect displayFrame = outputDependentState.displayFrame;
     FloatRect sourceCrop = outputDependentState.sourceCrop;
-    if (outputDependentState.overrideInfo.buffer != nullptr) { // adyabr
+
+    if (outputDependentState.overrideInfo.buffer != nullptr) {
         displayFrame = outputDependentState.overrideInfo.displayFrame;
         sourceCrop = displayFrame.toFloatRect();
     }
@@ -385,8 +386,9 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(
               outputDependentState.z, to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    // Solid-color layers should always use an identity transform.
-    const auto bufferTransform = requestedCompositionType != hal::Composition::SOLID_COLOR
+    // Solid-color layers and overridden buffers should always use an identity transform.
+    const auto bufferTransform = (requestedCompositionType != hal::Composition::SOLID_COLOR &&
+                                  getState().overrideInfo.buffer == nullptr)
             ? outputDependentState.bufferTransform
             : static_cast<hal::Transform>(0);
     if (auto error = hwcLayer->setTransform(static_cast<hal::Transform>(bufferTransform));
@@ -400,14 +402,17 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(
 void OutputLayer::writeOutputIndependentGeometryStateToHWC(
         HWC2::Layer* hwcLayer, const LayerFECompositionState& outputIndependentState,
         bool skipLayer) {
-    if (auto error = hwcLayer->setBlendMode(outputIndependentState.blendMode);
-        error != hal::Error::NONE) {
+    const auto blendMode = getState().overrideInfo.buffer
+            ? hardware::graphics::composer::hal::BlendMode::PREMULTIPLIED
+            : outputIndependentState.blendMode;
+    if (auto error = hwcLayer->setBlendMode(blendMode); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set blend mode %s: %s (%d)", getLayerFE().getDebugName(),
-              toString(outputIndependentState.blendMode).c_str(), to_string(error).c_str(),
-              static_cast<int32_t>(error));
+              toString(blendMode).c_str(), to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    const float alpha = skipLayer ? 0.0f : outputIndependentState.alpha;
+    const float alpha = skipLayer
+            ? 0.0f
+            : (getState().overrideInfo.buffer ? 1.0f : outputIndependentState.alpha);
     ALOGV("Writing alpha %f", alpha);
 
     if (auto error = hwcLayer->setPlaneAlpha(alpha); error != hal::Error::NONE) {
@@ -429,18 +434,22 @@ void OutputLayer::writeOutputDependentPerFrameStateToHWC(HWC2::Layer* hwcLayer) 
 
     // TODO(lpique): b/121291683 outputSpaceVisibleRegion is output-dependent geometry
     // state and should not change every frame.
-    if (auto error = hwcLayer->setVisibleRegion(outputDependentState.outputSpaceVisibleRegion);
-        error != hal::Error::NONE) {
+    Region visibleRegion = outputDependentState.overrideInfo.buffer
+            ? Region(outputDependentState.overrideInfo.visibleRegion)
+            : outputDependentState.outputSpaceVisibleRegion;
+    if (auto error = hwcLayer->setVisibleRegion(visibleRegion); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set visible region: %s (%d)", getLayerFE().getDebugName(),
               to_string(error).c_str(), static_cast<int32_t>(error));
         outputDependentState.outputSpaceVisibleRegion.dump(LOG_TAG);
     }
 
-    if (auto error = hwcLayer->setDataspace(outputDependentState.dataspace);
-        error != hal::Error::NONE) {
-        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", getLayerFE().getDebugName(),
-              outputDependentState.dataspace, to_string(error).c_str(),
-              static_cast<int32_t>(error));
+    const auto dataspace = outputDependentState.overrideInfo.buffer
+            ? outputDependentState.overrideInfo.dataspace
+            : outputDependentState.dataspace;
+
+    if (auto error = hwcLayer->setDataspace(dataspace); error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", getLayerFE().getDebugName(), dataspace,
+              to_string(error).c_str(), static_cast<int32_t>(error));
     }
 }
 
@@ -457,8 +466,11 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
                   to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    if (auto error = hwcLayer->setSurfaceDamage(outputIndependentState.surfaceDamage);
-        error != hal::Error::NONE) {
+    const Region& surfaceDamage = getState().overrideInfo.buffer
+            ? getState().overrideInfo.damageRegion
+            : outputIndependentState.surfaceDamage;
+
+    if (auto error = hwcLayer->setSurfaceDamage(surfaceDamage); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set surface damage: %s (%d)", getLayerFE().getDebugName(),
               to_string(error).c_str(), static_cast<int32_t>(error));
         outputIndependentState.surfaceDamage.dump(LOG_TAG);
@@ -698,16 +710,26 @@ std::vector<LayerFE::LayerSettings> OutputLayer::getOverrideCompositionList() co
         return {};
     }
 
+    // Compute the geometry boundaries in layer stack space: we need to transform from the
+    // framebuffer space of the override buffer to layer space.
+    const ProjectionSpace& layerSpace = getOutput().getState().layerStackSpace;
+    const ui::Transform transform = getState().overrideInfo.displaySpace.getTransform(layerSpace);
+    const Rect boundaries = transform.transform(getState().overrideInfo.displayFrame);
+
     LayerFE::LayerSettings settings;
     settings.geometry = renderengine::Geometry{
-            .boundaries = getState().overrideInfo.displayFrame.toFloatRect(),
+            .boundaries = boundaries.toFloatRect(),
     };
     settings.bufferId = getState().overrideInfo.buffer->getId();
-    settings.source =
-            renderengine::PixelSource{.buffer = renderengine::Buffer{
-                                              .buffer = getState().overrideInfo.buffer,
-                                              .fence = getState().overrideInfo.acquireFence,
-                                      }};
+    settings.source = renderengine::PixelSource{
+            .buffer = renderengine::Buffer{
+                    .buffer = getState().overrideInfo.buffer,
+                    .fence = getState().overrideInfo.acquireFence,
+                    // If the transform from layer space to display space contains a rotation, we
+                    // need to undo the rotation in the texture transform
+                    .textureTransform =
+                            ui::Transform(transform.inverse().getOrientation(), 1, 1).asMatrix4(),
+            }};
     settings.sourceDataspace = getState().overrideInfo.dataspace;
     settings.alpha = 1.0f;
 

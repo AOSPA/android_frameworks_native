@@ -118,7 +118,8 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.bufferTransform = 0;
     mCurrentState.transformToDisplayInverse = false;
     mCurrentState.crop.makeInvalid();
-    mCurrentState.acquireFence = new Fence(-1);
+    mCurrentState.acquireFence = sp<Fence>::make(-1);
+    mCurrentState.acquireFenceTime = std::make_shared<FenceTime>(mCurrentState.acquireFence);
     mCurrentState.dataspace = ui::Dataspace::UNKNOWN;
     mCurrentState.hdrMetadata.validTypes = 0;
     mCurrentState.surfaceDamageRegion = Region::INVALID_REGION;
@@ -2890,6 +2891,18 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
             return FrameRateCompatibility::Default;
+    }
+}
+
+scheduler::Seamlessness Layer::FrameRate::convertChangeFrameRateStrategy(int8_t strategy) {
+    switch (strategy) {
+        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS:
+            return Seamlessness::OnlySeamless;
+        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS:
+            return Seamlessness::SeamedAndSeamless;
+        default:
+            LOG_ALWAYS_FATAL("Invalid change frame sate strategy value %d", strategy);
+            return Seamlessness::Default;
     }
 }
 
