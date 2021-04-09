@@ -1551,6 +1551,7 @@ private:
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
     bool mDolphinFuncsEnabled = false;
+    bool mSmomoContentFpsEnabled = false;
     void *mDolphinHandle = nullptr;
     bool (*mDolphinInit)() = nullptr;
     bool (*mDolphinMonitor)(int number, nsecs_t vsyncPeriod) = nullptr;
