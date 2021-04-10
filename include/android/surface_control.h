@@ -455,10 +455,10 @@ void ASurfaceTransaction_setHdrMetadata_cta861_3(ASurfaceTransaction* transactio
                                                  __INTRODUCED_IN(29);
 
 /**
- * Same as ASurfaceTransaction_setFrameRateWithSeamlessness(transaction, surface_control,
- * frameRate, compatibility, true).
+ * Same as ASurfaceTransaction_setFrameRateWithChangeStrategy(transaction, surface_control,
+ * frameRate, compatibility, ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS).
  *
- * See ASurfaceTransaction_setFrameRateWithSeamlessness().
+ * See ASurfaceTransaction_setFrameRateWithChangeStrategy().
  *
  * Available since API level 30.
  */
@@ -486,18 +486,45 @@ void ASurfaceTransaction_setFrameRate(ASurfaceTransaction* transaction,
  * influence the system's choice of display frame rate. To specify a compatibility use the
  * ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_* enum.
  *
- * \param shouldBeSeamless Whether display refresh rate transitions should be seamless. A
- * seamless transition is one that doesn't have any visual interruptions, such as a black
- * screen for a second or two. True indicates that any frame rate changes caused by this
- * request should be seamless. False indicates that non-seamless refresh rates are also
- * acceptable.
+ * \param changeFrameRateStrategy Whether display refresh rate transitions should be seamless.
+ * A seamless transition is one that doesn't have any visual interruptions, such as a black
+ * screen for a second or two. See the ANATIVEWINDOW_CHANGE_FRAME_RATE_* values.
  *
  * Available since API level 31.
  */
-void ASurfaceTransaction_setFrameRateWithSeamlessness(ASurfaceTransaction* transaction,
+void ASurfaceTransaction_setFrameRateWithChangeStrategy(ASurfaceTransaction* transaction,
                                       ASurfaceControl* surface_control, float frameRate,
-                                      int8_t compatibility, bool shouldBeSeamless)
+                                      int8_t compatibility, int8_t changeFrameRateStrategy)
                                       __INTRODUCED_IN(31);
+
+/**
+ * Indicate whether to enable backpressure for buffer submission to a given SurfaceControl.
+ *
+ * By default backpressure is disabled, which means submitting a buffer prior to receiving
+ * a callback for the previous buffer could lead to that buffer being "dropped". In cases
+ * where you are selecting for latency, this may be a desirable behavior! We had a new buffer
+ * ready, why shouldn't we show it?
+ *
+ * When back pressure is enabled, each buffer will be required to be presented
+ * before it is released and the callback delivered
+ * (absent the whole SurfaceControl being removed).
+ *
+ * Most apps are likely to have some sort of backpressure internally, e.g. you are
+ * waiting on the callback from frame N-2 before starting frame N. In high refresh
+ * rate scenarios there may not be much time between SurfaceFlinger completing frame
+ * N-1 (and therefore releasing buffer N-2) and beginning frame N. This means
+ * your app may not have enough time to respond in the callback. Using this flag
+ * and pushing buffers earlier for server side queuing will be advantageous
+ * in such cases.
+ *
+ * \param transaction The transaction in which to make the change.
+ * \param surface_control The ASurfaceControl on which to control buffer backpressure behavior.
+ * \param enableBackPressure Whether to enable back pressure.
+ */
+void ASurfaceTransaction_setEnableBackPressure(ASurfaceTransaction* transaction,
+                                               ASurfaceControl* surface_control,
+                                               bool enableBackPressure)
+                                               __INTRODUCED_IN(31);
 
 __END_DECLS
 

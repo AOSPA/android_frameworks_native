@@ -32,6 +32,14 @@ template <typename T>
 struct hash<android::sp<T>> {
     size_t operator()(const android::sp<T>& p) { return std::hash<void*>()(p.get()); }
 };
+
+template <typename T>
+struct hash<android::wp<T>> {
+    size_t operator()(const android::wp<T>& p) {
+        android::sp<T> promoted = p.promote();
+        return std::hash<void*>()(promoted ? promoted.get() : nullptr);
+    }
+};
 } // namespace std
 
 namespace android::compositionengine::impl::planner {
@@ -49,13 +57,16 @@ enum class LayerStateField : uint32_t {
     BufferTransform = 1u << 5,
     BlendMode       = 1u << 6,
     Alpha           = 1u << 7,
-    VisibleRegion   = 1u << 8,
-    Dataspace       = 1u << 9,
-    ColorTransform  = 1u << 10,
-    CompositionType = 1u << 11,
-    SidebandStream  = 1u << 12,
-    Buffer          = 1u << 13,
-    SolidColor      = 1u << 14,
+    LayerMetadata   = 1u << 8,
+    VisibleRegion   = 1u << 9,
+    Dataspace       = 1u << 10,
+    PixelFormat     = 1u << 11,
+    ColorTransform  = 1u << 12,
+    SurfaceDamage   = 1u << 13,
+    CompositionType = 1u << 14,
+    SidebandStream  = 1u << 15,
+    Buffer          = 1u << 16,
+    SolidColor      = 1u << 17,
 };
 // clang-format on
 
@@ -70,7 +81,7 @@ public:
 
     virtual Flags<LayerStateField> update(const compositionengine::OutputLayer* layer) = 0;
 
-    virtual size_t getHash(Flags<LayerStateField> skipFields) const = 0;
+    virtual size_t getHash() const = 0;
 
     virtual LayerStateField getField() const = 0;
 
@@ -87,6 +98,7 @@ public:
     using ReadFromLayerState = std::function<T(const compositionengine::OutputLayer* layer)>;
     using ToStrings = std::function<std::vector<std::string>(const T&)>;
     using Equals = std::function<bool(const T&, const T&)>;
+    using Hashes = std::function<size_t(const T&)>;
 
     static ToStrings getDefaultToStrings() {
         return [](const T& value) {
@@ -99,20 +111,48 @@ public:
         return [](const T& value) { return std::vector<std::string>{toString(value)}; };
     }
 
+    static ToStrings getRegionToStrings() {
+        return [](const Region& region) {
+            using namespace std::string_literals;
+            std::string dump;
+            region.dump(dump, "");
+            std::vector<std::string> split = base::Split(dump, "\n"s);
+            split.erase(split.begin()); // Strip the header
+            split.pop_back();           // Strip the last (empty) line
+            for (std::string& line : split) {
+                line.erase(0, 4); // Strip leading padding before each rect
+            }
+            return split;
+        };
+    }
+
     static Equals getDefaultEquals() {
         return [](const T& lhs, const T& rhs) { return lhs == rhs; };
     }
 
+    static Equals getRegionEquals() {
+        return [](const Region& lhs, const Region& rhs) { return lhs.hasSameRects(rhs); };
+    }
+
+    static Hashes getDefaultHashes() {
+        return [](const T& value) { return std::hash<T>{}(value); };
+    }
+
     OutputLayerState(ReadFromLayerState reader,
                      ToStrings toStrings = OutputLayerState::getDefaultToStrings(),
-                     Equals equals = OutputLayerState::getDefaultEquals())
-          : mReader(reader), mToStrings(toStrings), mEquals(equals) {}
+                     Equals equals = OutputLayerState::getDefaultEquals(),
+                     Hashes hashes = OutputLayerState::getDefaultHashes())
+          : mReader(reader), mToStrings(toStrings), mEquals(equals), mHashes(hashes) {}
 
     ~OutputLayerState() override = default;
 
     // Returns this member's field flag if it was changed
     Flags<LayerStateField> update(const compositionengine::OutputLayer* layer) override {
         T newValue = mReader(layer);
+        return update(newValue);
+    }
+
+    Flags<LayerStateField> update(const T& newValue) {
         if (!mEquals(mValue, newValue)) {
             mValue = newValue;
             mHash = {};
@@ -124,12 +164,9 @@ public:
     LayerStateField getField() const override { return FIELD; }
     const T& get() const { return mValue; }
 
-    size_t getHash(Flags<LayerStateField> skipFields) const override {
-        if (skipFields.test(FIELD)) {
-            return 0;
-        }
+    size_t getHash() const override {
         if (!mHash) {
-            mHash = std::hash<T>{}(mValue);
+            mHash = mHashes(mValue);
         }
         return *mHash;
     }
@@ -163,6 +200,7 @@ private:
     const ReadFromLayerState mReader;
     const ToStrings mToStrings;
     const Equals mEquals;
+    const Hashes mHashes;
     T mValue = {};
     mutable std::optional<size_t> mHash = {};
 };
@@ -175,22 +213,22 @@ public:
     Flags<LayerStateField> update(compositionengine::OutputLayer*);
 
     // Computes a hash for this LayerState.
-    // The hash is only computed from NonUniqueFields.
-    size_t getHash(Flags<LayerStateField> skipFields) const;
+    // The hash is only computed from NonUniqueFields, and excludes GraphicBuffers since they are
+    // not guaranteed to live longer than the LayerState object.
+    size_t getHash() const;
 
     // Returns the bit-set of differing fields between this LayerState and another LayerState.
-    // This bit-set is based on NonUniqueFields only
-    Flags<LayerStateField> getDifferingFields(const LayerState& other,
-                                              Flags<LayerStateField> skipFields) const;
+    // This bit-set is based on NonUniqueFields only, and excludes GraphicBuffers.
+    Flags<LayerStateField> getDifferingFields(const LayerState& other) const;
 
     compositionengine::OutputLayer* getOutputLayer() const { return mOutputLayer; }
     int32_t getId() const { return mId.get(); }
     const std::string& getName() const { return mName.get(); }
     Rect getDisplayFrame() const { return mDisplayFrame.get(); }
+    const Region& getVisibleRegion() const { return mVisibleRegion.get(); }
     hardware::graphics::composer::hal::Composition getCompositionType() const {
         return mCompositionType.get();
     }
-    const sp<GraphicBuffer>& getBuffer() const { return mBuffer.get(); }
 
     void incrementFramesSinceBufferUpdate() { ++mFramesSinceBufferUpdate; }
     void resetFramesSinceBufferUpdate() { mFramesSinceBufferUpdate = 0; }
@@ -255,39 +293,80 @@ private:
     OutputLayerState<float, LayerStateField::Alpha> mAlpha{
             [](auto layer) { return layer->getLayerFE().getCompositionState()->alpha; }};
 
-    // TODO(b/180638831): Generic layer metadata
+    using LayerMetadataState =
+            OutputLayerState<GenericLayerMetadataMap, LayerStateField::LayerMetadata>;
+    LayerMetadataState
+            mLayerMetadata{[](auto layer) {
+                               return layer->getLayerFE().getCompositionState()->metadata;
+                           },
+                           [](const GenericLayerMetadataMap& metadata) {
+                               std::vector<std::string> result;
+                               if (metadata.empty()) {
+                                   result.push_back("{}");
+                                   return result;
+                               }
+                               result.push_back("{");
+                               for (const auto& [key, value] : metadata) {
+                                   std::string keyValueDump;
+                                   keyValueDump.append("           ");
+                                   keyValueDump.append(key);
+                                   keyValueDump.append("=");
+                                   keyValueDump.append(value.dumpAsString());
+                                   result.push_back(keyValueDump);
+                               }
+                               result.push_back("}");
+                               return result;
+                           },
+                           LayerMetadataState::getDefaultEquals(),
+                           [](const GenericLayerMetadataMap& metadata) {
+                               size_t hash = 0;
+                               for (const auto& [key, value] : metadata) {
+                                   size_t entryHash = 0;
+                                   hashCombineSingleHashed(entryHash,
+                                                           std::hash<std::string>{}(key));
+                                   hashCombineSingleHashed(entryHash,
+                                                           GenericLayerMetadataEntry::Hasher{}(
+                                                                   value));
+                                   hash ^= entryHash;
+                               }
+                               return hash;
+                           }};
 
     // Output-dependent per-frame state
 
-    OutputLayerState<Region, LayerStateField::VisibleRegion>
-            mVisibleRegion{[](auto layer) { return layer->getState().visibleRegion; },
-                           [](const Region& region) {
-                               using namespace std::string_literals;
-                               std::string dump;
-                               region.dump(dump, "");
-                               std::vector<std::string> split = base::Split(dump, "\n"s);
-                               split.erase(split.begin()); // Strip the header
-                               split.pop_back();           // Strip the last (empty) line
-                               for (std::string& line : split) {
-                                   line.erase(0, 4); // Strip leading padding before each rect
-                               }
-                               return split;
-                           },
-                           [](const Region& lhs, const Region& rhs) {
-                               return lhs.hasSameRects(rhs);
-                           }};
+    using VisibleRegionState = OutputLayerState<Region, LayerStateField::VisibleRegion>;
+    VisibleRegionState mVisibleRegion{[](auto layer) { return layer->getState().visibleRegion; },
+                                      VisibleRegionState::getRegionToStrings(),
+                                      VisibleRegionState::getRegionEquals()};
 
     using DataspaceState = OutputLayerState<ui::Dataspace, LayerStateField::Dataspace>;
     DataspaceState mOutputDataspace{[](auto layer) { return layer->getState().dataspace; },
                                     DataspaceState::getHalToStrings()};
 
-    // TODO(b/180638831): Buffer format
-
     // Output-independent per-frame state
+
+    using PixelFormatState = OutputLayerState<hardware::graphics::composer::hal::PixelFormat,
+                                              LayerStateField::PixelFormat>;
+    PixelFormatState
+            mPixelFormat{[](auto layer) {
+                             return layer->getLayerFE().getCompositionState()->buffer
+                                     ? static_cast<hardware::graphics::composer::hal::PixelFormat>(
+                                               layer->getLayerFE()
+                                                       .getCompositionState()
+                                                       ->buffer->getPixelFormat())
+                                     : hardware::graphics::composer::hal::PixelFormat::RGBA_8888;
+                         },
+                         PixelFormatState::getHalToStrings()};
 
     OutputLayerState<mat4, LayerStateField::ColorTransform> mColorTransform;
 
-    // TODO(b/180638831): Surface damage
+    using SurfaceDamageState = OutputLayerState<Region, LayerStateField::SurfaceDamage>;
+    SurfaceDamageState
+            mSurfaceDamage{[](auto layer) {
+                               return layer->getLayerFE().getCompositionState()->surfaceDamage;
+                           },
+                           SurfaceDamageState::getRegionToStrings(),
+                           SurfaceDamageState::getRegionEquals()};
 
     using CompositionTypeState = OutputLayerState<hardware::graphics::composer::hal::Composition,
                                                   LayerStateField::CompositionType>;
@@ -311,10 +390,14 @@ private:
                                 return std::vector<std::string>{base::StringPrintf("%p", p)};
                             }};
 
-    OutputLayerState<sp<GraphicBuffer>, LayerStateField::Buffer>
+    OutputLayerState<wp<GraphicBuffer>, LayerStateField::Buffer>
             mBuffer{[](auto layer) { return layer->getLayerFE().getCompositionState()->buffer; },
-                    [](const sp<GraphicBuffer>& buffer) {
-                        return std::vector<std::string>{base::StringPrintf("%p", buffer.get())};
+                    [](const wp<GraphicBuffer>& buffer) {
+                        sp<GraphicBuffer> promotedBuffer = buffer.promote();
+                        return std::vector<std::string>{
+                                base::StringPrintf("%p",
+                                                   promotedBuffer ? promotedBuffer.get()
+                                                                  : nullptr)};
                     }};
 
     int64_t mFramesSinceBufferUpdate = 0;
@@ -327,10 +410,12 @@ private:
                             return std::vector<std::string>{stream.str()};
                         }};
 
-    std::array<StateInterface*, 13> getNonUniqueFields() {
-        std::array<const StateInterface*, 13> constFields =
+    static const constexpr size_t kNumNonUniqueFields = 16;
+
+    std::array<StateInterface*, kNumNonUniqueFields> getNonUniqueFields() {
+        std::array<const StateInterface*, kNumNonUniqueFields> constFields =
                 const_cast<const LayerState*>(this)->getNonUniqueFields();
-        std::array<StateInterface*, 13> fields;
+        std::array<StateInterface*, kNumNonUniqueFields> fields;
         std::transform(constFields.cbegin(), constFields.cend(), fields.begin(),
                        [](const StateInterface* constField) {
                            return const_cast<StateInterface*>(constField);
@@ -338,12 +423,12 @@ private:
         return fields;
     }
 
-    std::array<const StateInterface*, 13> getNonUniqueFields() const {
+    std::array<const StateInterface*, kNumNonUniqueFields> getNonUniqueFields() const {
         return {
-                &mDisplayFrame,   &mSourceCrop,      &mZOrder,         &mBufferTransform,
-                &mBlendMode,      &mAlpha,           &mVisibleRegion,  &mOutputDataspace,
-                &mColorTransform, &mCompositionType, &mSidebandStream, &mBuffer,
-                &mSolidColor,
+                &mDisplayFrame,    &mSourceCrop,     &mZOrder,         &mBufferTransform,
+                &mBlendMode,       &mAlpha,          &mLayerMetadata,  &mVisibleRegion,
+                &mOutputDataspace, &mPixelFormat,    &mColorTransform, &mSurfaceDamage,
+                &mCompositionType, &mSidebandStream, &mBuffer,         &mSolidColor,
         };
     }
 };

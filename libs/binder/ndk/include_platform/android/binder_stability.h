@@ -45,6 +45,18 @@ static inline void AIBinder_markCompilationUnitStability(AIBinder* binder) {
     AIBinder_markVendorStability(binder);
 }
 
+/**
+ * Given a binder interface at a certain stability, there may be some
+ * requirements associated with that higher stability level. For instance, a
+ * VINTF stability binder is required to be in the VINTF manifest. This API
+ * can be called to use that same interface within the vendor partition.
+ */
+void AIBinder_forceDowngradeToVendorStability(AIBinder* binder);
+
+static inline void AIBinder_forceDowngradeToLocalStability(AIBinder* binder) {
+    AIBinder_forceDowngradeToVendorStability(binder);
+}
+
 #else  // defined(__ANDROID_VENDOR__)
 
 enum {
@@ -62,9 +74,27 @@ static inline void AIBinder_markCompilationUnitStability(AIBinder* binder) {
     AIBinder_markSystemStability(binder);
 }
 
+/**
+ * Given a binder interface at a certain stability, there may be some
+ * requirements associated with that higher stability level. For instance, a
+ * VINTF stability binder is required to be in the VINTF manifest. This API
+ * can be called to use that same interface within the system partition.
+ */
+void AIBinder_forceDowngradeToSystemStability(AIBinder* binder);
+
+static inline void AIBinder_forceDowngradeToLocalStability(AIBinder* binder) {
+    AIBinder_forceDowngradeToSystemStability(binder);
+}
+
 #endif  // defined(__ANDROID_VENDOR__)
 
 /**
+ * WARNING: this is not expected to be used manually. When the build system has
+ * versioned checks in place for an interface that prevent it being changed year
+ * over year (specifically like those for @VintfStability stable AIDL
+ * interfaces), this could be called. Calling this without this or equivalent
+ * infrastructure will lead to de facto frozen APIs or GSI test failures.
+ *
  * This interface has system<->vendor stability
  */
 void AIBinder_markVintfStability(AIBinder* binder);

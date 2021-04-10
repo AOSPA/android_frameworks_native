@@ -67,6 +67,7 @@ public:
     void cleanFramebufferCache() override;
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
+    void onPrimaryDisplaySizeChanged(ui::Size size) override;
 
 private:
     void threadMain(CreateInstanceFactory factory);

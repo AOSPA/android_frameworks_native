@@ -24,6 +24,9 @@
 #include <gtest/gtest.h>
 #include <log/log.h>
 
+#include "android/hardware_buffer.h"
+#include "compositionengine/LayerFECompositionState.h"
+
 namespace android::compositionengine::impl::planner {
 namespace {
 
@@ -48,7 +51,15 @@ const mat4 sMat4One = mat4::scale(vec4(2.f, 3.f, 1.f, 1.f));
 native_handle_t* const sFakeSidebandStreamOne = reinterpret_cast<native_handle_t*>(10);
 native_handle_t* const sFakeSidebandStreamTwo = reinterpret_cast<native_handle_t*>(11);
 const half4 sHalf4One = half4(0.2f, 0.3f, 0.4f, 0.5f);
-const half4 sHalf4Two = half4(0.5f, 0.4f, 0.43, 0.2f);
+const half4 sHalf4Two = half4(0.5f, 0.4f, 0.3f, 0.2f);
+const std::string sMetadataKeyOne = std::string("Meta!");
+const std::string sMetadataKeyTwo = std::string("Data!");
+const GenericLayerMetadataEntry sMetadataValueOne = GenericLayerMetadataEntry{
+        .value = std::vector<uint8_t>({1, 2}),
+};
+const GenericLayerMetadataEntry sMetadataValueTwo = GenericLayerMetadataEntry{
+        .value = std::vector<uint8_t>({1, 3}),
+};
 
 struct LayerStateTest : public testing::Test {
     LayerStateTest() {
@@ -73,6 +84,21 @@ struct LayerStateTest : public testing::Test {
         EXPECT_CALL(layerFE, getSequence()).WillRepeatedly(Return(sequenceId));
         EXPECT_CALL(layerFE, getDebugName()).WillRepeatedly(Return(debugName.c_str()));
         EXPECT_CALL(layerFE, getCompositionState()).WillRepeatedly(Return(&layerFEState));
+    }
+
+    void verifyUniqueDifferingFields(const LayerState& lhs, const LayerState& rhs) {
+        EXPECT_EQ(lhs.getHash(), rhs.getHash());
+
+        EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None), lhs.getDifferingFields(rhs));
+        EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None), rhs.getDifferingFields(lhs));
+    }
+
+    void verifyNonUniqueDifferingFields(const LayerState& lhs, const LayerState& rhs,
+                                        Flags<LayerStateField> fields) {
+        EXPECT_NE(lhs.getHash(), rhs.getHash());
+
+        EXPECT_EQ(fields, lhs.getDifferingFields(rhs));
+        EXPECT_EQ(fields, rhs.getDifferingFields(lhs));
     }
 
     mock::LayerFE mLayerFE;
@@ -129,21 +155,7 @@ TEST_F(LayerStateTest, compareId) {
     EXPECT_NE(mLayerState->getId(), otherLayerState->getId());
 
     // Id is a unique field, so it's not computed in the hash for a layer state.
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::Id),
-              otherLayerState->getHash(LayerStateField::Id));
-
-    // Similarly, Id cannot be included in differing fields.
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::Id));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::Id));
-
+    verifyUniqueDifferingFields(*mLayerState, *otherLayerState);
     EXPECT_FALSE(mLayerState->compare(*otherLayerState));
     EXPECT_FALSE(otherLayerState->compare(*mLayerState));
 }
@@ -188,21 +200,7 @@ TEST_F(LayerStateTest, compareName) {
     EXPECT_NE(mLayerState->getName(), otherLayerState->getName());
 
     // Name is a unique field, so it's not computed in the hash for a layer state.
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::Name),
-              otherLayerState->getHash(LayerStateField::Name));
-
-    // Similarly, Name cannot be included in differing fields.
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::Name));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::Name));
-
+    verifyUniqueDifferingFields(*mLayerState, *otherLayerState);
     EXPECT_FALSE(mLayerState->compare(*otherLayerState));
     EXPECT_FALSE(otherLayerState->compare(*mLayerState));
 }
@@ -253,20 +251,7 @@ TEST_F(LayerStateTest, compareDisplayFrame) {
 
     EXPECT_NE(mLayerState->getDisplayFrame(), otherLayerState->getDisplayFrame());
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::DisplayFrame),
-              otherLayerState->getHash(LayerStateField::DisplayFrame));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::DisplayFrame),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::DisplayFrame));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::DisplayFrame),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::DisplayFrame));
-
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::DisplayFrame);
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
 }
@@ -337,32 +322,10 @@ TEST_F(LayerStateTest, compareCompositionType) {
 
     EXPECT_NE(mLayerState->getCompositionType(), otherLayerState->getCompositionType());
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::CompositionType),
-              otherLayerState->getHash(LayerStateField::CompositionType));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::CompositionType),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::CompositionType));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::CompositionType),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::CompositionType));
-
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState,
+                                   LayerStateField::CompositionType);
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
-}
-
-TEST_F(LayerStateTest, getBuffer) {
-    OutputLayerCompositionState outputLayerCompositionState;
-    LayerFECompositionState layerFECompositionState;
-    layerFECompositionState.buffer = new GraphicBuffer();
-    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
-                       layerFECompositionState);
-    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
-    EXPECT_EQ(layerFECompositionState.buffer, mLayerState->getBuffer());
 }
 
 TEST_F(LayerStateTest, updateBuffer) {
@@ -380,7 +343,6 @@ TEST_F(LayerStateTest, updateBuffer) {
     setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionState,
                        layerFECompositionStateTwo);
     Flags<LayerStateField> updates = mLayerState->update(&newOutputLayer);
-    EXPECT_EQ(layerFECompositionStateTwo.buffer, mLayerState->getBuffer());
     EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Buffer), updates);
 }
 
@@ -399,21 +361,8 @@ TEST_F(LayerStateTest, compareBuffer) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getBuffer(), otherLayerState->getBuffer());
-
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::Buffer),
-              otherLayerState->getHash(LayerStateField::Buffer));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Buffer),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::Buffer));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Buffer),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::Buffer));
+    // A buffer is not a unique field, but the assertions are the same.
+    verifyUniqueDifferingFields(*mLayerState, *otherLayerState);
 
     // Buffers are explicitly excluded from comparison
     EXPECT_FALSE(mLayerState->compare(*otherLayerState));
@@ -453,19 +402,7 @@ TEST_F(LayerStateTest, compareSourceCrop) {
                        layerFECompositionState);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::SourceCrop),
-              otherLayerState->getHash(LayerStateField::SourceCrop));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SourceCrop),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::SourceCrop));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SourceCrop),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::SourceCrop));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::SourceCrop);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -504,19 +441,7 @@ TEST_F(LayerStateTest, compareZOrder) {
                        layerFECompositionState);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::ZOrder),
-              otherLayerState->getHash(LayerStateField::ZOrder));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::ZOrder),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::ZOrder));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::ZOrder),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::ZOrder));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::ZOrder);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -555,19 +480,8 @@ TEST_F(LayerStateTest, compareBufferTransform) {
                        layerFECompositionState);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::BufferTransform),
-              otherLayerState->getHash(LayerStateField::BufferTransform));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::BufferTransform),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::BufferTransform));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::BufferTransform),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::BufferTransform));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState,
+                                   LayerStateField::BufferTransform);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -606,19 +520,7 @@ TEST_F(LayerStateTest, compareBlendMode) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::BlendMode),
-              otherLayerState->getHash(LayerStateField::BlendMode));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::BlendMode),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::BlendMode));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::BlendMode),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::BlendMode));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::BlendMode);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -657,22 +559,59 @@ TEST_F(LayerStateTest, compareAlpha) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::Alpha),
-              otherLayerState->getHash(LayerStateField::Alpha));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Alpha),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::Alpha));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Alpha),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::Alpha));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::Alpha);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
+}
+
+TEST_F(LayerStateTest, updateLayerMetadata) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.metadata[sMetadataKeyOne] = sMetadataValueOne;
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.metadata[sMetadataKeyTwo] = sMetadataValueTwo;
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    Flags<LayerStateField> updates = mLayerState->update(&newOutputLayer);
+    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::LayerMetadata), updates);
+}
+
+TEST_F(LayerStateTest, compareLayerMetadata) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.metadata[sMetadataKeyOne] = sMetadataValueOne;
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.metadata[sMetadataKeyTwo] = sMetadataValueTwo;
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
+
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::LayerMetadata);
+
+    EXPECT_TRUE(mLayerState->compare(*otherLayerState));
+    EXPECT_TRUE(otherLayerState->compare(*mLayerState));
+}
+
+TEST_F(LayerStateTest, getVisibleRegion) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    outputLayerCompositionState.visibleRegion = sRegionOne;
+    LayerFECompositionState layerFECompositionState;
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    EXPECT_TRUE(mLayerState->getVisibleRegion().hasSameRects(sRegionOne));
 }
 
 TEST_F(LayerStateTest, updateVisibleRegion) {
@@ -708,19 +647,7 @@ TEST_F(LayerStateTest, compareVisibleRegion) {
                        layerFECompositionState);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::VisibleRegion),
-              otherLayerState->getHash(LayerStateField::VisibleRegion));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::VisibleRegion),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::VisibleRegion));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::VisibleRegion),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::VisibleRegion));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::VisibleRegion);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -759,19 +686,65 @@ TEST_F(LayerStateTest, compareDataspace) {
                        layerFECompositionState);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::Dataspace),
-              otherLayerState->getHash(LayerStateField::Dataspace));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::Dataspace);
 
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Dataspace),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::Dataspace));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Dataspace),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::Dataspace));
+    EXPECT_TRUE(mLayerState->compare(*otherLayerState));
+    EXPECT_TRUE(otherLayerState->compare(*mLayerState));
+}
+
+TEST_F(LayerStateTest, updatePixelFormat) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.buffer =
+            new GraphicBuffer(1, 1, PIXEL_FORMAT_RGBA_8888,
+                              AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+                                      AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                              "buffer1");
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.buffer =
+            new GraphicBuffer(1, 1, PIXEL_FORMAT_RGBX_8888,
+                              AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+                                      AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                              "buffer2");
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    Flags<LayerStateField> updates = mLayerState->update(&newOutputLayer);
+    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::Buffer) |
+                      Flags<LayerStateField>(LayerStateField::PixelFormat),
+              updates);
+}
+
+TEST_F(LayerStateTest, comparePixelFormat) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.buffer =
+            new GraphicBuffer(1, 1, PIXEL_FORMAT_RGBA_8888,
+                              AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+                                      AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                              "buffer1");
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.buffer =
+            new GraphicBuffer(1, 1, PIXEL_FORMAT_RGBX_8888,
+                              AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+                                      AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                              "buffer2");
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
+
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState,
+                                   Flags<LayerStateField>(LayerStateField::PixelFormat));
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -814,19 +787,48 @@ TEST_F(LayerStateTest, compareColorTransform) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::ColorTransform),
-              otherLayerState->getHash(LayerStateField::ColorTransform));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::ColorTransform);
 
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::ColorTransform),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::ColorTransform));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::ColorTransform),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::ColorTransform));
+    EXPECT_TRUE(mLayerState->compare(*otherLayerState));
+    EXPECT_TRUE(otherLayerState->compare(*mLayerState));
+}
+
+TEST_F(LayerStateTest, updateSurfaceDamage) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.surfaceDamage = sRegionOne;
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    OutputLayerCompositionState outputLayerCompositionStateTwo;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.surfaceDamage = sRegionTwo;
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionStateTwo,
+                       layerFECompositionStateTwo);
+    Flags<LayerStateField> updates = mLayerState->update(&newOutputLayer);
+    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SurfaceDamage), updates);
+}
+
+TEST_F(LayerStateTest, compareSurfaceDamage) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.surfaceDamage = sRegionOne;
+    setupMocksForLayer(mOutputLayer, mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    mock::OutputLayer newOutputLayer;
+    mock::LayerFE newLayerFE;
+    OutputLayerCompositionState outputLayerCompositionStateTwo;
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.surfaceDamage = sRegionTwo;
+    setupMocksForLayer(newOutputLayer, newLayerFE, outputLayerCompositionStateTwo,
+                       layerFECompositionStateTwo);
+    auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
+
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::SurfaceDamage);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -865,19 +867,7 @@ TEST_F(LayerStateTest, compareSidebandStream) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::SidebandStream),
-              otherLayerState->getHash(LayerStateField::SidebandStream));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SidebandStream),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::SidebandStream));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SidebandStream),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::SidebandStream));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::SidebandStream);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
@@ -916,19 +906,7 @@ TEST_F(LayerStateTest, compareSolidColor) {
                        layerFECompositionStateTwo);
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
-    EXPECT_NE(mLayerState->getHash(LayerStateField::None),
-              otherLayerState->getHash(LayerStateField::None));
-    EXPECT_EQ(mLayerState->getHash(LayerStateField::SolidColor),
-              otherLayerState->getHash(LayerStateField::SolidColor));
-
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SolidColor),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              mLayerState->getDifferingFields(*otherLayerState, LayerStateField::SolidColor));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::SolidColor),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::None));
-    EXPECT_EQ(Flags<LayerStateField>(LayerStateField::None),
-              otherLayerState->getDifferingFields(*mLayerState, LayerStateField::SolidColor));
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::SolidColor);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));

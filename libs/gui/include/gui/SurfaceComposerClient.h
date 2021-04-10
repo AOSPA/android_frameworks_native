@@ -215,6 +215,11 @@ public:
     static status_t setDisplayBrightness(const sp<IBinder>& displayToken,
                                          const gui::DisplayBrightness& brightness);
 
+    static status_t addHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                            const sp<gui::IHdrLayerInfoListener>& listener);
+    static status_t removeHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                               const sp<gui::IHdrLayerInfoListener>& listener);
+
     /*
      * Sends a power boost to the composer. This function is asynchronous.
      *
@@ -515,7 +520,7 @@ public:
         Transaction& setShadowRadius(const sp<SurfaceControl>& sc, float cornerRadius);
 
         Transaction& setFrameRate(const sp<SurfaceControl>& sc, float frameRate,
-                                  int8_t compatibility, bool shouldBeSeamless);
+                                  int8_t compatibility, int8_t changeFrameRateStrategy);
 
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that
