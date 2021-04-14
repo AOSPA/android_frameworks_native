@@ -728,6 +728,21 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         return;
     }
 
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+            hasSecureCamera = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+            hasSecureDisplay = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+            needsProtected = true;
+        }
+    }
+
     sp<GraphicBuffer> previousOverride = nullptr;
     for (auto* layer : getOutputLayersOrderedByZ()) {
         bool skipLayer = false;
