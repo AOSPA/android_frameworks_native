@@ -281,6 +281,20 @@ enum Permission {
     ROTATE_SURFACE_FLINGER = 0x2,
 };
 
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+class DisplayConfigCallbackHandler : public ::DisplayConfig::ConfigCallback {
+public:
+    DisplayConfigCallbackHandler(SurfaceFlinger& flinger) : mFlinger(flinger) {
+    }
+    void NotifyIdleStatus(bool is_idle) {
+      ALOGV("received idle notification");
+      ATRACE_CALL();
+      mFlinger.NotifyIdleStatus();
+    }
+  private:
+    SurfaceFlinger& mFlinger;
+};
+#endif
 }  // namespace anonymous
 
 struct SetInputWindowsListener : os::BnSetInputWindowsListener {
@@ -328,6 +342,7 @@ bool SurfaceFlinger::useFrameRateApi;
 bool SurfaceFlinger::sDirectStreaming;
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
 ::DisplayConfig::ClientInterface *mDisplayConfigIntf = nullptr;
+DisplayConfigCallbackHandler *mDisplayConfigCallbackhandler = nullptr;
 #endif
 std::string getHwcServiceName() {
     char value[PROPERTY_VALUE_MAX] = {};
@@ -597,8 +612,10 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 
     useFrameRateApi = use_frame_rate_api(true);
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
+    mDisplayConfigCallbackhandler = new DisplayConfigCallbackHandler(*this);
     int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger"+std::to_string(0),
-                                                        nullptr, &mDisplayConfigIntf);
+                                                        mDisplayConfigCallbackhandler,
+                                                        &mDisplayConfigIntf);
     if (ret || !mDisplayConfigIntf) {
         ALOGE("DisplayConfig HIDL not present\n");
         mDisplayConfigIntf = nullptr;
@@ -1830,10 +1847,11 @@ status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
 sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
         ISurfaceComposer::VsyncSource vsyncSource,
         ISurfaceComposer::EventRegistrationFlags eventRegistration) {
-    const auto& handle =
-            vsyncSource == eVsyncSourceSurfaceFlinger ? mSfConnectionHandle : mAppConnectionHandle;
 
-    return mScheduler->createDisplayEventConnection(handle, eventRegistration);
+    bool triggerRefresh = vsyncSource != eVsyncSourceSurfaceFlinger;
+    const auto& handle = triggerRefresh ? mAppConnectionHandle : mSfConnectionHandle;
+
+    return mScheduler->createDisplayEventConnection(handle, triggerRefresh, eventRegistration);
 }
 
 void SurfaceFlinger::signalTransaction() {
@@ -7640,6 +7658,10 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
             compareStack = true;
         }
     }
+}
+
+void SurfaceFlinger::NotifyIdleStatus() {
+  mScheduler->setIdleState();
 }
 
 void SurfaceFlinger::setupEarlyWakeUpFeature() {
