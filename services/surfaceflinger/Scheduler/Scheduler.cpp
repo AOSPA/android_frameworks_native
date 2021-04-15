@@ -257,30 +257,39 @@ Scheduler::ConnectionHandle Scheduler::createConnection(
     auto eventThread = std::make_unique<impl::EventThread>(std::move(vsyncSource), tokenManager,
                                                            std::move(interceptCallback),
                                                            std::move(throttleVsync));
-    return createConnection(std::move(eventThread));
+    bool triggerRefresh = !strcmp(connectionName, "app");
+    return createConnection(std::move(eventThread), triggerRefresh);
 }
 
-Scheduler::ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread) {
+Scheduler::ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread,
+                                                        bool triggerRefresh) {
     const ConnectionHandle handle = ConnectionHandle{mNextConnectionHandleId++};
     ALOGV("Creating a connection handle with ID %" PRIuPTR, handle.id);
 
-    auto connection = createConnectionInternal(eventThread.get());
+    auto connection = createConnectionInternal(eventThread.get(), triggerRefresh);
 
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     mConnections.emplace(handle, Connection{connection, std::move(eventThread)});
     return handle;
 }
 
-sp<EventThreadConnection> Scheduler::createConnectionInternal(
-        EventThread* eventThread, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
-    return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
+sp<EventThreadConnection> Scheduler::createConnectionInternal(EventThread* eventThread,
+                 bool triggerRefresh, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+    // Refresh need to be triggered from app thread alone.
+    // Triggering it from sf connection can result in infinite loop due to requestnextvsync.
+    if (triggerRefresh) {
+        return eventThread->createEventConnection([&] { resyncAndRefresh(); }, eventRegistration);
+    } else {
+        return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
+    }
 }
 
-sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(
-        ConnectionHandle handle, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(ConnectionHandle handle,
+                 bool triggerRefresh, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     RETURN_IF_INVALID_HANDLE(handle, nullptr);
-    return createConnectionInternal(mConnections[handle].thread.get(), eventRegistration);
+    return createConnectionInternal(mConnections[handle].thread.get(), triggerRefresh,
+                                    eventRegistration);
 }
 
 sp<EventThreadConnection> Scheduler::getEventConnection(ConnectionHandle handle) {
@@ -450,7 +459,7 @@ Scheduler::ConnectionHandle Scheduler::enableVSyncInjection(bool enable) {
         eventThread->onHotplugReceived(PhysicalDisplayId::fromPort(0), true);
         eventThread->onScreenAcquired();
 
-        mInjectorConnectionHandle = createConnection(std::move(eventThread));
+        mInjectorConnectionHandle = createConnection(std::move(eventThread), false /*No Refresh*/);
     }
 
     mInjectVSyncs = enable;
@@ -503,6 +512,20 @@ void Scheduler::resyncToHardwareVsync(bool makeAvailable, nsecs_t period, bool f
     }
 
     setVsyncPeriod(period, force_resync);
+}
+
+void Scheduler::resyncAndRefresh() {
+    resync();
+
+    if (!mDisplayIdle) {
+        return;
+    }
+
+    ATRACE_CALL();
+    const auto& refreshRate = mRefreshRateConfigs.getCurrentRefreshRate();
+    mSchedulerCallback.repaintEverythingForHWC();
+    resyncToHardwareVsync(true /* makeAvailable */, refreshRate.getVsyncPeriod(), true);
+    mDisplayIdle = false;
 }
 
 void Scheduler::resync() {
@@ -899,6 +922,10 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     } else {
         mFrameRateOverridesFromBackdoor.erase(frameRateOverride.uid);
     }
+}
+
+void Scheduler::setIdleState() {
+    mDisplayIdle = true;
 }
 
 } // namespace android
