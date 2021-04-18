@@ -146,9 +146,9 @@ bool DisplayDevice::isPoweredOn() const {
 }
 
 void DisplayDevice::setActiveMode(DisplayModeId id) {
-    LOG_FATAL_IF(id.value() >= mSupportedModes.size(),
-                 "Cannot set active mode which is not supported.");
-    mActiveModeId = id;
+    const auto mode = getMode(id);
+    LOG_FATAL_IF(!mode, "Cannot set active mode which is not supported.");
+    mActiveMode = mode;
 }
 
 status_t DisplayDevice::initiateModeChange(DisplayModeId modeId,
@@ -165,7 +165,7 @@ status_t DisplayDevice::initiateModeChange(DisplayModeId modeId,
 }
 
 const DisplayModePtr& DisplayDevice::getActiveMode() const {
-    return mSupportedModes[mActiveModeId.value()];
+    return mActiveMode;
 }
 
 const DisplayModes& DisplayDevice::getSupportedModes() const {
@@ -173,9 +173,10 @@ const DisplayModes& DisplayDevice::getSupportedModes() const {
 }
 
 DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
-    const auto id = modeId.value();
-    if (id < mSupportedModes.size()) {
-        return mSupportedModes[id];
+    const auto it = std::find_if(mSupportedModes.begin(), mSupportedModes.end(),
+                                 [&](DisplayModePtr mode) { return mode->getId() == modeId; });
+    if (it != mSupportedModes.end()) {
+        return *it;
     }
     return nullptr;
 }
@@ -263,7 +264,7 @@ ui::Transform::RotationFlags DisplayDevice::getPrimaryDisplayRotationFlags() {
 std::string DisplayDevice::getDebugName() const {
     const char* type = "virtual";
     if (mConnectionType) {
-        type = *mConnectionType == DisplayConnectionType::Internal ? "internal" : "external";
+        type = *mConnectionType == ui::DisplayConnectionType::Internal ? "internal" : "external";
     }
 
     return base::StringPrintf("DisplayDevice{%s, %s%s, \"%s\"}", to_string(getId()).c_str(), type,
@@ -362,8 +363,20 @@ int DisplayDevice::getSupportedPerFrameMetadata() const {
     return mCompositionDisplay->getDisplayColorProfile()->getSupportedPerFrameMetadata();
 }
 
-const HdrCapabilities& DisplayDevice::getHdrCapabilities() const {
-    return mCompositionDisplay->getDisplayColorProfile()->getHdrCapabilities();
+void DisplayDevice::overrideHdrTypes(const std::vector<ui::Hdr>& hdrTypes) {
+    mOverrideHdrTypes = hdrTypes;
+}
+
+HdrCapabilities DisplayDevice::getHdrCapabilities() const {
+    const HdrCapabilities& capabilities =
+            mCompositionDisplay->getDisplayColorProfile()->getHdrCapabilities();
+    std::vector<ui::Hdr> hdrTypes = capabilities.getSupportedHdrTypes();
+    if (!mOverrideHdrTypes.empty()) {
+        hdrTypes = mOverrideHdrTypes;
+    }
+    return HdrCapabilities(hdrTypes, capabilities.getDesiredMaxLuminance(),
+                           capabilities.getDesiredMaxAverageLuminance(),
+                           capabilities.getDesiredMinLuminance());
 }
 
 std::atomic<int32_t> DisplayDeviceState::sNextSequenceId(1);

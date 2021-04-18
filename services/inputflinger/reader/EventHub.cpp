@@ -38,16 +38,19 @@
 // #define LOG_NDEBUG 0
 #include <android-base/file.h>
 #include <android-base/stringprintf.h>
+#include <android-base/strings.h>
 #include <cutils/properties.h>
 #include <input/KeyCharacterMap.h>
 #include <input/KeyLayoutMap.h>
 #include <input/VirtualKeyMap.h>
 #include <openssl/sha.h>
+#include <statslog.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/Timers.h>
 
 #include <filesystem>
+#include <regex>
 
 #include "EventHub.h"
 
@@ -83,6 +86,30 @@ static const std::unordered_map<std::string, int32_t> BATTERY_LEVEL = {{"Critica
                                                                        {"High", 70},
                                                                        {"Full", 100},
                                                                        {"Unknown", 50}};
+
+// Mapping for input led class node names lookup.
+// https://www.kernel.org/doc/html/latest/leds/leds-class.html
+static const std::unordered_map<std::string, InputLightClass> LIGHT_CLASSES =
+        {{"red", InputLightClass::RED},
+         {"green", InputLightClass::GREEN},
+         {"blue", InputLightClass::BLUE},
+         {"global", InputLightClass::GLOBAL},
+         {"brightness", InputLightClass::BRIGHTNESS},
+         {"multi_index", InputLightClass::MULTI_INDEX},
+         {"multi_intensity", InputLightClass::MULTI_INTENSITY},
+         {"max_brightness", InputLightClass::MAX_BRIGHTNESS}};
+
+// Mapping for input multicolor led class node names.
+// https://www.kernel.org/doc/html/latest/leds/leds-class-multicolor.html
+static const std::unordered_map<InputLightClass, std::string> LIGHT_NODES =
+        {{InputLightClass::BRIGHTNESS, "brightness"},
+         {InputLightClass::MULTI_INDEX, "multi_index"},
+         {InputLightClass::MULTI_INTENSITY, "multi_intensity"}};
+
+// Mapping for light color name and the light color
+const std::unordered_map<std::string, LightColor> LIGHT_COLORS = {{"red", LightColor::RED},
+                                                                  {"green", LightColor::GREEN},
+                                                                  {"blue", LightColor::BLUE}};
 
 static inline const char* toString(bool value) {
     return value ? "true" : "false";
@@ -151,14 +178,14 @@ static nsecs_t processEventTimestamp(const struct input_event& event) {
  * Returns the sysfs root path of the input device
  *
  */
-static std::filesystem::path getSysfsRootPath(const char* devicePath) {
+static std::optional<std::filesystem::path> getSysfsRootPath(const char* devicePath) {
     std::error_code errorCode;
 
     // Stat the device path to get the major and minor number of the character file
     struct stat statbuf;
     if (stat(devicePath, &statbuf) == -1) {
         ALOGE("Could not stat device %s due to error: %s.", devicePath, std::strerror(errno));
-        return std::filesystem::path();
+        return std::nullopt;
     }
 
     unsigned int major_num = major(statbuf.st_rdev);
@@ -173,7 +200,7 @@ static std::filesystem::path getSysfsRootPath(const char* devicePath) {
     if (errorCode) {
         ALOGW("Could not run filesystem::canonical() due to error %d : %s.", errorCode.value(),
               errorCode.message().c_str());
-        return std::filesystem::path();
+        return std::nullopt;
     }
 
     // Continue to go up a directory until we reach a directory named "input"
@@ -192,26 +219,68 @@ static std::filesystem::path getSysfsRootPath(const char* devicePath) {
         }
 
         // Not found
-        return std::filesystem::path();
+        return std::nullopt;
     }
 
     return sysfsPath;
 }
 
 /**
- * Returns the power supply node in sys fs
- *
+ * Returns the list of files under a specified path.
  */
-static std::filesystem::path findPowerSupplyNode(const std::filesystem::path& sysfsRootPath) {
-    for (auto path = sysfsRootPath; path != "/"; path = path.parent_path()) {
-        std::error_code errorCode;
-        auto iter = std::filesystem::directory_iterator(path / "power_supply", errorCode);
-        if (!errorCode && iter != std::filesystem::directory_iterator()) {
-            return iter->path();
+static std::vector<std::filesystem::path> allFilesInPath(const std::filesystem::path& path) {
+    std::vector<std::filesystem::path> nodes;
+    std::error_code errorCode;
+    auto iter = std::filesystem::directory_iterator(path, errorCode);
+    while (!errorCode && iter != std::filesystem::directory_iterator()) {
+        nodes.push_back(iter->path());
+        iter++;
+    }
+    return nodes;
+}
+
+/**
+ * Returns the list of files under a specified directory in a sysfs path.
+ * Example:
+ * findSysfsNodes(sysfsRootPath, SysfsClass::LEDS) will return all led nodes under "leds" directory
+ * in the sysfs path.
+ */
+static std::vector<std::filesystem::path> findSysfsNodes(const std::filesystem::path& sysfsRoot,
+                                                         SysfsClass clazz) {
+    std::string nodeStr = NamedEnum::string(clazz);
+    std::for_each(nodeStr.begin(), nodeStr.end(),
+                  [](char& c) { c = std::tolower(static_cast<unsigned char>(c)); });
+    std::vector<std::filesystem::path> nodes;
+    for (auto path = sysfsRoot; path != "/" && nodes.empty(); path = path.parent_path()) {
+        nodes = allFilesInPath(path / nodeStr);
+    }
+    return nodes;
+}
+
+static std::optional<std::array<LightColor, COLOR_NUM>> getColorIndexArray(
+        std::filesystem::path path) {
+    std::string indexStr;
+    if (!base::ReadFileToString(path, &indexStr)) {
+        return std::nullopt;
+    }
+
+    // Parse the multi color LED index file, refer to kernel docs
+    // leds/leds-class-multicolor.html
+    std::regex indexPattern("(red|green|blue)\\s(red|green|blue)\\s(red|green|blue)[\\n]");
+    std::smatch results;
+    std::array<LightColor, COLOR_NUM> colors;
+    if (!std::regex_match(indexStr, results, indexPattern)) {
+        return std::nullopt;
+    }
+
+    for (size_t i = 1; i < results.size(); i++) {
+        const auto it = LIGHT_COLORS.find(results[i].str());
+        if (it != LIGHT_COLORS.end()) {
+            // intensities.emplace(it->second, 0);
+            colors[i - 1] = it->second;
         }
     }
-    // Not found
-    return std::filesystem::path();
+    return colors;
 }
 
 // --- Global Functions ---
@@ -280,6 +349,7 @@ EventHub::Device::Device(int fd, int32_t id, const std::string& path,
         virtualKeyMap(nullptr),
         ffEffectPlaying(false),
         ffEffectId(-1),
+        nextLightId(0),
         controllerNumber(0),
         enabled(true),
         isVirtual(fd < 0) {}
@@ -467,6 +537,70 @@ status_t EventHub::Device::mapLed(int32_t led, int32_t* outScanCode) const {
         }
     }
     return NAME_NOT_FOUND;
+}
+
+// Check the sysfs path for any input device batteries, returns true if battery found.
+bool EventHub::Device::configureBatteryLocked() {
+    if (!sysfsRootPath.has_value()) {
+        return false;
+    }
+    // Check if device has any batteries.
+    std::vector<std::filesystem::path> batteryPaths =
+            findSysfsNodes(sysfsRootPath.value(), SysfsClass::POWER_SUPPLY);
+    // We only support single battery for an input device, if multiple batteries exist only the
+    // first one is supported.
+    if (batteryPaths.empty()) {
+        // Set path to be empty
+        sysfsBatteryPath = std::nullopt;
+        return false;
+    }
+    // If a battery exists
+    sysfsBatteryPath = batteryPaths[0];
+    return true;
+}
+
+// Check the sysfs path for any input device lights, returns true if lights found.
+bool EventHub::Device::configureLightsLocked() {
+    if (!sysfsRootPath.has_value()) {
+        return false;
+    }
+    // Check if device has any lights.
+    const auto& paths = findSysfsNodes(sysfsRootPath.value(), SysfsClass::LEDS);
+    for (const auto& nodePath : paths) {
+        RawLightInfo info;
+        info.id = ++nextLightId;
+        info.path = nodePath;
+        info.name = nodePath.filename();
+        info.maxBrightness = std::nullopt;
+        size_t nameStart = info.name.rfind(":");
+        if (nameStart != std::string::npos) {
+            // Trim the name to color name
+            info.name = info.name.substr(nameStart + 1);
+            // Set InputLightClass flag for colors
+            const auto it = LIGHT_CLASSES.find(info.name);
+            if (it != LIGHT_CLASSES.end()) {
+                info.flags |= it->second;
+            }
+        }
+        // Scan the path for all the files
+        // Refer to https://www.kernel.org/doc/Documentation/leds/leds-class.txt
+        const auto& files = allFilesInPath(nodePath);
+        for (const auto& file : files) {
+            const auto it = LIGHT_CLASSES.find(file.filename().string());
+            if (it != LIGHT_CLASSES.end()) {
+                info.flags |= it->second;
+                // If the node has maximum brightness, read it
+                if (it->second == InputLightClass::MAX_BRIGHTNESS) {
+                    std::string str;
+                    if (base::ReadFileToString(file, &str)) {
+                        info.maxBrightness = std::stoi(str);
+                    }
+                }
+            }
+        }
+        lightInfos.insert_or_assign(info.id, info);
+    }
+    return !lightInfos.empty();
 }
 
 /**
@@ -829,6 +963,161 @@ base::Result<std::pair<InputDeviceSensorType, int32_t>> EventHub::mapSensor(int3
     return Errorf("Device not found or device has no key layout.");
 }
 
+const std::vector<int32_t> EventHub::getRawLightIds(int32_t deviceId) {
+    std::scoped_lock _l(mLock);
+    Device* device = getDeviceLocked(deviceId);
+    std::vector<int32_t> lightIds;
+
+    if (device != nullptr) {
+        for (const auto [id, info] : device->lightInfos) {
+            lightIds.push_back(id);
+        }
+    }
+    return lightIds;
+}
+
+std::optional<RawLightInfo> EventHub::getRawLightInfo(int32_t deviceId, int32_t lightId) {
+    std::scoped_lock _l(mLock);
+    Device* device = getDeviceLocked(deviceId);
+
+    if (device != nullptr) {
+        auto it = device->lightInfos.find(lightId);
+        if (it != device->lightInfos.end()) {
+            return it->second;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<int32_t> EventHub::getLightBrightness(int32_t deviceId, int32_t lightId) {
+    std::scoped_lock _l(mLock);
+
+    Device* device = getDeviceLocked(deviceId);
+    if (device == nullptr) {
+        return std::nullopt;
+    }
+
+    auto it = device->lightInfos.find(lightId);
+    if (it == device->lightInfos.end()) {
+        return std::nullopt;
+    }
+    std::string buffer;
+    if (!base::ReadFileToString(it->second.path / LIGHT_NODES.at(InputLightClass::BRIGHTNESS),
+                                &buffer)) {
+        return std::nullopt;
+    }
+    return std::stoi(buffer);
+}
+
+std::optional<std::unordered_map<LightColor, int32_t>> EventHub::getLightIntensities(
+        int32_t deviceId, int32_t lightId) {
+    std::scoped_lock _l(mLock);
+
+    Device* device = getDeviceLocked(deviceId);
+    if (device == nullptr) {
+        return std::nullopt;
+    }
+
+    auto lightIt = device->lightInfos.find(lightId);
+    if (lightIt == device->lightInfos.end()) {
+        return std::nullopt;
+    }
+
+    auto ret =
+            getColorIndexArray(lightIt->second.path / LIGHT_NODES.at(InputLightClass::MULTI_INDEX));
+
+    if (!ret.has_value()) {
+        return std::nullopt;
+    }
+    std::array<LightColor, COLOR_NUM> colors = ret.value();
+
+    std::string intensityStr;
+    if (!base::ReadFileToString(lightIt->second.path /
+                                        LIGHT_NODES.at(InputLightClass::MULTI_INTENSITY),
+                                &intensityStr)) {
+        return std::nullopt;
+    }
+
+    // Intensity node outputs 3 color values
+    std::regex intensityPattern("([0-9]+)\\s([0-9]+)\\s([0-9]+)[\\n]");
+    std::smatch results;
+
+    if (!std::regex_match(intensityStr, results, intensityPattern)) {
+        return std::nullopt;
+    }
+    std::unordered_map<LightColor, int32_t> intensities;
+    for (size_t i = 1; i < results.size(); i++) {
+        int value = std::stoi(results[i].str());
+        intensities.emplace(colors[i - 1], value);
+    }
+    return intensities;
+}
+
+void EventHub::setLightBrightness(int32_t deviceId, int32_t lightId, int32_t brightness) {
+    std::scoped_lock _l(mLock);
+
+    Device* device = getDeviceLocked(deviceId);
+    if (device == nullptr) {
+        ALOGE("Device Id %d does not exist", deviceId);
+        return;
+    }
+    auto lightIt = device->lightInfos.find(lightId);
+    if (lightIt == device->lightInfos.end()) {
+        ALOGE("Light Id %d does not exist.", lightId);
+        return;
+    }
+
+    if (!base::WriteStringToFile(std::to_string(brightness),
+                                 lightIt->second.path /
+                                         LIGHT_NODES.at(InputLightClass::BRIGHTNESS))) {
+        ALOGE("Can not write to file, error: %s", strerror(errno));
+    }
+}
+
+void EventHub::setLightIntensities(int32_t deviceId, int32_t lightId,
+                                   std::unordered_map<LightColor, int32_t> intensities) {
+    std::scoped_lock _l(mLock);
+
+    Device* device = getDeviceLocked(deviceId);
+    if (device == nullptr) {
+        ALOGE("Device Id %d does not exist", deviceId);
+        return;
+    }
+    auto lightIt = device->lightInfos.find(lightId);
+    if (lightIt == device->lightInfos.end()) {
+        ALOGE("Light Id %d does not exist.", lightId);
+        return;
+    }
+
+    auto ret =
+            getColorIndexArray(lightIt->second.path / LIGHT_NODES.at(InputLightClass::MULTI_INDEX));
+
+    if (!ret.has_value()) {
+        return;
+    }
+    std::array<LightColor, COLOR_NUM> colors = ret.value();
+
+    std::string rgbStr;
+    for (size_t i = 0; i < COLOR_NUM; i++) {
+        auto it = intensities.find(colors[i]);
+        if (it != intensities.end()) {
+            rgbStr += std::to_string(it->second);
+            // Insert space between colors
+            if (i < COLOR_NUM - 1) {
+                rgbStr += " ";
+            }
+        }
+    }
+    // Append new line
+    rgbStr += "\n";
+
+    if (!base::WriteStringToFile(rgbStr,
+                                 lightIt->second.path /
+                                         LIGHT_NODES.at(InputLightClass::MULTI_INTENSITY))) {
+        ALOGE("Can not write to file, error: %s", strerror(errno));
+    }
+}
+
 void EventHub::setExcludedDevices(const std::vector<std::string>& devices) {
     std::scoped_lock _l(mLock);
 
@@ -1068,19 +1357,20 @@ std::optional<int32_t> EventHub::getBatteryCapacity(int32_t deviceId) const {
     Device* device = getDeviceLocked(deviceId);
     std::string buffer;
 
-    if (!device || (device->sysfsBatteryPath.empty())) {
+    if (device == nullptr || !device->sysfsBatteryPath.has_value()) {
         return std::nullopt;
     }
 
     // Some devices report battery capacity as an integer through the "capacity" file
-    if (base::ReadFileToString(device->sysfsBatteryPath / "capacity", &buffer)) {
-        return std::stoi(buffer);
+    if (base::ReadFileToString(device->sysfsBatteryPath.value() / "capacity", &buffer)) {
+        return std::stoi(base::Trim(buffer));
     }
 
     // Other devices report capacity as an enum value POWER_SUPPLY_CAPACITY_LEVEL_XXX
     // These values are taken from kernel source code include/linux/power_supply.h
-    if (base::ReadFileToString(device->sysfsBatteryPath / "capacity_level", &buffer)) {
-        const auto it = BATTERY_LEVEL.find(buffer);
+    if (base::ReadFileToString(device->sysfsBatteryPath.value() / "capacity_level", &buffer)) {
+        // Remove any white space such as trailing new line
+        const auto it = BATTERY_LEVEL.find(base::Trim(buffer));
         if (it != BATTERY_LEVEL.end()) {
             return it->second;
         }
@@ -1093,18 +1383,17 @@ std::optional<int32_t> EventHub::getBatteryStatus(int32_t deviceId) const {
     Device* device = getDeviceLocked(deviceId);
     std::string buffer;
 
-    if (!device || (device->sysfsBatteryPath.empty())) {
+    if (device == nullptr || !device->sysfsBatteryPath.has_value()) {
         return std::nullopt;
     }
 
-    if (!base::ReadFileToString(device->sysfsBatteryPath / "status", &buffer)) {
+    if (!base::ReadFileToString(device->sysfsBatteryPath.value() / "status", &buffer)) {
         ALOGE("Failed to read sysfs battery info: %s", strerror(errno));
         return std::nullopt;
     }
 
-    // Remove trailing new line
-    buffer.erase(std::remove(buffer.begin(), buffer.end(), '\n'), buffer.end());
-    const auto it = BATTERY_STATUS.find(buffer);
+    // Remove white space like trailing new line
+    const auto it = BATTERY_STATUS.find(base::Trim(buffer));
 
     if (it != BATTERY_STATUS.end()) {
         return it->second;
@@ -1173,7 +1462,7 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
             for (auto it = mUnattachedVideoDevices.begin(); it != mUnattachedVideoDevices.end();
                  it++) {
                 std::unique_ptr<TouchVideoDevice>& videoDevice = *it;
-                if (tryAddVideoDevice(*device, videoDevice)) {
+                if (tryAddVideoDeviceLocked(*device, videoDevice)) {
                     // videoDevice was transferred to 'device'
                     it = mUnattachedVideoDevices.erase(it);
                     break;
@@ -1280,6 +1569,7 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                     for (size_t i = 0; i < count; i++) {
                         struct input_event& iev = readBuffer[i];
                         event->when = processEventTimestamp(iev);
+                        event->readTime = systemTime(SYSTEM_TIME_MONOTONIC);
                         event->deviceId = deviceId;
                         event->type = iev.type;
                         event->code = iev.code;
@@ -1482,7 +1772,24 @@ void EventHub::unregisterVideoDeviceFromEpollLocked(const TouchVideoDevice& vide
     }
 }
 
-status_t EventHub::openDeviceLocked(const std::string& devicePath) {
+void EventHub::reportDeviceAddedForStatisticsLocked(const InputDeviceIdentifier& identifier,
+                                                    Flags<InputDeviceClass> classes) {
+    android::util::stats_write(android::util::INPUTDEVICE_REGISTERED, identifier.name.c_str(),
+                               identifier.vendor, identifier.product, identifier.version,
+                               identifier.bus, identifier.uniqueId.c_str(), classes.get());
+}
+
+void EventHub::openDeviceLocked(const std::string& devicePath) {
+    // If an input device happens to register around the time when EventHub's constructor runs, it
+    // is possible that the same input event node (for example, /dev/input/event3) will be noticed
+    // in both 'inotify' callback and also in the 'scanDirLocked' pass. To prevent duplicate devices
+    // from getting registered, ensure that this path is not already covered by an existing device.
+    for (const auto& [deviceId, device] : mDevices) {
+        if (device->path == devicePath) {
+            return; // device was already registered
+        }
+    }
+
     char buffer[80];
 
     ALOGV("Opening device: %s", devicePath.c_str());
@@ -1490,7 +1797,7 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     int fd = open(devicePath.c_str(), O_RDWR | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) {
         ALOGE("could not open %s, %s\n", devicePath.c_str(), strerror(errno));
-        return -1;
+        return;
     }
 
     InputDeviceIdentifier identifier;
@@ -1509,7 +1816,7 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
         if (identifier.name == item) {
             ALOGI("ignoring event id %s driver %s\n", devicePath.c_str(), item.c_str());
             close(fd);
-            return -1;
+            return;
         }
     }
 
@@ -1518,7 +1825,7 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     if (ioctl(fd, EVIOCGVERSION, &driverVersion)) {
         ALOGE("could not get driver version for %s, %s\n", devicePath.c_str(), strerror(errno));
         close(fd);
-        return -1;
+        return;
     }
 
     // Get device identifier.
@@ -1526,7 +1833,7 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     if (ioctl(fd, EVIOCGID, &inputId)) {
         ALOGE("could not get device input id for %s, %s\n", devicePath.c_str(), strerror(errno));
         close(fd);
-        return -1;
+        return;
     }
     identifier.bus = inputId.bustype;
     identifier.product = inputId.product;
@@ -1571,6 +1878,12 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
 
     // Load the configuration file for the device.
     device->loadConfigurationLocked();
+
+    // Grab the device's sysfs path
+    device->sysfsRootPath = getSysfsRootPath(devicePath.c_str());
+    // find related components
+    bool hasBattery = device->configureBatteryLocked();
+    bool hasLights = device->configureLightsLocked();
 
     // Figure out the kinds of events the device reports.
     device->readDeviceBitMask(EVIOCGBIT(EV_KEY, 0), device->keyBitmask);
@@ -1718,19 +2031,17 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     if (device->classes == Flags<InputDeviceClass>(0)) {
         ALOGV("Dropping device: id=%d, path='%s', name='%s'", deviceId, devicePath.c_str(),
               device->identifier.name.c_str());
-        return -1;
+        return;
     }
 
-    // Grab the device's sysfs path
-    device->sysfsRootPath = getSysfsRootPath(devicePath.c_str());
+    // Classify InputDeviceClass::BATTERY.
+    if (hasBattery) {
+        device->classes |= InputDeviceClass::BATTERY;
+    }
 
-    if (!device->sysfsRootPath.empty()) {
-        device->sysfsBatteryPath = findPowerSupplyNode(device->sysfsRootPath);
-
-        // Check if a battery exists
-        if (!device->sysfsBatteryPath.empty()) {
-            device->classes |= InputDeviceClass::BATTERY;
-        }
+    // Classify InputDeviceClass::LIGHT.
+    if (hasLights) {
+        device->classes |= InputDeviceClass::LIGHT;
     }
 
     // Determine whether the device has a mic.
@@ -1750,7 +2061,7 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
     }
 
     if (registerDeviceForEpollLocked(*device) != OK) {
-        return -1;
+        return;
     }
 
     device->configureFd();
@@ -1763,7 +2074,6 @@ status_t EventHub::openDeviceLocked(const std::string& devicePath) {
           toString(mBuiltInKeyboardId == deviceId));
 
     addDeviceLocked(std::move(device));
-    return OK;
 }
 
 void EventHub::openVideoDeviceLocked(const std::string& devicePath) {
@@ -1774,7 +2084,7 @@ void EventHub::openVideoDeviceLocked(const std::string& devicePath) {
     }
     // Transfer ownership of this video device to a matching input device
     for (const auto& [id, device] : mDevices) {
-        if (tryAddVideoDevice(*device, videoDevice)) {
+        if (tryAddVideoDeviceLocked(*device, videoDevice)) {
             return; // 'device' now owns 'videoDevice'
         }
     }
@@ -1786,8 +2096,8 @@ void EventHub::openVideoDeviceLocked(const std::string& devicePath) {
     mUnattachedVideoDevices.push_back(std::move(videoDevice));
 }
 
-bool EventHub::tryAddVideoDevice(EventHub::Device& device,
-                                 std::unique_ptr<TouchVideoDevice>& videoDevice) {
+bool EventHub::tryAddVideoDeviceLocked(EventHub::Device& device,
+                                       std::unique_ptr<TouchVideoDevice>& videoDevice) {
     if (videoDevice->getName() != device.identifier.name) {
         return false;
     }
@@ -1861,6 +2171,7 @@ void EventHub::createVirtualKeyboardLocked() {
 }
 
 void EventHub::addDeviceLocked(std::unique_ptr<Device> device) {
+    reportDeviceAddedForStatisticsLocked(device->identifier, device->classes);
     mOpeningDevices.push_back(std::move(device));
 }
 

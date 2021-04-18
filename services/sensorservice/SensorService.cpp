@@ -1285,7 +1285,7 @@ Vector<Sensor> SensorService::getDynamicSensorList(const String16& opPackageName
 }
 
 sp<ISensorEventConnection> SensorService::createSensorEventConnection(const String8& packageName,
-        int requestedMode, const String16& opPackageName) {
+        int requestedMode, const String16& opPackageName, const String16& attributionTag) {
     // Only 2 modes supported for a SensorEventConnection ... NORMAL and DATA_INJECTION.
     if (requestedMode != NORMAL && requestedMode != DATA_INJECTION) {
         return nullptr;
@@ -1307,7 +1307,7 @@ sp<ISensorEventConnection> SensorService::createSensorEventConnection(const Stri
     String16 connOpPackageName =
             (opPackageName == String16("")) ? String16(connPackageName) : opPackageName;
     sp<SensorEventConnection> result(new SensorEventConnection(this, uid, connPackageName,
-            requestedMode == DATA_INJECTION, connOpPackageName));
+            requestedMode == DATA_INJECTION, connOpPackageName, attributionTag));
     if (requestedMode == DATA_INJECTION) {
         mConnectionHolder.addEventConnectionIfNotPresent(result);
         // Add the associated file descriptor to the Looper for polling whenever there is data to
@@ -2129,12 +2129,14 @@ status_t SensorService::adjustRateLevelBasedOnMicAndPermission(int* requestedRat
 }
 
 void SensorService::SensorPrivacyPolicy::registerSelf() {
+    AutoCallerClear acc;
     SensorPrivacyManager spm;
     mSensorPrivacyEnabled = spm.isSensorPrivacyEnabled();
     spm.addSensorPrivacyListener(this);
 }
 
 void SensorService::SensorPrivacyPolicy::unregisterSelf() {
+    AutoCallerClear acc;
     SensorPrivacyManager spm;
     spm.removeSensorPrivacyListener(this);
 }
@@ -2167,7 +2169,7 @@ binder::Status SensorService::SensorPrivacyPolicy::onSensorPrivacyChanged(bool e
 
 status_t SensorService::SensorPrivacyPolicy::registerSelfForIndividual(int userId) {
     Mutex::Autolock _l(mSensorPrivacyLock);
-
+    AutoCallerClear acc;
     SensorPrivacyManager spm;
     status_t err = spm.addIndividualSensorPrivacyListener(userId,
             SensorPrivacyManager::INDIVIDUAL_SENSOR_MICROPHONE, this);

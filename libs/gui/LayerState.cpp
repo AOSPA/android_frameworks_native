@@ -23,6 +23,7 @@
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerState.h>
+#include <private/gui/ParcelUtils.h>
 #include <utils/Errors.h>
 
 #include <cmath>
@@ -41,7 +42,6 @@ layer_state_t::layer_state_t()
         flags(0),
         mask(0),
         reserved(0),
-        crop_legacy(Rect::INVALID_RECT),
         cornerRadius(0.0f),
         backgroundBlurRadius(0),
         barrierFrameNumber(0),
@@ -63,8 +63,8 @@ layer_state_t::layer_state_t()
         shouldBeSeamless(true),
         fixedTransformHint(ui::Transform::ROT_INVALID),
         frameNumber(0),
-        frameTimelineInfo(),
-        autoRefresh(false) {
+        autoRefresh(false),
+        releaseBufferListener(nullptr) {
     matrix.dsdx = matrix.dtdy = 1.0f;
     matrix.dsdy = matrix.dtdx = 0.0f;
     hdrMetadata.validTypes = 0;
@@ -85,7 +85,7 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeUint32, flags);
     SAFE_PARCEL(output.writeUint32, mask);
     SAFE_PARCEL(matrix.write, output);
-    SAFE_PARCEL(output.write, crop_legacy);
+    SAFE_PARCEL(output.write, crop);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, barrierSurfaceControl_legacy);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, reparentSurfaceControl);
     SAFE_PARCEL(output.writeUint64, barrierFrameNumber);
@@ -151,8 +151,8 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeBool, shouldBeSeamless);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeUint64, frameNumber);
-    SAFE_PARCEL(frameTimelineInfo.write, output);
     SAFE_PARCEL(output.writeBool, autoRefresh);
+    SAFE_PARCEL(output.writeStrongBinder, IInterface::asBinder(releaseBufferListener));
 
     SAFE_PARCEL(output.writeUint32, blurRegions.size());
     for (auto region : blurRegions) {
@@ -191,7 +191,7 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readUint32, &mask);
 
     SAFE_PARCEL(matrix.read, input);
-    SAFE_PARCEL(input.read, crop_legacy);
+    SAFE_PARCEL(input.read, crop);
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &barrierSurfaceControl_legacy);
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &reparentSurfaceControl);
     SAFE_PARCEL(input.readUint64, &barrierFrameNumber);
@@ -273,8 +273,13 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readUint64, &frameNumber);
-    SAFE_PARCEL(frameTimelineInfo.read, input);
     SAFE_PARCEL(input.readBool, &autoRefresh);
+
+    tmpBinder = nullptr;
+    SAFE_PARCEL(input.readNullableStrongBinder, &tmpBinder);
+    if (tmpBinder) {
+        releaseBufferListener = checked_interface_cast<ITransactionCompletedListener>(tmpBinder);
+    }
 
     uint32_t numRegions = 0;
     SAFE_PARCEL(input.readUint32, &numRegions);
@@ -407,10 +412,6 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eLayerStackChanged;
         layerStack = other.layerStack;
     }
-    if (other.what & eCropChanged_legacy) {
-        what |= eCropChanged_legacy;
-        crop_legacy = other.crop_legacy;
-    }
     if (other.what & eCornerRadiusChanged) {
         what |= eCornerRadiusChanged;
         cornerRadius = other.cornerRadius;
@@ -540,13 +541,20 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eFrameNumberChanged;
         frameNumber = other.frameNumber;
     }
-    if (other.what & eFrameTimelineInfoChanged) {
-        what |= eFrameTimelineInfoChanged;
-        frameTimelineInfo.merge(other.frameTimelineInfo);
-    }
     if (other.what & eAutoRefreshChanged) {
         what |= eAutoRefreshChanged;
         autoRefresh = other.autoRefresh;
+    }
+    if (other.what & eReleaseBufferListenerChanged) {
+        if (releaseBufferListener) {
+            ALOGW("Overriding releaseBufferListener");
+        }
+        what |= eReleaseBufferListenerChanged;
+        releaseBufferListener = other.releaseBufferListener;
+    }
+    if (other.what & eStretchChanged) {
+        what |= eStretchChanged;
+        stretchEffect = other.stretchEffect;
     }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "

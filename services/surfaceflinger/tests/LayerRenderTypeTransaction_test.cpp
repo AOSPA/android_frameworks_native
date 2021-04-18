@@ -43,6 +43,9 @@ public:
 
 protected:
     LayerRenderPathTestHarness mHarness;
+
+    static constexpr int64_t kUsageFlags = BufferUsage::CPU_READ_OFTEN |
+            BufferUsage::CPU_WRITE_OFTEN | BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE;
 };
 
 INSTANTIATE_TEST_CASE_P(LayerRenderTypeTransactionTests, LayerRenderTypeTransactionTest,
@@ -377,10 +380,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetTransparentRegionHintBasic_BufferState
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
 
     ASSERT_NO_FATAL_FAILURE(
             TransactionUtils::fillGraphicBufferColor(buffer, top, Color::TRANSPARENT));
@@ -405,10 +405,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetTransparentRegionHintBasic_BufferState
         shot->expectColor(bottom, Color::BLACK);
     }
 
-    buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                               BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                       BufferUsage::COMPOSER_OVERLAY,
-                               "test");
+    buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
 
     ASSERT_NO_FATAL_FAILURE(TransactionUtils::fillGraphicBufferColor(buffer, top, Color::RED));
     ASSERT_NO_FATAL_FAILURE(
@@ -518,7 +515,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorBasic) {
                                                 ISurfaceComposerClient::eFXSurfaceEffect));
 
     Transaction()
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setLayer(colorLayer, mLayerZBase + 1)
             .apply();
 
@@ -557,7 +554,7 @@ void LayerRenderTypeTransactionTest::setBackgroundColorHelper(uint32_t layerType
         case ISurfaceComposerClient::eFXSurfaceEffect:
             ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 0, 0, layerType));
             Transaction()
-                    .setCrop_legacy(layer, Rect(0, 0, width, height))
+                    .setCrop(layer, Rect(0, 0, width, height))
                     .setColor(layer, half3(1.0f, 0, 0))
                     .apply();
             expectedColor = fillColor;
@@ -568,7 +565,7 @@ void LayerRenderTypeTransactionTest::setBackgroundColorHelper(uint32_t layerType
                 ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, fillColor, width, height));
                 expectedColor = fillColor;
             }
-            Transaction().setCrop_legacy(layer, Rect(0, 0, width, height)).apply();
+            Transaction().setCrop(layer, Rect(0, 0, width, height)).apply();
             break;
         case ISurfaceComposerClient::eFXSurfaceBufferState:
             ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", width, height, layerType));
@@ -730,7 +727,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorClamped) {
                                     createLayer("test", 0 /* buffer width */, 0 /* buffer height */,
                                                 ISurfaceComposerClient::eFXSurfaceEffect));
     Transaction()
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setColor(colorLayer, half3(2.0f, 0.0f, 0.0f))
             .apply();
 
@@ -744,7 +741,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetInvalidColor) {
                                     createLayer("test", 0 /* buffer width */, 0 /* buffer height */,
                                                 ISurfaceComposerClient::eFXSurfaceEffect));
     Transaction()
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setColor(colorLayer, half3(1.0f, -1.0f, 0.5f))
             .apply();
 
@@ -759,7 +756,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorWithAlpha) {
     ASSERT_NO_FATAL_FAILURE(colorLayer =
                                     createLayer("test", 0 /* buffer width */, 0 /* buffer height */,
                                                 ISurfaceComposerClient::eFXSurfaceEffect));
-    Transaction().setCrop_legacy(colorLayer, Rect(0, 0, 32, 32)).apply();
+    Transaction().setCrop(colorLayer, Rect(0, 0, 32, 32)).apply();
 
     const half3 color(15.0f / 255.0f, 51.0f / 255.0f, 85.0f / 255.0f);
     const float alpha = 0.25f;
@@ -786,7 +783,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorWithParentAlpha_Bug74220420) {
     ASSERT_NO_FATAL_FAILURE(colorLayer = createLayer("childWithColor", 0 /* buffer width */,
                                                      0 /* buffer height */,
                                                      ISurfaceComposerClient::eFXSurfaceEffect));
-    Transaction().setCrop_legacy(colorLayer, Rect(0, 0, 32, 32)).apply();
+    Transaction().setCrop(colorLayer, Rect(0, 0, 32, 32)).apply();
     const half3 color(15.0f / 255.0f, 51.0f / 255.0f, 85.0f / 255.0f);
     const float alpha = 0.25f;
     const ubyte3 expected((vec3(color) * alpha + vec3(1.0f, 0.0f, 0.0f) * (1.0f - alpha)) * 255.0f);
@@ -943,7 +940,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropBasic_BufferQueue) {
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
     const Rect crop(8, 8, 24, 24);
 
-    Transaction().setCrop_legacy(layer, crop).apply();
+    Transaction().setCrop(layer, crop).apply();
     auto shot = getScreenCapture();
     shot->expectColor(crop, Color::RED);
     shot->expectBorder(crop, Color::BLACK);
@@ -969,13 +966,13 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropEmpty_BufferQueue) {
 
     {
         SCOPED_TRACE("empty rect");
-        Transaction().setCrop_legacy(layer, Rect(8, 8, 8, 8)).apply();
+        Transaction().setCrop(layer, Rect(8, 8, 8, 8)).apply();
         getScreenCapture()->expectColor(Rect(0, 0, 32, 32), Color::RED);
     }
 
     {
         SCOPED_TRACE("negative rect");
-        Transaction().setCrop_legacy(layer, Rect(8, 8, 0, 0)).apply();
+        Transaction().setCrop(layer, Rect(8, 8, 0, 0)).apply();
         getScreenCapture()->expectColor(Rect(0, 0, 32, 32), Color::RED);
     }
 }
@@ -1004,7 +1001,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropOutOfBounds_BufferQueue) {
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
 
-    Transaction().setCrop_legacy(layer, Rect(-128, -64, 128, 64)).apply();
+    Transaction().setCrop(layer, Rect(-128, -64, 128, 64)).apply();
     auto shot = getScreenCapture();
     shot->expectColor(Rect(0, 0, 32, 32), Color::RED);
     shot->expectBorder(Rect(0, 0, 32, 32), Color::BLACK);
@@ -1015,10 +1012,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropOutOfBounds_BufferState) {
     ASSERT_NO_FATAL_FAILURE(
             layer = createLayer("test", 32, 64, ISurfaceComposerClient::eFXSurfaceBufferState));
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 64, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 64, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 16), Color::BLUE);
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 16, 32, 64), Color::RED);
 
@@ -1062,7 +1056,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropWithTranslation_BufferQueue) {
 
     const Point position(32, 32);
     const Rect crop(8, 8, 24, 24);
-    Transaction().setPosition(layer, position.x, position.y).setCrop_legacy(layer, crop).apply();
+    Transaction().setPosition(layer, position.x, position.y).setCrop(layer, crop).apply();
     auto shot = getScreenCapture();
     shot->expectColor(crop + position, Color::RED);
     shot->expectBorder(crop + position, Color::BLACK);
@@ -1087,10 +1081,10 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropWithScale_BufferQueue) {
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
 
-    // crop_legacy is affected by matrix
+    // crop is affected by matrix
     Transaction()
             .setMatrix(layer, 2.0f, 0.0f, 0.0f, 2.0f)
-            .setCrop_legacy(layer, Rect(8, 8, 24, 24))
+            .setCrop(layer, Rect(8, 8, 24, 24))
             .apply();
     auto shot = getScreenCapture();
     shot->expectColor(Rect(16, 16, 48, 48), Color::RED);
@@ -1102,8 +1096,8 @@ TEST_P(LayerRenderTypeTransactionTest, SetCropWithResize_BufferQueue) {
     ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", 32, 32));
     ASSERT_NO_FATAL_FAILURE(fillBufferQueueLayerColor(layer, Color::RED, 32, 32));
 
-    // setCrop_legacy is applied immediately by default, with or without resize pending
-    Transaction().setCrop_legacy(layer, Rect(8, 8, 24, 24)).setSize(layer, 16, 16).apply();
+    // setCrop is applied immediately by default, with or without resize pending
+    Transaction().setCrop(layer, Rect(8, 8, 24, 24)).setSize(layer, 16, 16).apply();
     {
         SCOPED_TRACE("resize pending");
         auto shot = getScreenCapture();
@@ -1341,10 +1335,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_BufferState) {
 
     size_t idx = 0;
     for (auto& buffer : buffers) {
-        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                           BufferUsage::COMPOSER_OVERLAY,
-                                   "test");
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
         Color color = colors[idx % colors.size()];
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
         idx++;
@@ -1377,10 +1368,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_LeastRecentlyUsed_Buffer
 
     size_t idx = 0;
     for (auto& buffer : buffers) {
-        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                           BufferUsage::COMPOSER_OVERLAY,
-                                   "test");
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
         Color color = colors[idx % colors.size()];
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
         idx++;
@@ -1413,10 +1401,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetBufferCaching_DestroyedBuffer_BufferSt
 
     size_t idx = 0;
     for (auto& buffer : buffers) {
-        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                           BufferUsage::COMPOSER_OVERLAY,
-                                   "test");
+        buffer = new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
         Color color = colors[idx % colors.size()];
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), color);
         idx++;
@@ -1499,10 +1484,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetFenceBasic_BufferState) {
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     sp<Fence> fence;
@@ -1528,10 +1510,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetFenceNull_BufferState) {
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     sp<Fence> fence = Fence::NO_FENCE;
@@ -1549,10 +1528,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetDataspaceBasic_BufferState) {
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     Transaction().setBuffer(layer, buffer).setDataspace(layer, ui::Dataspace::UNKNOWN).apply();
@@ -1568,10 +1544,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetHdrMetadataBasic_BufferState) {
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     HdrMetadata hdrMetadata;
@@ -1589,10 +1562,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetSurfaceDamageRegionBasic_BufferState) 
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     Region region;
@@ -1610,10 +1580,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetApiBasic_BufferState) {
             layer = createLayer("test", 32, 32, ISurfaceComposerClient::eFXSurfaceBufferState));
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(32, 32, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 32, 32), Color::RED);
 
     Transaction().setBuffer(layer, buffer).setApi(layer, NATIVE_WINDOW_API_CPU).apply();
@@ -1629,7 +1596,7 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorTransformBasic) {
                                     createLayer("test", 0 /* buffer width */, 0 /* buffer height */,
                                                 ISurfaceComposerClient::eFXSurfaceEffect));
     Transaction()
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setLayer(colorLayer, mLayerZBase + 1)
             .apply();
     {
@@ -1686,8 +1653,8 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorTransformOnParent) {
                                      ISurfaceComposerClient::eFXSurfaceEffect, parentLayer.get()));
 
     Transaction()
-            .setCrop_legacy(parentLayer, Rect(0, 0, 100, 100))
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(parentLayer, Rect(0, 0, 100, 100))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setLayer(parentLayer, mLayerZBase + 1)
             .apply();
     {
@@ -1747,8 +1714,8 @@ TEST_P(LayerRenderTypeTransactionTest, SetColorTransformOnChildAndParent) {
                                      ISurfaceComposerClient::eFXSurfaceEffect, parentLayer.get()));
 
     Transaction()
-            .setCrop_legacy(parentLayer, Rect(0, 0, 100, 100))
-            .setCrop_legacy(colorLayer, Rect(0, 0, 32, 32))
+            .setCrop(parentLayer, Rect(0, 0, 100, 100))
+            .setCrop(colorLayer, Rect(0, 0, 32, 32))
             .setLayer(parentLayer, mLayerZBase + 1)
             .apply();
     {

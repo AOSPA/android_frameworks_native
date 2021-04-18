@@ -246,6 +246,8 @@ public:
 
     void resetScheduler(Scheduler* scheduler) { mFlinger->mScheduler.reset(scheduler); }
 
+    TestableScheduler& mutableScheduler() const { return *mScheduler; }
+
     using CreateBufferQueueFunction = surfaceflinger::test::Factory::CreateBufferQueueFunction;
     void setCreateBufferQueueFunction(CreateBufferQueueFunction f) {
         mFactory.mCreateBufferQueue = f;
@@ -634,7 +636,7 @@ public:
     public:
         FakeDisplayDeviceInjector(TestableSurfaceFlinger& flinger,
                                   std::shared_ptr<compositionengine::Display> compositionDisplay,
-                                  std::optional<DisplayConnectionType> connectionType,
+                                  std::optional<ui::DisplayConnectionType> connectionType,
                                   std::optional<hal::HWDisplayId> hwcDisplayId, bool isPrimary)
               : mFlinger(flinger),
                 mCreationArgs(flinger.mFlinger.get(), flinger.mFlinger->getHwComposer(),

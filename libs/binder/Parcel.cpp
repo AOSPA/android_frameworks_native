@@ -41,13 +41,15 @@
 #include <binder/TextOutput.h>
 
 #include <cutils/ashmem.h>
+#include <cutils/compiler.h>
 #include <utils/Flattenable.h>
 #include <utils/Log.h>
-#include <utils/misc.h>
-#include <utils/String8.h>
 #include <utils/String16.h>
+#include <utils/String8.h>
+#include <utils/misc.h>
 
 #include <private/binder/binder_module.h>
+#include "RpcState.h"
 #include "Static.h"
 #include "Utils.h"
 
@@ -191,6 +193,22 @@ static constexpr inline int schedPolicyMask(int policy, int priority) {
 
 status_t Parcel::flattenBinder(const sp<IBinder>& binder)
 {
+    if (isForRpc()) {
+        if (binder) {
+            status_t status = writeInt32(1); // non-null
+            if (status != OK) return status;
+            RpcAddress address = RpcAddress::zero();
+            status = mConnection->state()->onBinderLeaving(mConnection, binder, &address);
+            if (status != OK) return status;
+            status = address.writeToParcel(this);
+            if (status != OK) return status;
+        } else {
+            status_t status = writeInt32(0); // null
+            if (status != OK) return status;
+        }
+        return finishFlattenBinder(binder);
+    }
+
     flat_binder_object obj;
     obj.flags = FLAT_BINDER_FLAG_ACCEPTS_FDS;
 
@@ -205,8 +223,13 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder)
             BpBinder *proxy = binder->remoteBinder();
             if (proxy == nullptr) {
                 ALOGE("null proxy");
+            } else {
+                if (proxy->isRpcBinder()) {
+                    ALOGE("Sending a socket binder over RPC is prohibited");
+                    return INVALID_OPERATION;
+                }
             }
-            const int32_t handle = proxy ? proxy->getPrivateAccessorForHandle().handle() : 0;
+            const int32_t handle = proxy ? proxy->getPrivateAccessorForId().binderHandle() : 0;
             obj.hdr.type = BINDER_TYPE_HANDLE;
             obj.binder = 0; /* Don't pass uninitialized stack data to a remote process */
             obj.handle = handle;
@@ -245,6 +268,26 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder)
 
 status_t Parcel::unflattenBinder(sp<IBinder>* out) const
 {
+    if (isForRpc()) {
+        LOG_ALWAYS_FATAL_IF(mConnection == nullptr,
+                            "RpcConnection required to read from remote parcel");
+
+        int32_t isNull;
+        status_t status = readInt32(&isNull);
+        if (status != OK) return status;
+
+        sp<IBinder> binder;
+
+        if (isNull & 1) {
+            auto addr = RpcAddress::zero();
+            status_t status = addr.readFromParcel(*this);
+            if (status != OK) return status;
+            binder = mConnection->state()->onBinderEntering(mConnection, addr);
+        }
+
+        return finishUnflattenBinder(binder, out);
+    }
+
     const flat_binder_object* flat = readObject(false);
 
     if (flat) {
@@ -511,6 +554,21 @@ void Parcel::markSensitive() const
     mDeallocZero = true;
 }
 
+void Parcel::markForBinder(const sp<IBinder>& binder) {
+    if (binder && binder->remoteBinder() && binder->remoteBinder()->isRpcBinder()) {
+        markForRpc(binder->remoteBinder()->getPrivateAccessorForId().rpcConnection());
+    }
+}
+
+void Parcel::markForRpc(const sp<RpcConnection>& connection) {
+    LOG_ALWAYS_FATAL_IF(connection == nullptr, "markForRpc requires connection");
+    mConnection = connection;
+}
+
+bool Parcel::isForRpc() const {
+    return mConnection != nullptr;
+}
+
 void Parcel::updateWorkSourceRequestHeaderPosition() const {
     // Only update the request headers once. We only want to point
     // to the first headers read/written.
@@ -533,12 +591,14 @@ status_t Parcel::writeInterfaceToken(const String16& interface)
 }
 
 status_t Parcel::writeInterfaceToken(const char16_t* str, size_t len) {
-    const IPCThreadState* threadState = IPCThreadState::self();
-    writeInt32(threadState->getStrictModePolicy() | STRICT_MODE_PENALTY_GATHER);
-    updateWorkSourceRequestHeaderPosition();
-    writeInt32(threadState->shouldPropagateWorkSource() ?
-            threadState->getCallingWorkSourceUid() : IPCThreadState::kUnsetWorkSource);
-    writeInt32(kHeader);
+    if (CC_LIKELY(!isForRpc())) {
+        const IPCThreadState* threadState = IPCThreadState::self();
+        writeInt32(threadState->getStrictModePolicy() | STRICT_MODE_PENALTY_GATHER);
+        updateWorkSourceRequestHeaderPosition();
+        writeInt32(threadState->shouldPropagateWorkSource() ? threadState->getCallingWorkSourceUid()
+                                                            : IPCThreadState::kUnsetWorkSource);
+        writeInt32(kHeader);
+    }
 
     // currently the interface identification token is just its name as a string
     return writeString16(str, len);
@@ -585,31 +645,34 @@ bool Parcel::enforceInterface(const char16_t* interface,
                               size_t len,
                               IPCThreadState* threadState) const
 {
-    // StrictModePolicy.
-    int32_t strictPolicy = readInt32();
-    if (threadState == nullptr) {
-        threadState = IPCThreadState::self();
+    if (CC_LIKELY(!isForRpc())) {
+        // StrictModePolicy.
+        int32_t strictPolicy = readInt32();
+        if (threadState == nullptr) {
+            threadState = IPCThreadState::self();
+        }
+        if ((threadState->getLastTransactionBinderFlags() & IBinder::FLAG_ONEWAY) != 0) {
+            // For one-way calls, the callee is running entirely
+            // disconnected from the caller, so disable StrictMode entirely.
+            // Not only does disk/network usage not impact the caller, but
+            // there's no way to communicate back violations anyway.
+            threadState->setStrictModePolicy(0);
+        } else {
+            threadState->setStrictModePolicy(strictPolicy);
+        }
+        // WorkSource.
+        updateWorkSourceRequestHeaderPosition();
+        int32_t workSource = readInt32();
+        threadState->setCallingWorkSourceUidWithoutPropagation(workSource);
+        // vendor header
+        int32_t header = readInt32();
+        if (header != kHeader) {
+            ALOGE("Expecting header 0x%x but found 0x%x. Mixing copies of libbinder?", kHeader,
+                  header);
+            return false;
+        }
     }
-    if ((threadState->getLastTransactionBinderFlags() &
-         IBinder::FLAG_ONEWAY) != 0) {
-      // For one-way calls, the callee is running entirely
-      // disconnected from the caller, so disable StrictMode entirely.
-      // Not only does disk/network usage not impact the caller, but
-      // there's no way to commuicate back any violations anyway.
-      threadState->setStrictModePolicy(0);
-    } else {
-      threadState->setStrictModePolicy(strictPolicy);
-    }
-    // WorkSource.
-    updateWorkSourceRequestHeaderPosition();
-    int32_t workSource = readInt32();
-    threadState->setCallingWorkSourceUidWithoutPropagation(workSource);
-    // vendor header
-    int32_t header = readInt32();
-    if (header != kHeader) {
-        ALOGE("Expecting header 0x%x but found 0x%x. Mixing copies of libbinder?", kHeader, header);
-        return false;
-    }
+
     // Interface descriptor.
     size_t parcel_interface_len;
     const char16_t* parcel_interface = readString16Inplace(&parcel_interface_len);
@@ -1070,6 +1133,11 @@ status_t Parcel::writeNativeHandle(const native_handle* handle)
 
 status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership)
 {
+    if (isForRpc()) {
+        ALOGE("Cannot write file descriptor to remote binder.");
+        return BAD_TYPE;
+    }
+
     flat_binder_object obj;
     obj.hdr.type = BINDER_TYPE_FD;
     obj.flags = 0x7f | FLAT_BINDER_FLAG_ACCEPTS_FDS;
@@ -2413,6 +2481,7 @@ void Parcel::initState()
     mDataPos = 0;
     ALOGV("initState Setting data size of %p to %zu", this, mDataSize);
     ALOGV("initState Setting data pos of %p to %zu", this, mDataPos);
+    mConnection = nullptr;
     mObjects = nullptr;
     mObjectsSize = 0;
     mObjectsCapacity = 0;

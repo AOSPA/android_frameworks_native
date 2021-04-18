@@ -134,7 +134,7 @@ public:
                               uint32_t policyFlags) = 0;
 
     /* Poke user activity for an event dispatched to a window. */
-    virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType) = 0;
+    virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType, int32_t displayId) = 0;
 
     /* Checks whether a given application pid/uid has permission to inject input events
      * into other applications.
@@ -157,6 +157,9 @@ public:
      * InputDispatcher is solely responsible for updating the Pointer Capture state.
      */
     virtual void setPointerCapture(bool enabled) = 0;
+
+    /* Notifies the policy that the drag window has moved over to another window */
+    virtual void notifyDropWindow(const sp<IBinder>& token, float x, float y) = 0;
 };
 
 } // namespace android

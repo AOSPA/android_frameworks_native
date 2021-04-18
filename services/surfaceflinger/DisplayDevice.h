@@ -28,11 +28,11 @@
 #include <renderengine/RenderEngine.h>
 #include <system/window.h>
 #include <ui/DisplayId.h>
-#include <ui/DisplayInfo.h>
 #include <ui/DisplayState.h>
 #include <ui/GraphicTypes.h>
 #include <ui/HdrCapabilities.h>
 #include <ui/Region.h>
+#include <ui/StaticDisplayInfo.h>
 #include <ui/Transform.h>
 #include <utils/Errors.h>
 #include <utils/Mutex.h>
@@ -74,7 +74,7 @@ public:
         return mCompositionDisplay;
     }
 
-    std::optional<DisplayConnectionType> getConnectionType() const { return mConnectionType; }
+    std::optional<ui::DisplayConnectionType> getConnectionType() const { return mConnectionType; }
 
     bool isVirtual() const { return !mConnectionType; }
     bool isPrimary() const { return mIsPrimary; }
@@ -126,13 +126,15 @@ public:
     bool hasHLGSupport() const;
     bool hasDolbyVisionSupport() const;
 
+    void overrideHdrTypes(const std::vector<ui::Hdr>& hdrTypes);
+
     // The returned HdrCapabilities is the combination of HDR capabilities from
     // hardware composer and RenderEngine. When the DisplayDevice supports wide
     // color gamut, RenderEngine is able to simulate HDR support in Display P3
     // color space for both PQ and HLG HDR contents. The minimum and maximum
     // luminance will be set to sDefaultMinLumiance and sDefaultMaxLumiance
     // respectively if hardware composer doesn't return meaningful values.
-    const HdrCapabilities& getHdrCapabilities() const;
+    HdrCapabilities getHdrCapabilities() const;
 
     // Return true if intent is supported by the display.
     bool hasRenderIntent(ui::RenderIntent intent) const;
@@ -197,7 +199,7 @@ private:
     HWComposer& mHwComposer;
     const wp<IBinder> mDisplayToken;
     const int32_t mSequenceId;
-    const std::optional<DisplayConnectionType> mConnectionType;
+    const std::optional<ui::DisplayConnectionType> mConnectionType;
 
     const std::shared_ptr<compositionengine::Display> mCompositionDisplay;
 
@@ -210,7 +212,7 @@ private:
 
     hardware::graphics::composer::hal::PowerMode mPowerMode =
             hardware::graphics::composer::hal::PowerMode::OFF;
-    DisplayModeId mActiveModeId;
+    DisplayModePtr mActiveMode;
     const DisplayModes mSupportedModes;
 
     std::atomic<nsecs_t> mLastHwVsync = 0;
@@ -219,13 +221,16 @@ private:
     const bool mIsPrimary;
 
     std::optional<DeviceProductInfo> mDeviceProductInfo;
+
+    std::vector<ui::Hdr> mOverrideHdrTypes;
+
     bool mIsPowerModeOverride;
 };
 
 struct DisplayDeviceState {
     struct Physical {
         PhysicalDisplayId id;
-        DisplayConnectionType type;
+        ui::DisplayConnectionType type;
         hardware::graphics::composer::hal::HWDisplayId hwcDisplayId;
         std::optional<DeviceProductInfo> deviceProductInfo;
         DisplayModes supportedModes;
@@ -266,7 +271,7 @@ struct DisplayDeviceCreationArgs {
     const std::shared_ptr<compositionengine::Display> compositionDisplay;
 
     int32_t sequenceId{0};
-    std::optional<DisplayConnectionType> connectionType;
+    std::optional<ui::DisplayConnectionType> connectionType;
     bool isSecure{false};
     sp<ANativeWindow> nativeWindow;
     sp<compositionengine::DisplaySurface> displaySurface;

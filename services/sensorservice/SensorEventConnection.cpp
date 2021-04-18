@@ -38,12 +38,12 @@ constexpr int kTargetSdkUnknown = 0;
 
 SensorService::SensorEventConnection::SensorEventConnection(
         const sp<SensorService>& service, uid_t uid, String8 packageName, bool isDataInjectionMode,
-        const String16& opPackageName)
+        const String16& opPackageName, const String16& attributionTag)
     : mService(service), mUid(uid), mWakeLockRefCount(0), mHasLooperCallbacks(false),
       mDead(false), mDataInjectionMode(isDataInjectionMode), mEventCache(nullptr),
       mCacheSize(0), mMaxCacheSize(0), mTimeOfLastEventDrop(0), mEventsDropped(0),
-      mPackageName(packageName), mOpPackageName(opPackageName), mTargetSdk(kTargetSdkUnknown),
-      mDestroyed(false) {
+      mPackageName(packageName), mOpPackageName(opPackageName), mAttributionTag(attributionTag),
+      mTargetSdk(kTargetSdkUnknown), mDestroyed(false) {
     mIsRateCappedBasedOnPermission = mService->isRateCappedBasedOnPermission(mOpPackageName);
     mUserId = multiuser_get_user_id(mUid);
     mChannel = new BitTube(mService->mSocketBufferSize);
@@ -287,29 +287,6 @@ bool SensorService::SensorEventConnection::incrementPendingFlushCountIfHasAccess
     }
 }
 
-// TODO(b/179649922): A better algorithm to guarantee that capped connections will get a sampling
-// rate close to 200 Hz. With the current algorithm, apps might be punished unfairly: E.g.,two apps
-// make requests to the sensor service at the same time, one is not capped and uses 250 Hz, and one
-//is capped, the capped connection will only get 125 Hz.
-void SensorService::SensorEventConnection::addSensorEventsToBuffer(bool shouldResample,
-    const sensors_event_t& sensorEvent, sensors_event_t* buffer, int* index) {
-    if (!shouldResample || !mService->isSensorInCappedSet(sensorEvent.type)) {
-        buffer[(*index)++] = sensorEvent;
-    } else {
-        int64_t lastTimestamp = -1;
-        auto entry = mSensorLastTimestamp.find(sensorEvent.sensor);
-        if (entry != mSensorLastTimestamp.end()) {
-            lastTimestamp = entry->second;
-        }
-        // Allow 10% headroom here because the clocks are not perfect.
-        if (lastTimestamp == -1  || sensorEvent.timestamp - lastTimestamp
-                                        >= 0.9 * SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS) {
-            mSensorLastTimestamp[sensorEvent.sensor] = sensorEvent.timestamp;
-            buffer[(*index)++] = sensorEvent;
-        }
-    }
-}
-
 status_t SensorService::SensorEventConnection::sendEvents(
         sensors_event_t const* buffer, size_t numEvents,
         sensors_event_t* scratch,
@@ -318,8 +295,6 @@ status_t SensorService::SensorEventConnection::sendEvents(
 
     std::unique_ptr<sensors_event_t[]> sanitizedBuffer;
 
-    bool shouldResample = mService->isMicSensorPrivacyEnabledForUid(mUid) ||
-                            mIsRateCappedBasedOnPermission;
     int count = 0;
     Mutex::Autolock _l(mConnectionLock);
     if (scratch) {
@@ -373,7 +348,7 @@ status_t SensorService::SensorEventConnection::sendEvents(
                     // Regular sensor event, just copy it to the scratch buffer after checking
                     // the AppOp.
                     if (hasSensorAccess() && noteOpIfRequired(buffer[i])) {
-                        addSensorEventsToBuffer(shouldResample, buffer[i], scratch, &count);
+                        scratch[count++] = buffer[i];
                     }
                 }
                 i++;
@@ -383,13 +358,12 @@ status_t SensorService::SensorEventConnection::sendEvents(
                                         buffer[i].meta_data.sensor == sensor_handle)));
         }
     } else {
-        sanitizedBuffer.reset(new sensors_event_t[numEvents]);
-        scratch = sanitizedBuffer.get();
         if (hasSensorAccess()) {
-            for (size_t i = 0; i < numEvents; i++) {
-                addSensorEventsToBuffer(shouldResample, buffer[i], scratch, &count);
-            }
+            scratch = const_cast<sensors_event_t *>(buffer);
+            count = numEvents;
         } else {
+            sanitizedBuffer.reset(new sensors_event_t[numEvents]);
+            scratch = sanitizedBuffer.get();
             for (size_t i = 0; i < numEvents; i++) {
                 if (buffer[i].type == SENSOR_TYPE_META_DATA) {
                     scratch[count++] = buffer[i++];
@@ -493,7 +467,8 @@ bool SensorService::SensorEventConnection::noteOpIfRequired(const sensors_event_
             noteMsg.append(String16(mService->getSensorStringType(sensorHandle)));
             noteMsg.append(String16(")"));
             int32_t appOpMode = mService->sAppOpsManager.noteOp(iter->second, mUid,
-                                                                mOpPackageName, {}, noteMsg);
+                                                                mOpPackageName, mAttributionTag,
+                                                                noteMsg);
             success = (appOpMode == AppOpsManager::MODE_ALLOWED);
         }
     }

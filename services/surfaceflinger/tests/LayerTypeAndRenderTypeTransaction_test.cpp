@@ -18,7 +18,6 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
-#include <cutils/properties.h>
 #include <gui/BufferItemConsumer.h>
 #include "TransactionTestHarnesses.h"
 
@@ -40,6 +39,9 @@ public:
 
 protected:
     LayerRenderPathTestHarness mRenderPathHarness;
+
+    static constexpr int64_t kUsageFlags = BufferUsage::CPU_READ_OFTEN |
+            BufferUsage::CPU_WRITE_OFTEN | BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE;
 };
 
 ::testing::Environment* const binderEnv =
@@ -143,7 +145,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetZNegative) {
     sp<SurfaceControl> parent =
             LayerTransactionTest::createLayer("Parent", 0 /* buffer width */, 0 /* buffer height */,
                                               ISurfaceComposerClient::eFXSurfaceContainer);
-    Transaction().setCrop_legacy(parent, Rect(0, 0, mDisplayWidth, mDisplayHeight)).apply();
+    Transaction().setCrop(parent, Rect(0, 0, mDisplayWidth, mDisplayHeight)).apply();
     sp<SurfaceControl> layerR;
     sp<SurfaceControl> layerG;
     ASSERT_NO_FATAL_FAILURE(layerR = createLayer("test R", 32, 32));
@@ -197,7 +199,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadius) {
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
         Transaction()
                 .setCornerRadius(layer, cornerRadius)
-                .setCrop_legacy(layer, Rect(0, 0, size, size))
+                .setCrop(layer, Rect(0, 0, size, size))
                 .apply();
     } else {
         Transaction()
@@ -234,13 +236,13 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadiusRotated) {
 
     auto transaction = Transaction()
                                .setCornerRadius(parent, cornerRadius)
-                               .setCrop_legacy(parent, Rect(0, 0, size, size))
+                               .setCrop(parent, Rect(0, 0, size, size))
                                .reparent(child, parent)
                                .setPosition(child, 0, size)
                                // Rotate by half PI
                                .setMatrix(child, 0.0f, -1.0f, 1.0f, 0.0f);
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
-        transaction.setCrop_legacy(parent, Rect(0, 0, size, size));
+        transaction.setCrop(parent, Rect(0, 0, size, size));
     } else {
         transaction.setFrame(parent, Rect(0, 0, size, size));
     }
@@ -276,7 +278,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadiusChildCrop) {
     if (mLayerType == ISurfaceComposerClient::eFXSurfaceBufferQueue) {
         Transaction()
                 .setCornerRadius(parent, cornerRadius)
-                .setCrop_legacy(parent, Rect(0, 0, size, size))
+                .setCrop(parent, Rect(0, 0, size, size))
                 .reparent(child, parent)
                 .setPosition(child, 0, size / 2)
                 .apply();
@@ -301,47 +303,86 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetCornerRadiusChildCrop) {
     }
 }
 
-TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadius) {
-    char value[PROPERTY_VALUE_MAX];
-    property_get("ro.surface_flinger.supports_background_blur", value, "0");
-    if (!atoi(value)) {
-        // This device doesn't support blurs, no-op.
-        return;
-    }
+TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusSimple) {
+    if (!deviceSupportsBlurs()) GTEST_SKIP();
+    if (!deviceUsesSkiaRenderEngine()) GTEST_SKIP();
 
-    auto size = 256;
-    auto center = size / 2;
-    auto blurRadius = 50;
-
-    sp<SurfaceControl> backgroundLayer;
-    ASSERT_NO_FATAL_FAILURE(backgroundLayer = createLayer("background", size, size));
-    ASSERT_NO_FATAL_FAILURE(fillLayerColor(backgroundLayer, Color::GREEN, size, size));
+    const auto canvasSize = 256;
 
     sp<SurfaceControl> leftLayer;
-    ASSERT_NO_FATAL_FAILURE(leftLayer = createLayer("left", size / 2, size));
-    ASSERT_NO_FATAL_FAILURE(fillLayerColor(leftLayer, Color::RED, size / 2, size));
-
+    sp<SurfaceControl> rightLayer;
+    sp<SurfaceControl> greenLayer;
     sp<SurfaceControl> blurLayer;
-    ASSERT_NO_FATAL_FAILURE(blurLayer = createLayer("blur", size, size));
-    ASSERT_NO_FATAL_FAILURE(fillLayerColor(blurLayer, Color::TRANSPARENT, size, size));
+    const auto leftRect = Rect(0, 0, canvasSize / 2, canvasSize);
+    const auto rightRect = Rect(canvasSize / 2, 0, canvasSize, canvasSize);
+    const auto blurRect = Rect(0, 0, canvasSize, canvasSize);
 
-    Transaction().setBackgroundBlurRadius(blurLayer, blurRadius).apply();
+    ASSERT_NO_FATAL_FAILURE(leftLayer =
+                                    createLayer("Left", leftRect.getWidth(), leftRect.getHeight()));
+    ASSERT_NO_FATAL_FAILURE(
+            fillLayerColor(leftLayer, Color::BLUE, leftRect.getWidth(), leftRect.getHeight()));
+    ASSERT_NO_FATAL_FAILURE(greenLayer = createLayer("Green", canvasSize * 2, canvasSize * 2));
+    ASSERT_NO_FATAL_FAILURE(
+            fillLayerColor(greenLayer, Color::GREEN, canvasSize * 2, canvasSize * 2));
+    ASSERT_NO_FATAL_FAILURE(
+            rightLayer = createLayer("Right", rightRect.getWidth(), rightRect.getHeight()));
+    ASSERT_NO_FATAL_FAILURE(
+            fillLayerColor(rightLayer, Color::RED, rightRect.getWidth(), rightRect.getHeight()));
 
-    auto shot = getScreenCapture();
-    // Edges are mixed
-    shot->expectColor(Rect(center - 1, center - 5, center, center + 5), Color{150, 150, 0, 255},
-                      50 /* tolerance */);
-    shot->expectColor(Rect(center, center - 5, center + 1, center + 5), Color{150, 150, 0, 255},
-                      50 /* tolerance */);
+    Transaction()
+            .setLayer(greenLayer, mLayerZBase)
+            .setFrame(leftLayer, {0, 0, canvasSize * 2, canvasSize * 2})
+            .setLayer(leftLayer, mLayerZBase + 1)
+            .setFrame(leftLayer, leftRect)
+            .setLayer(rightLayer, mLayerZBase + 2)
+            .setPosition(rightLayer, rightRect.left, rightRect.top)
+            .setFrame(rightLayer, rightRect)
+            .apply();
+
+    {
+        auto shot = getScreenCapture();
+        shot->expectColor(leftRect, Color::BLUE);
+        shot->expectColor(rightRect, Color::RED);
+    }
+
+    ASSERT_NO_FATAL_FAILURE(blurLayer = createColorLayer("BackgroundBlur", Color::TRANSPARENT));
+
+    const auto blurRadius = canvasSize / 2;
+    Transaction()
+            .setLayer(blurLayer, mLayerZBase + 3)
+            .setBackgroundBlurRadius(blurLayer, blurRadius)
+            .setCrop(blurLayer, blurRect)
+            .setFrame(blurLayer, blurRect)
+            .setSize(blurLayer, blurRect.getWidth(), blurRect.getHeight())
+            .setAlpha(blurLayer, 0.0f)
+            .apply();
+
+    {
+        auto shot = getScreenCapture();
+
+        const auto stepSize = 1;
+        const auto blurAreaOffset = blurRadius * 0.7f;
+        const auto blurAreaStartX = canvasSize / 2 - blurRadius + blurAreaOffset;
+        const auto blurAreaEndX = canvasSize / 2 + blurRadius - blurAreaOffset;
+        Color previousColor;
+        Color currentColor;
+        for (int y = 0; y < canvasSize; y++) {
+            shot->checkPixel(0, y, /* r = */ 0, /* g = */ 0, /* b = */ 255);
+            previousColor = shot->getPixelColor(0, y);
+            for (int x = blurAreaStartX; x < blurAreaEndX; x += stepSize) {
+                currentColor = shot->getPixelColor(x, y);
+                ASSERT_GT(currentColor.r, previousColor.r);
+                ASSERT_LT(currentColor.b, previousColor.b);
+                ASSERT_EQ(0, currentColor.g);
+            }
+            shot->checkPixel(canvasSize - 1, y, 255, 0, 0);
+        }
+    }
 }
 
 TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusOnMultipleLayers) {
-    char value[PROPERTY_VALUE_MAX];
-    property_get("ro.surface_flinger.supports_background_blur", value, "0");
-    if (!atoi(value)) {
-        // This device doesn't support blurs, no-op.
-        return;
-    }
+    if (!deviceSupportsBlurs()) GTEST_SKIP();
+    if (!deviceUsesSkiaRenderEngine()) GTEST_SKIP();
 
     auto size = 256;
     auto center = size / 2;
@@ -378,25 +419,15 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusOnMultipleL
 }
 
 TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurAffectedByParentAlpha) {
-    char value[PROPERTY_VALUE_MAX];
-    property_get("ro.surface_flinger.supports_background_blur", value, "0");
-    if (!atoi(value)) {
-        // This device doesn't support blurs, no-op.
-        return;
-    }
-
-    property_get("debug.renderengine.backend", value, "");
-    if (strcmp(value, "skiagl") != 0) {
-        // This device isn't using Skia render engine, no-op.
-        return;
-    }
+    if (!deviceSupportsBlurs()) GTEST_SKIP();
+    if (!deviceUsesSkiaRenderEngine()) GTEST_SKIP();
 
     sp<SurfaceControl> left;
     sp<SurfaceControl> right;
     sp<SurfaceControl> blur;
     sp<SurfaceControl> blurParent;
 
-    const auto size = 32;
+    const auto size = 256;
     ASSERT_NO_FATAL_FAILURE(left = createLayer("Left", size, size));
     ASSERT_NO_FATAL_FAILURE(fillLayerColor(left, Color::BLUE, size, size));
     ASSERT_NO_FATAL_FAILURE(right = createLayer("Right", size, size));
@@ -485,7 +516,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
             .setLayer(layer, INT32_MAX - 1)
             .show(layer)
             .setLayerStack(behindLayer, mDisplayLayerStack)
-            .setCrop_legacy(behindLayer, crop)
+            .setCrop(behindLayer, crop)
             .setLayer(behindLayer, INT32_MAX - 2)
             .show(behindLayer)
             .apply();
@@ -493,10 +524,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
     sp<Surface> surface = layer->getSurface();
 
     sp<GraphicBuffer> buffer =
-            new GraphicBuffer(width, height, PIXEL_FORMAT_RGBX_8888, 1,
-                              BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                      BufferUsage::COMPOSER_OVERLAY,
-                              "test");
+            new GraphicBuffer(width, height, PIXEL_FORMAT_RGBX_8888, 1, kUsageFlags, "test");
     ASSERT_NO_FATAL_FAILURE(
             TransactionUtils::fillGraphicBufferColor(buffer, crop, Color::TRANSPARENT));
 
@@ -512,10 +540,7 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBufferFormat) {
         shot->expectColor(crop, Color::BLACK);
     }
 
-    buffer = new GraphicBuffer(width, height, PIXEL_FORMAT_RGBA_8888, 1,
-                               BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                       BufferUsage::COMPOSER_OVERLAY,
-                               "test");
+    buffer = new GraphicBuffer(width, height, PIXEL_FORMAT_RGBA_8888, 1, kUsageFlags, "test");
     ASSERT_NO_FATAL_FAILURE(
             TransactionUtils::fillGraphicBufferColor(buffer, crop, Color::TRANSPARENT));
 

@@ -17,9 +17,10 @@
 #define LOG_TAG "ITransactionCompletedListener"
 //#define LOG_NDEBUG 0
 
-#include <gui/LayerState.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/ITransactionCompletedListener.h>
+#include <gui/LayerState.h>
+#include <private/gui/ParcelUtils.h>
 
 namespace android {
 
@@ -27,7 +28,8 @@ namespace { // Anonymous
 
 enum class Tag : uint32_t {
     ON_TRANSACTION_COMPLETED = IBinder::FIRST_CALL_TRANSACTION,
-    LAST = ON_TRANSACTION_COMPLETED,
+    ON_RELEASE_BUFFER,
+    LAST = ON_RELEASE_BUFFER,
 };
 
 } // Anonymous namespace
@@ -122,6 +124,7 @@ status_t SurfaceStats::writeToParcel(Parcel* output) const {
     for (const auto& data : jankData) {
         SAFE_PARCEL(output->writeParcelable, data);
     }
+    SAFE_PARCEL(output->writeUint64, previousBufferId);
     return NO_ERROR;
 }
 
@@ -144,6 +147,7 @@ status_t SurfaceStats::readFromParcel(const Parcel* input) {
         SAFE_PARCEL(input->readParcelable, &data);
         jankData.push_back(data);
     }
+    SAFE_PARCEL(input->readUint64, &previousBufferId);
     return NO_ERROR;
 }
 
@@ -245,6 +249,12 @@ public:
                                          onTransactionCompleted)>(Tag::ON_TRANSACTION_COMPLETED,
                                                                   stats);
     }
+
+    void onReleaseBuffer(uint64_t graphicBufferId, sp<Fence> releaseFence) override {
+        callRemoteAsync<decltype(
+                &ITransactionCompletedListener::onReleaseBuffer)>(Tag::ON_RELEASE_BUFFER,
+                                                                  graphicBufferId, releaseFence);
+    }
 };
 
 // Out-of-line virtual method definitions to trigger vtable emission in this translation unit (see
@@ -263,6 +273,8 @@ status_t BnTransactionCompletedListener::onTransact(uint32_t code, const Parcel&
         case Tag::ON_TRANSACTION_COMPLETED:
             return callLocalAsync(data, reply,
                                   &ITransactionCompletedListener::onTransactionCompleted);
+        case Tag::ON_RELEASE_BUFFER:
+            return callLocalAsync(data, reply, &ITransactionCompletedListener::onReleaseBuffer);
     }
 }
 

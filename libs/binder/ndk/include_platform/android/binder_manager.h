@@ -26,6 +26,9 @@ __BEGIN_DECLS
  * This registers the service with the default service manager under this instance name. This does
  * not take ownership of binder.
  *
+ * WARNING: when using this API across an APEX boundary, do not use with unstable
+ * AIDL services. TODO(b/139325195)
+ *
  * \param binder object to register globally with the service manager.
  * \param instance identifier of the service. This will be used to lookup the service.
  *
@@ -39,6 +42,9 @@ __attribute__((warn_unused_result)) binder_exception_t AServiceManager_addServic
  * service is not available This also implicitly calls AIBinder_incStrong (so the caller of this
  * function is responsible for calling AIBinder_decStrong).
  *
+ * WARNING: when using this API across an APEX boundary, do not use with unstable
+ * AIDL services. TODO(b/139325195)
+ *
  * \param instance identifier of the service used to lookup the service.
  */
 __attribute__((warn_unused_result)) AIBinder* AServiceManager_checkService(const char* instance);
@@ -47,6 +53,9 @@ __attribute__((warn_unused_result)) AIBinder* AServiceManager_checkService(const
  * Gets a binder object with this specific instance name. Blocks for a couple of seconds waiting on
  * it. This also implicitly calls AIBinder_incStrong (so the caller of this function is responsible
  * for calling AIBinder_decStrong).
+ *
+ * WARNING: when using this API across an APEX boundary, do not use with unstable
+ * AIDL services. TODO(b/139325195)
  *
  * \param instance identifier of the service used to lookup the service.
  */
@@ -78,6 +87,9 @@ binder_status_t AServiceManager_registerLazyService(AIBinder* binder, const char
  * This also implicitly calls AIBinder_incStrong (so the caller of this function is responsible
  * for calling AIBinder_decStrong).
  *
+ * WARNING: when using this API across an APEX boundary, do not use with unstable
+ * AIDL services. TODO(b/139325195)
+ *
  * \param instance identifier of the service used to lookup the service.
  *
  * \return service if registered, null if not.
@@ -94,6 +106,22 @@ __attribute__((warn_unused_result)) AIBinder* AServiceManager_waitForService(con
  *    be able to return the service.
  */
 bool AServiceManager_isDeclared(const char* instance) __INTRODUCED_IN(31);
+
+/**
+ * Returns all declared instances for a particular interface.
+ *
+ * For instance, if 'android.foo.IFoo/foo' is declared, and 'android.foo.IFoo' is
+ * passed here, then ["foo"] would be returned.
+ *
+ * See also AServiceManager_isDeclared.
+ *
+ * \param interface interface, e.g. 'android.foo.IFoo'
+ * \param context to pass to callback
+ * \param callback taking instance (e.g. 'foo') and context
+ */
+void AServiceManager_forEachDeclaredInstance(const char* interface, void* context,
+                                             void (*callback)(const char*, void*))
+        __INTRODUCED_IN(31);
 
 /**
  * Prevent lazy services without client from shutting down their process

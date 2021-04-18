@@ -49,7 +49,8 @@ std::unique_ptr<RenderEngine> RenderEngine::create(const RenderEngineCreationArg
         case RenderEngineType::THREADED:
             ALOGD("Threaded RenderEngine with GLES Backend");
             return renderengine::threaded::RenderEngineThreaded::create(
-                    [args]() { return android::renderengine::gl::GLESRenderEngine::create(args); });
+                    [args]() { return android::renderengine::gl::GLESRenderEngine::create(args); },
+                    renderEngineType);
         case RenderEngineType::SKIA_GL:
             ALOGD("RenderEngine with SkiaGL Backend");
             return renderengine::skia::SkiaGLRenderEngine::create(args);
@@ -66,12 +67,14 @@ std::unique_ptr<RenderEngine> RenderEngine::create(const RenderEngineCreationArg
                             .setPrecacheToneMapperShaderOnly(args.precacheToneMapperShaderOnly)
                             .setSupportsBackgroundBlur(args.supportsBackgroundBlur)
                             .setContextPriority(args.contextPriority)
-                            .setRenderEngineType(RenderEngineType::SKIA_GL_THREADED)
+                            .setRenderEngineType(renderEngineType)
                             .build();
             ALOGD("Threaded RenderEngine with SkiaGL Backend");
-            return renderengine::threaded::RenderEngineThreaded::create([skiaArgs]() {
-                return android::renderengine::skia::SkiaGLRenderEngine::create(skiaArgs);
-            });
+            return renderengine::threaded::RenderEngineThreaded::create(
+                    [skiaArgs]() {
+                        return android::renderengine::skia::SkiaGLRenderEngine::create(skiaArgs);
+                    },
+                    renderEngineType);
         }
         case RenderEngineType::GLES:
         default:
@@ -81,6 +84,16 @@ std::unique_ptr<RenderEngine> RenderEngine::create(const RenderEngineCreationArg
 }
 
 RenderEngine::~RenderEngine() = default;
+
+void RenderEngine::validateInputBufferUsage(const sp<GraphicBuffer>& buffer) {
+    LOG_ALWAYS_FATAL_IF(!(buffer->getUsage() & GraphicBuffer::USAGE_HW_TEXTURE),
+                        "input buffer not gpu readable");
+}
+
+void RenderEngine::validateOutputBufferUsage(const sp<GraphicBuffer>& buffer) {
+    LOG_ALWAYS_FATAL_IF(!(buffer->getUsage() & GraphicBuffer::USAGE_HW_RENDER),
+                        "output buffer not gpu writeable");
+}
 
 } // namespace renderengine
 } // namespace android

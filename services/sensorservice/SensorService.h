@@ -242,6 +242,22 @@ private:
             userid_t mUserId;
     };
 
+    // A class automatically clearing and restoring binder caller identity inside
+    // a code block (scoped variable).
+    // Declare one systematically before calling SensorPrivacyManager methods so that they are
+    // executed with the same level of privilege as the SensorService process.
+    class AutoCallerClear {
+        public:
+            AutoCallerClear() :
+                mToken(IPCThreadState::self()->clearCallingIdentity()) {}
+            ~AutoCallerClear() {
+                IPCThreadState::self()->restoreCallingIdentity(mToken);
+            }
+
+        private:
+            const int64_t mToken;
+    };
+
     enum Mode {
        // The regular operating mode where any application can register/unregister/call flush on
        // sensors.
@@ -303,7 +319,7 @@ private:
     virtual Vector<Sensor> getDynamicSensorList(const String16& opPackageName);
     virtual sp<ISensorEventConnection> createSensorEventConnection(
             const String8& packageName,
-            int requestedMode, const String16& opPackageName);
+            int requestedMode, const String16& opPackageName, const String16& attributionTag);
     virtual int isDataInjectionEnabled();
     virtual sp<ISensorEventConnection> createSensorDirectConnection(const String16& opPackageName,
             uint32_t size, int32_t type, int32_t format, const native_handle *resource);

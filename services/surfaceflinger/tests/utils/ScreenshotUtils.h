@@ -85,6 +85,7 @@ public:
 
     void expectColor(const Rect& rect, const Color& color, uint8_t tolerance = 0) {
         ASSERT_NE(nullptr, mOutBuffer);
+        ASSERT_NE(nullptr, mPixels);
         ASSERT_EQ(HAL_PIXEL_FORMAT_RGBA_8888, mOutBuffer->getPixelFormat());
         TransactionUtils::expectBufferColor(mOutBuffer, mPixels, rect, color, tolerance);
     }
@@ -157,6 +158,15 @@ public:
                                         x, y, r, g, b, pixel[0], pixel[1], pixel[2]));
             EXPECT_EQ(String8(), err) << err.string();
         }
+    }
+
+    Color getPixelColor(uint32_t x, uint32_t y) {
+        if (!mOutBuffer || mOutBuffer->getPixelFormat() != HAL_PIXEL_FORMAT_RGBA_8888) {
+            return {0, 0, 0, 0};
+        }
+
+        const uint8_t* pixel = mPixels + (4 * (y * mOutBuffer->getStride() + x));
+        return {pixel[0], pixel[1], pixel[2], pixel[3]};
     }
 
     void expectFGColor(uint32_t x, uint32_t y) { checkPixel(x, y, 195, 63, 63); }

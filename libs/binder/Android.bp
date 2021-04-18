@@ -73,6 +73,7 @@ libbinder_device_interface_sources = [
     "PermissionController.cpp",
     "ProcessInfoService.cpp",
     "IpPrefix.cpp",
+    ":activity_manager_procstate_aidl",
 ]
 
 cc_library {
@@ -121,13 +122,17 @@ cc_library {
         "ParcelFileDescriptor.cpp",
         "PersistableBundle.cpp",
         "ProcessState.cpp",
+        "RpcAddress.cpp",
+        "RpcConnection.cpp",
+        "RpcServer.cpp",
+        "RpcState.cpp",
         "Static.cpp",
         "Stability.cpp",
         "Status.cpp",
         "TextOutput.cpp",
         "Utils.cpp",
+        ":packagemanager_aidl",
         ":libbinder_aidl",
-        ":activity_manager_procstate_aidl",
     ],
 
     target: {
@@ -214,21 +219,34 @@ cc_library {
         "-misc-redundant-expression",
         "-misc-unused-using-decls",
         "performance*",
+        "-performance-no-int-to-ptr",
         "portability*",
     ],
+
+    pgo: {
+        sampling: true,
+        profile_file: "libbinder/libbinder.profdata",
+    },
 }
 
 // AIDL interface between libbinder and framework.jar
 filegroup {
     name: "libbinder_aidl",
     srcs: [
-        "aidl/android/content/pm/IPackageChangeObserver.aidl",
-        "aidl/android/content/pm/IPackageManagerNative.aidl",
-        "aidl/android/content/pm/PackageChangeEvent.aidl",
         "aidl/android/os/IClientCallback.aidl",
         "aidl/android/os/IServiceCallback.aidl",
         "aidl/android/os/IServiceManager.aidl",
         "aidl/android/os/ServiceDebugInfo.aidl",
+    ],
+    path: "aidl",
+}
+
+filegroup {
+    name: "packagemanager_aidl",
+    srcs: [
+        "aidl/android/content/pm/IPackageChangeObserver.aidl",
+        "aidl/android/content/pm/IPackageManagerNative.aidl",
+        "aidl/android/content/pm/PackageChangeEvent.aidl",
     ],
     path: "aidl",
 }

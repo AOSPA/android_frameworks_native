@@ -44,11 +44,15 @@
 #include "DisplayMode.h"
 #include "HWC2.h"
 #include "Hal.h"
-
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 namespace android {
 
 namespace hal = hardware::graphics::composer::hal;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 struct DisplayedFrameStats;
 class GraphicBuffer;
 class TestableSurfaceFlinger;
@@ -91,6 +95,12 @@ public:
         int32_t dpiX = -1;
         int32_t dpiY = -1;
         int32_t configGroup = -1;
+
+        friend std::ostream& operator<<(std::ostream& os, const HWCDisplayMode& mode) {
+            return os << "id=" << mode.hwcId << " res=" << mode.width << "x" << mode.height
+                      << " vsyncPeriod=" << mode.vsyncPeriod << " dpi=" << mode.dpiX << "x"
+                      << mode.dpiY << " group=" << mode.configGroup;
+        }
     };
 
     virtual ~HWComposer();
@@ -204,7 +214,7 @@ public:
                                         ui::RenderIntent) = 0;
 
     // Composer 2.4
-    virtual DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const = 0;
+    virtual ui::DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const = 0;
     virtual bool isVsyncPeriodSwitchSupported(PhysicalDisplayId) const = 0;
     virtual status_t getDisplayVsyncPeriod(PhysicalDisplayId displayId,
                                            nsecs_t* outVsyncPeriod) const = 0;
@@ -230,6 +240,12 @@ public:
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
     virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
+#ifdef QTI_UNIFIED_DRAW
+    virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
+            const sp<Fence>& acquireFence, ui::Dataspace dataspace) = 0;
+    virtual status_t tryDrawMethod(HalDisplayId displayId,
+            IQtiComposerClient::DrawMethod drawMethod) = 0;
+#endif
 };
 
 namespace impl {
@@ -337,7 +353,7 @@ public:
     status_t setActiveColorMode(PhysicalDisplayId, ui::ColorMode, ui::RenderIntent) override;
 
     // Composer 2.4
-    DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const override;
+    ui::DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const override;
     bool isVsyncPeriodSwitchSupported(PhysicalDisplayId) const override;
     status_t getDisplayVsyncPeriod(PhysicalDisplayId displayId,
                                    nsecs_t* outVsyncPeriod) const override;
@@ -365,6 +381,13 @@ public:
 
     std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const override;
     std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const override;
+#ifdef QTI_UNIFIED_DRAW
+    virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
+                                         const sp<Fence>& acquireFence,
+                                         ui::Dataspace dataspace) override;
+    status_t tryDrawMethod(HalDisplayId displayId,
+                           IQtiComposerClient::DrawMethod drawMethod)  override;
+#endif
 
 private:
     // For unit tests

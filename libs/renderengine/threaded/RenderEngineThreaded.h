@@ -37,11 +37,12 @@ using CreateInstanceFactory = std::function<std::unique_ptr<renderengine::Render
  */
 class RenderEngineThreaded : public RenderEngine {
 public:
-    static std::unique_ptr<RenderEngineThreaded> create(CreateInstanceFactory factory);
+    static std::unique_ptr<RenderEngineThreaded> create(CreateInstanceFactory factory,
+                                                        RenderEngineType type);
 
-    RenderEngineThreaded(CreateInstanceFactory factory);
+    RenderEngineThreaded(CreateInstanceFactory factory, RenderEngineType type);
     ~RenderEngineThreaded() override;
-    void primeCache() const override;
+    void primeCache() override;
 
     void dump(std::string& result) override;
 
@@ -73,7 +74,7 @@ private:
     /* ------------------------------------------------------------------------
      * Threading
      */
-    const char* const mThreadName = "RenderEngineThread";
+    const char* const mThreadName = "RenderEngine";
     // Protects the creation and destruction of mThread.
     mutable std::mutex mThreadMutex;
     std::thread mThread GUARDED_BY(mThreadMutex);

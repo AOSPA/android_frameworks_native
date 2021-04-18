@@ -64,7 +64,7 @@ using AllRefreshRatesMapType = RefreshRateConfigs::AllRefreshRatesMapType;
 using RefreshRate = RefreshRateConfigs::RefreshRate;
 
 std::string RefreshRate::toString() const {
-    return base::StringPrintf("{id=%zu, hwcId=%d, fps=%.2f, width=%d, height=%d group=%d}",
+    return base::StringPrintf("{id=%d, hwcId=%d, fps=%.2f, width=%d, height=%d group=%d}",
                               getModeId().value(), mode->getHwcId(), getFps().getValue(),
                               mode->getWidth(), mode->getHeight(), getModeGroup());
 }
@@ -89,7 +89,7 @@ std::string RefreshRateConfigs::layerVoteTypeString(LayerVoteType vote) {
 }
 
 std::string RefreshRateConfigs::Policy::toString() const {
-    return base::StringPrintf("default mode ID: %zu, allowGroupSwitching = %d"
+    return base::StringPrintf("default mode ID: %d, allowGroupSwitching = %d"
                               ", primary range: %s, app request range: %s",
                               defaultMode.value(), allowGroupSwitching,
                               primaryRange.toString().c_str(), appRequestRange.toString().c_str());
@@ -499,11 +499,7 @@ RefreshRateConfigs::UidToFrameRateOverride RefreshRateConfigs::getFrameRateOverr
         // Now that we scored all the refresh rates we need to pick the one that got the highest
         // score.
         const RefreshRate* bestRefreshRate = getBestRefreshRate(scores.begin(), scores.end());
-
-        // If the nest refresh rate is the current one, we don't have an override
-        if (!bestRefreshRate->getFps().equalsWithMargin(displayFrameRate)) {
-            frameRateOverrides.emplace(uid, bestRefreshRate->getFps());
-        }
+        frameRateOverrides.emplace(uid, bestRefreshRate->getFps());
     }
 
     return frameRateOverrides;
@@ -614,15 +610,16 @@ RefreshRateConfigs::RefreshRateConfigs(const DisplayModes& modes, DisplayModeId 
 void RefreshRateConfigs::updateDisplayModes(const DisplayModes& modes,
                                             DisplayModeId currentModeId) {
     std::lock_guard lock(mLock);
-    LOG_ALWAYS_FATAL_IF(modes.empty());
-    LOG_ALWAYS_FATAL_IF(currentModeId.value() >= modes.size());
+    // The current mode should be supported
+    LOG_ALWAYS_FATAL_IF(std::none_of(modes.begin(), modes.end(), [&](DisplayModePtr mode) {
+        return mode->getId() == currentModeId;
+    }));
 
     mRefreshRates.clear();
     for (const auto& mode : modes) {
         const auto modeId = mode->getId();
-        const auto fps = Fps::fromPeriodNsecs(mode->getVsyncPeriod());
         mRefreshRates.emplace(modeId,
-                              std::make_unique<RefreshRate>(modeId, mode, fps,
+                              std::make_unique<RefreshRate>(modeId, mode, mode->getFps(),
                                                             RefreshRate::ConstructorTag(0)));
         if (modeId == currentModeId) {
             mCurrentRefreshRate = mRefreshRates.at(modeId).get();
@@ -728,7 +725,7 @@ void RefreshRateConfigs::getSortedRefreshRateListLocked(
     outRefreshRates->reserve(mRefreshRates.size());
     for (const auto& [type, refreshRate] : mRefreshRates) {
         if (shouldAddRefreshRate(*refreshRate)) {
-            ALOGV("getSortedRefreshRateListLocked: mode %zu added to list policy",
+            ALOGV("getSortedRefreshRateListLocked: mode %d added to list policy",
                   refreshRate->modeId.value());
             outRefreshRates->push_back(refreshRate.get());
         }
@@ -840,11 +837,6 @@ int RefreshRateConfigs::getFrameRateDivider(Fps displayFrameRate, Fps layerFrame
     }
 
     return static_cast<int>(numPeriodsRounded);
-}
-
-int RefreshRateConfigs::getRefreshRateDivider(Fps frameRate) const {
-    std::lock_guard lock(mLock);
-    return getFrameRateDivider(mCurrentRefreshRate->getFps(), frameRate);
 }
 
 void RefreshRateConfigs::dump(std::string& result) const {

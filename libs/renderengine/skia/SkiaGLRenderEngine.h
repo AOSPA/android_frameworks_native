@@ -31,6 +31,7 @@
 
 #include "AutoBackendTexture.h"
 #include "EGL/egl.h"
+#include "GrContextOptions.h"
 #include "SkImageInfo.h"
 #include "SkiaRenderEngine.h"
 #include "android-base/macros.h"
@@ -50,6 +51,7 @@ public:
                        EGLSurface protectedPlaceholder);
     ~SkiaGLRenderEngine() override EXCLUDES(mRenderingMutex);
 
+    void primeCache() override;
     void cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) override;
     void unbindExternalTextureBuffer(uint64_t bufferId) override;
     status_t drawLayers(const DisplaySettings& display,
@@ -62,6 +64,7 @@ public:
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
     bool supportsBackgroundBlur() override { return mBlurFilter != nullptr; }
+    void assertShadersCompiled(int numShaders) override;
 
 protected:
     void dump(std::string& result) override;
@@ -92,11 +95,12 @@ private:
     void initCanvas(SkCanvas* canvas, const DisplaySettings& display);
     void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
                     const ShadowSettings& shadowSettings);
-    // If mUseColorManagement is correct and layer needsLinearEffect, it returns a linear runtime
-    // shader. Otherwise it returns the input shader.
+    // If requiresLinearEffect is true or the layer has a stretchEffect a new shader is returned.
+    // Otherwise it returns the input shader.
     sk_sp<SkShader> createRuntimeEffectShader(sk_sp<SkShader> shader, const LayerSettings* layer,
                                               const DisplaySettings& display,
-                                              bool undoPremultipliedAlpha);
+                                              bool undoPremultipliedAlpha,
+                                              bool requiresLinearEffect);
 
     EGLDisplay mEGLDisplay;
     EGLContext mEGLContext;
@@ -130,9 +134,28 @@ private:
     // Object to capture commands send to Skia.
     std::unique_ptr<SkiaCapture> mCapture;
 
-    // Keep this information as a local variable to determine whether the access of the GL
-    // operations is working on the same threads.
-    const RenderEngineType mRenderEngineType = RenderEngineType::SKIA_GL;
+    // Implements PersistentCache as a way to monitor what SkSL shaders Skia has
+    // cached.
+    class SkSLCacheMonitor : public GrContextOptions::PersistentCache {
+    public:
+        SkSLCacheMonitor() = default;
+        ~SkSLCacheMonitor() override = default;
+
+        sk_sp<SkData> load(const SkData& key) override;
+
+        void store(const SkData& key, const SkData& data, const SkString& description) override;
+
+        int shadersCachedSinceLastCall() {
+            const int shadersCachedSinceLastCall = mShadersCachedSinceLastCall;
+            mShadersCachedSinceLastCall = 0;
+            return shadersCachedSinceLastCall;
+        }
+
+    private:
+        int mShadersCachedSinceLastCall = 0;
+    };
+
+    SkSLCacheMonitor mSkSLCacheMonitor;
 };
 
 } // namespace skia

@@ -40,6 +40,7 @@
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/Trace.h>
+#include "Cache.h"
 
 #include <cmath>
 #include <cstdint>
@@ -224,6 +225,10 @@ std::unique_ptr<SkiaGLRenderEngine> SkiaGLRenderEngine::create(
     return engine;
 }
 
+void SkiaGLRenderEngine::primeCache() {
+    Cache::primeShaderCache(this);
+}
+
 EGLConfig SkiaGLRenderEngine::chooseEglConfig(EGLDisplay display, int format, bool logConfig) {
     status_t err;
     EGLConfig config;
@@ -263,22 +268,40 @@ EGLConfig SkiaGLRenderEngine::chooseEglConfig(EGLDisplay display, int format, bo
     return config;
 }
 
+sk_sp<SkData> SkiaGLRenderEngine::SkSLCacheMonitor::load(const SkData& key) {
+    // This "cache" does not actually cache anything. It just allows us to
+    // monitor Skia's internal cache. So this method always returns null.
+    return nullptr;
+}
+
+void SkiaGLRenderEngine::SkSLCacheMonitor::store(const SkData& key, const SkData& data,
+                                                 const SkString& description) {
+    mShadersCachedSinceLastCall++;
+}
+
+void SkiaGLRenderEngine::assertShadersCompiled(int numShaders) {
+    const int cached = mSkSLCacheMonitor.shadersCachedSinceLastCall();
+    LOG_ALWAYS_FATAL_IF(cached != numShaders, "Attempted to cache %i shaders; cached %i",
+                        numShaders, cached);
+}
+
 SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
                                        EGLContext ctxt, EGLSurface placeholder,
                                        EGLContext protectedContext, EGLSurface protectedPlaceholder)
-      : mEGLDisplay(display),
+      : SkiaRenderEngine(args.renderEngineType),
+        mEGLDisplay(display),
         mEGLContext(ctxt),
         mPlaceholderSurface(placeholder),
         mProtectedEGLContext(protectedContext),
         mProtectedPlaceholderSurface(protectedPlaceholder),
-        mUseColorManagement(args.useColorManagement),
-        mRenderEngineType(args.renderEngineType) {
+        mUseColorManagement(args.useColorManagement) {
     sk_sp<const GrGLInterface> glInterface(GrGLCreateNativeInterface());
     LOG_ALWAYS_FATAL_IF(!glInterface.get());
 
     GrContextOptions options;
     options.fPreferExternalImagesOverES3 = true;
     options.fDisableDistanceFieldPaths = true;
+    options.fPersistentCache = &mSkSLCacheMonitor;
     mGrContext = GrDirectContext::MakeGL(glInterface, options);
     if (useProtectedContext(true)) {
         mProtectedGrContext = GrDirectContext::MakeGL(glInterface, options);
@@ -293,11 +316,9 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGL
 }
 
 SkiaGLRenderEngine::~SkiaGLRenderEngine() {
-    std::lock_guard<std::mutex> lock(mRenderingMutex);
-    mRuntimeEffects.clear();
-    mProtectedTextureCache.clear();
-    mTextureCache.clear();
+    cleanFramebufferCache();
 
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
     if (mBlurFilter) {
         delete mBlurFilter;
     }
@@ -404,10 +425,6 @@ bool SkiaGLRenderEngine::waitFence(base::unique_fd fenceFd) {
     return true;
 }
 
-static bool hasUsage(const AHardwareBuffer_Desc& desc, uint64_t usage) {
-    return !!(desc.usage & usage);
-}
-
 static float toDegrees(uint32_t transform) {
     switch (transform) {
         case ui::Transform::ROT_90:
@@ -454,11 +471,6 @@ static bool needsToneMapping(ui::Dataspace sourceDataspace, ui::Dataspace destin
             sourceTransfer != destTransfer;
 }
 
-static bool needsLinearEffect(const mat4& colorTransform, ui::Dataspace sourceDataspace,
-                              ui::Dataspace destinationDataspace) {
-    return colorTransform != mat4() || needsToneMapping(sourceDataspace, destinationDataspace);
-}
-
 void SkiaGLRenderEngine::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buffer) {
     // Only run this if RE is running on its own thread. This way the access to GL
     // operations is guaranteed to be happening on the same thread.
@@ -467,18 +479,31 @@ void SkiaGLRenderEngine::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buf
     }
     ATRACE_CALL();
 
-    std::lock_guard<std::mutex> lock(mRenderingMutex);
-    auto iter = mTextureCache.find(buffer->getId());
-    if (iter != mTextureCache.end()) {
-        ALOGV("Texture already exists in cache.");
+    // We need to switch the currently bound context if the buffer is protected but the current
+    // context is not. The current state must then be restored after the buffer is cached.
+    const bool protectedContextState = mInProtectedContext;
+    if (!useProtectedContext(protectedContextState ||
+                             (buffer->getUsage() & GRALLOC_USAGE_PROTECTED))) {
+        ALOGE("Attempting to cache a buffer into a different context than what is currently bound");
         return;
+    }
+
+    auto grContext = mInProtectedContext ? mProtectedGrContext : mGrContext;
+    auto& cache = mInProtectedContext ? mProtectedTextureCache : mTextureCache;
+
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    auto iter = cache.find(buffer->getId());
+    if (iter != cache.end()) {
+        ALOGV("Texture already exists in cache.");
     } else {
         std::shared_ptr<AutoBackendTexture::LocalRef> imageTextureRef =
                 std::make_shared<AutoBackendTexture::LocalRef>();
         imageTextureRef->setTexture(
-                new AutoBackendTexture(mGrContext.get(), buffer->toAHardwareBuffer(), false));
-        mTextureCache.insert({buffer->getId(), imageTextureRef});
+                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer()));
+        cache.insert({buffer->getId(), imageTextureRef});
     }
+    // restore the original state of the protected context if necessary
+    useProtectedContext(protectedContextState);
 }
 
 void SkiaGLRenderEngine::unbindExternalTextureBuffer(uint64_t bufferId) {
@@ -491,14 +516,19 @@ void SkiaGLRenderEngine::unbindExternalTextureBuffer(uint64_t bufferId) {
 sk_sp<SkShader> SkiaGLRenderEngine::createRuntimeEffectShader(sk_sp<SkShader> shader,
                                                               const LayerSettings* layer,
                                                               const DisplaySettings& display,
-                                                              bool undoPremultipliedAlpha) {
+                                                              bool undoPremultipliedAlpha,
+                                                              bool requiresLinearEffect) {
     if (layer->stretchEffect.hasEffect()) {
         // TODO: Implement
     }
-    if (mUseColorManagement &&
-        needsLinearEffect(layer->colorTransform, layer->sourceDataspace, display.outputDataspace)) {
-        LinearEffect effect = LinearEffect{.inputDataspace = layer->sourceDataspace,
-                                           .outputDataspace = display.outputDataspace,
+    if (requiresLinearEffect) {
+        const ui::Dataspace inputDataspace =
+                mUseColorManagement ? layer->sourceDataspace : ui::Dataspace::UNKNOWN;
+        const ui::Dataspace outputDataspace =
+                mUseColorManagement ? display.outputDataspace : ui::Dataspace::UNKNOWN;
+
+        LinearEffect effect = LinearEffect{.inputDataspace = inputDataspace,
+                                           .outputDataspace = outputDataspace,
                                            .undoPremultipliedAlpha = undoPremultipliedAlpha};
 
         auto effectIter = mRuntimeEffects.find(effect);
@@ -556,6 +586,26 @@ void SkiaGLRenderEngine::initCanvas(SkCanvas* canvas, const DisplaySettings& dis
     canvas->translate(-display.clip.left, -display.clip.top);
 }
 
+class AutoSaveRestore {
+public:
+    AutoSaveRestore(SkCanvas* canvas) : mCanvas(canvas) { mSaveCount = canvas->save(); }
+    ~AutoSaveRestore() { restore(); }
+    void replace(SkCanvas* canvas) {
+        mCanvas = canvas;
+        mSaveCount = canvas->save();
+    }
+    void restore() {
+        if (mCanvas) {
+            mCanvas->restoreToCount(mSaveCount);
+            mCanvas = nullptr;
+        }
+    }
+
+private:
+    SkCanvas* mCanvas;
+    int mSaveCount;
+};
+
 status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                                         const std::vector<const LayerSettings*>& layers,
                                         const sp<GraphicBuffer>& buffer,
@@ -582,12 +632,12 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         return BAD_VALUE;
     }
 
+    validateOutputBufferUsage(buffer);
+
     auto grContext = mInProtectedContext ? mProtectedGrContext : mGrContext;
     auto& cache = mInProtectedContext ? mProtectedTextureCache : mTextureCache;
     AHardwareBuffer_Desc bufferDesc;
     AHardwareBuffer_describe(buffer->toAHardwareBuffer(), &bufferDesc);
-    LOG_ALWAYS_FATAL_IF(!hasUsage(bufferDesc, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE),
-                        "missing usage");
 
     std::shared_ptr<AutoBackendTexture::LocalRef> surfaceTextureRef = nullptr;
     if (useFramebufferCache) {
@@ -603,18 +653,17 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         ATRACE_NAME("Cache miss");
         surfaceTextureRef = std::make_shared<AutoBackendTexture::LocalRef>();
         surfaceTextureRef->setTexture(
-                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer(), true));
+                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer()));
         if (useFramebufferCache) {
             ALOGD("Adding to cache");
             cache.insert({buffer->getId(), surfaceTextureRef});
         }
     }
 
+    const ui::Dataspace dstDataspace =
+            mUseColorManagement ? display.outputDataspace : ui::Dataspace::UNKNOWN;
     sk_sp<SkSurface> dstSurface =
-            surfaceTextureRef->getTexture()->getOrCreateSurface(mUseColorManagement
-                                                                        ? display.outputDataspace
-                                                                        : ui::Dataspace::UNKNOWN,
-                                                                grContext.get());
+            surfaceTextureRef->getTexture()->getOrCreateSurface(dstDataspace, grContext.get());
 
     SkCanvas* dstCanvas = mCapture->tryCapture(dstSurface.get());
     if (dstCanvas == nullptr) {
@@ -631,9 +680,8 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
     if (mBlurFilter) {
         bool requiresCompositionLayer = false;
         for (const auto& layer : layers) {
-            if (layer->backgroundBlurRadius > 0) {
-                // when skbug.com/11208 and b/176903027 are resolved we can add the additional
-                // restriction for layer->backgroundBlurRadius < BlurFilter::kMaxCrossFadeRadius
+            if (layer->backgroundBlurRadius > 0 &&
+                layer->backgroundBlurRadius < BlurFilter::kMaxCrossFadeRadius) {
                 requiresCompositionLayer = true;
             }
             for (auto region : layer->blurRegions) {
@@ -650,7 +698,7 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         }
     }
 
-    canvas->save();
+    AutoSaveRestore surfaceAutoSaveRestore(canvas);
     // Clear the entire canvas with a transparent black to prevent ghost images.
     canvas->clear(SK_ColorTRANSPARENT);
     initCanvas(canvas, display);
@@ -671,11 +719,16 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         SkPaint paint;
         sk_sp<SkShader> shader =
                 SkShaders::Color(SkColor4f{.fR = 0., .fG = 0., .fB = 0., .fA = 1.0},
-                                 toSkColorSpace(mUseColorManagement ? display.outputDataspace
-                                                                    : ui::Dataspace::UNKNOWN));
+                                 toSkColorSpace(dstDataspace));
         paint.setShader(shader);
         clearRegion.setRects(skRects, numRects);
         canvas->drawRegion(clearRegion, paint);
+    }
+
+    // setup color filter if necessary
+    sk_sp<SkColorFilter> displayColorTransform;
+    if (display.colorTransform != mat4()) {
+        displayColorTransform = SkColorFilters::Matrix(toSkColorMatrix(display.colorTransform));
     }
 
     for (const auto& layer : layers) {
@@ -705,7 +758,7 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
 
             // assign dstCanvas to canvas and ensure that the canvas state is up to date
             canvas = dstCanvas;
-            canvas->save();
+            surfaceAutoSaveRestore.replace(canvas);
             initCanvas(canvas, display);
 
             LOG_ALWAYS_FATAL_IF(activeSurface->getCanvas()->getSaveCount() !=
@@ -717,7 +770,7 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             activeSurface = dstSurface;
         }
 
-        canvas->save();
+        SkAutoCanvasRestore layerAutoSaveRestore(canvas, true);
         if (CC_UNLIKELY(mCapture->isCaptureRunning())) {
             // Record the name of the layer if the capture is running.
             std::stringstream layerSettings;
@@ -765,34 +818,55 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             }
         }
 
-        const ui::Dataspace targetDataspace = mUseColorManagement
-                ? (needsLinearEffect(layer->colorTransform, layer->sourceDataspace,
-                                     display.outputDataspace)
-                           // If we need to map to linear space, then mark the source image with the
-                           // same colorspace as the destination surface so that Skia's color
-                           // management is a no-op.
-                           ? display.outputDataspace
-                           : layer->sourceDataspace)
-                : ui::Dataspace::UNKNOWN;
+        // Shadows are assumed to live only on their own layer - it's not valid
+        // to draw the boundary rectangles when there is already a caster shadow
+        // TODO(b/175915334): consider relaxing this restriction to enable more flexible
+        // composition - using a well-defined invalid color is long-term less error-prone.
+        if (layer->shadow.length > 0) {
+            const auto rect = layer->geometry.roundedCornersRadius > 0
+                    ? getSkRect(layer->geometry.roundedCornersCrop)
+                    : bounds;
+            // This would require a new parameter/flag to SkShadowUtils::DrawShadow
+            LOG_ALWAYS_FATAL_IF(layer->disableBlending, "Cannot disableBlending with a shadow");
+            drawShadow(canvas, rect, layer->geometry.roundedCornersRadius, layer->shadow);
+            continue;
+        }
+
+        const bool requiresLinearEffect = layer->colorTransform != mat4() ||
+                (mUseColorManagement &&
+                 needsToneMapping(layer->sourceDataspace, display.outputDataspace));
+
+        // quick abort from drawing the remaining portion of the layer
+        if (layer->alpha == 0 && !requiresLinearEffect && !layer->disableBlending &&
+            (!displayColorTransform || displayColorTransform->isAlphaUnchanged())) {
+            continue;
+        }
+
+        // If we need to map to linear space or color management is disabled, then mark the source
+        // image with the same colorspace as the destination surface so that Skia's color
+        // management is a no-op.
+        const ui::Dataspace layerDataspace = (!mUseColorManagement || requiresLinearEffect)
+                ? dstDataspace
+                : layer->sourceDataspace;
 
         SkPaint paint;
         if (layer->source.buffer.buffer) {
             ATRACE_NAME("DrawImage");
+            validateInputBufferUsage(layer->source.buffer.buffer);
             const auto& item = layer->source.buffer;
             std::shared_ptr<AutoBackendTexture::LocalRef> imageTextureRef = nullptr;
-            auto iter = mTextureCache.find(item.buffer->getId());
-            if (iter != mTextureCache.end()) {
+            auto iter = cache.find(item.buffer->getId());
+            if (iter != cache.end()) {
                 imageTextureRef = iter->second;
             } else {
                 imageTextureRef = std::make_shared<AutoBackendTexture::LocalRef>();
-                imageTextureRef->setTexture(new AutoBackendTexture(grContext.get(),
-                                                                   item.buffer->toAHardwareBuffer(),
-                                                                   false));
-                mTextureCache.insert({item.buffer->getId(), imageTextureRef});
+                imageTextureRef->setTexture(
+                        new AutoBackendTexture(grContext.get(), item.buffer->toAHardwareBuffer()));
+                cache.insert({item.buffer->getId(), imageTextureRef});
             }
 
             sk_sp<SkImage> image =
-                    imageTextureRef->getTexture()->makeImage(targetDataspace,
+                    imageTextureRef->getTexture()->makeImage(layerDataspace,
                                                              item.usePremultipliedAlpha
                                                                      ? kPremul_SkAlphaType
                                                                      : kUnpremul_SkAlphaType,
@@ -848,12 +922,12 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             if (item.isOpaque) {
                 shader = SkShaders::Blend(SkBlendMode::kPlus, shader,
                                           SkShaders::Color(SkColors::kBlack,
-                                                           toSkColorSpace(targetDataspace)));
+                                                           toSkColorSpace(layerDataspace)));
             }
 
-            paint.setShader(
-                    createRuntimeEffectShader(shader, layer, display,
-                                              !item.isOpaque && item.usePremultipliedAlpha));
+            paint.setShader(createRuntimeEffectShader(shader, layer, display,
+                                                      !item.isOpaque && item.usePremultipliedAlpha,
+                                                      requiresLinearEffect));
             paint.setAlphaf(layer->alpha);
         } else {
             ATRACE_NAME("DrawColor");
@@ -862,35 +936,26 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                                                                 .fG = color.g,
                                                                 .fB = color.b,
                                                                 .fA = layer->alpha},
-                                                      toSkColorSpace(targetDataspace));
+                                                      toSkColorSpace(layerDataspace));
             paint.setShader(createRuntimeEffectShader(shader, layer, display,
-                                                      /* undoPremultipliedAlpha */ false));
+                                                      /* undoPremultipliedAlpha */ false,
+                                                      requiresLinearEffect));
         }
 
-        sk_sp<SkColorFilter> filter =
-                SkColorFilters::Matrix(toSkColorMatrix(display.colorTransform));
+        if (layer->disableBlending) {
+            paint.setBlendMode(SkBlendMode::kSrc);
+        }
 
-        paint.setColorFilter(filter);
+        paint.setColorFilter(displayColorTransform);
 
-        if (layer->shadow.length > 0) {
-            const auto rect = layer->geometry.roundedCornersRadius > 0
-                    ? getSkRect(layer->geometry.roundedCornersCrop)
-                    : bounds;
-            drawShadow(canvas, rect, layer->geometry.roundedCornersRadius, layer->shadow);
+        if (layer->geometry.roundedCornersRadius > 0) {
+            paint.setAntiAlias(true);
+            canvas->drawRRect(getRoundedRect(layer), paint);
         } else {
-            // Shadows are assumed to live only on their own layer - it's not valid
-            // to draw the boundary retangles when there is already a caster shadow
-            // TODO(b/175915334): consider relaxing this restriction to enable more flexible
-            // composition - using a well-defined invalid color is long-term less error-prone.
-            // Push the clipRRect onto the clip stack. Draw the image. Pop the clip.
-            if (layer->geometry.roundedCornersRadius > 0) {
-                canvas->clipRRect(getRoundedRect(layer), true);
-            }
             canvas->drawRect(bounds, paint);
         }
-        canvas->restore();
     }
-    canvas->restore();
+    surfaceAutoSaveRestore.restore();
     mCapture->endCapture();
     {
         ATRACE_NAME("flush surface");
@@ -1106,7 +1171,14 @@ EGLSurface SkiaGLRenderEngine::createPlaceholderEglPbufferSurface(EGLDisplay dis
     return eglCreatePbufferSurface(display, placeholderConfig, attributes.data());
 }
 
-void SkiaGLRenderEngine::cleanFramebufferCache() {}
+void SkiaGLRenderEngine::cleanFramebufferCache() {
+    // TODO(b/180767535) Remove this method and use b/180767535 instead, which would allow
+    // SF to control texture lifecycle more tightly rather than through custom hooks into RE.
+    std::lock_guard<std::mutex> lock(mRenderingMutex);
+    mRuntimeEffects.clear();
+    mProtectedTextureCache.clear();
+    mTextureCache.clear();
+}
 
 int SkiaGLRenderEngine::getContextPriority() {
     int value;
@@ -1126,6 +1198,8 @@ void SkiaGLRenderEngine::dump(std::string& result) {
     StringAppendF(&result, "RenderEngine supports protected context: %d\n",
                   supportsProtectedContent());
     StringAppendF(&result, "RenderEngine is in protected context: %d\n", mInProtectedContext);
+    StringAppendF(&result, "RenderEngine shaders cached since last dump/primeCache: %d\n",
+                  mSkSLCacheMonitor.shadersCachedSinceLastCall());
 
     {
         std::lock_guard<std::mutex> lock(mRenderingMutex);

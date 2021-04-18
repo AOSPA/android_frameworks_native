@@ -234,21 +234,6 @@ bool BufferQueueLayer::hasFrameUpdate() const {
     return mQueuedFrames > 0;
 }
 
-std::optional<nsecs_t> BufferQueueLayer::nextPredictedPresentTime() const {
-    Mutex::Autolock lock(mQueueItemLock);
-    if (mQueueItems.empty()) {
-        return std::nullopt;
-    }
-
-    const auto& bufferData = mQueueItems[0];
-
-    if (!bufferData.item.mIsAutoTimestamp || !bufferData.surfaceFrame) {
-        return std::nullopt;
-    }
-
-    return bufferData.surfaceFrame->getPredictions().presentTime;
-}
-
 status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t latchTime,
                                           nsecs_t expectedPresentTime) {
     // This boolean is used to make sure that SurfaceFlinger's shadow copy
@@ -571,10 +556,7 @@ void BufferQueueLayer::onFirstRef() {
     mConsumer->setContentsChangedListener(mContentsChangedListener);
     mConsumer->setName(String8(mName.data(), mName.size()));
 
-    // BufferQueueCore::mMaxDequeuedBufferCount is default to 1
-    if (!mFlinger->isLayerTripleBufferingDisabled()) {
-        mProducer->setMaxDequeuedBufferCount(2);
-    }
+    mProducer->setMaxDequeuedBufferCount(2);
 
     if (mFlinger->mLayerExt) {
         mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);

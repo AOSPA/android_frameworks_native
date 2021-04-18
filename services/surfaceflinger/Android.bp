@@ -34,6 +34,35 @@ soong_config_module_type {
       }
   }
 
+
+soong_config_module_type {
+      name: "unifieddraw_cc_defaults",
+      module_type: "cc_defaults",
+      config_namespace: "qtiunifeddraw",
+       bool_variables: [
+           "qtiunifeddraw_enabled",
+       ],
+       properties: [
+           "cflags",
+           "srcs",
+           "shared_libs",
+       ],
+  }
+
+  unifieddraw_cc_defaults {
+      name: "unfieddraw_defaults",
+      soong_config_variables: {
+          qtiunifeddraw_enabled: {
+              cflags: [
+              "-Wno-unused-parameter",
+              "-DQTI_UNIFIED_DRAW"
+              ],
+              shared_libs : ["vendor.qti.hardware.display.composer@3.1"]
+          }
+      }
+  }
+
+
 cc_defaults {
     name: "surfaceflinger_defaults",
     cflags: [
@@ -52,6 +81,7 @@ cc_defaults {
     name: "libsurfaceflinger_qti_defaults",
     defaults: [
         "libdisplayconfig_defaults",
+        "unfieddraw_defaults",
     ],
     shared_libs: [
       "vendor.qti.hardware.display.composer@3.0",
@@ -195,6 +225,7 @@ filegroup {
         "DisplayRenderArea.cpp",
         "Effects/Daltonizer.cpp",
         "EventLog/EventLog.cpp",
+        "FpsReporter.cpp",
         "FrameTracer/FrameTracer.cpp",
         "FrameTracker.cpp",
         "Layer.cpp",

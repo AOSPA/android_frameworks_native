@@ -84,6 +84,14 @@ struct OutputLayerCompositionState {
     // The Z order index of this layer on this output
     uint32_t z{0};
 
+    // Overrides the buffer, acquire fence, and display frame stored in LayerFECompositionState
+    struct {
+        sp<GraphicBuffer> buffer = nullptr;
+        sp<Fence> acquireFence = nullptr;
+        Rect displayFrame = {};
+        ui::Dataspace dataspace{ui::Dataspace::UNKNOWN};
+    } overrideInfo;
+
     /*
      * HWC state
      */

@@ -48,6 +48,8 @@ public:
     bool isProtected() const override { return mProtected; }
 
     const sp<Fence>& getClientTargetAcquireFence() const override;
+    int getClientTargetCurrentSlot() override;
+    ui::Dataspace getClientTargetCurrentDataspace() override;
     void setBufferDataspace(ui::Dataspace) override;
     void setBufferPixelFormat(ui::PixelFormat) override;
     void setDisplaySize(const ui::Size&) override;

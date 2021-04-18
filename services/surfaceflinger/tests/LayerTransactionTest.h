@@ -21,6 +21,7 @@
 #pragma clang diagnostic ignored "-Wconversion"
 #pragma clang diagnostic ignored "-Wextra"
 
+#include <cutils/properties.h>
 #include <gtest/gtest.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/SurfaceComposerClient.h>
@@ -138,7 +139,7 @@ protected:
         sp<GraphicBuffer> buffer =
                 new GraphicBuffer(bufferWidth, bufferHeight, PIXEL_FORMAT_RGBA_8888, 1,
                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                          BufferUsage::COMPOSER_OVERLAY,
+                                          BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE,
                                   "test");
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, bufferWidth, bufferHeight),
                                                  color);
@@ -207,7 +208,7 @@ protected:
         sp<GraphicBuffer> buffer =
                 new GraphicBuffer(bufferWidth, bufferHeight, PIXEL_FORMAT_RGBA_8888, 1,
                                   BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN |
-                                          BufferUsage::COMPOSER_OVERLAY,
+                                          BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE,
                                   "test");
 
         ASSERT_TRUE(bufferWidth % 2 == 0 && bufferHeight % 2 == 0);
@@ -244,6 +245,18 @@ protected:
     }
 
     sp<SurfaceComposerClient> mClient;
+
+    bool deviceSupportsBlurs() {
+        char value[PROPERTY_VALUE_MAX];
+        property_get("ro.surface_flinger.supports_background_blur", value, "0");
+        return atoi(value);
+    }
+
+    bool deviceUsesSkiaRenderEngine() {
+        char value[PROPERTY_VALUE_MAX];
+        property_get("debug.renderengine.backend", value, "default");
+        return strstr(value, "skia") != nullptr;
+    }
 
     sp<IBinder> mDisplay;
     uint32_t mDisplayWidth;
@@ -285,7 +298,7 @@ private:
         // set layer stack (b/68888219)
         Transaction t;
         t.setDisplayLayerStack(mDisplay, mDisplayLayerStack);
-        t.setCrop_legacy(mBlackBgSurface, Rect(0, 0, mDisplayWidth, mDisplayHeight));
+        t.setCrop(mBlackBgSurface, Rect(0, 0, mDisplayWidth, mDisplayHeight));
         t.setLayerStack(mBlackBgSurface, mDisplayLayerStack);
         t.setColor(mBlackBgSurface, half3{0, 0, 0});
         t.setLayer(mBlackBgSurface, mLayerZBase);

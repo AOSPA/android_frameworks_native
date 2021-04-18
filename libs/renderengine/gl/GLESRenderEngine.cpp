@@ -379,7 +379,8 @@ EGLConfig GLESRenderEngine::chooseEglConfig(EGLDisplay display, int format, bool
 GLESRenderEngine::GLESRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
                                    EGLConfig config, EGLContext ctxt, EGLSurface stub,
                                    EGLContext protectedContext, EGLSurface protectedStub)
-      : mEGLDisplay(display),
+      : RenderEngine(args.renderEngineType),
+        mEGLDisplay(display),
         mEGLConfig(config),
         mEGLContext(ctxt),
         mStubSurface(stub),
@@ -514,7 +515,7 @@ Framebuffer* GLESRenderEngine::getFramebufferForDrawing() {
     return mDrawingBuffer.get();
 }
 
-void GLESRenderEngine::primeCache() const {
+void GLESRenderEngine::primeCache() {
     ProgramCache::getInstance().primeCache(mInProtectedContext ? mProtectedEGLContext : mEGLContext,
                                            mUseColorManagement, mPrecacheToneMapperShaderOnly);
 }
@@ -1124,6 +1125,8 @@ status_t GLESRenderEngine::drawLayers(const DisplaySettings& display,
         return BAD_VALUE;
     }
 
+    validateOutputBufferUsage(buffer);
+
     std::unique_ptr<BindNativeBufferAsFramebuffer> fbo;
     // Gathering layers that requested blur, we'll need them to decide when to render to an
     // offscreen buffer, and when to render to the native buffer.
@@ -1248,6 +1251,7 @@ status_t GLESRenderEngine::drawLayers(const DisplaySettings& display,
             isOpaque = layer->source.buffer.isOpaque;
 
             sp<GraphicBuffer> gBuf = layer->source.buffer.buffer;
+            validateInputBufferUsage(gBuf);
             bindExternalTextureBuffer(layer->source.buffer.textureName, gBuf,
                                       layer->source.buffer.fence);
 

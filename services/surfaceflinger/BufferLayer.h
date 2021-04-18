@@ -185,16 +185,12 @@ protected:
     bool getSidebandStreamChanged() const { return mSidebandStreamChanged; }
 
     // Returns true if the next buffer should be presented at the expected present time
-    bool shouldPresentNow(nsecs_t expectedPresentTime) const final;
+    bool shouldPresentNow(nsecs_t expectedPresentTime) const;
 
     // Returns true if the next buffer should be presented at the expected present time,
     // overridden by BufferStateLayer and BufferQueueLayer for implementation
     // specific logic
     virtual bool isBufferDue(nsecs_t /*expectedPresentTime*/) const = 0;
-
-    // Returns true if the next frame is considered too early to present
-    // at the given expectedPresentTime
-    bool frameIsEarly(nsecs_t expectedPresentTime) const;
 
     std::atomic<bool> mAutoRefresh{false};
     std::atomic<bool> mSidebandStreamChanged{false};
@@ -239,13 +235,6 @@ private:
     std::unique_ptr<compositionengine::LayerFECompositionState> mCompositionState;
 
     FloatRect computeSourceBounds(const FloatRect& parentBounds) const override;
-
-    // Returns the predicted present time of the next frame if available
-    virtual std::optional<nsecs_t> nextPredictedPresentTime() const = 0;
-
-    // The amount of time SF can delay a frame if it is considered early based
-    // on the VsyncModulator::VsyncConfig::appWorkDuration
-    static constexpr std::chrono::nanoseconds kEarlyLatchMaxThreshold = 100ms;
 };
 
 } // namespace android

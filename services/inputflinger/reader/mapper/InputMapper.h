@@ -67,7 +67,7 @@ public:
     virtual void cancelVibrate(int32_t token);
     virtual bool isVibrating();
     virtual std::vector<int32_t> getVibratorIds();
-    virtual void cancelTouch(nsecs_t when);
+    virtual void cancelTouch(nsecs_t when, nsecs_t readTime);
     virtual bool enableSensor(InputDeviceSensorType sensorType,
                               std::chrono::microseconds samplingPeriod,
                               std::chrono::microseconds maxBatchReportLatency);
@@ -76,6 +76,11 @@ public:
 
     virtual std::optional<int32_t> getBatteryCapacity() { return std::nullopt; }
     virtual std::optional<int32_t> getBatteryStatus() { return std::nullopt; }
+
+    virtual bool setLightColor(int32_t lightId, int32_t color) { return true; }
+    virtual bool setLightPlayerId(int32_t lightId, int32_t playerId) { return true; }
+    virtual std::optional<int32_t> getLightColor(int32_t lightId) { return std::nullopt; }
+    virtual std::optional<int32_t> getLightPlayerId(int32_t lightId) { return std::nullopt; }
 
     virtual int32_t getMetaState();
     virtual void updateMetaState(int32_t keyCode);

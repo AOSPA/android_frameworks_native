@@ -176,7 +176,7 @@ RegionSamplingThread::RegionSamplingThread(SurfaceFlinger& flinger, Scheduler& s
         mScheduler(scheduler),
         mTunables(tunables),
         mIdleTimer(
-                "RegionSamplingIdleTimer",
+                "RegSampIdle",
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                         mTunables.mSamplingTimerTimeout),
                 [] {}, [this] { checkForStaleLuma(); }),
@@ -184,7 +184,7 @@ RegionSamplingThread::RegionSamplingThread(SurfaceFlinger& flinger, Scheduler& s
                                                                 tunables.mSamplingDuration)),
         lastSampleTime(0ns) {
     mThread = std::thread([this]() { threadMain(); });
-    pthread_setname_np(mThread.native_handle(), "RegionSamplingThread");
+    pthread_setname_np(mThread.native_handle(), "RegionSampling");
     mIdleTimer.start();
 }
 
@@ -481,6 +481,12 @@ void RegionSamplingThread::captureSample() {
     // 1) The region sampling thread is the last owner of the buffer, and the freeing of the buffer
     // happens in this thread, as opposed to the main thread.
     // 2) The listener(s) receive their notifications prior to freeing the buffer.
+    if (mCachedBuffer != nullptr && mCachedBuffer != buffer) {
+        if (mFlinger.getRenderEngine().getRenderEngineType() ==
+            renderengine::RenderEngine::RenderEngineType::SKIA_GL_THREADED) {
+            mFlinger.getRenderEngine().unbindExternalTextureBuffer(mCachedBuffer->getId());
+        }
+    }
     mCachedBuffer = buffer;
     ATRACE_INT(lumaSamplingStepTag, static_cast<int>(samplingStep::noWorkNeeded));
 }

@@ -310,6 +310,14 @@ const sp<Fence>& VirtualDisplaySurface::getClientTargetAcquireFence() const {
     return mFbFence;
 }
 
+int VirtualDisplaySurface::getClientTargetCurrentSlot() {
+    return mFbProducerSlot;
+}
+
+ui::Dataspace VirtualDisplaySurface::getClientTargetCurrentDataspace() {
+    return ui::Dataspace::UNKNOWN;
+}
+
 status_t VirtualDisplaySurface::requestBuffer(int pslot,
         sp<GraphicBuffer>* outBuf) {
     if (GpuVirtualDisplayId::tryCast(mDisplayId)) {

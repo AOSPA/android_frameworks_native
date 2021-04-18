@@ -19,16 +19,22 @@
 #include <memory>
 #include <string>
 
+#include <compositionengine/LayerFE.h>
 #include <compositionengine/OutputLayer.h>
 #include <ui/FloatRect.h>
 #include <ui/Rect.h>
 
 #include "DisplayHardware/DisplayIdentification.h"
 
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 namespace android::compositionengine {
 
 struct LayerFECompositionState;
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 namespace impl {
 
 // The implementation class contains the common implementation, but does not
@@ -41,9 +47,11 @@ public:
 
     void updateCompositionState(bool includeGeometry, bool forceClientComposition,
                                 ui::Transform::RotationFlags) override;
-    void writeStateToHWC(bool) override;
+    void writeStateToHWC(bool includeGeometry, bool skipLayer) override;
     void writeCursorPositionToHWC() const override;
-
+#ifdef QTI_UNIFIED_DRAW
+    void writeLayerFlagToHWC(IQtiComposerClient::LayerFlag) override;
+#endif
     HWC2::Layer* getHwcLayer() const override;
     bool requiresClientComposition() const override;
     bool isHardwareCursor() const override;
@@ -51,6 +59,7 @@ public:
     void prepareForDeviceLayerRequests() override;
     void applyDeviceLayerRequest(Hwc2::IComposerClient::LayerRequest request) override;
     bool needsFiltering() const override;
+    std::vector<LayerFE::LayerSettings> getOverrideCompositionList() const override;
 
     void dump(std::string&) const override;
 
@@ -66,7 +75,8 @@ protected:
 private:
     Rect calculateInitialCrop() const;
     void writeOutputDependentGeometryStateToHWC(HWC2::Layer*, Hwc2::IComposerClient::Composition);
-    void writeOutputIndependentGeometryStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
+    void writeOutputIndependentGeometryStateToHWC(HWC2::Layer*, const LayerFECompositionState&,
+                                                  bool skipLayer);
     void writeOutputDependentPerFrameStateToHWC(HWC2::Layer*);
     void writeOutputIndependentPerFrameStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
     void writeSolidColorStateToHWC(HWC2::Layer*, const LayerFECompositionState&);

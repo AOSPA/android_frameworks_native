@@ -16,23 +16,7 @@
 
 #ifndef ANDROID_SF_LAYER_STATE_H
 #define ANDROID_SF_LAYER_STATE_H
-#define SAFE_PARCEL(FUNC, ...)                                                            \
-    {                                                                                     \
-        status_t error = FUNC(__VA_ARGS__);                                               \
-        if (error) {                                                                      \
-            ALOGE("ERROR(%d). Failed to call parcel %s(%s)", error, #FUNC, #__VA_ARGS__); \
-            return error;                                                                 \
-        }                                                                                 \
-    }
 
-#define SAFE_PARCEL_READ_SIZE(FUNC, COUNT, SIZE)                             \
-    {                                                                        \
-        SAFE_PARCEL(FUNC, COUNT);                                            \
-        if (static_cast<unsigned int>(*COUNT) > SIZE) {                      \
-            ALOGE("ERROR(BAD_VALUE). %s was greater than dataSize", #COUNT); \
-            return BAD_VALUE;                                                \
-        }                                                                    \
-    }
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -98,9 +82,9 @@ struct layer_state_t {
         eTransparentRegionChanged = 0x00000020,
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
-        eCropChanged_legacy = 0x00000100,
+        /* was eCropChanged_legacy, now available 0x00000100, */
         eDeferTransaction_legacy = 0x00000200,
-        /* was ScalingModeChanged, now available 0x00000400, */
+        eReleaseBufferListenerChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
         eReparentChildren = 0x00001000,
         /* was eDetachChildren, now available 0x00002000, */
@@ -133,10 +117,9 @@ struct layer_state_t {
         eProducerDisconnect = 0x100'00000000,
         eFixedTransformHintChanged = 0x200'00000000,
         eFrameNumberChanged = 0x400'00000000,
-        eFrameTimelineInfoChanged = 0x800'00000000,
-        eBlurRegionsChanged = 0x1000'00000000,
-        eAutoRefreshChanged = 0x2000'00000000,
-        eStretchChanged = 0x4000'00000000,
+        eBlurRegionsChanged = 0x800'00000000,
+        eAutoRefreshChanged = 0x1000'00000000,
+        eStretchChanged = 0x2000'00000000,
     };
 
     layer_state_t();
@@ -167,7 +150,6 @@ struct layer_state_t {
     uint32_t mask;
     uint8_t reserved;
     matrix22_t matrix;
-    Rect crop_legacy;
     float cornerRadius;
     uint32_t backgroundBlurRadius;
     sp<SurfaceControl> barrierSurfaceControl_legacy;
@@ -240,8 +222,6 @@ struct layer_state_t {
     // graphics producer.
     uint64_t frameNumber;
 
-    FrameTimelineInfo frameTimelineInfo;
-
     // Indicates that the consumer should acquire the next frame as soon as it
     // can and not wait for a frame to become available. This is only relevant
     // in shared buffer mode.
@@ -249,6 +229,11 @@ struct layer_state_t {
 
     // Stretch effect to be applied to this layer
     StretchEffect stretchEffect;
+
+    // Listens to when the buffer is safe to be released. This is used for blast
+    // layers only. The callback includes a release fence as well as the graphic
+    // buffer id to identify the buffer.
+    sp<ITransactionCompletedListener> releaseBufferListener;
 };
 
 struct ComposerState {

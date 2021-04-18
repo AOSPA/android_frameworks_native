@@ -104,18 +104,18 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.active_legacy.h = args.h;
     mCurrentState.flags = layerFlags;
     mCurrentState.active_legacy.transform.set(0, 0);
-    mCurrentState.crop_legacy.makeInvalid();
-    mCurrentState.requestedCrop_legacy = mCurrentState.crop_legacy;
+    mCurrentState.crop.makeInvalid();
+    mCurrentState.requestedCrop = mCurrentState.crop;
     mCurrentState.z = 0;
     mCurrentState.color.a = 1.0f;
     mCurrentState.layerStack = 0;
     mCurrentState.sequence = 0;
     mCurrentState.requested_legacy = mCurrentState.active_legacy;
-    mCurrentState.active.w = UINT32_MAX;
-    mCurrentState.active.h = UINT32_MAX;
-    mCurrentState.active.transform.set(0, 0);
+    mCurrentState.width = UINT32_MAX;
+    mCurrentState.height = UINT32_MAX;
+    mCurrentState.transform.set(0, 0);
     mCurrentState.frameNumber = 0;
-    mCurrentState.transform = 0;
+    mCurrentState.bufferTransform = 0;
     mCurrentState.transformToDisplayInverse = false;
     mCurrentState.crop.makeInvalid();
     mCurrentState.acquireFence = new Fence(-1);
@@ -491,7 +491,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     compositionState->alpha = alpha;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
     compositionState->blurRegions = drawingState.blurRegions;
-    compositionState->stretchEffect = drawingState.stretchEffect;
+    compositionState->stretchEffect = getStretchEffect();
 }
 
 void Layer::prepareGeometryCompositionState() {
@@ -566,7 +566,7 @@ void Layer::preparePerFrameCompositionState() {
 
     // Force client composition for special cases known only to the front-end.
     if (isHdrY410() || usesRoundedCorners || drawShadows() || drawingState.blurRegions.size() > 0 ||
-        drawingState.stretchEffect.hasEffect()) {
+        compositionState->stretchEffect.hasEffect()) {
         compositionState->forceClientComposition = true;
     }
 }
@@ -973,13 +973,12 @@ uint32_t Layer::doTransactionResize(uint32_t flags, State* stateToCommit) {
                  "            requested={ wh={%4u,%4u} }}\n",
                  this, getName().c_str(), getBufferTransform(), getEffectiveScalingMode(),
                  stateToCommit->active_legacy.w, stateToCommit->active_legacy.h,
-                 stateToCommit->crop_legacy.left, stateToCommit->crop_legacy.top,
-                 stateToCommit->crop_legacy.right, stateToCommit->crop_legacy.bottom,
-                 stateToCommit->crop_legacy.getWidth(), stateToCommit->crop_legacy.getHeight(),
-                 stateToCommit->requested_legacy.w, stateToCommit->requested_legacy.h,
-                 s.active_legacy.w, s.active_legacy.h, s.crop_legacy.left, s.crop_legacy.top,
-                 s.crop_legacy.right, s.crop_legacy.bottom, s.crop_legacy.getWidth(),
-                 s.crop_legacy.getHeight(), s.requested_legacy.w, s.requested_legacy.h);
+                 stateToCommit->crop.left, stateToCommit->crop.top, stateToCommit->crop.right,
+                 stateToCommit->crop.bottom, stateToCommit->crop.getWidth(),
+                 stateToCommit->crop.getHeight(), stateToCommit->requested_legacy.w,
+                 stateToCommit->requested_legacy.h, s.active_legacy.w, s.active_legacy.h,
+                 s.crop.left, s.crop.top, s.crop.right, s.crop.bottom, s.crop.getWidth(),
+                 s.crop.getHeight(), s.requested_legacy.w, s.requested_legacy.h);
     }
 
     // Don't let Layer::doTransaction update the drawing state
@@ -1073,6 +1072,9 @@ uint32_t Layer::doTransaction(uint32_t flags) {
         c.callbackHandles.push_back(handle);
     }
 
+    // Allow BufferStateLayer to release any unlatched buffers in drawing state.
+    bufferMayChange(c.buffer);
+
     // Commit the transaction
     commitTransaction(c);
     mPendingStatesSnapshot = mPendingStates;
@@ -1082,6 +1084,15 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 }
 
 void Layer::commitTransaction(State& stateToCommit) {
+    if (auto& bufferSurfaceFrame = mDrawingState.bufferSurfaceFrameTX;
+        mDrawingState.buffer != stateToCommit.buffer && bufferSurfaceFrame != nullptr &&
+        bufferSurfaceFrame->getPresentState() != PresentState::Presented) {
+        // If the previous buffer was committed but not latched (refreshPending - happens during
+        // back to back invalidates), it gets silently dropped here. Mark the corresponding
+        // SurfaceFrame as dropped to prevent it from getting stuck in the pending classification
+        // list.
+        addSurfaceFrameDroppedForBuffer(bufferSurfaceFrame);
+    }
     mDrawingState = stateToCommit;
 
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
@@ -1350,11 +1361,11 @@ bool Layer::setFlags(uint32_t flags, uint32_t mask) {
     return true;
 }
 
-bool Layer::setCrop_legacy(const Rect& crop) {
-    if (mCurrentState.requestedCrop_legacy == crop) return false;
+bool Layer::setCrop(const Rect& crop) {
+    if (mCurrentState.requestedCrop == crop) return false;
     mCurrentState.sequence++;
-    mCurrentState.requestedCrop_legacy = crop;
-    mCurrentState.crop_legacy = crop;
+    mCurrentState.requestedCrop = crop;
+    mCurrentState.crop = crop;
 
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -1363,7 +1374,6 @@ bool Layer::setCrop_legacy(const Rect& crop) {
 
 bool Layer::setMetadata(const LayerMetadata& data) {
     if (!mCurrentState.metadata.merge(data, true /* eraseEmpty */)) return false;
-    mCurrentState.sequence++;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -1461,6 +1471,22 @@ bool Layer::setStretchEffect(const StretchEffect& effect) {
     return true;
 }
 
+StretchEffect Layer::getStretchEffect() const {
+    if (mDrawingState.stretchEffect.hasEffect()) {
+        return mDrawingState.stretchEffect;
+    }
+
+    sp<Layer> parent = getParent();
+    if (parent != nullptr) {
+        auto effect = parent->getStretchEffect();
+        if (effect.hasEffect()) {
+            // TODO(b/179047472): Map it? Or do we make the effect be in global space?
+            return effect;
+        }
+    }
+    return StretchEffect{};
+}
+
 void Layer::updateTreeHasFrameRateVote() {
     const auto traverseTree = [&](const LayerVector::Visitor& visitor) {
         auto parent = getParent();
@@ -1476,7 +1502,7 @@ void Layer::updateTreeHasFrameRateVote() {
     // First traverse the tree and count how many layers has votes. In addition
     // activate the layers in Scheduler's LayerHistory for it to check for changes
     int layersWithVote = 0;
-    traverseTree([&layersWithVote, this](Layer* layer) {
+    traverseTree([&layersWithVote](Layer* layer) {
         const auto layerVotedWithDefaultCompatibility =
                 layer->mCurrentState.frameRate.rate.isValid() &&
                 layer->mCurrentState.frameRate.type == FrameRateCompatibility::Default;
@@ -1492,20 +1518,21 @@ void Layer::updateTreeHasFrameRateVote() {
             layerVotedWithExactCompatibility) {
             layersWithVote++;
         }
-
-        mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
-                                                 LayerHistory::LayerUpdateType::SetFrameRate);
     });
 
     // Now update the other layers
     bool transactionNeeded = false;
-    traverseTree([layersWithVote, &transactionNeeded](Layer* layer) {
-        if (layer->mCurrentState.treeHasFrameRateVote != layersWithVote > 0) {
+    traverseTree([layersWithVote, &transactionNeeded, this](Layer* layer) {
+        const bool treeHasFrameRateVote = layersWithVote > 0;
+        if (layer->mCurrentState.treeHasFrameRateVote != treeHasFrameRateVote) {
             layer->mCurrentState.sequence++;
-            layer->mCurrentState.treeHasFrameRateVote = layersWithVote > 0;
+            layer->mCurrentState.treeHasFrameRateVote = treeHasFrameRateVote;
             layer->mCurrentState.modified = true;
             layer->setTransactionFlags(eTransactionNeeded);
             transactionNeeded = true;
+
+            mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
+                                                     LayerHistory::LayerUpdateType::SetFrameRate);
         }
     });
 
@@ -1545,6 +1572,7 @@ void Layer::setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& i
         // Promote the bufferlessSurfaceFrame to a bufferSurfaceFrameTX
         mCurrentState.bufferSurfaceFrameTX = it->second;
         mCurrentState.bufferlessSurfaceFramesTX.erase(it);
+        mCurrentState.bufferSurfaceFrameTX->promoteToBuffer();
         mCurrentState.bufferSurfaceFrameTX->setActualQueueTime(postTime);
     } else {
         mCurrentState.bufferSurfaceFrameTX =
@@ -1602,8 +1630,10 @@ void Layer::addSurfaceFramePresentedForBuffer(
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransaction(
         const FrameTimelineInfo& info, nsecs_t postTime) {
     auto surfaceFrame =
-            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid, mName,
-                                                                 mTransactionName);
+            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
+                                                                 getSequence(), mName,
+                                                                 mTransactionName,
+                                                                 /*isBuffer*/ false);
     // For Transactions, the post time is considered to be both queue and acquire fence time.
     surfaceFrame->setActualQueueTime(postTime);
     surfaceFrame->setAcquireFenceTime(postTime);
@@ -1618,8 +1648,9 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
         const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName) {
     auto surfaceFrame =
-            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid, mName,
-                                                                 debugName);
+            mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
+                                                                 getSequence(), mName, debugName,
+                                                                 /*isBuffer*/ true);
     // For buffers, acquire fence time will set during latch.
     surfaceFrame->setActualQueueTime(queueTime);
     const auto fps = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
@@ -1739,7 +1770,7 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
     info.mZ = ds.z;
     info.mWidth = ds.active_legacy.w;
     info.mHeight = ds.active_legacy.h;
-    info.mCrop = ds.crop_legacy;
+    info.mCrop = ds.crop;
     info.mColor = ds.color;
     info.mFlags = ds.flags;
     info.mPixelFormat = getPixelFormat();
@@ -1766,6 +1797,7 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
     info.mRefreshPending = isBufferLatched();
     info.mIsOpaque = isOpaque(ds);
     info.mContentDirty = contentDirty;
+    info.mStretchEffect = getStretchEffect();
     return info;
 }
 
@@ -2439,7 +2471,7 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
     const State& state = useDrawing ? mDrawingState : mCurrentState;
 
-    ui::Transform requestedTransform = state.active_legacy.transform;
+    ui::Transform requestedTransform = state.transform;
 
     if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
         layerInfo->set_id(sequence);
@@ -2468,11 +2500,10 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
                                                    return layerInfo->mutable_requested_position();
                                                });
 
-        LayerProtoHelper::writeSizeToProto(state.active_legacy.w, state.active_legacy.h,
+        LayerProtoHelper::writeSizeToProto(state.width, state.height,
                                            [&]() { return layerInfo->mutable_size(); });
 
-        LayerProtoHelper::writeToProto(state.crop_legacy,
-                                       [&]() { return layerInfo->mutable_crop(); });
+        LayerProtoHelper::writeToProto(state.crop, [&]() { return layerInfo->mutable_crop(); });
 
         layerInfo->set_is_opaque(isOpaque(state));
 

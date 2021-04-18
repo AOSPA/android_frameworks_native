@@ -188,11 +188,29 @@ void CursorInputMapper::configure(nsecs_t when, const InputReaderConfiguration* 
 
     if (!changes || (changes & InputReaderConfiguration::CHANGE_DISPLAY_INFO)) {
         mOrientation = DISPLAY_ORIENTATION_0;
-        if (mParameters.orientationAware && mParameters.hasAssociatedDisplay) {
-            std::optional<DisplayViewport> internalViewport =
-                    config->getDisplayViewportByType(ViewportType::INTERNAL);
-            if (internalViewport) {
-                mOrientation = internalViewport->orientation;
+        const bool isOrientedDevice =
+                (mParameters.orientationAware && mParameters.hasAssociatedDisplay);
+
+        if (isPerWindowInputRotationEnabled()) {
+            // When per-window input rotation is enabled, InputReader works in the un-rotated
+            // coordinate space, so we don't need to do anything if the device is already
+            // orientation-aware. If the device is not orientation-aware, then we need to apply the
+            // inverse rotation of the display so that when the display rotation is applied later
+            // as a part of the per-window transform, we get the expected screen coordinates.
+            if (!isOrientedDevice) {
+                std::optional<DisplayViewport> internalViewport =
+                        config->getDisplayViewportByType(ViewportType::INTERNAL);
+                if (internalViewport) {
+                    mOrientation = getInverseRotation(internalViewport->orientation);
+                }
+            }
+        } else {
+            if (isOrientedDevice) {
+                std::optional<DisplayViewport> internalViewport =
+                        config->getDisplayViewportByType(ViewportType::INTERNAL);
+                if (internalViewport) {
+                    mOrientation = internalViewport->orientation;
+                }
             }
         }
 
@@ -265,11 +283,11 @@ void CursorInputMapper::process(const RawEvent* rawEvent) {
     mCursorScrollAccumulator.process(rawEvent);
 
     if (rawEvent->type == EV_SYN && rawEvent->code == SYN_REPORT) {
-        sync(rawEvent->when);
+        sync(rawEvent->when, rawEvent->readTime);
     }
 }
 
-void CursorInputMapper::sync(nsecs_t when) {
+void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
     int32_t lastButtonState = mButtonState;
     int32_t currentButtonState = mCursorButtonAccumulator.getButtonState();
     mButtonState = currentButtonState;
@@ -294,11 +312,8 @@ void CursorInputMapper::sync(nsecs_t when) {
     float deltaY = mCursorMotionAccumulator.getRelativeY() * mYScale;
     bool moved = deltaX != 0 || deltaY != 0;
 
-    // Rotate delta according to orientation if needed.
-    if (mParameters.orientationAware && mParameters.hasAssociatedDisplay &&
-        (deltaX != 0.0f || deltaY != 0.0f)) {
-        rotateDelta(mOrientation, &deltaX, &deltaY);
-    }
+    // Rotate delta according to orientation.
+    rotateDelta(mOrientation, &deltaX, &deltaY);
 
     // Move the pointer.
     PointerProperties pointerProperties;
@@ -326,7 +341,15 @@ void CursorInputMapper::sync(nsecs_t when) {
             mPointerController->setPresentation(PointerControllerInterface::Presentation::POINTER);
 
             if (moved) {
-                mPointerController->move(deltaX, deltaY);
+                float dx = deltaX;
+                float dy = deltaY;
+                if (isPerWindowInputRotationEnabled()) {
+                    // Rotate the delta from InputReader's un-rotated coordinate space to
+                    // PointerController's rotated coordinate space that is oriented with the
+                    // viewport.
+                    rotateDelta(getInverseRotation(mOrientation), &dx, &dy);
+                }
+                mPointerController->move(dx, dy);
             }
 
             if (buttonsChanged) {
@@ -362,8 +385,8 @@ void CursorInputMapper::sync(nsecs_t when) {
     }
 
     // Synthesize key down from buttons if needed.
-    synthesizeButtonKeys(getContext(), AKEY_EVENT_ACTION_DOWN, when, getDeviceId(), mSource,
-                         displayId, policyFlags, lastButtonState, currentButtonState);
+    synthesizeButtonKeys(getContext(), AKEY_EVENT_ACTION_DOWN, when, readTime, getDeviceId(),
+                         mSource, displayId, policyFlags, lastButtonState, currentButtonState);
 
     // Send motion event.
     if (downChanged || moved || scrolled || buttonsChanged) {
@@ -383,8 +406,8 @@ void CursorInputMapper::sync(nsecs_t when) {
             while (!released.isEmpty()) {
                 int32_t actionButton = BitSet32::valueForBit(released.clearFirstMarkedBit());
                 buttonState &= ~actionButton;
-                NotifyMotionArgs releaseArgs(getContext()->getNextId(), when, getDeviceId(),
-                                             mSource, displayId, policyFlags,
+                NotifyMotionArgs releaseArgs(getContext()->getNextId(), when, readTime,
+                                             getDeviceId(), mSource, displayId, policyFlags,
                                              AMOTION_EVENT_ACTION_BUTTON_RELEASE, actionButton, 0,
                                              metaState, buttonState, MotionClassification::NONE,
                                              AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
@@ -395,11 +418,11 @@ void CursorInputMapper::sync(nsecs_t when) {
             }
         }
 
-        NotifyMotionArgs args(getContext()->getNextId(), when, getDeviceId(), mSource, displayId,
-                              policyFlags, motionEventAction, 0, 0, metaState, currentButtonState,
-                              MotionClassification::NONE, AMOTION_EVENT_EDGE_FLAG_NONE, 1,
-                              &pointerProperties, &pointerCoords, mXPrecision, mYPrecision,
-                              xCursorPosition, yCursorPosition, downTime,
+        NotifyMotionArgs args(getContext()->getNextId(), when, readTime, getDeviceId(), mSource,
+                              displayId, policyFlags, motionEventAction, 0, 0, metaState,
+                              currentButtonState, MotionClassification::NONE,
+                              AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties, &pointerCoords,
+                              mXPrecision, mYPrecision, xCursorPosition, yCursorPosition, downTime,
                               /* videoFrames */ {});
         getListener()->notifyMotion(&args);
 
@@ -408,8 +431,8 @@ void CursorInputMapper::sync(nsecs_t when) {
             while (!pressed.isEmpty()) {
                 int32_t actionButton = BitSet32::valueForBit(pressed.clearFirstMarkedBit());
                 buttonState |= actionButton;
-                NotifyMotionArgs pressArgs(getContext()->getNextId(), when, getDeviceId(), mSource,
-                                           displayId, policyFlags,
+                NotifyMotionArgs pressArgs(getContext()->getNextId(), when, readTime, getDeviceId(),
+                                           mSource, displayId, policyFlags,
                                            AMOTION_EVENT_ACTION_BUTTON_PRESS, actionButton, 0,
                                            metaState, buttonState, MotionClassification::NONE,
                                            AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
@@ -424,9 +447,10 @@ void CursorInputMapper::sync(nsecs_t when) {
 
         // Send hover move after UP to tell the application that the mouse is hovering now.
         if (motionEventAction == AMOTION_EVENT_ACTION_UP && (mSource == AINPUT_SOURCE_MOUSE)) {
-            NotifyMotionArgs hoverArgs(getContext()->getNextId(), when, getDeviceId(), mSource,
-                                       displayId, policyFlags, AMOTION_EVENT_ACTION_HOVER_MOVE, 0,
-                                       0, metaState, currentButtonState, MotionClassification::NONE,
+            NotifyMotionArgs hoverArgs(getContext()->getNextId(), when, readTime, getDeviceId(),
+                                       mSource, displayId, policyFlags,
+                                       AMOTION_EVENT_ACTION_HOVER_MOVE, 0, 0, metaState,
+                                       currentButtonState, MotionClassification::NONE,
                                        AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
                                        &pointerCoords, mXPrecision, mYPrecision, xCursorPosition,
                                        yCursorPosition, downTime, /* videoFrames */ {});
@@ -438,9 +462,10 @@ void CursorInputMapper::sync(nsecs_t when) {
             pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_VSCROLL, vscroll);
             pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_HSCROLL, hscroll);
 
-            NotifyMotionArgs scrollArgs(getContext()->getNextId(), when, getDeviceId(), mSource,
-                                        displayId, policyFlags, AMOTION_EVENT_ACTION_SCROLL, 0, 0,
-                                        metaState, currentButtonState, MotionClassification::NONE,
+            NotifyMotionArgs scrollArgs(getContext()->getNextId(), when, readTime, getDeviceId(),
+                                        mSource, displayId, policyFlags,
+                                        AMOTION_EVENT_ACTION_SCROLL, 0, 0, metaState,
+                                        currentButtonState, MotionClassification::NONE,
                                         AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
                                         &pointerCoords, mXPrecision, mYPrecision, xCursorPosition,
                                         yCursorPosition, downTime, /* videoFrames */ {});
@@ -449,7 +474,7 @@ void CursorInputMapper::sync(nsecs_t when) {
     }
 
     // Synthesize key up from buttons if needed.
-    synthesizeButtonKeys(getContext(), AKEY_EVENT_ACTION_UP, when, getDeviceId(), mSource,
+    synthesizeButtonKeys(getContext(), AKEY_EVENT_ACTION_UP, when, readTime, getDeviceId(), mSource,
                          displayId, policyFlags, lastButtonState, currentButtonState);
 
     mCursorMotionAccumulator.finishSync();

@@ -87,13 +87,17 @@ public:
 
     static std::unique_ptr<RenderEngine> create(const RenderEngineCreationArgs& args);
 
+    RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
+
+    RenderEngine(RenderEngineType type) : mRenderEngineType(type) {}
+
     virtual ~RenderEngine() = 0;
 
     // ----- BEGIN DEPRECATED INTERFACE -----
     // This interface, while still in use until a suitable replacement is built,
     // should be considered deprecated, minus some methods which still may be
     // used to support legacy behavior.
-    virtual void primeCache() const = 0;
+    virtual void primeCache() = 0;
 
     // dump the extension strings. always call the base class.
     virtual void dump(std::string& result) = 0;
@@ -192,8 +196,17 @@ public:
     // also supports background blur.  If false, no blur will be applied when drawing layers.
     virtual bool supportsBackgroundBlur() = 0;
 
+    // Returns the current type of RenderEngine instance that was created.
+    // TODO(b/180767535): This is only implemented to allow for backend-specific behavior, which
+    // we should not allow in general, so remove this.
+    RenderEngineType getRenderEngineType() const { return mRenderEngineType; }
+
+    static void validateInputBufferUsage(const sp<GraphicBuffer>&);
+    static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
+
 protected:
     friend class threaded::RenderEngineThreaded;
+    const RenderEngineType mRenderEngineType;
 };
 
 struct RenderEngineCreationArgs {

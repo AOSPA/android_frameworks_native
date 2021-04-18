@@ -185,10 +185,14 @@ std::optional<compositionengine::LayerFE::LayerSettings> BufferLayer::prepareCli
             return std::nullopt;
         }
     }
-    bool blackOutLayer = (isProtected() && !targetSettings.supportsProtectedContent) ||
+    const bool blackOutLayer = (isProtected() && !targetSettings.supportsProtectedContent) ||
             (isSecure() && !targetSettings.isSecure);
+    const bool bufferCanBeUsedAsHwTexture =
+            mBufferInfo.mBuffer->getUsage() & GraphicBuffer::USAGE_HW_TEXTURE;
     compositionengine::LayerFE::LayerSettings& layer = *result;
-    if (blackOutLayer) {
+    if (blackOutLayer || !bufferCanBeUsedAsHwTexture) {
+        ALOGE_IF(!bufferCanBeUsedAsHwTexture, "%s is blacked out as buffer is not gpu readable",
+                 mName.c_str());
         prepareClearClientComposition(layer, true /* blackout */);
         return layer;
     }
@@ -355,6 +359,13 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
         mFlinger->mFrameTracer->traceTimestamp(layerId, getCurrentBufferId(), mCurrentFrameNumber,
                                                clientCompositionTimestamp,
                                                FrameTracer::FrameEvent::FALLBACK_COMPOSITION);
+        // Update the SurfaceFrames in the drawing state
+        if (mDrawingState.bufferSurfaceFrameTX) {
+            mDrawingState.bufferSurfaceFrameTX->setGpuComposition();
+        }
+        for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
+            surfaceFrame->setGpuComposition();
+        }
     }
 
     std::shared_ptr<FenceTime> frameReadyFence = mBufferInfo.mFenceTime;
@@ -414,12 +425,6 @@ bool BufferLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
         return true;
     }
 
-    // If the next planned present time is not current, return and try again later
-    if (frameIsEarly(expectedPresentTime)) {
-        ATRACE_NAME("frameIsEarly()");
-        return false;
-    }
-
     // If this layer doesn't have a frame is shouldn't be presented
     if (!hasFrameUpdate()) {
         return false;
@@ -428,24 +433,6 @@ bool BufferLayer::shouldPresentNow(nsecs_t expectedPresentTime) const {
     // Defer to the derived class to decide whether the next buffer is due for
     // presentation.
     return isBufferDue(expectedPresentTime);
-}
-
-bool BufferLayer::frameIsEarly(nsecs_t expectedPresentTime) const {
-    // TODO(b/169901895): kEarlyLatchVsyncThreshold should be based on the
-    // vsync period. We can do this change as soon as ag/13100772 is merged.
-    constexpr static std::chrono::nanoseconds kEarlyLatchVsyncThreshold = 5ms;
-
-    const auto presentTime = nextPredictedPresentTime();
-    if (!presentTime.has_value()) {
-        return false;
-    }
-
-    if (std::abs(*presentTime - expectedPresentTime) >= kEarlyLatchMaxThreshold.count()) {
-        return false;
-    }
-
-    return *presentTime >= expectedPresentTime &&
-            *presentTime - expectedPresentTime >= kEarlyLatchVsyncThreshold.count();
 }
 
 bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,

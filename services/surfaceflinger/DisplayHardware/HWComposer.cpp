@@ -322,8 +322,11 @@ void HWComposer::destroyLayer(HalDisplayId displayId, HWC2::Layer* layer) {
 }
 
 bool HWComposer::isConnected(PhysicalDisplayId displayId) const {
-    RETURN_IF_INVALID_DISPLAY(displayId, false);
-    return mDisplayData.at(displayId).hwcDisplay->isConnected();
+    if (mDisplayData.count(displayId)) {
+        return mDisplayData.at(displayId).hwcDisplay->isConnected();
+    }
+
+    return false;
 }
 
 std::vector<HWComposer::HWCDisplayMode> HWComposer::getModes(PhysicalDisplayId displayId) const {
@@ -369,16 +372,16 @@ std::optional<hal::HWConfigId> HWComposer::getActiveMode(PhysicalDisplayId displ
 
 // Composer 2.4
 
-DisplayConnectionType HWComposer::getDisplayConnectionType(PhysicalDisplayId displayId) const {
-    RETURN_IF_INVALID_DISPLAY(displayId, DisplayConnectionType::Internal);
+ui::DisplayConnectionType HWComposer::getDisplayConnectionType(PhysicalDisplayId displayId) const {
+    RETURN_IF_INVALID_DISPLAY(displayId, ui::DisplayConnectionType::Internal);
     const auto& hwcDisplay = mDisplayData.at(displayId).hwcDisplay;
 
-    DisplayConnectionType type;
+    ui::DisplayConnectionType type;
     const auto error = hwcDisplay->getConnectionType(&type);
 
     const auto FALLBACK_TYPE = hwcDisplay->getId() == mInternalHwcDisplayId
-            ? DisplayConnectionType::Internal
-            : DisplayConnectionType::External;
+            ? ui::DisplayConnectionType::Internal
+            : ui::DisplayConnectionType::External;
 
     RETURN_IF_HWC_ERROR(error, displayId, FALLBACK_TYPE);
     return type;
@@ -467,7 +470,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 }
 
 status_t HWComposer::getDeviceCompositionChanges(
-        HalDisplayId displayId, bool frameUsesClientComposition,
+        HalDisplayId displayId, bool /*frameUsesClientComposition */,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
 
@@ -489,26 +492,31 @@ status_t HWComposer::getDeviceCompositionChanges(
     // rendered to the client target yet, we should not attempt to skip
     // validate.
     displayData.validateWasSkipped = false;
-    if (!frameUsesClientComposition) {
-        sp<Fence> outPresentFence;
-        uint32_t state = UINT32_MAX;
-        error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
-        if (!hasChangesError(error)) {
-            RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
-        }
-        if (state == 1) { //Present Succeeded.
-            std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
-            error = hwcDisplay->getReleaseFences(&releaseFences);
-            displayData.releaseFences = std::move(releaseFences);
-            displayData.lastPresentFence = outPresentFence;
-            displayData.validateWasSkipped = true;
-            displayData.presentError = error;
-            return NO_ERROR;
-        }
-        // Present failed but Validate ran.
-    } else {
-        error = hwcDisplay->validate(&numTypes, &numRequests);
+    sp<Fence> outPresentFence;
+    uint32_t state = UINT32_MAX;
+    error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
+    if (!hasChangesError(error)) {
+        RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
     }
+    ALOGV("getDeviceCompositionChanges: state: %d", state);
+    // state = 0 --> Only Validate.
+    // state = 1 --> Validate and commit succeeded. Skip validate case. No comp changes.
+    // state = 2 --> Validate and commit succeeded. Query Comp changes.
+    if (state == 1 || state == 2) { //Present Succeeded.
+        std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
+        error = hwcDisplay->getReleaseFences(&releaseFences);
+        displayData.releaseFences = std::move(releaseFences);
+        displayData.lastPresentFence = outPresentFence;
+        displayData.validateWasSkipped = true;
+        displayData.presentError = error;
+        ALOGV("Retrieving fences");
+    }
+
+    if (state == 1) {
+        ALOGV("skip validate case present succeeded");
+        return NO_ERROR;
+    }
+
     ALOGV("SkipValidate failed, Falling back to SLOW validate/present");
     if (!hasChangesError(error)) {
         RETURN_IF_HWC_ERROR_FOR("validate", error, displayId, BAD_INDEX);
@@ -961,8 +969,10 @@ void HWComposer::loadLayerMetadataSupport() {
     std::vector<Hwc2::IComposerClient::LayerGenericMetadataKey> supportedMetadataKeyInfo;
     const auto error = mComposer->getLayerGenericMetadataKeys(&supportedMetadataKeyInfo);
     if (error != hardware::graphics::composer::V2_4::Error::NONE) {
-        ALOGE("%s: %s failed: %s (%d)", __FUNCTION__, "getLayerGenericMetadataKeys",
-              toString(error).c_str(), static_cast<int32_t>(error));
+        if (error != hardware::graphics::composer::V2_4::Error::UNSUPPORTED) {
+            ALOGE("%s: %s failed: %s (%d)", __FUNCTION__, "getLayerGenericMetadataKeys",
+                  toString(error).c_str(), static_cast<int32_t>(error));
+        }
         return;
     }
 
@@ -984,6 +994,28 @@ status_t HWComposer::setDisplayElapseTime(HalDisplayId displayId, uint64_t timeS
     RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
     return NO_ERROR;
 }
+
+#ifdef QTI_UNIFIED_DRAW
+status_t HWComposer::setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
+         const sp<Fence>& acquireFence, ui::Dataspace dataspace) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto& displayData = mDisplayData[displayId];
+
+    auto error = displayData.hwcDisplay->setClientTarget_3_1(slot, acquireFence, dataspace);
+    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    return NO_ERROR;
+}
+
+status_t HWComposer::tryDrawMethod(HalDisplayId displayId,
+         IQtiComposerClient::DrawMethod drawMethod) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto& displayData = mDisplayData[displayId];
+
+    auto error = displayData.hwcDisplay->tryDrawMethod(drawMethod);
+    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    return NO_ERROR;
+}
+#endif
 
 } // namespace impl
 } // namespace android
