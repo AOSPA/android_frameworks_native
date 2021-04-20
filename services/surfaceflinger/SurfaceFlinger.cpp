@@ -1008,7 +1008,14 @@ void SurfaceFlinger::init() {
 
     char layerExtProp[PROPERTY_VALUE_MAX];
     property_get("vendor.display.use_layer_ext", layerExtProp, "0");
-    if (atoi(layerExtProp) && mLayerExt.init()) {
+    if (atoi(layerExtProp)) {
+        mUseLayerExt = true;
+    }
+    property_get("vendor.display.split_layer_ext", layerExtProp, "0");
+    if (atoi(layerExtProp)) {
+        mSplitLayerExt = true;
+    }
+    if ((mUseLayerExt || mSplitLayerExt) && mLayerExt.init()) {
         ALOGI("Layer Extension is enabled");
     }
 
@@ -2845,6 +2852,16 @@ void SurfaceFlinger::postComposition() {
 
     if (mLumaSampling && mRegionSamplingThread) {
         mRegionSamplingThread->notifyNewContent();
+    }
+
+    if (mSplitLayerExt && mLayerExt) {
+        std::vector<std::string> layerInfo;
+        mDrawingState.traverse([&](Layer* layer) {
+            if (layer->findOutputLayerForDisplay(display)) {
+                layerInfo.push_back(layer->getName());
+            }
+        });
+        mLayerExt->UpdateLayerState(layerInfo, mNumLayers);
     }
 
     if (mSmoMo) {
