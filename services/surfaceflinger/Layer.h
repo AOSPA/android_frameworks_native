@@ -493,6 +493,7 @@ public:
     //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
+    int32_t getPriority();
     virtual ui::Dataspace getDataSpace() const { return ui::Dataspace::UNKNOWN; }
 
     virtual sp<compositionengine::LayerFE> getCompositionEngineLayerFE() const;
@@ -1248,6 +1249,8 @@ private:
     // final shadow radius for this layer. If a shadow is specified for a layer, then effective
     // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
     float mEffectiveShadowRadius = 0.f;
+
+    mutable int32_t mPriority = Layer::PRIORITY_UNSET;
 
     // A list of regions on this layer that should have blurs.
     const std::vector<BlurRegion>& getBlurRegions() const;
