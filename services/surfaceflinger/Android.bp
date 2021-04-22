@@ -131,7 +131,6 @@ cc_defaults {
         "libnativewindow",
         "libprocessgroup",
         "libprotobuf-cpp-lite",
-        "libstatslog",
         "libsync",
         "libtimestats",
         "libui",
