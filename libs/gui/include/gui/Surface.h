@@ -141,9 +141,6 @@ public:
     // See IGraphicBufferProducer::getNextFrameNumber
     uint64_t getNextFrameNumber() const;
 
-    bool isBufferAccumulated() const;
-    void setPresentTimeMode(int mode);
-
     /* Set the scaling mode to be used with a Surface.
      * See NATIVE_WINDOW_SET_SCALING_MODE and its parameters
      * in <system/window.h>. */
@@ -571,9 +568,6 @@ protected:
 
     uint64_t mNextFrameNumber = 1;
     uint64_t mLastFrameNumber = 0;
-
-    bool mIsBufferAccumulated = false;
-    int mPresentTimeMode = -1;
 
     // Mutable because ANativeWindow::query needs this class const.
     mutable bool mQueriedSupportedTimestamps;

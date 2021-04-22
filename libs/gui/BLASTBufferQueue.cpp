@@ -326,6 +326,7 @@ void BLASTBufferQueue::releaseBufferCallback(uint64_t graphicBufferId,
     mBufferItemConsumer->releaseBuffer(it->second, releaseFence);
     mSubmitted.erase(it);
     mNumAcquired--;
+    mNumUndequeued++;
     processNextBufferLocked(false /* useNextTransaction */);
     mCallbackCV.notify_all();
 }
@@ -507,6 +508,7 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
 void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::unique_lock _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
+    mNumUndequeued--;
 };
 
 void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {
