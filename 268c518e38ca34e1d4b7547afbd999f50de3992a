@@ -16,6 +16,23 @@
       "message": "i would actually want this to be done globally, taking from master. With PGO too",
       "revId": "268c518e38ca34e1d4b7547afbd999f50de3992a",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "9e6259ae_a8165a09",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000488
+      },
+      "writtenOn": "2021-04-23T04:33:25Z",
+      "side": 1,
+      "message": "I\u0027ll check it out myself",
+      "revId": "268c518e38ca34e1d4b7547afbd999f50de3992a",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
