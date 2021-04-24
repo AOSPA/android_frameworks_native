@@ -1244,6 +1244,8 @@ private:
 
     void setupEarlyWakeUpFeature();
 
+    void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
+
     static mat4 calculateColorMatrix(float saturation);
 
     void updateColorMatrixLocked();
