@@ -218,12 +218,18 @@ namespace impl {
 EventThread::EventThread(std::unique_ptr<VSyncSource> vsyncSource,
                          android::frametimeline::TokenManager* tokenManager,
                          InterceptVSyncsCallback interceptVSyncsCallback,
-                         ThrottleVsyncCallback throttleVsyncCallback)
+                         ThrottleVsyncCallback throttleVsyncCallback,
+                         GetVsyncPeriodFunction getVsyncPeriodFunction)
       : mVSyncSource(std::move(vsyncSource)),
         mTokenManager(tokenManager),
         mInterceptVSyncsCallback(std::move(interceptVSyncsCallback)),
         mThrottleVsyncCallback(std::move(throttleVsyncCallback)),
+        mGetVsyncPeriodFunction(std::move(getVsyncPeriodFunction)),
         mThreadName(mVSyncSource->getName()) {
+
+    LOG_ALWAYS_FATAL_IF(getVsyncPeriodFunction == nullptr,
+            "getVsyncPeriodFunction must not be null");
+
     mVSyncSource->setCallback(this);
 
     mThread = std::thread([this]() NO_THREAD_SAFETY_ANALYSIS {
@@ -595,9 +601,13 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
     const uint8_t num_attempts = 3;
     for (const auto& consumer : consumers) {
+        DisplayEventReceiver::Event copy = event;
+        if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
+            copy.vsync.frameInterval = mGetVsyncPeriodFunction(consumer->mOwnerUid);
+        }
         bool needs_retry = true;
         for (uint8_t attempt = 0; needs_retry && (attempt < num_attempts); attempt++) {
-            switch (consumer->postEvent(event)) {
+            switch (consumer->postEvent(copy)) {
                 case NO_ERROR:
                     needs_retry = false;
                     break;

@@ -82,10 +82,9 @@ struct layer_state_t {
         eTransparentRegionChanged = 0x00000020,
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
-        /* was eCropChanged_legacy, now available 0x00000100, */
-        eDeferTransaction_legacy = 0x00000200,
         eReleaseBufferListenerChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
+        eLayerCreated = 0x00001000,
         /* was eDetachChildren, now available 0x00002000, */
         eRelativeLayerChanged = 0x00004000,
         eReparent = 0x00008000,
@@ -105,7 +104,7 @@ struct layer_state_t {
         eHasListenerCallbacksChanged = 0x20000000,
         eInputInfoChanged = 0x40000000,
         eCornerRadiusChanged = 0x80000000,
-        eFrameChanged = 0x1'00000000,
+        /* was eFrameChanged, now available 0x1'00000000, */
         eCachedBufferChanged = 0x2'00000000,
         eBackgroundColorChanged = 0x4'00000000,
         eMetadataChanged = 0x8'00000000,
@@ -152,9 +151,7 @@ struct layer_state_t {
     matrix22_t matrix;
     float cornerRadius;
     uint32_t backgroundBlurRadius;
-    sp<SurfaceControl> barrierSurfaceControl_legacy;
     sp<SurfaceControl> reparentSurfaceControl;
-    uint64_t barrierFrameNumber;
 
     sp<SurfaceControl> relativeLayerSurfaceControl;
 

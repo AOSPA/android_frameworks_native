@@ -2326,6 +2326,8 @@ void InputDispatcher::finishDragAndDrop(int32_t displayId, float x, float y) {
     if (dropWindow) {
         vec2 local = dropWindow->getInfo()->transform.transform(x, y);
         notifyDropWindowLocked(dropWindow->getToken(), local.x, local.y);
+    } else {
+        notifyDropWindowLocked(nullptr, 0, 0);
     }
     mDragState.reset();
 }
@@ -2372,6 +2374,7 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
     } else if (maskedAction == AMOTION_EVENT_ACTION_UP) {
         finishDragAndDrop(entry.displayId, x, y);
     } else if (maskedAction == AMOTION_EVENT_ACTION_CANCEL) {
+        notifyDropWindowLocked(nullptr, 0, 0);
         mDragState.reset();
     }
 }
@@ -3154,8 +3157,9 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                     ALOGE("channel '%s' ~ Could not publish event because the pipe is full. "
                           "This is unexpected because the wait queue is empty, so the pipe "
                           "should be empty and we shouldn't have any problems writing an "
-                          "event to it, status=%d",
-                          connection->getInputChannelName().c_str(), status);
+                          "event to it, status=%s(%d)",
+                          connection->getInputChannelName().c_str(), statusToString(status).c_str(),
+                          status);
                     abortBrokenDispatchCycleLocked(currentTime, connection, true /*notify*/);
                 } else {
                     // Pipe is full and we are waiting for the app to finish process some events
@@ -3168,8 +3172,9 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                 }
             } else {
                 ALOGE("channel '%s' ~ Could not publish event due to an unexpected error, "
-                      "status=%d",
-                      connection->getInputChannelName().c_str(), status);
+                      "status=%s(%d)",
+                      connection->getInputChannelName().c_str(), statusToString(status).c_str(),
+                      status);
                 abortBrokenDispatchCycleLocked(currentTime, connection, true /*notify*/);
             }
             return;
@@ -3338,8 +3343,9 @@ int InputDispatcher::handleReceiveCallback(int fd, int events, void* data) {
 
             notify = status != DEAD_OBJECT || !connection->monitor;
             if (notify) {
-                ALOGE("channel '%s' ~ Failed to receive finished signal.  status=%d",
-                      connection->getInputChannelName().c_str(), status);
+                ALOGE("channel '%s' ~ Failed to receive finished signal.  status=%s(%d)",
+                      connection->getInputChannelName().c_str(), statusToString(status).c_str(),
+                      status);
             }
         } else {
             // Monitor channels are never explicitly unregistered.
@@ -5094,6 +5100,8 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
         monitorsByDisplay[displayId].emplace_back(serverChannel, pid);
 
         mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, handleReceiveCallback, this);
+        ALOGI("Created monitor %s for display %" PRId32 ", gesture=%s, pid=%" PRId32, name.c_str(),
+              displayId, toString(isGestureMonitor), pid);
     }
 
     // Wake the looper because some connections have changed.
@@ -5154,6 +5162,8 @@ void InputDispatcher::removeMonitorChannelLocked(
         const size_t numMonitors = monitors.size();
         for (size_t i = 0; i < numMonitors; i++) {
             if (monitors[i].inputChannel->getConnectionToken() == connectionToken) {
+                ALOGI("Erasing monitor %s on display %" PRId32 ", pid=%" PRId32,
+                      monitors[i].inputChannel->getName().c_str(), it->first, monitors[i].pid);
                 monitors.erase(monitors.begin() + i);
                 break;
             }

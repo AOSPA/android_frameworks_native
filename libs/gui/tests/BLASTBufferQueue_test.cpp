@@ -140,7 +140,6 @@ protected:
                                                  /*parent*/ nullptr);
         t.setLayerStack(mSurfaceControl, 0)
                 .setLayer(mSurfaceControl, std::numeric_limits<int32_t>::max())
-                .setFrame(mSurfaceControl, Rect(resolution))
                 .show(mSurfaceControl)
                 .setDataspace(mSurfaceControl, ui::Dataspace::V0_SRGB)
                 .apply();
@@ -218,13 +217,13 @@ protected:
                             col >= region.left - border && col < region.right + border;
                 }
                 if (!outsideRegion && inRegion) {
-                    EXPECT_GE(epsilon, abs(r - *(pixel)));
-                    EXPECT_GE(epsilon, abs(g - *(pixel + 1)));
-                    EXPECT_GE(epsilon, abs(b - *(pixel + 2)));
+                    ASSERT_GE(epsilon, abs(r - *(pixel)));
+                    ASSERT_GE(epsilon, abs(g - *(pixel + 1)));
+                    ASSERT_GE(epsilon, abs(b - *(pixel + 2)));
                 } else if (outsideRegion && !inRegion) {
-                    EXPECT_GE(epsilon, abs(r - *(pixel)));
-                    EXPECT_GE(epsilon, abs(g - *(pixel + 1)));
-                    EXPECT_GE(epsilon, abs(b - *(pixel + 2)));
+                    ASSERT_GE(epsilon, abs(r - *(pixel)));
+                    ASSERT_GE(epsilon, abs(g - *(pixel + 1)));
+                    ASSERT_GE(epsilon, abs(b - *(pixel + 2)));
                 }
                 ASSERT_EQ(false, ::testing::Test::HasFailure());
             }
@@ -466,7 +465,8 @@ TEST_F(BLASTBufferQueueTest, SetCrop_Item) {
     ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
 
     ASSERT_NO_FATAL_FAILURE(
-            checkScreenCapture(r, g, b, {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight}));
+            checkScreenCapture(r, g, b,
+                               {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight / 2}));
 }
 
 TEST_F(BLASTBufferQueueTest, SetCrop_ScalingModeScaleCrop) {
@@ -522,14 +522,146 @@ TEST_F(BLASTBufferQueueTest, SetCrop_ScalingModeScaleCrop) {
     adapter.waitForCallbacks();
     // capture screen and verify that it is red
     ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
-
-    ASSERT_NO_FATAL_FAILURE(
-            checkScreenCapture(r, g, b,
-                               {0, 0, (int32_t)bufferSideLength, (int32_t)bufferSideLength}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(r, g, b,
+                                               {10, 10, (int32_t)bufferSideLength - 10,
+                                                (int32_t)bufferSideLength - 10}));
     ASSERT_NO_FATAL_FAILURE(
             checkScreenCapture(0, 0, 0,
                                {0, 0, (int32_t)bufferSideLength, (int32_t)bufferSideLength},
                                /*border*/ 0, /*outsideRegion*/ true));
+}
+
+TEST_F(BLASTBufferQueueTest, ScaleCroppedBufferToBufferSize) {
+    // add black background
+    auto bg = mClient->createSurface(String8("BGTest"), 0, 0, PIXEL_FORMAT_RGBA_8888,
+                                     ISurfaceComposerClient::eFXSurfaceEffect);
+    ASSERT_NE(nullptr, bg.get());
+    Transaction t;
+    t.setLayerStack(bg, 0)
+            .setCrop(bg, Rect(0, 0, mDisplayWidth, mDisplayHeight))
+            .setColor(bg, half3{0, 0, 0})
+            .setLayer(bg, 0)
+            .apply();
+
+    Rect windowSize(1000, 1000);
+    Rect bufferSize(windowSize);
+    Rect bufferCrop(200, 200, 700, 700);
+
+    BLASTBufferQueueHelper adapter(mSurfaceControl, windowSize.getWidth(), windowSize.getHeight());
+    sp<IGraphicBufferProducer> igbProducer;
+    setUpProducer(adapter, igbProducer);
+    int slot;
+    sp<Fence> fence;
+    sp<GraphicBuffer> buf;
+    auto ret = igbProducer->dequeueBuffer(&slot, &fence, bufferSize.getWidth(),
+                                          bufferSize.getHeight(), PIXEL_FORMAT_RGBA_8888,
+                                          GRALLOC_USAGE_SW_WRITE_OFTEN, nullptr, nullptr);
+    ASSERT_EQ(IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION, ret);
+    ASSERT_EQ(OK, igbProducer->requestBuffer(slot, &buf));
+
+    uint32_t* bufData;
+    buf->lock(static_cast<uint32_t>(GraphicBuffer::USAGE_SW_WRITE_OFTEN),
+              reinterpret_cast<void**>(&bufData));
+    // fill buffer with grey
+    fillBuffer(bufData, bufferSize, buf->getStride(), 127, 127, 127);
+
+    // fill crop area with different colors so we can verify the cropped region has been scaled
+    // correctly.
+    fillBuffer(bufData, Rect(200, 200, 450, 450), buf->getStride(), /* rgb */ 255, 0, 0);
+    fillBuffer(bufData, Rect(200, 451, 450, 700), buf->getStride(), /* rgb */ 0, 255, 0);
+    fillBuffer(bufData, Rect(451, 200, 700, 450), buf->getStride(), /* rgb */ 0, 0, 255);
+    fillBuffer(bufData, Rect(451, 451, 700, 700), buf->getStride(), /* rgb */ 255, 0, 0);
+    buf->unlock();
+
+    IGraphicBufferProducer::QueueBufferOutput qbOutput;
+    IGraphicBufferProducer::QueueBufferInput input(systemTime(), true /* autotimestamp */,
+                                                   HAL_DATASPACE_UNKNOWN,
+                                                   bufferCrop /* Rect::INVALID_RECT */,
+                                                   NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW, 0,
+                                                   Fence::NO_FENCE);
+    igbProducer->queueBuffer(slot, input, &qbOutput);
+    ASSERT_NE(ui::Transform::ROT_INVALID, qbOutput.transformHint);
+
+    adapter.waitForCallbacks();
+
+    ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
+
+    // Verify cropped region is scaled correctly.
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(255, 0, 0, {10, 10, 490, 490}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 255, 0, {10, 510, 490, 990}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 0, 255, {510, 10, 990, 490}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(255, 0, 0, {510, 510, 990, 990}));
+    // Verify outside region is black.
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 0, 0,
+                                               {0, 0, (int32_t)windowSize.getWidth(),
+                                                (int32_t)windowSize.getHeight()},
+                                               /*border*/ 0, /*outsideRegion*/ true));
+}
+
+TEST_F(BLASTBufferQueueTest, ScaleCroppedBufferToWindowSize) {
+    // add black background
+    auto bg = mClient->createSurface(String8("BGTest"), 0, 0, PIXEL_FORMAT_RGBA_8888,
+                                     ISurfaceComposerClient::eFXSurfaceEffect);
+    ASSERT_NE(nullptr, bg.get());
+    Transaction t;
+    t.setLayerStack(bg, 0)
+            .setCrop(bg, Rect(0, 0, mDisplayWidth, mDisplayHeight))
+            .setColor(bg, half3{0, 0, 0})
+            .setLayer(bg, 0)
+            .apply();
+
+    Rect windowSize(1000, 1000);
+    Rect bufferSize(500, 500);
+    Rect bufferCrop(100, 100, 350, 350);
+
+    BLASTBufferQueueHelper adapter(mSurfaceControl, windowSize.getWidth(), windowSize.getHeight());
+    sp<IGraphicBufferProducer> igbProducer;
+    setUpProducer(adapter, igbProducer);
+    int slot;
+    sp<Fence> fence;
+    sp<GraphicBuffer> buf;
+    auto ret = igbProducer->dequeueBuffer(&slot, &fence, bufferSize.getWidth(),
+                                          bufferSize.getHeight(), PIXEL_FORMAT_RGBA_8888,
+                                          GRALLOC_USAGE_SW_WRITE_OFTEN, nullptr, nullptr);
+    ASSERT_EQ(IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION, ret);
+    ASSERT_EQ(OK, igbProducer->requestBuffer(slot, &buf));
+
+    uint32_t* bufData;
+    buf->lock(static_cast<uint32_t>(GraphicBuffer::USAGE_SW_WRITE_OFTEN),
+              reinterpret_cast<void**>(&bufData));
+    // fill buffer with grey
+    fillBuffer(bufData, bufferSize, buf->getStride(), 127, 127, 127);
+
+    // fill crop area with different colors so we can verify the cropped region has been scaled
+    // correctly.
+    fillBuffer(bufData, Rect(100, 100, 225, 225), buf->getStride(), /* rgb */ 255, 0, 0);
+    fillBuffer(bufData, Rect(100, 226, 225, 350), buf->getStride(), /* rgb */ 0, 255, 0);
+    fillBuffer(bufData, Rect(226, 100, 350, 225), buf->getStride(), /* rgb */ 0, 0, 255);
+    fillBuffer(bufData, Rect(226, 226, 350, 350), buf->getStride(), /* rgb */ 255, 0, 0);
+    buf->unlock();
+
+    IGraphicBufferProducer::QueueBufferOutput qbOutput;
+    IGraphicBufferProducer::QueueBufferInput input(systemTime(), true /* autotimestamp */,
+                                                   HAL_DATASPACE_UNKNOWN,
+                                                   bufferCrop /* Rect::INVALID_RECT */,
+                                                   NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW, 0,
+                                                   Fence::NO_FENCE);
+    igbProducer->queueBuffer(slot, input, &qbOutput);
+    ASSERT_NE(ui::Transform::ROT_INVALID, qbOutput.transformHint);
+
+    adapter.waitForCallbacks();
+
+    ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
+    // Verify cropped region is scaled correctly.
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(255, 0, 0, {10, 10, 490, 490}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 255, 0, {10, 510, 490, 990}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 0, 255, {510, 10, 990, 490}));
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(255, 0, 0, {510, 510, 990, 990}));
+    // Verify outside region is black.
+    ASSERT_NO_FATAL_FAILURE(checkScreenCapture(0, 0, 0,
+                                               {0, 0, (int32_t)windowSize.getWidth(),
+                                                (int32_t)windowSize.getHeight()},
+                                               /*border*/ 0, /*outsideRegion*/ true));
 }
 
 class TestProducerListener : public BnProducerListener {
@@ -596,7 +728,6 @@ TEST_F(BLASTBufferQueueTest, OutOfOrderTransactionTest) {
     t.setLayerStack(bgSurface, 0)
             .show(bgSurface)
             .setDataspace(bgSurface, ui::Dataspace::V0_SRGB)
-            .setFrame(bgSurface, Rect(0, 0, mDisplayWidth, mDisplayHeight))
             .setLayer(bgSurface, std::numeric_limits<int32_t>::max() - 1)
             .apply();
 
@@ -619,7 +750,8 @@ TEST_F(BLASTBufferQueueTest, OutOfOrderTransactionTest) {
     ASSERT_EQ(NO_ERROR, captureDisplay(mCaptureArgs, mCaptureResults));
 
     ASSERT_NO_FATAL_FAILURE(
-            checkScreenCapture(r, g, b, {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight}));
+            checkScreenCapture(r, g, b,
+                               {0, 0, (int32_t)mDisplayWidth, (int32_t)mDisplayHeight / 2}));
 }
 
 class BLASTBufferQueueTransformTest : public BLASTBufferQueueTest {
@@ -834,26 +966,6 @@ public:
         if (postedTime) *postedTime = systemTime();
         igbProducer->queueBuffer(slot, input, qbOutput);
     }
-
-    void createBufferQueueProducer(sp<IGraphicBufferProducer>* bqIgbp) {
-        mBufferQueueSurfaceControl =
-                mClient->createSurface(String8("BqSurface"), 0, 0, PIXEL_FORMAT_RGBA_8888,
-                                       ISurfaceComposerClient::eFXSurfaceBufferQueue);
-        ASSERT_NE(nullptr, mBufferQueueSurfaceControl.get());
-        Transaction()
-                .setLayerStack(mBufferQueueSurfaceControl, 0)
-                .show(mBufferQueueSurfaceControl)
-                .setDataspace(mBufferQueueSurfaceControl, ui::Dataspace::V0_SRGB)
-                .setSize(mBufferQueueSurfaceControl, mDisplayWidth, mDisplayHeight)
-                .setLayer(mBufferQueueSurfaceControl, std::numeric_limits<int32_t>::max())
-                .apply();
-
-        sp<Surface> bqSurface = mBufferQueueSurfaceControl->getSurface();
-        ASSERT_NE(nullptr, bqSurface.get());
-
-        *bqIgbp = bqSurface->getIGraphicBufferProducer();
-        setUpProducer(*bqIgbp);
-    }
     sp<SurfaceControl> mBufferQueueSurfaceControl;
 };
 
@@ -909,55 +1021,6 @@ TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_Basic) {
     adapter.waitForCallbacks();
 }
 
-// Runs the same Frame Event History test
-TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_Basic_BufferQueue) {
-    sp<IGraphicBufferProducer> bqIgbp;
-    createBufferQueueProducer(&bqIgbp);
-
-    ProducerFrameEventHistory history;
-    IGraphicBufferProducer::QueueBufferOutput qbOutput;
-    nsecs_t requestedPresentTimeA = 0;
-    nsecs_t postedTimeA = 0;
-    setUpAndQueueBuffer(bqIgbp, &requestedPresentTimeA, &postedTimeA, &qbOutput, true);
-    history.applyDelta(qbOutput.frameTimestamps);
-
-    FrameEvents* events = nullptr;
-    events = history.getFrame(1);
-    ASSERT_NE(nullptr, events);
-    ASSERT_EQ(1, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeA, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeA);
-
-    // wait for buffer to be presented
-    std::this_thread::sleep_for(200ms);
-
-    nsecs_t requestedPresentTimeB = 0;
-    nsecs_t postedTimeB = 0;
-    setUpAndQueueBuffer(bqIgbp, &requestedPresentTimeB, &postedTimeB, &qbOutput, true);
-    history.applyDelta(qbOutput.frameTimestamps);
-    events = history.getFrame(1);
-    ASSERT_NE(nullptr, events);
-
-    // frame number, requestedPresentTime, and postTime should not have changed
-    ASSERT_EQ(1, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeA, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeA);
-
-    ASSERT_GE(events->latchTime, postedTimeA);
-    ASSERT_FALSE(events->hasDequeueReadyInfo());
-
-    ASSERT_NE(nullptr, events->gpuCompositionDoneFence);
-    ASSERT_NE(nullptr, events->displayPresentFence);
-    ASSERT_NE(nullptr, events->releaseFence);
-
-    // we should also have gotten the initial values for the next frame
-    events = history.getFrame(2);
-    ASSERT_NE(nullptr, events);
-    ASSERT_EQ(2, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeB, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeB);
-}
-
 TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_DroppedFrame) {
     BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
     sp<IGraphicBufferProducer> igbProducer;
@@ -983,55 +1046,6 @@ TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_DroppedFrame) {
     nsecs_t requestedPresentTimeB = 0;
     nsecs_t postedTimeB = 0;
     setUpAndQueueBuffer(igbProducer, &requestedPresentTimeB, &postedTimeB, &qbOutput, true);
-    history.applyDelta(qbOutput.frameTimestamps);
-    events = history.getFrame(1);
-    ASSERT_NE(nullptr, events);
-
-    // frame number, requestedPresentTime, and postTime should not have changed
-    ASSERT_EQ(1, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeA, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeA);
-
-    // a valid latchtime should not be set
-    ASSERT_FALSE(events->hasLatchInfo());
-    ASSERT_FALSE(events->hasDequeueReadyInfo());
-
-    ASSERT_NE(nullptr, events->gpuCompositionDoneFence);
-    ASSERT_NE(nullptr, events->displayPresentFence);
-    ASSERT_NE(nullptr, events->releaseFence);
-
-    // we should also have gotten the initial values for the next frame
-    events = history.getFrame(2);
-    ASSERT_NE(nullptr, events);
-    ASSERT_EQ(2, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeB, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeB);
-}
-
-TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_DroppedFrame_BufferQueue) {
-    sp<IGraphicBufferProducer> bqIgbp;
-    createBufferQueueProducer(&bqIgbp);
-
-    ProducerFrameEventHistory history;
-    IGraphicBufferProducer::QueueBufferOutput qbOutput;
-    nsecs_t requestedPresentTimeA = 0;
-    nsecs_t postedTimeA = 0;
-    nsecs_t presentTimeDelay = std::chrono::nanoseconds(500ms).count();
-    setUpAndQueueBuffer(bqIgbp, &requestedPresentTimeA, &postedTimeA, &qbOutput, true,
-                        presentTimeDelay);
-    history.applyDelta(qbOutput.frameTimestamps);
-
-    FrameEvents* events = nullptr;
-    events = history.getFrame(1);
-    ASSERT_NE(nullptr, events);
-    ASSERT_EQ(1, events->frameNumber);
-    ASSERT_EQ(requestedPresentTimeA, events->requestedPresentTime);
-    ASSERT_GE(events->postedTime, postedTimeA);
-
-    // queue another buffer so the first can be dropped
-    nsecs_t requestedPresentTimeB = 0;
-    nsecs_t postedTimeB = 0;
-    setUpAndQueueBuffer(bqIgbp, &requestedPresentTimeB, &postedTimeB, &qbOutput, true);
     history.applyDelta(qbOutput.frameTimestamps);
     events = history.getFrame(1);
     ASSERT_NE(nullptr, events);

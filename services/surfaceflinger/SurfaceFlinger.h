@@ -159,13 +159,7 @@ enum {
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
-class SurfaceFlingerBE
-{
-public:
-    SurfaceFlingerBE();
-
-    const std::string mHwcServiceName; // "default" for real use, something else for testing.
-
+struct SurfaceFlingerBE {
     FenceTimeline mGlCompositionDoneTimeline;
     FenceTimeline mDisplayTimeline;
 
@@ -255,7 +249,6 @@ private:
 
 class SurfaceFlinger : public BnSurfaceComposer,
                        public PriorityDumper,
-                       public ClientCache::ErasedRecipient,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
                        private ISchedulerCallback {
@@ -404,9 +397,6 @@ public:
     // won't accidentally hold onto the last strong reference.
     wp<Layer> fromHandle(const sp<IBinder>& handle);
     wp<Layer> fromHandleLocked(const sp<IBinder>& handle) const REQUIRES(mStateLock);
-
-    // Inherit from ClientCache::ErasedRecipient
-    void bufferErased(const client_cache_t& clientCacheId) override;
 
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
@@ -723,6 +713,7 @@ private:
     status_t getAnimationFrameStats(FrameStats* outStats) const override;
     status_t overrideHdrTypes(const sp<IBinder>& displayToken,
                               const std::vector<ui::Hdr>& hdrTypes) override;
+    status_t onPullAtom(const int32_t atomId, std::string* pulledData, bool* success) override;
     status_t enableVSyncInjections(bool enable) override;
     status_t injectVSync(nsecs_t when) override;
     status_t getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) override;
@@ -990,12 +981,14 @@ private:
     status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
                                  ui::PixelFormat, bool allowProtected, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, sp<GraphicBuffer>&,
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction,
+                                 const std::shared_ptr<renderengine::ExternalTexture>&,
                                  bool regionSampling, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
     status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
-                                    const sp<GraphicBuffer>&, bool forSystem, bool regionSampling,
-                                    bool grayscale, ScreenCaptureResults&);
+                                    const std::shared_ptr<renderengine::ExternalTexture>&,
+                                    bool forSystem, bool regionSampling, bool grayscale,
+                                    ScreenCaptureResults&);
 
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayById(DisplayId displayId) const REQUIRES(mStateLock);
@@ -1462,6 +1455,10 @@ private:
     SurfaceFlingerBE mBE;
     std::unique_ptr<compositionengine::CompositionEngine> mCompositionEngine;
 
+    const std::string mHwcServiceName;
+
+    bool hasMockHwc() const { return mHwcServiceName == "mock"; }
+
     /*
      * Scheduler
      */
@@ -1534,6 +1531,35 @@ private:
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
             GUARDED_BY(mStateLock);
+    mutable Mutex mCreatedLayersLock;
+    struct LayerCreatedState {
+        LayerCreatedState(const wp<Layer>& layer, const wp<IBinder>& parent,
+                          const wp<Layer> parentLayer, const wp<IBinder>& producer)
+              : layer(layer),
+                initialParent(parent),
+                initialParentLayer(parentLayer),
+                initialProducer(producer) {}
+        wp<Layer> layer;
+        // Indicates the initial parent of the created layer, only used for creating layer in
+        // SurfaceFlinger. If nullptr, it may add the created layer into the current root layers.
+        wp<IBinder> initialParent;
+        wp<Layer> initialParentLayer;
+        // Indicates the initial graphic buffer producer of the created layer, only used for
+        // creating layer in SurfaceFlinger.
+        wp<IBinder> initialProducer;
+    };
+
+    // A temporay pool that store the created layers and will be added to current state in main
+    // thread.
+    std::unordered_map<BBinder*, std::unique_ptr<LayerCreatedState>> mCreatedLayers;
+    void setLayerCreatedState(const sp<IBinder>& handle, const wp<Layer>& layer,
+                              const wp<IBinder>& parent, const wp<Layer> parentLayer,
+                              const wp<IBinder>& producer);
+    auto getLayerCreatedState(const sp<IBinder>& handle);
+    sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle, bool privileged)
+            REQUIRES(mStateLock);
+
+    std::atomic<ui::Transform::RotationFlags> mDefaultDisplayTransformHint;
 
     SmomoWrapper mSmoMo;
     LayerExtWrapper mLayerExt;

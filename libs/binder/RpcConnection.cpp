@@ -18,17 +18,22 @@
 
 #include <binder/RpcConnection.h>
 
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <string_view>
+
 #include <binder/Parcel.h>
 #include <binder/Stability.h>
 #include <utils/String8.h>
 
 #include "RpcState.h"
 #include "RpcWireFormat.h"
-
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/un.h>
-#include <unistd.h>
 
 #ifdef __GLIBC__
 extern "C" pid_t gettid();
@@ -41,6 +46,7 @@ extern "C" pid_t gettid();
 namespace android {
 
 using base::unique_fd;
+using AddrInfo = std::unique_ptr<addrinfo, decltype(&freeaddrinfo)>;
 
 RpcConnection::SocketAddress::~SocketAddress() {}
 
@@ -51,17 +57,22 @@ RpcConnection::RpcConnection() {
 }
 RpcConnection::~RpcConnection() {
     LOG_RPC_DETAIL("RpcConnection destroyed %p", this);
+
+    std::lock_guard<std::mutex> _l(mSocketMutex);
+    LOG_ALWAYS_FATAL_IF(mServers.size() != 0,
+                        "Should not be able to destroy a connection with servers in use.");
 }
 
 sp<RpcConnection> RpcConnection::make() {
-    return new RpcConnection;
+    return sp<RpcConnection>::make();
 }
 
 class UnixSocketAddress : public RpcConnection::SocketAddress {
 public:
     explicit UnixSocketAddress(const char* path) : mAddr({.sun_family = AF_UNIX}) {
         unsigned int pathLen = strlen(path) + 1;
-        LOG_ALWAYS_FATAL_IF(pathLen > sizeof(mAddr.sun_path), "%u %s", pathLen, path);
+        LOG_ALWAYS_FATAL_IF(pathLen > sizeof(mAddr.sun_path), "Socket path is too long: %u %s",
+                            pathLen, path);
         memcpy(mAddr.sun_path, path, pathLen);
     }
     virtual ~UnixSocketAddress() {}
@@ -78,11 +89,11 @@ private:
 };
 
 bool RpcConnection::setupUnixDomainServer(const char* path) {
-    return addServer(UnixSocketAddress(path));
+    return setupSocketServer(UnixSocketAddress(path));
 }
 
 bool RpcConnection::addUnixDomainClient(const char* path) {
-    return addClient(UnixSocketAddress(path));
+    return addSocketClient(UnixSocketAddress(path));
 }
 
 #ifdef __BIONIC__
@@ -97,7 +108,7 @@ public:
             }) {}
     virtual ~VsockSocketAddress() {}
     std::string toString() const override {
-        return String8::format("cid %du port %du", mAddr.svm_cid, mAddr.svm_port).c_str();
+        return String8::format("cid %u port %u", mAddr.svm_cid, mAddr.svm_port).c_str();
     }
     const sockaddr* addr() const override { return reinterpret_cast<const sockaddr*>(&mAddr); }
     size_t addrSize() const override { return sizeof(mAddr); }
@@ -110,63 +121,140 @@ bool RpcConnection::setupVsockServer(unsigned int port) {
     // realizing value w/ this type at compile time to avoid ubsan abort
     constexpr unsigned int kAnyCid = VMADDR_CID_ANY;
 
-    return addServer(VsockSocketAddress(kAnyCid, port));
+    return setupSocketServer(VsockSocketAddress(kAnyCid, port));
 }
 
 bool RpcConnection::addVsockClient(unsigned int cid, unsigned int port) {
-    return addClient(VsockSocketAddress(cid, port));
+    return addSocketClient(VsockSocketAddress(cid, port));
 }
 
 #endif // __BIONIC__
 
+class SocketAddressImpl : public RpcConnection::SocketAddress {
+public:
+    SocketAddressImpl(const sockaddr* addr, size_t size, const String8& desc)
+          : mAddr(addr), mSize(size), mDesc(desc) {}
+    [[nodiscard]] std::string toString() const override {
+        return std::string(mDesc.c_str(), mDesc.size());
+    }
+    [[nodiscard]] const sockaddr* addr() const override { return mAddr; }
+    [[nodiscard]] size_t addrSize() const override { return mSize; }
+    void set(const sockaddr* addr, size_t size) {
+        mAddr = addr;
+        mSize = size;
+    }
+
+private:
+    const sockaddr* mAddr = nullptr;
+    size_t mSize = 0;
+    String8 mDesc;
+};
+
+AddrInfo GetAddrInfo(const char* addr, unsigned int port) {
+    addrinfo hint{
+            .ai_flags = 0,
+            .ai_family = AF_UNSPEC,
+            .ai_socktype = SOCK_STREAM,
+            .ai_protocol = 0,
+    };
+    addrinfo* aiStart = nullptr;
+    if (int rc = getaddrinfo(addr, std::to_string(port).data(), &hint, &aiStart); 0 != rc) {
+        ALOGE("Unable to resolve %s:%u: %s", addr, port, gai_strerror(rc));
+        return AddrInfo(nullptr, nullptr);
+    }
+    if (aiStart == nullptr) {
+        ALOGE("Unable to resolve %s:%u: getaddrinfo returns null", addr, port);
+        return AddrInfo(nullptr, nullptr);
+    }
+    return AddrInfo(aiStart, &freeaddrinfo);
+}
+
+bool RpcConnection::setupInetServer(unsigned int port) {
+    auto aiStart = GetAddrInfo("127.0.0.1", port);
+    if (aiStart == nullptr) return false;
+    SocketAddressImpl socketAddress(nullptr, 0, String8::format("127.0.0.1:%u", port));
+    for (auto ai = aiStart.get(); ai != nullptr; ai = ai->ai_next) {
+        socketAddress.set(ai->ai_addr, ai->ai_addrlen);
+        if (setupSocketServer(socketAddress)) return true;
+    }
+    ALOGE("None of the socket address resolved for 127.0.0.1:%u can be set up as inet server.",
+          port);
+    return false;
+}
+
+bool RpcConnection::addInetClient(const char* addr, unsigned int port) {
+    auto aiStart = GetAddrInfo(addr, port);
+    if (aiStart == nullptr) return false;
+    SocketAddressImpl socketAddress(nullptr, 0, String8::format("%s:%u", addr, port));
+    for (auto ai = aiStart.get(); ai != nullptr; ai = ai->ai_next) {
+        socketAddress.set(ai->ai_addr, ai->ai_addrlen);
+        if (addSocketClient(socketAddress)) return true;
+    }
+    ALOGE("None of the socket address resolved for %s:%u can be added as inet client.", addr, port);
+    return false;
+}
+
+bool RpcConnection::addNullDebuggingClient() {
+    unique_fd serverFd(TEMP_FAILURE_RETRY(open("/dev/null", O_WRONLY | O_CLOEXEC)));
+
+    if (serverFd == -1) {
+        ALOGE("Could not connect to /dev/null: %s", strerror(errno));
+        return false;
+    }
+
+    addClient(std::move(serverFd));
+    return true;
+}
+
 sp<IBinder> RpcConnection::getRootObject() {
-    ExclusiveSocket socket(this, SocketUse::CLIENT);
-    return state()->getRootObject(socket.fd(), this);
+    ExclusiveSocket socket(sp<RpcConnection>::fromExisting(this), SocketUse::CLIENT);
+    return state()->getRootObject(socket.fd(), sp<RpcConnection>::fromExisting(this));
 }
 
 status_t RpcConnection::transact(const RpcAddress& address, uint32_t code, const Parcel& data,
                                  Parcel* reply, uint32_t flags) {
-    ExclusiveSocket socket(this,
+    ExclusiveSocket socket(sp<RpcConnection>::fromExisting(this),
                            (flags & IBinder::FLAG_ONEWAY) ? SocketUse::CLIENT_ASYNC
                                                           : SocketUse::CLIENT);
-    return state()->transact(socket.fd(), address, code, data, this, reply, flags);
+    return state()->transact(socket.fd(), address, code, data,
+                             sp<RpcConnection>::fromExisting(this), reply, flags);
 }
 
 status_t RpcConnection::sendDecStrong(const RpcAddress& address) {
-    ExclusiveSocket socket(this, SocketUse::CLIENT_REFCOUNT);
+    ExclusiveSocket socket(sp<RpcConnection>::fromExisting(this), SocketUse::CLIENT_REFCOUNT);
     return state()->sendDecStrong(socket.fd(), address);
 }
 
 void RpcConnection::join() {
-    // establish a connection
-    {
-        unique_fd clientFd(
-                TEMP_FAILURE_RETRY(accept4(mServer.get(), nullptr, 0 /*length*/, SOCK_CLOEXEC)));
-        if (clientFd < 0) {
-            // If this log becomes confusing, should save more state from setupUnixDomainServer
-            // in order to output here.
-            ALOGE("Could not accept4 socket: %s", strerror(errno));
-            return;
-        }
-
-        LOG_RPC_DETAIL("accept4 on fd %d yields fd %d", mServer.get(), clientFd.get());
-
-        assignServerToThisThread(std::move(clientFd));
+    // TODO(b/185167543): do this dynamically, instead of from a static number
+    // of threads
+    unique_fd clientFd(
+            TEMP_FAILURE_RETRY(accept4(mServer.get(), nullptr, 0 /*length*/, SOCK_CLOEXEC)));
+    if (clientFd < 0) {
+        // If this log becomes confusing, should save more state from setupUnixDomainServer
+        // in order to output here.
+        ALOGE("Could not accept4 socket: %s", strerror(errno));
+        return;
     }
 
-    // We may not use the connection we just established (two threads might
-    // establish connections for each other), but for now, just use one
-    // server/socket connection.
-    ExclusiveSocket socket(this, SocketUse::SERVER);
+    LOG_RPC_DETAIL("accept4 on fd %d yields fd %d", mServer.get(), clientFd.get());
+
+    // must be registered to allow arbitrary client code executing commands to
+    // be able to do nested calls (we can't only read from it)
+    sp<ConnectionSocket> socket = assignServerToThisThread(std::move(clientFd));
 
     while (true) {
-        status_t error = state()->getAndExecuteCommand(socket.fd(), this);
+        status_t error =
+                state()->getAndExecuteCommand(socket->fd, sp<RpcConnection>::fromExisting(this));
 
         if (error != OK) {
             ALOGI("Binder socket thread closing w/ status %s", statusToString(error).c_str());
-            return;
+            break;
         }
     }
+
+    LOG_ALWAYS_FATAL_IF(!removeServerSocket(socket),
+                        "bad state: socket object guaranteed to be in list");
 }
 
 void RpcConnection::setForServer(const wp<RpcServer>& server) {
@@ -177,7 +265,7 @@ wp<RpcServer> RpcConnection::server() {
     return mForServer;
 }
 
-bool RpcConnection::addServer(const SocketAddress& addr) {
+bool RpcConnection::setupSocketServer(const SocketAddress& addr) {
     LOG_ALWAYS_FATAL_IF(mServer.get() != -1, "Each RpcConnection can only have one server.");
 
     unique_fd serverFd(
@@ -203,7 +291,7 @@ bool RpcConnection::addServer(const SocketAddress& addr) {
     return true;
 }
 
-bool RpcConnection::addClient(const SocketAddress& addr) {
+bool RpcConnection::addSocketClient(const SocketAddress& addr) {
     unique_fd serverFd(
             TEMP_FAILURE_RETRY(socket(addr.addr()->sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0)));
     if (serverFd == -1) {
@@ -220,18 +308,34 @@ bool RpcConnection::addClient(const SocketAddress& addr) {
 
     LOG_RPC_DETAIL("Socket at %s client with fd %d", addr.toString().c_str(), serverFd.get());
 
-    std::lock_guard<std::mutex> _l(mSocketMutex);
-    sp<ConnectionSocket> connection = new ConnectionSocket();
-    connection->fd = std::move(serverFd);
-    mClients.push_back(connection);
+    addClient(std::move(serverFd));
     return true;
 }
 
-void RpcConnection::assignServerToThisThread(base::unique_fd&& fd) {
+void RpcConnection::addClient(unique_fd&& fd) {
     std::lock_guard<std::mutex> _l(mSocketMutex);
-    sp<ConnectionSocket> connection = new ConnectionSocket();
+    sp<ConnectionSocket> connection = sp<ConnectionSocket>::make();
     connection->fd = std::move(fd);
+    mClients.push_back(connection);
+}
+
+sp<RpcConnection::ConnectionSocket> RpcConnection::assignServerToThisThread(unique_fd&& fd) {
+    std::lock_guard<std::mutex> _l(mSocketMutex);
+    sp<ConnectionSocket> connection = sp<ConnectionSocket>::make();
+    connection->fd = std::move(fd);
+    connection->exclusiveTid = gettid();
     mServers.push_back(connection);
+
+    return connection;
+}
+
+bool RpcConnection::removeServerSocket(const sp<ConnectionSocket>& socket) {
+    std::lock_guard<std::mutex> _l(mSocketMutex);
+    if (auto it = std::find(mServers.begin(), mServers.end(), socket); it != mServers.end()) {
+        mServers.erase(it);
+        return true;
+    }
+    return false;
 }
 
 RpcConnection::ExclusiveSocket::ExclusiveSocket(const sp<RpcConnection>& connection, SocketUse use)
@@ -246,37 +350,31 @@ RpcConnection::ExclusiveSocket::ExclusiveSocket(const sp<RpcConnection>& connect
 
         // CHECK FOR DEDICATED CLIENT SOCKET
         //
-        // A server/looper should always use a dedicated connection.
-        if (use != SocketUse::SERVER) {
-            findSocket(tid, &exclusive, &available, mConnection->mClients,
-                       mConnection->mClientsOffset);
+        // A server/looper should always use a dedicated connection if available
+        findSocket(tid, &exclusive, &available, mConnection->mClients, mConnection->mClientsOffset);
 
-            // WARNING: this assumes a server cannot request its client to send
-            // a transaction, as mServers is excluded below.
-            //
-            // Imagine we have more than one thread in play, and a single thread
-            // sends a synchronous, then an asynchronous command. Imagine the
-            // asynchronous command is sent on the first client socket. Then, if
-            // we naively send a synchronous command to that same socket, the
-            // thread on the far side might be busy processing the asynchronous
-            // command. So, we move to considering the second available thread
-            // for subsequent calls.
-            if (use == SocketUse::CLIENT_ASYNC && (exclusive != nullptr || available != nullptr)) {
-                mConnection->mClientsOffset =
-                        (mConnection->mClientsOffset + 1) % mConnection->mClients.size();
-            }
+        // WARNING: this assumes a server cannot request its client to send
+        // a transaction, as mServers is excluded below.
+        //
+        // Imagine we have more than one thread in play, and a single thread
+        // sends a synchronous, then an asynchronous command. Imagine the
+        // asynchronous command is sent on the first client socket. Then, if
+        // we naively send a synchronous command to that same socket, the
+        // thread on the far side might be busy processing the asynchronous
+        // command. So, we move to considering the second available thread
+        // for subsequent calls.
+        if (use == SocketUse::CLIENT_ASYNC && (exclusive != nullptr || available != nullptr)) {
+            mConnection->mClientsOffset =
+                    (mConnection->mClientsOffset + 1) % mConnection->mClients.size();
         }
 
-        // USE SERVING SOCKET (to start serving or for nested transaction)
+        // USE SERVING SOCKET (for nested transaction)
         //
         // asynchronous calls cannot be nested
         if (use != SocketUse::CLIENT_ASYNC) {
-            // servers should start serving on an available thread only
-            // otherwise, this should only be a nested call
-            bool useAvailable = use == SocketUse::SERVER;
-
-            findSocket(tid, &exclusive, (useAvailable ? &available : nullptr),
-                       mConnection->mServers, 0 /* index hint */);
+            // server sockets are always assigned to a thread
+            findSocket(tid, &exclusive, nullptr /*available*/, mConnection->mServers,
+                       0 /* index hint */);
         }
 
         // if our thread is already using a connection, prioritize using that
@@ -289,8 +387,6 @@ RpcConnection::ExclusiveSocket::ExclusiveSocket(const sp<RpcConnection>& connect
             mSocket->exclusiveTid = tid;
             break;
         }
-
-        LOG_ALWAYS_FATAL_IF(use == SocketUse::SERVER, "Must create connection to join one.");
 
         // in regular binder, this would usually be a deadlock :)
         LOG_ALWAYS_FATAL_IF(mConnection->mClients.size() == 0,
