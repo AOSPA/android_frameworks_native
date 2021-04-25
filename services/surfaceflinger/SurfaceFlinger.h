@@ -403,7 +403,7 @@ public:
     // Otherwise, returns a weak reference so that callers off the main-thread
     // won't accidentally hold onto the last strong reference.
     wp<Layer> fromHandle(const sp<IBinder>& handle);
-    wp<Layer> fromHandleLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
+    wp<Layer> fromHandleLocked(const sp<IBinder>& handle) const REQUIRES(mStateLock);
 
     // Inherit from ClientCache::ErasedRecipient
     void bufferErased(const client_cache_t& clientCacheId) override;
@@ -612,6 +612,8 @@ private:
                 originPid(originPid),
                 originUid(originUid),
                 id(transactionId) {}
+
+        void traverseStatesWithBuffers(std::function<void(const layer_state_t&)> visitor);
 
         FrameTimelineInfo frameTimelineInfo;
         Vector<ComposerState> states;
@@ -928,8 +930,8 @@ private:
     bool transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
             uid_t originUid, const Vector<ComposerState>& states,
-            std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers)
-            REQUIRES(mStateLock);
+            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
+                    bufferLayersReadyToPresent) const REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
@@ -1523,13 +1525,6 @@ private:
     // The Layer pointer is removed from the set when the destructor is called so there shouldn't
     // be any issues with a raw pointer referencing an invalid object.
     std::unordered_set<Layer*> mOffscreenLayers;
-
-    // Fields tracking the current jank event: when it started and how many
-    // janky frames there are.
-    nsecs_t mMissedFrameJankStart = 0;
-    int32_t mMissedFrameJankCount = 0;
-    // Positive if jank should be uploaded in postComposition
-    nsecs_t mLastJankDuration = -1;
 
     int mFrameRateFlexibilityTokenCount = 0;
 

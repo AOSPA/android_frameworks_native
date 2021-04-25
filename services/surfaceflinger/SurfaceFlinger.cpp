@@ -2187,10 +2187,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     if (frameMissed) {
         mFrameMissedCount++;
         mTimeStats->incrementMissedFrames();
-        if (mMissedFrameJankCount == 0) {
-            mMissedFrameJankStart = systemTime();
-        }
-        mMissedFrameJankCount++;
     }
 
     if (hwcFrameMissed) {
@@ -2260,37 +2256,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         }
     }
 
-    // Our jank window is always at least 100ms since we missed a
-    // frame...
-    static constexpr nsecs_t kMinJankyDuration =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(100ms).count();
-    // ...but if it's larger than 1s then we missed the trace cutoff.
-    static constexpr nsecs_t kMaxJankyDuration =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(1s).count();
-    nsecs_t jankDurationToUpload = -1;
-    // If we're in a user build then don't push any atoms
-    if (!mIsUserBuild && mMissedFrameJankCount > 0) {
-        const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
-        // Only report jank when the display is on, as displays in DOZE
-        // power mode may operate at a different frame rate than is
-        // reported in their config, which causes noticeable (but less
-        // severe) jank.
-        if (display && display->getPowerMode() == hal::PowerMode::ON) {
-            const nsecs_t currentTime = systemTime();
-            const nsecs_t jankDuration = currentTime - mMissedFrameJankStart;
-            if (jankDuration > kMinJankyDuration && jankDuration < kMaxJankyDuration) {
-                jankDurationToUpload = jankDuration;
-            }
-
-            // We either reported a jank event or we missed the trace
-            // window, so clear counters here.
-            if (jankDuration > kMinJankyDuration) {
-                mMissedFrameJankCount = 0;
-                mMissedFrameJankStart = 0;
-            }
-        }
-    }
-
     if (mTracingEnabledChanged) {
         mTracingEnabled = mTracing.isEnabled();
         mTracingEnabledChanged = false;
@@ -2337,7 +2302,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
 
     refreshNeeded |= mRepaintEverything;
     if (refreshNeeded && CC_LIKELY(mBootStage != BootStage::BOOTLOADER)) {
-        mLastJankDuration = jankDurationToUpload;
         // Signal a refresh if a transaction modified the window state,
         // a new buffer was latched, or if HWC has requested a full
         // repaint
@@ -2811,14 +2775,6 @@ void SurfaceFlinger::postComposition() {
     const size_t sfConnections = mScheduler->getEventThreadConnectionCount(mSfConnectionHandle);
     const size_t appConnections = mScheduler->getEventThreadConnectionCount(mAppConnectionHandle);
     mTimeStats->recordDisplayEventConnectionCount(sfConnections + appConnections);
-
-    if (mLastJankDuration > 0) {
-        ATRACE_NAME("Jank detected");
-        const int32_t jankyDurationMillis = mLastJankDuration / (1000 * 1000);
-        android::util::stats_write(android::util::DISPLAY_JANK_REPORTED, jankyDurationMillis,
-                                   mMissedFrameJankCount);
-        mLastJankDuration = -1;
-    }
 
     if (isDisplayConnected && !display->isPoweredOn()) {
         return;
@@ -4092,8 +4048,12 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client, const sp<IBind
             }
         }
 
-        if (const auto display = getDefaultDisplayDeviceLocked()) {
-            lbc->updateTransformHint(display->getTransformHint());
+        if (const auto token = getInternalDisplayTokenLocked()) {
+            const ssize_t index = mCurrentState.displays.indexOfKey(token);
+            if (index >= 0) {
+                const DisplayDeviceState& state = mCurrentState.displays.valueAt(index);
+                lbc->updateTransformHint(ui::Transform::toRotationFlags(state.orientation));
+            }
         }
         if (outTransformHint) {
             *outTransformHint = lbc->getTransformHint();
@@ -4144,7 +4104,7 @@ void SurfaceFlinger::flushTransactionQueues() {
     // states) around outside the scope of the lock
     std::vector<const TransactionState> transactions;
     // Layer handles that have transactions with buffers that are ready to be applied.
-    std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>> pendingBuffers;
+    std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>> bufferLayersReadyToPresent;
     {
         Mutex::Autolock _l(mStateLock);
         {
@@ -4160,10 +4120,13 @@ void SurfaceFlinger::flushTransactionQueues() {
                                                        transaction.isAutoTimestamp,
                                                        transaction.desiredPresentTime,
                                                        transaction.originUid, transaction.states,
-                                                       pendingBuffers)) {
+                                                       bufferLayersReadyToPresent)) {
                         setTransactionFlags(eTransactionFlushNeeded);
                         break;
                     }
+                    transaction.traverseStatesWithBuffers([&](const layer_state_t& state) {
+                        bufferLayersReadyToPresent.insert(state.surface);
+                    });
                     transactions.emplace_back(std::move(transaction));
                     transactionQueue.pop();
                 }
@@ -4184,14 +4147,17 @@ void SurfaceFlinger::flushTransactionQueues() {
                 auto& transaction = mTransactionQueue.front();
                 bool pendingTransactions = mPendingTransactionQueues.find(transaction.applyToken) !=
                         mPendingTransactionQueues.end();
-                if (!transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
+                if (pendingTransactions ||
+                    !transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
                                                    transaction.isAutoTimestamp,
                                                    transaction.desiredPresentTime,
                                                    transaction.originUid, transaction.states,
-                                                   pendingBuffers) ||
-                    pendingTransactions) {
+                                                   bufferLayersReadyToPresent)) {
                     mPendingTransactionQueues[transaction.applyToken].push(std::move(transaction));
                 } else {
+                    transaction.traverseStatesWithBuffers([&](const layer_state_t& state) {
+                        bufferLayersReadyToPresent.insert(state.surface);
+                    });
                     transactions.emplace_back(std::move(transaction));
                 }
                 mTransactionQueue.pop();
@@ -4246,28 +4212,28 @@ bool SurfaceFlinger::frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) 
 bool SurfaceFlinger::transactionIsReadyToBeApplied(
         const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
         uid_t originUid, const Vector<ComposerState>& states,
-        std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers) {
+        const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
+                bufferLayersReadyToPresent) const {
     ATRACE_CALL();
     const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
-    bool ready = true;
     // Do not present if the desiredPresentTime has not passed unless it is more than one second
     // in the future. We ignore timestamps more than 1 second in the future for stability reasons.
     if (!isAutoTimestamp && desiredPresentTime >= expectedPresentTime &&
         desiredPresentTime < expectedPresentTime + s2ns(1)) {
         ATRACE_NAME("not current");
-        ready = false;
+        return false;
     }
 
     if (!mScheduler->isVsyncValid(expectedPresentTime, originUid)) {
         ATRACE_NAME("!isVsyncValid");
-        ready = false;
+        return false;
     }
 
     // If the client didn't specify desiredPresentTime, use the vsyncId to determine the expected
     // present time of this transaction.
     if (isAutoTimestamp && frameIsEarly(expectedPresentTime, info.vsyncId)) {
         ATRACE_NAME("frameIsEarly");
-        ready = false;
+        return false;
     }
 
     for (const ComposerState& state : states) {
@@ -4276,7 +4242,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
         if (acquireFenceChanged && s.acquireFence &&
             s.acquireFence->getStatus() == Fence::Status::Unsignaled) {
             ATRACE_NAME("fence unsignaled");
-            ready = false;
+            return false;
         }
 
         sp<Layer> layer = nullptr;
@@ -4295,15 +4261,15 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
         if (s.hasBufferChanges()) {
             // If backpressure is enabled and we already have a buffer to commit, keep the
             // transaction in the queue.
-            const bool hasPendingBuffer = pendingBuffers.find(s.surface) != pendingBuffers.end();
+            const bool hasPendingBuffer =
+                    bufferLayersReadyToPresent.find(s.surface) != bufferLayersReadyToPresent.end();
             if (layer->backpressureEnabled() && hasPendingBuffer && isAutoTimestamp) {
                 ATRACE_NAME("hasPendingBuffer");
-                ready = false;
+                return false;
             }
-            pendingBuffers.insert(s.surface);
         }
     }
-    return ready;
+    return true;
 }
 
 void SurfaceFlinger::queueTransaction(TransactionState& state) {
@@ -4373,13 +4339,6 @@ status_t SurfaceFlinger::setTransactionState(
         const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) {
     ATRACE_CALL();
 
-    // Check for incoming buffer updates and increment the pending buffer count.
-    for (const auto& state : states) {
-        if (state.state.hasBufferChanges() && (state.state.surface)) {
-            mBufferCountTracker.increment(state.state.surface->localBinder());
-        }
-    }
-
     uint32_t permissions =
             callingThreadHasUnscopedSurfaceFlingerAccess() ? Permission::ACCESS_SURFACE_FLINGER : 0;
     // Avoid checking for rotation permissions if the caller already has ACCESS_SURFACE_FLINGER
@@ -4412,6 +4371,11 @@ status_t SurfaceFlinger::setTransactionState(
                            permissions,        hasListenerCallbacks,
                            listenerCallbacks,  originPid,
                            originUid,          transactionId};
+
+    // Check for incoming buffer updates and increment the pending buffer count.
+    state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+        mBufferCountTracker.increment(state.surface->localBinder());
+    });
     queueTransaction(state);
 
     // Check the pending state to make sure the transaction is synchronous.
@@ -4790,11 +4754,6 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                                             s.barrierFrameNumber);
         // We don't trigger a traversal here because if no other state is
         // changed, we don't want this to cause any more work
-    }
-    if (what & layer_state_t::eReparentChildren) {
-        if (layer->reparentChildren(s.reparentSurfaceControl->getHandle())) {
-            flags |= eTransactionNeeded|eTraversalNeeded;
-        }
     }
     if (what & layer_state_t::eTransformChanged) {
         if (layer->setTransform(s.transform)) flags |= eTraversalNeeded;
@@ -7274,11 +7233,8 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     const status_t bufferStatus = buffer->initCheck();
     LOG_ALWAYS_FATAL_IF(bufferStatus != OK, "captureScreenCommon: Buffer failed to allocate: %d",
                         bufferStatus);
-    getRenderEngine().cacheExternalTextureBuffer(buffer);
-    status_t result = captureScreenCommon(std::move(renderAreaFuture), traverseLayers, buffer,
-                                          false /* regionSampling */, grayscale, captureListener);
-    getRenderEngine().unbindExternalTextureBuffer(buffer->getId());
-    return result;
+    return captureScreenCommon(std::move(renderAreaFuture), traverseLayers, buffer,
+                               false /* regionSampling */, grayscale, captureListener);
 }
 
 status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
@@ -7317,6 +7273,15 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
             result = renderScreenImplLocked(*renderArea, traverseLayers, buffer, forSystem,
                                             regionSampling, grayscale, captureResults);
         });
+
+        // TODO(b/180767535): Remove this once we optimize buffer lifecycle for RenderEngine
+        // Only do this when we're not doing region sampling, to allow the region sampling thread to
+        // manage buffer lifecycle itself.
+        if (!regionSampling &&
+            getRenderEngine().getRenderEngineType() ==
+                    renderengine::RenderEngine::RenderEngineType::SKIA_GL_THREADED) {
+            getRenderEngine().unbindExternalTextureBuffer(buffer->getId());
+        }
 
         captureResults.result = result;
         captureListener->onScreenCaptureCompleted(captureResults);
@@ -7705,7 +7670,7 @@ wp<Layer> SurfaceFlinger::fromHandle(const sp<IBinder>& handle) {
     return fromHandleLocked(handle);
 }
 
-wp<Layer> SurfaceFlinger::fromHandleLocked(const sp<IBinder>& handle) {
+wp<Layer> SurfaceFlinger::fromHandleLocked(const sp<IBinder>& handle) const {
     BBinder* b = nullptr;
     if (handle) {
         b = handle->localBinder();
@@ -7726,6 +7691,7 @@ void SurfaceFlinger::onLayerFirstRef(Layer* layer) {
 }
 
 void SurfaceFlinger::onLayerDestroyed(Layer* layer) {
+    mScheduler->deregisterLayer(layer);
     mNumLayers--;
     removeFromOffscreenLayers(layer);
 }
@@ -7948,6 +7914,15 @@ status_t SurfaceFlinger::getExtraBufferCount(int* extraBuffers) const {
 
     *extraBuffers = calculateExtraBufferCount(maxSupportedRefreshRate, presentLatency);
     return NO_ERROR;
+}
+
+void SurfaceFlinger::TransactionState::traverseStatesWithBuffers(
+        std::function<void(const layer_state_t&)> visitor) {
+    for (const auto& state : states) {
+        if (state.state.hasBufferChanges() && (state.state.surface)) {
+            visitor(state.state);
+        }
+    }
 }
 
 void SurfaceFlinger::setContentFps(uint32_t contentFps) {
