@@ -105,11 +105,6 @@ class LayerExtnIntf;
 
 using composer::LayerExtnIntf;
 
-namespace composer {
-class FrameExtnIntf;
-}
-using composer::FrameExtnIntf;
-
 namespace android {
 
 class Client;
@@ -199,6 +194,23 @@ struct SurfaceFlingerBE {
     // use to differentiate callbacks from different hardware composer
     // instances. Each hardware composer instance gets a different sequence id.
     int32_t mComposerSequenceId = 0;
+};
+
+class DolphinWrapper {
+public:
+    DolphinWrapper() { init(); }
+    ~DolphinWrapper();
+    bool init();
+
+    bool (*dolphinInit)() = nullptr;
+    void (*dolphinSetVsyncPeriod)(nsecs_t vsyncPeriod) = nullptr;
+    void (*dolphinTrackBufferIncrement)(const char* name, int counter) = nullptr;
+    void (*dolphinTrackBufferDecrement)(const char* name, int counter) = nullptr;
+    void (*dolphinTrackVsyncSignal)(nsecs_t vsyncTime, nsecs_t targetWakeupTime,
+                                 nsecs_t readyTime) = nullptr;
+
+private:
+    void *mDolphinHandle = nullptr;
 };
 
 class SmomoWrapper {
@@ -498,6 +510,11 @@ private:
             auto it = mCounterByLayerHandle.find(layerHandle);
             if (it != mCounterByLayerHandle.end()) {
                 auto [name, pendingBuffers] = it->second;
+                if (mDolphinWrapper.dolphinTrackBufferIncrement) {
+                    mLock.unlock();
+                    mDolphinWrapper.dolphinTrackBufferIncrement(name.c_str(),
+                        (*pendingBuffers) + 1);
+                }
                 int32_t count = ++(*pendingBuffers);
                 ATRACE_INT(name.c_str(), count);
             } else {
@@ -519,6 +536,7 @@ private:
         std::mutex mLock;
         std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
                 mCounterByLayerHandle GUARDED_BY(mLock);
+        DolphinWrapper mDolphinWrapper;
     };
 
     struct ActiveModeInfo {
@@ -1292,7 +1310,6 @@ private:
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
     mutable Mutex mVsyncLock;
-    mutable Mutex mDolphinStateLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     std::vector<std::shared_ptr<CountDownLatch>> mTransactionCommittedSignals;
@@ -1576,31 +1593,16 @@ private:
     LayerExtWrapper mLayerExt;
 
 public:
-    nsecs_t mRefreshTimeStamp = -1;
     nsecs_t mVsyncPeriod = -1;
-    std::string mNameLayerMax;
-    int mMaxQueuedFrames = -1;
-    int mNumIdle = -1;
+    DolphinWrapper mDolphinWrapper;
 
 private:
     bool mEarlyWakeUpEnabled = false;
     bool mDynamicSfIdleEnabled = false;
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
-    bool mDolphinFuncsEnabled = false;
     bool mSmomoContentFpsEnabled = false;
-    void *mDolphinHandle = nullptr;
-    bool (*mDolphinInit)() = nullptr;
-    bool (*mDolphinMonitor)(int number, nsecs_t vsyncPeriod) = nullptr;
-    void (*mDolphinScaling)(int numIdle, int maxQueuedFrames) = nullptr;
-    void (*mDolphinRefresh)() = nullptr;
-    void (*mDolphinDequeueBuffer)(const char *name) = nullptr;
-    void (*mDolphinQueueBuffer)(const char *name) = nullptr;
 
-    FrameExtnIntf* mFrameExtn = nullptr;
-    void *mFrameExtnLibHandle = nullptr;
-    bool (*mCreateFrameExtnFunc)(FrameExtnIntf **interface) = nullptr;
-    bool (*mDestroyFrameExtnFunc)(FrameExtnIntf *interface) = nullptr;
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;

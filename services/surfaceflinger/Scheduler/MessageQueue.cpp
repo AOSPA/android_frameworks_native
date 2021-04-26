@@ -108,6 +108,10 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
         mVsync.lastCallbackTime = std::chrono::nanoseconds(vsyncTime);
         mVsync.mScheduled = false;
     }
+
+    if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
+        mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
+    }
     mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
                                          {targetWakeupTime, readyTime, vsyncTime}),
                                  vsyncTime);

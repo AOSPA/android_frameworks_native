@@ -147,7 +147,6 @@ private:
     // a buffer to correlate the buffer with the vsync id. Can only be accessed
     // with the SF state lock held.
     FrameTimelineInfo mFrameTimelineInfo;
-    nsecs_t mLastTimeStamp = -1;
 };
 
 } // namespace android
