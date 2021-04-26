@@ -931,6 +931,7 @@ private:
             std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
+    void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
     bool frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) const;
@@ -1243,6 +1244,8 @@ private:
 
     void setupEarlyWakeUpFeature();
 
+    void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
+
     static mat4 calculateColorMatrix(float saturation);
 
     void updateColorMatrixLocked();
@@ -1386,6 +1389,7 @@ private:
     bool mBlursAreExpensive = false;
     bool mUseAdvanceSfOffset = false;
     bool mUseFbScaling = false;
+    bool mAsyncVdsCreationSupported = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
