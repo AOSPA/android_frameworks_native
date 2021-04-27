@@ -1636,7 +1636,7 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
 
 status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
     nsecs_t sfOffset = mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
-    if (!mUseAdvanceSfOffset && (sfOffset >= 0)) {
+    if (!mUseAdvanceSfOffset || (sfOffset >= 0)) {
         return OK;
     }
 
