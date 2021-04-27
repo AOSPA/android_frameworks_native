@@ -122,7 +122,6 @@ protected:
 
     void addChild(sp<Layer> layer, sp<Layer> child);
     void removeChild(sp<Layer> layer, sp<Layer> child);
-    void reparentChildren(sp<Layer> layer, sp<Layer> child);
     void commitTransaction();
 
     TestableSurfaceFlinger mFlinger;
@@ -150,10 +149,6 @@ void SetFrameRateTest::addChild(sp<Layer> layer, sp<Layer> child) {
 
 void SetFrameRateTest::removeChild(sp<Layer> layer, sp<Layer> child) {
     layer.get()->removeChild(child.get());
-}
-
-void SetFrameRateTest::reparentChildren(sp<Layer> parent, sp<Layer> newParent) {
-    parent.get()->reparentChildren(newParent);
 }
 
 void SetFrameRateTest::commitTransaction() {
@@ -433,41 +428,6 @@ TEST_P(SetFrameRateTest, SetAndGetParentNotInTree) {
     EXPECT_EQ(FRAME_RATE_NO_VOTE, child2_1->getFrameRateForLayerTree());
 }
 
-TEST_P(SetFrameRateTest, SetAndGetReparentChildren) {
-    EXPECT_CALL(*mMessageQueue, invalidate()).Times(1);
-
-    const auto& layerFactory = GetParam();
-
-    auto parent = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
-    auto parent2 = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
-    auto child1 = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
-    auto child2 = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
-
-    addChild(parent, child1);
-    addChild(child1, child2);
-
-    child2->setFrameRate(FRAME_RATE_VOTE1);
-    commitTransaction();
-    EXPECT_EQ(FRAME_RATE_TREE, parent->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, parent2->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_TREE, child1->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_VOTE1, child2->getFrameRateForLayerTree());
-
-    reparentChildren(parent, parent2);
-    commitTransaction();
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, parent->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_TREE, parent2->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_TREE, child1->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_VOTE1, child2->getFrameRateForLayerTree());
-
-    child2->setFrameRate(FRAME_RATE_NO_VOTE);
-    commitTransaction();
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, parent->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, parent2->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, child1->getFrameRateForLayerTree());
-    EXPECT_EQ(FRAME_RATE_NO_VOTE, child2->getFrameRateForLayerTree());
-}
-
 INSTANTIATE_TEST_SUITE_P(PerLayerType, SetFrameRateTest,
                          testing::Values(std::make_shared<BufferQueueLayerFactory>(),
                                          std::make_shared<BufferStateLayerFactory>(),
@@ -522,6 +482,13 @@ TEST_P(SetFrameRateTest, SetOnParentActivatesTree) {
 
     parent->setFrameRate(FRAME_RATE_VOTE1);
     commitTransaction();
+
+    mFlinger.mutableScheduler()
+            .mutableLayerHistory()
+            ->record(parent.get(), 0, 0, LayerHistory::LayerUpdateType::Buffer);
+    mFlinger.mutableScheduler()
+            .mutableLayerHistory()
+            ->record(child.get(), 0, 0, LayerHistory::LayerUpdateType::Buffer);
 
     const auto layerHistorySummary =
             mFlinger.mutableScheduler().mutableLayerHistory()->summarize(0);

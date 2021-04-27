@@ -56,6 +56,12 @@
 #include "skia/debug/SkiaCapture.h"
 #include "system/graphics-base-v1.0.h"
 
+namespace {
+// Debugging settings
+static const bool kPrintLayerSettings = false;
+static const bool kFlushAfterEveryLayer = false;
+} // namespace
+
 bool checkGlError(const char* op, int lineNumber);
 
 namespace android {
@@ -285,6 +291,10 @@ void SkiaGLRenderEngine::assertShadersCompiled(int numShaders) {
                         numShaders, cached);
 }
 
+int SkiaGLRenderEngine::reportShadersCompiled() {
+    return mSkSLCacheMonitor.shadersCachedSinceLastCall();
+}
+
 SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
                                        EGLContext ctxt, EGLSurface placeholder,
                                        EGLContext protectedContext, EGLSurface protectedPlaceholder)
@@ -500,7 +510,7 @@ void SkiaGLRenderEngine::cacheExternalTextureBuffer(const sp<GraphicBuffer>& buf
         std::shared_ptr<AutoBackendTexture::LocalRef> imageTextureRef =
                 std::make_shared<AutoBackendTexture::LocalRef>();
         imageTextureRef->setTexture(
-                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer()));
+                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer(), false));
         cache.insert({buffer->getId(), imageTextureRef});
     }
     // restore the original state of the protected context if necessary
@@ -654,7 +664,7 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
         ATRACE_NAME("Cache miss");
         surfaceTextureRef = std::make_shared<AutoBackendTexture::LocalRef>();
         surfaceTextureRef->setTexture(
-                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer()));
+                new AutoBackendTexture(grContext.get(), buffer->toAHardwareBuffer(), true));
         if (useFramebufferCache) {
             ALOGD("Adding to cache");
             cache.insert({buffer->getId(), surfaceTextureRef});
@@ -734,6 +744,17 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
 
     for (const auto& layer : layers) {
         ATRACE_NAME("DrawLayer");
+
+        if (kPrintLayerSettings) {
+            std::stringstream ls;
+            PrintTo(*layer, &ls);
+            auto debugs = ls.str();
+            int pos = 0;
+            while (pos < debugs.size()) {
+                ALOGD("cache_debug %s", debugs.substr(pos, 1000).c_str());
+                pos += 1000;
+            }
+        }
 
         sk_sp<SkImage> blurInput;
         if (blurCompositionLayer == layer) {
@@ -861,8 +882,9 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
                 imageTextureRef = iter->second;
             } else {
                 imageTextureRef = std::make_shared<AutoBackendTexture::LocalRef>();
-                imageTextureRef->setTexture(
-                        new AutoBackendTexture(grContext.get(), item.buffer->toAHardwareBuffer()));
+                imageTextureRef->setTexture(new AutoBackendTexture(grContext.get(),
+                                                                   item.buffer->toAHardwareBuffer(),
+                                                                   false));
                 cache.insert({item.buffer->getId(), imageTextureRef});
             }
 
@@ -954,6 +976,10 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
             canvas->drawRRect(getRoundedRect(layer), paint);
         } else {
             canvas->drawRect(bounds, paint);
+        }
+        if (kFlushAfterEveryLayer) {
+            ATRACE_NAME("flush surface");
+            activeSurface->flush();
         }
     }
     surfaceAutoSaveRestore.restore();

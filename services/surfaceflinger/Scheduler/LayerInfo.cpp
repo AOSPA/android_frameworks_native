@@ -37,17 +37,20 @@ namespace android::scheduler {
 const RefreshRateConfigs* LayerInfo::sRefreshRateConfigs = nullptr;
 bool LayerInfo::sTraceEnabled = false;
 
-LayerInfo::LayerInfo(const std::string& name, LayerHistory::LayerVoteType defaultVote)
+LayerInfo::LayerInfo(const std::string& name, uid_t ownerUid,
+                     LayerHistory::LayerVoteType defaultVote)
       : mName(name),
+        mOwnerUid(ownerUid),
         mDefaultVote(defaultVote),
         mLayerVote({defaultVote, Fps(0.0f)}),
         mRefreshRateHistory(name) {}
 
 void LayerInfo::setLastPresentTime(nsecs_t lastPresentTime, nsecs_t now, LayerUpdateType updateType,
-                                   bool pendingModeChange) {
+                                   bool pendingModeChange, LayerProps props) {
     lastPresentTime = std::max(lastPresentTime, static_cast<nsecs_t>(0));
 
     mLastUpdatedTime = std::max(lastPresentTime, now);
+    mLayerProps = props;
     switch (updateType) {
         case LayerUpdateType::AnimationTX:
             mLastAnimationTime = std::max(lastPresentTime, now);
@@ -232,6 +235,8 @@ LayerInfo::LayerVote LayerInfo::getRefreshRateVote(nsecs_t now) {
     if (!isFrequent(now)) {
         ALOGV("%s is infrequent", mName.c_str());
         mLastRefreshRate.animatingOrInfrequent = true;
+        // Infrequent layers vote for mininal refresh rate for
+        // battery saving purposes and also to prevent b/135718869.
         return {LayerHistory::LayerVoteType::Min, Fps(0.0f)};
     }
 
