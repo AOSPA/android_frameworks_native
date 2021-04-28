@@ -690,6 +690,9 @@ Error Composer::setClientTarget_3_1(Display display, int32_t slot, int acquireFe
 Error Composer::setLayerFlag(Display display, Layer layer,
         IQtiComposerClient::LayerFlag layerFlag)
 {
+    if (mClient_3_1 == nullptr) {
+      return Error::NONE;
+    }
     mWriter.selectDisplay(display);
     mWriter.selectLayer(layer);
     mWriter.setLayerFlag(static_cast<uint32_t>(layerFlag));
