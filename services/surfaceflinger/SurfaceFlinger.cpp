@@ -2852,7 +2852,16 @@ void SurfaceFlinger::postComposition() {
 
         mSmoMo->UpdateSmomoState(layers, fps);
         int content_fps = mSmoMo->GetFrameRate();
-        setContentFps((content_fps > 0) ? content_fps : fps);
+
+        bool is_valid_content_fps = false;
+        if ((content_fps > 0) && (mLayersWithQueuedFrames.size() == 1)) {
+            is_valid_content_fps = mSmomoContentFpsEnabled;
+            mSmomoContentFpsEnabled = true;
+        } else {
+            mSmomoContentFpsEnabled = false;
+        }
+
+        setContentFps(is_valid_content_fps ? content_fps : fps);
     }
 
 
