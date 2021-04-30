@@ -2033,6 +2033,12 @@ void SurfaceFlinger::setVsyncEnabled(bool enabled) {
             display && display->isPoweredOn()) {
             getHwComposer().setVsyncEnabled(display->getPhysicalId(), mHWCVsyncPendingState);
         }
+
+        if (mNextVsyncSource) {
+            mActiveVsyncSource = mNextVsyncSource;
+            mNextVsyncSource = NULL;
+        }
+
     }));
 }
 
