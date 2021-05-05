@@ -38,6 +38,9 @@
 #include "FrameTracer/FrameTracer.h"
 #include "TimeStats/TimeStats.h"
 
+#include "smomo_interface.h"
+#include "layer_extn_intf.h"
+
 namespace android {
 
 using PresentState = frametimeline::SurfaceFrame::PresentState;
@@ -270,6 +273,22 @@ void BufferStateLayer::pushPendingState() {
 }
 */
 
+bool BufferStateLayer::isBufferDue(nsecs_t expectedPresentTime) const {
+    bool isDue = true;
+
+    if (mFlinger->mSmoMo) {
+        smomo::SmomoBufferStats bufferStats;
+        bufferStats.id = getSequence();
+        bufferStats.queued_frames = mPendingBufferTransactions;
+        bufferStats.auto_timestamp = mCurrentState.isAutoTimestamp;
+        bufferStats.timestamp = mCurrentState.desiredPresentTime;
+        bufferStats.dequeue_latency = 0;
+        isDue = mFlinger->mSmoMo->ShouldPresentNow(bufferStats, expectedPresentTime);
+    }
+
+    return isDue;
+}
+
 bool BufferStateLayer::applyPendingStates(Layer::State* stateToCommit) {
     mCurrentStateModified = mCurrentState.modified;
     bool stateUpdateAvailable = Layer::applyPendingStates(stateToCommit);
@@ -428,6 +447,17 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
         mFlinger->mFrameTracer->traceTimestamp(layerId, bufferId, frameNumber, postTime,
                                                FrameTracer::FrameEvent::QUEUE);
     }
+
+    if (mFlinger->mSmoMo) {
+        smomo::SmomoBufferStats bufferStats;
+        bufferStats.id = getSequence();
+        bufferStats.queued_frames = mPendingBufferTransactions;
+        bufferStats.auto_timestamp = mCurrentState.isAutoTimestamp;
+        bufferStats.timestamp = mCurrentState.desiredPresentTime;
+        bufferStats.dequeue_latency = 0;
+        mFlinger->mSmoMo->CollectLayerStats(bufferStats);
+    }
+
     return true;
 }
 

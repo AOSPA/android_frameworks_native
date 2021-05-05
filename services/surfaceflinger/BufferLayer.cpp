@@ -56,6 +56,8 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "layer_extn_intf.h"
+
 namespace android {
 
 static constexpr float defaultMaxMasteringLuminance = 1000.0;
@@ -71,6 +73,10 @@ BufferLayer::BufferLayer(const LayerCreationArgs& args)
 
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
+
+    if (mFlinger->mLayerExt) {
+        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
+    }
 }
 
 BufferLayer::~BufferLayer() {
