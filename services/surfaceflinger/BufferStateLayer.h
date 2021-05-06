@@ -45,7 +45,7 @@ public:
     void finalizeFrameEventHistory(const std::shared_ptr<FenceTime>& glDoneFence,
                                    const CompositorTiming& compositorTiming) override;
 
-    bool isBufferDue(nsecs_t /*expectedPresentTime*/) const override { return true; }
+    bool isBufferDue(nsecs_t expectedPresentTime) const override;
 
     uint32_t doTransactionResize(uint32_t flags, Layer::State* /*stateToCommit*/) override {
         return flags;

@@ -37,7 +37,6 @@
 
 #include "frame_extn_intf.h"
 #include "smomo_interface.h"
-#include "layer_extn_intf.h"
 
 namespace android {
 using PresentState = frametimeline::SurfaceFrame::PresentState;
@@ -562,10 +561,6 @@ void BufferQueueLayer::onFirstRef() {
     mConsumer->setName(String8(mName.data(), mName.size()));
 
     mProducer->setMaxDequeuedBufferCount(2);
-
-    if (mFlinger->mLayerExt) {
-        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
-    }
 }
 
 status_t BufferQueueLayer::setDefaultBufferProperties(uint32_t w, uint32_t h, PixelFormat format) {
