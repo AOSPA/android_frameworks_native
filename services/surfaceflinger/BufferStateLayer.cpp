@@ -74,14 +74,8 @@ BufferStateLayer::~BufferStateLayer() {
     // original layer and the clone should be removed at the same time so there shouldn't be any
     // issue with the clone layer trying to use the texture.
     if (mBufferInfo.mBuffer != nullptr && !isClone()) {
-        // Ensure that mBuffer is uncached from RenderEngine here, as
-        // RenderEngine may have been using the buffer as an external texture
-        // after the client uncached the buffer.
-        auto& engine(mFlinger->getRenderEngine());
-        const uint64_t bufferId = mBufferInfo.mBuffer->getId();
-        engine.unbindExternalTextureBuffer(bufferId);
-        callReleaseBufferCallback(mDrawingState.releaseBufferListener, mBufferInfo.mBuffer,
-                                  mBufferInfo.mFence);
+        callReleaseBufferCallback(mDrawingState.releaseBufferListener,
+                                  mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFence);
     }
 }
 
@@ -289,17 +283,8 @@ bool BufferStateLayer::isBufferDue(nsecs_t expectedPresentTime) const {
     return isDue;
 }
 
-bool BufferStateLayer::applyPendingStates(Layer::State* stateToCommit) {
-    mCurrentStateModified = mCurrentState.modified;
-    bool stateUpdateAvailable = Layer::applyPendingStates(stateToCommit);
-    mCurrentStateModified = stateUpdateAvailable && mCurrentStateModified;
-    mCurrentState.modified = false;
-    return stateUpdateAvailable;
-}
-
-// Crop that applies to the window
-Rect BufferStateLayer::getCrop(const Layer::State& /*s*/) const {
-    return Rect::INVALID_RECT;
+Rect BufferStateLayer::getCrop(const Layer::State& s) const {
+    return s.crop;
 }
 
 bool BufferStateLayer::setTransform(uint32_t transform) {
@@ -320,57 +305,53 @@ bool BufferStateLayer::setTransformToDisplayInverse(bool transformToDisplayInver
 }
 
 bool BufferStateLayer::setCrop(const Rect& crop) {
-    Rect c = crop;
-    if (c.left < 0) {
-        c.left = 0;
-    }
-    if (c.top < 0) {
-        c.top = 0;
-    }
-    // If the width and/or height are < 0, make it [0, 0, -1, -1] so the equality comparision below
-    // treats all invalid rectangles the same.
-    if (!c.isValid()) {
-        c.makeInvalid();
-    }
+    if (mCurrentState.crop == crop) return false;
+    mCurrentState.sequence++;
+    mCurrentState.crop = crop;
 
-    if (mCurrentState.crop == c) return false;
-    mCurrentState.crop = c;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
-bool BufferStateLayer::setFrame(const Rect& frame) {
-    int x = frame.left;
-    int y = frame.top;
-    int w = frame.getWidth();
-    int h = frame.getHeight();
-
-    if (x < 0) {
-        x = 0;
-        w = frame.right;
-    }
-
-    if (y < 0) {
-        y = 0;
-        h = frame.bottom;
-    }
-
-    if (mCurrentState.transform.tx() == x && mCurrentState.transform.ty() == y &&
-        mCurrentState.width == w && mCurrentState.height == h) {
+bool BufferStateLayer::setMatrix(const layer_state_t::matrix22_t& matrix,
+                                 bool allowNonRectPreservingTransforms) {
+    if (mCurrentState.transform.dsdx() == matrix.dsdx &&
+        mCurrentState.transform.dtdy() == matrix.dtdy &&
+        mCurrentState.transform.dtdx() == matrix.dtdx &&
+        mCurrentState.transform.dsdy() == matrix.dsdy) {
         return false;
     }
 
-    if (!frame.isValid()) {
-        x = y = w = h = 0;
+    ui::Transform t;
+    t.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
+
+    if (!allowNonRectPreservingTransforms && !t.preserveRects()) {
+        ALOGW("Attempt to set rotation matrix without permission ACCESS_SURFACE_FLINGER nor "
+              "ROTATE_SURFACE_FLINGER ignored");
+        return false;
     }
-    mCurrentState.transform.set(x, y);
-    mCurrentState.width = w;
-    mCurrentState.height = h;
+
+    mCurrentState.transform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
 
     mCurrentState.sequence++;
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
+
+    return true;
+}
+
+bool BufferStateLayer::setPosition(float x, float y) {
+    if (mCurrentState.transform.tx() == x && mCurrentState.transform.ty() == y) {
+        return false;
+    }
+
+    mCurrentState.transform.set(x, y);
+
+    mCurrentState.sequence++;
+    mCurrentState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+
     return true;
 }
 
@@ -387,8 +368,9 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
     return true;
 }
 
-bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& acquireFence,
-                                 nsecs_t postTime, nsecs_t desiredPresentTime, bool isAutoTimestamp,
+bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTexture>& buffer,
+                                 const sp<Fence>& acquireFence, nsecs_t postTime,
+                                 nsecs_t desiredPresentTime, bool isAutoTimestamp,
                                  const client_cache_t& clientCacheId, uint64_t frameNumber,
                                  std::optional<nsecs_t> dequeueTime, const FrameTimelineInfo& info,
                                  const sp<ITransactionCompletedListener>& releaseBufferListener) {
@@ -396,12 +378,14 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
 
     if (mCurrentState.buffer) {
         mReleasePreviousBuffer = true;
-        if (mCurrentState.buffer != mDrawingState.buffer) {
+        if (!mDrawingState.buffer ||
+            mCurrentState.buffer->getBuffer() != mDrawingState.buffer->getBuffer()) {
             // If mCurrentState has a buffer, and we are about to update again
             // before swapping to drawing state, then the first buffer will be
             // dropped and we should decrement the pending buffer count and
             // call any release buffer callbacks if set.
-            callReleaseBufferCallback(mCurrentState.releaseBufferListener, mCurrentState.buffer,
+            callReleaseBufferCallback(mCurrentState.releaseBufferListener,
+                                      mCurrentState.buffer->getBuffer(),
                                       mCurrentState.acquireFence);
             decrementPendingBufferCount();
             if (mCurrentState.bufferSurfaceFrameTX != nullptr) {
@@ -439,14 +423,17 @@ bool BufferStateLayer::setBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence
 
     setFrameTimelineVsyncForBufferTransaction(info, postTime);
 
-    if (dequeueTime && *dequeueTime != 0) {
-        const uint64_t bufferId = buffer->getId();
+    if (buffer && dequeueTime && *dequeueTime != 0) {
+        const uint64_t bufferId = buffer->getBuffer()->getId();
         mFlinger->mFrameTracer->traceNewLayer(layerId, getName().c_str());
         mFlinger->mFrameTracer->traceTimestamp(layerId, bufferId, frameNumber, *dequeueTime,
                                                FrameTracer::FrameEvent::DEQUEUE);
         mFlinger->mFrameTracer->traceTimestamp(layerId, bufferId, frameNumber, postTime,
                                                FrameTracer::FrameEvent::QUEUE);
     }
+
+    mCurrentState.width = mCurrentState.buffer->getBuffer()->getWidth();
+    mCurrentState.height = mCurrentState.buffer->getBuffer()->getHeight();
 
     if (mFlinger->mSmoMo) {
         smomo::SmomoBufferStats bufferStats;
@@ -709,7 +696,7 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
     }
 
     const int32_t layerId = getSequence();
-    const uint64_t bufferId = mDrawingState.buffer->getId();
+    const uint64_t bufferId = mDrawingState.buffer->getBuffer()->getId();
     const uint64_t frameNumber = mDrawingState.frameNumber;
     const auto acquireFence = std::make_shared<FenceTime>(mDrawingState.acquireFence);
     mFlinger->mTimeStats->setAcquireFence(layerId, frameNumber, acquireFence);
@@ -731,6 +718,11 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
                                           latchTime);
     }
 
+    std::deque<sp<CallbackHandle>> remainingHandles;
+    mFlinger->getTransactionCallbackInvoker()
+            .finalizeOnCommitCallbackHandles(mDrawingState.callbackHandles, remainingHandles);
+    mDrawingState.callbackHandles = remainingHandles;
+
     mCurrentStateModified = false;
 
     return NO_ERROR;
@@ -743,7 +735,7 @@ status_t BufferStateLayer::updateActiveBuffer() {
         return BAD_VALUE;
     }
 
-    if (s.buffer != mBufferInfo.mBuffer) {
+    if (!mBufferInfo.mBuffer || s.buffer->getBuffer() != mBufferInfo.mBuffer->getBuffer()) {
         decrementPendingBufferCount();
     }
 
@@ -847,7 +839,7 @@ void BufferStateLayer::gatherBufferInfo() {
     mBufferInfo.mFence = s.acquireFence;
     mBufferInfo.mTransform = s.bufferTransform;
     mBufferInfo.mDataspace = translateDataspace(s.dataspace);
-    mBufferInfo.mCrop = computeCrop(s);
+    mBufferInfo.mCrop = computeBufferCrop(s);
     mBufferInfo.mScaleMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
     mBufferInfo.mSurfaceDamage = s.surfaceDamageRegion;
     mBufferInfo.mHdrMetadata = s.hdrMetadata;
@@ -860,27 +852,11 @@ uint32_t BufferStateLayer::getEffectiveScalingMode() const {
    return NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
 }
 
-Rect BufferStateLayer::computeCrop(const State& s) {
-    if (s.crop.isEmpty() && s.buffer) {
-        return s.buffer->getBounds();
-    } else if (s.buffer) {
-        Rect crop = s.crop;
-        crop.left = std::max(crop.left, 0);
-        crop.top = std::max(crop.top, 0);
-        uint32_t bufferWidth = s.buffer->getWidth();
-        uint32_t bufferHeight = s.buffer->getHeight();
-        if (bufferHeight <= std::numeric_limits<int32_t>::max() &&
-            bufferWidth <= std::numeric_limits<int32_t>::max()) {
-            crop.right = std::min(crop.right, static_cast<int32_t>(bufferWidth));
-            crop.bottom = std::min(crop.bottom, static_cast<int32_t>(bufferHeight));
-        }
-        if (!crop.isValid()) {
-            // Crop rect is out of bounds, return whole buffer
-            return s.buffer->getBounds();
-        }
-        return crop;
+Rect BufferStateLayer::computeBufferCrop(const State& s) {
+    if (s.buffer) {
+        return s.buffer->getBuffer()->getBounds();
     }
-    return s.crop;
+    return Rect::INVALID_RECT;
 }
 
 sp<Layer> BufferStateLayer::createClone() {
@@ -892,41 +868,14 @@ sp<Layer> BufferStateLayer::createClone() {
     return layer;
 }
 
-Layer::RoundedCornerState BufferStateLayer::getRoundedCornerState() const {
-    const auto& p = mDrawingParent.promote();
-    if (p != nullptr) {
-        RoundedCornerState parentState = p->getRoundedCornerState();
-        if (parentState.radius > 0) {
-            ui::Transform t = getActiveTransform(getDrawingState());
-            t = t.inverse();
-            parentState.cropRect = t.transform(parentState.cropRect);
-            // The rounded corners shader only accepts 1 corner radius for performance reasons,
-            // but a transform matrix can define horizontal and vertical scales.
-            // Let's take the average between both of them and pass into the shader, practically we
-            // never do this type of transformation on windows anyway.
-            parentState.radius *= (t[0][0] + t[1][1]) / 2.0f;
-            return parentState;
-        }
-    }
-    const float radius = getDrawingState().cornerRadius;
-    const State& s(getDrawingState());
-    if (radius <= 0 || (getActiveWidth(s) == UINT32_MAX && getActiveHeight(s) == UINT32_MAX))
-        return RoundedCornerState();
-    return RoundedCornerState(FloatRect(static_cast<float>(s.transform.tx()),
-                                        static_cast<float>(s.transform.ty()),
-                                        static_cast<float>(s.transform.tx() + s.width),
-                                        static_cast<float>(s.transform.ty() + s.height)),
-                              radius);
-}
-
 bool BufferStateLayer::bufferNeedsFiltering() const {
     const State& s(getDrawingState());
     if (!s.buffer) {
         return false;
     }
 
-    uint32_t bufferWidth = s.buffer->width;
-    uint32_t bufferHeight = s.buffer->height;
+    uint32_t bufferWidth = s.buffer->getBuffer()->width;
+    uint32_t bufferHeight = s.buffer->getBuffer()->height;
 
     // Undo any transformations on the buffer and return the result.
     if (s.bufferTransform & ui::Transform::ROT_90) {
@@ -953,14 +902,16 @@ void BufferStateLayer::tracePendingBufferCount(int32_t pendingBuffers) {
     ATRACE_INT(mBlastTransactionName.c_str(), pendingBuffers);
 }
 
-void BufferStateLayer::bufferMayChange(sp<GraphicBuffer>& newBuffer) {
-    if (mDrawingState.buffer != nullptr && mDrawingState.buffer != mBufferInfo.mBuffer &&
-        newBuffer != mDrawingState.buffer) {
+void BufferStateLayer::bufferMayChange(const sp<GraphicBuffer>& newBuffer) {
+    if (mDrawingState.buffer != nullptr &&
+        (!mBufferInfo.mBuffer ||
+         mDrawingState.buffer->getBuffer() != mBufferInfo.mBuffer->getBuffer()) &&
+        newBuffer != mDrawingState.buffer->getBuffer()) {
         // If we are about to update mDrawingState.buffer but it has not yet latched
         // then we will drop a buffer and should decrement the pending buffer count and
         // call any release buffer callbacks if set.
-        callReleaseBufferCallback(mDrawingState.releaseBufferListener, mDrawingState.buffer,
-                                  mDrawingState.acquireFence);
+        callReleaseBufferCallback(mDrawingState.releaseBufferListener,
+                                  mDrawingState.buffer->getBuffer(), mDrawingState.acquireFence);
         decrementPendingBufferCount();
     }
 }

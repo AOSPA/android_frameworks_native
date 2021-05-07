@@ -22,9 +22,11 @@
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <gmock/gmock.h>
+#include <cstdint>
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #endif
+
 namespace android::compositionengine::mock {
 #ifdef QTI_UNIFIED_DRAW
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
@@ -43,7 +45,8 @@ public:
     MOCK_METHOD0(editState, impl::OutputLayerCompositionState&());
 
     MOCK_METHOD3(updateCompositionState, void(bool, bool, ui::Transform::RotationFlags));
-    MOCK_METHOD2(writeStateToHWC, void(bool, bool));
+
+    MOCK_METHOD5(writeStateToHWC, void(bool, bool, uint32_t, bool, bool));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD1(writeLayerFlagToHWC, void(IQtiComposerClient::LayerFlag));
 #endif

@@ -27,12 +27,44 @@ using namespace std::chrono_literals;
 
 namespace android::compositionengine::impl::planner {
 
+namespace {
+
+// True if the underlying layer stack is the same modulo state that would be expected to be
+// different like specific buffers, false otherwise.
+bool isSameStack(const std::vector<const LayerState*>& incomingLayers,
+                 const std::vector<CachedSet>& cachedSets) {
+    std::vector<const LayerState*> existingLayers;
+    for (auto& cachedSet : cachedSets) {
+        for (auto& layer : cachedSet.getConstituentLayers()) {
+            existingLayers.push_back(layer.getState());
+        }
+    }
+
+    if (incomingLayers.size() != existingLayers.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < incomingLayers.size(); i++) {
+        if (incomingLayers[i]->getDifferingFields(*(existingLayers[i])) != LayerStateField::None) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& layers,
                                        NonBufferHash hash, time_point now) {
     const size_t unflattenedDisplayCost = calculateDisplayCost(layers);
     mUnflattenedDisplayCost += unflattenedDisplayCost;
 
-    if (mCurrentGeometry != hash) {
+    // We invalidate the layer cache if:
+    // 1. We're not tracking any layers, or
+    // 2. The last seen hashed geometry changed between frames, or
+    // 3. A stricter equality check demonstrates that the layer stack really did change, since the
+    // hashed geometry does not guarantee uniqueness.
+    if (mCurrentGeometry != hash || (!mLayers.empty() && !isSameStack(layers, mLayers))) {
         resetActivities(hash, now);
         mFlattenedDisplayCost += unflattenedDisplayCost;
         return hash;
@@ -40,13 +72,17 @@ NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& lay
 
     ++mInitialLayerCounts[layers.size()];
 
-    if (mergeWithCachedSets(layers, now)) {
-        hash = mLayersHash;
-    }
+    // Only buildCachedSets if these layers are already stored in mLayers.
+    // Otherwise (i.e. mergeWithCachedSets returns false), the time has not
+    // changed, so buildCachedSets will never find any runs.
+    const bool alreadyHadCachedSets = mergeWithCachedSets(layers, now);
 
     ++mFinalLayerCounts[mLayers.size()];
 
-    buildCachedSets(now);
+    if (alreadyHadCachedSets) {
+        buildCachedSets(now);
+        hash = computeLayersHash();
+    }
 
     return hash;
 }
@@ -157,14 +193,17 @@ void Flattener::resetActivities(NonBufferHash hash, time_point now) {
     }
 }
 
-void Flattener::updateLayersHash() {
+NonBufferHash Flattener::computeLayersHash() const{
     size_t hash = 0;
     for (const auto& layer : mLayers) {
         android::hashCombineSingleHashed(hash, layer.getNonBufferHash());
     }
-    mLayersHash = hash;
+    return hash;
 }
 
+// Only called if the geometry matches the last frame. Return true if mLayers
+// was already populated with these layers, i.e. on the second and following
+// calls with the same geometry.
 bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers, time_point now) {
     std::vector<CachedSet> merged;
 
@@ -202,6 +241,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                 ALOGV("[%s] Found ready buffer", __func__);
                 size_t skipCount = mNewCachedSet->getLayerCount();
                 while (skipCount != 0) {
+                    auto* peekThroughLayer = mNewCachedSet->getHolePunchLayer();
                     const size_t layerCount = currentLayerIter->getLayerCount();
                     for (size_t i = 0; i < layerCount; ++i) {
                         OutputLayer::CompositionState& state =
@@ -214,6 +254,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                                 .displaySpace = mNewCachedSet->getOutputSpace(),
                                 .damageRegion = Region::INVALID_REGION,
                                 .visibleRegion = mNewCachedSet->getVisibleRegion(),
+                                .peekThroughLayer = peekThroughLayer,
                         };
                         ++incomingLayerIter;
                     }
@@ -237,6 +278,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
 
             // Skip the incoming layers corresponding to this valid current layer
             const size_t layerCount = currentLayerIter->getLayerCount();
+            auto* peekThroughLayer = currentLayerIter->getHolePunchLayer();
             for (size_t i = 0; i < layerCount; ++i) {
                 OutputLayer::CompositionState& state =
                         (*incomingLayerIter)->getOutputLayer()->editState();
@@ -248,6 +290,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                         .displaySpace = currentLayerIter->getOutputSpace(),
                         .damageRegion = Region(),
                         .visibleRegion = currentLayerIter->getVisibleRegion(),
+                        .peekThroughLayer = peekThroughLayer,
                 };
                 ++incomingLayerIter;
             }
@@ -272,7 +315,6 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
     }
 
     mLayers = std::move(merged);
-    updateLayersHash();
     return true;
 }
 
@@ -292,6 +334,11 @@ void Flattener::buildCachedSets(time_point now) {
 
     std::vector<Run> runs;
     bool isPartOfRun = false;
+
+    // Keep track of the layer that follows a run. It's possible that we will
+    // render it with a hole-punch.
+    const CachedSet* holePunchLayer = nullptr;
+
     for (auto currentSet = mLayers.cbegin(); currentSet != mLayers.cend(); ++currentSet) {
         if (now - currentSet->getLastUpdate() > kActiveLayerTimeout) {
             // Layer is inactive
@@ -306,10 +353,20 @@ void Flattener::buildCachedSets(time_point now) {
                     isPartOfRun = true;
                 }
             }
-        } else {
+        } else if (isPartOfRun) {
             // Runs must be at least 2 sets long or there's nothing to combine
-            if (isPartOfRun && runs.back().start->getLayerCount() == runs.back().length) {
+            if (runs.back().start->getLayerCount() == runs.back().length) {
                 runs.pop_back();
+            } else {
+                // The prior run contained at least two sets. Currently, we'll
+                // only possibly merge a single run, so only keep track of a
+                // holePunchLayer if this is the first run.
+                if (runs.size() == 1) {
+                    holePunchLayer = &(*currentSet);
+                }
+
+                // TODO(b/185114532: Break out of the loop? We may find more runs, but we
+                // won't do anything with them.
             }
 
             isPartOfRun = false;
@@ -333,6 +390,13 @@ void Flattener::buildCachedSets(time_point now) {
     while (mNewCachedSet->getLayerCount() < runs[0].length) {
         ++currentSet;
         mNewCachedSet->append(*currentSet);
+    }
+
+    if (mEnableHolePunch && holePunchLayer && holePunchLayer->requiresHolePunch()) {
+        // Add the pip layer to mNewCachedSet, but in a special way - it should
+        // replace the buffer with a clear round rect.
+        mNewCachedSet->addHolePunchLayerIfFeasible(*holePunchLayer,
+                                                   runs[0].start == mLayers.cbegin());
     }
 
     // TODO(b/181192467): Actually compute new LayerState vector and corresponding hash for each run

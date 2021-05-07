@@ -60,10 +60,6 @@ cc_library_headers {
 // Currently, these are only on system android (not vendor, not host)
 // TODO(b/183654927) - move these into separate libraries
 libbinder_device_interface_sources = [
-    "AppOpsManager.cpp",
-    "IAppOpsCallback.cpp",
-    "IAppOpsService.cpp",
-
     "IPermissionController.cpp",
     "PermissionCache.cpp",
     "PermissionController.cpp",
@@ -160,6 +156,7 @@ cc_library {
         "-Werror",
         "-Wzero-as-null-pointer-constant",
         "-DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION",
+        "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
     ],
     product_variables: {
         binder32bit: {
@@ -192,6 +189,9 @@ cc_library {
         // Only check our headers
         "--header-filter=^.*frameworks/native/libs/binder/.*.h$",
     ],
+    tidy_checks: [
+        "-performance-no-int-to-ptr",
+    ],
     tidy_checks_as_errors: [
         // Explicitly list the checks that should not occur in this module.
         "abseil-*",
@@ -199,20 +199,9 @@ cc_library {
         "bugprone-*",
         "cert-*",
         "clang-analyzer-*",
-        "-clang-analyzer-core.CallAndMessage",
-        "-clang-analyzer-core.uninitialized.Assign",
-        "-clang-analyzer-unix.Malloc",
-        "-clang-analyzer-deadcode.DeadStores",
-        "-clang-analyzer-optin.cplusplus.UninitializedObject",
         "google-*",
-        "-google-readability-*",
-        "-google-runtime-references",
         "misc-*",
-        "-misc-no-recursion",
-        "-misc-redundant-expression",
-        "-misc-unused-using-decls",
         "performance*",
-        "-performance-no-int-to-ptr",
         "portability*",
     ],
 

@@ -74,6 +74,25 @@ public:
 #endif // __BIONIC__
 
     /**
+     * Creates an RPC server at the current port.
+     */
+    [[nodiscard]] bool setupInetServer(unsigned int port);
+
+    /**
+     * Connects to an RPC server at the given address and port.
+     */
+    [[nodiscard]] bool addInetClient(const char* addr, unsigned int port);
+
+    /**
+     * For debugging!
+     *
+     * Sets up an empty socket. All queries to this socket which require a
+     * response will never be satisfied. All data sent here will be
+     * unceremoniously cast down the bottomless pit, /dev/null.
+     */
+    [[nodiscard]] bool addNullDebuggingClient();
+
+    /**
      * Query the other side of the connection for the root object hosted by that
      * process's RpcServer (if one exists)
      */
@@ -109,10 +128,6 @@ private:
     friend sp<RpcConnection>;
     RpcConnection();
 
-    bool addServer(const SocketAddress& address);
-    bool addClient(const SocketAddress& address);
-    void assignServerToThisThread(base::unique_fd&& fd);
-
     struct ConnectionSocket : public RefBase {
         base::unique_fd fd;
 
@@ -121,11 +136,16 @@ private:
         std::optional<pid_t> exclusiveTid;
     };
 
+    bool setupSocketServer(const SocketAddress& address);
+    bool addSocketClient(const SocketAddress& address);
+    void addClient(base::unique_fd&& fd);
+    sp<ConnectionSocket> assignServerToThisThread(base::unique_fd&& fd);
+    bool removeServerSocket(const sp<ConnectionSocket>& socket);
+
     enum class SocketUse {
         CLIENT,
         CLIENT_ASYNC,
         CLIENT_REFCOUNT,
-        SERVER,
     };
 
     // RAII object for connection socket

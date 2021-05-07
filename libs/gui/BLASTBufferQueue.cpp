@@ -161,9 +161,9 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     mTransformHint = mSurfaceControl->getTransformHint();
     mBufferItemConsumer->setTransformHint(mTransformHint);
     SurfaceComposerClient::Transaction()
-            .setFlags(surface, layer_state_t::eEnableBackpressure,
-                      layer_state_t::eEnableBackpressure)
-            .apply();
+          .setFlags(surface, layer_state_t::eEnableBackpressure,
+                    layer_state_t::eEnableBackpressure)
+          .apply();
 
     mNumAcquired = 0;
     mNumFrameAvailable = 0;
@@ -186,6 +186,7 @@ BLASTBufferQueue::~BLASTBufferQueue() {
 void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height,
                               int32_t format) {
     std::unique_lock _lock{mMutex};
+    BQA_LOGV("update width=%d height=%d format=%d", width, height, format);
     if (mFormat != format) {
         mFormat = format;
         mBufferItemConsumer->setDefaultBufferFormat(convertBufferFormat(format));
@@ -204,13 +205,16 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
     if (mRequestedSize != newSize) {
         mRequestedSize.set(newSize);
         mBufferItemConsumer->setDefaultBufferSize(mRequestedSize.width, mRequestedSize.height);
-        if (mLastBufferScalingMode != NATIVE_WINDOW_SCALING_MODE_FREEZE) {
+        if (mLastBufferInfo.scalingMode != NATIVE_WINDOW_SCALING_MODE_FREEZE) {
             // If the buffer supports scaling, update the frame immediately since the client may
             // want to scale the existing buffer to the new size.
             mSize = mRequestedSize;
-            t.setFrame(mSurfaceControl,
-                       {0, 0, static_cast<int32_t>(mSize.width),
-                        static_cast<int32_t>(mSize.height)});
+            // We only need to update the scale if we've received at least one buffer. The reason
+            // for this is the scale is calculated based on the requested size and buffer size.
+            // If there's no buffer, the scale will always be 1.
+            if (mLastBufferInfo.hasBuffer) {
+                setMatrix(&t, mLastBufferInfo);
+            }
             applyTransaction = true;
         }
     }
@@ -239,29 +243,49 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
         ATRACE_CALL();
         BQA_LOGV("transactionCallback");
 
-        if (!stats.empty()) {
-            mTransformHint = stats[0].transformHint;
-            mBufferItemConsumer->setTransformHint(mTransformHint);
-            mBufferItemConsumer
-                    ->updateFrameTimestamps(stats[0].frameEventStats.frameNumber,
-                                            stats[0].frameEventStats.refreshStartTime,
-                                            stats[0].frameEventStats.gpuCompositionDoneFence,
-                                            stats[0].presentFence, stats[0].previousReleaseFence,
-                                            stats[0].frameEventStats.compositorTiming,
-                                            stats[0].latchTime,
-                                            stats[0].frameEventStats.dequeueReadyTime);
-            currFrameNumber = stats[0].frameEventStats.frameNumber;
-
-            if (mTransactionCompleteCallback &&
-                currFrameNumber >= mTransactionCompleteFrameNumber) {
-                if (currFrameNumber > mTransactionCompleteFrameNumber) {
-                    BQA_LOGE("transactionCallback received for a newer framenumber=%" PRIu64
-                             " than expected=%" PRIu64,
-                             currFrameNumber, mTransactionCompleteFrameNumber);
+        if (!mSurfaceControlsWithPendingCallback.empty()) {
+            sp<SurfaceControl> pendingSC = mSurfaceControlsWithPendingCallback.front();
+            mSurfaceControlsWithPendingCallback.pop();
+            bool found = false;
+            for (auto stat : stats) {
+                if (!SurfaceControl::isSameSurface(pendingSC, stat.surfaceControl)) {
+                    continue;
                 }
-                transactionCompleteCallback = std::move(mTransactionCompleteCallback);
-                mTransactionCompleteFrameNumber = 0;
+
+                mTransformHint = stat.transformHint;
+                mBufferItemConsumer->setTransformHint(mTransformHint);
+                mBufferItemConsumer
+                        ->updateFrameTimestamps(stat.frameEventStats.frameNumber,
+                                                stat.frameEventStats.refreshStartTime,
+                                                stat.frameEventStats.gpuCompositionDoneFence,
+                                                stat.presentFence, stat.previousReleaseFence,
+                                                stat.frameEventStats.compositorTiming,
+                                                stat.latchTime,
+                                                stat.frameEventStats.dequeueReadyTime);
+
+                currFrameNumber = stat.frameEventStats.frameNumber;
+
+                if (mTransactionCompleteCallback &&
+                    currFrameNumber >= mTransactionCompleteFrameNumber) {
+                    if (currFrameNumber > mTransactionCompleteFrameNumber) {
+                        BQA_LOGE("transactionCallback received for a newer framenumber=%" PRIu64
+                                 " than expected=%" PRIu64,
+                                 currFrameNumber, mTransactionCompleteFrameNumber);
+                    }
+                    transactionCompleteCallback = std::move(mTransactionCompleteCallback);
+                    mTransactionCompleteFrameNumber = 0;
+                }
+
+                found = true;
+                break;
             }
+
+            if (!found) {
+                BQA_LOGE("Failed to find matching SurfaceControl in transaction callback");
+            }
+        } else {
+            BQA_LOGE("No matching SurfaceControls found: mSurfaceControlsWithPendingCallback was "
+                     "empty.");
         }
 
         decStrong((void*)transactionCallbackThunk);
@@ -374,8 +398,11 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     // Ensure BLASTBufferQueue stays alive until we receive the transaction complete callback.
     incStrong((void*)transactionCallbackThunk);
 
-    mLastBufferScalingMode = bufferItem.mScalingMode;
+    Rect crop = computeCrop(bufferItem);
     mLastAcquiredFrameNumber = bufferItem.mFrameNumber;
+    mLastBufferInfo.update(true /* hasBuffer */, bufferItem.mGraphicBuffer->getWidth(),
+                           bufferItem.mGraphicBuffer->getHeight(), bufferItem.mTransform,
+                           bufferItem.mScalingMode, crop);
 
     auto releaseBufferCallback =
             std::bind(releaseBufferCallbackThunk, wp<BLASTBufferQueue>(this) /* callbackContext */,
@@ -387,10 +414,10 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     t->setAcquireFence(mSurfaceControl,
                        bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE);
     t->addTransactionCompletedCallback(transactionCallbackThunk, static_cast<void*>(this));
+    mSurfaceControlsWithPendingCallback.push(mSurfaceControl);
 
-    t->setFrame(mSurfaceControl,
-                {0, 0, static_cast<int32_t>(mSize.width), static_cast<int32_t>(mSize.height)});
-    t->setCrop(mSurfaceControl, computeCrop(bufferItem));
+    setMatrix(t, mLastBufferInfo);
+    t->setCrop(mSurfaceControl, crop);
     t->setTransform(mSurfaceControl, bufferItem.mTransform);
     t->setTransformToDisplayInverse(mSurfaceControl, bufferItem.mTransformToDisplayInverse);
     if (!bufferItem.mIsAutoTimestamp) {
@@ -494,6 +521,7 @@ void BLASTBufferQueue::setNextTransaction(SurfaceComposerClient::Transaction* t)
 
 bool BLASTBufferQueue::rejectBuffer(const BufferItem& item) {
     if (item.mScalingMode != NATIVE_WINDOW_SCALING_MODE_FREEZE) {
+        mSize = mRequestedSize;
         // Only reject buffers if scaling mode is freeze.
         return false;
     }
@@ -513,6 +541,19 @@ bool BLASTBufferQueue::rejectBuffer(const BufferItem& item) {
 
     // reject buffers if the buffer size doesn't match.
     return mSize != bufferSize;
+}
+
+void BLASTBufferQueue::setMatrix(SurfaceComposerClient::Transaction* t,
+                                 const BufferInfo& bufferInfo) {
+    uint32_t bufWidth = bufferInfo.crop.getWidth();
+    uint32_t bufHeight = bufferInfo.crop.getHeight();
+
+    float sx = mSize.width / static_cast<float>(bufWidth);
+    float sy = mSize.height / static_cast<float>(bufHeight);
+
+    t->setMatrix(mSurfaceControl, sx, 0, 0, sy);
+    // Update position based on crop.
+    t->setPosition(mSurfaceControl, bufferInfo.crop.left * sx * -1, bufferInfo.crop.top * sy * -1);
 }
 
 void BLASTBufferQueue::setTransactionCompleteCallback(

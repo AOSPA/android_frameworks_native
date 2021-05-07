@@ -336,7 +336,7 @@ public:
     struct CallbackInfo {
         // All the callbacks that have been requested for a TransactionCompletedListener in the
         // Transaction
-        std::unordered_set<CallbackId> callbackIds;
+        std::unordered_set<CallbackId, CallbackIdHash> callbackIds;
         // All the SurfaceControls that have been modified in this TransactionCompletedListener's
         // process that require a callback if there is one or more callbackIds set.
         std::unordered_set<sp<SurfaceControl>, SCHash> surfaceControls;
@@ -454,13 +454,7 @@ public:
                                     const std::vector<BlurRegion>& regions);
         Transaction& setLayerStack(const sp<SurfaceControl>& sc, uint32_t layerStack);
         Transaction& setMetadata(const sp<SurfaceControl>& sc, uint32_t key, const Parcel& p);
-        // Defers applying any changes made in this transaction until the Layer
-        // identified by handle reaches the given frameNumber. If the Layer identified
-        // by handle is removed, then we will apply this transaction regardless of
-        // what frame number has been reached.
-        Transaction& deferTransactionUntil_legacy(const sp<SurfaceControl>& sc,
-                                                  const sp<SurfaceControl>& barrierSurfaceControl,
-                                                  uint64_t frameNumber);
+
         /// Reparents the current layer to the new parent handle. The new parent must not be null.
         Transaction& reparent(const sp<SurfaceControl>& sc, const sp<SurfaceControl>& newParent);
 
@@ -473,7 +467,6 @@ public:
         Transaction& setTransform(const sp<SurfaceControl>& sc, uint32_t transform);
         Transaction& setTransformToDisplayInverse(const sp<SurfaceControl>& sc,
                                                   bool transformToDisplayInverse);
-        Transaction& setFrame(const sp<SurfaceControl>& sc, const Rect& frame);
         Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
                                ReleaseBufferCallback callback = nullptr);
         Transaction& setCachedBuffer(const sp<SurfaceControl>& sc, int32_t bufferId);
@@ -491,7 +484,13 @@ public:
         // Sets information about the priority of the frame.
         Transaction& setFrameRateSelectionPriority(const sp<SurfaceControl>& sc, int32_t priority);
 
+        Transaction& addTransactionCallback(TransactionCompletedCallbackTakesContext callback,
+                                            void* callbackContext, CallbackId::Type callbackType);
+
         Transaction& addTransactionCompletedCallback(
+                TransactionCompletedCallbackTakesContext callback, void* callbackContext);
+
+        Transaction& addTransactionCommittedCallback(
                 TransactionCompletedCallbackTakesContext callback, void* callbackContext);
 
         // ONLY FOR BLAST ADAPTER
@@ -574,6 +573,8 @@ public:
     static status_t overrideHdrTypes(const sp<IBinder>& display,
                                      const std::vector<ui::Hdr>& hdrTypes);
 
+    static status_t onPullAtom(const int32_t atomId, std::string* outData, bool* success);
+
     static void setDisplayProjection(const sp<IBinder>& token, ui::Rotation orientation,
                                      const Rect& layerStackRect, const Rect& displayRect);
 
@@ -626,14 +627,13 @@ public:
 class TransactionCompletedListener : public BnTransactionCompletedListener {
     TransactionCompletedListener();
 
-    CallbackId getNextIdLocked() REQUIRES(mMutex);
+    int64_t getNextIdLocked() REQUIRES(mMutex);
 
     std::mutex mMutex;
 
     bool mListening GUARDED_BY(mMutex) = false;
 
-    CallbackId mCallbackIdCounter GUARDED_BY(mMutex) = 1;
-
+    int64_t mCallbackIdCounter GUARDED_BY(mMutex) = 1;
     struct CallbackTranslation {
         TransactionCompletedCallback callbackFunction;
         std::unordered_map<sp<IBinder>, sp<SurfaceControl>, SurfaceComposerClient::IBinderHash>
@@ -651,7 +651,8 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
         SurfaceStatsCallback callback;
     };
 
-    std::unordered_map<CallbackId, CallbackTranslation> mCallbacks GUARDED_BY(mMutex);
+    std::unordered_map<CallbackId, CallbackTranslation, CallbackIdHash> mCallbacks
+            GUARDED_BY(mMutex);
     std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners GUARDED_BY(mMutex);
     std::unordered_map<uint64_t /* graphicsBufferId */, ReleaseBufferCallback>
             mReleaseBufferCallbacks GUARDED_BY(mMutex);
@@ -667,10 +668,12 @@ public:
     CallbackId addCallbackFunction(
             const TransactionCompletedCallback& callbackFunction,
             const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
-                    surfaceControls);
+                    surfaceControls,
+            CallbackId::Type callbackType);
 
-    void addSurfaceControlToCallbacks(const sp<SurfaceControl>& surfaceControl,
-                                      const std::unordered_set<CallbackId>& callbackIds);
+    void addSurfaceControlToCallbacks(
+            const sp<SurfaceControl>& surfaceControl,
+            const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds);
 
     /*
      * Adds a jank listener to be informed about SurfaceFlinger's jank classification for a specific

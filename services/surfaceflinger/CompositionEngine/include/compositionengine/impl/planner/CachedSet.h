@@ -66,10 +66,11 @@ public:
     const Rect& getBounds() const { return mBounds; }
     const Region& getVisibleRegion() const { return mVisibleRegion; }
     size_t getAge() const { return mAge; }
-    const sp<GraphicBuffer>& getBuffer() const { return mTexture.getBuffer(); }
+    const std::shared_ptr<renderengine::ExternalTexture>& getBuffer() const { return mTexture; }
     const sp<Fence>& getDrawFence() const { return mDrawFence; }
     const ProjectionSpace& getOutputSpace() const { return mOutputSpace; }
     ui::Dataspace getOutputDataspace() const { return mOutputDataspace; }
+    const std::vector<Layer>& getConstituentLayers() const { return mLayers; }
 
     NonBufferHash getNonBufferHash() const;
 
@@ -87,7 +88,7 @@ public:
 
     void setLastUpdate(std::chrono::steady_clock::time_point now) { mLastUpdate = now; }
     void append(const CachedSet& other) {
-        mTexture.setBuffer(nullptr, nullptr);
+        mTexture = nullptr;
         mOutputDataspace = ui::Dataspace::UNKNOWN;
         mDrawFence = nullptr;
 
@@ -105,41 +106,37 @@ public:
 
     void dump(std::string& result) const;
 
+    // Whether this represents a single layer with a buffer and rounded corners.
+    // If it is, we may be able to draw it by placing it behind another
+    // CachedSet and punching a hole.
+    bool requiresHolePunch() const;
+
+    // Add a layer that will be drawn behind this one. ::render() will render a
+    // hole in this CachedSet's buffer, allowing the supplied layer to peek
+    // through. Must be called before ::render().
+    // Will do nothing if this CachedSet is not opaque where the hole punch
+    // layer is displayed.
+    // If isFirstLayer is true, this CachedSet can be considered opaque because
+    // nothing (besides the hole punch layer) will be drawn behind it.
+    void addHolePunchLayerIfFeasible(const CachedSet&, bool isFirstLayer);
+
+    // Retrieve the layer that will be drawn behind this one.
+    OutputLayer* getHolePunchLayer() const;
+
 private:
     CachedSet() = default;
 
-    NonBufferHash mFingerprint = 0;
+    const NonBufferHash mFingerprint;
     std::chrono::steady_clock::time_point mLastUpdate = std::chrono::steady_clock::now();
     std::vector<Layer> mLayers;
+
+    // Unowned.
+    const LayerState* mHolePunchLayer = nullptr;
     Rect mBounds = Rect::EMPTY_RECT;
     Region mVisibleRegion;
     size_t mAge = 0;
 
-    class Texture {
-    public:
-        ~Texture() { setBuffer(nullptr, nullptr); }
-
-        void setBuffer(const sp<GraphicBuffer>& buffer, renderengine::RenderEngine* re) {
-            if (mRE && mBuffer) {
-                mRE->unbindExternalTextureBuffer(mBuffer->getId());
-            }
-
-            mBuffer = buffer;
-            mRE = re;
-
-            if (mRE && mBuffer) {
-                mRE->cacheExternalTextureBuffer(mBuffer);
-            }
-        }
-
-        const sp<GraphicBuffer>& getBuffer() const { return mBuffer; }
-
-    private:
-        sp<GraphicBuffer> mBuffer = nullptr;
-        renderengine::RenderEngine* mRE = nullptr;
-    };
-
-    Texture mTexture;
+    std::shared_ptr<renderengine::ExternalTexture> mTexture;
     sp<Fence> mDrawFence;
     ProjectionSpace mOutputSpace;
     ui::Dataspace mOutputDataspace;

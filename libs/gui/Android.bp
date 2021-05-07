@@ -39,11 +39,49 @@ cc_library_headers {
     min_sdk_version: "29",
 }
 
+cc_library_headers {
+    name: "libgui_aidl_headers",
+    vendor_available: true,
+    static_libs: [
+        "libgui_aidl_static",
+    ],
+
+    export_static_lib_headers: [
+        "libgui_aidl_static",
+    ],
+}
+
 filegroup {
     name: "libgui_aidl",
     srcs: ["aidl/**/*.aidl"],
     path: "aidl/",
 }
+
+cc_library_static {
+    name: "libgui_aidl_static",
+    vendor_available: true,
+    srcs: [
+        ":libgui_aidl",
+    ],
+
+    shared_libs: [
+        "libbinder",
+        "libui",
+    ],
+
+    local_include_dirs: [
+        "include",
+    ],
+
+    export_shared_lib_headers: [
+        "libbinder",
+    ],
+
+    aidl: {
+        export_aidl_headers: true
+    }
+}
+
 
 cc_defaults {
     name: "libgui_defaults",
@@ -51,10 +89,16 @@ cc_defaults {
 
     defaults: ["libgui_bufferqueue-defaults"],
 
+    static_libs: [
+        "libgui_aidl_static",
+    ],
+    export_static_lib_headers: [
+        "libgui_aidl_static",
+    ],
+
     srcs: [
         ":framework_native_aidl",
         ":inputconstants_aidl",
-        ":libgui_aidl",
         ":libgui_bufferqueue_sources",
 
         "BitTube.cpp",
@@ -110,6 +154,10 @@ cc_defaults {
         "libinput",
     ],
 
+    export_header_lib_headers: [
+        "libgui_aidl_headers",
+    ],
+
     // bufferhub is not used when building libgui for vendors
     target: {
         vendor: {
@@ -131,14 +179,15 @@ cc_defaults {
         },
     },
 
-    header_libs: [
-        "libdvr_headers",
-        "libpdx_headers",
-    ],
-
     aidl: {
         export_aidl_headers: true,
     },
+
+    header_libs: [
+        "libdvr_headers",
+        "libgui_aidl_headers",
+        "libpdx_headers",
+    ],
 
     pgo: {
         sampling: true,
@@ -170,8 +219,8 @@ cc_library_static {
 
     srcs: [
         ":inputconstants_aidl",
-        ":libgui_aidl",
         ":libgui_bufferqueue_sources",
+        ":libgui_aidl",
     ],
 }
 

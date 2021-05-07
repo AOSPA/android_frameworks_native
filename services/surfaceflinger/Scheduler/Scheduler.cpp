@@ -248,15 +248,34 @@ impl::EventThread::ThrottleVsyncCallback Scheduler::makeThrottleVsyncCallback() 
     };
 }
 
+impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction() const {
+    return [this](uid_t uid) {
+        nsecs_t basePeriod = mRefreshRateConfigs.getCurrentRefreshRate().getVsyncPeriod();
+        const auto frameRate = getFrameRateOverride(uid);
+        if (!frameRate.has_value()) {
+            return basePeriod;
+        }
+
+        const auto divider = scheduler::RefreshRateConfigs::getFrameRateDivider(
+            mRefreshRateConfigs.getCurrentRefreshRate().getFps(), *frameRate);
+        if (divider <= 1) {
+            return basePeriod;
+        }
+        return basePeriod * divider;
+    };
+}
+
 Scheduler::ConnectionHandle Scheduler::createConnection(
         const char* connectionName, frametimeline::TokenManager* tokenManager,
         std::chrono::nanoseconds workDuration, std::chrono::nanoseconds readyDuration,
         impl::EventThread::InterceptVSyncsCallback interceptCallback) {
     auto vsyncSource = makePrimaryDispSyncSource(connectionName, workDuration, readyDuration);
     auto throttleVsync = makeThrottleVsyncCallback();
+    auto getVsyncPeriod = makeGetVsyncPeriodFunction();
     auto eventThread = std::make_unique<impl::EventThread>(std::move(vsyncSource), tokenManager,
                                                            std::move(interceptCallback),
-                                                           std::move(throttleVsync));
+                                                           std::move(throttleVsync),
+                                                           std::move(getVsyncPeriod));
     bool triggerRefresh = !strcmp(connectionName, "app");
     return createConnection(std::move(eventThread), triggerRefresh);
 }
@@ -453,7 +472,8 @@ Scheduler::ConnectionHandle Scheduler::enableVSyncInjection(bool enable) {
                 std::make_unique<impl::EventThread>(std::move(vsyncSource),
                                                     /*tokenManager=*/nullptr,
                                                     impl::EventThread::InterceptVSyncsCallback(),
-                                                    impl::EventThread::ThrottleVsyncCallback());
+                                                    impl::EventThread::ThrottleVsyncCallback(),
+                                                    impl::EventThread::GetVsyncPeriodFunction());
 
         // EventThread does not dispatch VSYNC unless the display is connected and powered on.
         eventThread->onHotplugReceived(PhysicalDisplayId::fromPort(0), true);
@@ -928,6 +948,13 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     } else {
         mFrameRateOverridesFromBackdoor.erase(frameRateOverride.uid);
     }
+}
+
+std::chrono::steady_clock::time_point Scheduler::getPreviousVsyncFrom(
+        nsecs_t expectedPresentTime) const {
+    const auto presentTime = std::chrono::nanoseconds(expectedPresentTime);
+    const auto vsyncPeriod = std::chrono::nanoseconds(mVsyncSchedule.tracker->currentPeriod());
+    return std::chrono::steady_clock::time_point(presentTime - vsyncPeriod);
 }
 
 void Scheduler::setIdleState() {

@@ -36,7 +36,8 @@ class Predictor;
 
 class Flattener {
 public:
-    Flattener(Predictor& predictor) : mPredictor(predictor) {}
+    Flattener(Predictor& predictor, bool enableHolePunch = false)
+          : mEnableHolePunch(enableHolePunch), mPredictor(predictor) {}
 
     void setDisplaySize(ui::Size size) { mDisplaySize = size; }
 
@@ -54,13 +55,14 @@ private:
 
     void resetActivities(NonBufferHash, std::chrono::steady_clock::time_point now);
 
-    void updateLayersHash();
+    NonBufferHash computeLayersHash() const;
 
     bool mergeWithCachedSets(const std::vector<const LayerState*>& layers,
                              std::chrono::steady_clock::time_point now);
 
     void buildCachedSets(std::chrono::steady_clock::time_point now);
 
+    const bool mEnableHolePunch;
     Predictor& mPredictor;
 
     ui::Size mDisplaySize;
@@ -69,7 +71,6 @@ private:
     std::chrono::steady_clock::time_point mLastGeometryUpdate;
 
     std::vector<CachedSet> mLayers;
-    NonBufferHash mLayersHash = 0;
     std::optional<CachedSet> mNewCachedSet;
 
     // Statistics
