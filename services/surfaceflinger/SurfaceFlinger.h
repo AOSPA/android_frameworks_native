@@ -1237,7 +1237,11 @@ private:
 
     void updateInternalDisplaysPresentationMode();
 
-    void setupEarlyWakeUpFeature();
+    void setupDisplayExtnFeatures();
+
+    void setupIdleTimeoutHandling(uint32_t displayId);
+
+    bool isDisplayExtnEnabled() { return (mEarlyWakeUpEnabled || mDynamicSfIdleEnabled); }
 
     void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
 
@@ -1573,6 +1577,7 @@ public:
 
 private:
     bool mEarlyWakeUpEnabled = false;
+    bool mDynamicSfIdleEnabled = false;
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
     bool mDolphinFuncsEnabled = false;

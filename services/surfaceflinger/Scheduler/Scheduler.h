@@ -137,6 +137,7 @@ public:
 
     bool isIdleTimerEnabled() const { return mIdleTimer.has_value(); }
     void resetIdleTimer();
+    void handleIdleTimeout(bool enable) { mHandleIdleTimeout = enable; }
 
     // Function that resets the touch timer.
     void notifyTouchEvent();
@@ -327,6 +328,9 @@ private:
             GUARDED_BY(mFrameRateOverridesMutex);
     // This flag indicates display in idle. Refresh as and when vsync is requested.
     bool mDisplayIdle;
+
+    // This state variable indicates whether to handle the Idle Timer Callback.
+    std::atomic<bool> mHandleIdleTimeout = true;
 };
 
 } // namespace android
