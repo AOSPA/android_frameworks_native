@@ -95,6 +95,7 @@ filegroup {
         "skia/debug/SkiaMemoryReporter.cpp",
         "skia/filters/BlurFilter.cpp",
         "skia/filters/LinearEffect.cpp",
+        "skia/filters/StretchShaderFactory.cpp"
     ],
 }
 
@@ -117,7 +118,7 @@ cc_library_static {
     include_dirs: [
         "external/skia/src/gpu",
     ],
-    whole_static_libs: ["libskia"],
+    whole_static_libs: ["libskia_renderengine"],
     lto: {
         thin: true,
     },

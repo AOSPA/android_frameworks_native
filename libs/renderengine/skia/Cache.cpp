@@ -37,12 +37,15 @@ const auto kScaleAndTranslate = mat4(0.7f,   0.f, 0.f, 0.f,
                                      0.f,  0.7f, 0.f, 0.f,
                                      0.f,   0.f, 1.f, 0.f,
                                    67.3f, 52.2f, 0.f, 1.f);
+const auto kScaleYOnly = mat4(1.f,   0.f, 0.f, 0.f,
+                              0.f,  0.7f, 0.f, 0.f,
+                              0.f,   0.f, 1.f, 0.f,
+                              0.f,   0.f, 0.f, 1.f);
 // clang-format on
-// When choosing dataspaces below, whether the match the destination or not determined whether
-// a color correction effect is added to the shader. There may be other additional shader details
-// for particular color spaces.
-// TODO(b/184842383) figure out which color related shaders are necessary
+// When setting layer.sourceDataspace, whether it matches the destination or not determines whether
+// a color correction effect is added to the shader.
 constexpr auto kDestDataSpace = ui::Dataspace::SRGB;
+constexpr auto kOtherDataSpace = ui::Dataspace::DISPLAY_P3;
 } // namespace
 
 static void drawShadowLayers(SkiaRenderEngine* renderengine, const DisplaySettings& display,
@@ -115,20 +118,24 @@ static void drawImageLayers(SkiaRenderEngine* renderengine, const DisplaySetting
 
     // Test both drawRect and drawRRect
     auto layers = std::vector<const LayerSettings*>{&layer};
-    for (bool identity : {true, false}) {
-        layer.geometry.positionTransform = identity ? mat4() : kScaleAndTranslate;
-        // Corner radii less than 0.5 creates a special shader. This likely occurs in real usage
-        // due to animating corner radius.
-        // For the non-idenity matrix, only the large corner radius will create a new shader.
-        for (float roundedCornersRadius : identity ? threeCornerRadii : oneCornerRadius) {
-            // roundedCornersCrop is always set, but it is this radius that triggers the behavior
-            layer.geometry.roundedCornersRadius = roundedCornersRadius;
-            for (bool isOpaque : {true, false}) {
-                layer.source.buffer.isOpaque = isOpaque;
-                for (auto alpha : {half(.23999f), half(1.0f)}) {
-                    layer.alpha = alpha;
-                    renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                             base::unique_fd(), nullptr);
+    for (auto dataspace : {kDestDataSpace, kOtherDataSpace}) {
+        layer.sourceDataspace = dataspace;
+        for (bool identity : {true, false}) {
+            layer.geometry.positionTransform = identity ? mat4() : kScaleAndTranslate;
+            // Corner radii less than 0.5 creates a special shader. This likely occurs in real usage
+            // due to animating corner radius.
+            // For the non-idenity matrix, only the large corner radius will create a new shader.
+            for (float roundedCornersRadius : identity ? threeCornerRadii : oneCornerRadius) {
+                // roundedCornersCrop is always set, but it is this radius that triggers the
+                // behavior
+                layer.geometry.roundedCornersRadius = roundedCornersRadius;
+                for (bool isOpaque : {true, false}) {
+                    layer.source.buffer.isOpaque = isOpaque;
+                    for (auto alpha : {half(.23999f), half(1.0f)}) {
+                        layer.alpha = alpha;
+                        renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
+                                                 base::unique_fd(), nullptr);
+                    }
                 }
             }
         }
@@ -182,6 +189,37 @@ static void drawBlurLayers(SkiaRenderEngine* renderengine, const DisplaySettings
     }
 }
 
+static void drawTextureScaleLayers(SkiaRenderEngine* renderengine, const DisplaySettings& display,
+                                   const std::shared_ptr<ExternalTexture>& dstTexture,
+                                   const std::shared_ptr<ExternalTexture>& srcTexture) {
+    const Rect& displayRect = display.physicalDisplay;
+    FloatRect rect(0, 0, displayRect.width(), displayRect.height());
+    LayerSettings layer{
+            .geometry =
+                    Geometry{
+                            .boundaries = rect,
+                            .roundedCornersCrop = rect,
+                            .positionTransform = kScaleAndTranslate,
+                            .roundedCornersRadius = 300,
+                    },
+            .source = PixelSource{.buffer =
+                                          Buffer{
+                                                  .buffer = srcTexture,
+                                                  .maxMasteringLuminance = 1000.f,
+                                                  .maxContentLuminance = 1000.f,
+                                                  .textureTransform = kScaleYOnly,
+                                          }},
+            .sourceDataspace = kOtherDataSpace,
+    };
+
+    auto layers = std::vector<const LayerSettings*>{&layer};
+    for (float alpha : {0.5f, 1.f}) {
+        layer.alpha = alpha,
+        renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
+                                 base::unique_fd(), nullptr);
+    }
+}
+
 //
 // The collection of shaders cached here were found by using perfetto to record shader compiles
 // during actions that involve RenderEngine, logging the layer settings, and the shader code
@@ -200,60 +238,70 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine) {
     if (previousCount) {
         ALOGD("%d Shaders already compiled before Cache::primeShaderCache ran\n", previousCount);
     }
-    const nsecs_t timeBefore = systemTime();
-    // The dimensions should not matter, so long as we draw inside them.
-    const Rect displayRect(0, 0, 1080, 2340);
-    DisplaySettings display{
-            .physicalDisplay = displayRect,
-            .clip = displayRect,
-            .maxLuminance = 500,
-            .outputDataspace = kDestDataSpace,
-    };
 
-    const int64_t usage = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
+    // The loop is beneficial for debugging and should otherwise be optimized out by the compiler.
+    // Adding additional bounds to the loop is useful for verifying that the size of the dst buffer
+    // does not impact the shader compilation counts by triggering different behaviors in RE/Skia.
+    for (SkSize bounds : {SkSize::Make(128, 128), /*SkSize::Make(1080, 2340)*/}) {
+        const nsecs_t timeBefore = systemTime();
+        // The dimensions should not matter, so long as we draw inside them.
+        const Rect displayRect(0, 0, bounds.fWidth, bounds.fHeight);
+        DisplaySettings display{
+                .physicalDisplay = displayRect,
+                .clip = displayRect,
+                .maxLuminance = 500,
+                .outputDataspace = kDestDataSpace,
+        };
 
-    sp<GraphicBuffer> dstBuffer =
-            new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888, 1,
-                              usage, "primeShaderCache_dst");
+        const int64_t usage = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
 
-    const auto dstTexture = std::make_shared<ExternalTexture>(dstBuffer, *renderengine,
-                                                              ExternalTexture::Usage::WRITEABLE);
-    // This buffer will be the source for the call to drawImageLayers. Draw
-    // something to it as a placeholder for what an app draws. We should draw
-    // something, but the details are not important. Make use of the shadow layer drawing step
-    // to populate it.
-    sp<GraphicBuffer> srcBuffer =
-            new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888, 1,
-                              usage, "drawImageLayer_src");
+        sp<GraphicBuffer> dstBuffer =
+                new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888,
+                                  1, usage, "primeShaderCache_dst");
 
-    const auto srcTexture =
-            std::make_shared<ExternalTexture>(srcBuffer, *renderengine,
-                                              ExternalTexture::Usage::READABLE |
-                                                      ExternalTexture::Usage::WRITEABLE);
+        const auto dstTexture =
+                std::make_shared<ExternalTexture>(dstBuffer, *renderengine,
+                                                  ExternalTexture::Usage::WRITEABLE);
+        // This buffer will be the source for the call to drawImageLayers. Draw
+        // something to it as a placeholder for what an app draws. We should draw
+        // something, but the details are not important. Make use of the shadow layer drawing step
+        // to populate it.
+        sp<GraphicBuffer> srcBuffer =
+                new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888,
+                                  1, usage, "drawImageLayer_src");
 
-    drawSolidLayers(renderengine, display, dstTexture);
-    drawShadowLayers(renderengine, display, srcTexture);
-    drawBlurLayers(renderengine, display, dstTexture);
-    // The majority of shaders are related to sampling images.
-    drawImageLayers(renderengine, display, dstTexture, srcTexture);
+        const auto srcTexture =
+                std::make_shared<ExternalTexture>(srcBuffer, *renderengine,
+                                                  ExternalTexture::Usage::READABLE |
+                                                          ExternalTexture::Usage::WRITEABLE);
 
-    // should be the same as AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
-    const int64_t usageExternal = GRALLOC_USAGE_HW_TEXTURE;
+        drawSolidLayers(renderengine, display, dstTexture);
+        drawShadowLayers(renderengine, display, srcTexture);
+        drawBlurLayers(renderengine, display, dstTexture);
+        // The majority of shaders are related to sampling images.
+        drawImageLayers(renderengine, display, dstTexture, srcTexture);
 
-    sp<GraphicBuffer> externalBuffer =
-            new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888, 1,
-                              usageExternal, "primeShaderCache_external");
-    const auto externalTexture =
-            std::make_shared<ExternalTexture>(externalBuffer, *renderengine,
-                                              ExternalTexture::Usage::READABLE);
-    // TODO(b/184665179) doubles number of image shader compilations, but only somewhere
-    // between 6 and 8 will occur in real uses.
-    drawImageLayers(renderengine, display, dstTexture, externalTexture);
+        // should be the same as AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+        const int64_t usageExternal = GRALLOC_USAGE_HW_TEXTURE;
 
-    const nsecs_t timeAfter = systemTime();
-    const float compileTimeMs = static_cast<float>(timeAfter - timeBefore) / 1.0E6;
-    const int shadersCompiled = renderengine->reportShadersCompiled();
-    ALOGD("Shader cache generated %d shaders in %f ms\n", shadersCompiled, compileTimeMs);
+        sp<GraphicBuffer> externalBuffer =
+                new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888,
+                                  1, usageExternal, "primeShaderCache_external");
+        const auto externalTexture =
+                std::make_shared<ExternalTexture>(externalBuffer, *renderengine,
+                                                  ExternalTexture::Usage::READABLE);
+        // TODO(b/184665179) doubles number of image shader compilations, but only somewhere
+        // between 6 and 8 will occur in real uses.
+        drawImageLayers(renderengine, display, dstTexture, externalTexture);
+
+        // Draw layers for b/185569240.
+        drawTextureScaleLayers(renderengine, display, dstTexture, externalTexture);
+
+        const nsecs_t timeAfter = systemTime();
+        const float compileTimeMs = static_cast<float>(timeAfter - timeBefore) / 1.0E6;
+        const int shadersCompiled = renderengine->reportShadersCompiled();
+        ALOGD("Shader cache generated %d shaders in %f ms\n", shadersCompiled, compileTimeMs);
+    }
 }
 
 } // namespace android::renderengine::skia

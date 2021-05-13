@@ -19,8 +19,12 @@
 #include <compositionengine/impl/planner/LayerState.h>
 #include <compositionengine/mock/LayerFE.h>
 #include <compositionengine/mock/OutputLayer.h>
+#include <gmock/gmock-actions.h>
 #include <gtest/gtest.h>
+#include <renderengine/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
+#include <ui/GraphicTypes.h>
+#include <memory>
 
 namespace android::compositionengine {
 using namespace std::chrono_literals;
@@ -105,7 +109,6 @@ void CachedSetTest::TearDown() {
 }
 
 void expectEqual(const CachedSet& cachedSet, const CachedSet::Layer& layer) {
-    EXPECT_EQ(layer.getHash(), cachedSet.getFingerprint());
     EXPECT_EQ(layer.getLastUpdate(), cachedSet.getLastUpdate());
     EXPECT_EQ(layer.getDisplayFrame(), cachedSet.getBounds());
     EXPECT_TRUE(layer.getVisibleRegion().hasSameRects(cachedSet.getVisibleRegion()));
@@ -154,7 +157,6 @@ TEST_F(CachedSetTest, addLayer) {
     CachedSet cachedSet(layer1);
     cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
 
-    EXPECT_EQ(layer1.getHash(), cachedSet.getFingerprint());
     EXPECT_EQ(kStartTime, cachedSet.getLastUpdate());
     EXPECT_EQ(Rect(0, 0, 2, 2), cachedSet.getBounds());
     Region expectedRegion;
@@ -243,7 +245,6 @@ TEST_F(CachedSetTest, append) {
     cachedSet1.addLayer(layer3.getState(), kStartTime + 10ms);
     cachedSet1.append(cachedSet2);
 
-    EXPECT_EQ(layer1.getHash(), cachedSet1.getFingerprint());
     EXPECT_EQ(kStartTime, cachedSet1.getLastUpdate());
     EXPECT_EQ(Rect(0, 0, 3, 3), cachedSet1.getBounds());
     Region expectedRegion;
@@ -287,10 +288,11 @@ TEST_F(CachedSetTest, updateAge_BufferUpdate) {
 }
 
 TEST_F(CachedSetTest, render) {
-    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
-    sp<mock::LayerFE> layerFE1 = mTestLayers[0]->layerFE;
-    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
-    sp<mock::LayerFE> layerFE2 = mTestLayers[1]->layerFE;
+    // Skip the 0th layer to ensure that the bounding box of the layers is offset from (0, 0)
+    CachedSet::Layer& layer1 = *mTestLayers[1]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[1]->layerFE;
+    CachedSet::Layer& layer2 = *mTestLayers[2]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE2 = mTestLayers[2]->layerFE;
 
     CachedSet cachedSet(layer1);
     cachedSet.append(CachedSet(layer2));
@@ -307,7 +309,7 @@ TEST_F(CachedSetTest, render) {
                                 const std::vector<const renderengine::LayerSettings*>& layers,
                                 const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
                                 base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(Rect(0, 0, 2, 2), displaySettings.physicalDisplay);
+        EXPECT_EQ(Rect(-1, -1, 9, 4), displaySettings.physicalDisplay);
         EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
         EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
                   displaySettings.orientation);
@@ -324,14 +326,245 @@ TEST_F(CachedSetTest, render) {
     cachedSet.render(mRenderEngine, mOutputState);
     expectReadyBuffer(cachedSet);
 
-    EXPECT_EQ(Rect(0, 0, 2, 2), cachedSet.getOutputSpace().content);
-    EXPECT_EQ(Rect(mOutputState.framebufferSpace.bounds.getWidth(),
-                   mOutputState.framebufferSpace.bounds.getHeight()),
-              cachedSet.getOutputSpace().bounds);
+    EXPECT_EQ(mOutputState.framebufferSpace, cachedSet.getOutputSpace());
 
     // Now check that appending a new cached set properly cleans up RenderEngine resources.
     CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
     cachedSet.append(CachedSet(layer3));
+}
+
+TEST_F(CachedSetTest, rendersWithOffsetFramebufferContent) {
+    // Skip the 0th layer to ensure that the bounding box of the layers is offset from (0, 0)
+    CachedSet::Layer& layer1 = *mTestLayers[1]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[1]->layerFE;
+    CachedSet::Layer& layer2 = *mTestLayers[2]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE2 = mTestLayers[2]->layerFE;
+
+    CachedSet cachedSet(layer1);
+    cachedSet.append(CachedSet(layer2));
+
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList1;
+    clientCompList1.push_back({});
+    clientCompList1[0].alpha = 0.5f;
+
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList2;
+    clientCompList2.push_back({});
+    clientCompList2[0].alpha = 0.75f;
+
+    mOutputState.framebufferSpace = ProjectionSpace(ui::Size(10, 20), Rect(2, 3, 10, 5));
+
+    const auto drawLayers = [&](const renderengine::DisplaySettings& displaySettings,
+                                const std::vector<const renderengine::LayerSettings*>& layers,
+                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                                base::unique_fd&&, base::unique_fd*) -> size_t {
+        EXPECT_EQ(Rect(1, 2, 9, 4), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
+        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
+                  displaySettings.orientation);
+        EXPECT_EQ(0.5f, layers[0]->alpha);
+        EXPECT_EQ(0.75f, layers[1]->alpha);
+        EXPECT_EQ(ui::Dataspace::SRGB, displaySettings.outputDataspace);
+
+        return NO_ERROR;
+    };
+
+    EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
+    EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    cachedSet.render(mRenderEngine, mOutputState);
+    expectReadyBuffer(cachedSet);
+
+    EXPECT_EQ(mOutputState.framebufferSpace, cachedSet.getOutputSpace());
+
+    // Now check that appending a new cached set properly cleans up RenderEngine resources.
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+    cachedSet.append(CachedSet(layer3));
+}
+
+TEST_F(CachedSetTest, holePunch_requiresBuffer) {
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[0]->layerFE;
+
+    CachedSet cachedSet(layer1);
+    EXPECT_CALL(*layerFE1, hasRoundedCorners()).WillRepeatedly(Return(true));
+
+    EXPECT_FALSE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, holePunch_requiresRoundedCorners) {
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    mTestLayers[0]->layerFECompositionState.buffer = sp<GraphicBuffer>::make();
+
+    CachedSet cachedSet(layer1);
+
+    EXPECT_FALSE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, holePunch_requiresSingleLayer) {
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    mTestLayers[0]->layerFECompositionState.buffer = sp<GraphicBuffer>::make();
+    sp<mock::LayerFE> layerFE = mTestLayers[0]->layerFE;
+    EXPECT_CALL(*layerFE, hasRoundedCorners()).WillRepeatedly(Return(true));
+
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.append(layer2);
+
+    EXPECT_FALSE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, requiresHolePunch) {
+    CachedSet::Layer& layer = *mTestLayers[0]->cachedSetLayer.get();
+    mTestLayers[0]->layerFECompositionState.buffer = sp<GraphicBuffer>::make();
+    sp<mock::LayerFE> layerFE = mTestLayers[0]->layerFE;
+
+    CachedSet cachedSet(layer);
+    EXPECT_CALL(*layerFE, hasRoundedCorners()).WillRepeatedly(Return(true));
+
+    EXPECT_TRUE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, holePunch_requiresDeviceComposition) {
+    CachedSet::Layer& layer = *mTestLayers[0]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE = mTestLayers[0]->layerFE;
+    auto& layerFECompositionState = mTestLayers[0]->layerFECompositionState;
+    layerFECompositionState.buffer = sp<GraphicBuffer>::make();
+    layerFECompositionState.forceClientComposition = true;
+
+    CachedSet cachedSet(layer);
+    EXPECT_CALL(*layerFE, hasRoundedCorners()).WillRepeatedly(Return(true));
+
+    EXPECT_FALSE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, addHolePunch_requiresOverlap) {
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, true);
+
+    ASSERT_EQ(nullptr, cachedSet.getHolePunchLayer());
+}
+
+TEST_F(CachedSetTest, addHolePunch_requiresOpaque) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    mTestLayers[0]->layerFECompositionState.isOpaque = false;
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, false);
+
+    ASSERT_EQ(nullptr, cachedSet.getHolePunchLayer());
+}
+
+TEST_F(CachedSetTest, addHolePunch_opaque) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    mTestLayers[0]->layerFECompositionState.isOpaque = true;
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, false);
+
+    ASSERT_EQ(&mTestLayers[2]->outputLayer, cachedSet.getHolePunchLayer());
+}
+
+TEST_F(CachedSetTest, addHolePunch_firstLayer) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    mTestLayers[0]->layerFECompositionState.isOpaque = false;
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, true);
+
+    ASSERT_EQ(&mTestLayers[2]->outputLayer, cachedSet.getHolePunchLayer());
+}
+
+TEST_F(CachedSetTest, addHolePunch) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[0]->layerFE;
+
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE2 = mTestLayers[1]->layerFE;
+
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE3 = mTestLayers[2]->layerFE;
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, true);
+
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList1;
+    clientCompList1.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList2;
+    clientCompList2.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList3;
+    clientCompList3.push_back({});
+
+    clientCompList3[0].source.buffer.buffer = std::make_shared<
+            renderengine::ExternalTexture>(sp<GraphicBuffer>::make(), mRenderEngine,
+                                           renderengine::ExternalTexture::READABLE);
+
+    EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
+    EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
+    EXPECT_CALL(*layerFE3, prepareClientCompositionList(_)).WillOnce(Return(clientCompList3));
+
+    const auto drawLayers = [&](const renderengine::DisplaySettings&,
+                                const std::vector<const renderengine::LayerSettings*>& layers,
+                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                                base::unique_fd&&, base::unique_fd*) -> size_t {
+        // If the highlight layer is enabled, it will increase the size by 1.
+        // We're interested in the third layer either way.
+        EXPECT_GE(layers.size(), 3u);
+        const auto* holePunchSettings = layers[2];
+        EXPECT_EQ(nullptr, holePunchSettings->source.buffer.buffer);
+        EXPECT_EQ(half3(0.0f, 0.0f, 0.0f), holePunchSettings->source.solidColor);
+        EXPECT_TRUE(holePunchSettings->disableBlending);
+        EXPECT_EQ(0.0f, holePunchSettings->alpha);
+
+        return NO_ERROR;
+    };
+
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    cachedSet.render(mRenderEngine, mOutputState);
+}
+
+TEST_F(CachedSetTest, decompose_removesHolePunch) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, true);
+
+    ASSERT_EQ(&mTestLayers[2]->outputLayer, cachedSet.getHolePunchLayer());
+
+    std::vector<CachedSet> decomposed = cachedSet.decompose();
+    EXPECT_EQ(2u, decomposed.size());
+    for (const auto& set : decomposed) {
+        EXPECT_EQ(nullptr, set.getHolePunchLayer());
+    }
 }
 
 } // namespace

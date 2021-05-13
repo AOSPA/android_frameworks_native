@@ -136,6 +136,8 @@ struct InputMessage {
             float yPrecision;
             float xCursorPosition;
             float yCursorPosition;
+            int32_t displayWidth;
+            int32_t displayHeight;
             uint32_t pointerCount;
             uint32_t empty3;
             /**
@@ -227,7 +229,7 @@ public:
     InputChannel(const InputChannel& other)
           : mName(other.mName), mFd(::dup(other.mFd)), mToken(other.mToken){};
     InputChannel(const std::string name, android::base::unique_fd fd, sp<IBinder> token);
-    virtual ~InputChannel();
+    ~InputChannel() override;
     /**
      * Create a pair of input channels.
      * The two returned input channels are equivalent, and are labeled as "server" and "client"
@@ -353,8 +355,9 @@ public:
                                 int32_t metaState, int32_t buttonState,
                                 MotionClassification classification, const ui::Transform& transform,
                                 float xPrecision, float yPrecision, float xCursorPosition,
-                                float yCursorPosition, nsecs_t downTime, nsecs_t eventTime,
-                                uint32_t pointerCount, const PointerProperties* pointerProperties,
+                                float yCursorPosition, int32_t displayWidth, int32_t displayHeight,
+                                nsecs_t downTime, nsecs_t eventTime, uint32_t pointerCount,
+                                const PointerProperties* pointerProperties,
                                 const PointerCoords* pointerCoords);
 
     /* Publishes a focus event to the input channel.

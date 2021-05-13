@@ -739,6 +739,9 @@ int32_t AImageDecoder_getRepeatCount(AImageDecoder* _Nonnull decoder)
  * skipping frames in an image with such frames may not produce the correct
  * results.
  *
+ * Only supported by {@link ANDROID_BITMAP_FORMAT_RGBA_8888} and
+ * {@link ANDROID_BITMAP_FORMAT_RGBA_F16}.
+ *
  * @param decoder an {@link AImageDecoder} object.
  * @return {@link ANDROID_IMAGE_DECODER_SUCCESS} on success or a value
  *         indicating the reason for the failure.
@@ -747,6 +750,8 @@ int32_t AImageDecoder_getRepeatCount(AImageDecoder* _Nonnull decoder)
  * - {@link ANDROID_IMAGE_DECODER_BAD_PARAMETER}: The AImageDecoder
  *   represents an image that is not animated (see
  *   {@link AImageDecoder_isAnimated}) or the AImageDecoder is null.
+ * - {@link ANDROID_IMAGE_DECODER_INVALID_STATE): The requested
+ *   {@link AndroidBitmapFormat} does not support animation.
  * - {@link ANDROID_IMAGE_DECODER_INCOMPLETE}: The input appears
  *   to be truncated. The client must call {@link AImageDecoder_rewind}
  *   before calling {@link AImageDecoder_decodeImage} again.
@@ -832,8 +837,10 @@ void AImageDecoderFrameInfo_delete(
  * is the current frame.
  *
  * If the image only has one frame, this will fill the {@link
- * AImageDecoderFrameInfo} with the encoded info, if any, or reasonable
+ * AImageDecoderFrameInfo} with the encoded info and reasonable
  * defaults.
+ *
+ * If {@link AImageDecoder_advanceFrame} succeeded, this will succeed as well.
  *
  * @param decoder Opaque object representing the decoder.
  * @param info Opaque object to hold frame information. On success, will be
@@ -856,7 +863,7 @@ int AImageDecoder_getFrameInfo(AImageDecoder* _Nonnull decoder,
  * Introduced in API 31.
  *
  * Errors:
- * - returns 0 if |info| is null.
+ * - returns {@link ANDROID_IMAGE_DECODER_BAD_PARAMETER} if |info| is null.
  */
 int64_t AImageDecoderFrameInfo_getDuration(
         const AImageDecoderFrameInfo* _Nonnull info) __INTRODUCED_IN(31);
@@ -891,18 +898,24 @@ ARect AImageDecoderFrameInfo_getFrameRect(
  *
  * Introduced in API 31.
  *
- * Note that this may differ from whether the composed frame has
- * alpha. If this frame does not fill the entire image dimensions
- * (see {@link AImageDecoderFrameInfo_getFrameRect}) or it blends
- * with an opaque frame, for example, the composed frame’s alpha
- * may not match. It is also conservative; for example, if a color
- * index-based frame has a color with alpha but does not use it,
- * this will still return true.
+ * Unless this frame is independent (see {@link AImageDecoder_decodeImage}),
+ * a single call to {@link AImageDecoder_decodeImage} will decode an updated
+ * rectangle of pixels and then blend it with the existing pixels in the
+ * |pixels| buffer according to {@link AImageDecoderFrameInfo_getBlendOp}. This
+ * method returns whether the updated rectangle has alpha, prior to blending.
+ * The return value is conservative; for example, if a color-index-based frame
+ * has a color with alpha but does not use it, this will still return true.
  *
  * This, along with other information in AImageDecoderFrameInfo,
  * can be useful for determining whether a frame is independent, but
  * the decoder handles blending frames, so a simple
  * sequential client does not need this.
+ *
+ * Note that this may differ from whether the composed frame (that is, the
+ * resulting image after blending) has alpha. If this frame does not fill the
+ * entire image dimensions (see {@link AImageDecoderFrameInfo_getFrameRect})
+ * or it blends with an opaque frame, for example, the composed frame’s alpha
+ * may not match.
  *
  * Errors:
  * - returns false if |info| is null.

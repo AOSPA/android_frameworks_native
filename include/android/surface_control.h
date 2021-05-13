@@ -526,6 +526,9 @@ void ASurfaceTransaction_setFrameRate(ASurfaceTransaction* transaction,
  * callback timings, and changes to the time interval at which the system releases buffers back to
  * the application.
  *
+ * You can register for changes in the refresh rate using
+ * \a AChoreographer_registerRefreshRateCallback.
+ *
  * \param frameRate is the intended frame rate of this surface, in frames per second. 0 is a special
  * value that indicates the app will accept the system's choice for the display frame rate, which is
  * the default behavior if this function isn't called. The frameRate param does <em>not</em> need to
@@ -534,11 +537,12 @@ void ASurfaceTransaction_setFrameRate(ASurfaceTransaction* transaction,
  *
  * \param compatibility The frame rate compatibility of this surface. The compatibility value may
  * influence the system's choice of display frame rate. To specify a compatibility use the
- * ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_* enum.
+ * ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_* enum. This parameter is ignored when frameRate is 0.
  *
- * \param changeFrameRateStrategy Whether display refresh rate transitions should be seamless.
- * A seamless transition is one that doesn't have any visual interruptions, such as a black
- * screen for a second or two. See the ANATIVEWINDOW_CHANGE_FRAME_RATE_* values.
+ * \param changeFrameRateStrategy Whether display refresh rate transitions caused by this
+ * surface should be seamless. A seamless transition is one that doesn't have any visual
+ * interruptions, such as a black screen for a second or two. See the
+ * ANATIVEWINDOW_CHANGE_FRAME_RATE_* values. This parameter is ignored when frameRate is 0.
  *
  * Available since API level 31.
  */
