@@ -256,6 +256,10 @@ int32_t jankTypeBitmaskToProto(int32_t jankType) {
         protoJank |= FrameTimelineEvent::JANK_UNKNOWN;
         jankType &= ~JankType::Unknown;
     }
+    if (jankType & JankType::SurfaceFlingerStuffing) {
+        protoJank |= FrameTimelineEvent::JANK_SF_STUFFING;
+        jankType &= ~JankType::SurfaceFlingerStuffing;
+    }
 
     // jankType should be 0 if all types of jank were checked for.
     LOG_ALWAYS_FATAL_IF(jankType != 0, "Unrecognized jank type value 0x%x", jankType);
@@ -726,9 +730,11 @@ namespace impl {
 int64_t TokenManager::generateTokenForPredictions(TimelineItem&& predictions) {
     ATRACE_CALL();
     std::scoped_lock lock(mMutex);
+    while (mPredictions.size() >= kMaxTokens) {
+        mPredictions.erase(mPredictions.begin());
+    }
     const int64_t assignedToken = mCurrentToken++;
-    mPredictions[assignedToken] = {systemTime(), predictions};
-    flushTokens(systemTime());
+    mPredictions[assignedToken] = predictions;
     return assignedToken;
 }
 
@@ -736,21 +742,9 @@ std::optional<TimelineItem> TokenManager::getPredictionsForToken(int64_t token) 
     std::scoped_lock lock(mMutex);
     auto predictionsIterator = mPredictions.find(token);
     if (predictionsIterator != mPredictions.end()) {
-        return predictionsIterator->second.predictions;
+        return predictionsIterator->second;
     }
     return {};
-}
-
-void TokenManager::flushTokens(nsecs_t flushTime) {
-    for (auto it = mPredictions.begin(); it != mPredictions.end();) {
-        if (flushTime - it->second.timestamp >= kMaxRetentionTime) {
-            it = mPredictions.erase(it);
-        } else {
-            // Tokens are ordered by time. If i'th token is within the retention time, then the
-            // i+1'th token will also be within retention time.
-            break;
-        }
-    }
 }
 
 FrameTimeline::FrameTimeline(std::shared_ptr<TimeStats> timeStats, pid_t surfaceFlingerPid,
@@ -875,7 +869,8 @@ void FrameTimeline::DisplayFrame::setGpuFence(const std::shared_ptr<FenceTime>& 
     mGpuFence = gpuFence;
 }
 
-void FrameTimeline::DisplayFrame::classifyJank(nsecs_t& deadlineDelta, nsecs_t& deltaToVsync) {
+void FrameTimeline::DisplayFrame::classifyJank(nsecs_t& deadlineDelta, nsecs_t& deltaToVsync,
+                                               nsecs_t previousPresentTime) {
     if (mPredictionState == PredictionState::Expired ||
         mSurfaceFlingerActuals.presentTime == Fence::SIGNAL_TIME_INVALID) {
         // Cannot do jank classification with expired predictions or invalid signal times. Set the
@@ -949,7 +944,15 @@ void FrameTimeline::DisplayFrame::classifyJank(nsecs_t& deadlineDelta, nsecs_t& 
                 mJankType = JankType::Unknown;
             }
         } else if (mFramePresentMetadata == FramePresentMetadata::LatePresent) {
-            if (mFrameReadyMetadata == FrameReadyMetadata::OnTimeFinish) {
+            if (std::abs(mSurfaceFlingerPredictions.presentTime - previousPresentTime) <=
+                        mJankClassificationThresholds.presentThreshold ||
+                previousPresentTime > mSurfaceFlingerPredictions.presentTime) {
+                // The previous frame was either presented in the current frame's expected vsync or
+                // it was presented even later than the current frame's expected vsync.
+                mJankType = JankType::SurfaceFlingerStuffing;
+            }
+            if (mFrameReadyMetadata == FrameReadyMetadata::OnTimeFinish &&
+                !(mJankType & JankType::SurfaceFlingerStuffing)) {
                 // Finish on time, Present late
                 if (deltaToVsync < mJankClassificationThresholds.presentThreshold ||
                     deltaToVsync >= (mRefreshRate.getPeriodNsecs() -
@@ -963,11 +966,12 @@ void FrameTimeline::DisplayFrame::classifyJank(nsecs_t& deadlineDelta, nsecs_t& 
                     mJankType = JankType::PredictionError;
                 }
             } else if (mFrameReadyMetadata == FrameReadyMetadata::LateFinish) {
-                if (mFrameStartMetadata == FrameStartMetadata::LateStart) {
-                    // Late start, Late finish, Late Present
-                    mJankType = JankType::SurfaceFlingerScheduling;
-                } else {
-                    // OnTime start, Finish late, Present late
+                if (!(mJankType & JankType::SurfaceFlingerStuffing) ||
+                    mSurfaceFlingerActuals.presentTime - previousPresentTime >
+                            mRefreshRate.getPeriodNsecs() +
+                                    mJankClassificationThresholds.presentThreshold) {
+                    // Classify CPU vs GPU if SF wasn't stuffed or if SF was stuffed but this frame
+                    // was presented more than a vsync late.
                     if (mGpuFence != FenceTime::NO_FENCE &&
                         mSurfaceFlingerActuals.endTime - mSurfaceFlingerActuals.startTime <
                                 mRefreshRate.getPeriodNsecs()) {
@@ -989,11 +993,11 @@ void FrameTimeline::DisplayFrame::classifyJank(nsecs_t& deadlineDelta, nsecs_t& 
     }
 }
 
-void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime) {
+void FrameTimeline::DisplayFrame::onPresent(nsecs_t signalTime, nsecs_t previousPresentTime) {
     mSurfaceFlingerActuals.presentTime = signalTime;
     nsecs_t deadlineDelta = 0;
     nsecs_t deltaToVsync = 0;
-    classifyJank(deadlineDelta, deltaToVsync);
+    classifyJank(deadlineDelta, deltaToVsync, previousPresentTime);
 
     for (auto& surfaceFrame : mSurfaceFrames) {
         surfaceFrame->onPresent(signalTime, mJankType, mRefreshRate, deadlineDelta, deltaToVsync);
@@ -1158,8 +1162,9 @@ void FrameTimeline::flushPendingPresentFences() {
             }
         }
         auto& displayFrame = pendingPresentFence.second;
-        displayFrame->onPresent(signalTime);
+        displayFrame->onPresent(signalTime, mPreviousPresentTime);
         displayFrame->trace(mSurfaceFlingerPid);
+        mPreviousPresentTime = signalTime;
 
         mPendingPresentFences.erase(mPendingPresentFences.begin() + static_cast<int>(i));
         --i;

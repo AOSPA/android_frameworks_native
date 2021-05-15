@@ -17,6 +17,7 @@
 #include <BnBinderRpcSession.h>
 #include <BnBinderRpcTest.h>
 #include <aidl/IBinderRpcTest.h>
+#include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android/binder_auto_utils.h>
 #include <android/binder_libbinder.h>
@@ -24,8 +25,8 @@
 #include <binder/BpBinder.h>
 #include <binder/IServiceManager.h>
 #include <binder/ProcessState.h>
-#include <binder/RpcConnection.h>
 #include <binder/RpcServer.h>
+#include <binder/RpcSession.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -77,7 +78,7 @@ std::atomic<int32_t> MyBinderRpcSession::gNum;
 
 class MyBinderRpcTest : public BnBinderRpcTest {
 public:
-    sp<RpcConnection> connection;
+    wp<RpcServer> server;
 
     Status sendString(const std::string& str) override {
         (void)str;
@@ -87,13 +88,20 @@ public:
         *strstr = str + str;
         return Status::ok();
     }
-    Status countBinders(int32_t* out) override {
-        if (connection == nullptr) {
+    Status countBinders(std::vector<int32_t>* out) override {
+        sp<RpcServer> spServer = server.promote();
+        if (spServer == nullptr) {
             return Status::fromExceptionCode(Status::EX_NULL_POINTER);
         }
-        *out = connection->state()->countBinders();
-        if (*out != 1) {
-            connection->state()->dump();
+        out->clear();
+        for (auto session : spServer->listSessions()) {
+            size_t count = session->state()->countBinders();
+            if (count != 1) {
+                // this is called when there is only one binder held remaining,
+                // so to aid debugging
+                session->state()->dump();
+            }
+            out->push_back(count);
         }
         return Status::ok();
     }
@@ -176,14 +184,27 @@ public:
 };
 sp<IBinder> MyBinderRpcTest::mHeldBinder;
 
+class Pipe {
+public:
+    Pipe() { CHECK(android::base::Pipe(&mRead, &mWrite)); }
+    Pipe(Pipe&&) = default;
+    android::base::borrowed_fd readEnd() { return mRead; }
+    android::base::borrowed_fd writeEnd() { return mWrite; }
+
+private:
+    android::base::unique_fd mRead;
+    android::base::unique_fd mWrite;
+};
+
 class Process {
 public:
-    Process(const std::function<void()>& f) {
+    Process(Process&&) = default;
+    Process(const std::function<void(Pipe*)>& f) {
         if (0 == (mPid = fork())) {
             // racey: assume parent doesn't crash before this is set
             prctl(PR_SET_PDEATHSIG, SIGHUP);
 
-            f();
+            f(&mPipe);
         }
     }
     ~Process() {
@@ -191,9 +212,11 @@ public:
             kill(mPid, SIGKILL);
         }
     }
+    Pipe* getPipe() { return &mPipe; }
 
 private:
     pid_t mPid = 0;
+    Pipe mPipe;
 };
 
 static std::string allocateSocketAddress() {
@@ -202,48 +225,63 @@ static std::string allocateSocketAddress() {
     return temp + "/binderRpcTest_" + std::to_string(id++);
 };
 
-struct ProcessConnection {
+struct ProcessSession {
     // reference to process hosting a socket server
     Process host;
 
-    // client connection object associated with other process
-    sp<RpcConnection> connection;
+    struct SessionInfo {
+        sp<RpcSession> session;
+        sp<IBinder> root;
+    };
 
-    // pre-fetched root object
-    sp<IBinder> rootBinder;
+    // client session objects associated with other process
+    // each one represents a separate session
+    std::vector<SessionInfo> sessions;
 
-    // whether connection should be invalidated by end of run
-    bool expectInvalid = false;
+    ProcessSession(ProcessSession&&) = default;
+    ~ProcessSession() {
+        for (auto& session : sessions) {
+            session.root = nullptr;
+        }
 
-    ~ProcessConnection() {
-        rootBinder = nullptr;
-        EXPECT_NE(nullptr, connection);
-        EXPECT_NE(nullptr, connection->state());
-        EXPECT_EQ(0, connection->state()->countBinders()) << (connection->state()->dump(), "dump:");
+        for (auto& info : sessions) {
+            sp<RpcSession>& session = info.session;
 
-        wp<RpcConnection> weakConnection = connection;
-        connection = nullptr;
-        EXPECT_EQ(nullptr, weakConnection.promote()) << "Leaked connection";
+            EXPECT_NE(nullptr, session);
+            EXPECT_NE(nullptr, session->state());
+            EXPECT_EQ(0, session->state()->countBinders()) << (session->state()->dump(), "dump:");
+
+            wp<RpcSession> weakSession = session;
+            session = nullptr;
+            EXPECT_EQ(nullptr, weakSession.promote()) << "Leaked session";
+        }
     }
 };
 
-// Process connection where the process hosts IBinderRpcTest, the server used
+// Process session where the process hosts IBinderRpcTest, the server used
 // for most testing here
-struct BinderRpcTestProcessConnection {
-    ProcessConnection proc;
+struct BinderRpcTestProcessSession {
+    ProcessSession proc;
 
-    // pre-fetched root object
+    // pre-fetched root object (for first session)
     sp<IBinder> rootBinder;
 
-    // pre-casted root object
+    // pre-casted root object (for first session)
     sp<IBinderRpcTest> rootIface;
 
-    ~BinderRpcTestProcessConnection() {
-        if (!proc.expectInvalid) {
-            int32_t remoteBinders = 0;
-            EXPECT_OK(rootIface->countBinders(&remoteBinders));
-            // should only be the root binder object, iface
-            EXPECT_EQ(remoteBinders, 1);
+    // whether session should be invalidated by end of run
+    bool expectInvalid = false;
+
+    BinderRpcTestProcessSession(BinderRpcTestProcessSession&&) = default;
+    ~BinderRpcTestProcessSession() {
+        if (!expectInvalid) {
+            std::vector<int32_t> remoteCounts;
+            // calling over any sessions counts across all sessions
+            EXPECT_OK(rootIface->countBinders(&remoteCounts));
+            EXPECT_EQ(remoteCounts.size(), proc.sessions.size());
+            for (auto remoteCount : remoteCounts) {
+                EXPECT_EQ(remoteCount, 1);
+            }
         }
 
         rootIface = nullptr;
@@ -277,98 +315,99 @@ class BinderRpc : public ::testing::TestWithParam<SocketType> {
 public:
     // This creates a new process serving an interface on a certain number of
     // threads.
-    ProcessConnection createRpcTestSocketServerProcess(
-            size_t numThreads,
-            const std::function<void(const sp<RpcServer>&, const sp<RpcConnection>&)>& configure) {
-        CHECK_GT(numThreads, 0);
+    ProcessSession createRpcTestSocketServerProcess(
+            size_t numThreads, size_t numSessions,
+            const std::function<void(const sp<RpcServer>&)>& configure) {
+        CHECK_GE(numSessions, 1) << "Must have at least one session to a server";
 
         SocketType socketType = GetParam();
 
         std::string addr = allocateSocketAddress();
         unlink(addr.c_str());
-        static unsigned int port = 3456;
-        port++;
+        static unsigned int vsockPort = 3456;
+        vsockPort++;
 
-        auto ret = ProcessConnection{
-                .host = Process([&] {
+        auto ret = ProcessSession{
+                .host = Process([&](Pipe* pipe) {
                     sp<RpcServer> server = RpcServer::make();
 
                     server->iUnderstandThisCodeIsExperimentalAndIWillNotUseItInProduction();
-
-                    // server supporting one client on one socket
-                    sp<RpcConnection> connection = server->addClientConnection();
+                    server->setMaxThreads(numThreads);
 
                     switch (socketType) {
                         case SocketType::UNIX:
-                            CHECK(connection->setupUnixDomainServer(addr.c_str())) << addr;
+                            CHECK(server->setupUnixDomainServer(addr.c_str())) << addr;
                             break;
 #ifdef __BIONIC__
                         case SocketType::VSOCK:
-                            CHECK(connection->setupVsockServer(port));
+                            CHECK(server->setupVsockServer(vsockPort));
                             break;
 #endif // __BIONIC__
-                        case SocketType::INET:
-                            CHECK(connection->setupInetServer(port));
+                        case SocketType::INET: {
+                            unsigned int outPort = 0;
+                            CHECK(server->setupInetServer(0, &outPort));
+                            CHECK_NE(0, outPort);
+                            CHECK(android::base::WriteFully(pipe->writeEnd(), &outPort,
+                                                            sizeof(outPort)));
                             break;
+                        }
                         default:
                             LOG_ALWAYS_FATAL("Unknown socket type");
                     }
 
-                    configure(server, connection);
+                    configure(server);
 
-                    // accept 'numThreads' connections
-                    std::vector<std::thread> pool;
-                    for (size_t i = 0; i + 1 < numThreads; i++) {
-                        pool.push_back(std::thread([=] { connection->join(); }));
-                    }
-                    connection->join();
-                    for (auto& t : pool) t.join();
+                    server->join();
                 }),
-                .connection = RpcConnection::make(),
         };
 
-        // create remainder of connections
-        for (size_t i = 0; i < numThreads; i++) {
-            for (size_t tries = 0; tries < 5; tries++) {
+        unsigned int inetPort = 0;
+        if (socketType == SocketType::INET) {
+            CHECK(android::base::ReadFully(ret.host.getPipe()->readEnd(), &inetPort,
+                                           sizeof(inetPort)));
+            CHECK_NE(0, inetPort);
+        }
+
+        for (size_t i = 0; i < numSessions; i++) {
+            sp<RpcSession> session = RpcSession::make();
+            for (size_t tries = 0; tries < 10; tries++) {
                 usleep(10000);
                 switch (socketType) {
                     case SocketType::UNIX:
-                        if (ret.connection->addUnixDomainClient(addr.c_str())) goto success;
+                        if (session->setupUnixDomainClient(addr.c_str())) goto success;
                         break;
 #ifdef __BIONIC__
                     case SocketType::VSOCK:
-                        if (ret.connection->addVsockClient(VMADDR_CID_LOCAL, port)) goto success;
+                        if (session->setupVsockClient(VMADDR_CID_LOCAL, vsockPort)) goto success;
                         break;
 #endif // __BIONIC__
                     case SocketType::INET:
-                        if (ret.connection->addInetClient("127.0.0.1", port)) goto success;
+                        if (session->setupInetClient("127.0.0.1", inetPort)) goto success;
                         break;
                     default:
                         LOG_ALWAYS_FATAL("Unknown socket type");
                 }
             }
             LOG_ALWAYS_FATAL("Could not connect");
-        success:;
+        success:
+            ret.sessions.push_back({session, session->getRootObject()});
         }
-
-        ret.rootBinder = ret.connection->getRootObject();
         return ret;
     }
 
-    BinderRpcTestProcessConnection createRpcTestSocketServerProcess(size_t numThreads) {
-        BinderRpcTestProcessConnection ret{
-                .proc = createRpcTestSocketServerProcess(numThreads,
-                                                         [&](const sp<RpcServer>& server,
-                                                             const sp<RpcConnection>& connection) {
+    BinderRpcTestProcessSession createRpcTestSocketServerProcess(size_t numThreads,
+                                                                 size_t numSessions = 1) {
+        BinderRpcTestProcessSession ret{
+                .proc = createRpcTestSocketServerProcess(numThreads, numSessions,
+                                                         [&](const sp<RpcServer>& server) {
                                                              sp<MyBinderRpcTest> service =
                                                                      new MyBinderRpcTest;
                                                              server->setRootObject(service);
-                                                             service->connection =
-                                                                     connection; // for testing only
+                                                             service->server = server;
                                                          }),
         };
 
-        ret.rootBinder = ret.proc.rootBinder;
+        ret.rootBinder = ret.proc.sessions.at(0).root;
         ret.rootIface = interface_cast<IBinderRpcTest>(ret.rootBinder);
 
         return ret;
@@ -376,18 +415,12 @@ public:
 };
 
 TEST_P(BinderRpc, RootObjectIsNull) {
-    auto proc = createRpcTestSocketServerProcess(1,
-                                                 [](const sp<RpcServer>& server,
-                                                    const sp<RpcConnection>&) {
-                                                     // this is the default, but to be explicit
-                                                     server->setRootObject(nullptr);
-                                                 });
+    auto proc = createRpcTestSocketServerProcess(1, 1, [](const sp<RpcServer>& server) {
+        // this is the default, but to be explicit
+        server->setRootObject(nullptr);
+    });
 
-    // retrieved by getRootObject when process is created above
-    EXPECT_EQ(nullptr, proc.rootBinder);
-
-    // make sure we can retrieve it again (process doesn't crash)
-    EXPECT_EQ(nullptr, proc.connection->getRootObject());
+    EXPECT_EQ(nullptr, proc.sessions.at(0).root);
 }
 
 TEST_P(BinderRpc, Ping) {
@@ -400,6 +433,14 @@ TEST_P(BinderRpc, GetInterfaceDescriptor) {
     auto proc = createRpcTestSocketServerProcess(1);
     ASSERT_NE(proc.rootBinder, nullptr);
     EXPECT_EQ(IBinderRpcTest::descriptor, proc.rootBinder->getInterfaceDescriptor());
+}
+
+TEST_P(BinderRpc, MultipleSessions) {
+    auto proc = createRpcTestSocketServerProcess(1 /*threads*/, 5 /*sessions*/);
+    for (auto session : proc.proc.sessions) {
+        ASSERT_NE(nullptr, session.root);
+        EXPECT_EQ(OK, session.root->pingBinder());
+    }
 }
 
 TEST_P(BinderRpc, TransactionsMustBeMarkedRpc) {
@@ -540,13 +581,22 @@ TEST_P(BinderRpc, HoldBinder) {
 // These are behavioral differences form regular binder, where certain usecases
 // aren't supported.
 
-TEST_P(BinderRpc, CannotMixBindersBetweenUnrelatedSocketConnections) {
+TEST_P(BinderRpc, CannotMixBindersBetweenUnrelatedSocketSessions) {
     auto proc1 = createRpcTestSocketServerProcess(1);
     auto proc2 = createRpcTestSocketServerProcess(1);
 
     sp<IBinder> outBinder;
     EXPECT_EQ(INVALID_OPERATION,
               proc1.rootIface->repeatBinder(proc2.rootBinder, &outBinder).transactionError());
+}
+
+TEST_P(BinderRpc, CannotMixBindersBetweenTwoSessionsToTheSameServer) {
+    auto proc = createRpcTestSocketServerProcess(1 /*threads*/, 2 /*sessions*/);
+
+    sp<IBinder> outBinder;
+    EXPECT_EQ(INVALID_OPERATION,
+              proc.rootIface->repeatBinder(proc.proc.sessions.at(1).root, &outBinder)
+                      .transactionError());
 }
 
 TEST_P(BinderRpc, CannotSendRegularBinderOverSocketBinder) {
@@ -833,7 +883,7 @@ TEST_P(BinderRpc, Die) {
         EXPECT_EQ(DEAD_OBJECT, proc.rootIface->die(doDeathCleanup).transactionError())
                 << "Do death cleanup: " << doDeathCleanup;
 
-        proc.proc.expectInvalid = true;
+        proc.expectInvalid = true;
     }
 }
 

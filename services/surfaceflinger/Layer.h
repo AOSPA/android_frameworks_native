@@ -274,6 +274,8 @@ public:
 
         // Stretch effect to apply to this layer
         StretchEffect stretchEffect;
+
+        Rect bufferCrop;
     };
 
     /*
@@ -483,12 +485,9 @@ public:
     // to avoid grabbing the lock again to avoid deadlock
     virtual bool isCreatedFromMainThread() const { return false; }
 
-    virtual Geometry getActiveGeometry(const Layer::State& s) const { return s.active_legacy; }
-    virtual uint32_t getActiveWidth(const Layer::State& s) const { return s.active_legacy.w; }
-    virtual uint32_t getActiveHeight(const Layer::State& s) const { return s.active_legacy.h; }
-    virtual ui::Transform getActiveTransform(const Layer::State& s) const {
-        return s.active_legacy.transform;
-    }
+    uint32_t getActiveWidth(const Layer::State& s) const { return s.width; }
+    uint32_t getActiveHeight(const Layer::State& s) const { return s.height; }
+    ui::Transform getActiveTransform(const Layer::State& s) const { return s.transform; }
     virtual Region getActiveTransparentRegion(const Layer::State& s) const {
         return s.activeTransparentRegion_legacy;
     }
@@ -890,6 +889,7 @@ public:
     bool setStretchEffect(const StretchEffect& effect);
     StretchEffect getStretchEffect() const;
 
+    virtual bool setBufferCrop(const Rect& /* bufferCrop */) { return false; }
     virtual std::atomic<int32_t>* getPendingBufferCounter() { return nullptr; }
     virtual std::string getPendingBufferCounterName() { return ""; }
 

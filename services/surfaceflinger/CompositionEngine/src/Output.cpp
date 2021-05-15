@@ -725,7 +725,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
     editState().earliestPresentTime = refreshArgs.earliestPresentTime;
 
-    OutputLayer* peekThroughLayer = nullptr;
+    compositionengine::OutputLayer* peekThroughLayer = nullptr;
     bool hasSecureCamera = false;
     bool hasSecureDisplay = false;
     bool needsProtected = false;

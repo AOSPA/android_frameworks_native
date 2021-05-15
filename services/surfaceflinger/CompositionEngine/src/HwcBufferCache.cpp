@@ -92,7 +92,7 @@ void HwcBufferCache::getHwcBuffer(int slot, const sp<GraphicBuffer>& buffer, uin
         format = buffer->getPixelFormat();
     }
     bool widevideo = false;
-    uint32_t numSlots = BufferQueue::NUM_BUFFER_SLOTS;
+    uint32_t numSlots = kMaxLayerBufferCount;
 
     // Workaround to reduce slots for 8k buffers
     if ((width * height > MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT) && mReduceSlotsForWideVideo &&
