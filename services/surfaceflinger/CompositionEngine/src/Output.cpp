@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#include <thread>
-
+#include <SurfaceFlingerProperties.sysprop.h>
 #include <android-base/stringprintf.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/CompositionRefreshArgs.h>
@@ -29,7 +28,9 @@
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <compositionengine/impl/planner/Planner.h>
 
-#include <SurfaceFlingerProperties.sysprop.h>
+#include <thread>
+
+#include "renderengine/ExternalTexture.h"
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -458,12 +459,6 @@ void Output::collectVisibleLayers(const compositionengine::CompositionRefreshArg
     setReleasedLayers(refreshArgs);
 
     finalizePendingOutputLayers();
-
-    // Generate a simple Z-order values to each visible output layer
-    uint32_t zOrder = 0;
-    for (auto* outputLayer : getOutputLayersOrderedByZ()) {
-        outputLayer->editState().z = zOrder++;
-    }
 }
 
 void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
@@ -728,23 +723,62 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         return;
     }
 
-    sp<GraphicBuffer> previousOverride = nullptr;
+    editState().earliestPresentTime = refreshArgs.earliestPresentTime;
+
+    OutputLayer* peekThroughLayer = nullptr;
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
     for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+            hasSecureCamera = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+            hasSecureDisplay = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+            needsProtected = true;
+        }
+    }
+
+    sp<GraphicBuffer> previousOverride = nullptr;
+    bool includeGeometry = refreshArgs.updatingGeometryThisFrame;
+    uint32_t z = 0;
+    bool overrideZ = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer == peekThroughLayer) {
+            // No longer needed, although it should not show up again, so
+            // resetting it is not truly needed either.
+            peekThroughLayer = nullptr;
+
+            // peekThroughLayer was already drawn ahead of its z order.
+            continue;
+        }
         bool skipLayer = false;
-        if (layer->getState().overrideInfo.buffer != nullptr) {
-            if (previousOverride != nullptr &&
-                layer->getState().overrideInfo.buffer == previousOverride) {
+        const auto& overrideInfo = layer->getState().overrideInfo;
+        if (overrideInfo.buffer != nullptr) {
+            if (previousOverride && overrideInfo.buffer->getBuffer() == previousOverride) {
                 ALOGV("Skipping redundant buffer");
                 skipLayer = true;
+            } else {
+                // First layer with the override buffer.
+                if (overrideInfo.peekThroughLayer) {
+                    peekThroughLayer = overrideInfo.peekThroughLayer;
+
+                    // Draw peekThroughLayer first.
+                    overrideZ = true;
+                    includeGeometry = true;
+                    constexpr bool isPeekingThrough = true;
+                    peekThroughLayer->writeStateToHWC(includeGeometry, false, z++, overrideZ,
+                                                      isPeekingThrough);
+                }
+
+                previousOverride = overrideInfo.buffer->getBuffer();
             }
-            previousOverride = layer->getState().overrideInfo.buffer;
         }
 
-        // TODO(b/181172795): We now update geometry for all flattened layers. We should update it
-        // only when the geometry actually changes
-        const bool includeGeometry = refreshArgs.updatingGeometryThisFrame ||
-                layer->getState().overrideInfo.buffer != nullptr || skipLayer;
-        layer->writeStateToHWC(includeGeometry, skipLayer);
+        constexpr bool isPeekingThrough = false;
+        layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough);
 #ifdef QTI_UNIFIED_DRAW
         if (hasSecureCamera || hasSecureDisplay || needsProtected) {
             layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::DEFAULT);
@@ -994,46 +1028,47 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     const TracedOrdinal<bool> hasClientComposition = {"hasClientComposition",
                                                       outputState.usesClientComposition};
 
-    auto layers = getOutputLayersOrderedByZ();
-    bool hasSecureCamera = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-         return layer->getLayerFE().getCompositionState()->isSecureCamera;
-    });
-
-    bool hasSecureDisplay = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-         return layer->getLayerFE().getCompositionState()->isSecureDisplay;
-    });
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+            hasSecureCamera = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+            hasSecureDisplay = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+            needsProtected = true;
+        }
+    }
 
     auto& renderEngine = getCompositionEngine().getRenderEngine();
     const bool supportsProtectedContent = renderEngine.supportsProtectedContent() &&
-                                          !hasSecureCamera && !hasSecureDisplay;
+                                          !hasSecureCamera && !hasSecureDisplay &&
+                                          outputState.isSecure && needsProtected;
 
     // If we the display is secure, protected content support is enabled, and at
     // least one layer has protected content, we need to use a secure back
     // buffer.
-    if (outputState.isSecure && supportsProtectedContent) {
-        bool needsProtected = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-            return layer->getLayerFE().getCompositionState()->hasProtectedContent;
-        });
-        if (needsProtected != renderEngine.isProtected()) {
-            renderEngine.useProtectedContext(needsProtected);
-        }
-        if (needsProtected != mRenderSurface->isProtected() &&
-            needsProtected == renderEngine.isProtected()) {
-            mRenderSurface->setProtected(needsProtected);
-        }
-    } else if (!outputState.isSecure && renderEngine.isProtected()) {
-        renderEngine.useProtectedContext(false);
+    if (supportsProtectedContent != renderEngine.isProtected()) {
+        renderEngine.useProtectedContext(supportsProtectedContent);
+    }
+    if (supportsProtectedContent != mRenderSurface->isProtected() &&
+        supportsProtectedContent == renderEngine.isProtected()) {
+        mRenderSurface->setProtected(supportsProtectedContent);
     }
 
     base::unique_fd fd;
-    sp<GraphicBuffer> buf;
+
+    std::shared_ptr<renderengine::ExternalTexture> tex;
 
     // If we aren't doing client composition on this output, but do have a
     // flipClientTarget request for this frame on this output, we still need to
     // dequeue a buffer.
     if (hasClientComposition || outputState.flipClientTarget) {
-        buf = mRenderSurface->dequeueBuffer(&fd);
-        if (buf == nullptr) {
+        tex = mRenderSurface->dequeueBuffer(&fd);
+        if (tex == nullptr) {
             ALOGW("Dequeuing buffer for display [%s] failed, bailing out of "
                   "client composition for this frame",
                   mName.c_str());
@@ -1078,13 +1113,14 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // Check if the client composition requests were rendered into the provided graphic buffer. If
     // so, we can reuse the buffer and avoid client composition.
     if (mClientCompositionRequestCache) {
-        if (mClientCompositionRequestCache->exists(buf->getId(), clientCompositionDisplay,
+        if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
+                                                   clientCompositionDisplay,
                                                    clientCompositionLayers)) {
             outputCompositionState.reusedClientComposition = true;
             setExpensiveRenderingExpected(false);
             return readyFence;
         }
-        mClientCompositionRequestCache->add(buf->getId(), clientCompositionDisplay,
+        mClientCompositionRequestCache->add(tex->getBuffer()->getId(), clientCompositionDisplay,
                                             clientCompositionLayers);
     }
 
@@ -1117,12 +1153,12 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // over to RenderEngine, in which case this flag can be removed from the drawLayers interface.
     const bool useFramebufferCache = outputState.layerStackInternal;
     status_t status =
-            renderEngine.drawLayers(clientCompositionDisplay, clientCompositionLayerPointers, buf,
+            renderEngine.drawLayers(clientCompositionDisplay, clientCompositionLayerPointers, tex,
                                     useFramebufferCache, std::move(fd), &readyFence);
 
     if (status != NO_ERROR && mClientCompositionRequestCache) {
         // If rendering was not successful, remove the request from the cache.
-        mClientCompositionRequestCache->remove(buf->getId());
+        mClientCompositionRequestCache->remove(tex->getBuffer()->getId());
     }
 
     auto& timeStats = getCompositionEngine().getTimeStats();
@@ -1149,6 +1185,7 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
     Region stubRegion;
 
     bool disableBlurs = false;
+    sp<GraphicBuffer> previousOverrideBuffer = nullptr;
 
     for (auto* layer : getOutputLayersOrderedByZ()) {
         const auto& layerState = layer->getState();
@@ -1198,8 +1235,14 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
 
             std::vector<LayerFE::LayerSettings> results;
             if (layer->getState().overrideInfo.buffer != nullptr) {
-                results = layer->getOverrideCompositionList();
-                ALOGV("Replacing [%s] with override in RE", layer->getLayerFE().getDebugName());
+                if (layer->getState().overrideInfo.buffer->getBuffer() != previousOverrideBuffer) {
+                    results = layer->getOverrideCompositionList();
+                    previousOverrideBuffer = layer->getState().overrideInfo.buffer->getBuffer();
+                    ALOGV("Replacing [%s] with override in RE", layer->getLayerFE().getDebugName());
+                } else {
+                    ALOGV("Skipping redundant override buffer for [%s] in RE",
+                          layer->getLayerFE().getDebugName());
+                }
             } else {
                 results = layerFE.prepareClientCompositionList(targetSettings);
                 if (realContentIsVisible && !results.empty()) {
@@ -1297,7 +1340,7 @@ void Output::postFramebuffer() {
 
 void Output::renderCachedSets() {
     if (mPlanner) {
-        mPlanner->renderCachedSets(getCompositionEngine().getRenderEngine(), getState().dataspace);
+        mPlanner->renderCachedSets(getCompositionEngine().getRenderEngine(), getState());
     }
 }
 

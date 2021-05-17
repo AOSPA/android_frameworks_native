@@ -167,8 +167,6 @@ private:
                                        int32_t backgroundBlurRadius);
     void addBlurRegionsLocked(Transaction* transaction, int32_t layerId,
                               const std::vector<BlurRegion>& effectRegions);
-    void addDeferTransactionLocked(Transaction* transaction, int32_t layerId,
-            const sp<const Layer>& layer, uint64_t frameNumber);
     void addSurfaceChangesLocked(Transaction* transaction, const layer_state_t& state);
     void addTransactionLocked(Increment* increment, const Vector<ComposerState>& stateUpdates,
                               const DefaultKeyedVector<wp<IBinder>, DisplayDeviceState>& displays,
@@ -176,7 +174,6 @@ private:
                               uint32_t transactionFlags, int originPid, int originUid,
                               uint64_t transactionId);
     void addReparentLocked(Transaction* transaction, int32_t layerId, int32_t parentId);
-    void addReparentChildrenLocked(Transaction* transaction, int32_t layerId, int32_t parentId);
     void addRelativeParentLocked(Transaction* transaction, int32_t layerId, int32_t parentId,
                                  int z);
     void addShadowRadiusLocked(Transaction* transaction, int32_t layerId, float shadowRadius);

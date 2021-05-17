@@ -21,6 +21,7 @@
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
+#include <cstdint>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -317,7 +318,8 @@ void OutputLayer::updateCompositionState(
     }
 }
 
-void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer) {
+void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t z,
+                                  bool zIsOverridden, bool isPeekingThrough) {
     const auto& state = getState();
     // Skip doing this if there is no HWC interface
     if (!state.hwc) {
@@ -338,8 +340,13 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer) {
 
     auto requestedCompositionType = outputIndependentState->compositionType;
 
-    if (includeGeometry) {
-        writeOutputDependentGeometryStateToHWC(hwcLayer.get(), requestedCompositionType);
+    // TODO(b/181172795): We now update geometry for all flattened layers. We should update it
+    // only when the geometry actually changes
+    const bool isOverridden =
+            state.overrideInfo.buffer != nullptr || isPeekingThrough || zIsOverridden;
+    const bool prevOverridden = state.hwc->stateOverridden;
+    if (isOverridden || prevOverridden || skipLayer || includeGeometry) {
+        writeOutputDependentGeometryStateToHWC(hwcLayer.get(), requestedCompositionType, z);
         writeOutputIndependentGeometryStateToHWC(hwcLayer.get(), *outputIndependentState,
                                                  skipLayer);
     }
@@ -347,21 +354,30 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer) {
     writeOutputDependentPerFrameStateToHWC(hwcLayer.get());
     writeOutputIndependentPerFrameStateToHWC(hwcLayer.get(), *outputIndependentState);
 
-    writeCompositionTypeToHWC(hwcLayer.get(), requestedCompositionType);
+    writeCompositionTypeToHWC(hwcLayer.get(), requestedCompositionType, isPeekingThrough);
 
     // Always set the layer color after setting the composition type.
     writeSolidColorStateToHWC(hwcLayer.get(), *outputIndependentState);
+
+    editState().hwc->stateOverridden = isOverridden;
 }
 
-void OutputLayer::writeOutputDependentGeometryStateToHWC(
-        HWC2::Layer* hwcLayer, hal::Composition requestedCompositionType) {
+void OutputLayer::writeOutputDependentGeometryStateToHWC(HWC2::Layer* hwcLayer,
+                                                         hal::Composition requestedCompositionType,
+                                                         uint32_t z) {
     const auto& outputDependentState = getState();
 
     Rect displayFrame = outputDependentState.displayFrame;
     FloatRect sourceCrop = outputDependentState.sourceCrop;
-    if (outputDependentState.overrideInfo.buffer != nullptr) { // adyabr
+
+    if (outputDependentState.overrideInfo.buffer != nullptr) {
         displayFrame = outputDependentState.overrideInfo.displayFrame;
-        sourceCrop = displayFrame.toFloatRect();
+        sourceCrop =
+                FloatRect(0.f, 0.f,
+                          static_cast<float>(outputDependentState.overrideInfo.buffer->getBuffer()
+                                                     ->getWidth()),
+                          static_cast<float>(outputDependentState.overrideInfo.buffer->getBuffer()
+                                                     ->getHeight()));
     }
 
     ALOGV("Writing display frame [%d, %d, %d, %d]", displayFrame.left, displayFrame.top,
@@ -380,13 +396,14 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(
               sourceCrop.bottom, to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    if (auto error = hwcLayer->setZOrder(outputDependentState.z); error != hal::Error::NONE) {
-        ALOGE("[%s] Failed to set Z %u: %s (%d)", getLayerFE().getDebugName(),
-              outputDependentState.z, to_string(error).c_str(), static_cast<int32_t>(error));
+    if (auto error = hwcLayer->setZOrder(z); error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set Z %u: %s (%d)", getLayerFE().getDebugName(), z,
+              to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    // Solid-color layers should always use an identity transform.
-    const auto bufferTransform = requestedCompositionType != hal::Composition::SOLID_COLOR
+    // Solid-color layers and overridden buffers should always use an identity transform.
+    const auto bufferTransform = (requestedCompositionType != hal::Composition::SOLID_COLOR &&
+                                  getState().overrideInfo.buffer == nullptr)
             ? outputDependentState.bufferTransform
             : static_cast<hal::Transform>(0);
     if (auto error = hwcLayer->setTransform(static_cast<hal::Transform>(bufferTransform));
@@ -400,14 +417,20 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(
 void OutputLayer::writeOutputIndependentGeometryStateToHWC(
         HWC2::Layer* hwcLayer, const LayerFECompositionState& outputIndependentState,
         bool skipLayer) {
-    if (auto error = hwcLayer->setBlendMode(outputIndependentState.blendMode);
-        error != hal::Error::NONE) {
+    // If there is a peekThroughLayer, then this layer has a hole in it. We need to use
+    // PREMULTIPLIED so it will peek through.
+    const auto& overrideInfo = getState().overrideInfo;
+    const auto blendMode = overrideInfo.buffer || overrideInfo.peekThroughLayer
+            ? hardware::graphics::composer::hal::BlendMode::PREMULTIPLIED
+            : outputIndependentState.blendMode;
+    if (auto error = hwcLayer->setBlendMode(blendMode); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set blend mode %s: %s (%d)", getLayerFE().getDebugName(),
-              toString(outputIndependentState.blendMode).c_str(), to_string(error).c_str(),
-              static_cast<int32_t>(error));
+              toString(blendMode).c_str(), to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    const float alpha = skipLayer ? 0.0f : outputIndependentState.alpha;
+    const float alpha = skipLayer
+            ? 0.0f
+            : (getState().overrideInfo.buffer ? 1.0f : outputIndependentState.alpha);
     ALOGV("Writing alpha %f", alpha);
 
     if (auto error = hwcLayer->setPlaneAlpha(alpha); error != hal::Error::NONE) {
@@ -429,18 +452,22 @@ void OutputLayer::writeOutputDependentPerFrameStateToHWC(HWC2::Layer* hwcLayer) 
 
     // TODO(lpique): b/121291683 outputSpaceVisibleRegion is output-dependent geometry
     // state and should not change every frame.
-    if (auto error = hwcLayer->setVisibleRegion(outputDependentState.outputSpaceVisibleRegion);
-        error != hal::Error::NONE) {
+    Region visibleRegion = outputDependentState.overrideInfo.buffer
+            ? Region(outputDependentState.overrideInfo.visibleRegion)
+            : outputDependentState.outputSpaceVisibleRegion;
+    if (auto error = hwcLayer->setVisibleRegion(visibleRegion); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set visible region: %s (%d)", getLayerFE().getDebugName(),
               to_string(error).c_str(), static_cast<int32_t>(error));
         outputDependentState.outputSpaceVisibleRegion.dump(LOG_TAG);
     }
 
-    if (auto error = hwcLayer->setDataspace(outputDependentState.dataspace);
-        error != hal::Error::NONE) {
-        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", getLayerFE().getDebugName(),
-              outputDependentState.dataspace, to_string(error).c_str(),
-              static_cast<int32_t>(error));
+    const auto dataspace = outputDependentState.overrideInfo.buffer
+            ? outputDependentState.overrideInfo.dataspace
+            : outputDependentState.dataspace;
+
+    if (auto error = hwcLayer->setDataspace(dataspace); error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set dataspace %d: %s (%d)", getLayerFE().getDebugName(), dataspace,
+              to_string(error).c_str(), static_cast<int32_t>(error));
     }
 }
 
@@ -457,8 +484,11 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
                   to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    if (auto error = hwcLayer->setSurfaceDamage(outputIndependentState.surfaceDamage);
-        error != hal::Error::NONE) {
+    const Region& surfaceDamage = getState().overrideInfo.buffer
+            ? getState().overrideInfo.damageRegion
+            : outputIndependentState.surfaceDamage;
+
+    if (auto error = hwcLayer->setSurfaceDamage(surfaceDamage); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set surface damage: %s (%d)", getLayerFE().getDebugName(),
               to_string(error).c_str(), static_cast<int32_t>(error));
         outputIndependentState.surfaceDamage.dump(LOG_TAG);
@@ -530,7 +560,7 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
     sp<GraphicBuffer> buffer = outputIndependentState.buffer;
     sp<Fence> acquireFence = outputIndependentState.acquireFence;
     if (getState().overrideInfo.buffer != nullptr) {
-        buffer = getState().overrideInfo.buffer;
+        buffer = getState().overrideInfo.buffer->getBuffer();
         acquireFence = getState().overrideInfo.acquireFence;
     }
 
@@ -551,11 +581,13 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
 }
 
 void OutputLayer::writeCompositionTypeToHWC(HWC2::Layer* hwcLayer,
-                                            hal::Composition requestedCompositionType) {
+                                            hal::Composition requestedCompositionType,
+                                            bool isPeekingThrough) {
     auto& outputDependentState = editState();
 
     // If we are forcing client composition, we need to tell the HWC
-    if (outputDependentState.forceClientComposition) {
+    if (outputDependentState.forceClientComposition ||
+        (!isPeekingThrough && getLayerFE().hasRoundedCorners())) {
         requestedCompositionType = hal::Composition::CLIENT;
     }
 
@@ -698,16 +730,26 @@ std::vector<LayerFE::LayerSettings> OutputLayer::getOverrideCompositionList() co
         return {};
     }
 
+    // Compute the geometry boundaries in layer stack space: we need to transform from the
+    // framebuffer space of the override buffer to layer space.
+    const ProjectionSpace& layerSpace = getOutput().getState().layerStackSpace;
+    const ui::Transform transform = getState().overrideInfo.displaySpace.getTransform(layerSpace);
+    const Rect boundaries = transform.transform(getState().overrideInfo.displayFrame);
+
     LayerFE::LayerSettings settings;
     settings.geometry = renderengine::Geometry{
-            .boundaries = getState().overrideInfo.displayFrame.toFloatRect(),
+            .boundaries = boundaries.toFloatRect(),
     };
-    settings.bufferId = getState().overrideInfo.buffer->getId();
-    settings.source =
-            renderengine::PixelSource{.buffer = renderengine::Buffer{
-                                              .buffer = getState().overrideInfo.buffer,
-                                              .fence = getState().overrideInfo.acquireFence,
-                                      }};
+    settings.bufferId = getState().overrideInfo.buffer->getBuffer()->getId();
+    settings.source = renderengine::PixelSource{
+            .buffer = renderengine::Buffer{
+                    .buffer = getState().overrideInfo.buffer,
+                    .fence = getState().overrideInfo.acquireFence,
+                    // If the transform from layer space to display space contains a rotation, we
+                    // need to undo the rotation in the texture transform
+                    .textureTransform =
+                            ui::Transform(transform.inverse().getOrientation(), 1, 1).asMatrix4(),
+            }};
     settings.sourceDataspace = getState().overrideInfo.dataspace;
     settings.alpha = 1.0f;
 

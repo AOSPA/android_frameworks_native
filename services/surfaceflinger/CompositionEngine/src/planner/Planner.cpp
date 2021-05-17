@@ -19,11 +19,16 @@
 #undef LOG_TAG
 #define LOG_TAG "Planner"
 
+#include <android-base/properties.h>
 #include <compositionengine/LayerFECompositionState.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <compositionengine/impl/planner/Planner.h>
 
 namespace android::compositionengine::impl::planner {
+
+Planner::Planner()
+      : mFlattener(mPredictor,
+                   base::GetBoolProperty(std::string("debug.sf.enable_hole_punch_pip"), false)) {}
 
 void Planner::setDisplaySize(ui::Size size) {
     mFlattener.setDisplaySize(size);
@@ -111,7 +116,12 @@ void Planner::reportFinalPlan(
     const GraphicBuffer* currentOverrideBuffer = nullptr;
     bool hasSkippedLayers = false;
     for (auto layer : layers) {
-        const GraphicBuffer* overrideBuffer = layer->getState().overrideInfo.buffer.get();
+        if (!layer->getState().overrideInfo.buffer) {
+            continue;
+        }
+
+        const GraphicBuffer* overrideBuffer =
+                layer->getState().overrideInfo.buffer->getBuffer().get();
         if (overrideBuffer != nullptr && overrideBuffer == currentOverrideBuffer) {
             // Skip this layer since it is part of a previous cached set
             hasSkippedLayers = true;
@@ -134,8 +144,8 @@ void Planner::reportFinalPlan(
 }
 
 void Planner::renderCachedSets(renderengine::RenderEngine& renderEngine,
-                               ui::Dataspace outputDataspace) {
-    mFlattener.renderCachedSets(renderEngine, outputDataspace);
+                               const OutputCompositionState& outputState) {
+    mFlattener.renderCachedSets(renderEngine, outputState);
 }
 
 void Planner::dump(const Vector<String16>& args, std::string& result) {

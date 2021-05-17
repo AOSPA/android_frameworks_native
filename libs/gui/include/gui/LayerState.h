@@ -82,11 +82,9 @@ struct layer_state_t {
         eTransparentRegionChanged = 0x00000020,
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
-        /* was eCropChanged_legacy, now available 0x00000100, */
-        eDeferTransaction_legacy = 0x00000200,
         eReleaseBufferListenerChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
-        eReparentChildren = 0x00001000,
+        eLayerCreated = 0x00001000,
         /* was eDetachChildren, now available 0x00002000, */
         eRelativeLayerChanged = 0x00004000,
         eReparent = 0x00008000,
@@ -106,7 +104,7 @@ struct layer_state_t {
         eHasListenerCallbacksChanged = 0x20000000,
         eInputInfoChanged = 0x40000000,
         eCornerRadiusChanged = 0x80000000,
-        eFrameChanged = 0x1'00000000,
+        /* was eFrameChanged, now available 0x1'00000000, */
         eCachedBufferChanged = 0x2'00000000,
         eBackgroundColorChanged = 0x4'00000000,
         eMetadataChanged = 0x8'00000000,
@@ -127,6 +125,7 @@ struct layer_state_t {
     void merge(const layer_state_t& other);
     status_t write(Parcel& output) const;
     status_t read(const Parcel& input);
+    bool hasBufferChanges() const;
 
     struct matrix22_t {
         float dsdx{0};
@@ -152,9 +151,7 @@ struct layer_state_t {
     matrix22_t matrix;
     float cornerRadius;
     uint32_t backgroundBlurRadius;
-    sp<SurfaceControl> barrierSurfaceControl_legacy;
     sp<SurfaceControl> reparentSurfaceControl;
-    uint64_t barrierFrameNumber;
 
     sp<SurfaceControl> relativeLayerSurfaceControl;
 
@@ -207,7 +204,7 @@ struct layer_state_t {
     // Layer frame rate and compatibility. See ANativeWindow_setFrameRate().
     float frameRate;
     int8_t frameRateCompatibility;
-    bool shouldBeSeamless;
+    int8_t changeFrameRateStrategy;
 
     // Set by window manager indicating the layer and all its children are
     // in a different orientation than the display. The hint suggests that
@@ -307,10 +304,11 @@ static inline int compare_type(const DisplayState& lhs, const DisplayState& rhs)
 //
 // @param frameRate the frame rate in Hz
 // @param compatibility a ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_*
+// @param changeFrameRateStrategy a ANATIVEWINDOW_CHANGE_FRAME_RATE_*
 // @param functionName calling function or nullptr. Used for logging
 // @param privileged whether caller has unscoped surfaceflinger access
-bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* functionName,
-                       bool privileged = false);
+bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrameRateStrategy,
+                       const char* functionName, bool privileged = false);
 
 struct CaptureArgs {
     const static int32_t UNSET_UID = -1;

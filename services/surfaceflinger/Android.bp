@@ -78,25 +78,12 @@ cc_defaults {
 }
 
 cc_defaults {
-    name: "libsurfaceflinger_qti_defaults",
-    defaults: [
-        "libdisplayconfig_defaults",
-        "unfieddraw_defaults",
-    ],
-    shared_libs: [
-      "vendor.qti.hardware.display.composer@3.0",
-    ],
-    header_libs: [
-      "display_intf_headers",
-    ],
-}
-
-cc_defaults {
     name: "libsurfaceflinger_defaults",
     defaults: [
         "surfaceflinger_defaults",
         "skia_deps",
-        "libsurfaceflinger_qti_defaults"
+        "libdisplayconfig_defaults",
+        "unfieddraw_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
@@ -131,13 +118,13 @@ cc_defaults {
         "libnativewindow",
         "libprocessgroup",
         "libprotobuf-cpp-lite",
-        "libstatslog",
         "libsync",
         "libtimestats",
         "libui",
         "libinput",
         "libutils",
         "libSurfaceFlingerProp",
+        "vendor.qti.hardware.display.composer@3.0",
     ],
     static_libs: [
         "libcompositionengine",
@@ -152,6 +139,7 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2-command-buffer",
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
+        "display_intf_headers",
     ],
     export_static_lib_headers: [
         "libcompositionengine",
@@ -228,6 +216,7 @@ filegroup {
         "FpsReporter.cpp",
         "FrameTracer/FrameTracer.cpp",
         "FrameTracker.cpp",
+        "HdrLayerInfoReporter.cpp",
         "Layer.cpp",
         "LayerProtoHelper.cpp",
         "LayerRejecter.cpp",

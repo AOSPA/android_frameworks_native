@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <BatteryInputMapper.h>
 #include <CursorInputMapper.h>
 #include <InputDevice.h>
 #include <InputMapper.h>
@@ -22,8 +21,8 @@
 #include <InputReaderBase.h>
 #include <InputReaderFactory.h>
 #include <KeyboardInputMapper.h>
-#include <LightInputMapper.h>
 #include <MultiTouchInputMapper.h>
+#include <PeripheralController.h>
 #include <SensorInputMapper.h>
 #include <SingleTouchInputMapper.h>
 #include <SwitchInputMapper.h>
@@ -71,6 +70,7 @@ static constexpr int32_t INVALID_TRACKING_ID = -1;
 static constexpr int32_t FIRST_TRACKING_ID = 0;
 static constexpr int32_t SECOND_TRACKING_ID = 1;
 static constexpr int32_t THIRD_TRACKING_ID = 2;
+static constexpr int32_t DEFAULT_BATTERY = 1;
 static constexpr int32_t BATTERY_STATUS = 4;
 static constexpr int32_t BATTERY_CAPACITY = 66;
 static constexpr int32_t LIGHT_BRIGHTNESS = 0x55000000;
@@ -267,6 +267,11 @@ public:
 
     void addInputPortAssociation(const std::string& inputPort, uint8_t displayPort) {
         mConfig.portAssociations.insert({inputPort, displayPort});
+    }
+
+    void addInputUniqueIdAssociation(const std::string& inputUniqueId,
+                                     const std::string& displayUniqueId) {
+        mConfig.uniqueIdAssociations.insert({inputUniqueId, displayUniqueId});
     }
 
     void addDisabledDevice(int32_t deviceId) { mConfig.disabledDevices.insert(deviceId); }
@@ -895,9 +900,19 @@ private:
 
     std::vector<int32_t> getVibratorIds(int32_t deviceId) override { return mVibrators; };
 
-    std::optional<int32_t> getBatteryCapacity(int32_t) const override { return BATTERY_CAPACITY; }
+    std::optional<int32_t> getBatteryCapacity(int32_t, int32_t) const override {
+        return BATTERY_CAPACITY;
+    }
 
-    std::optional<int32_t> getBatteryStatus(int32_t) const override { return BATTERY_STATUS; }
+    std::optional<int32_t> getBatteryStatus(int32_t, int32_t) const override {
+        return BATTERY_STATUS;
+    }
+
+    const std::vector<int32_t> getRawBatteryIds(int32_t deviceId) { return {}; }
+
+    std::optional<RawBatteryInfo> getRawBatteryInfo(int32_t deviceId, int32_t batteryId) {
+        return std::nullopt;
+    }
 
     const std::vector<int32_t> getRawLightIds(int32_t deviceId) override {
         std::vector<int32_t> ids;
@@ -2005,56 +2020,25 @@ TEST_F(InputReaderTest, VibratorGetVibratorIds) {
     ASSERT_EQ(mReader->getVibratorIds(deviceId).size(), 2U);
 }
 
-class FakeBatteryInputMapper : public FakeInputMapper {
-public:
-    FakeBatteryInputMapper(InputDeviceContext& deviceContext, uint32_t sources)
-          : FakeInputMapper(deviceContext, sources) {}
+// --- FakePeripheralController ---
 
-    std::optional<int32_t> getBatteryCapacity() override {
-        return getDeviceContext().getBatteryCapacity();
+class FakePeripheralController : public PeripheralControllerInterface {
+public:
+    FakePeripheralController(InputDeviceContext& deviceContext) : mDeviceContext(deviceContext) {}
+
+    ~FakePeripheralController() override {}
+
+    void populateDeviceInfo(InputDeviceInfo* deviceInfo) override {}
+
+    void dump(std::string& dump) override {}
+
+    std::optional<int32_t> getBatteryCapacity(int32_t batteryId) override {
+        return getDeviceContext().getBatteryCapacity(batteryId);
     }
 
-    std::optional<int32_t> getBatteryStatus() override {
-        return getDeviceContext().getBatteryStatus();
+    std::optional<int32_t> getBatteryStatus(int32_t batteryId) override {
+        return getDeviceContext().getBatteryStatus(batteryId);
     }
-};
-
-TEST_F(InputReaderTest, BatteryGetCapacity) {
-    constexpr int32_t deviceId = END_RESERVED_ID + 1000;
-    Flags<InputDeviceClass> deviceClass = InputDeviceClass::KEYBOARD | InputDeviceClass::BATTERY;
-    constexpr int32_t eventHubId = 1;
-    const char* DEVICE_LOCATION = "BLUETOOTH";
-    std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake", DEVICE_LOCATION);
-    FakeBatteryInputMapper& mapper =
-            device->addMapper<FakeBatteryInputMapper>(eventHubId, AINPUT_SOURCE_KEYBOARD);
-    mReader->pushNextDevice(device);
-
-    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
-    ASSERT_NO_FATAL_FAILURE(mapper.assertConfigureWasCalled());
-
-    ASSERT_EQ(mReader->getBatteryCapacity(deviceId), BATTERY_CAPACITY);
-}
-
-TEST_F(InputReaderTest, BatteryGetStatus) {
-    constexpr int32_t deviceId = END_RESERVED_ID + 1000;
-    Flags<InputDeviceClass> deviceClass = InputDeviceClass::KEYBOARD | InputDeviceClass::BATTERY;
-    constexpr int32_t eventHubId = 1;
-    const char* DEVICE_LOCATION = "BLUETOOTH";
-    std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake", DEVICE_LOCATION);
-    FakeBatteryInputMapper& mapper =
-            device->addMapper<FakeBatteryInputMapper>(eventHubId, AINPUT_SOURCE_KEYBOARD);
-    mReader->pushNextDevice(device);
-
-    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
-    ASSERT_NO_FATAL_FAILURE(mapper.assertConfigureWasCalled());
-
-    ASSERT_EQ(mReader->getBatteryStatus(deviceId), BATTERY_STATUS);
-}
-
-class FakeLightInputMapper : public FakeInputMapper {
-public:
-    FakeLightInputMapper(InputDeviceContext& deviceContext, uint32_t sources)
-          : FakeInputMapper(deviceContext, sources) {}
 
     bool setLightColor(int32_t lightId, int32_t color) override {
         getDeviceContext().setLightBrightness(lightId, color >> 24);
@@ -2068,7 +2052,48 @@ public:
         }
         return result.value() << 24;
     }
+
+    bool setLightPlayerId(int32_t lightId, int32_t playerId) override { return true; }
+
+    std::optional<int32_t> getLightPlayerId(int32_t lightId) override { return std::nullopt; }
+
+private:
+    InputDeviceContext& mDeviceContext;
+    inline int32_t getDeviceId() { return mDeviceContext.getId(); }
+    inline InputDeviceContext& getDeviceContext() { return mDeviceContext; }
 };
+
+TEST_F(InputReaderTest, BatteryGetCapacity) {
+    constexpr int32_t deviceId = END_RESERVED_ID + 1000;
+    Flags<InputDeviceClass> deviceClass = InputDeviceClass::KEYBOARD | InputDeviceClass::BATTERY;
+    constexpr int32_t eventHubId = 1;
+    const char* DEVICE_LOCATION = "BLUETOOTH";
+    std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake", DEVICE_LOCATION);
+    FakePeripheralController& controller =
+            device->addController<FakePeripheralController>(eventHubId);
+    mReader->pushNextDevice(device);
+
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
+
+    ASSERT_EQ(controller.getBatteryCapacity(DEFAULT_BATTERY), BATTERY_CAPACITY);
+    ASSERT_EQ(mReader->getBatteryCapacity(deviceId), BATTERY_CAPACITY);
+}
+
+TEST_F(InputReaderTest, BatteryGetStatus) {
+    constexpr int32_t deviceId = END_RESERVED_ID + 1000;
+    Flags<InputDeviceClass> deviceClass = InputDeviceClass::KEYBOARD | InputDeviceClass::BATTERY;
+    constexpr int32_t eventHubId = 1;
+    const char* DEVICE_LOCATION = "BLUETOOTH";
+    std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake", DEVICE_LOCATION);
+    FakePeripheralController& controller =
+            device->addController<FakePeripheralController>(eventHubId);
+    mReader->pushNextDevice(device);
+
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
+
+    ASSERT_EQ(controller.getBatteryStatus(DEFAULT_BATTERY), BATTERY_STATUS);
+    ASSERT_EQ(mReader->getBatteryStatus(deviceId), BATTERY_STATUS);
+}
 
 TEST_F(InputReaderTest, LightGetColor) {
     constexpr int32_t deviceId = END_RESERVED_ID + 1000;
@@ -2076,8 +2101,8 @@ TEST_F(InputReaderTest, LightGetColor) {
     constexpr int32_t eventHubId = 1;
     const char* DEVICE_LOCATION = "BLUETOOTH";
     std::shared_ptr<InputDevice> device = mReader->newDevice(deviceId, "fake", DEVICE_LOCATION);
-    FakeLightInputMapper& mapper =
-            device->addMapper<FakeLightInputMapper>(eventHubId, AINPUT_SOURCE_KEYBOARD);
+    FakePeripheralController& controller =
+            device->addController<FakePeripheralController>(eventHubId);
     mReader->pushNextDevice(device);
     RawLightInfo info = {.id = 1,
                          .name = "Mono",
@@ -2088,8 +2113,9 @@ TEST_F(InputReaderTest, LightGetColor) {
     mFakeEventHub->fakeLightBrightness(1 /* rawId */, 0x55);
 
     ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
-    ASSERT_NO_FATAL_FAILURE(mapper.assertConfigureWasCalled());
 
+    ASSERT_TRUE(controller.setLightColor(1 /* lightId */, LIGHT_BRIGHTNESS));
+    ASSERT_EQ(controller.getLightColor(1 /* lightId */), LIGHT_BRIGHTNESS);
     ASSERT_TRUE(mReader->setLightColor(deviceId, 1 /* lightId */, LIGHT_BRIGHTNESS));
     ASSERT_EQ(mReader->getLightColor(deviceId, 1 /* lightId */), LIGHT_BRIGHTNESS);
 }
@@ -2600,6 +2626,41 @@ TEST_F(InputDeviceTest, Configure_AssignsDisplayPort) {
     ASSERT_FALSE(mDevice->isEnabled());
 }
 
+TEST_F(InputDeviceTest, Configure_AssignsDisplayUniqueId) {
+    // Device should be enabled by default.
+    mFakePolicy->clearViewports();
+    mDevice->addMapper<FakeInputMapper>(EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD);
+    mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(), 0);
+    ASSERT_TRUE(mDevice->isEnabled());
+
+    // Device should be disabled because it is associated with a specific display, but the
+    // corresponding display is not found.
+    const std::string DISPLAY_UNIQUE_ID = "displayUniqueId";
+    mFakePolicy->addInputUniqueIdAssociation(DEVICE_NAME, DISPLAY_UNIQUE_ID);
+    mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                       InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    ASSERT_FALSE(mDevice->isEnabled());
+
+    // Device should be enabled when a display is found.
+    mFakePolicy->addDisplayViewport(SECONDARY_DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                    DISPLAY_ORIENTATION_0, /* isActive= */ true, DISPLAY_UNIQUE_ID,
+                                    NO_PORT, ViewportType::INTERNAL);
+    mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                       InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    ASSERT_TRUE(mDevice->isEnabled());
+
+    // Device should be disabled after set disable.
+    mFakePolicy->addDisabledDevice(mDevice->getId());
+    mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                       InputReaderConfiguration::CHANGE_ENABLED_STATE);
+    ASSERT_FALSE(mDevice->isEnabled());
+
+    // Device should still be disabled even found the associated display.
+    mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                       InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    ASSERT_FALSE(mDevice->isEnabled());
+}
+
 // --- InputMapperTest ---
 
 class InputMapperTest : public testing::Test {
@@ -2987,154 +3048,6 @@ TEST_F(SensorInputMapperTest, ProcessGyroscopeSensor) {
     ASSERT_EQ(args.hwTimestamp, ARBITRARY_TIME);
     ASSERT_EQ(args.values, values);
     mapper.flushSensor(InputDeviceSensorType::GYROSCOPE);
-}
-
-// --- BatteryInputMapperTest ---
-class BatteryInputMapperTest : public InputMapperTest {
-protected:
-    void SetUp() override { InputMapperTest::SetUp(DEVICE_CLASSES | InputDeviceClass::BATTERY); }
-};
-
-TEST_F(BatteryInputMapperTest, GetSources) {
-    BatteryInputMapper& mapper = addMapperAndConfigure<BatteryInputMapper>();
-
-    ASSERT_EQ(AINPUT_SOURCE_UNKNOWN, mapper.getSources());
-}
-
-TEST_F(BatteryInputMapperTest, GetBatteryCapacity) {
-    BatteryInputMapper& mapper = addMapperAndConfigure<BatteryInputMapper>();
-
-    ASSERT_TRUE(mapper.getBatteryCapacity());
-    ASSERT_EQ(mapper.getBatteryCapacity().value_or(-1), BATTERY_CAPACITY);
-}
-
-TEST_F(BatteryInputMapperTest, GetBatteryStatus) {
-    BatteryInputMapper& mapper = addMapperAndConfigure<BatteryInputMapper>();
-
-    ASSERT_TRUE(mapper.getBatteryStatus());
-    ASSERT_EQ(mapper.getBatteryStatus().value_or(-1), BATTERY_STATUS);
-}
-
-// --- LightInputMapperTest ---
-class LightInputMapperTest : public InputMapperTest {
-protected:
-    void SetUp() override { InputMapperTest::SetUp(DEVICE_CLASSES | InputDeviceClass::LIGHT); }
-};
-
-TEST_F(LightInputMapperTest, GetSources) {
-    LightInputMapper& mapper = addMapperAndConfigure<LightInputMapper>();
-
-    ASSERT_EQ(AINPUT_SOURCE_UNKNOWN, mapper.getSources());
-}
-
-TEST_F(LightInputMapperTest, SingleLight) {
-    RawLightInfo infoSingle = {.id = 1,
-                               .name = "Mono",
-                               .maxBrightness = 255,
-                               .flags = InputLightClass::BRIGHTNESS,
-                               .path = ""};
-    mFakeEventHub->addRawLightInfo(infoSingle.id, std::move(infoSingle));
-
-    LightInputMapper& mapper = addMapperAndConfigure<LightInputMapper>();
-    InputDeviceInfo info;
-    mapper.populateDeviceInfo(&info);
-    const auto& ids = info.getLightIds();
-    ASSERT_EQ(1UL, ids.size());
-    ASSERT_EQ(InputDeviceLightType::SINGLE, info.getLightInfo(ids[0])->type);
-
-    ASSERT_TRUE(mapper.setLightColor(ids[0], LIGHT_BRIGHTNESS));
-    ASSERT_EQ(mapper.getLightColor(ids[0]).value_or(-1), LIGHT_BRIGHTNESS);
-}
-
-TEST_F(LightInputMapperTest, RGBLight) {
-    RawLightInfo infoRed = {.id = 1,
-                            .name = "red",
-                            .maxBrightness = 255,
-                            .flags = InputLightClass::BRIGHTNESS | InputLightClass::RED,
-                            .path = ""};
-    RawLightInfo infoGreen = {.id = 2,
-                              .name = "green",
-                              .maxBrightness = 255,
-                              .flags = InputLightClass::BRIGHTNESS | InputLightClass::GREEN,
-                              .path = ""};
-    RawLightInfo infoBlue = {.id = 3,
-                             .name = "blue",
-                             .maxBrightness = 255,
-                             .flags = InputLightClass::BRIGHTNESS | InputLightClass::BLUE,
-                             .path = ""};
-    mFakeEventHub->addRawLightInfo(infoRed.id, std::move(infoRed));
-    mFakeEventHub->addRawLightInfo(infoGreen.id, std::move(infoGreen));
-    mFakeEventHub->addRawLightInfo(infoBlue.id, std::move(infoBlue));
-
-    LightInputMapper& mapper = addMapperAndConfigure<LightInputMapper>();
-    InputDeviceInfo info;
-    mapper.populateDeviceInfo(&info);
-    const auto& ids = info.getLightIds();
-    ASSERT_EQ(1UL, ids.size());
-    ASSERT_EQ(InputDeviceLightType::RGB, info.getLightInfo(ids[0])->type);
-
-    ASSERT_TRUE(mapper.setLightColor(ids[0], LIGHT_COLOR));
-    ASSERT_EQ(mapper.getLightColor(ids[0]).value_or(-1), LIGHT_COLOR);
-}
-
-TEST_F(LightInputMapperTest, MultiColorRGBLight) {
-    RawLightInfo infoColor = {.id = 1,
-                              .name = "red",
-                              .maxBrightness = 255,
-                              .flags = InputLightClass::BRIGHTNESS |
-                                      InputLightClass::MULTI_INTENSITY |
-                                      InputLightClass::MULTI_INDEX,
-                              .path = ""};
-
-    mFakeEventHub->addRawLightInfo(infoColor.id, std::move(infoColor));
-
-    LightInputMapper& mapper = addMapperAndConfigure<LightInputMapper>();
-    InputDeviceInfo info;
-    mapper.populateDeviceInfo(&info);
-    const auto& ids = info.getLightIds();
-    ASSERT_EQ(1UL, ids.size());
-    ASSERT_EQ(InputDeviceLightType::MULTI_COLOR, info.getLightInfo(ids[0])->type);
-
-    ASSERT_TRUE(mapper.setLightColor(ids[0], LIGHT_COLOR));
-    ASSERT_EQ(mapper.getLightColor(ids[0]).value_or(-1), LIGHT_COLOR);
-}
-
-TEST_F(LightInputMapperTest, PlayerIdLight) {
-    RawLightInfo info1 = {.id = 1,
-                          .name = "player1",
-                          .maxBrightness = 255,
-                          .flags = InputLightClass::BRIGHTNESS,
-                          .path = ""};
-    RawLightInfo info2 = {.id = 2,
-                          .name = "player2",
-                          .maxBrightness = 255,
-                          .flags = InputLightClass::BRIGHTNESS,
-                          .path = ""};
-    RawLightInfo info3 = {.id = 3,
-                          .name = "player3",
-                          .maxBrightness = 255,
-                          .flags = InputLightClass::BRIGHTNESS,
-                          .path = ""};
-    RawLightInfo info4 = {.id = 4,
-                          .name = "player4",
-                          .maxBrightness = 255,
-                          .flags = InputLightClass::BRIGHTNESS,
-                          .path = ""};
-    mFakeEventHub->addRawLightInfo(info1.id, std::move(info1));
-    mFakeEventHub->addRawLightInfo(info2.id, std::move(info2));
-    mFakeEventHub->addRawLightInfo(info3.id, std::move(info3));
-    mFakeEventHub->addRawLightInfo(info4.id, std::move(info4));
-
-    LightInputMapper& mapper = addMapperAndConfigure<LightInputMapper>();
-    InputDeviceInfo info;
-    mapper.populateDeviceInfo(&info);
-    const auto& ids = info.getLightIds();
-    ASSERT_EQ(1UL, ids.size());
-    ASSERT_EQ(InputDeviceLightType::PLAYER_ID, info.getLightInfo(ids[0])->type);
-
-    ASSERT_FALSE(mapper.setLightColor(ids[0], LIGHT_COLOR));
-    ASSERT_TRUE(mapper.setLightPlayerId(ids[0], LIGHT_PLAYER_ID));
-    ASSERT_EQ(mapper.getLightPlayerId(ids[0]).value_or(-1), LIGHT_PLAYER_ID);
 }
 
 // --- KeyboardInputMapperTest ---
@@ -7980,8 +7893,6 @@ TEST_F(MultiTouchInputMapperTest, Configure_EnabledForAssociatedDisplay) {
     ASSERT_EQ(SECONDARY_DISPLAY_ID, args.displayId);
 }
 
-
-
 TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleSingleTouch) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     prepareDisplay(DISPLAY_ORIENTATION_0);
@@ -8726,6 +8637,220 @@ TEST_F(MultiTouchInputMapperTest, WhenCapturedAndNotCaptured_GetSources) {
     mFakePolicy->setPointerCapture(true);
     configureDevice(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     ASSERT_EQ(AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
+}
+
+// --- PeripheralControllerTest ---
+
+class PeripheralControllerTest : public testing::Test {
+protected:
+    static const char* DEVICE_NAME;
+    static const char* DEVICE_LOCATION;
+    static const int32_t DEVICE_ID;
+    static const int32_t DEVICE_GENERATION;
+    static const int32_t DEVICE_CONTROLLER_NUMBER;
+    static const Flags<InputDeviceClass> DEVICE_CLASSES;
+    static const int32_t EVENTHUB_ID;
+
+    std::shared_ptr<FakeEventHub> mFakeEventHub;
+    sp<FakeInputReaderPolicy> mFakePolicy;
+    sp<TestInputListener> mFakeListener;
+    std::unique_ptr<InstrumentedInputReader> mReader;
+    std::shared_ptr<InputDevice> mDevice;
+
+    virtual void SetUp(Flags<InputDeviceClass> classes) {
+        mFakeEventHub = std::make_unique<FakeEventHub>();
+        mFakePolicy = new FakeInputReaderPolicy();
+        mFakeListener = new TestInputListener();
+        mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
+                                                            mFakeListener);
+        mDevice = newDevice(DEVICE_ID, DEVICE_NAME, DEVICE_LOCATION, EVENTHUB_ID, classes);
+    }
+
+    void SetUp() override { SetUp(DEVICE_CLASSES); }
+
+    void TearDown() override {
+        mFakeListener.clear();
+        mFakePolicy.clear();
+    }
+
+    void configureDevice(uint32_t changes) {
+        if (!changes || (changes & InputReaderConfiguration::CHANGE_DISPLAY_INFO)) {
+            mReader->requestRefreshConfiguration(changes);
+            mReader->loopOnce();
+        }
+        mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(), changes);
+    }
+
+    std::shared_ptr<InputDevice> newDevice(int32_t deviceId, const std::string& name,
+                                           const std::string& location, int32_t eventHubId,
+                                           Flags<InputDeviceClass> classes) {
+        InputDeviceIdentifier identifier;
+        identifier.name = name;
+        identifier.location = location;
+        std::shared_ptr<InputDevice> device =
+                std::make_shared<InputDevice>(mReader->getContext(), deviceId, DEVICE_GENERATION,
+                                              identifier);
+        mReader->pushNextDevice(device);
+        mFakeEventHub->addDevice(eventHubId, name, classes);
+        mReader->loopOnce();
+        return device;
+    }
+
+    template <class T, typename... Args>
+    T& addControllerAndConfigure(Args... args) {
+        T& controller = mDevice->addController<T>(EVENTHUB_ID, args...);
+
+        return controller;
+    }
+};
+
+const char* PeripheralControllerTest::DEVICE_NAME = "device";
+const char* PeripheralControllerTest::DEVICE_LOCATION = "BLUETOOTH";
+const int32_t PeripheralControllerTest::DEVICE_ID = END_RESERVED_ID + 1000;
+const int32_t PeripheralControllerTest::DEVICE_GENERATION = 2;
+const int32_t PeripheralControllerTest::DEVICE_CONTROLLER_NUMBER = 0;
+const Flags<InputDeviceClass> PeripheralControllerTest::DEVICE_CLASSES =
+        Flags<InputDeviceClass>(0); // not needed for current tests
+const int32_t PeripheralControllerTest::EVENTHUB_ID = 1;
+
+// --- BatteryControllerTest ---
+class BatteryControllerTest : public PeripheralControllerTest {
+protected:
+    void SetUp() override {
+        PeripheralControllerTest::SetUp(DEVICE_CLASSES | InputDeviceClass::BATTERY);
+    }
+};
+
+TEST_F(BatteryControllerTest, GetBatteryCapacity) {
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+
+    ASSERT_TRUE(controller.getBatteryCapacity(DEFAULT_BATTERY));
+    ASSERT_EQ(controller.getBatteryCapacity(DEFAULT_BATTERY).value_or(-1), BATTERY_CAPACITY);
+}
+
+TEST_F(BatteryControllerTest, GetBatteryStatus) {
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+
+    ASSERT_TRUE(controller.getBatteryStatus(DEFAULT_BATTERY));
+    ASSERT_EQ(controller.getBatteryStatus(DEFAULT_BATTERY).value_or(-1), BATTERY_STATUS);
+}
+
+// --- LightControllerTest ---
+class LightControllerTest : public PeripheralControllerTest {
+protected:
+    void SetUp() override {
+        PeripheralControllerTest::SetUp(DEVICE_CLASSES | InputDeviceClass::LIGHT);
+    }
+};
+
+TEST_F(LightControllerTest, SingleLight) {
+    RawLightInfo infoSingle = {.id = 1,
+                               .name = "Mono",
+                               .maxBrightness = 255,
+                               .flags = InputLightClass::BRIGHTNESS,
+                               .path = ""};
+    mFakeEventHub->addRawLightInfo(infoSingle.id, std::move(infoSingle));
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    const auto& ids = info.getLightIds();
+    ASSERT_EQ(1UL, ids.size());
+    ASSERT_EQ(InputDeviceLightType::SINGLE, info.getLightInfo(ids[0])->type);
+
+    ASSERT_TRUE(controller.setLightColor(ids[0], LIGHT_BRIGHTNESS));
+    ASSERT_EQ(controller.getLightColor(ids[0]).value_or(-1), LIGHT_BRIGHTNESS);
+}
+
+TEST_F(LightControllerTest, RGBLight) {
+    RawLightInfo infoRed = {.id = 1,
+                            .name = "red",
+                            .maxBrightness = 255,
+                            .flags = InputLightClass::BRIGHTNESS | InputLightClass::RED,
+                            .path = ""};
+    RawLightInfo infoGreen = {.id = 2,
+                              .name = "green",
+                              .maxBrightness = 255,
+                              .flags = InputLightClass::BRIGHTNESS | InputLightClass::GREEN,
+                              .path = ""};
+    RawLightInfo infoBlue = {.id = 3,
+                             .name = "blue",
+                             .maxBrightness = 255,
+                             .flags = InputLightClass::BRIGHTNESS | InputLightClass::BLUE,
+                             .path = ""};
+    mFakeEventHub->addRawLightInfo(infoRed.id, std::move(infoRed));
+    mFakeEventHub->addRawLightInfo(infoGreen.id, std::move(infoGreen));
+    mFakeEventHub->addRawLightInfo(infoBlue.id, std::move(infoBlue));
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    const auto& ids = info.getLightIds();
+    ASSERT_EQ(1UL, ids.size());
+    ASSERT_EQ(InputDeviceLightType::RGB, info.getLightInfo(ids[0])->type);
+
+    ASSERT_TRUE(controller.setLightColor(ids[0], LIGHT_COLOR));
+    ASSERT_EQ(controller.getLightColor(ids[0]).value_or(-1), LIGHT_COLOR);
+}
+
+TEST_F(LightControllerTest, MultiColorRGBLight) {
+    RawLightInfo infoColor = {.id = 1,
+                              .name = "red",
+                              .maxBrightness = 255,
+                              .flags = InputLightClass::BRIGHTNESS |
+                                      InputLightClass::MULTI_INTENSITY |
+                                      InputLightClass::MULTI_INDEX,
+                              .path = ""};
+
+    mFakeEventHub->addRawLightInfo(infoColor.id, std::move(infoColor));
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    const auto& ids = info.getLightIds();
+    ASSERT_EQ(1UL, ids.size());
+    ASSERT_EQ(InputDeviceLightType::MULTI_COLOR, info.getLightInfo(ids[0])->type);
+
+    ASSERT_TRUE(controller.setLightColor(ids[0], LIGHT_COLOR));
+    ASSERT_EQ(controller.getLightColor(ids[0]).value_or(-1), LIGHT_COLOR);
+}
+
+TEST_F(LightControllerTest, PlayerIdLight) {
+    RawLightInfo info1 = {.id = 1,
+                          .name = "player1",
+                          .maxBrightness = 255,
+                          .flags = InputLightClass::BRIGHTNESS,
+                          .path = ""};
+    RawLightInfo info2 = {.id = 2,
+                          .name = "player2",
+                          .maxBrightness = 255,
+                          .flags = InputLightClass::BRIGHTNESS,
+                          .path = ""};
+    RawLightInfo info3 = {.id = 3,
+                          .name = "player3",
+                          .maxBrightness = 255,
+                          .flags = InputLightClass::BRIGHTNESS,
+                          .path = ""};
+    RawLightInfo info4 = {.id = 4,
+                          .name = "player4",
+                          .maxBrightness = 255,
+                          .flags = InputLightClass::BRIGHTNESS,
+                          .path = ""};
+    mFakeEventHub->addRawLightInfo(info1.id, std::move(info1));
+    mFakeEventHub->addRawLightInfo(info2.id, std::move(info2));
+    mFakeEventHub->addRawLightInfo(info3.id, std::move(info3));
+    mFakeEventHub->addRawLightInfo(info4.id, std::move(info4));
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    const auto& ids = info.getLightIds();
+    ASSERT_EQ(1UL, ids.size());
+    ASSERT_EQ(InputDeviceLightType::PLAYER_ID, info.getLightInfo(ids[0])->type);
+
+    ASSERT_FALSE(controller.setLightColor(ids[0], LIGHT_COLOR));
+    ASSERT_TRUE(controller.setLightPlayerId(ids[0], LIGHT_PLAYER_ID));
+    ASSERT_EQ(controller.getLightPlayerId(ids[0]).value_or(-1), LIGHT_PLAYER_ID);
 }
 
 } // namespace android

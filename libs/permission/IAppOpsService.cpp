@@ -18,8 +18,8 @@
 
 #include <binder/IAppOpsService.h>
 
-#include <utils/Log.h>
 #include <binder/Parcel.h>
+#include <utils/Log.h>
 #include <utils/String8.h>
 
 #include <optional>
@@ -63,6 +63,9 @@ public:
         remote()->transact(NOTE_OPERATION_TRANSACTION, data, &reply);
         // fail on exception
         if (reply.readExceptionCode() != 0) return MODE_ERRORED;
+        // TODO b/184855056: extract to class
+        reply.readInt32();
+        reply.readByte();
         return reply.readInt32();
     }
 
@@ -84,6 +87,9 @@ public:
         remote()->transact(START_OPERATION_TRANSACTION, data, &reply);
         // fail on exception
         if (reply.readExceptionCode() != 0) return MODE_ERRORED;
+        // TODO b/184855056: extract to class
+        reply.readInt32();
+        reply.readByte();
         return reply.readInt32();
     }
 

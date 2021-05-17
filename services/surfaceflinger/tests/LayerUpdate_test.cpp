@@ -127,15 +127,7 @@ protected:
         TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
         waitForPostedBuffers();
     }
-    void restoreInitialState() {
-        asTransaction([&](Transaction& t) {
-            t.setSize(mFGSurfaceControl, 64, 64);
-            t.setPosition(mFGSurfaceControl, 64, 64);
-            t.setCrop(mFGSurfaceControl, Rect(0, 0, 64, 64));
-        });
 
-        EXPECT_INITIAL_STATE("After restoring initial state");
-    }
     std::unique_ptr<ScreenCapture> sc;
 };
 
@@ -159,61 +151,6 @@ protected:
         sc->expectBGColor(192, 192);
     }
 };
-
-TEST_F(LayerUpdateTest, DeferredTransactionTest) {
-    std::unique_ptr<ScreenCapture> sc;
-    {
-        SCOPED_TRACE("before anything");
-        ScreenCapture::captureScreen(&sc);
-        sc->expectBGColor(32, 32);
-        sc->expectFGColor(96, 96);
-        sc->expectBGColor(160, 160);
-    }
-
-    // set up two deferred transactions on different frames
-    asTransaction([&](Transaction& t) {
-        t.setAlpha(mFGSurfaceControl, 0.75);
-        t.deferTransactionUntil_legacy(mFGSurfaceControl, mSyncSurfaceControl,
-                                       mSyncSurfaceControl->getSurface()->getNextFrameNumber());
-    });
-
-    asTransaction([&](Transaction& t) {
-        t.setPosition(mFGSurfaceControl, 128, 128);
-        t.deferTransactionUntil_legacy(mFGSurfaceControl, mSyncSurfaceControl,
-                                       mSyncSurfaceControl->getSurface()->getNextFrameNumber() + 1);
-    });
-
-    {
-        SCOPED_TRACE("before any trigger");
-        ScreenCapture::captureScreen(&sc);
-        sc->expectBGColor(32, 32);
-        sc->expectFGColor(96, 96);
-        sc->expectBGColor(160, 160);
-    }
-
-    // should trigger the first deferred transaction, but not the second one
-    TransactionUtils::fillSurfaceRGBA8(mSyncSurfaceControl, 31, 31, 31);
-    {
-        SCOPED_TRACE("after first trigger");
-        ScreenCapture::captureScreen(&sc);
-        sc->expectBGColor(32, 32);
-        sc->checkPixel(96, 96, 162, 63, 96);
-        sc->expectBGColor(160, 160);
-    }
-
-    // should show up immediately since it's not deferred
-    asTransaction([&](Transaction& t) { t.setAlpha(mFGSurfaceControl, 1.0); });
-
-    // trigger the second deferred transaction
-    TransactionUtils::fillSurfaceRGBA8(mSyncSurfaceControl, 31, 31, 31);
-    {
-        SCOPED_TRACE("after second trigger");
-        ScreenCapture::captureScreen(&sc);
-        sc->expectBGColor(32, 32);
-        sc->expectBGColor(96, 96);
-        sc->expectFGColor(160, 160);
-    }
-}
 
 TEST_F(LayerUpdateTest, LayerWithNoBuffersResizesImmediately) {
     std::unique_ptr<ScreenCapture> sc;
@@ -462,38 +399,6 @@ TEST_F(ChildLayerTest, ChildLayerAlpha) {
     }
 }
 
-TEST_F(ChildLayerTest, ReparentChildren) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 10, 10);
-        t.setPosition(mFGSurfaceControl, 64, 64);
-    });
-
-    {
-        mCapture = screenshot();
-        // Top left of foreground must now be visible
-        mCapture->expectFGColor(64, 64);
-        // But 10 pixels in we should see the child surface
-        mCapture->expectChildColor(74, 74);
-        // And 10 more pixels we should be back to the foreground surface
-        mCapture->expectFGColor(84, 84);
-    }
-
-    asTransaction(
-            [&](Transaction& t) { t.reparentChildren(mFGSurfaceControl, mBGSurfaceControl); });
-
-    {
-        mCapture = screenshot();
-        mCapture->expectFGColor(64, 64);
-        // In reparenting we should have exposed the entire foreground surface.
-        mCapture->expectFGColor(74, 74);
-        // And the child layer should now begin at 10, 10 (since the BG
-        // layer is at (0, 0)).
-        mCapture->expectBGColor(9, 9);
-        mCapture->expectChildColor(10, 10);
-    }
-}
-
 TEST_F(ChildLayerTest, ChildrenSurviveParentDestruction) {
     sp<SurfaceControl> mGrandChild =
             createSurface(mClient, "Grand Child", 10, 10, PIXEL_FORMAT_RGBA_8888, 0, mChild.get());
@@ -539,7 +444,7 @@ TEST_F(ChildLayerTest, ChildrenRelativeZSurvivesParentDestruction) {
 
     asTransaction([&](Transaction& t) {
         t.reparent(mChild, nullptr);
-        t.reparentChildren(mChild, mFGSurfaceControl);
+        t.reparent(mGrandChild, mFGSurfaceControl);
     });
 
     {
@@ -547,221 +452,6 @@ TEST_F(ChildLayerTest, ChildrenRelativeZSurvivesParentDestruction) {
         ScreenCapture::captureScreen(&mCapture);
         mCapture->checkPixel(64, 64, 195, 63, 63);
     }
-}
-
-TEST_F(ChildLayerTest, ChildrenInheritNonTransformScalingFromParent) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 0, 0);
-        t.setPosition(mFGSurfaceControl, 0, 0);
-    });
-
-    {
-        mCapture = screenshot();
-        // We've positioned the child in the top left.
-        mCapture->expectChildColor(0, 0);
-        // But it's only 10x15.
-        mCapture->expectFGColor(10, 15);
-    }
-
-    asTransaction([&](Transaction& t) {
-        mFGSurfaceControl->getSurface()->setScalingMode(
-            NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-        // Resubmit buffer with new scaling mode
-        TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-        // We cause scaling by 2.
-        t.setSize(mFGSurfaceControl, 128, 128);
-    });
-
-    {
-        mCapture = screenshot();
-        // We've positioned the child in the top left.
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(10, 10);
-        mCapture->expectChildColor(19, 29);
-        // And now it should be scaled all the way to 20x30
-        mCapture->expectFGColor(20, 30);
-    }
-}
-
-// Regression test for b/37673612
-TEST_F(ChildLayerTest, ChildrenWithParentBufferTransform) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 0, 0);
-        t.setPosition(mFGSurfaceControl, 0, 0);
-    });
-
-    {
-        mCapture = screenshot();
-        // We've positioned the child in the top left.
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(9, 14);
-        // But it's only 10x15.
-        mCapture->expectFGColor(10, 15);
-    }
-    // We set things up as in b/37673612 so that there is a mismatch between the buffer size and
-    // the WM specified state size.
-    asTransaction([&](Transaction& t) { t.setSize(mFGSurfaceControl, 128, 64); });
-    sp<Surface> s = mFGSurfaceControl->getSurface();
-    auto anw = static_cast<ANativeWindow*>(s.get());
-    native_window_set_buffers_transform(anw, NATIVE_WINDOW_TRANSFORM_ROT_90);
-    native_window_set_buffers_dimensions(anw, 64, 128);
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-    waitForPostedBuffers();
-
-    {
-        // The child should still be in the same place and not have any strange scaling as in
-        // b/37673612.
-        mCapture = screenshot();
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectFGColor(10, 10);
-    }
-}
-
-// A child with a buffer transform from its parents should be cropped by its parent bounds.
-TEST_F(ChildLayerTest, ChildCroppedByParentWithBufferTransform) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 0, 0);
-        t.setPosition(mFGSurfaceControl, 0, 0);
-        t.setSize(mChild, 100, 100);
-    });
-    TransactionUtils::fillSurfaceRGBA8(mChild, 200, 200, 200);
-
-    {
-        mCapture = screenshot();
-
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(63, 63);
-        mCapture->expectBGColor(64, 64);
-    }
-
-    asTransaction([&](Transaction& t) { t.setSize(mFGSurfaceControl, 128, 64); });
-    sp<Surface> s = mFGSurfaceControl->getSurface();
-    auto anw = static_cast<ANativeWindow*>(s.get());
-    // Apply a 90 transform on the buffer.
-    native_window_set_buffers_transform(anw, NATIVE_WINDOW_TRANSFORM_ROT_90);
-    native_window_set_buffers_dimensions(anw, 64, 128);
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-    waitForPostedBuffers();
-
-    // The child should be cropped by the new parent bounds.
-    {
-        mCapture = screenshot();
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(99, 63);
-        mCapture->expectFGColor(100, 63);
-        mCapture->expectBGColor(128, 64);
-    }
-}
-
-// A child with a scale transform from its parents should be cropped by its parent bounds.
-TEST_F(ChildLayerTest, ChildCroppedByParentWithBufferScale) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 0, 0);
-        t.setPosition(mFGSurfaceControl, 0, 0);
-        t.setSize(mChild, 200, 200);
-    });
-    TransactionUtils::fillSurfaceRGBA8(mChild, 200, 200, 200);
-
-    {
-        mCapture = screenshot();
-
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(63, 63);
-        mCapture->expectBGColor(64, 64);
-    }
-
-    asTransaction([&](Transaction& t) {
-        mFGSurfaceControl->getSurface()->setScalingMode(
-            NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-        // Resubmit buffer with new scaling mode
-        TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-        // Set a scaling by 2.
-        t.setSize(mFGSurfaceControl, 128, 128);
-    });
-
-    // Child should inherit its parents scale but should be cropped by its parent bounds.
-    {
-        mCapture = screenshot();
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(127, 127);
-        mCapture->expectBGColor(128, 128);
-    }
-}
-
-// Regression test for b/127368943
-// Child should ignore the buffer transform but apply parent scale transform.
-TEST_F(ChildLayerTest, ChildrenWithParentBufferTransformAndScale) {
-    asTransaction([&](Transaction& t) {
-        t.show(mChild);
-        t.setPosition(mChild, 0, 0);
-        t.setPosition(mFGSurfaceControl, 0, 0);
-    });
-
-    {
-        mCapture = screenshot();
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(9, 14);
-        mCapture->expectFGColor(10, 15);
-    }
-
-    // Change the size of the foreground to 128 * 64 so we can test rotation as well.
-    asTransaction([&](Transaction& t) {
-        mFGSurfaceControl->getSurface()->setScalingMode(
-            NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-        // Resubmit buffer with new scaling mode
-        TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-        t.setSize(mFGSurfaceControl, 128, 64);
-    });
-    sp<Surface> s = mFGSurfaceControl->getSurface();
-    auto anw = static_cast<ANativeWindow*>(s.get());
-    // Apply a 90 transform on the buffer and submit a buffer half the expected size so that we
-    // have an effective scale of 2.0 applied to the buffer along with a rotation transform.
-    native_window_set_buffers_transform(anw, NATIVE_WINDOW_TRANSFORM_ROT_90);
-    native_window_set_buffers_dimensions(anw, 32, 64);
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 195, 63, 63);
-    waitForPostedBuffers();
-
-    // The child should ignore the buffer transform but apply the 2.0 scale from parent.
-    {
-        mCapture = screenshot();
-        mCapture->expectChildColor(0, 0);
-        mCapture->expectChildColor(19, 29);
-        mCapture->expectFGColor(20, 30);
-    }
-}
-
-TEST_F(ChildLayerTest, Bug36858924) {
-    // Destroy the child layer
-    mChild.clear();
-
-    // Now recreate it as hidden
-    mChild = createSurface(mClient, "Child surface", 10, 10, PIXEL_FORMAT_RGBA_8888,
-                           ISurfaceComposerClient::eHidden, mFGSurfaceControl.get());
-
-    // Show the child layer in a deferred transaction
-    asTransaction([&](Transaction& t) {
-        t.deferTransactionUntil_legacy(mChild, mFGSurfaceControl,
-                                       mFGSurfaceControl->getSurface()->getNextFrameNumber());
-        t.show(mChild);
-    });
-
-    // Render the foreground surface a few times
-    //
-    // Prior to the bugfix for b/36858924, this would usually hang while trying to fill the third
-    // frame because SurfaceFlinger would never process the deferred transaction and would therefore
-    // never acquire/release the first buffer
-    ALOGI("Filling 1");
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 0, 255, 0);
-    ALOGI("Filling 2");
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 0, 0, 255);
-    ALOGI("Filling 3");
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 255, 0, 0);
-    ALOGI("Filling 4");
-    TransactionUtils::fillSurfaceRGBA8(mFGSurfaceControl, 0, 255, 0);
 }
 
 TEST_F(ChildLayerTest, Reparent) {

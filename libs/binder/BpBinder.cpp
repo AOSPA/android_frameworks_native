@@ -107,8 +107,7 @@ void BpBinder::ObjectManager::kill()
 
 // ---------------------------------------------------------------------------
 
-
-BpBinder* BpBinder::create(int32_t handle) {
+sp<BpBinder> BpBinder::create(int32_t handle) {
     int32_t trackedUid = -1;
     if (sCountByUidEnabled) {
         trackedUid = IPCThreadState::self()->getCallingUid();
@@ -134,10 +133,10 @@ BpBinder* BpBinder::create(int32_t handle) {
         }
         sTrackingMap[trackedUid]++;
     }
-    return new BpBinder(BinderHandle{handle}, trackedUid);
+    return sp<BpBinder>::make(BinderHandle{handle}, trackedUid);
 }
 
-BpBinder* BpBinder::create(const sp<RpcConnection>& connection, const RpcAddress& address) {
+sp<BpBinder> BpBinder::create(const sp<RpcConnection>& connection, const RpcAddress& address) {
     LOG_ALWAYS_FATAL_IF(connection == nullptr, "BpBinder::create null connection");
 
     // These are not currently tracked, since there is no UID or other
@@ -145,7 +144,7 @@ BpBinder* BpBinder::create(const sp<RpcConnection>& connection, const RpcAddress
     // needed, connection objects keep track of all BpBinder objects on a
     // per-connection basis.
 
-    return new BpBinder(SocketHandle{connection, address});
+    return sp<BpBinder>::make(SocketHandle{connection, address});
 }
 
 BpBinder::BpBinder(Handle&& handle)
@@ -194,10 +193,13 @@ bool BpBinder::isDescriptorCached() const {
 const String16& BpBinder::getInterfaceDescriptor() const
 {
     if (isDescriptorCached() == false) {
-        Parcel send, reply;
+        sp<BpBinder> thiz = sp<BpBinder>::fromExisting(const_cast<BpBinder*>(this));
+
+        Parcel data;
+        data.markForBinder(thiz);
+        Parcel reply;
         // do the IPC without a lock held.
-        status_t err = const_cast<BpBinder*>(this)->transact(
-                INTERFACE_TRANSACTION, send, &reply);
+        status_t err = thiz->transact(INTERFACE_TRANSACTION, data, &reply);
         if (err == NO_ERROR) {
             String16 res(reply.readString16());
             Mutex::Autolock _l(mLock);
@@ -223,7 +225,7 @@ bool BpBinder::isBinderAlive() const
 status_t BpBinder::pingBinder()
 {
     Parcel data;
-    data.markForBinder(this);
+    data.markForBinder(sp<BpBinder>::fromExisting(this));
     Parcel reply;
     return transact(PING_TRANSACTION, data, &reply);
 }
@@ -400,7 +402,7 @@ void BpBinder::reportOneDeath(const Obituary& obit)
     ALOGV("Reporting death to recipient: %p\n", recipient.get());
     if (recipient == nullptr) return;
 
-    recipient->binderDied(this);
+    recipient->binderDied(wp<BpBinder>::fromExisting(this));
 }
 
 

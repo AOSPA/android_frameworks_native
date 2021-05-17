@@ -44,7 +44,6 @@ constexpr uint32_t BUFFER_UPDATES = 18;
 constexpr uint32_t LAYER_UPDATE = INT_MAX - 2;
 constexpr uint32_t SIZE_UPDATE = 134;
 constexpr uint32_t STACK_UPDATE = 1;
-constexpr uint64_t DEFERRED_UPDATE = 0;
 constexpr int32_t RELATIVE_Z = 42;
 constexpr float ALPHA_UPDATE = 0.29f;
 constexpr float CORNER_RADIUS_UPDATE = 0.2f;
@@ -191,10 +190,8 @@ public:
     bool hiddenFlagUpdateFound(const SurfaceChange& change, bool foundHiddenFlag);
     bool opaqueFlagUpdateFound(const SurfaceChange& change, bool foundOpaqueFlag);
     bool secureFlagUpdateFound(const SurfaceChange& change, bool foundSecureFlag);
-    bool deferredTransactionUpdateFound(const SurfaceChange& change, bool foundDeferred);
     bool reparentUpdateFound(const SurfaceChange& change, bool found);
     bool relativeParentUpdateFound(const SurfaceChange& change, bool found);
-    bool reparentChildrenUpdateFound(const SurfaceChange& change, bool found);
     bool shadowRadiusUpdateFound(const SurfaceChange& change, bool found);
     bool surfaceUpdateFound(const Trace& trace, SurfaceChange::SurfaceChangeCase changeCase);
 
@@ -228,10 +225,8 @@ public:
     void hiddenFlagUpdate(Transaction&);
     void opaqueFlagUpdate(Transaction&);
     void secureFlagUpdate(Transaction&);
-    void deferredTransactionUpdate(Transaction&);
     void reparentUpdate(Transaction&);
     void relativeParentUpdate(Transaction&);
-    void reparentChildrenUpdate(Transaction&);
     void shadowRadiusUpdate(Transaction&);
     void surfaceCreation(Transaction&);
     void displayCreation(Transaction&);
@@ -398,20 +393,12 @@ void SurfaceInterceptorTest::secureFlagUpdate(Transaction& t) {
     t.setFlags(mBGSurfaceControl, layer_state_t::eLayerSecure, layer_state_t::eLayerSecure);
 }
 
-void SurfaceInterceptorTest::deferredTransactionUpdate(Transaction& t) {
-    t.deferTransactionUntil_legacy(mBGSurfaceControl, mBGSurfaceControl, DEFERRED_UPDATE);
-}
-
 void SurfaceInterceptorTest::reparentUpdate(Transaction& t) {
     t.reparent(mBGSurfaceControl, mFGSurfaceControl);
 }
 
 void SurfaceInterceptorTest::relativeParentUpdate(Transaction& t) {
     t.setRelativeLayer(mBGSurfaceControl, mFGSurfaceControl, RELATIVE_Z);
-}
-
-void SurfaceInterceptorTest::reparentChildrenUpdate(Transaction& t) {
-    t.reparentChildren(mBGSurfaceControl, mFGSurfaceControl);
 }
 
 void SurfaceInterceptorTest::shadowRadiusUpdate(Transaction& t) {
@@ -443,9 +430,7 @@ void SurfaceInterceptorTest::runAllUpdates() {
     runInTransaction(&SurfaceInterceptorTest::hiddenFlagUpdate);
     runInTransaction(&SurfaceInterceptorTest::opaqueFlagUpdate);
     runInTransaction(&SurfaceInterceptorTest::secureFlagUpdate);
-    runInTransaction(&SurfaceInterceptorTest::deferredTransactionUpdate);
     runInTransaction(&SurfaceInterceptorTest::reparentUpdate);
-    runInTransaction(&SurfaceInterceptorTest::reparentChildrenUpdate);
     runInTransaction(&SurfaceInterceptorTest::relativeParentUpdate);
     runInTransaction(&SurfaceInterceptorTest::shadowRadiusUpdate);
 }
@@ -628,18 +613,6 @@ bool SurfaceInterceptorTest::secureFlagUpdateFound(const SurfaceChange& change,
     return foundSecureFlag;
 }
 
-bool SurfaceInterceptorTest::deferredTransactionUpdateFound(const SurfaceChange& change,
-        bool foundDeferred) {
-    bool hasId(change.deferred_transaction().layer_id() == mBGLayerId);
-    bool hasFrameNumber(change.deferred_transaction().frame_number() == DEFERRED_UPDATE);
-    if (hasId && hasFrameNumber && !foundDeferred) {
-        foundDeferred = true;
-    } else if (hasId && hasFrameNumber && foundDeferred) {
-        [] () { FAIL(); }();
-    }
-    return foundDeferred;
-}
-
 bool SurfaceInterceptorTest::reparentUpdateFound(const SurfaceChange& change, bool found) {
     bool hasId(change.reparent().parent_id() == mFGLayerId);
     if (hasId && !found) {
@@ -652,16 +625,6 @@ bool SurfaceInterceptorTest::reparentUpdateFound(const SurfaceChange& change, bo
 
 bool SurfaceInterceptorTest::relativeParentUpdateFound(const SurfaceChange& change, bool found) {
     bool hasId(change.relative_parent().relative_parent_id() == mFGLayerId);
-    if (hasId && !found) {
-        found = true;
-    } else if (hasId && found) {
-        []() { FAIL(); }();
-    }
-    return found;
-}
-
-bool SurfaceInterceptorTest::reparentChildrenUpdateFound(const SurfaceChange& change, bool found) {
-    bool hasId(change.reparent_children().parent_id() == mFGLayerId);
     if (hasId && !found) {
         found = true;
     } else if (hasId && found) {
@@ -732,14 +695,8 @@ bool SurfaceInterceptorTest::surfaceUpdateFound(const Trace& trace,
                         case SurfaceChange::SurfaceChangeCase::kSecureFlag:
                             foundUpdate = secureFlagUpdateFound(change, foundUpdate);
                             break;
-                        case SurfaceChange::SurfaceChangeCase::kDeferredTransaction:
-                            foundUpdate = deferredTransactionUpdateFound(change, foundUpdate);
-                            break;
                         case SurfaceChange::SurfaceChangeCase::kReparent:
                             foundUpdate = reparentUpdateFound(change, foundUpdate);
-                            break;
-                        case SurfaceChange::SurfaceChangeCase::kReparentChildren:
-                            foundUpdate = reparentChildrenUpdateFound(change, foundUpdate);
                             break;
                         case SurfaceChange::SurfaceChangeCase::kRelativeParent:
                             foundUpdate = relativeParentUpdateFound(change, foundUpdate);
@@ -769,9 +726,7 @@ void SurfaceInterceptorTest::assertAllUpdatesFound(const Trace& trace) {
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kHiddenFlag));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kOpaqueFlag));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kSecureFlag));
-    ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kDeferredTransaction));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kReparent));
-    ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kReparentChildren));
     ASSERT_TRUE(surfaceUpdateFound(trace, SurfaceChange::SurfaceChangeCase::kRelativeParent));
 }
 
@@ -927,19 +882,9 @@ TEST_F(SurfaceInterceptorTest, InterceptSecureFlagUpdateWorks) {
             SurfaceChange::SurfaceChangeCase::kSecureFlag);
 }
 
-TEST_F(SurfaceInterceptorTest, InterceptDeferredTransactionUpdateWorks) {
-    captureTest(&SurfaceInterceptorTest::deferredTransactionUpdate,
-            SurfaceChange::SurfaceChangeCase::kDeferredTransaction);
-}
-
 TEST_F(SurfaceInterceptorTest, InterceptReparentUpdateWorks) {
     captureTest(&SurfaceInterceptorTest::reparentUpdate,
                 SurfaceChange::SurfaceChangeCase::kReparent);
-}
-
-TEST_F(SurfaceInterceptorTest, InterceptReparentChildrenUpdateWorks) {
-    captureTest(&SurfaceInterceptorTest::reparentChildrenUpdate,
-                SurfaceChange::SurfaceChangeCase::kReparentChildren);
 }
 
 TEST_F(SurfaceInterceptorTest, InterceptRelativeParentUpdateWorks) {
@@ -976,11 +921,6 @@ TEST_F(SurfaceInterceptorTest, InterceptDisplayDeletionWorks) {
     ASSERT_TRUE(singleIncrementFound(capturedTrace, Increment::IncrementCase::kDisplayDeletion));
 }
 
-TEST_F(SurfaceInterceptorTest, InterceptBufferUpdateWorks) {
-    captureTest(&SurfaceInterceptorTest::nBufferUpdates,
-            &SurfaceInterceptorTest::bufferUpdatesFound);
-}
-
 // If the interceptor is enabled while buffer updates are being pushed, the interceptor should
 // first create a snapshot of the existing displays and surfaces and then start capturing
 // the buffer updates
@@ -996,26 +936,6 @@ TEST_F(SurfaceInterceptorTest, InterceptWhileBufferUpdatesWorks) {
     const auto& firstIncrement = capturedTrace.mutable_increment(0);
     ASSERT_EQ(firstIncrement->increment_case(), Increment::IncrementCase::kDisplayCreation);
 }
-
-TEST_F(SurfaceInterceptorTest, InterceptSimultaneousUpdatesWorks) {
-    enableInterceptor();
-    setupBackgroundSurface();
-    std::thread bufferUpdates(&SurfaceInterceptorTest::nBufferUpdates, this);
-    std::thread surfaceUpdates(&SurfaceInterceptorTest::runAllUpdates, this);
-    runInTransaction(&SurfaceInterceptorTest::surfaceCreation);
-    bufferUpdates.join();
-    surfaceUpdates.join();
-    disableInterceptor();
-
-    Trace capturedTrace;
-    ASSERT_EQ(NO_ERROR, readProtoFile(&capturedTrace));
-    preProcessTrace(capturedTrace);
-
-    assertAllUpdatesFound(capturedTrace);
-    ASSERT_TRUE(bufferUpdatesFound(capturedTrace));
-    ASSERT_TRUE(singleIncrementFound(capturedTrace, Increment::IncrementCase::kSurfaceCreation));
 }
-}
-
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"

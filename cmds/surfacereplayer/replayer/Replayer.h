@@ -110,14 +110,10 @@ class Replayer {
             layer_id id, const OpaqueFlagChange& ofc);
     void setSecureFlag(SurfaceComposerClient::Transaction& t,
             layer_id id, const SecureFlagChange& sfc);
-    void setDeferredTransaction(SurfaceComposerClient::Transaction& t,
-            layer_id id, const DeferredTransactionChange& dtc);
     void setReparentChange(SurfaceComposerClient::Transaction& t,
             layer_id id, const ReparentChange& c);
     void setRelativeParentChange(SurfaceComposerClient::Transaction& t,
             layer_id id, const RelativeParentChange& c);
-    void setReparentChildrenChange(SurfaceComposerClient::Transaction& t,
-            layer_id id, const ReparentChildrenChange& c);
     void setShadowRadiusChange(SurfaceComposerClient::Transaction& t,
             layer_id id, const ShadowRadiusChange& c);
     void setBlurRegionsChange(SurfaceComposerClient::Transaction& t,
@@ -133,8 +129,6 @@ class Replayer {
             display_id id, const ProjectionChange& pc);
 
     void waitUntilTimestamp(int64_t timestamp);
-    void waitUntilDeferredTransactionLayerExists(
-            const DeferredTransactionChange& dtc, std::unique_lock<std::mutex>& lock);
     status_t loadSurfaceComposerClient();
 
     Trace mTrace;

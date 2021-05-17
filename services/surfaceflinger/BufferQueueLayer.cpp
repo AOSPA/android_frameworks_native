@@ -37,7 +37,6 @@
 
 #include "frame_extn_intf.h"
 #include "smomo_interface.h"
-#include "layer_extn_intf.h"
 
 namespace android {
 using PresentState = frametimeline::SurfaceFrame::PresentState;
@@ -480,6 +479,11 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
         frameInfo.ref_latency = mFrameTracker.getPreviousGfxInfo();
         frameInfo.vsync_period = mFlinger->mVsyncPeriod;
         frameInfo.transparent_region = !this->isOpaque(mDrawingState);
+        if (frameInfo.transparent_region) {
+            if (this->isLayerFocusedBasedOnPriority(this->getPriority())) {
+                frameInfo.transparent_region = false;
+            }
+        }
         frameInfo.width = item.mGraphicBuffer->getWidth();
         frameInfo.height = item.mGraphicBuffer->getHeight();
         frameInfo.layer_name = this->getName().c_str();
@@ -557,10 +561,6 @@ void BufferQueueLayer::onFirstRef() {
     mConsumer->setName(String8(mName.data(), mName.size()));
 
     mProducer->setMaxDequeuedBufferCount(2);
-
-    if (mFlinger->mLayerExt) {
-        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
-    }
 }
 
 status_t BufferQueueLayer::setDefaultBufferProperties(uint32_t w, uint32_t h, PixelFormat format) {

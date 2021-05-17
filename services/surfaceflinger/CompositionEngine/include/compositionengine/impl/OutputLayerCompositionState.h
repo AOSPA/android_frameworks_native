@@ -16,16 +16,17 @@
 
 #pragma once
 
-#include <cstdint>
-#include <optional>
-#include <string>
-
+#include <compositionengine/ProjectionSpace.h>
 #include <compositionengine/impl/HwcBufferCache.h>
-#include <renderengine/Mesh.h>
+#include <renderengine/ExternalTexture.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicTypes.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -45,8 +46,14 @@ class Layer;
 
 class HWComposer;
 
+namespace compositionengine {
+class OutputLayer;
+} // namespace compositionengine
+
 namespace compositionengine::impl {
 
+// Note that fields that affect HW composer state may need to be mirrored into
+// android::compositionengine::impl::planner::LayerState
 struct OutputLayerCompositionState {
     // The portion of the layer that is not obscured by opaque layers on top
     Region visibleRegion;
@@ -81,15 +88,21 @@ struct OutputLayerCompositionState {
     // The dataspace for this layer
     ui::Dataspace dataspace{ui::Dataspace::UNKNOWN};
 
-    // The Z order index of this layer on this output
-    uint32_t z{0};
-
     // Overrides the buffer, acquire fence, and display frame stored in LayerFECompositionState
     struct {
-        sp<GraphicBuffer> buffer = nullptr;
+        std::shared_ptr<renderengine::ExternalTexture> buffer = nullptr;
         sp<Fence> acquireFence = nullptr;
         Rect displayFrame = {};
         ui::Dataspace dataspace{ui::Dataspace::UNKNOWN};
+        ProjectionSpace displaySpace;
+        Region damageRegion = Region::INVALID_REGION;
+        Region visibleRegion;
+
+        // The OutputLayer pointed to by this field will be rearranged to draw
+        // behind the OutputLayer represented by this CompositionState and will
+        // be visible through it. Unowned - the OutputLayer's lifetime will
+        // outlast this.)
+        OutputLayer* peekThroughLayer = nullptr;
     } overrideInfo;
 
     /*
@@ -109,6 +122,9 @@ struct OutputLayerCompositionState {
         // The buffer cache for this layer. This is used to lower the
         // cost of sending reused buffers to the HWC.
         HwcBufferCache hwcBufferCache;
+
+        // Set to true when overridden info has been sent to HW composer
+        bool stateOverridden = false;
     };
 
     // The HWC state is optional, and is only set up if there is any potential

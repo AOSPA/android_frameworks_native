@@ -99,7 +99,7 @@ public:
         SAFE_PARCEL(data.writeVectorSize, listenerCallbacks);
         for (const auto& [listener, callbackIds] : listenerCallbacks) {
             SAFE_PARCEL(data.writeStrongBinder, listener);
-            SAFE_PARCEL(data.writeInt64Vector, callbackIds);
+            SAFE_PARCEL(data.writeParcelableVector, callbackIds);
         }
 
         SAFE_PARCEL(data.writeUint64, transactionId);
@@ -495,6 +495,28 @@ public:
             return result;
         }
         return result;
+    }
+
+    status_t onPullAtom(const int32_t atomId, std::string* pulledData, bool* success) {
+        Parcel data, reply;
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeInt32, atomId);
+
+        status_t err = remote()->transact(BnSurfaceComposer::ON_PULL_ATOM, data, &reply);
+        if (err != NO_ERROR) {
+            ALOGE("onPullAtom failed to transact: %d", err);
+            return err;
+        }
+
+        int32_t size = 0;
+        SAFE_PARCEL(reply.readInt32, &size);
+        const void* dataPtr = reply.readInplace(size);
+        if (dataPtr == nullptr) {
+            return UNEXPECTED_NULL;
+        }
+        pulledData->assign((const char*)dataPtr, size);
+        SAFE_PARCEL(reply.readBool, success);
+        return NO_ERROR;
     }
 
     status_t enableVSyncInjections(bool enable) override {
@@ -982,6 +1004,34 @@ public:
         return NO_ERROR;
     }
 
+    status_t addHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                     const sp<gui::IHdrLayerInfoListener>& listener) override {
+        Parcel data, reply;
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeStrongBinder, displayToken);
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(listener));
+        const status_t error =
+                remote()->transact(BnSurfaceComposer::ADD_HDR_LAYER_INFO_LISTENER, data, &reply);
+        if (error != OK) {
+            ALOGE("addHdrLayerInfoListener: Failed to transact; error = %d", error);
+        }
+        return error;
+    }
+
+    status_t removeHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                        const sp<gui::IHdrLayerInfoListener>& listener) override {
+        Parcel data, reply;
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeStrongBinder, displayToken);
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(listener));
+        const status_t error =
+                remote()->transact(BnSurfaceComposer::REMOVE_HDR_LAYER_INFO_LISTENER, data, &reply);
+        if (error != OK) {
+            ALOGE("removeHdrLayerInfoListener: Failed to transact; error = %d", error);
+        }
+        return error;
+    }
+
     status_t notifyPowerBoost(int32_t boostId) override {
         Parcel data, reply;
         status_t error = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
@@ -1033,39 +1083,15 @@ public:
     }
 
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                          int8_t compatibility, bool shouldBeSeamless) override {
+                          int8_t compatibility, int8_t changeFrameRateStrategy) override {
         Parcel data, reply;
-        status_t err = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        if (err != NO_ERROR) {
-            ALOGE("setFrameRate: failed writing interface token: %s (%d)", strerror(-err), -err);
-            return err;
-        }
+        SAFE_PARCEL(data.writeInterfaceToken, ISurfaceComposer::getInterfaceDescriptor());
+        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(surface));
+        SAFE_PARCEL(data.writeFloat, frameRate);
+        SAFE_PARCEL(data.writeByte, compatibility);
+        SAFE_PARCEL(data.writeByte, changeFrameRateStrategy);
 
-        err = data.writeStrongBinder(IInterface::asBinder(surface));
-        if (err != NO_ERROR) {
-            ALOGE("setFrameRate: failed writing strong binder: %s (%d)", strerror(-err), -err);
-            return err;
-        }
-
-        err = data.writeFloat(frameRate);
-        if (err != NO_ERROR) {
-            ALOGE("setFrameRate: failed writing float: %s (%d)", strerror(-err), -err);
-            return err;
-        }
-
-        err = data.writeByte(compatibility);
-        if (err != NO_ERROR) {
-            ALOGE("setFrameRate: failed writing byte: %s (%d)", strerror(-err), -err);
-            return err;
-        }
-
-        err = data.writeBool(shouldBeSeamless);
-        if (err != NO_ERROR) {
-            ALOGE("setFrameRate: failed writing bool: %s (%d)", strerror(-err), -err);
-            return err;
-        }
-
-        err = remote()->transact(BnSurfaceComposer::SET_FRAME_RATE, data, &reply);
+        status_t err = remote()->transact(BnSurfaceComposer::SET_FRAME_RATE, data, &reply);
         if (err != NO_ERROR) {
             ALOGE("setFrameRate: failed to transact: %s (%d)", strerror(-err), err);
             return err;
@@ -1242,7 +1268,7 @@ status_t BnSurfaceComposer::onTransact(
             for (int32_t i = 0; i < listenersSize; i++) {
                 SAFE_PARCEL(data.readStrongBinder, &tmpBinder);
                 std::vector<CallbackId> callbackIds;
-                SAFE_PARCEL(data.readInt64Vector, &callbackIds);
+                SAFE_PARCEL(data.readParcelableVector, &callbackIds);
                 listenerCallbacks.emplace_back(tmpBinder, callbackIds);
             }
 
@@ -1862,6 +1888,38 @@ status_t BnSurfaceComposer::onTransact(
             }
             return setDisplayBrightness(displayToken, brightness);
         }
+        case ADD_HDR_LAYER_INFO_LISTENER: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IBinder> displayToken;
+            status_t error = data.readNullableStrongBinder(&displayToken);
+            if (error != NO_ERROR) {
+                ALOGE("addHdrLayerInfoListener: Failed to read display token");
+                return error;
+            }
+            sp<gui::IHdrLayerInfoListener> listener;
+            error = data.readNullableStrongBinder(&listener);
+            if (error != NO_ERROR) {
+                ALOGE("addHdrLayerInfoListener: Failed to read listener");
+                return error;
+            }
+            return addHdrLayerInfoListener(displayToken, listener);
+        }
+        case REMOVE_HDR_LAYER_INFO_LISTENER: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IBinder> displayToken;
+            status_t error = data.readNullableStrongBinder(&displayToken);
+            if (error != NO_ERROR) {
+                ALOGE("removeHdrLayerInfoListener: Failed to read display token");
+                return error;
+            }
+            sp<gui::IHdrLayerInfoListener> listener;
+            error = data.readNullableStrongBinder(&listener);
+            if (error != NO_ERROR) {
+                ALOGE("removeHdrLayerInfoListener: Failed to read listener");
+                return error;
+            }
+            return removeHdrLayerInfoListener(displayToken, listener);
+        }
         case NOTIFY_POWER_BOOST: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             int32_t boostId;
@@ -1894,36 +1952,24 @@ status_t BnSurfaceComposer::onTransact(
         case SET_FRAME_RATE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             sp<IBinder> binder;
-            status_t err = data.readStrongBinder(&binder);
-            if (err != NO_ERROR) {
-                ALOGE("setFrameRate: failed to read strong binder: %s (%d)", strerror(-err), -err);
-                return err;
-            }
+            SAFE_PARCEL(data.readStrongBinder, &binder);
+
             sp<IGraphicBufferProducer> surface = interface_cast<IGraphicBufferProducer>(binder);
             if (!surface) {
-                ALOGE("setFrameRate: failed to cast to IGraphicBufferProducer: %s (%d)",
-                      strerror(-err), -err);
-                return err;
+                ALOGE("setFrameRate: failed to cast to IGraphicBufferProducer");
+                return BAD_VALUE;
             }
             float frameRate;
-            err = data.readFloat(&frameRate);
-            if (err != NO_ERROR) {
-                ALOGE("setFrameRate: failed to read float: %s (%d)", strerror(-err), -err);
-                return err;
-            }
+            SAFE_PARCEL(data.readFloat, &frameRate);
+
             int8_t compatibility;
-            err = data.readByte(&compatibility);
-            if (err != NO_ERROR) {
-                ALOGE("setFrameRate: failed to read byte: %s (%d)", strerror(-err), -err);
-                return err;
-            }
-            bool shouldBeSeamless;
-            err = data.readBool(&shouldBeSeamless);
-            if (err != NO_ERROR) {
-                ALOGE("setFrameRate: failed to read bool: %s (%d)", strerror(-err), -err);
-                return err;
-            }
-            status_t result = setFrameRate(surface, frameRate, compatibility, shouldBeSeamless);
+            SAFE_PARCEL(data.readByte, &compatibility);
+
+            int8_t changeFrameRateStrategy;
+            SAFE_PARCEL(data.readByte, &changeFrameRateStrategy);
+
+            status_t result =
+                    setFrameRate(surface, frameRate, compatibility, changeFrameRateStrategy);
             reply->writeInt32(result);
             return NO_ERROR;
         }
@@ -1996,6 +2042,19 @@ status_t BnSurfaceComposer::onTransact(
                 hdrTypesVector.push_back(static_cast<ui::Hdr>(i));
             }
             return overrideHdrTypes(display, hdrTypesVector);
+        }
+        case ON_PULL_ATOM: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            int32_t atomId = 0;
+            SAFE_PARCEL(data.readInt32, &atomId);
+
+            std::string pulledData;
+            bool success;
+            status_t err = onPullAtom(atomId, &pulledData, &success);
+            SAFE_PARCEL(reply->writeByteArray, pulledData.size(),
+                        reinterpret_cast<const uint8_t*>(pulledData.data()));
+            SAFE_PARCEL(reply->writeBool, success);
+            return err;
         }
         default: {
             return BBinder::onTransact(code, data, reply, flags);

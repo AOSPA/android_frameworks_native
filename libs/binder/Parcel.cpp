@@ -293,7 +293,8 @@ status_t Parcel::unflattenBinder(sp<IBinder>* out) const
     if (flat) {
         switch (flat->hdr.type) {
             case BINDER_TYPE_BINDER: {
-                sp<IBinder> binder = reinterpret_cast<IBinder*>(flat->cookie);
+                sp<IBinder> binder =
+                        sp<IBinder>::fromExisting(reinterpret_cast<IBinder*>(flat->cookie));
                 return finishUnflattenBinder(binder, out);
             }
             case BINDER_TYPE_HANDLE: {
@@ -418,6 +419,11 @@ status_t Parcel::setData(const uint8_t* buffer, size_t len)
 
 status_t Parcel::appendFrom(const Parcel *parcel, size_t offset, size_t len)
 {
+    if (parcel->isForRpc() != isForRpc()) {
+        ALOGE("Cannot append Parcel of one format to another.");
+        return BAD_TYPE;
+    }
+
     status_t err;
     const uint8_t *data = parcel->mData;
     const binder_size_t *objects = parcel->mObjects;
@@ -555,12 +561,17 @@ void Parcel::markSensitive() const
 }
 
 void Parcel::markForBinder(const sp<IBinder>& binder) {
+    LOG_ALWAYS_FATAL_IF(mData != nullptr, "format must be set before data is written");
+
     if (binder && binder->remoteBinder() && binder->remoteBinder()->isRpcBinder()) {
         markForRpc(binder->remoteBinder()->getPrivateAccessorForId().rpcConnection());
     }
 }
 
 void Parcel::markForRpc(const sp<RpcConnection>& connection) {
+    LOG_ALWAYS_FATAL_IF(mData != nullptr && mOwner == nullptr,
+                        "format must be set before data is written OR on IPC data");
+
     LOG_ALWAYS_FATAL_IF(connection == nullptr, "markForRpc requires connection");
     mConnection = connection;
 }
@@ -2100,6 +2111,9 @@ size_t Parcel::ipcObjectsCount() const
 void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
     const binder_size_t* objects, size_t objectsCount, release_func relFunc)
 {
+    // this code uses 'mOwner == nullptr' to understand whether it owns memory
+    LOG_ALWAYS_FATAL_IF(relFunc == nullptr, "must provide cleanup function");
+
     freeData();
 
     mData = const_cast<uint8_t*>(data);

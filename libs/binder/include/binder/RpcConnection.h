@@ -61,6 +61,37 @@ public:
      */
     [[nodiscard]] bool addUnixDomainClient(const char* path);
 
+#ifdef __BIONIC__
+    /**
+     * Creates an RPC server at the current port.
+     */
+    [[nodiscard]] bool setupVsockServer(unsigned int port);
+
+    /**
+     * Connects to an RPC server at the CVD & port.
+     */
+    [[nodiscard]] bool addVsockClient(unsigned int cvd, unsigned int port);
+#endif // __BIONIC__
+
+    /**
+     * Creates an RPC server at the current port.
+     */
+    [[nodiscard]] bool setupInetServer(unsigned int port);
+
+    /**
+     * Connects to an RPC server at the given address and port.
+     */
+    [[nodiscard]] bool addInetClient(const char* addr, unsigned int port);
+
+    /**
+     * For debugging!
+     *
+     * Sets up an empty socket. All queries to this socket which require a
+     * response will never be satisfied. All data sent here will be
+     * unceremoniously cast down the bottomless pit, /dev/null.
+     */
+    [[nodiscard]] bool addNullDebuggingClient();
+
     /**
      * Query the other side of the connection for the root object hosted by that
      * process's RpcServer (if one exists)
@@ -85,11 +116,17 @@ public:
     // internal only
     const std::unique_ptr<RpcState>& state() { return mState; }
 
-private:
-    RpcConnection();
+    class SocketAddress {
+    public:
+        virtual ~SocketAddress();
+        virtual std::string toString() const = 0;
+        virtual const sockaddr* addr() const = 0;
+        virtual size_t addrSize() const = 0;
+    };
 
-    void addServer(base::unique_fd&& fd);
-    void addClient(base::unique_fd&& fd);
+private:
+    friend sp<RpcConnection>;
+    RpcConnection();
 
     struct ConnectionSocket : public RefBase {
         base::unique_fd fd;
@@ -99,11 +136,16 @@ private:
         std::optional<pid_t> exclusiveTid;
     };
 
+    bool setupSocketServer(const SocketAddress& address);
+    bool addSocketClient(const SocketAddress& address);
+    void addClient(base::unique_fd&& fd);
+    sp<ConnectionSocket> assignServerToThisThread(base::unique_fd&& fd);
+    bool removeServerSocket(const sp<ConnectionSocket>& socket);
+
     enum class SocketUse {
         CLIENT,
         CLIENT_ASYNC,
         CLIENT_REFCOUNT,
-        SERVER,
     };
 
     // RAII object for connection socket

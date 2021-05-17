@@ -75,6 +75,7 @@ public:
     sp<IBinder> waitForService(const String16& name16) override;
     bool isDeclared(const String16& name) override;
     Vector<String16> getDeclaredInstances(const String16& interface) override;
+    std::optional<String16> updatableViaApex(const String16& name) override;
 
     // for legacy ABI
     const String16& getInterfaceDescriptor() const override {
@@ -102,7 +103,7 @@ sp<IServiceManager> defaultServiceManager()
             }
         }
 
-        gDefaultServiceManager = new ServiceManagerShim(sm);
+        gDefaultServiceManager = sp<ServiceManagerShim>::make(sm);
     });
 
     return gDefaultServiceManager;
@@ -324,7 +325,7 @@ sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
     }
     if (out != nullptr) return out;
 
-    sp<Waiter> waiter = new Waiter;
+    sp<Waiter> waiter = sp<Waiter>::make();
     if (!mTheRealServiceManager->registerForNotifications(
             name, waiter).isOk()) {
         return nullptr;
@@ -386,6 +387,14 @@ Vector<String16> ServiceManagerShim::getDeclaredInstances(const String16& interf
         res.push(String16(instance.c_str()));
     }
     return res;
+}
+
+std::optional<String16> ServiceManagerShim::updatableViaApex(const String16& name) {
+    std::optional<std::string> declared;
+    if (!mTheRealServiceManager->updatableViaApex(String8(name).c_str(), &declared).isOk()) {
+        return std::nullopt;
+    }
+    return declared ? std::optional<String16>(String16(declared.value().c_str())) : std::nullopt;
 }
 
 } // namespace android

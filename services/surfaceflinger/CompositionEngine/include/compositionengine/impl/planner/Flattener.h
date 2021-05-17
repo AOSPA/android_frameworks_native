@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <compositionengine/Output.h>
 #include <compositionengine/impl/planner/CachedSet.h>
 #include <compositionengine/impl/planner/LayerState.h>
 
@@ -35,15 +36,17 @@ class Predictor;
 
 class Flattener {
 public:
-    Flattener(Predictor& predictor) : mPredictor(predictor) {}
+    Flattener(Predictor& predictor, bool enableHolePunch = false)
+          : mEnableHolePunch(enableHolePunch), mPredictor(predictor) {}
 
     void setDisplaySize(ui::Size size) { mDisplaySize = size; }
 
     NonBufferHash flattenLayers(const std::vector<const LayerState*>& layers, NonBufferHash,
                                 std::chrono::steady_clock::time_point now);
 
-    // Renders the newest cached sets with the supplied output dataspace
-    void renderCachedSets(renderengine::RenderEngine&, ui::Dataspace outputDataspace);
+    // Renders the newest cached sets with the supplied output composition state
+    void renderCachedSets(renderengine::RenderEngine& re,
+                          const OutputCompositionState& outputState);
 
     void dump(std::string& result) const;
 
@@ -52,13 +55,14 @@ private:
 
     void resetActivities(NonBufferHash, std::chrono::steady_clock::time_point now);
 
-    void updateLayersHash();
+    NonBufferHash computeLayersHash() const;
 
     bool mergeWithCachedSets(const std::vector<const LayerState*>& layers,
                              std::chrono::steady_clock::time_point now);
 
     void buildCachedSets(std::chrono::steady_clock::time_point now);
 
+    const bool mEnableHolePunch;
     Predictor& mPredictor;
 
     ui::Size mDisplaySize;
@@ -67,7 +71,6 @@ private:
     std::chrono::steady_clock::time_point mLastGeometryUpdate;
 
     std::vector<CachedSet> mLayers;
-    NonBufferHash mLayersHash = 0;
     std::optional<CachedSet> mNewCachedSet;
 
     // Statistics

@@ -363,7 +363,8 @@ const char* AIBinder_Class_getDescriptor(const AIBinder_Class* clazz) {
 }
 
 void AIBinder_DeathRecipient::TransferDeathRecipient::binderDied(const wp<IBinder>& who) {
-    CHECK(who == mWho);
+    CHECK(who == mWho) << who.unsafe_get() << "(" << who.get_refs() << ") vs " << mWho.unsafe_get()
+                       << " (" << mWho.get_refs() << ")";
 
     mOnDied(mCookie);
 
@@ -598,6 +599,8 @@ binder_status_t AIBinder_prepareTransaction(AIBinder* binder, AParcel** in) {
     }
 
     *in = new AParcel(binder);
+    (*in)->get()->markForBinder(binder->getBinder());
+
     status_t status = (*in)->get()->writeInterfaceToken(clazz->getInterfaceDescriptor());
     binder_status_t ret = PruneStatusT(status);
 

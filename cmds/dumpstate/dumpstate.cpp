@@ -793,6 +793,9 @@ void Dumpstate::PrintHeader() const {
     if (module_metadata_version != 0) {
         printf("Module Metadata version: %" PRId64 "\n", module_metadata_version);
     }
+    printf("SDK extension versions [r=%s s=%s]\n",
+           android::base::GetProperty("build.version.extensions.r", "-").c_str(),
+           android::base::GetProperty("build.version.extensions.s", "-").c_str());
 
     printf("Kernel: ");
     DumpFileToFd(STDOUT_FILENO, "", "/proc/version");
@@ -2175,16 +2178,13 @@ void Dumpstate::DumpstateBoard(int out_fd) {
     }
 
     /*
-     * mount debugfs for non-user builds which launch with S and unmount it
-     * after invoking dumpstateBoard_* methods. This is to enable debug builds
-     * to not have debugfs mounted during runtime. It will also ensure that
-     * debugfs is only accessed by the dumpstate HAL.
+     * mount debugfs for non-user builds with ro.product.debugfs_restrictions.enabled
+     * set to true and unmount it after invoking dumpstateBoard_* methods.
+     * This is to enable debug builds to not have debugfs mounted during runtime.
+     * It will also ensure that debugfs is only accessed by the dumpstate HAL.
      */
-    auto api_level = android::base::GetIntProperty("ro.product.first_api_level", 0);
-    auto api_level_override = android::base::GetBoolProperty("debug.mount_debugfs", false);
-    bool mount_debugfs = !PropertiesHelper::IsUserBuild() &&
-            ((api_level >= 31) || api_level_override);
-
+    auto mount_debugfs =
+        android::base::GetBoolProperty("ro.product.debugfs_restrictions.enabled", false);
     if (mount_debugfs) {
         RunCommand("mount debugfs", {"mount", "-t", "debugfs", "debugfs", "/sys/kernel/debug"},
                    AS_ROOT_20);
@@ -2292,7 +2292,10 @@ void Dumpstate::DumpstateBoard(int out_fd) {
     }
 
     if (mount_debugfs) {
-        RunCommand("unmount debugfs", {"umount", "/sys/kernel/debug"}, AS_ROOT_20);
+        auto keep_debugfs_mounted =
+            android::base::GetProperty("persist.dbg.keep_debugfs_mounted", "");
+        if (keep_debugfs_mounted.empty())
+            RunCommand("unmount debugfs", {"umount", "/sys/kernel/debug"}, AS_ROOT_20);
     }
 
     auto file_sizes = std::make_unique<ssize_t[]>(paths.size());

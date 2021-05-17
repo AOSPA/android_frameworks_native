@@ -23,10 +23,10 @@
 #define LOG_TAG "LibSurfaceFlingerUnittests"
 
 #include <TimeStats/TimeStats.h>
-#include <android/util/ProtoOutputStream.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <log/log.h>
+#include <timestatsatomsproto/TimeStatsAtomsProtoHeader.h>
 #include <utils/String16.h>
 #include <utils/Vector.h>
 
@@ -142,57 +142,22 @@ public:
 
     std::string inputCommand(InputCommand cmd, bool useProto);
 
-    void setTimeStamp(TimeStamp type, int32_t id, uint64_t frameNumber, nsecs_t ts);
+    void setTimeStamp(TimeStamp type, int32_t id, uint64_t frameNumber, nsecs_t ts,
+                      TimeStats::SetFrameRateVote frameRateVote);
 
     int32_t genRandomInt32(int32_t begin, int32_t end);
 
     template <size_t N>
     void insertTimeRecord(const TimeStamp (&sequence)[N], int32_t id, uint64_t frameNumber,
-                          nsecs_t ts) {
+                          nsecs_t ts, TimeStats::SetFrameRateVote frameRateVote = {}) {
         for (size_t i = 0; i < N; i++, ts += 1000000) {
-            setTimeStamp(sequence[i], id, frameNumber, ts);
+            setTimeStamp(sequence[i], id, frameNumber, ts, frameRateVote);
         }
     }
 
     std::mt19937 mRandomEngine = std::mt19937(std::random_device()());
-
-    class FakeStatsEventDelegate : public impl::TimeStats::StatsEventDelegate {
-    public:
-        FakeStatsEventDelegate() = default;
-        ~FakeStatsEventDelegate() override = default;
-
-        struct AStatsEvent* addStatsEventToPullData(AStatsEventList*) override {
-            return mEvent;
-        }
-        void setStatsPullAtomCallback(int32_t atom_tag, AStatsManager_PullAtomMetadata*,
-                                      AStatsManager_PullAtomCallback callback,
-                                      void* cookie) override {
-            mAtomTags.push_back(atom_tag);
-            mCallback = callback;
-            mCookie = cookie;
-        }
-
-        AStatsManager_PullAtomCallbackReturn makePullAtomCallback(int32_t atom_tag, void* cookie) {
-            return (*mCallback)(atom_tag, nullptr, cookie);
-        }
-
-        MOCK_METHOD1(clearStatsPullAtomCallback, void(int32_t));
-        MOCK_METHOD2(statsEventSetAtomId, void(AStatsEvent*, uint32_t));
-        MOCK_METHOD2(statsEventWriteInt32, void(AStatsEvent*, int32_t));
-        MOCK_METHOD2(statsEventWriteInt64, void(AStatsEvent*, int64_t));
-        MOCK_METHOD2(statsEventWriteString8, void(AStatsEvent*, const char*));
-        MOCK_METHOD3(statsEventWriteByteArray, void(AStatsEvent*, const uint8_t*, size_t));
-        MOCK_METHOD1(statsEventBuild, void(AStatsEvent*));
-
-        AStatsEvent* mEvent = AStatsEvent_obtain();
-        std::vector<int32_t> mAtomTags;
-        AStatsManager_PullAtomCallback mCallback = nullptr;
-        void* mCookie = nullptr;
-    };
-    FakeStatsEventDelegate* mDelegate = new FakeStatsEventDelegate;
     std::unique_ptr<TimeStats> mTimeStats =
-            std::make_unique<impl::TimeStats>(std::unique_ptr<FakeStatsEventDelegate>(mDelegate),
-                                              std::nullopt, std::nullopt);
+            std::make_unique<impl::TimeStats>(std::nullopt, std::nullopt);
 };
 
 std::string TimeStatsTest::inputCommand(InputCommand cmd, bool useProto) {
@@ -234,7 +199,8 @@ static std::string genLayerName(int32_t layerId) {
     return (layerId < 0 ? "PopupWindow:b54fcd1#0" : "com.example.fake#") + std::to_string(layerId);
 }
 
-void TimeStatsTest::setTimeStamp(TimeStamp type, int32_t id, uint64_t frameNumber, nsecs_t ts) {
+void TimeStatsTest::setTimeStamp(TimeStamp type, int32_t id, uint64_t frameNumber, nsecs_t ts,
+                                 TimeStats::SetFrameRateVote frameRateVote) {
     switch (type) {
         case TimeStamp::POST:
             ASSERT_NO_FATAL_FAILURE(
@@ -254,13 +220,13 @@ void TimeStatsTest::setTimeStamp(TimeStamp type, int32_t id, uint64_t frameNumbe
             ASSERT_NO_FATAL_FAILURE(mTimeStats->setDesiredTime(id, frameNumber, ts));
             break;
         case TimeStamp::PRESENT:
-            ASSERT_NO_FATAL_FAILURE(
-                    mTimeStats->setPresentTime(id, frameNumber, ts, kRefreshRate0, kRenderRate0));
+            ASSERT_NO_FATAL_FAILURE(mTimeStats->setPresentTime(id, frameNumber, ts, kRefreshRate0,
+                                                               kRenderRate0, frameRateVote));
             break;
         case TimeStamp::PRESENT_FENCE:
-            ASSERT_NO_FATAL_FAILURE(mTimeStats->setPresentFence(id, frameNumber,
-                                                                std::make_shared<FenceTime>(ts),
-                                                                kRefreshRate0, kRenderRate0));
+            ASSERT_NO_FATAL_FAILURE(
+                    mTimeStats->setPresentFence(id, frameNumber, std::make_shared<FenceTime>(ts),
+                                                kRefreshRate0, kRenderRate0, frameRateVote));
             break;
         default:
             ALOGD("Invalid timestamp type");
@@ -274,21 +240,6 @@ int32_t TimeStatsTest::genRandomInt32(int32_t begin, int32_t end) {
 
 TEST_F(TimeStatsTest, disabledByDefault) {
     ASSERT_FALSE(mTimeStats->isEnabled());
-}
-
-TEST_F(TimeStatsTest, setsCallbacksAfterBoot) {
-    mTimeStats->onBootFinished();
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-}
-
-TEST_F(TimeStatsTest, clearsCallbacksOnDestruction) {
-    EXPECT_CALL(*mDelegate,
-                clearStatsPullAtomCallback(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO));
-    EXPECT_CALL(*mDelegate,
-                clearStatsPullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    mTimeStats.reset();
 }
 
 TEST_F(TimeStatsTest, canEnableAndDisableTimeStats) {
@@ -408,6 +359,96 @@ TEST_F(TimeStatsTest, canIncreaseJankyFramesForLayer) {
     expectedResult = "sfPredictionErrorJankyFrames = " + std::to_string(1);
     EXPECT_THAT(result, HasSubstr(expectedResult));
     expectedResult = "appBufferStuffingJankyFrames = " + std::to_string(1);
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+}
+
+TEST_F(TimeStatsTest, canCaptureSetFrameRateVote) {
+    // this stat is not in the proto so verify by checking the string dump
+    EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
+
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
+
+    const auto frameRate60 = TimeStats::SetFrameRateVote{
+            .frameRate = 60.0f,
+            .frameRateCompatibility = TimeStats::SetFrameRateVote::FrameRateCompatibility::Default,
+            .seamlessness = TimeStats::SetFrameRateVote::Seamlessness::ShouldBeSeamless,
+    };
+    const auto frameRate90 = TimeStats::SetFrameRateVote{
+            .frameRate = 90.0f,
+            .frameRateCompatibility =
+                    TimeStats::SetFrameRateVote::FrameRateCompatibility::ExactOrMultiple,
+            .seamlessness = TimeStats::SetFrameRateVote::Seamlessness::NotRequired,
+    };
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000, frameRate60);
+    std::string result(inputCommand(InputCommand::DUMP_ALL, FMT_STRING));
+    std::string expectedResult = "frameRate = 60.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = Default";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = ShouldBeSeamless";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 3, 3000000, frameRate90);
+    result = inputCommand(InputCommand::DUMP_ALL, FMT_STRING);
+    expectedResult = "frameRate = 90.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = ExactOrMultiple";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = NotRequired";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+
+    insertTimeRecord(NORMAL_SEQUENCE_2, LAYER_ID_0, 4, 4000000, frameRate60);
+    result = inputCommand(InputCommand::DUMP_ALL, FMT_STRING);
+    expectedResult = "frameRate = 60.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = Default";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = ShouldBeSeamless";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+}
+
+TEST_F(TimeStatsTest, canCaptureSetFrameRateVoteAfterZeroForLayer) {
+    // this stat is not in the proto so verify by checking the string dump
+    EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
+
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
+
+    const auto frameRate90 = TimeStats::SetFrameRateVote{
+            .frameRate = 90.0f,
+            .frameRateCompatibility =
+                    TimeStats::SetFrameRateVote::FrameRateCompatibility::ExactOrMultiple,
+            .seamlessness = TimeStats::SetFrameRateVote::Seamlessness::NotRequired,
+    };
+    const auto frameRateDefault = TimeStats::SetFrameRateVote{
+            .frameRate = 0.0f,
+            .frameRateCompatibility = TimeStats::SetFrameRateVote::FrameRateCompatibility::Default,
+            .seamlessness = TimeStats::SetFrameRateVote::Seamlessness::ShouldBeSeamless,
+    };
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000, frameRate90);
+    std::string result(inputCommand(InputCommand::DUMP_ALL, FMT_STRING));
+    std::string expectedResult = "frameRate = 90.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = ExactOrMultiple";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = NotRequired";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 3, 3000000, frameRateDefault);
+    result = inputCommand(InputCommand::DUMP_ALL, FMT_STRING);
+    expectedResult = "frameRate = 90.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = ExactOrMultiple";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = NotRequired";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+
+    insertTimeRecord(NORMAL_SEQUENCE_2, LAYER_ID_0, 4, 4000000, frameRateDefault);
+    result = inputCommand(InputCommand::DUMP_ALL, FMT_STRING);
+    expectedResult = "frameRate = 90.00";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "frameRateCompatibility = ExactOrMultiple";
+    EXPECT_THAT(result, HasSubstr(expectedResult));
+    expectedResult = "seamlessness = NotRequired";
     EXPECT_THAT(result, HasSubstr(expectedResult));
 }
 
@@ -920,58 +961,49 @@ TEST_F(TimeStatsTest, noInfInAverageFPS) {
 }
 
 namespace {
-std::string buildExpectedHistogramBytestring(const std::vector<int32_t>& times,
-                                             const std::vector<int32_t>& frameCounts) {
-    util::ProtoOutputStream proto;
+FrameTimingHistogram buildExpectedHistogram(const std::vector<int32_t>& times,
+                                            const std::vector<int32_t>& frameCounts) {
+    FrameTimingHistogram histogram;
     for (int i = 0; i < times.size(); i++) {
         ALOGE("Writing time: %d", times[i]);
-        proto.write(util::FIELD_TYPE_INT32 | util::FIELD_COUNT_REPEATED | 1 /* field id */,
-                    (int32_t)times[i]);
+        histogram.add_time_millis_buckets(times[i]);
         ALOGE("Writing count: %d", frameCounts[i]);
-        proto.write(util::FIELD_TYPE_INT64 | util::FIELD_COUNT_REPEATED | 2 /* field id */,
-                    (int64_t)frameCounts[i]);
+        histogram.add_frame_counts((int64_t)frameCounts[i]);
     }
-    std::string byteString;
-    proto.serializeToString(&byteString);
-    return byteString;
+    return histogram;
 }
-
-std::string frameRateVoteToProtoByteString(float refreshRate, int frameRateCompatibility,
-                                           int seamlessness) {
-    util::ProtoOutputStream proto;
-    proto.write(android::util::FIELD_TYPE_FLOAT | 1 /* field id */, refreshRate);
-    proto.write(android::util::FIELD_TYPE_ENUM | 2 /* field id */, frameRateCompatibility);
-    proto.write(android::util::FIELD_TYPE_ENUM | 3 /* field id */, seamlessness);
-
-    std::string byteString;
-    proto.serializeToString(&byteString);
-    return byteString;
-}
-
-std::string dumpByteStringHex(const std::string& str) {
-    std::stringstream ss;
-    ss << std::hex;
-    for (const char& c : str) {
-        ss << (int)c << " ";
-    }
-
-    return ss.str();
-}
-
 } // namespace
 
-MATCHER_P2(BytesEq, bytes, size, "") {
-    std::string expected;
-    expected.append((const char*)bytes, size);
-    std::string actual;
-    actual.append((const char*)arg, size);
+MATCHER_P(HistogramEq, expected, "") {
+    *result_listener << "Histograms are not equal! \n";
 
-    *result_listener << "Bytes are not equal! \n";
-    *result_listener << "size: " << size << "\n";
-    *result_listener << "expected: " << dumpByteStringHex(expected).c_str() << "\n";
-    *result_listener << "actual: " << dumpByteStringHex(actual).c_str() << "\n";
+    if (arg.time_millis_buckets_size() != expected.time_millis_buckets_size()) {
+        *result_listener << "Time millis bucket are different sizes. Expected: "
+                         << expected.time_millis_buckets_size() << ". Actual "
+                         << arg.time_millis_buckets_size();
+        return false;
+    }
+    if (arg.frame_counts_size() != expected.frame_counts_size()) {
+        *result_listener << "Frame counts are different sizes. Expected: "
+                         << expected.frame_counts_size() << ". Actual " << arg.frame_counts_size();
+        return false;
+    }
 
-    return expected == actual;
+    for (int i = 0; i < expected.time_millis_buckets_size(); i++) {
+        if (arg.time_millis_buckets(i) != expected.time_millis_buckets(i)) {
+            *result_listener << "time_millis_bucket[" << i
+                             << "] is different. Expected: " << expected.time_millis_buckets(i)
+                             << ". Actual: " << arg.time_millis_buckets(i);
+            return false;
+        }
+        if (arg.frame_counts(i) != expected.frame_counts(i)) {
+            *result_listener << "frame_counts[" << i
+                             << "] is different. Expected: " << expected.frame_counts(i)
+                             << ". Actual: " << arg.frame_counts(i);
+            return false;
+        }
+    }
+    return true;
 }
 
 TEST_F(TimeStatsTest, globalStatsCallback) {
@@ -980,7 +1012,6 @@ TEST_F(TimeStatsTest, globalStatsCallback) {
     constexpr size_t CLIENT_COMPOSITION_FRAMES = 3;
     constexpr size_t DISPLAY_EVENT_CONNECTIONS = 14;
 
-    mTimeStats->onBootFinished();
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
 
     for (size_t i = 0; i < TOTAL_FRAMES; i++) {
@@ -1020,71 +1051,39 @@ TEST_F(TimeStatsTest, globalStatsCallback) {
                                       JankType::AppDeadlineMissed | JankType::BufferStuffing, 1, 2,
                                       3});
     mTimeStats->incrementJankyFrames({kRefreshRate0, kRenderRate0, UID_0, genLayerName(LAYER_ID_0),
+                                      JankType::BufferStuffing, 1, 2, 3});
+    mTimeStats->incrementJankyFrames({kRefreshRate0, kRenderRate0, UID_0, genLayerName(LAYER_ID_0),
                                       JankType::None, 1, 2, 3});
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10062 /*SURFACEFLINGER_STATS_GLOBAL_INFO*/, &pulledData));
 
-    std::string expectedFrameDuration = buildExpectedHistogramBytestring({2}, {1});
-    std::string expectedRenderEngineTiming = buildExpectedHistogramBytestring({1, 2}, {1, 1});
-    std::string expectedEmptyHistogram = buildExpectedHistogramBytestring({}, {});
-    std::string expectedSfDeadlineMissed = buildExpectedHistogramBytestring({1}, {7});
-    std::string expectedSfPredictionErrors = buildExpectedHistogramBytestring({2}, {7});
+    android::surfaceflinger::SurfaceflingerStatsGlobalInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 1);
+    const android::surfaceflinger::SurfaceflingerStatsGlobalInfo& atom = atomList.atom(0);
 
-    {
-        InSequence seq;
-        EXPECT_CALL(*mDelegate,
-                    statsEventSetAtomId(mDelegate->mEvent,
-                                        android::util::SURFACEFLINGER_STATS_GLOBAL_INFO));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, TOTAL_FRAMES));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, MISSED_FRAMES));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, CLIENT_COMPOSITION_FRAMES));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, _));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, 2));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, DISPLAY_EVENT_CONNECTIONS));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)expectedFrameDuration.c_str(),
-                                                     expectedFrameDuration.size()),
-                                             expectedFrameDuration.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedRenderEngineTiming.c_str(),
-                                                     expectedRenderEngineTiming.size()),
-                                             expectedRenderEngineTiming.size()));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 8));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 7));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 2));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, REFRESH_RATE_BUCKET_0));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedSfDeadlineMissed.c_str(),
-                                                     expectedSfDeadlineMissed.size()),
-                                             expectedSfDeadlineMissed.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedSfPredictionErrors.c_str(),
-                                                     expectedSfPredictionErrors.size()),
-                                             expectedSfPredictionErrors.size()));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, RENDER_RATE_BUCKET_0));
-
-        EXPECT_CALL(*mDelegate, statsEventBuild(mDelegate->mEvent));
-    }
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                              mDelegate->mCookie));
+    EXPECT_EQ(atom.total_frames(), TOTAL_FRAMES);
+    EXPECT_EQ(atom.missed_frames(), MISSED_FRAMES);
+    EXPECT_EQ(atom.client_composition_frames(), CLIENT_COMPOSITION_FRAMES);
+    // Display on millis is not checked.
+    EXPECT_EQ(atom.animation_millis(), 2);
+    EXPECT_EQ(atom.event_connection_count(), DISPLAY_EVENT_CONNECTIONS);
+    EXPECT_THAT(atom.frame_duration(), HistogramEq(buildExpectedHistogram({2}, {1})));
+    EXPECT_THAT(atom.render_engine_timing(), HistogramEq(buildExpectedHistogram({1, 2}, {1, 1})));
+    EXPECT_EQ(atom.total_timeline_frames(), 9);
+    EXPECT_EQ(atom.total_janky_frames(), 7);
+    EXPECT_EQ(atom.total_janky_frames_with_long_cpu(), 1);
+    EXPECT_EQ(atom.total_janky_frames_with_long_gpu(), 1);
+    EXPECT_EQ(atom.total_janky_frames_sf_unattributed(), 1);
+    EXPECT_EQ(atom.total_janky_frames_app_unattributed(), 2);
+    EXPECT_EQ(atom.total_janky_frames_sf_scheduling(), 1);
+    EXPECT_EQ(atom.total_jank_frames_sf_prediction_error(), 1);
+    EXPECT_EQ(atom.total_jank_frames_app_buffer_stuffing(), 2);
+    EXPECT_EQ(atom.display_refresh_rate_bucket(), REFRESH_RATE_BUCKET_0);
+    EXPECT_THAT(atom.sf_deadline_misses(), HistogramEq(buildExpectedHistogram({1}, {7})));
+    EXPECT_THAT(atom.sf_prediction_errors(), HistogramEq(buildExpectedHistogram({2}, {7})));
+    EXPECT_EQ(atom.render_rate_bucket(), RENDER_RATE_BUCKET_0);
 
     SFTimeStatsGlobalProto globalProto;
     ASSERT_TRUE(globalProto.ParseFromString(inputCommand(InputCommand::DUMP_ALL, FMT_PROTO)));
@@ -1099,7 +1098,7 @@ TEST_F(TimeStatsTest, globalStatsCallback) {
     const std::string result(inputCommand(InputCommand::DUMP_ALL, FMT_STRING));
     std::string expectedResult = "totalTimelineFrames = " + std::to_string(0);
     EXPECT_THAT(result, HasSubstr(expectedResult));
-    expectedResult = "totalTimelineFrames = " + std::to_string(8);
+    expectedResult = "totalTimelineFrames = " + std::to_string(9);
     EXPECT_THAT(result, HasSubstr(expectedResult));
     expectedResult = "jankyFrames = " + std::to_string(0);
     EXPECT_THAT(result, HasSubstr(expectedResult));
@@ -1131,7 +1130,7 @@ TEST_F(TimeStatsTest, globalStatsCallback) {
     EXPECT_THAT(result, HasSubstr(expectedResult));
     expectedResult = "appBufferStuffingJankyFrames = " + std::to_string(0);
     EXPECT_THAT(result, HasSubstr(expectedResult));
-    expectedResult = "appBufferStuffingJankyFrames = " + std::to_string(1);
+    expectedResult = "appBufferStuffingJankyFrames = " + std::to_string(2);
     EXPECT_THAT(result, HasSubstr(expectedResult));
 }
 
@@ -1140,8 +1139,6 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsAllAndClears) {
     constexpr size_t BAD_DESIRED_PRESENT_FRAMES = 3;
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
 
-    mTimeStats->onBootFinished();
-
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     for (size_t i = 0; i < LATE_ACQUIRE_FRAMES; i++) {
         mTimeStats->incrementLatchSkipped(LAYER_ID_0, TimeStats::LatchSkipReason::LateAcquire);
@@ -1149,7 +1146,13 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsAllAndClears) {
     for (size_t i = 0; i < BAD_DESIRED_PRESENT_FRAMES; i++) {
         mTimeStats->incrementBadDesiredPresent(LAYER_ID_0);
     }
-    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
+    const auto frameRate60 = TimeStats::SetFrameRateVote{
+            .frameRate = 60.0f,
+            .frameRateCompatibility =
+                    TimeStats::SetFrameRateVote::FrameRateCompatibility::ExactOrMultiple,
+            .seamlessness = TimeStats::SetFrameRateVote::Seamlessness::NotRequired,
+    };
+    insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000, frameRate60);
 
     mTimeStats->incrementJankyFrames({kRefreshRate0, kRenderRate0, UID_0, genLayerName(LAYER_ID_0),
                                       JankType::SurfaceFlingerCpuDeadlineMissed, 1, 2, 3});
@@ -1169,96 +1172,42 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsAllAndClears) {
     mTimeStats->incrementJankyFrames({kRefreshRate0, kRenderRate0, UID_0, genLayerName(LAYER_ID_0),
                                       JankType::None, 1, 2, 3});
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10063 /*SURFACEFLINGER_STATS_LAYER_INFO*/, &pulledData));
 
-    std::string expectedPresentToPresent = buildExpectedHistogramBytestring({1}, {1});
-    std::string expectedPostToPresent = buildExpectedHistogramBytestring({4}, {1});
-    std::string expectedAcquireToPresent = buildExpectedHistogramBytestring({3}, {1});
-    std::string expectedLatchToPresent = buildExpectedHistogramBytestring({2}, {1});
-    std::string expectedDesiredToPresent = buildExpectedHistogramBytestring({1}, {1});
-    std::string expectedPostToAcquire = buildExpectedHistogramBytestring({1}, {1});
-    std::string expectedFrameRateOverride = frameRateVoteToProtoByteString(0.0, 0, 0);
-    std::string expectedAppDeadlineMissed = buildExpectedHistogramBytestring({3, 2}, {4, 3});
-    {
-        InSequence seq;
-        EXPECT_CALL(*mDelegate,
-                    statsEventSetAtomId(mDelegate->mEvent,
-                                        android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteString8(mDelegate->mEvent,
-                                           StrEq(genLayerName(LAYER_ID_0).c_str())));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, 0));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedPresentToPresent.c_str(),
-                                                     expectedPresentToPresent.size()),
-                                             expectedPresentToPresent.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)expectedPostToPresent.c_str(),
-                                                     expectedPostToPresent.size()),
-                                             expectedPostToPresent.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedAcquireToPresent.c_str(),
-                                                     expectedAcquireToPresent.size()),
-                                             expectedAcquireToPresent.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)expectedLatchToPresent.c_str(),
-                                                     expectedLatchToPresent.size()),
-                                             expectedLatchToPresent.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedDesiredToPresent.c_str(),
-                                                     expectedDesiredToPresent.size()),
-                                             expectedDesiredToPresent.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)expectedPostToAcquire.c_str(),
-                                                     expectedPostToAcquire.size()),
-                                             expectedPostToAcquire.size()));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt64(mDelegate->mEvent, LATE_ACQUIRE_FRAMES));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteInt64(mDelegate->mEvent, BAD_DESIRED_PRESENT_FRAMES));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, UID_0));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 8));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 7));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 2));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, 1));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, REFRESH_RATE_BUCKET_0));
-        EXPECT_CALL(*mDelegate, statsEventWriteInt32(mDelegate->mEvent, RENDER_RATE_BUCKET_0));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedFrameRateOverride.c_str(),
-                                                     expectedFrameRateOverride.size()),
-                                             expectedFrameRateOverride.size()));
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedAppDeadlineMissed.c_str(),
-                                                     expectedAppDeadlineMissed.size()),
-                                             expectedAppDeadlineMissed.size()));
+    android::surfaceflinger::SurfaceflingerStatsLayerInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 1);
+    const android::surfaceflinger::SurfaceflingerStatsLayerInfo& atom = atomList.atom(0);
 
-        EXPECT_CALL(*mDelegate, statsEventBuild(mDelegate->mEvent));
-    }
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO,
-                                              mDelegate->mCookie));
+    EXPECT_EQ(atom.layer_name(), genLayerName(LAYER_ID_0));
+    EXPECT_EQ(atom.total_frames(), 1);
+    EXPECT_EQ(atom.dropped_frames(), 0);
+    EXPECT_THAT(atom.present_to_present(), HistogramEq(buildExpectedHistogram({1}, {1})));
+    EXPECT_THAT(atom.post_to_present(), HistogramEq(buildExpectedHistogram({4}, {1})));
+    EXPECT_THAT(atom.acquire_to_present(), HistogramEq(buildExpectedHistogram({3}, {1})));
+    EXPECT_THAT(atom.latch_to_present(), HistogramEq(buildExpectedHistogram({2}, {1})));
+    EXPECT_THAT(atom.desired_to_present(), HistogramEq(buildExpectedHistogram({1}, {1})));
+    EXPECT_THAT(atom.post_to_acquire(), HistogramEq(buildExpectedHistogram({1}, {1})));
+    EXPECT_EQ(atom.late_acquire_frames(), LATE_ACQUIRE_FRAMES);
+    EXPECT_EQ(atom.bad_desired_present_frames(), BAD_DESIRED_PRESENT_FRAMES);
+    EXPECT_EQ(atom.uid(), UID_0);
+    EXPECT_EQ(atom.total_timeline_frames(), 8);
+    EXPECT_EQ(atom.total_janky_frames(), 7);
+    EXPECT_EQ(atom.total_janky_frames_with_long_cpu(), 1);
+    EXPECT_EQ(atom.total_janky_frames_with_long_gpu(), 1);
+    EXPECT_EQ(atom.total_janky_frames_sf_unattributed(), 1);
+    EXPECT_EQ(atom.total_janky_frames_app_unattributed(), 2);
+    EXPECT_EQ(atom.total_janky_frames_sf_scheduling(), 1);
+    EXPECT_EQ(atom.total_jank_frames_sf_prediction_error(), 1);
+    EXPECT_EQ(atom.total_jank_frames_app_buffer_stuffing(), 1);
+    EXPECT_EQ(atom.display_refresh_rate_bucket(), REFRESH_RATE_BUCKET_0);
+    EXPECT_EQ(atom.render_rate_bucket(), RENDER_RATE_BUCKET_0);
+    EXPECT_THAT(atom.set_frame_rate_vote().frame_rate(), testing::FloatEq(frameRate60.frameRate));
+    EXPECT_EQ((int)atom.set_frame_rate_vote().frame_rate_compatibility(),
+              (int)frameRate60.frameRateCompatibility);
+    EXPECT_EQ((int)atom.set_frame_rate_vote().seamlessness(), (int)frameRate60.seamlessness);
+    EXPECT_THAT(atom.app_deadline_misses(), HistogramEq(buildExpectedHistogram({3, 2}, {4, 3})));
 
     SFTimeStatsGlobalProto globalProto;
     ASSERT_TRUE(globalProto.ParseFromString(inputCommand(InputCommand::DUMP_ALL, FMT_PROTO)));
@@ -1294,36 +1243,25 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsAllAndClears) {
 TEST_F(TimeStatsTest, layerStatsCallback_pullsMultipleLayers) {
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
 
-    mTimeStats->onBootFinished();
-
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_1, 1, 2000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_1, 2, 3000000);
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10063 /*SURFACEFLINGER_STATS_LAYER_INFO*/, &pulledData));
 
-    EXPECT_CALL(*mDelegate,
-                statsEventSetAtomId(mDelegate->mEvent,
-                                    android::util::SURFACEFLINGER_STATS_LAYER_INFO))
-            .Times(2);
-    EXPECT_CALL(*mDelegate,
-                statsEventWriteString8(mDelegate->mEvent, StrEq(genLayerName(LAYER_ID_0).c_str())));
-    EXPECT_CALL(*mDelegate,
-                statsEventWriteString8(mDelegate->mEvent, StrEq(genLayerName(LAYER_ID_1).c_str())));
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO,
-                                              mDelegate->mCookie));
+    android::surfaceflinger::SurfaceflingerStatsLayerInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 2);
+    std::vector<std::string> actualLayerNames = {atomList.atom(0).layer_name(),
+                                                 atomList.atom(1).layer_name()};
+    EXPECT_THAT(actualLayerNames,
+                UnorderedElementsAre(genLayerName(LAYER_ID_0), genLayerName(LAYER_ID_1)));
 }
 
 TEST_F(TimeStatsTest, layerStatsCallback_pullsMultipleBuckets) {
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
-
-    mTimeStats->onBootFinished();
 
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
@@ -1334,80 +1272,39 @@ TEST_F(TimeStatsTest, layerStatsCallback_pullsMultipleBuckets) {
     mTimeStats->setPowerMode(PowerMode::ON);
     mTimeStats->setPresentFenceGlobal(std::make_shared<FenceTime>(3000000));
     mTimeStats->setPresentFenceGlobal(std::make_shared<FenceTime>(5000000));
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    std::string expectedPresentToPresent = buildExpectedHistogramBytestring({1, 2}, {2, 1});
-    {
-        InSequence seq;
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedPresentToPresent.c_str(),
-                                                     expectedPresentToPresent.size()),
-                                             expectedPresentToPresent.size()));
-        EXPECT_CALL(*mDelegate, statsEventWriteByteArray(mDelegate->mEvent, _, _))
-                .Times(AnyNumber());
-    }
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO,
-                                              mDelegate->mCookie));
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10063 /*SURFACEFLINGER_STATS_LAYER_INFO*/, &pulledData));
+
+    android::surfaceflinger::SurfaceflingerStatsLayerInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 1);
+    const android::surfaceflinger::SurfaceflingerStatsLayerInfo& atom = atomList.atom(0);
+    EXPECT_THAT(atom.present_to_present(), HistogramEq(buildExpectedHistogram({1, 2}, {2, 1})));
 }
 
 TEST_F(TimeStatsTest, layerStatsCallback_limitsHistogramBuckets) {
-    mDelegate = new FakeStatsEventDelegate;
-    mTimeStats =
-            std::make_unique<impl::TimeStats>(std::unique_ptr<FakeStatsEventDelegate>(mDelegate),
-                                              std::nullopt, 1);
+    mTimeStats = std::make_unique<impl::TimeStats>(std::nullopt, 1);
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
-
-    mTimeStats->onBootFinished();
 
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 3, 4000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 4, 5000000);
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10063 /*SURFACEFLINGER_STATS_LAYER_INFO*/, &pulledData));
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    std::string expectedPresentToPresent = buildExpectedHistogramBytestring({1}, {2});
-    {
-        InSequence seq;
-        EXPECT_CALL(*mDelegate,
-                    statsEventWriteByteArray(mDelegate->mEvent,
-                                             BytesEq((const uint8_t*)
-                                                             expectedPresentToPresent.c_str(),
-                                                     expectedPresentToPresent.size()),
-                                             expectedPresentToPresent.size()));
-        EXPECT_CALL(*mDelegate, statsEventWriteByteArray(mDelegate->mEvent, _, _))
-                .Times(AnyNumber());
-    }
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO,
-                                              mDelegate->mCookie));
+    android::surfaceflinger::SurfaceflingerStatsLayerInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 1);
+    const android::surfaceflinger::SurfaceflingerStatsLayerInfo& atom = atomList.atom(0);
+    EXPECT_THAT(atom.present_to_present(), HistogramEq(buildExpectedHistogram({1}, {2})));
 }
 
 TEST_F(TimeStatsTest, layerStatsCallback_limitsLayers) {
-    mDelegate = new FakeStatsEventDelegate;
-    mTimeStats =
-            std::make_unique<impl::TimeStats>(std::unique_ptr<FakeStatsEventDelegate>(mDelegate), 1,
-                                              std::nullopt);
+    mTimeStats = std::make_unique<impl::TimeStats>(1, std::nullopt);
     EXPECT_TRUE(inputCommand(InputCommand::ENABLE, FMT_STRING).empty());
-
-    mTimeStats->onBootFinished();
 
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 1, 1000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_0, 2, 2000000);
@@ -1415,21 +1312,13 @@ TEST_F(TimeStatsTest, layerStatsCallback_limitsLayers) {
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_1, 2, 3000000);
     insertTimeRecord(NORMAL_SEQUENCE, LAYER_ID_1, 4, 5000000);
 
-    EXPECT_THAT(mDelegate->mAtomTags,
-                UnorderedElementsAre(android::util::SURFACEFLINGER_STATS_GLOBAL_INFO,
-                                     android::util::SURFACEFLINGER_STATS_LAYER_INFO));
-    EXPECT_NE(nullptr, mDelegate->mCallback);
-    EXPECT_EQ(mTimeStats.get(), mDelegate->mCookie);
+    std::string pulledData;
+    EXPECT_TRUE(mTimeStats->onPullAtom(10063 /*SURFACEFLINGER_STATS_LAYER_INFO*/, &pulledData));
 
-    EXPECT_CALL(*mDelegate,
-                statsEventSetAtomId(mDelegate->mEvent,
-                                    android::util::SURFACEFLINGER_STATS_LAYER_INFO))
-            .Times(1);
-    EXPECT_CALL(*mDelegate,
-                statsEventWriteString8(mDelegate->mEvent, StrEq(genLayerName(LAYER_ID_1).c_str())));
-    EXPECT_EQ(AStatsManager_PULL_SUCCESS,
-              mDelegate->makePullAtomCallback(android::util::SURFACEFLINGER_STATS_LAYER_INFO,
-                                              mDelegate->mCookie));
+    android::surfaceflinger::SurfaceflingerStatsLayerInfoWrapper atomList;
+    ASSERT_TRUE(atomList.ParseFromString(pulledData));
+    ASSERT_EQ(atomList.atom_size(), 1);
+    EXPECT_EQ(atomList.atom(0).layer_name(), genLayerName(LAYER_ID_1));
 }
 
 TEST_F(TimeStatsTest, canSurviveMonkey) {
@@ -1455,7 +1344,7 @@ TEST_F(TimeStatsTest, canSurviveMonkey) {
         TimeStamp type = static_cast<TimeStamp>(genRandomInt32(TIME_STAMP_BEGIN, TIME_STAMP_END));
         const int32_t ts = genRandomInt32(1, 1000000000);
         ALOGV("type[%d], layerId[%d], frameNumber[%d], ts[%d]", type, layerId, frameNumber, ts);
-        setTimeStamp(type, layerId, frameNumber, ts);
+        setTimeStamp(type, layerId, frameNumber, ts, {});
     }
 }
 

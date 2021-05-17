@@ -19,6 +19,7 @@
 #include <apex/window.h>
 #include <inttypes.h>
 
+#include <android/native_window.h>
 #include <binder/Parcel.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ISurfaceComposerClient.h>
@@ -44,7 +45,6 @@ layer_state_t::layer_state_t()
         reserved(0),
         cornerRadius(0.0f),
         backgroundBlurRadius(0),
-        barrierFrameNumber(0),
         transform(0),
         transformToDisplayInverse(false),
         crop(Rect::INVALID_RECT),
@@ -60,7 +60,7 @@ layer_state_t::layer_state_t()
         frameRateSelectionPriority(-1),
         frameRate(0.0f),
         frameRateCompatibility(ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT),
-        shouldBeSeamless(true),
+        changeFrameRateStrategy(ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS),
         fixedTransformHint(ui::Transform::ROT_INVALID),
         frameNumber(0),
         autoRefresh(false),
@@ -86,9 +86,7 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeUint32, mask);
     SAFE_PARCEL(matrix.write, output);
     SAFE_PARCEL(output.write, crop);
-    SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, barrierSurfaceControl_legacy);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, reparentSurfaceControl);
-    SAFE_PARCEL(output.writeUint64, barrierFrameNumber);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, relativeLayerSurfaceControl);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, parentSurfaceControlForChild);
     SAFE_PARCEL(output.writeFloat, color.r);
@@ -142,13 +140,13 @@ status_t layer_state_t::write(Parcel& output) const
 
     for (auto listener : listeners) {
         SAFE_PARCEL(output.writeStrongBinder, listener.transactionCompletedListener);
-        SAFE_PARCEL(output.writeInt64Vector, listener.callbackIds);
+        SAFE_PARCEL(output.writeParcelableVector, listener.callbackIds);
     }
     SAFE_PARCEL(output.writeFloat, shadowRadius);
     SAFE_PARCEL(output.writeInt32, frameRateSelectionPriority);
     SAFE_PARCEL(output.writeFloat, frameRate);
     SAFE_PARCEL(output.writeByte, frameRateCompatibility);
-    SAFE_PARCEL(output.writeBool, shouldBeSeamless);
+    SAFE_PARCEL(output.writeByte, changeFrameRateStrategy);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeUint64, frameNumber);
     SAFE_PARCEL(output.writeBool, autoRefresh);
@@ -192,9 +190,7 @@ status_t layer_state_t::read(const Parcel& input)
 
     SAFE_PARCEL(matrix.read, input);
     SAFE_PARCEL(input.read, crop);
-    SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &barrierSurfaceControl_legacy);
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &reparentSurfaceControl);
-    SAFE_PARCEL(input.readUint64, &barrierFrameNumber);
 
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &relativeLayerSurfaceControl);
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &parentSurfaceControlForChild);
@@ -262,14 +258,14 @@ status_t layer_state_t::read(const Parcel& input)
         sp<IBinder> listener;
         std::vector<CallbackId> callbackIds;
         SAFE_PARCEL(input.readNullableStrongBinder, &listener);
-        SAFE_PARCEL(input.readInt64Vector, &callbackIds);
+        SAFE_PARCEL(input.readParcelableVector, &callbackIds);
         listeners.emplace_back(listener, callbackIds);
     }
     SAFE_PARCEL(input.readFloat, &shadowRadius);
     SAFE_PARCEL(input.readInt32, &frameRateSelectionPriority);
     SAFE_PARCEL(input.readFloat, &frameRate);
     SAFE_PARCEL(input.readByte, &frameRateCompatibility);
-    SAFE_PARCEL(input.readBool, &shouldBeSeamless);
+    SAFE_PARCEL(input.readByte, &changeFrameRateStrategy);
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readUint64, &frameNumber);
@@ -424,15 +420,6 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eBlurRegionsChanged;
         blurRegions = other.blurRegions;
     }
-    if (other.what & eDeferTransaction_legacy) {
-        what |= eDeferTransaction_legacy;
-        barrierSurfaceControl_legacy = other.barrierSurfaceControl_legacy;
-        barrierFrameNumber = other.barrierFrameNumber;
-    }
-    if (other.what & eReparentChildren) {
-        what |= eReparentChildren;
-        reparentSurfaceControl = other.reparentSurfaceControl;
-    }
     if (other.what & eRelativeLayerChanged) {
         what |= eRelativeLayerChanged;
         what &= ~eLayerChanged;
@@ -457,10 +444,6 @@ void layer_state_t::merge(const layer_state_t& other) {
     if (other.what & eCropChanged) {
         what |= eCropChanged;
         crop = other.crop;
-    }
-    if (other.what & eFrameChanged) {
-        what |= eFrameChanged;
-        orientedDisplaySpaceRect = other.orientedDisplaySpaceRect;
     }
     if (other.what & eBufferChanged) {
         what |= eBufferChanged;
@@ -531,7 +514,7 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eFrameRateChanged;
         frameRate = other.frameRate;
         frameRateCompatibility = other.frameRateCompatibility;
-        shouldBeSeamless = other.shouldBeSeamless;
+        changeFrameRateStrategy = other.changeFrameRateStrategy;
     }
     if (other.what & eFixedTransformHintChanged) {
         what |= eFixedTransformHintChanged;
@@ -561,6 +544,10 @@ void layer_state_t::merge(const layer_state_t& other) {
               "other.what=0x%" PRIu64 " what=0x%" PRIu64,
               other.what, what);
     }
+}
+
+bool layer_state_t::hasBufferChanges() const {
+    return (what & layer_state_t::eBufferChanged) || (what & layer_state_t::eCachedBufferChanged);
 }
 
 status_t layer_state_t::matrix22_t::write(Parcel& output) const {
@@ -624,8 +611,8 @@ status_t InputWindowCommands::read(const Parcel& input) {
     return NO_ERROR;
 }
 
-bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* inFunctionName,
-                       bool privileged) {
+bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrameRateStrategy,
+                       const char* inFunctionName, bool privileged) {
     const char* functionName = inFunctionName != nullptr ? inFunctionName : "call";
     int floatClassification = std::fpclassify(frameRate);
     if (frameRate < 0 || floatClassification == FP_INFINITE || floatClassification == FP_NAN) {
@@ -639,6 +626,12 @@ bool ValidateFrameRate(float frameRate, int8_t compatibility, const char* inFunc
         ALOGE("%s failed - invalid compatibility value %d privileged: %s", functionName,
               compatibility, privileged ? "yes" : "no");
         return false;
+    }
+
+    if (changeFrameRateStrategy != ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS &&
+        changeFrameRateStrategy != ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS) {
+        ALOGE("%s failed - invalid change frame rate strategy value %d", functionName,
+              changeFrameRateStrategy);
     }
 
     return true;

@@ -21,14 +21,13 @@
 #include <input/Flags.h>
 #include <algorithm>
 
-#include "BatteryInputMapper.h"
 #include "CursorInputMapper.h"
 #include "ExternalStylusInputMapper.h"
 #include "InputReaderContext.h"
 #include "JoystickInputMapper.h"
 #include "KeyboardInputMapper.h"
-#include "LightInputMapper.h"
 #include "MultiTouchInputMapper.h"
+#include "PeripheralController.h"
 #include "RotaryEncoderInputMapper.h"
 #include "SensorInputMapper.h"
 #include "SingleTouchInputMapper.h"
@@ -104,6 +103,12 @@ void InputDevice::dump(std::string& dump, const std::string& eventHubDevStr) {
     } else {
         dump += "<none>\n";
     }
+    dump += StringPrintf(INDENT2 "AssociatedDisplayUniqueId: ");
+    if (mAssociatedDisplayUniqueId) {
+        dump += StringPrintf("%s\n", mAssociatedDisplayUniqueId->c_str());
+    } else {
+        dump += "<none>\n";
+    }
     dump += StringPrintf(INDENT2 "HasMic:     %s\n", toString(mHasMic));
     dump += StringPrintf(INDENT2 "Sources: 0x%08x\n", deviceInfo.getSources());
     dump += StringPrintf(INDENT2 "KeyboardType: %d\n", deviceInfo.getKeyboardType());
@@ -131,6 +136,9 @@ void InputDevice::dump(std::string& dump, const std::string& eventHubDevStr) {
     }
 
     for_each_mapper([&dump](InputMapper& mapper) { mapper.dump(dump); });
+    if (mController) {
+        mController->dump(dump);
+    }
 }
 
 void InputDevice::addEventHubDevice(int32_t eventHubId, bool populateMappers) {
@@ -162,22 +170,10 @@ void InputDevice::addEventHubDevice(int32_t eventHubId, bool populateMappers) {
         mappers.push_back(std::make_unique<VibratorInputMapper>(*contextPtr));
     }
 
-    // Battery-like devices. Only one battery mapper for each EventHub device.
-    if (classes.test(InputDeviceClass::BATTERY)) {
-        InputDeviceInfo deviceInfo;
-        getDeviceInfo(&deviceInfo);
-        if (!deviceInfo.hasBattery()) {
-            mappers.push_back(std::make_unique<BatteryInputMapper>(*contextPtr));
-        }
-    }
-
-    // Light-containing devices. Only one light mapper for each EventHub device.
-    if (classes.test(InputDeviceClass::LIGHT)) {
-        InputDeviceInfo deviceInfo;
-        getDeviceInfo(&deviceInfo);
-        if (deviceInfo.getLightIds().empty()) {
-            mappers.push_back(std::make_unique<LightInputMapper>(*contextPtr));
-        }
+    // Battery-like devices or light-containing devices.
+    // PeripheralController will be created with associated EventHub device.
+    if (classes.test(InputDeviceClass::BATTERY) || classes.test(InputDeviceClass::LIGHT)) {
+        mController = std::make_unique<PeripheralController>(*contextPtr);
     }
 
     // Keyboard-like devices.
@@ -303,8 +299,9 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
         }
 
         if (!changes || (changes & InputReaderConfiguration::CHANGE_DISPLAY_INFO)) {
-            // In most situations, no port will be specified.
+            // In most situations, no port or name will be specified.
             mAssociatedDisplayPort = std::nullopt;
+            mAssociatedDisplayUniqueId = std::nullopt;
             mAssociatedViewport = std::nullopt;
             // Find the display port that corresponds to the current input port.
             const std::string& inputPort = mIdentifier.location;
@@ -314,6 +311,13 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
                 if (displayPort != ports.end()) {
                     mAssociatedDisplayPort = std::make_optional(displayPort->second);
                 }
+            }
+            const std::string& inputDeviceName = mIdentifier.name;
+            const std::unordered_map<std::string, std::string>& names =
+                    config->uniqueIdAssociations;
+            const auto& displayUniqueId = names.find(inputDeviceName);
+            if (displayUniqueId != names.end()) {
+                mAssociatedDisplayUniqueId = displayUniqueId->second;
             }
 
             // If the device was explicitly disabled by the user, it would be present in the
@@ -327,6 +331,15 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
                     ALOGW("Input device %s should be associated with display on port %" PRIu8 ", "
                           "but the corresponding viewport is not found.",
                           getName().c_str(), *mAssociatedDisplayPort);
+                    enabled = false;
+                }
+            } else if (mAssociatedDisplayUniqueId != std::nullopt) {
+                mAssociatedViewport =
+                        config->getDisplayViewportByUniqueId(*mAssociatedDisplayUniqueId);
+                if (!mAssociatedViewport) {
+                    ALOGW("Input device %s should be associated with display %s but the "
+                          "corresponding viewport cannot be found",
+                          inputDeviceName.c_str(), mAssociatedDisplayUniqueId->c_str());
                     enabled = false;
                 }
             }
@@ -409,6 +422,10 @@ void InputDevice::getDeviceInfo(InputDeviceInfo* outDeviceInfo) {
                               mHasMic);
     for_each_mapper(
             [outDeviceInfo](InputMapper& mapper) { mapper.populateDeviceInfo(outDeviceInfo); });
+
+    if (mController) {
+        mController->populateDeviceInfo(outDeviceInfo);
+    }
 }
 
 int32_t InputDevice::getKeyCodeState(uint32_t sourceMask, int32_t keyCode) {
@@ -511,38 +528,27 @@ void InputDevice::cancelTouch(nsecs_t when, nsecs_t readTime) {
 }
 
 std::optional<int32_t> InputDevice::getBatteryCapacity() {
-    return first_in_mappers<int32_t>(
-            [](InputMapper& mapper) { return mapper.getBatteryCapacity(); });
+    return mController ? mController->getBatteryCapacity(DEFAULT_BATTERY_ID) : std::nullopt;
 }
 
 std::optional<int32_t> InputDevice::getBatteryStatus() {
-    return first_in_mappers<int32_t>([](InputMapper& mapper) { return mapper.getBatteryStatus(); });
+    return mController ? mController->getBatteryStatus(DEFAULT_BATTERY_ID) : std::nullopt;
 }
 
 bool InputDevice::setLightColor(int32_t lightId, int32_t color) {
-    bool success = true;
-    for_each_mapper([&success, lightId, color](InputMapper& mapper) {
-        success &= mapper.setLightColor(lightId, color);
-    });
-    return success;
+    return mController ? mController->setLightColor(lightId, color) : false;
 }
 
 bool InputDevice::setLightPlayerId(int32_t lightId, int32_t playerId) {
-    bool success = true;
-    for_each_mapper([&success, lightId, playerId](InputMapper& mapper) {
-        success &= mapper.setLightPlayerId(lightId, playerId);
-    });
-    return success;
+    return mController ? mController->setLightPlayerId(lightId, playerId) : false;
 }
 
 std::optional<int32_t> InputDevice::getLightColor(int32_t lightId) {
-    return first_in_mappers<int32_t>(
-            [lightId](InputMapper& mapper) { return mapper.getLightColor(lightId); });
+    return mController ? mController->getLightColor(lightId) : std::nullopt;
 }
 
 std::optional<int32_t> InputDevice::getLightPlayerId(int32_t lightId) {
-    return first_in_mappers<int32_t>(
-            [lightId](InputMapper& mapper) { return mapper.getLightPlayerId(lightId); });
+    return mController ? mController->getLightPlayerId(lightId) : std::nullopt;
 }
 
 int32_t InputDevice::getMetaState() {

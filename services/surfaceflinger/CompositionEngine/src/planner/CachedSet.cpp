@@ -19,6 +19,7 @@
 // #define LOG_NDEBUG 0
 
 #include <android-base/properties.h>
+#include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/planner/CachedSet.h>
 #include <math/HashCombine.h>
 #include <renderengine/DisplaySettings.h>
@@ -50,17 +51,18 @@ std::string durationString(std::chrono::milliseconds duration) {
 }
 
 CachedSet::Layer::Layer(const LayerState* state, std::chrono::steady_clock::time_point lastUpdate)
-      : mState(state), mHash(state->getHash(LayerStateField::Buffer)), mLastUpdate(lastUpdate) {}
+      : mState(state), mHash(state->getHash()), mLastUpdate(lastUpdate) {}
 
 CachedSet::CachedSet(const LayerState* layer, std::chrono::steady_clock::time_point lastUpdate)
-      : mFingerprint(layer->getHash(LayerStateField::Buffer)), mLastUpdate(lastUpdate) {
+      : mFingerprint(layer->getHash()), mLastUpdate(lastUpdate) {
     addLayer(layer, lastUpdate);
 }
 
 CachedSet::CachedSet(Layer layer)
       : mFingerprint(layer.getHash()),
         mLastUpdate(layer.getLastUpdate()),
-        mBounds(layer.getDisplayFrame()) {
+        mBounds(layer.getDisplayFrame()),
+        mVisibleRegion(layer.getVisibleRegion()) {
     mLayers.emplace_back(std::move(layer));
 }
 
@@ -72,6 +74,7 @@ void CachedSet::addLayer(const LayerState* layer,
     boundingRegion.orSelf(mBounds);
     boundingRegion.orSelf(layer->getDisplayFrame());
     mBounds = boundingRegion.getBounds();
+    mVisibleRegion.orSelf(layer->getVisibleRegion());
 }
 
 NonBufferHash CachedSet::getNonBufferHash() const {
@@ -84,6 +87,7 @@ NonBufferHash CachedSet::getNonBufferHash() const {
     size_t hash = 0;
     android::hashCombineSingle(hash, mBounds);
     android::hashCombineSingle(hash, mOutputDataspace);
+    android::hashCombineSingle(hash, mOrientation);
     return hash;
 }
 
@@ -126,7 +130,7 @@ bool CachedSet::hasBufferUpdate() const {
 }
 
 bool CachedSet::hasReadyBuffer() const {
-    return mTexture.getBuffer() != nullptr && mDrawFence->getStatus() == Fence::Status::Signaled;
+    return mTexture != nullptr && mDrawFence->getStatus() == Fence::Status::Signaled;
 }
 
 std::vector<CachedSet> CachedSet::decompose() const {
@@ -148,17 +152,22 @@ void CachedSet::updateAge(std::chrono::steady_clock::time_point now) {
     }
 }
 
-void CachedSet::render(renderengine::RenderEngine& renderEngine, ui::Dataspace outputDataspace) {
+void CachedSet::render(renderengine::RenderEngine& renderEngine,
+                       const OutputCompositionState& outputState) {
+    const Rect& viewport = outputState.layerStackSpace.content;
+    const ui::Dataspace& outputDataspace = outputState.dataspace;
+    const ui::Transform::RotationFlags orientation =
+            ui::Transform::toRotationFlags(outputState.framebufferSpace.orientation);
     renderengine::DisplaySettings displaySettings{
             .physicalDisplay = Rect(0, 0, mBounds.getWidth(), mBounds.getHeight()),
-            .clip = mBounds,
+            .clip = viewport,
             .outputDataspace = outputDataspace,
+            .orientation = orientation,
     };
 
     Region clearRegion = Region::INVALID_REGION;
-    Rect viewport = mBounds;
     LayerFE::ClientCompositionTargetSettings targetSettings{
-            .clip = Region(mBounds),
+            .clip = Region(viewport),
             .needsFiltering = false,
             .isSecure = true,
             .supportsProtectedContent = false,
@@ -171,6 +180,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, ui::Dataspace o
     };
 
     std::vector<renderengine::LayerSettings> layerSettings;
+    renderengine::LayerSettings highlight;
     for (const auto& layer : mLayers) {
         const auto clientCompositionList =
                 layer.getState()->getOutputLayer()->getLayerFE().prepareClientCompositionList(
@@ -183,9 +193,26 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, ui::Dataspace o
     std::transform(layerSettings.cbegin(), layerSettings.cend(),
                    std::back_inserter(layerSettingsPointers),
                    [](const renderengine::LayerSettings& settings) { return &settings; });
+    renderengine::LayerSettings holePunchSettings;
+    if (mHolePunchLayer) {
+        auto clientCompositionList =
+                mHolePunchLayer->getOutputLayer()->getLayerFE().prepareClientCompositionList(
+                        targetSettings);
+        // Assume that the final layer contains the buffer that we want to
+        // replace with a hole punch.
+        holePunchSettings = clientCompositionList.back();
+        LOG_ALWAYS_FATAL_IF(!holePunchSettings.source.buffer.buffer, "Expected to have a buffer!");
+        // This mimics Layer::prepareClearClientComposition
+        holePunchSettings.source.buffer.buffer = nullptr;
+        holePunchSettings.source.solidColor = half3(0.0f, 0.0f, 0.0f);
+        holePunchSettings.disableBlending = true;
+        holePunchSettings.alpha = 0.0f;
+        holePunchSettings.name = std::string("hole punch layer");
+        layerSettingsPointers.push_back(&holePunchSettings);
+    }
 
     if (sDebugHighlighLayers) {
-        renderengine::LayerSettings highlight{
+        highlight = {
                 .geometry =
                         renderengine::Geometry{
                                 .boundaries = FloatRect(0.0f, 0.0f,
@@ -207,17 +234,78 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, ui::Dataspace o
     sp<GraphicBuffer> buffer = new GraphicBuffer(static_cast<uint32_t>(mBounds.getWidth()),
                                                  static_cast<uint32_t>(mBounds.getHeight()),
                                                  HAL_PIXEL_FORMAT_RGBA_8888, 1, usageFlags);
+    const auto texture = std::make_shared<
+            renderengine::ExternalTexture>(buffer, renderEngine,
+                                           renderengine::ExternalTexture::Usage::READABLE |
+                                                   renderengine::ExternalTexture::Usage::WRITEABLE);
     LOG_ALWAYS_FATAL_IF(buffer->initCheck() != OK);
     base::unique_fd drawFence;
 
-    status_t result = renderEngine.drawLayers(displaySettings, layerSettingsPointers, buffer, false,
-                                              base::unique_fd(), &drawFence);
+    status_t result = renderEngine.drawLayers(displaySettings, layerSettingsPointers, texture,
+                                              false, base::unique_fd(), &drawFence);
 
     if (result == NO_ERROR) {
-        mTexture.setBuffer(buffer, &renderEngine);
         mDrawFence = new Fence(drawFence.release());
+        mOutputSpace = ProjectionSpace(ui::Size(outputState.framebufferSpace.bounds.getWidth(),
+                                                outputState.framebufferSpace.bounds.getHeight()),
+                                       mBounds);
+        mTexture = std::move(texture);
+        mOutputSpace.orientation = outputState.framebufferSpace.orientation;
         mOutputDataspace = outputDataspace;
+        mOrientation = orientation;
+    } else {
+        mTexture = nullptr;
     }
+}
+
+bool CachedSet::requiresHolePunch() const {
+    // In order for the hole punch to be beneficial, the layer must be updating
+    // regularly, meaning  it should not have been merged with other layers.
+    if (getLayerCount() != 1) {
+        return false;
+    }
+
+    // There is no benefit to a hole punch unless the layer has a buffer.
+    if (!mLayers[0].getBuffer()) {
+        return false;
+    }
+
+    const auto& layerFE = mLayers[0].getState()->getOutputLayer()->getLayerFE();
+    if (layerFE.getCompositionState()->forceClientComposition) {
+        return false;
+    }
+
+    return layerFE.hasRoundedCorners();
+}
+
+namespace {
+bool contains(const Rect& outer, const Rect& inner) {
+    return outer.left <= inner.left && outer.right >= inner.right && outer.top <= inner.top &&
+            outer.bottom >= inner.bottom;
+}
+}; // namespace
+
+void CachedSet::addHolePunchLayerIfFeasible(const CachedSet& holePunchLayer, bool isFirstLayer) {
+    // Verify that this CachedSet is opaque where the hole punch layer
+    // will draw.
+    const Rect& holePunchBounds = holePunchLayer.getBounds();
+    for (const auto& layer : mLayers) {
+        // The first layer is considered opaque because nothing is behind it.
+        // Note that isOpaque is always false for a layer with rounded
+        // corners, even if the interior is opaque. In theory, such a layer
+        // could be used for a hole punch, but this is unlikely to happen in
+        // practice.
+        const auto* outputLayer = layer.getState()->getOutputLayer();
+        if (contains(outputLayer->getState().displayFrame, holePunchBounds) &&
+            (isFirstLayer || outputLayer->getLayerFE().getCompositionState()->isOpaque)) {
+            mHolePunchLayer = holePunchLayer.getFirstLayer().getState();
+            return;
+        }
+    }
+}
+
+OutputLayer* CachedSet::getHolePunchLayer() const {
+    return mHolePunchLayer ? mHolePunchLayer->getOutputLayer() : nullptr;
 }
 
 void CachedSet::dump(std::string& result) const {
@@ -227,6 +315,11 @@ void CachedSet::dump(std::string& result) const {
             std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastUpdate);
     base::StringAppendF(&result, "  + Fingerprint %016zx, last update %sago, age %zd\n",
                         mFingerprint, durationString(lastUpdate).c_str(), mAge);
+    {
+        const auto b = mTexture ? mTexture->getBuffer().get() : nullptr;
+        base::StringAppendF(&result, "    Override buffer: %p\n", b);
+    }
+    base::StringAppendF(&result, "    HolePunchLayer: %p\n", mHolePunchLayer);
 
     if (mLayers.size() == 1) {
         base::StringAppendF(&result, "    Layer [%s]\n", mLayers[0].getName().c_str());

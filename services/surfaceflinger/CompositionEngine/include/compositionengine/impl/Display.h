@@ -94,6 +94,7 @@ private:
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
     DisplayIdGenerator<GpuVirtualDisplayId>* mGpuVirtualDisplayIdGenerator;
     bool mHasScreenshot = false;
+    ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;
 };
 
 // This template factory function standardizes the implementation details of the

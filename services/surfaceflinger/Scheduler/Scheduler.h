@@ -81,8 +81,8 @@ public:
                                       std::chrono::nanoseconds readyDuration,
                                       impl::EventThread::InterceptVSyncsCallback);
 
-    sp<IDisplayEventConnection> createDisplayEventConnection(
-            ConnectionHandle, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -117,6 +117,7 @@ public:
     // The period is the vsync period from the current display configuration.
     void resyncToHardwareVsync(bool makeAvailable, nsecs_t period, bool force_resync = false);
     void resync();
+    void resyncAndRefresh();
 
     // Passes a vsync sample to VsyncController. periodFlushed will be true if
     // VsyncController detected that the vsync period changed, and false otherwise.
@@ -129,6 +130,7 @@ public:
     void registerLayer(Layer*);
     void recordLayerHistory(Layer*, nsecs_t presentTime, LayerHistory::LayerUpdateType updateType);
     void setModeChangePending(bool pending);
+    void deregisterLayer(Layer*);
 
     // Detects content using layer history, and selects a matching refresh rate.
     void chooseRefreshRateForContent();
@@ -147,6 +149,8 @@ public:
     // for a given uid
     bool isVsyncValid(nsecs_t expectedVsyncTimestamp, uid_t uid) const
             EXCLUDES(mFrameRateOverridesMutex);
+
+    std::chrono::steady_clock::time_point getPreviousVsyncFrom(nsecs_t expectedPresentTime) const;
 
     void dump(std::string&) const;
     void dump(ConnectionHandle, std::string&) const;
@@ -176,6 +180,7 @@ public:
     void setPreferredRefreshRateForUid(FrameRateOverride) EXCLUDES(mFrameRateOverridesMutex);
     // Retrieves the overridden refresh rate for a given uid.
     std::optional<Fps> getFrameRateOverride(uid_t uid) const EXCLUDES(mFrameRateOverridesMutex);
+    void setIdleState();
 
 private:
     friend class TestableScheduler;
@@ -210,9 +215,9 @@ private:
     static std::unique_ptr<LayerHistory> createLayerHistory(const scheduler::RefreshRateConfigs&);
 
     // Create a connection on the given EventThread.
-    ConnectionHandle createConnection(std::unique_ptr<EventThread>);
-    sp<EventThreadConnection> createConnectionInternal(
-            EventThread*, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);
+    sp<EventThreadConnection> createConnectionInternal(EventThread*, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState);
@@ -239,6 +244,7 @@ private:
             EXCLUDES(mFrameRateOverridesMutex);
 
     impl::EventThread::ThrottleVsyncCallback makeThrottleVsyncCallback() const;
+    impl::EventThread::GetVsyncPeriodFunction makeGetVsyncPeriodFunction() const;
 
     // Stores EventThread associated with a given VSyncSource, and an initial EventThreadConnection.
     struct Connection {
@@ -319,6 +325,8 @@ private:
             GUARDED_BY(mFrameRateOverridesMutex);
     scheduler::RefreshRateConfigs::UidToFrameRateOverride mFrameRateOverridesFromBackdoor
             GUARDED_BY(mFrameRateOverridesMutex);
+    // This flag indicates display in idle. Refresh as and when vsync is requested.
+    bool mDisplayIdle;
 };
 
 } // namespace android

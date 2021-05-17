@@ -115,6 +115,7 @@ namespace android {
 class Client;
 class EventThread;
 class FpsReporter;
+class HdrLayerInfoReporter;
 class HWComposer;
 struct SetInputWindowsListener;
 class IGraphicBufferProducer;
@@ -158,13 +159,7 @@ enum {
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
-class SurfaceFlingerBE
-{
-public:
-    SurfaceFlingerBE();
-
-    const std::string mHwcServiceName; // "default" for real use, something else for testing.
-
+struct SurfaceFlingerBE {
     FenceTimeline mGlCompositionDoneTimeline;
     FenceTimeline mDisplayTimeline;
 
@@ -254,7 +249,6 @@ private:
 
 class SurfaceFlinger : public BnSurfaceComposer,
                        public PriorityDumper,
-                       public ClientCache::ErasedRecipient,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
                        private ISchedulerCallback {
@@ -402,10 +396,7 @@ public:
     // Otherwise, returns a weak reference so that callers off the main-thread
     // won't accidentally hold onto the last strong reference.
     wp<Layer> fromHandle(const sp<IBinder>& handle);
-    wp<Layer> fromHandleLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
-
-    // Inherit from ClientCache::ErasedRecipient
-    void bufferErased(const client_cache_t& clientCacheId) override;
+    wp<Layer> fromHandleLocked(const sp<IBinder>& handle) const REQUIRES(mStateLock);
 
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
@@ -413,6 +404,7 @@ public:
     void setInputWindowsFinished();
 
     nsecs_t mVsyncTimeStamp = -1;
+    void NotifyIdleStatus();
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -611,6 +603,8 @@ private:
                 originUid(originUid),
                 id(transactionId) {}
 
+        void traverseStatesWithBuffers(std::function<void(const layer_state_t&)> visitor);
+
         FrameTimelineInfo frameTimelineInfo;
         Vector<ComposerState> states;
         Vector<DisplayState> displays;
@@ -719,6 +713,7 @@ private:
     status_t getAnimationFrameStats(FrameStats* outStats) const override;
     status_t overrideHdrTypes(const sp<IBinder>& displayToken,
                               const std::vector<ui::Hdr>& hdrTypes) override;
+    status_t onPullAtom(const int32_t atomId, std::string* pulledData, bool* success) override;
     status_t enableVSyncInjections(bool enable) override;
     status_t injectVSync(nsecs_t when) override;
     status_t getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) override;
@@ -759,11 +754,15 @@ private:
                                          bool* outSupport) const override;
     status_t setDisplayBrightness(const sp<IBinder>& displayToken,
                                   const gui::DisplayBrightness& brightness) override;
+    status_t addHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                     const sp<gui::IHdrLayerInfoListener>& listener) override;
+    status_t removeHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                        const sp<gui::IHdrLayerInfoListener>& listener) override;
     status_t notifyPowerBoost(int32_t boostId) override;
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                          int8_t compatibility, bool shouldBeSeamless) override;
+                          int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
 
@@ -922,9 +921,10 @@ private:
     bool transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
             uid_t originUid, const Vector<ComposerState>& states,
-            std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>& pendingBuffers)
-            REQUIRES(mStateLock);
+            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
+                    bufferLayersReadyToPresent) const REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
+    void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
     bool frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) const;
@@ -981,14 +981,17 @@ private:
     status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
                                  ui::PixelFormat, bool allowProtected, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, sp<GraphicBuffer>&,
+    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction,
+                                 const std::shared_ptr<renderengine::ExternalTexture>&,
                                  bool regionSampling, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
     status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
-                                    const sp<GraphicBuffer>&, bool forSystem, bool regionSampling,
-                                    bool grayscale, ScreenCaptureResults&);
+                                    const std::shared_ptr<renderengine::ExternalTexture>&,
+                                    bool forSystem, bool regionSampling, bool grayscale,
+                                    ScreenCaptureResults&);
 
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
+    sp<DisplayDevice> getDisplayById(DisplayId displayId) const REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayByLayerStack(uint64_t layerStack) REQUIRES(mStateLock);
 
 
@@ -1104,9 +1107,14 @@ private:
 
     bool isDisplayModeAllowed(DisplayModeId) const REQUIRES(mStateLock);
 
+    struct FenceWithFenceTime {
+        sp<Fence> fence = Fence::NO_FENCE;
+        std::shared_ptr<FenceTime> fenceTime = FenceTime::NO_FENCE;
+    };
+
     // Gets the fence for the previous frame.
     // Must be called on the main thread.
-    sp<Fence> previousFrameFence();
+    FenceWithFenceTime previousFrameFence();
 
     // Whether the previous frame has not yet been presented to the display.
     // If graceTimeMs is positive, this method waits for at most the provided
@@ -1158,7 +1166,7 @@ private:
      * Debugging & dumpsys
      */
     void dumpAllLocked(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
-
+    void dumpMini(std::string& result) const REQUIRES(mStateLock);
     void appendSfConfigString(std::string& result) const;
     void listLayersLocked(std::string& result) const;
     void dumpStatsLocked(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
@@ -1190,6 +1198,19 @@ private:
 
     status_t doDump(int fd, const DumpArgs& args, bool asProto);
 
+    status_t doDumpContinuous(int fd, const DumpArgs& args);
+    void dumpDrawCycle(bool prePrepare);
+
+    struct {
+      Mutex lock;
+      const char *name = "/data/misc/wmtrace/dumpsys.txt";
+      bool running = false;
+      bool noLimit = false;
+      bool fullDump = false;
+      bool replaceAfterCommit = false;
+      long int position = 0;
+    } mFileDump;
+
     status_t dumpCritical(int fd, const DumpArgs&, bool asProto);
 
     status_t dumpAll(int fd, const DumpArgs& args, bool asProto) override {
@@ -1217,6 +1238,8 @@ private:
     void updateInternalDisplaysPresentationMode();
 
     void setupEarlyWakeUpFeature();
+
+    void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
 
     static mat4 calculateColorMatrix(float saturation);
 
@@ -1306,7 +1329,7 @@ private:
     std::unordered_set<sp<Layer>, ISurfaceComposer::SpHash<Layer>> mLayersWithQueuedFrames;
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
-    std::array<sp<Fence>, 2> mPreviousPresentFences = {Fence::NO_FENCE, Fence::NO_FENCE};
+    std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
     // True if in the previous frame at least one layer was composed via the GPU.
     bool mHadClientComposition = false;
     // True if in the previous frame at least one layer was composed via HW Composer.
@@ -1361,6 +1384,7 @@ private:
     bool mBlursAreExpensive = false;
     bool mUseAdvanceSfOffset = false;
     bool mUseFbScaling = false;
+    bool mAsyncVdsCreationSupported = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
@@ -1431,6 +1455,10 @@ private:
     SurfaceFlingerBE mBE;
     std::unique_ptr<compositionengine::CompositionEngine> mCompositionEngine;
 
+    const std::string mHwcServiceName;
+
+    bool hasMockHwc() const { return mHwcServiceName == "mock"; }
+
     /*
      * Scheduler
      */
@@ -1495,18 +1523,43 @@ private:
     // be any issues with a raw pointer referencing an invalid object.
     std::unordered_set<Layer*> mOffscreenLayers;
 
-    // Fields tracking the current jank event: when it started and how many
-    // janky frames there are.
-    nsecs_t mMissedFrameJankStart = 0;
-    int32_t mMissedFrameJankCount = 0;
-    // Positive if jank should be uploaded in postComposition
-    nsecs_t mLastJankDuration = -1;
-
     int mFrameRateFlexibilityTokenCount = 0;
 
     sp<IBinder> mDebugFrameRateFlexibilityToken;
 
     BufferCountTracker mBufferCountTracker;
+
+    std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
+            GUARDED_BY(mStateLock);
+    mutable Mutex mCreatedLayersLock;
+    struct LayerCreatedState {
+        LayerCreatedState(const wp<Layer>& layer, const wp<IBinder>& parent,
+                          const wp<Layer> parentLayer, const wp<IBinder>& producer)
+              : layer(layer),
+                initialParent(parent),
+                initialParentLayer(parentLayer),
+                initialProducer(producer) {}
+        wp<Layer> layer;
+        // Indicates the initial parent of the created layer, only used for creating layer in
+        // SurfaceFlinger. If nullptr, it may add the created layer into the current root layers.
+        wp<IBinder> initialParent;
+        wp<Layer> initialParentLayer;
+        // Indicates the initial graphic buffer producer of the created layer, only used for
+        // creating layer in SurfaceFlinger.
+        wp<IBinder> initialProducer;
+    };
+
+    // A temporay pool that store the created layers and will be added to current state in main
+    // thread.
+    std::unordered_map<BBinder*, std::unique_ptr<LayerCreatedState>> mCreatedLayers;
+    void setLayerCreatedState(const sp<IBinder>& handle, const wp<Layer>& layer,
+                              const wp<IBinder>& parent, const wp<Layer> parentLayer,
+                              const wp<IBinder>& producer);
+    auto getLayerCreatedState(const sp<IBinder>& handle);
+    sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle, bool privileged)
+            REQUIRES(mStateLock);
+
+    std::atomic<ui::Transform::RotationFlags> mDefaultDisplayTransformHint;
 
     SmomoWrapper mSmoMo;
     LayerExtWrapper mLayerExt;
@@ -1523,6 +1576,7 @@ private:
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
     bool mDolphinFuncsEnabled = false;
+    bool mSmomoContentFpsEnabled = false;
     void *mDolphinHandle = nullptr;
     bool (*mDolphinInit)() = nullptr;
     bool (*mDolphinMonitor)(int number, nsecs_t vsyncPeriod) = nullptr;
@@ -1538,6 +1592,8 @@ private:
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
+    bool mUseLayerExt = false;
+    bool mSplitLayerExt = false;
 };
 
 } // namespace android

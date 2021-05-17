@@ -268,7 +268,9 @@ public:
 
     void assertDropTargetEquals(const sp<IBinder>& targetToken) {
         std::scoped_lock lock(mLock);
+        ASSERT_TRUE(mNotifyDropWindowWasCalled);
         ASSERT_EQ(targetToken, mDropTargetWindowToken);
+        mNotifyDropWindowWasCalled = false;
     }
 
 private:
@@ -290,6 +292,7 @@ private:
     std::condition_variable mNotifyAnr;
 
     sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
+    bool mNotifyDropWindowWasCalled GUARDED_BY(mLock) = false;
 
     void notifyConfigurationChanged(nsecs_t when) override {
         std::scoped_lock lock(mLock);
@@ -403,6 +406,7 @@ private:
 
     void notifyDropWindow(const sp<IBinder>& token, float x, float y) override {
         std::scoped_lock lock(mLock);
+        mNotifyDropWindowWasCalled = true;
         mDropTargetWindowToken = token;
     }
 
@@ -745,6 +749,11 @@ public:
         ASSERT_EQ(OK, status) << mName.c_str() << ": consumer sendFinishedSignal should return OK.";
     }
 
+    void sendTimeline(int32_t inputEventId, std::array<nsecs_t, GraphicsTimeline::SIZE> timeline) {
+        const status_t status = mConsumer->sendTimeline(inputEventId, timeline);
+        ASSERT_EQ(OK, status);
+    }
+
     void consumeEvent(int32_t expectedEventType, int32_t expectedAction,
                       std::optional<int32_t> expectedDisplayId,
                       std::optional<int32_t> expectedFlags) {
@@ -1055,6 +1064,11 @@ public:
     void finishEvent(uint32_t sequenceNum) {
         ASSERT_NE(mInputReceiver, nullptr) << "Invalid receive event on window with no receiver";
         mInputReceiver->finishEvent(sequenceNum);
+    }
+
+    void sendTimeline(int32_t inputEventId, std::array<nsecs_t, GraphicsTimeline::SIZE> timeline) {
+        ASSERT_NE(mInputReceiver, nullptr) << "Invalid receive event on window with no receiver";
+        mInputReceiver->sendTimeline(inputEventId, timeline);
     }
 
     InputEvent* consume() {
@@ -1971,6 +1985,21 @@ TEST_F(InputDispatcherTest, PointerCancel_SendCancelWhenSplitTouch) {
     // The first window gets up and the second gets nothing.
     firstWindow->consumeMotionUp();
     secondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherTest, SendTimeline_DoesNotCrashDispatcher) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    std::array<nsecs_t, GraphicsTimeline::SIZE> graphicsTimeline;
+    graphicsTimeline[GraphicsTimeline::GPU_COMPLETED_TIME] = 2;
+    graphicsTimeline[GraphicsTimeline::PRESENT_TIME] = 3;
+
+    window->sendTimeline(1 /*inputEventId*/, graphicsTimeline);
+    window->assertNoEvents();
+    mDispatcher->waitForIdle();
 }
 
 class FakeMonitorReceiver {
@@ -4925,6 +4954,42 @@ TEST_F(InputDispatcherDragTests, StylusDragAndDrop) {
                                         .build()))
             << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
     mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDragTests, DragAndDrop_InvalidWindow) {
+    performDrag();
+
+    // Set second window invisible.
+    mSecondWindow->setVisible(false);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
+
+    // Move on window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->assertNoEvents();
+
+    // drop to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                             {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mFakePolicy->assertDropTargetEquals(nullptr);
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
 }

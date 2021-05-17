@@ -18,6 +18,7 @@
 
 #include <android/gui/DisplayBrightness.h>
 #include <android/gui/IFpsListener.h>
+#include <android/gui/IHdrLayerInfoListener.h>
 #include <android/gui/IScreenCaptureListener.h>
 #include <android/gui/ITransactionTraceListener.h>
 #include <binder/IBinder.h>
@@ -274,6 +275,12 @@ public:
     virtual status_t overrideHdrTypes(const sp<IBinder>& display,
                                       const std::vector<ui::Hdr>& hdrTypes) = 0;
 
+    /* Pulls surfaceflinger atoms global stats and layer stats to pipe to statsd.
+     *
+     * Requires the calling uid be from system server.
+     */
+    virtual status_t onPullAtom(const int32_t atomId, std::string* outData, bool* success) = 0;
+
     virtual status_t enableVSyncInjections(bool enable) = 0;
 
     virtual status_t injectVSync(nsecs_t when) = 0;
@@ -431,6 +438,25 @@ public:
                                           const gui::DisplayBrightness& brightness) = 0;
 
     /*
+     * Adds a listener that receives HDR layer information. This is used in combination
+     * with setDisplayBrightness to adjust the display brightness depending on factors such
+     * as whether or not HDR is in use.
+     *
+     * Returns NO_ERROR upon success or NAME_NOT_FOUND if the display is invalid.
+     */
+    virtual status_t addHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                             const sp<gui::IHdrLayerInfoListener>& listener) = 0;
+    /*
+     * Removes a listener that was added with addHdrLayerInfoListener.
+     *
+     * Returns NO_ERROR upon success, NAME_NOT_FOUND if the display is invalid, and BAD_VALUE if
+     *     the listener wasn't registered.
+     *
+     */
+    virtual status_t removeHdrLayerInfoListener(const sp<IBinder>& displayToken,
+                                                const sp<gui::IHdrLayerInfoListener>& listener) = 0;
+
+    /*
      * Sends a power boost to the composer. This function is asynchronous.
      *
      * boostId
@@ -466,7 +492,7 @@ public:
      * Sets the intended frame rate for a surface. See ANativeWindow_setFrameRate() for more info.
      */
     virtual status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                                  int8_t compatibility, bool shouldBeSeamless) = 0;
+                                  int8_t compatibility, int8_t changeFrameRateStrategy) = 0;
 
     /*
      * Acquire a frame rate flexibility token from SurfaceFlinger. While this token is acquired,
@@ -578,6 +604,9 @@ public:
         ADD_FPS_LISTENER,
         REMOVE_FPS_LISTENER,
         OVERRIDE_HDR_TYPES,
+        ADD_HDR_LAYER_INFO_LISTENER,
+        REMOVE_HDR_LAYER_INFO_LISTENER,
+        ON_PULL_ATOM,
         // Always append new enum to the end.
     };
 

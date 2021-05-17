@@ -20,11 +20,7 @@
 
 #undef LOG_TAG
 #define LOG_TAG "HwcComposer"
-
-#include <log/log.h>
-
-#include <algorithm>
-#include <cinttypes>
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "ComposerHal.h"
 
@@ -32,12 +28,24 @@
 #include <gui/BufferQueue.h>
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/HidlTransportUtils.h>
+#include <log/log.h>
+#include <utils/Trace.h>
+
+#include <algorithm>
+#include <cinttypes>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposer.h>
 #else
 #include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
+#endif
+
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+#include <config/client_interface.h>
+namespace DisplayConfig {
+class ClientInterface;
+}
 #endif
 
 namespace android {
@@ -230,6 +238,29 @@ Composer::Composer(const std::string& serviceName) : mWriter(kWriterInitialSize)
     if (mClient == nullptr) {
         LOG_ALWAYS_FATAL("failed to create composer client");
     }
+
+    // On successful creation of composer client only AllowIdleFallback
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+    if (mClient) {
+        ::DisplayConfig::ClientInterface *mDisplayConfigIntf = nullptr;
+        ::DisplayConfig::ClientInterface::Create("SurfaceFlinger"+std::to_string(0),
+                                                        nullptr, &mDisplayConfigIntf);
+        if (mDisplayConfigIntf) {
+#ifdef DISPLAY_CONFIG_API_LEVEL_2
+            std::string value = "";
+            std::string idle_fallback_prop = "enable_allow_idle_fallback";
+            int ret = mDisplayConfigIntf->GetDebugProperty(idle_fallback_prop, &value);
+            ALOGI("enable_allow_idle_fallback, ret:%d value:%s", ret, value.c_str());
+            if (!ret && (value == "1")) {
+                if(mDisplayConfigIntf->AllowIdleFallback()) {
+                   ALOGW("failed to set Idle time");
+                }
+            }
+#endif
+            ::DisplayConfig::ClientInterface::Destroy(mDisplayConfigIntf);
+        }
+    }
+#endif
 }
 
 Composer::~Composer() = default;
@@ -574,6 +605,7 @@ Error Composer::getReleaseFences(Display display,
 
 Error Composer::presentDisplay(Display display, int* outPresentFence)
 {
+    ATRACE_NAME("HwcPresentDisplay");
     mWriter.selectDisplay(display);
     mWriter.presentDisplay();
 
@@ -660,6 +692,9 @@ Error Composer::setClientTarget_3_1(Display display, int32_t slot, int acquireFe
 Error Composer::setLayerFlag(Display display, Layer layer,
         IQtiComposerClient::LayerFlag layerFlag)
 {
+    if (mClient_3_1 == nullptr) {
+      return Error::NONE;
+    }
     mWriter.selectDisplay(display);
     mWriter.selectLayer(layer);
     mWriter.setLayerFlag(static_cast<uint32_t>(layerFlag));
@@ -694,6 +729,7 @@ Error Composer::setClientTargetSlotCount(Display display)
 Error Composer::validateDisplay(Display display, uint32_t* outNumTypes,
         uint32_t* outNumRequests)
 {
+    ATRACE_NAME("HwcValidateDisplay");
     mWriter.selectDisplay(display);
     mWriter.validateDisplay();
 
@@ -709,13 +745,14 @@ Error Composer::validateDisplay(Display display, uint32_t* outNumTypes,
 
 Error Composer::presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
                                uint32_t* outNumRequests, int* outPresentFence, uint32_t* state) {
-   mWriter.selectDisplay(display);
-   mWriter.presentOrvalidateDisplay();
+    ATRACE_NAME("HwcPresentOrValidateDisplay");
+    mWriter.selectDisplay(display);
+    mWriter.presentOrvalidateDisplay();
 
-   Error error = execute();
-   if (error != Error::NONE) {
-       return error;
-   }
+    Error error = execute();
+    if (error != Error::NONE) {
+        return error;
+    }
 
    mReader.takePresentOrValidateStage(display, state);
 

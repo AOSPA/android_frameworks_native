@@ -29,9 +29,6 @@
 
 #include <../Fps.h>
 #include <gui/JankInfo.h>
-#include <stats_event.h>
-#include <stats_pull_atom_callback.h>
-#include <statslog.h>
 #include <timestatsproto/TimeStatsHelper.h>
 #include <timestatsproto/TimeStatsProtoHeader.h>
 #include <ui/FenceTime.h>
@@ -50,11 +47,12 @@ namespace android {
 
 class TimeStats {
 public:
+    using SetFrameRateVote = TimeStatsHelper::SetFrameRateVote;
+
     virtual ~TimeStats() = default;
 
-    // Called once boot has been finished to perform additional capabilities,
-    // e.g. registration to statsd.
-    virtual void onBootFinished() = 0;
+    // Process a pull request from statsd.
+    virtual bool onPullAtom(const int atomId, std::string* pulledData);
 
     virtual void parseArgs(bool asProto, const Vector<String16>& args, std::string& result) = 0;
     virtual bool isEnabled() = 0;
@@ -110,10 +108,12 @@ public:
     // SetPresent{Time, Fence} are not expected to be called in the critical
     // rendering path, as they flush prior fences if those fences have fired.
     virtual void setPresentTime(int32_t layerId, uint64_t frameNumber, nsecs_t presentTime,
-                                Fps displayRefreshRate, std::optional<Fps> renderRate) = 0;
+                                Fps displayRefreshRate, std::optional<Fps> renderRate,
+                                SetFrameRateVote frameRateVote) = 0;
     virtual void setPresentFence(int32_t layerId, uint64_t frameNumber,
                                  const std::shared_ptr<FenceTime>& presentFence,
-                                 Fps displayRefreshRate, std::optional<Fps> renderRate) = 0;
+                                 Fps displayRefreshRate, std::optional<Fps> renderRate,
+                                 SetFrameRateVote frameRateVote) = 0;
 
     // Increments janky frames, blamed to the provided {refreshRate, renderRate, uid, layerName}
     // key, with JankMetadata as supplementary reasons for the jank. Because FrameTimeline is the
@@ -228,58 +228,11 @@ class TimeStats : public android::TimeStats {
 
 public:
     TimeStats();
-
-    // Delegate to the statsd service and associated APIs.
-    // Production code may use this class directly, whereas unit test may define
-    // a subclass for ease of testing.
-    class StatsEventDelegate {
-    public:
-        virtual ~StatsEventDelegate() = default;
-        virtual AStatsEvent* addStatsEventToPullData(AStatsEventList* data) {
-            return AStatsEventList_addStatsEvent(data);
-        }
-        virtual void setStatsPullAtomCallback(int32_t atom_tag,
-                                              AStatsManager_PullAtomMetadata* metadata,
-                                              AStatsManager_PullAtomCallback callback,
-                                              void* cookie) {
-            return AStatsManager_setPullAtomCallback(atom_tag, metadata, callback, cookie);
-        }
-
-        virtual void clearStatsPullAtomCallback(int32_t atom_tag) {
-            return AStatsManager_clearPullAtomCallback(atom_tag);
-        }
-
-        virtual void statsEventSetAtomId(AStatsEvent* event, uint32_t atom_id) {
-            return AStatsEvent_setAtomId(event, atom_id);
-        }
-
-        virtual void statsEventWriteInt32(AStatsEvent* event, int32_t field) {
-            return AStatsEvent_writeInt32(event, field);
-        }
-
-        virtual void statsEventWriteInt64(AStatsEvent* event, int64_t field) {
-            return AStatsEvent_writeInt64(event, field);
-        }
-
-        virtual void statsEventWriteString8(AStatsEvent* event, const char* field) {
-            return AStatsEvent_writeString(event, field);
-        }
-
-        virtual void statsEventWriteByteArray(AStatsEvent* event, const uint8_t* buf,
-                                              size_t numBytes) {
-            return AStatsEvent_writeByteArray(event, buf, numBytes);
-        }
-
-        virtual void statsEventBuild(AStatsEvent* event) { return AStatsEvent_build(event); }
-    };
     // For testing only for injecting custom dependencies.
-    TimeStats(std::unique_ptr<StatsEventDelegate> statsDelegate,
-              std::optional<size_t> maxPulledLayers,
+    TimeStats(std::optional<size_t> maxPulledLayers,
               std::optional<size_t> maxPulledHistogramBuckets);
 
-    ~TimeStats() override;
-
-    void onBootFinished() override;
+    bool onPullAtom(const int atomId, std::string* pulledData) override;
     void parseArgs(bool asProto, const Vector<String16>& args, std::string& result) override;
     bool isEnabled() override;
     std::string miniDump() override;
@@ -307,10 +260,11 @@ public:
     void setAcquireFence(int32_t layerId, uint64_t frameNumber,
                          const std::shared_ptr<FenceTime>& acquireFence) override;
     void setPresentTime(int32_t layerId, uint64_t frameNumber, nsecs_t presentTime,
-                        Fps displayRefreshRate, std::optional<Fps> renderRate) override;
+                        Fps displayRefreshRate, std::optional<Fps> renderRate,
+                        SetFrameRateVote frameRateVote) override;
     void setPresentFence(int32_t layerId, uint64_t frameNumber,
                          const std::shared_ptr<FenceTime>& presentFence, Fps displayRefreshRate,
-                         std::optional<Fps> renderRate) override;
+                         std::optional<Fps> renderRate, SetFrameRateVote frameRateVote) override;
 
     void incrementJankyFrames(const JankyFramesInfo& info) override;
     // Clean up the layer record
@@ -327,14 +281,12 @@ public:
     static const size_t MAX_NUM_TIME_RECORDS = 64;
 
 private:
-    static AStatsManager_PullAtomCallbackReturn pullAtomCallback(int32_t atom_tag,
-                                                                 AStatsEventList* data,
-                                                                 void* cookie);
-    AStatsManager_PullAtomCallbackReturn populateGlobalAtom(AStatsEventList* data);
-    AStatsManager_PullAtomCallbackReturn populateLayerAtom(AStatsEventList* data);
+    bool populateGlobalAtom(std::string* pulledData);
+    bool populateLayerAtom(std::string* pulledData);
     bool recordReadyLocked(int32_t layerId, TimeRecord* timeRecord);
     void flushAvailableRecordsToStatsLocked(int32_t layerId, Fps displayRefreshRate,
-                                            std::optional<Fps> renderRate);
+                                            std::optional<Fps> renderRate,
+                                            SetFrameRateVote frameRateVote);
     void flushPowerTimeLocked();
     void flushAvailableGlobalRecordsToStatsLocked();
     bool canAddNewAggregatedStats(uid_t uid, const std::string& layerName);
@@ -360,7 +312,6 @@ private:
     static const size_t RENDER_RATE_BUCKET_WIDTH = REFRESH_RATE_BUCKET_WIDTH;
     static const size_t MAX_NUM_LAYER_STATS = 200;
     static const size_t MAX_NUM_PULLED_LAYERS = MAX_NUM_LAYER_STATS;
-    std::unique_ptr<StatsEventDelegate> mStatsDelegate = std::make_unique<StatsEventDelegate>();
     size_t mMaxPulledLayers = MAX_NUM_PULLED_LAYERS;
     size_t mMaxPulledHistogramBuckets = 6;
 };

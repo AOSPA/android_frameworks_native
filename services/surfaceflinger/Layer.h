@@ -52,6 +52,7 @@
 #include "LayerVector.h"
 #include "MonitoredProducer.h"
 #include "RenderArea.h"
+#include "Scheduler/LayerInfo.h"
 #include "Scheduler/Seamlessness.h"
 #include "SurfaceFlinger.h"
 #include "SurfaceTracing.h"
@@ -141,60 +142,8 @@ public:
         float radius = 0.0f;
     };
 
-    // FrameRateCompatibility specifies how we should interpret the frame rate associated with
-    // the layer.
-    enum class FrameRateCompatibility {
-        Default, // Layer didn't specify any specific handling strategy
-
-        Exact, // Layer needs the exact frame rate.
-
-        ExactOrMultiple, // Layer needs the exact frame rate (or a multiple of it) to present the
-                         // content properly. Any other value will result in a pull down.
-
-        NoVote, // Layer doesn't have any requirements for the refresh rate and
-                // should not be considered when the display refresh rate is determined.
-    };
-
-    // Encapsulates the frame rate and compatibility of the layer. This information will be used
-    // when the display refresh rate is determined.
-    struct FrameRate {
-        using Seamlessness = scheduler::Seamlessness;
-
-        Fps rate;
-        FrameRateCompatibility type;
-        Seamlessness seamlessness;
-
-        FrameRate()
-              : rate(0),
-                type(FrameRateCompatibility::Default),
-                seamlessness(Seamlessness::Default) {}
-        FrameRate(Fps rate, FrameRateCompatibility type, bool shouldBeSeamless = true)
-              : rate(rate), type(type), seamlessness(getSeamlessness(rate, shouldBeSeamless)) {}
-
-        bool operator==(const FrameRate& other) const {
-            return rate.equalsWithMargin(other.rate) && type == other.type &&
-                    seamlessness == other.seamlessness;
-        }
-
-        bool operator!=(const FrameRate& other) const { return !(*this == other); }
-
-        // Convert an ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_* value to a
-        // Layer::FrameRateCompatibility. Logs fatal if the compatibility value is invalid.
-        static FrameRateCompatibility convertCompatibility(int8_t compatibility);
-
-    private:
-        static Seamlessness getSeamlessness(Fps rate, bool shouldBeSeamless) {
-            if (!rate.isValid()) {
-                // Refresh rate of 0 is a special value which should reset the vote to
-                // its default value.
-                return Seamlessness::Default;
-            } else if (shouldBeSeamless) {
-                return Seamlessness::OnlySeamless;
-            } else {
-                return Seamlessness::SeamedAndSeamless;
-            }
-        }
-    };
+    using FrameRate = scheduler::LayerInfo::FrameRate;
+    using FrameRateCompatibility = scheduler::LayerInfo::FrameRateCompatibility;
 
     struct State {
         Geometry active_legacy;
@@ -216,11 +165,6 @@ public:
         // Crop is expressed in layer space coordinate.
         Rect crop;
         Rect requestedCrop;
-
-        // If set, defers this state update until the identified Layer
-        // receives a frame with the given frameNumber
-        wp<Layer> barrierLayer_legacy;
-        uint64_t barrierFrameNumber;
 
         // the transparentRegion hint is a bit special, it's latched only
         // when we receive a buffer -- this is because it's "content"
@@ -259,9 +203,10 @@ public:
 
         Region transparentRegionHint;
 
-        sp<GraphicBuffer> buffer;
+        std::shared_ptr<renderengine::ExternalTexture> buffer;
         client_cache_t clientCacheId;
         sp<Fence> acquireFence;
+        std::shared_ptr<FenceTime> acquireFenceTime;
         HdrMetadata hdrMetadata;
         Region surfaceDamageRegion;
         int32_t api;
@@ -448,9 +393,6 @@ public:
     virtual bool setFlags(uint32_t flags, uint32_t mask);
     virtual bool setLayerStack(uint32_t layerStack);
     virtual uint32_t getLayerStack() const;
-    virtual void deferTransactionUntil_legacy(const sp<IBinder>& barrierHandle,
-                                              uint64_t frameNumber);
-    virtual void deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber);
     virtual bool setMetadata(const LayerMetadata& data);
     virtual void setChildrenDrawingParent(const sp<Layer>&);
     virtual bool reparent(const sp<IBinder>& newParentHandle);
@@ -462,11 +404,11 @@ public:
     // Used only to set BufferStateLayer state
     virtual bool setTransform(uint32_t /*transform*/) { return false; };
     virtual bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/) { return false; };
-    virtual bool setFrame(const Rect& /*frame*/) { return false; };
-    virtual bool setBuffer(const sp<GraphicBuffer>& /*buffer*/, const sp<Fence>& /*acquireFence*/,
-                           nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
-                           bool /*isAutoTimestamp*/, const client_cache_t& /*clientCacheId*/,
-                           uint64_t /* frameNumber */, std::optional<nsecs_t> /* dequeueTime */,
+    virtual bool setBuffer(const std::shared_ptr<renderengine::ExternalTexture>& /*buffer*/,
+                           const sp<Fence>& /*acquireFence*/, nsecs_t /*postTime*/,
+                           nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
+                           const client_cache_t& /*clientCacheId*/, uint64_t /* frameNumber */,
+                           std::optional<nsecs_t> /* dequeueTime */,
                            const FrameTimelineInfo& /*info*/,
                            const sp<ITransactionCompletedListener>& /* releaseBufferListener */) {
         return false;
@@ -493,6 +435,7 @@ public:
     //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
+    int32_t getPriority();
     virtual ui::Dataspace getDataSpace() const { return ui::Dataspace::UNKNOWN; }
 
     virtual sp<compositionengine::LayerFE> getCompositionEngineLayerFE() const;
@@ -629,14 +572,6 @@ public:
 
     virtual int32_t getQueuedFrameCount() const { return 0; }
 
-    virtual void pushPendingState();
-
-    /*
-     * Merges the BufferlessSurfaceFrames from source with the target. If the same token exists in
-     * both source and target, target's SurfaceFrame will be retained.
-     */
-    void mergeSurfaceFrames(State& source, State& target);
-
     /**
      * Returns active buffer size in the correct orientation. Buffer size is determined by undoing
      * any buffer transformations. If the layer has no buffer then return INVALID_RECT.
@@ -666,7 +601,8 @@ public:
     // ignored.
     virtual RoundedCornerState getRoundedCornerState() const;
 
-    virtual void notifyAvailableFrames(nsecs_t /*expectedPresentTime*/) {}
+    bool hasRoundedCorners() const override { return getRoundedCornerState().radius > .0f; }
+
     virtual PixelFormat getPixelFormat() const { return PIXEL_FORMAT_NONE; }
     /**
      * Return whether this layer needs an input info. For most layer types
@@ -688,8 +624,6 @@ public:
     void onLayerDisplayed(const sp<Fence>& releaseFence) override;
     const char* getDebugName() const override;
 
-    bool reparentChildren(const sp<IBinder>& newParentHandle);
-    void reparentChildren(const sp<Layer>& newParent);
     bool setShadowRadius(float shadowRadius);
 
     // Before color management is introduced, contents on Android have to be
@@ -783,7 +717,7 @@ public:
      * Called before updating the drawing state buffer. Used by BufferStateLayer to release any
      * unlatched buffers in the drawing state.
      */
-    virtual void bufferMayChange(sp<GraphicBuffer>& /* newBuffer */){};
+    virtual void bufferMayChange(const sp<GraphicBuffer>& /* newBuffer */){};
 
     /*
      * Remove relative z for the layer if its relative parent is not part of the
@@ -960,65 +894,6 @@ public:
     virtual std::string getPendingBufferCounterName() { return ""; }
 
 protected:
-    class SyncPoint {
-    public:
-        explicit SyncPoint(uint64_t frameNumber, wp<Layer> requestedSyncLayer,
-                           wp<Layer> barrierLayer_legacy)
-              : mFrameNumber(frameNumber),
-                mFrameIsAvailable(false),
-                mTransactionIsApplied(false),
-                mRequestedSyncLayer(requestedSyncLayer),
-                mBarrierLayer_legacy(barrierLayer_legacy) {}
-        uint64_t getFrameNumber() const { return mFrameNumber; }
-
-        bool frameIsAvailable() const { return mFrameIsAvailable; }
-
-        void setFrameAvailable() { mFrameIsAvailable = true; }
-
-        bool transactionIsApplied() const { return mTransactionIsApplied; }
-
-        void setTransactionApplied() { mTransactionIsApplied = true; }
-
-        sp<Layer> getRequestedSyncLayer() { return mRequestedSyncLayer.promote(); }
-
-        sp<Layer> getBarrierLayer() const { return mBarrierLayer_legacy.promote(); }
-
-        bool isTimeout() const {
-            using namespace std::chrono_literals;
-            static constexpr std::chrono::nanoseconds TIMEOUT_THRESHOLD = 1s;
-
-            return std::chrono::steady_clock::now() - mCreateTimeStamp > TIMEOUT_THRESHOLD;
-        }
-
-        void checkTimeoutAndLog() {
-            using namespace std::chrono_literals;
-            static constexpr std::chrono::nanoseconds LOG_PERIOD = 1s;
-
-            if (!frameIsAvailable() && isTimeout()) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now - mLastLogTime > LOG_PERIOD) {
-                    mLastLogTime = now;
-                    sp<Layer> requestedSyncLayer = getRequestedSyncLayer();
-                    sp<Layer> barrierLayer = getBarrierLayer();
-                    ALOGW("[%s] sync point %" PRIu64 " wait timeout %lld for %s",
-                          requestedSyncLayer ? requestedSyncLayer->getDebugName() : "Removed",
-                          mFrameNumber, (now - mCreateTimeStamp).count(),
-                          barrierLayer ? barrierLayer->getDebugName() : "Removed");
-                }
-            }
-        }
-
-    private:
-        const uint64_t mFrameNumber;
-        std::atomic<bool> mFrameIsAvailable;
-        std::atomic<bool> mTransactionIsApplied;
-        wp<Layer> mRequestedSyncLayer;
-        wp<Layer> mBarrierLayer_legacy;
-        const std::chrono::time_point<std::chrono::steady_clock> mCreateTimeStamp =
-                std::chrono::steady_clock::now();
-        std::chrono::time_point<std::chrono::steady_clock> mLastLogTime;
-    };
-
     friend class impl::SurfaceInterceptor;
 
     // For unit tests
@@ -1037,7 +912,6 @@ protected:
             ui::Dataspace outputDataspace);
     virtual void preparePerFrameCompositionState();
     virtual void commitTransaction(State& stateToCommit);
-    virtual bool applyPendingStates(State* stateToCommit);
     virtual uint32_t doTransactionResize(uint32_t flags, Layer::State* stateToCommit);
     virtual void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&) {}
 
@@ -1083,20 +957,8 @@ public:
 protected:
     bool usingRelativeZ(LayerVector::StateSet) const;
 
-    // SyncPoints which will be signaled when the correct frame is at the head
-    // of the queue and dropped after the frame has been latched. Protected by
-    // mLocalSyncPointMutex.
-    Mutex mLocalSyncPointMutex;
-    std::list<std::shared_ptr<SyncPoint>> mLocalSyncPoints;
-
-    // SyncPoints which will be signaled and then dropped when the transaction
-    // is applied
-    std::list<std::shared_ptr<SyncPoint>> mRemoteSyncPoints;
-
-    // Returns false if the relevant frame has already been latched
-    bool addSyncPoint(const std::shared_ptr<SyncPoint>& point);
-
-    void popPendingState(State* stateToCommit);
+    virtual ui::Transform getInputTransform() const;
+    virtual Rect getInputBounds() const;
 
     // constant
     sp<SurfaceFlinger> mFlinger;
@@ -1107,14 +969,10 @@ protected:
 
     // These are only accessed by the main thread or the tracing thread.
     State mDrawingState;
-    // Store a copy of the pending state so that the drawing thread can access the
-    // states without a lock.
-    std::deque<State> mPendingStatesSnapshot;
 
     // these are protected by an external lock (mStateLock)
     State mCurrentState;
     std::atomic<uint32_t> mTransactionFlags{0};
-    std::deque<State> mPendingStates;
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
@@ -1178,6 +1036,8 @@ protected:
     // Used in buffer stuffing analysis in FrameTimeline.
     nsecs_t mLastLatchTime = 0;
 
+    mutable bool mCurrentStateModified = false;
+
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}
 
@@ -1202,7 +1062,6 @@ private:
 
     void updateTreeHasFrameRateVote();
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
-    void removeRemoteSyncPoints();
 
     // Find the root of the cloned hierarchy, this means the first non cloned parent.
     // This will return null if first non cloned parent is not found.
@@ -1249,8 +1108,10 @@ private:
     // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
     float mEffectiveShadowRadius = 0.f;
 
+    mutable int32_t mPriority = Layer::PRIORITY_UNSET;
+
     // A list of regions on this layer that should have blurs.
-    const std::vector<BlurRegion>& getBlurRegions() const;
+    const std::vector<BlurRegion> getBlurRegions() const;
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

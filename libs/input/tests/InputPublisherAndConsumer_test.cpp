@@ -128,13 +128,15 @@ void InputPublisherAndConsumerTest::PublishAndConsumeKeyEvent() {
     ASSERT_EQ(OK, status)
             << "consumer sendFinishedSignal should return OK";
 
-    Result<InputPublisher::Finished> result = mPublisher->receiveFinishedSignal();
-    ASSERT_TRUE(result.ok()) << "publisher receiveFinishedSignal should return OK";
-    ASSERT_EQ(seq, result->seq)
-            << "receiveFinishedSignal should have returned the original sequence number";
-    ASSERT_TRUE(result->handled)
-            << "receiveFinishedSignal should have set handled to consumer's reply";
-    ASSERT_GE(result->consumeTime, publishTime)
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Finished>(*result));
+    const InputPublisher::Finished& finish = std::get<InputPublisher::Finished>(*result);
+    ASSERT_EQ(seq, finish.seq)
+            << "receiveConsumerResponse should have returned the original sequence number";
+    ASSERT_TRUE(finish.handled)
+            << "receiveConsumerResponse should have set handled to consumer's reply";
+    ASSERT_GE(finish.consumeTime, publishTime)
             << "finished signal's consume time should be greater than publish time";
 }
 
@@ -272,13 +274,15 @@ void InputPublisherAndConsumerTest::PublishAndConsumeMotionEvent() {
     ASSERT_EQ(OK, status)
             << "consumer sendFinishedSignal should return OK";
 
-    Result<InputPublisher::Finished> result = mPublisher->receiveFinishedSignal();
-    ASSERT_TRUE(result.ok()) << "receiveFinishedSignal should return OK";
-    ASSERT_EQ(seq, result->seq)
-            << "receiveFinishedSignal should have returned the original sequence number";
-    ASSERT_FALSE(result->handled)
-            << "receiveFinishedSignal should have set handled to consumer's reply";
-    ASSERT_GE(result->consumeTime, publishTime)
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Finished>(*result));
+    const InputPublisher::Finished& finish = std::get<InputPublisher::Finished>(*result);
+    ASSERT_EQ(seq, finish.seq)
+            << "receiveConsumerResponse should have returned the original sequence number";
+    ASSERT_FALSE(finish.handled)
+            << "receiveConsumerResponse should have set handled to consumer's reply";
+    ASSERT_GE(finish.consumeTime, publishTime)
             << "finished signal's consume time should be greater than publish time";
 }
 
@@ -316,14 +320,16 @@ void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
     status = mConsumer->sendFinishedSignal(seq, true);
     ASSERT_EQ(OK, status) << "consumer sendFinishedSignal should return OK";
 
-    Result<InputPublisher::Finished> result = mPublisher->receiveFinishedSignal();
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Finished>(*result));
+    const InputPublisher::Finished& finish = std::get<InputPublisher::Finished>(*result);
 
-    ASSERT_TRUE(result.ok()) << "receiveFinishedSignal should return OK";
-    ASSERT_EQ(seq, result->seq)
-            << "receiveFinishedSignal should have returned the original sequence number";
-    ASSERT_TRUE(result->handled)
-            << "receiveFinishedSignal should have set handled to consumer's reply";
-    ASSERT_GE(result->consumeTime, publishTime)
+    ASSERT_EQ(seq, finish.seq)
+            << "receiveConsumerResponse should have returned the original sequence number";
+    ASSERT_TRUE(finish.handled)
+            << "receiveConsumerResponse should have set handled to consumer's reply";
+    ASSERT_GE(finish.consumeTime, publishTime)
             << "finished signal's consume time should be greater than publish time";
 }
 
@@ -359,13 +365,15 @@ void InputPublisherAndConsumerTest::PublishAndConsumeCaptureEvent() {
     status = mConsumer->sendFinishedSignal(seq, true);
     ASSERT_EQ(OK, status) << "consumer sendFinishedSignal should return OK";
 
-    android::base::Result<InputPublisher::Finished> result = mPublisher->receiveFinishedSignal();
-    ASSERT_TRUE(result.ok()) << "publisher receiveFinishedSignal should return OK";
-    ASSERT_EQ(seq, result->seq)
-            << "receiveFinishedSignal should have returned the original sequence number";
-    ASSERT_TRUE(result->handled)
-            << "receiveFinishedSignal should have set handled to consumer's reply";
-    ASSERT_GE(result->consumeTime, publishTime)
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Finished>(*result));
+    const InputPublisher::Finished& finish = std::get<InputPublisher::Finished>(*result);
+    ASSERT_EQ(seq, finish.seq)
+            << "receiveConsumerResponse should have returned the original sequence number";
+    ASSERT_TRUE(finish.handled)
+            << "receiveConsumerResponse should have set handled to consumer's reply";
+    ASSERT_GE(finish.consumeTime, publishTime)
             << "finished signal's consume time should be greater than publish time";
 }
 
@@ -405,14 +413,32 @@ void InputPublisherAndConsumerTest::PublishAndConsumeDragEvent() {
     status = mConsumer->sendFinishedSignal(seq, true);
     ASSERT_EQ(OK, status) << "consumer sendFinishedSignal should return OK";
 
-    android::base::Result<InputPublisher::Finished> result = mPublisher->receiveFinishedSignal();
-    ASSERT_TRUE(result.ok()) << "publisher receiveFinishedSignal should return OK";
-    ASSERT_EQ(seq, result->seq)
-            << "publisher receiveFinishedSignal should have returned the original sequence number";
-    ASSERT_TRUE(result->handled)
-            << "publisher receiveFinishedSignal should have set handled to consumer's reply";
-    ASSERT_GE(result->consumeTime, publishTime)
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Finished>(*result));
+    const InputPublisher::Finished& finish = std::get<InputPublisher::Finished>(*result);
+    ASSERT_EQ(seq, finish.seq)
+            << "receiveConsumerResponse should have returned the original sequence number";
+    ASSERT_TRUE(finish.handled)
+            << "receiveConsumerResponse should have set handled to consumer's reply";
+    ASSERT_GE(finish.consumeTime, publishTime)
             << "finished signal's consume time should be greater than publish time";
+}
+
+TEST_F(InputPublisherAndConsumerTest, SendTimeline) {
+    const int32_t inputEventId = 20;
+    std::array<nsecs_t, GraphicsTimeline::SIZE> graphicsTimeline;
+    graphicsTimeline[GraphicsTimeline::GPU_COMPLETED_TIME] = 30;
+    graphicsTimeline[GraphicsTimeline::PRESENT_TIME] = 40;
+    status_t status = mConsumer->sendTimeline(inputEventId, graphicsTimeline);
+    ASSERT_EQ(OK, status);
+
+    Result<InputPublisher::ConsumerResponse> result = mPublisher->receiveConsumerResponse();
+    ASSERT_TRUE(result.ok()) << "receiveConsumerResponse should return OK";
+    ASSERT_TRUE(std::holds_alternative<InputPublisher::Timeline>(*result));
+    const InputPublisher::Timeline& timeline = std::get<InputPublisher::Timeline>(*result);
+    ASSERT_EQ(inputEventId, timeline.inputEventId);
+    ASSERT_EQ(graphicsTimeline, timeline.graphicsTimeline);
 }
 
 TEST_F(InputPublisherAndConsumerTest, PublishKeyEvent_EndToEnd) {

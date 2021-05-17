@@ -208,7 +208,8 @@ bool RefreshRateOverlay::createLayer() {
     return true;
 }
 
-const std::vector<sp<GraphicBuffer>>& RefreshRateOverlay::getOrCreateBuffers(uint32_t fps) {
+const std::vector<std::shared_ptr<renderengine::ExternalTexture>>&
+RefreshRateOverlay::getOrCreateBuffers(uint32_t fps) {
     if (mBufferCache.find(fps) == mBufferCache.end()) {
         // Ensure the range is > 0, so we don't divide by 0.
         const auto rangeLength = std::max(1u, mHighFps - mLowFps);
@@ -222,7 +223,17 @@ const std::vector<sp<GraphicBuffer>>& RefreshRateOverlay::getOrCreateBuffers(uin
         color.g = HIGH_FPS_COLOR.g * fpsScale + LOW_FPS_COLOR.g * (1 - fpsScale);
         color.b = HIGH_FPS_COLOR.b * fpsScale + LOW_FPS_COLOR.b * (1 - fpsScale);
         color.a = ALPHA;
-        mBufferCache.emplace(fps, SevenSegmentDrawer::drawNumber(fps, color, mShowSpinner));
+        auto buffers = SevenSegmentDrawer::drawNumber(fps, color, mShowSpinner);
+        std::vector<std::shared_ptr<renderengine::ExternalTexture>> textures;
+        std::transform(buffers.begin(), buffers.end(), std::back_inserter(textures),
+                       [&](const auto& buffer) -> std::shared_ptr<renderengine::ExternalTexture> {
+                           return std::make_shared<
+                                   renderengine::ExternalTexture>(buffer,
+                                                                  mFlinger.getRenderEngine(),
+                                                                  renderengine::ExternalTexture::
+                                                                          Usage::READABLE);
+                       });
+        mBufferCache.emplace(fps, textures);
     }
 
     return mBufferCache[fps];
@@ -231,8 +242,14 @@ const std::vector<sp<GraphicBuffer>>& RefreshRateOverlay::getOrCreateBuffers(uin
 void RefreshRateOverlay::setViewport(ui::Size viewport) {
     Rect frame((3 * viewport.width) >> 4, viewport.height >> 5);
     frame.offsetBy(viewport.width >> 5, viewport.height >> 4);
-    mLayer->setFrame(frame);
 
+    layer_state_t::matrix22_t matrix;
+    matrix.dsdx = frame.getWidth() / static_cast<float>(SevenSegmentDrawer::getWidth());
+    matrix.dtdx = 0;
+    matrix.dtdy = 0;
+    matrix.dsdy = frame.getHeight() / static_cast<float>(SevenSegmentDrawer::getHeight());
+    mLayer->setMatrix(matrix, true);
+    mLayer->setPosition(frame.left, frame.top);
     mFlinger.mTransactionFlags.fetch_or(eTransactionMask);
 }
 

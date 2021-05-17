@@ -56,6 +56,8 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "layer_extn_intf.h"
+
 namespace android {
 
 static constexpr float defaultMaxMasteringLuminance = 1000.0;
@@ -71,6 +73,10 @@ BufferLayer::BufferLayer(const LayerCreationArgs& args)
 
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
+
+    if (mFlinger->mLayerExt) {
+        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
+    }
 }
 
 BufferLayer::~BufferLayer() {
@@ -186,9 +192,9 @@ std::optional<compositionengine::LayerFE::LayerSettings> BufferLayer::prepareCli
         }
     }
     const bool blackOutLayer = (isProtected() && !targetSettings.supportsProtectedContent) ||
-            (isSecure() && !targetSettings.isSecure);
+            ((isSecure() || isProtected()) && !targetSettings.isSecure);
     const bool bufferCanBeUsedAsHwTexture =
-            mBufferInfo.mBuffer->getUsage() & GraphicBuffer::USAGE_HW_TEXTURE;
+            mBufferInfo.mBuffer->getBuffer()->getUsage() & GraphicBuffer::USAGE_HW_TEXTURE;
     compositionengine::LayerFE::LayerSettings& layer = *result;
     if (blackOutLayer || !bufferCanBeUsedAsHwTexture) {
         ALOGE_IF(!bufferCanBeUsedAsHwTexture, "%s is blacked out as buffer is not gpu readable",
@@ -213,7 +219,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> BufferLayer::prepareCli
             ? mBufferInfo.mHdrMetadata.cta8613.maxContentLightLevel
             : defaultMaxContentLuminance;
     layer.frameNumber = mCurrentFrameNumber;
-    layer.bufferId = mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getId() : 0;
+    layer.bufferId = mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getBuffer()->getId() : 0;
 
     const bool useFiltering =
             targetSettings.needsFiltering || mNeedsFiltering || bufferNeedsFiltering();
@@ -314,7 +320,7 @@ void BufferLayer::preparePerFrameCompositionState() {
                 : Hwc2::IComposerClient::Composition::DEVICE;
     }
 
-    compositionState->buffer = mBufferInfo.mBuffer;
+    compositionState->buffer = mBufferInfo.mBuffer->getBuffer();
     compositionState->bufferSlot = (mBufferInfo.mBufferSlot == BufferQueue::INVALID_BUFFER_SLOT)
             ? 0
             : mBufferInfo.mBufferSlot;
@@ -329,6 +335,37 @@ bool BufferLayer::onPreComposition(nsecs_t refreshStartTime) {
     mRefreshPending = false;
     return hasReadyFrame();
 }
+namespace {
+TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate frameRate) {
+    using FrameRateCompatibility = TimeStats::SetFrameRateVote::FrameRateCompatibility;
+    using Seamlessness = TimeStats::SetFrameRateVote::Seamlessness;
+    const auto frameRateCompatibility = [frameRate] {
+        switch (frameRate.type) {
+            case Layer::FrameRateCompatibility::Default:
+                return FrameRateCompatibility::Default;
+            case Layer::FrameRateCompatibility::ExactOrMultiple:
+                return FrameRateCompatibility::ExactOrMultiple;
+            default:
+                return FrameRateCompatibility::Undefined;
+        }
+    }();
+
+    const auto seamlessness = [frameRate] {
+        switch (frameRate.seamlessness) {
+            case scheduler::Seamlessness::OnlySeamless:
+                return Seamlessness::ShouldBeSeamless;
+            case scheduler::Seamlessness::SeamedAndSeamless:
+                return Seamlessness::NotRequired;
+            default:
+                return Seamlessness::Undefined;
+        }
+    }();
+
+    return TimeStats::SetFrameRateVote{.frameRate = frameRate.rate.getValue(),
+                                       .frameRateCompatibility = frameRateCompatibility,
+                                       .seamlessness = seamlessness};
+}
+} // namespace
 
 bool BufferLayer::onPostComposition(const DisplayDevice* display,
                                     const std::shared_ptr<FenceTime>& glDoneFence,
@@ -381,7 +418,9 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
     const std::optional<Fps> renderRate = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
     if (presentFence->isValid()) {
         mFlinger->mTimeStats->setPresentFence(layerId, mCurrentFrameNumber, presentFence,
-                                              refreshRate, renderRate);
+                                              refreshRate, renderRate,
+                                              frameRateToSetFrameRateVotePayload(
+                                                      mDrawingState.frameRate));
         mFlinger->mFrameTracer->traceFence(layerId, getCurrentBufferId(), mCurrentFrameNumber,
                                            presentFence, FrameTracer::FrameEvent::PRESENT_FENCE);
         mFrameTracker.setActualPresentFence(std::shared_ptr<FenceTime>(presentFence));
@@ -393,7 +432,9 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
         // timestamp instead.
         const nsecs_t actualPresentTime = display->getRefreshTimestamp();
         mFlinger->mTimeStats->setPresentTime(layerId, mCurrentFrameNumber, actualPresentTime,
-                                             refreshRate, renderRate);
+                                             refreshRate, renderRate,
+                                             frameRateToSetFrameRateVotePayload(
+                                                     mDrawingState.frameRate));
         mFlinger->mFrameTracer->traceTimestamp(layerId, getCurrentBufferId(), mCurrentFrameNumber,
                                                actualPresentTime,
                                                FrameTracer::FrameEvent::PRESENT_FENCE);
@@ -407,7 +448,7 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
 
 void BufferLayer::gatherBufferInfo() {
     mBufferInfo.mPixelFormat =
-            !mBufferInfo.mBuffer ? PIXEL_FORMAT_NONE : mBufferInfo.mBuffer->format;
+            !mBufferInfo.mBuffer ? PIXEL_FORMAT_NONE : mBufferInfo.mBuffer->getBuffer()->format;
     mBufferInfo.mFrameLatencyNeeded = true;
 }
 
@@ -472,11 +513,6 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
 
     BufferInfo oldBufferInfo = mBufferInfo;
 
-    if (!allTransactionsSignaled(expectedPresentTime)) {
-        mFlinger->setTransactionFlags(eTraversalNeeded);
-        return false;
-    }
-
     status_t err = updateTexImage(recomputeVisibleRegions, latchTime, expectedPresentTime);
     if (err != NO_ERROR) {
         return false;
@@ -509,10 +545,10 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
     }
 
     if (oldBufferInfo.mBuffer != nullptr) {
-        uint32_t bufWidth = mBufferInfo.mBuffer->getWidth();
-        uint32_t bufHeight = mBufferInfo.mBuffer->getHeight();
-        if (bufWidth != uint32_t(oldBufferInfo.mBuffer->width) ||
-            bufHeight != uint32_t(oldBufferInfo.mBuffer->height)) {
+        uint32_t bufWidth = mBufferInfo.mBuffer->getBuffer()->getWidth();
+        uint32_t bufHeight = mBufferInfo.mBuffer->getBuffer()->getHeight();
+        if (bufWidth != uint32_t(oldBufferInfo.mBuffer->getBuffer()->width) ||
+            bufHeight != uint32_t(oldBufferInfo.mBuffer->getBuffer()->height)) {
             recomputeVisibleRegions = true;
         }
     }
@@ -521,51 +557,7 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
         recomputeVisibleRegions = true;
     }
 
-    // Remove any sync points corresponding to the buffer which was just
-    // latched
-    {
-        Mutex::Autolock lock(mLocalSyncPointMutex);
-        auto point = mLocalSyncPoints.begin();
-        while (point != mLocalSyncPoints.end()) {
-            if (!(*point)->frameIsAvailable() || !(*point)->transactionIsApplied()) {
-                // This sync point must have been added since we started
-                // latching. Don't drop it yet.
-                ++point;
-                continue;
-            }
-
-            if ((*point)->getFrameNumber() <= mCurrentFrameNumber) {
-                std::stringstream ss;
-                ss << "Dropping sync point " << (*point)->getFrameNumber();
-                ATRACE_NAME(ss.str().c_str());
-                point = mLocalSyncPoints.erase(point);
-            } else {
-                ++point;
-            }
-        }
-    }
-
     return true;
-}
-
-// transaction
-void BufferLayer::notifyAvailableFrames(nsecs_t expectedPresentTime) {
-    const auto headFrameNumber = getHeadFrameNumber(expectedPresentTime);
-    const bool headFenceSignaled = fenceHasSignaled();
-    const bool presentTimeIsCurrent = framePresentTimeIsCurrent(expectedPresentTime);
-    Mutex::Autolock lock(mLocalSyncPointMutex);
-    for (auto& point : mLocalSyncPoints) {
-        if (headFrameNumber >= point->getFrameNumber() && headFenceSignaled &&
-            presentTimeIsCurrent) {
-            point->setFrameAvailable();
-            sp<Layer> requestedSyncLayer = point->getRequestedSyncLayer();
-            if (requestedSyncLayer) {
-                // Need to update the transaction flag to ensure the layer's pending transaction
-                // gets applied.
-                requestedSyncLayer->setTransactionFlags(eTransactionNeeded);
-            }
-        }
-    }
 }
 
 bool BufferLayer::hasReadyFrame() const {
@@ -577,8 +569,8 @@ uint32_t BufferLayer::getEffectiveScalingMode() const {
 }
 
 bool BufferLayer::isProtected() const {
-    const sp<GraphicBuffer>& buffer(mBufferInfo.mBuffer);
-    return (buffer != 0) && (buffer->getUsage() & GRALLOC_USAGE_PROTECTED);
+    return (mBufferInfo.mBuffer != nullptr) &&
+            (mBufferInfo.mBuffer->getBuffer()->getUsage() & GRALLOC_USAGE_PROTECTED);
 }
 
 bool BufferLayer::latchUnsignaledBuffers() {
@@ -595,32 +587,6 @@ bool BufferLayer::latchUnsignaledBuffers() {
     return latch;
 }
 
-// h/w composer set-up
-bool BufferLayer::allTransactionsSignaled(nsecs_t expectedPresentTime) {
-    const auto headFrameNumber = getHeadFrameNumber(expectedPresentTime);
-    bool matchingFramesFound = false;
-    bool allTransactionsApplied = true;
-    Mutex::Autolock lock(mLocalSyncPointMutex);
-
-    for (auto& point : mLocalSyncPoints) {
-        if (point->getFrameNumber() > headFrameNumber) {
-            break;
-        }
-        matchingFramesFound = true;
-
-        if (!point->frameIsAvailable()) {
-            // We haven't notified the remote layer that the frame for
-            // this point is available yet. Notify it now, and then
-            // abort this attempt to latch.
-            point->setFrameAvailable();
-            allTransactionsApplied = false;
-            break;
-        }
-
-        allTransactionsApplied = allTransactionsApplied && point->transactionIsApplied();
-    }
-    return !matchingFramesFound || allTransactionsApplied;
-}
 
 // As documented in libhardware header, formats in the range
 // 0x100 - 0x1FF are specific to the HAL implementation, and
@@ -706,8 +672,8 @@ Rect BufferLayer::getBufferSize(const State& s) const {
         return Rect::INVALID_RECT;
     }
 
-    uint32_t bufWidth = mBufferInfo.mBuffer->getWidth();
-    uint32_t bufHeight = mBufferInfo.mBuffer->getHeight();
+    uint32_t bufWidth = mBufferInfo.mBuffer->getBuffer()->getWidth();
+    uint32_t bufHeight = mBufferInfo.mBuffer->getBuffer()->getHeight();
 
     // Undo any transformations on the buffer and return the result.
     if (mBufferInfo.mTransform & ui::Transform::ROT_90) {
@@ -738,8 +704,8 @@ FloatRect BufferLayer::computeSourceBounds(const FloatRect& parentBounds) const 
         return parentBounds;
     }
 
-    uint32_t bufWidth = mBufferInfo.mBuffer->getWidth();
-    uint32_t bufHeight = mBufferInfo.mBuffer->getHeight();
+    uint32_t bufWidth = mBufferInfo.mBuffer->getBuffer()->getWidth();
+    uint32_t bufHeight = mBufferInfo.mBuffer->getBuffer()->getHeight();
 
     // Undo any transformations on the buffer and return the result.
     if (mBufferInfo.mTransform & ui::Transform::ROT_90) {
@@ -781,7 +747,7 @@ Rect BufferLayer::getBufferCrop() const {
         return mBufferInfo.mCrop;
     } else if (mBufferInfo.mBuffer != nullptr) {
         // otherwise we use the whole buffer
-        return mBufferInfo.mBuffer->getBounds();
+        return mBufferInfo.mBuffer->getBuffer()->getBounds();
     } else {
         // if we don't have a buffer yet, we use an empty/invalid crop
         return Rect();
@@ -826,12 +792,14 @@ ui::Dataspace BufferLayer::translateDataspace(ui::Dataspace dataspace) {
 }
 
 sp<GraphicBuffer> BufferLayer::getBuffer() const {
-    return mBufferInfo.mBuffer;
+    return mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getBuffer() : nullptr;
 }
 
 void BufferLayer::getDrawingTransformMatrix(bool filteringEnabled, float outMatrix[16]) {
-    GLConsumer::computeTransformMatrix(outMatrix, mBufferInfo.mBuffer, mBufferInfo.mCrop,
-                                       mBufferInfo.mTransform, filteringEnabled);
+    GLConsumer::computeTransformMatrix(outMatrix,
+                                       mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getBuffer()
+                                                           : nullptr,
+                                       mBufferInfo.mCrop, mBufferInfo.mTransform, filteringEnabled);
 }
 
 void BufferLayer::setInitialValuesForClone(const sp<Layer>& clonedFrom) {

@@ -102,14 +102,13 @@ protected:
         //   test flakiness.
         mSurfaceControl = mComposerClient->createSurface(
                 String8("Test Surface"), 32, 32, PIXEL_FORMAT_RGBA_8888, 0);
+        SurfaceComposerClient::Transaction().apply(true);
 
         ASSERT_TRUE(mSurfaceControl != nullptr);
         ASSERT_TRUE(mSurfaceControl->isValid());
 
         Transaction t;
-        ASSERT_EQ(NO_ERROR, t.setLayer(mSurfaceControl, 0x7fffffff)
-                .show(mSurfaceControl)
-                .apply());
+        ASSERT_EQ(NO_ERROR, t.setLayer(mSurfaceControl, 0x7fffffff).show(mSurfaceControl).apply());
 
         mSurface = mSurfaceControl->getSurface();
         ASSERT_TRUE(mSurface != nullptr);
@@ -776,6 +775,10 @@ public:
                               const std::vector<ui::Hdr>& /*hdrTypes*/) override {
         return NO_ERROR;
     }
+    status_t onPullAtom(const int32_t /*atomId*/, std::string* /*outData*/,
+                        bool* /*success*/) override {
+        return NO_ERROR;
+    }
     status_t enableVSyncInjections(bool /*enable*/) override {
         return NO_ERROR;
     }
@@ -819,6 +822,16 @@ public:
         return NO_ERROR;
     }
 
+    status_t addHdrLayerInfoListener(const sp<IBinder>&,
+                                     const sp<gui::IHdrLayerInfoListener>&) override {
+        return NO_ERROR;
+    }
+
+    status_t removeHdrLayerInfoListener(const sp<IBinder>&,
+                                        const sp<gui::IHdrLayerInfoListener>&) override {
+        return NO_ERROR;
+    }
+
     status_t addRegionSamplingListener(const Rect& /*samplingArea*/,
                                        const sp<IBinder>& /*stopLayerHandle*/,
                                        const sp<IRegionSamplingListener>& /*listener*/) override {
@@ -859,7 +872,7 @@ public:
     }
 
     status_t setFrameRate(const sp<IGraphicBufferProducer>& /*surface*/, float /*frameRate*/,
-                          int8_t /*compatibility*/, bool /*shouldBeSeamless*/) override {
+                          int8_t /*compatibility*/, int8_t /*changeFrameRateStrategy*/) override {
         return NO_ERROR;
     }
 

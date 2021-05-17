@@ -118,7 +118,8 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.bufferTransform = 0;
     mCurrentState.transformToDisplayInverse = false;
     mCurrentState.crop.makeInvalid();
-    mCurrentState.acquireFence = new Fence(-1);
+    mCurrentState.acquireFence = sp<Fence>::make(-1);
+    mCurrentState.acquireFenceTime = std::make_shared<FenceTime>(mCurrentState.acquireFence);
     mCurrentState.dataspace = ui::Dataspace::UNKNOWN;
     mCurrentState.hdrMetadata.validTypes = 0;
     mCurrentState.surfaceDamageRegion = Region::INVALID_REGION;
@@ -203,19 +204,6 @@ LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client,
  */
 void Layer::onLayerDisplayed(const sp<Fence>& /*releaseFence*/) {}
 
-void Layer::removeRemoteSyncPoints() {
-    for (auto& point : mRemoteSyncPoints) {
-        point->setTransactionApplied();
-    }
-    mRemoteSyncPoints.clear();
-
-    {
-        for (State pendingState : mPendingStates) {
-            pendingState.barrierLayer_legacy = nullptr;
-        }
-    }
-}
-
 void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
     if (mCurrentState.zOrderRelativeOf == nullptr) {
         return;
@@ -236,21 +224,6 @@ void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
 
 void Layer::removeFromCurrentState() {
     mRemovedFromCurrentState = true;
-
-    // Since we are no longer reachable from CurrentState SurfaceFlinger
-    // will no longer invoke doTransaction for us, and so we will
-    // never finish applying transactions. We signal the sync point
-    // now so that another layer will not become indefinitely
-    // blocked.
-    removeRemoteSyncPoints();
-
-    {
-    Mutex::Autolock syncLock(mLocalSyncPointMutex);
-    for (auto& point : mLocalSyncPoints) {
-        point->setFrameAvailable();
-    }
-    mLocalSyncPoints.clear();
-    }
 
     mFlinger->markLayerPendingRemovalLocked(this);
 }
@@ -565,7 +538,9 @@ void Layer::preparePerFrameCompositionState() {
             isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
 
     // Force client composition for special cases known only to the front-end.
-    if (isHdrY410() || usesRoundedCorners || drawShadows() || drawingState.blurRegions.size() > 0 ||
+    // Rounded corners no longer force client composition, since we may use a
+    // hole punch so that the layer will appear to have rounded corners.
+    if (isHdrY410() || drawShadows() || drawingState.blurRegions.size() > 0 ||
         compositionState->stretchEffect.hasEffect()) {
         compositionState->forceClientComposition = true;
     }
@@ -781,21 +756,6 @@ Hwc2::IComposerClient::Composition Layer::getCompositionType(const DisplayDevice
     }
 }
 
-bool Layer::addSyncPoint(const std::shared_ptr<SyncPoint>& point) {
-    if (point->getFrameNumber() <= mCurrentFrameNumber) {
-        // Don't bother with a SyncPoint, since we've already latched the
-        // relevant frame
-        return false;
-    }
-    if (isRemovedFromCurrentState()) {
-        return false;
-    }
-
-    Mutex::Autolock lock(mLocalSyncPointMutex);
-    mLocalSyncPoints.push_back(point);
-    return true;
-}
-
 // ----------------------------------------------------------------------------
 // local state
 // ----------------------------------------------------------------------------
@@ -830,132 +790,6 @@ bool Layer::isScreenshot() const {
 // ----------------------------------------------------------------------------
 // transaction
 // ----------------------------------------------------------------------------
-
-void Layer::pushPendingState() {
-    if (!mCurrentState.modified) {
-        return;
-    }
-    ATRACE_CALL();
-
-    // If this transaction is waiting on the receipt of a frame, generate a sync
-    // point and send it to the remote layer.
-    // We don't allow installing sync points after we are removed from the current state
-    // as we won't be able to signal our end.
-    if (mCurrentState.barrierLayer_legacy != nullptr && !isRemovedFromCurrentState()) {
-        sp<Layer> barrierLayer = mCurrentState.barrierLayer_legacy.promote();
-        if (barrierLayer == nullptr) {
-            ALOGE("[%s] Unable to promote barrier Layer.", getDebugName());
-            // If we can't promote the layer we are intended to wait on,
-            // then it is expired or otherwise invalid. Allow this transaction
-            // to be applied as per normal (no synchronization).
-            mCurrentState.barrierLayer_legacy = nullptr;
-        } else {
-            auto syncPoint = std::make_shared<SyncPoint>(mCurrentState.barrierFrameNumber, this,
-                                                         barrierLayer);
-            if (barrierLayer->addSyncPoint(syncPoint)) {
-                std::stringstream ss;
-                ss << "Adding sync point " << mCurrentState.barrierFrameNumber;
-                ATRACE_NAME(ss.str().c_str());
-                mRemoteSyncPoints.push_back(std::move(syncPoint));
-            } else {
-                // We already missed the frame we're supposed to synchronize
-                // on, so go ahead and apply the state update
-                mCurrentState.barrierLayer_legacy = nullptr;
-            }
-        }
-
-        // Wake us up to check if the frame has been received
-        setTransactionFlags(eTransactionNeeded);
-        mFlinger->setTransactionFlags(eTraversalNeeded);
-    }
-    if (mCurrentState.bufferlessSurfaceFramesTX.size() >= State::kStateSurfaceFramesThreshold) {
-        // Ideally, the currentState would only contain one SurfaceFrame per transaction (assuming
-        // each Tx uses a different token). We don't expect the current state to hold a huge amount
-        // of SurfaceFrames. However, in the event it happens, this debug statement will leave a
-        // trail that can help in debugging.
-        ALOGW("Bufferless SurfaceFrames size on current state of layer %s is %" PRIu32 "",
-              mName.c_str(), static_cast<uint32_t>(mCurrentState.bufferlessSurfaceFramesTX.size()));
-    }
-    mPendingStates.push_back(mCurrentState);
-    // Since the current state along with the SurfaceFrames has been pushed into the pendingState,
-    // we no longer need to retain them. If multiple states are pushed and applied together, we have
-    // a merging logic to address the SurfaceFrames at mergeSurfaceFrames().
-    mCurrentState.bufferlessSurfaceFramesTX.clear();
-    ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
-}
-
-void Layer::mergeSurfaceFrames(State& source, State& target) {
-    // No need to merge BufferSurfaceFrame as the target's surfaceFrame, if it exists, will be used
-    // directly. Dropping of source's SurfaceFrame is taken care of at setBuffer().
-    target.bufferlessSurfaceFramesTX.merge(source.bufferlessSurfaceFramesTX);
-    source.bufferlessSurfaceFramesTX.clear();
-}
-
-void Layer::popPendingState(State* stateToCommit) {
-    ATRACE_CALL();
-
-    mergeSurfaceFrames(*stateToCommit, mPendingStates[0]);
-    *stateToCommit = mPendingStates[0];
-    mPendingStates.pop_front();
-    ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
-}
-
-bool Layer::applyPendingStates(State* stateToCommit) {
-    bool stateUpdateAvailable = false;
-    while (!mPendingStates.empty()) {
-        if (mPendingStates[0].barrierLayer_legacy != nullptr) {
-            if (mRemoteSyncPoints.empty()) {
-                // If we don't have a sync point for this, apply it anyway. It
-                // will be visually wrong, but it should keep us from getting
-                // into too much trouble.
-                ALOGV("[%s] No local sync point found", getDebugName());
-                popPendingState(stateToCommit);
-                stateUpdateAvailable = true;
-                continue;
-            }
-
-            if (mRemoteSyncPoints.front()->getFrameNumber() !=
-                mPendingStates[0].barrierFrameNumber) {
-                ALOGE("[%s] Unexpected sync point frame number found", getDebugName());
-
-                // Signal our end of the sync point and then dispose of it
-                mRemoteSyncPoints.front()->setTransactionApplied();
-                mRemoteSyncPoints.pop_front();
-                continue;
-            }
-
-            if (mRemoteSyncPoints.front()->frameIsAvailable()) {
-                ATRACE_NAME("frameIsAvailable");
-                // Apply the state update
-                popPendingState(stateToCommit);
-                stateUpdateAvailable = true;
-
-                // Signal our end of the sync point and then dispose of it
-                mRemoteSyncPoints.front()->setTransactionApplied();
-                mRemoteSyncPoints.pop_front();
-            } else {
-                ATRACE_NAME("!frameIsAvailable");
-                mRemoteSyncPoints.front()->checkTimeoutAndLog();
-                break;
-            }
-        } else {
-            popPendingState(stateToCommit);
-            stateUpdateAvailable = true;
-        }
-    }
-
-    // If we still have pending updates, we need to ensure SurfaceFlinger
-    // will keep calling doTransaction, and so we force a traversal.
-    // However, our pending states won't clear until a frame is available,
-    // and so there is no need to specifically trigger a wakeup.
-    if (!mPendingStates.empty()) {
-        setTransactionFlags(eTransactionNeeded);
-        mFlinger->setTraversalNeeded();
-    }
-
-    mCurrentState.modified = false;
-    return stateUpdateAvailable;
-}
 
 uint32_t Layer::doTransactionResize(uint32_t flags, State* stateToCommit) {
     const State& s(getDrawingState());
@@ -1037,15 +871,14 @@ uint32_t Layer::doTransaction(uint32_t flags) {
         mChildrenChanged = false;
     }
 
-    pushPendingState();
-    State c = getCurrentState();
-    if (!applyPendingStates(&c)) {
-        return flags;
-    }
+    // TODO: This is unfortunate.
+    mCurrentStateModified = mCurrentState.modified;
+    mCurrentState.modified = false;
 
-    flags = doTransactionResize(flags, &c);
+    flags = doTransactionResize(flags, &mCurrentState);
 
     const State& s(getDrawingState());
+    State& c(getCurrentState());
 
     if (getActiveGeometry(c) != getActiveGeometry(s)) {
         // invalidate and recompute the visible regions if needed
@@ -1073,11 +906,10 @@ uint32_t Layer::doTransaction(uint32_t flags) {
     }
 
     // Allow BufferStateLayer to release any unlatched buffers in drawing state.
-    bufferMayChange(c.buffer);
+    bufferMayChange(c.buffer->getBuffer());
 
     // Commit the transaction
     commitTransaction(c);
-    mPendingStatesSnapshot = mPendingStates;
     mCurrentState.callbackHandles = {};
 
     return flags;
@@ -1085,7 +917,11 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 
 void Layer::commitTransaction(State& stateToCommit) {
     if (auto& bufferSurfaceFrame = mDrawingState.bufferSurfaceFrameTX;
-        mDrawingState.buffer != stateToCommit.buffer && bufferSurfaceFrame != nullptr &&
+        ((mDrawingState.buffer && stateToCommit.buffer &&
+          mDrawingState.buffer->getBuffer() != stateToCommit.buffer->getBuffer()) ||
+         (mDrawingState.buffer && !stateToCommit.buffer) ||
+         (!mDrawingState.buffer && stateToCommit.buffer)) &&
+        bufferSurfaceFrame != nullptr &&
         bufferSurfaceFrame->getPresentState() != PresentState::Presented) {
         // If the previous buffer was committed but not latched (refreshPending - happens during
         // back to back invalidates), it gets silently dropped here. Mark the corresponding
@@ -1411,15 +1247,21 @@ bool Layer::setFrameRateSelectionPriority(int32_t priority) {
 int32_t Layer::getFrameRateSelectionPriority() const {
     // Check if layer has priority set.
     if (mDrawingState.frameRateSelectionPriority != PRIORITY_UNSET) {
-        return mDrawingState.frameRateSelectionPriority;
+        mPriority = mDrawingState.frameRateSelectionPriority;
+        return mPriority;
     }
     // If not, search whether its parents have it set.
     sp<Layer> parent = getParent();
     if (parent != nullptr) {
-        return parent->getFrameRateSelectionPriority();
+        mPriority = parent->getFrameRateSelectionPriority();
+        return mPriority;
     }
 
     return Layer::PRIORITY_UNSET;
+}
+
+int32_t Layer::getPriority() {
+    return mPriority;
 }
 
 bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
@@ -1683,25 +1525,6 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
     }
 
     return frameRate;
-}
-
-void Layer::deferTransactionUntil_legacy(const sp<Layer>& barrierLayer, uint64_t frameNumber) {
-    ATRACE_CALL();
-
-    mCurrentState.barrierLayer_legacy = barrierLayer;
-    mCurrentState.barrierFrameNumber = frameNumber;
-    // We don't set eTransactionNeeded, because just receiving a deferral
-    // request without any other state updates shouldn't actually induce a delay
-    mCurrentState.modified = true;
-    pushPendingState();
-    mCurrentState.barrierLayer_legacy = nullptr;
-    mCurrentState.barrierFrameNumber = 0;
-    mCurrentState.modified = false;
-}
-
-void Layer::deferTransactionUntil_legacy(const sp<IBinder>& barrierHandle, uint64_t frameNumber) {
-    sp<Handle> handle = static_cast<Handle*>(barrierHandle.get());
-    deferTransactionUntil_legacy(handle->owner.promote(), frameNumber);
 }
 
 // ----------------------------------------------------------------------------
@@ -1972,32 +1795,6 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
     layer->updateTreeHasFrameRateVote();
 
     return removeResult;
-}
-
-void Layer::reparentChildren(const sp<Layer>& newParent) {
-    for (const sp<Layer>& child : mCurrentChildren) {
-        newParent->addChild(child);
-    }
-    mCurrentChildren.clear();
-    updateTreeHasFrameRateVote();
-}
-
-bool Layer::reparentChildren(const sp<IBinder>& newParentHandle) {
-    sp<Handle> handle = nullptr;
-    sp<Layer> newParent = nullptr;
-    if (newParentHandle == nullptr) {
-        return false;
-    }
-    handle = static_cast<Handle*>(newParentHandle.get());
-    newParent = handle->owner.promote();
-    if (newParent == nullptr) {
-        ALOGE("Unable to promote Layer handle");
-        return false;
-    }
-
-    reparentChildren(newParent);
-
-    return true;
 }
 
 void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
@@ -2315,8 +2112,13 @@ int32_t Layer::getBackgroundBlurRadius() const {
     return parentAlpha * getDrawingState().backgroundBlurRadius;
 }
 
-const std::vector<BlurRegion>& Layer::getBlurRegions() const {
-    return getDrawingState().blurRegions;
+const std::vector<BlurRegion> Layer::getBlurRegions() const {
+    auto regionsCopy(getDrawingState().blurRegions);
+    int layerAlpha = getAlpha();
+    for (auto& region : regionsCopy) {
+        region.alpha = region.alpha * layerAlpha;
+    }
+    return regionsCopy;
 }
 
 Layer::RoundedCornerState Layer::getRoundedCornerState() const {
@@ -2338,8 +2140,8 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
         }
     }
     const float radius = getDrawingState().cornerRadius;
-    return radius > 0 && getCrop(getDrawingState()).isValid()
-            ? RoundedCornerState(getCrop(getDrawingState()).toFloatRect(), radius)
+    return radius > 0 && getCroppedBufferSize(getDrawingState()).isValid()
+            ? RoundedCornerState(getCroppedBufferSize(getDrawingState()).toFloatRect(), radius)
             : RoundedCornerState();
 }
 
@@ -2413,14 +2215,6 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
     const ui::Transform transform = getTransform();
 
     if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
-        for (const auto& pendingState : mPendingStatesSnapshot) {
-            auto barrierLayer = pendingState.barrierLayer_legacy.promote();
-            if (barrierLayer != nullptr) {
-                BarrierLayerProto* barrierLayerProto = layerInfo->add_barrier_layer();
-                barrierLayerProto->set_id(barrierLayer->sequence);
-                barrierLayerProto->set_frame_number(pendingState.barrierFrameNumber);
-            }
-        }
 
         auto buffer = getBuffer();
         if (buffer != nullptr) {
@@ -2560,14 +2354,22 @@ bool Layer::isRemovedFromCurrentState() const  {
     return mRemovedFromCurrentState;
 }
 
+ui::Transform Layer::getInputTransform() const {
+    return getTransform();
+}
+
+Rect Layer::getInputBounds() const {
+    return getCroppedBufferSize(getDrawingState());
+}
+
 void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay) {
     // Transform layer size to screen space and inset it by surface insets.
     // If this is a portal window, set the touchableRegion to the layerBounds.
     Rect layerBounds = info.portalToDisplayId == ADISPLAY_ID_NONE
-            ? getBufferSize(getDrawingState())
+            ? getInputBounds()
             : info.touchableRegion.getBounds();
     if (!layerBounds.isValid()) {
-        layerBounds = getCroppedBufferSize(getDrawingState());
+        layerBounds = getInputBounds();
     }
 
     if (!layerBounds.isValid()) {
@@ -2580,7 +2382,7 @@ void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhy
         return;
     }
 
-    ui::Transform layerToDisplay = getTransform();
+    ui::Transform layerToDisplay = getInputTransform();
     // Transform that takes window coordinates to unrotated display coordinates
     ui::Transform t = toPhysicalDisplay * layerToDisplay;
     int32_t xSurfaceInset = info.surfaceInset;
@@ -2890,6 +2692,18 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
             return FrameRateCompatibility::Default;
+    }
+}
+
+scheduler::Seamlessness Layer::FrameRate::convertChangeFrameRateStrategy(int8_t strategy) {
+    switch (strategy) {
+        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS:
+            return Seamlessness::OnlySeamless;
+        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS:
+            return Seamlessness::SeamedAndSeamless;
+        default:
+            LOG_ALWAYS_FATAL("Invalid change frame sate strategy value %d", strategy);
+            return Seamlessness::Default;
     }
 }
 
