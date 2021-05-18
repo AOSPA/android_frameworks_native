@@ -59,8 +59,6 @@ private:
     TracedOrdinal<std::chrono::nanoseconds> mWorkDuration GUARDED_BY(mVsyncMutex);
     std::chrono::nanoseconds mReadyDuration GUARDED_BY(mVsyncMutex);
     bool mEnabled GUARDED_BY(mVsyncMutex) = false;
-    void *mDolphinHandle = nullptr;
-    bool (*mDolphinCheck)(const char* name) = nullptr;
 };
 
 } // namespace android::scheduler

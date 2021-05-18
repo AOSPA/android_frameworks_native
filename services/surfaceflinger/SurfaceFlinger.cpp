@@ -137,7 +137,6 @@
 #include "android-base/strings.h"
 #include <composer_extn_intf.h>
 
-#include "frame_extn_intf.h"
 #include "smomo_interface.h"
 #include "QtiGralloc.h"
 #include "layer_extn_intf.h"
@@ -446,6 +445,45 @@ LayerExtWrapper::~LayerExtWrapper() {
     }
 }
 
+bool DolphinWrapper::init() {
+    bool succeed = false;
+    mDolphinHandle = dlopen("libdolphin.so", RTLD_NOW);
+    if (!mDolphinHandle) {
+        ALOGW("Unable to open libdolphin.so: %s.", dlerror());
+    } else {
+        dolphinInit = (bool (*) ())dlsym(mDolphinHandle, "dolphinInit");
+        dolphinSetVsyncPeriod = (void (*) (nsecs_t)) dlsym(mDolphinHandle,
+                "dolphinSetVsyncPeriod");
+        dolphinTrackBufferIncrement = (void (*) (const char*, int))dlsym(mDolphinHandle,
+                "dolphinTrackBufferIncrement");
+        dolphinTrackBufferDecrement = (void (*) (const char*, int))dlsym(mDolphinHandle,
+                "dolphinTrackBufferDecrement");
+        dolphinTrackVsyncSignal = (void (*) (nsecs_t, nsecs_t, nsecs_t))dlsym(mDolphinHandle,
+                "dolphinTrackVsyncSignal");
+        bool isFunctionsFound = dolphinInit && dolphinSetVsyncPeriod &&
+                                dolphinTrackBufferIncrement && dolphinTrackBufferDecrement &&
+                                dolphinTrackVsyncSignal;
+        if (isFunctionsFound) {
+            dolphinInit();
+            succeed = true;
+        } else {
+            dlclose(mDolphinHandle);
+            dolphinInit = nullptr;
+            dolphinSetVsyncPeriod = nullptr;
+            dolphinTrackBufferIncrement = nullptr;
+            dolphinTrackBufferDecrement = nullptr;
+            dolphinTrackVsyncSignal = nullptr;
+        }
+    }
+    return succeed;
+}
+
+DolphinWrapper::~DolphinWrapper() {
+    if (mDolphinHandle) {
+        dlclose(mDolphinHandle);
+    }
+}
+
 SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
       : mFactory(factory),
         mInterceptor(mFactory.createSurfaceInterceptor()),
@@ -627,57 +665,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     base::SetProperty(KERNEL_IDLE_TIMER_PROP, mKernelIdleTimerEnabled ? "true" : "false");
 
     mRefreshRateOverlaySpinner = property_get_bool("sf.debug.show_refresh_rate_overlay_spinner", 0);
-
-    mDolphinHandle = dlopen("libdolphin.so", RTLD_NOW);
-    if (!mDolphinHandle) {
-        ALOGW("Unable to open libdolphin.so: %s.", dlerror());
-    } else {
-        mDolphinInit = (bool (*) ())dlsym(mDolphinHandle, "dolphinInit");
-        mDolphinMonitor = (bool (*) (int, nsecs_t))dlsym(mDolphinHandle, "dolphinMonitor");
-        mDolphinScaling = (void (*)(int, int))dlsym(mDolphinHandle, "dolphinScaling");
-        mDolphinRefresh = (void (*) ())dlsym(mDolphinHandle, "dolphinRefresh");
-        mDolphinDequeueBuffer = (void (*)(const char *))dlsym(mDolphinHandle,
-                "dolphinDequeueBuffer");
-        mDolphinQueueBuffer = (void (*)(const char *))dlsym(mDolphinHandle,
-                "dolphinQueueBuffer");
-        bool allDolphinSymbolsFound = mDolphinInit && mDolphinMonitor &&
-                mDolphinScaling && mDolphinRefresh && mDolphinDequeueBuffer &&
-                mDolphinQueueBuffer;
-        if (allDolphinSymbolsFound && mDolphinInit()) {
-            mDolphinFuncsEnabled = true;
-        }
-        if (!mDolphinFuncsEnabled)
-            dlclose(mDolphinHandle);
-    }
-
-    mFrameExtnLibHandle = dlopen(EXTENSION_LIBRARY_NAME, RTLD_NOW);
-    if (!mFrameExtnLibHandle) {
-        ALOGE("Unable to open libframeextension.so: %s.", dlerror());
-    } else {
-        mCreateFrameExtnFunc =
-            (bool (*) (composer::FrameExtnIntf**))(dlsym(mFrameExtnLibHandle,
-                                                                CREATE_FRAME_EXTN_INTERFACE));
-        mDestroyFrameExtnFunc =
-            (bool (*) (composer::FrameExtnIntf*))(dlsym(mFrameExtnLibHandle,
-                                                                 DESTROY_FRAME_EXTN_INTERFACE));
-        if (mCreateFrameExtnFunc && mDestroyFrameExtnFunc) {
-            mCreateFrameExtnFunc(&mFrameExtn);
-            if (!mFrameExtn) {
-                ALOGE("Frame Extension Object create failed.");
-                dlclose(mFrameExtnLibHandle);
-            }
-        } else {
-            ALOGE("Can't load libframeextension symbols: %s", dlerror());
-            dlclose(mFrameExtnLibHandle);
-        }
-    }
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
-    if (mDolphinFuncsEnabled)
-        dlclose(mDolphinHandle);
-    if (mFrameExtn)
-        dlclose(mFrameExtnLibHandle);
 }
 
 void SurfaceFlinger::onFirstRef() {
@@ -1281,6 +1271,9 @@ void SurfaceFlinger::setDesiredActiveMode(const ActiveModeInfo& info) {
     ATRACE_CALL();
     auto refreshRate = mRefreshRateConfigs->getRefreshRateFromModeId(info.modeId);
     mVsyncPeriod = refreshRate.getVsyncPeriod();
+    if (mDolphinWrapper.dolphinSetVsyncPeriod) {
+        mDolphinWrapper.dolphinSetVsyncPeriod(mVsyncPeriod);
+    }
     ALOGV("setDesiredActiveConfig(%s)", refreshRate.getName().c_str());
 
     std::lock_guard<std::mutex> lock(mActiveModeLock);
@@ -2113,16 +2106,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
             break;
         }
         case MessageQueue::REFRESH: {
-            if (mFrameExtn) {
-                mRefreshTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
-            }
-            if (mDolphinFuncsEnabled) {
-                mDolphinRefresh();
-            }
             onMessageRefresh();
-            if (mFrameExtn) {
-                mNumIdle = 0;
-            }
             break;
         }
     }
@@ -2223,44 +2207,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         }
     }
 
-    if (mDolphinFuncsEnabled) {
-        int maxQueuedFrames = 0;
-        mDrawingState.traverseInZOrder([&](Layer* layer) {
-            if (layer->hasReadyFrame()) {
-                const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
-                if (layer->shouldPresentNow(expectedPresentTime)) {
-                    int layerQueuedFrames = layer->getQueuedFrameCount();
-                    const auto& drawingState{layer->getDrawingState()};
-                    bool isLayerAvailable = layer->isOpaque(drawingState);
-                    if (!isLayerAvailable) {
-                        int32_t priority = layer->getPriority();
-                        if (layer->isLayerFocusedBasedOnPriority(priority)) {
-                            isLayerAvailable = true;
-                        }
-                    }
-                    if (maxQueuedFrames < layerQueuedFrames &&
-                        isLayerAvailable) {
-                        maxQueuedFrames = layerQueuedFrames;
-                        mNameLayerMax = layer->getName();
-                    }
-                }
-            }
-        });
-        mMaxQueuedFrames = maxQueuedFrames;
-        DisplayStatInfo stats;
-        mScheduler->getDisplayStatInfo(systemTime());
-        if(mDolphinMonitor(maxQueuedFrames, stats.vsyncPeriod)) {
-            signalLayerUpdate();
-            if (mFrameExtn) {
-                mNumIdle++;
-            }
-            return;
-        }
-        if (mFrameExtn) {
-            mNumIdle++;
-        }
-    }
-
     if (mTracingEnabledChanged) {
         mTracingEnabled = mTracing.isEnabled();
         mTracingEnabledChanged = false;
@@ -2323,11 +2269,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         // other messages that were queued us already in the MessageQueue.
         mRefreshPending = true;
         onMessageRefresh();
-    }
-    if (mFrameExtn && mDolphinFuncsEnabled) {
-        if (!refreshNeeded) {
-            mDolphinScaling(mNumIdle, mMaxQueuedFrames);
-        }
     }
 }
 
