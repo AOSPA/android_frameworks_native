@@ -188,9 +188,6 @@ private:
     // It's updated during setConsumerName.
     String8 mConsumerName;
 
-    // Value used to show whether pre-rendering feature is enabled or not
-    bool mPreRendering;
-
 }; // class BufferQueueConsumer
 
 } // namespace android
