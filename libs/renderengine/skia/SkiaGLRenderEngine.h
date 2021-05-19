@@ -98,7 +98,7 @@ private:
     base::unique_fd flush();
     bool waitFence(base::unique_fd fenceFd);
     void initCanvas(SkCanvas* canvas, const DisplaySettings& display);
-    void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
+    void drawShadow(SkCanvas* canvas, const SkRRect& casterRRect,
                     const ShadowSettings& shadowSettings);
     // If requiresLinearEffect is true or the layer has a stretchEffect a new shader is returned.
     // Otherwise it returns the input shader.
@@ -120,14 +120,15 @@ private:
 
     // Identifier used or various mappings of layers to various
     // textures or shaders
-    using LayerId = uint64_t;
+    using GraphicBufferId = uint64_t;
 
     // Number of external holders of ExternalTexture references, per GraphicBuffer ID.
-    std::unordered_map<LayerId, int32_t> mGraphicBufferExternalRefs GUARDED_BY(mRenderingMutex);
-    // Cache of GL textures that we'll store per GraphicBuffer ID, sliced by GPU context.
-    std::unordered_map<LayerId, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
+    std::unordered_map<GraphicBufferId, int32_t> mGraphicBufferExternalRefs
             GUARDED_BY(mRenderingMutex);
-    std::unordered_map<LayerId, std::shared_ptr<AutoBackendTexture::LocalRef>>
+    // Cache of GL textures that we'll store per GraphicBuffer ID, sliced by GPU context.
+    std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
+            GUARDED_BY(mRenderingMutex);
+    std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>>
             mProtectedTextureCache GUARDED_BY(mRenderingMutex);
     std::unordered_map<LinearEffect, sk_sp<SkRuntimeEffect>, LinearEffectHasher> mRuntimeEffects;
 
