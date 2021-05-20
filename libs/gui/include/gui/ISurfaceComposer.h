@@ -341,6 +341,12 @@ public:
     virtual status_t isWideColorDisplay(const sp<IBinder>& token,
                                         bool* outIsWideColorDisplay) const = 0;
 
+    /*
+     * Queries whether the given display has hardware RC or not.
+     * Requires the ACCESS_SURFACE_FLINGER permission.
+     */
+    virtual status_t isDeviceRCSupported(const sp<IBinder>& token,
+                                         bool* isDeviceRCSupported) const = 0;
     /* Registers a listener to stream median luma updates from SurfaceFlinger.
      *
      * The sampling area is bounded by both samplingArea and the given stopLayerHandle
@@ -579,6 +585,7 @@ public:
         GET_DISPLAYED_CONTENT_SAMPLE,
         GET_PROTECTED_CONTENT_SUPPORT,
         IS_WIDE_COLOR_DISPLAY,
+        IS_HARDWARE_RC_DISPLAY,
         GET_DISPLAY_NATIVE_PRIMARIES,
         GET_PHYSICAL_DISPLAY_IDS,
         ADD_REGION_SAMPLING_LISTENER,

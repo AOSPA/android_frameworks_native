@@ -29,6 +29,7 @@
 #include <gui/IProducerListener.h>
 #include <gui/Surface.h>
 #include <utils/Singleton.h>
+#include <string.h>
 
 #include <utils/Trace.h>
 
@@ -157,6 +158,21 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     mBufferItemConsumer->setDefaultBufferSize(mSize.width, mSize.height);
     mBufferItemConsumer->setDefaultBufferFormat(convertBufferFormat(format));
     mBufferItemConsumer->setBlastBufferQueue(this);
+
+    if(strstr(mName.c_str(),"ScreenDecorOverlay") != nullptr){
+       sp<SurfaceComposerClient> client = mSurfaceControl->getClient();
+       if (client != nullptr) {
+           const sp<IBinder> display = client->getInternalDisplayToken();
+           if (display != nullptr) {
+               bool isDeviceRCSupported = false;
+               status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
+               if (!err && isDeviceRCSupported) {
+                   mConsumer->setConsumerUsageBits(GraphicBuffer::USAGE_SW_READ_RARELY |
+                                                   GraphicBuffer::USAGE_SW_WRITE_RARELY);
+                }
+            }
+        }
+    }
 
     mTransformHint = mSurfaceControl->getTransformHint();
     mBufferItemConsumer->setTransformHint(mTransformHint);
