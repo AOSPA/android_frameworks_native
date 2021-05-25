@@ -2182,7 +2182,9 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
         }
     }
 #ifdef PASS_COMPOSITOR_PID
-    mDisplayExtnIntf->SendCompositorPid();
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SendCompositorPid();
+    }
 #endif
 }
 
@@ -8066,11 +8068,13 @@ void SurfaceFlinger::updateDisplayExtension(uint32_t displayId, uint32_t configI
     ALOGV("updateDisplayExtn: Display:%d, Config:%d, Connected:%d", displayId, configId, connected);
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (connected) {
-        mDisplayExtnIntf->RegisterDisplay(displayId);
-        mDisplayExtnIntf->SetActiveConfig(displayId, configId);
-    } else {
-        mDisplayExtnIntf->UnregisterDisplay(displayId);
+    if (mDisplayExtnIntf) {
+        if (connected) {
+            mDisplayExtnIntf->RegisterDisplay(displayId);
+            mDisplayExtnIntf->SetActiveConfig(displayId, configId);
+        } else {
+            mDisplayExtnIntf->UnregisterDisplay(displayId);
+        }
     }
 #endif
 }
@@ -8079,7 +8083,9 @@ void SurfaceFlinger::setDisplayExtnActiveConfig(uint32_t displayId, uint32_t act
     ALOGV("setDisplayExtnActiveConfig: Display:%d, ActiveConfig:%d", displayId, activeConfigId);
 
 #ifdef EARLY_WAKEUP_FEATURE
-    mDisplayExtnIntf->SetActiveConfig(displayId, activeConfigId);
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SetActiveConfig(displayId, activeConfigId);
+    }
 #endif
 }
 
@@ -8090,7 +8096,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8105,7 +8111,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
@@ -8123,7 +8129,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
 void SurfaceFlinger::handlePresentationDisplaysEarlyWakeup(size_t updatingDisplays,
                                                            uint32_t layerStackId) {
     // Filter-out the updating display(s) for early wake-up in Presentation mode.
-    if (mEarlyWakeUpEnabled && mInternalPresentationDisplays) {
+    if (mDisplayExtnIntf && mEarlyWakeUpEnabled && mInternalPresentationDisplays) {
         ATRACE_CALL();
         uint32_t hwcDisplayId;
         bool internalDisplay = false;
@@ -8222,7 +8228,9 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
             bool enable = (mode == hal::PowerMode::ON) || (mode == hal::PowerMode::DOZE);
             ALOGV("setEarlyWakeUpConfig: Display: %d, Enable: %d", hwcDisplayId, enable);
 #ifdef DYNAMIC_EARLY_WAKEUP_CONFIG
-            mDisplayExtnIntf->SetEarlyWakeUpConfig(hwcDisplayId, enable);
+            if (mDisplayExtnIntf) {
+                mDisplayExtnIntf->SetEarlyWakeUpConfig(hwcDisplayId, enable);
+            }
 #endif
         }
     }
@@ -8230,8 +8238,10 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
 
 void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
 #ifdef SMART_DISPLAY_CONFIG
-    bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
-    mScheduler->handleIdleTimeout(isSmartConfig);
+    if (mDisplayExtnIntf) {
+        bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
+        mScheduler->handleIdleTimeout(isSmartConfig);
+    }
 #endif
 }
 
