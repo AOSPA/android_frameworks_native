@@ -2040,6 +2040,12 @@ status_t SurfaceComposerClient::isWideColorDisplay(const sp<IBinder>& display,
                                                                      outIsWideColorDisplay);
 }
 
+status_t SurfaceComposerClient::isDeviceRCSupported(const sp<IBinder>& display,
+                                                    bool* outDeviceRCSupported) {
+    return ComposerService::getComposerService()->isDeviceRCSupported(display,
+                                                                      outDeviceRCSupported);
+}
+
 status_t SurfaceComposerClient::addRegionSamplingListener(
         const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
         const sp<IRegionSamplingListener>& listener) {

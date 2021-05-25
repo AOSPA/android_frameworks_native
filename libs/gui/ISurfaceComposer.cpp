@@ -748,6 +748,25 @@ public:
         return error;
     }
 
+    status_t isDeviceRCSupported(const sp<IBinder>& token,
+                                 bool* outDeviceRCSupported) const override {
+        Parcel data, reply;
+        status_t error = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
+        if (error != NO_ERROR) {
+            return error;
+        }
+        error = data.writeStrongBinder(token);
+        if (error != NO_ERROR) {
+            return error;
+        }
+        error = remote()->transact(BnSurfaceComposer::IS_HARDWARE_RC_DISPLAY, data, &reply);
+        if (error != NO_ERROR) {
+            return error;
+        }
+        error = reply.readBool(outDeviceRCSupported);
+        return error;
+    }
+
     status_t addRegionSamplingListener(const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
                                        const sp<IRegionSamplingListener>& listener) override {
         Parcel data, reply;
@@ -1669,6 +1688,20 @@ status_t BnSurfaceComposer::onTransact(
             }
             bool result;
             error = isWideColorDisplay(display, &result);
+            if (error == NO_ERROR) {
+                reply->writeBool(result);
+            }
+            return error;
+        }
+        case IS_HARDWARE_RC_DISPLAY: {
+            CHECK_INTERFACE(ISurfaceComposer, data, reply);
+            sp<IBinder> display = nullptr;
+            status_t error = data.readStrongBinder(&display);
+            if (error != NO_ERROR) {
+                return error;
+            }
+            bool result;
+            error = isDeviceRCSupported(display, &result);
             if (error == NO_ERROR) {
                 reply->writeBool(result);
             }

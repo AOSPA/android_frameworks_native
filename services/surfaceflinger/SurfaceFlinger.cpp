@@ -1708,6 +1708,35 @@ status_t SurfaceFlinger::isWideColorDisplay(const sp<IBinder>& displayToken,
     return NO_ERROR;
 }
 
+status_t SurfaceFlinger::isDeviceRCSupported(const sp<IBinder>& displayToken,
+                                             bool* outDeviceRCSupported) const {
+    if (!displayToken || !outDeviceRCSupported) {
+        return BAD_VALUE;
+    }
+
+    static bool rc_supported = false;
+    static int read_rc_supported = true;
+    if (read_rc_supported) {
+        read_rc_supported = false;
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+        ::DisplayConfig::ClientInterface *DisplayConfigIntf = nullptr;
+        ::DisplayConfig::ClientInterface::Create("SurfaceFlinger::Layer" + std::to_string(0),
+              nullptr, &DisplayConfigIntf);
+        if (DisplayConfigIntf) {
+            std::string value = "0";
+            std::string rc_prop = "enable_rc_support";
+            int ret = DisplayConfigIntf->GetDebugProperty(rc_prop, &value);
+            if (!ret && (value == "1")) {
+                DisplayConfigIntf->IsRCSupported(0, &rc_supported);
+            }
+            ::DisplayConfig::ClientInterface::Destroy(DisplayConfigIntf);
+        }
+#endif  // QTI_DISPLAY_CONFIG_ENABLED
+    }
+   *outDeviceRCSupported = rc_supported;
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::enableVSyncInjections(bool enable) {
     schedule([=] {
         Mutex::Autolock lock(mStateLock);
@@ -6185,6 +6214,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_COMPOSITION_PREFERENCE:
         case GET_PROTECTED_CONTENT_SUPPORT:
         case IS_WIDE_COLOR_DISPLAY:
+        case IS_HARDWARE_RC_DISPLAY:
         // setFrameRate() is deliberately available for apps to call without any
         // special permissions.
         case SET_FRAME_RATE:
