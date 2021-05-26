@@ -52,12 +52,10 @@ public:
      */
     [[nodiscard]] bool setupUnixDomainClient(const char* path);
 
-#ifdef __BIONIC__
     /**
      * Connects to an RPC server at the CVD & port.
      */
     [[nodiscard]] bool setupVsockClient(unsigned int cvd, unsigned int port);
-#endif // __BIONIC__
 
     /**
      * Connects to an RPC server at the given address and port.
@@ -83,7 +81,7 @@ public:
      * Query the other side of the session for the maximum number of threads
      * it supports (maximum number of concurrent non-nested synchronous transactions)
      */
-    status_t getMaxThreads(size_t* maxThreads);
+    status_t getRemoteMaxThreads(size_t* maxThreads);
 
     [[nodiscard]] status_t transact(const RpcAddress& address, uint32_t code, const Parcel& data,
                                     Parcel* reply, uint32_t flags);
@@ -116,8 +114,8 @@ private:
 
     status_t readId();
 
-    void startThread(base::unique_fd client);
-    void join(base::unique_fd client);
+    void join(std::thread thread, base::unique_fd client);
+    void terminateLocked();
 
     struct RpcConnection : public RefBase {
         base::unique_fd fd;
@@ -129,7 +127,7 @@ private:
 
     bool setupSocketClient(const RpcSocketAddress& address);
     bool setupOneSocketClient(const RpcSocketAddress& address, int32_t sessionId);
-    void addClient(base::unique_fd fd);
+    void addClientConnection(base::unique_fd fd);
     void setForServer(const wp<RpcServer>& server, int32_t sessionId);
     sp<RpcConnection> assignServerToThisThread(base::unique_fd fd);
     bool removeServerConnection(const sp<RpcConnection>& connection);
@@ -162,13 +160,13 @@ private:
         bool mReentrant = false;
     };
 
-    // On the other side of a session, for each of mClients here, there should
-    // be one of mServers on the other side (and vice versa).
+    // On the other side of a session, for each of mClientConnections here, there should
+    // be one of mServerConnections on the other side (and vice versa).
     //
     // For the simplest session, a single server with one client, you would
     // have:
-    //  - the server has a single 'mServers' and a thread listening on this
-    //  - the client has a single 'mClients' and makes calls to this
+    //  - the server has a single 'mServerConnections' and a thread listening on this
+    //  - the client has a single 'mClientConnections' and makes calls to this
     //  - here, when the client makes a call, the server can call back into it
     //    (nested calls), but outside of this, the client will only ever read
     //    calls from the server when it makes a call itself.
@@ -187,15 +185,17 @@ private:
 
     std::condition_variable mAvailableConnectionCv; // for mWaitingThreads
     size_t mWaitingThreads = 0;
-    size_t mClientsOffset = 0; // hint index into clients, ++ when sending an async transaction
-    std::vector<sp<RpcConnection>> mClients;
-    std::vector<sp<RpcConnection>> mServers;
+    // hint index into clients, ++ when sending an async transaction
+    size_t mClientConnectionsOffset = 0;
+    std::vector<sp<RpcConnection>> mClientConnections;
+    std::vector<sp<RpcConnection>> mServerConnections;
 
     // TODO(b/185167543): use for reverse sessions (allow client to also
     // serve calls on a session).
     // TODO(b/185167543): allow sharing between different sessions in a
-    // process? (or combine with mServers)
+    // process? (or combine with mServerConnections)
     std::map<std::thread::id, std::thread> mThreads;
+    bool mTerminated = false;
 };
 
 } // namespace android
