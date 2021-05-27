@@ -1024,21 +1024,32 @@ void SurfaceFlinger::init() {
             ALOGI("Unable to create display extension");
         }
 
+    }
+    startUnifiedDraw();
+    ALOGV("Done initializing");
+}
+
+void SurfaceFlinger::startUnifiedDraw() {
 #ifdef QTI_UNIFIED_DRAW
-        const auto id = HalDisplayId::tryCast(display->getId());
-        if (mDisplayExtnIntf && id) {
-            uint32_t hwcDisplayId;
-            if (!getHwcDisplayId(display, &hwcDisplayId)) {
-               return;
-            }
-            if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
-                getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+    if (mDisplayExtnIntf) {
+        // Displays hotplugged at this point.
+        for (const auto& display : mDisplaysList) {
+            const auto id = HalDisplayId::tryCast(display->getId());
+            if (id) {
+                uint32_t hwcDisplayId;
+                if (!getHwcDisplayId(display, &hwcDisplayId)) {
+                   continue;
+                }
+                ALOGI("calling TryUnifiedDraw for display=%u", hwcDisplayId);
+                if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
+                    ALOGI("Calling tryDrawMethod for display=%u", hwcDisplayId);
+                    getHwComposer().tryDrawMethod(*id,
+                      IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+                }
             }
         }
-#endif
-
     }
-    ALOGV("Done initializing");
+#endif
 }
 
 void SurfaceFlinger::readPersistentProperties() {
