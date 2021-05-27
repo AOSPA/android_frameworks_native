@@ -24,6 +24,7 @@
 #include <string_view>
 
 #include <binder/Parcel.h>
+#include <binder/RpcServer.h>
 #include <binder/Stability.h>
 #include <utils/String8.h>
 
@@ -48,7 +49,7 @@ RpcSession::~RpcSession() {
     LOG_RPC_DETAIL("RpcSession destroyed %p", this);
 
     std::lock_guard<std::mutex> _l(mMutex);
-    LOG_ALWAYS_FATAL_IF(mServers.size() != 0,
+    LOG_ALWAYS_FATAL_IF(mServerConnections.size() != 0,
                         "Should not be able to destroy a session with servers in use.");
 }
 
@@ -60,13 +61,9 @@ bool RpcSession::setupUnixDomainClient(const char* path) {
     return setupSocketClient(UnixSocketAddress(path));
 }
 
-#ifdef __BIONIC__
-
 bool RpcSession::setupVsockClient(unsigned int cid, unsigned int port) {
     return setupSocketClient(VsockSocketAddress(cid, port));
 }
-
-#endif // __BIONIC__
 
 bool RpcSession::setupInetClient(const char* addr, unsigned int port) {
     auto aiStart = InetSocketAddress::getAddrInfo(addr, port);
@@ -87,7 +84,7 @@ bool RpcSession::addNullDebuggingClient() {
         return false;
     }
 
-    addClient(std::move(serverFd));
+    addClientConnection(std::move(serverFd));
     return true;
 }
 
@@ -96,7 +93,7 @@ sp<IBinder> RpcSession::getRootObject() {
     return state()->getRootObject(connection.fd(), sp<RpcSession>::fromExisting(this));
 }
 
-status_t RpcSession::getMaxThreads(size_t* maxThreads) {
+status_t RpcSession::getRemoteMaxThreads(size_t* maxThreads) {
     ExclusiveConnection connection(sp<RpcSession>::fromExisting(this), ConnectionUse::CLIENT);
     return state()->getMaxThreads(connection.fd(), sp<RpcSession>::fromExisting(this), maxThreads);
 }
@@ -134,22 +131,14 @@ status_t RpcSession::readId() {
     return OK;
 }
 
-void RpcSession::startThread(unique_fd client) {
-    std::lock_guard<std::mutex> _l(mMutex);
-    sp<RpcSession> holdThis = sp<RpcSession>::fromExisting(this);
-    int fd = client.release();
-    auto thread = std::thread([=] {
-        holdThis->join(unique_fd(fd));
-        {
-            std::lock_guard<std::mutex> _l(holdThis->mMutex);
-            size_t erased = mThreads.erase(std::this_thread::get_id());
-            LOG_ALWAYS_FATAL_IF(erased != 0, "Could not erase thread.");
-        }
-    });
-    mThreads[thread.get_id()] = std::move(thread);
-}
+void RpcSession::join(std::thread thread, unique_fd client) {
+    LOG_ALWAYS_FATAL_IF(thread.get_id() != std::this_thread::get_id(), "Must own this thread");
 
-void RpcSession::join(unique_fd client) {
+    {
+        std::lock_guard<std::mutex> _l(mMutex);
+        mThreads[thread.get_id()] = std::move(thread);
+    }
+
     // must be registered to allow arbitrary client code executing commands to
     // be able to do nested calls (we can't only read from it)
     sp<RpcConnection> connection = assignServerToThisThread(std::move(client));
@@ -166,6 +155,30 @@ void RpcSession::join(unique_fd client) {
 
     LOG_ALWAYS_FATAL_IF(!removeServerConnection(connection),
                         "bad state: connection object guaranteed to be in list");
+
+    {
+        std::lock_guard<std::mutex> _l(mMutex);
+        auto it = mThreads.find(std::this_thread::get_id());
+        LOG_ALWAYS_FATAL_IF(it == mThreads.end());
+        it->second.detach();
+        mThreads.erase(it);
+    }
+}
+
+void RpcSession::terminateLocked() {
+    // TODO(b/185167543):
+    // - kindly notify other side of the connection of termination (can't be
+    // locked)
+    // - prevent new client/servers from being added
+    // - stop all threads which are currently reading/writing
+    // - terminate RpcState?
+
+    if (mTerminated) return;
+
+    sp<RpcServer> server = mForServer.promote();
+    if (server) {
+        server->onSessionTerminating(sp<RpcSession>::fromExisting(this));
+    }
 }
 
 wp<RpcServer> RpcSession::server() {
@@ -175,9 +188,9 @@ wp<RpcServer> RpcSession::server() {
 bool RpcSession::setupSocketClient(const RpcSocketAddress& addr) {
     {
         std::lock_guard<std::mutex> _l(mMutex);
-        LOG_ALWAYS_FATAL_IF(mClients.size() != 0,
+        LOG_ALWAYS_FATAL_IF(mClientConnections.size() != 0,
                             "Must only setup session once, but already has %zu clients",
-                            mClients.size());
+                            mClientConnections.size());
     }
 
     if (!setupOneSocketClient(addr, RPC_SESSION_ID_NEW)) return false;
@@ -186,7 +199,7 @@ bool RpcSession::setupSocketClient(const RpcSocketAddress& addr) {
     // instead of all at once.
     // TODO(b/186470974): first risk of blocking
     size_t numThreadsAvailable;
-    if (status_t status = getMaxThreads(&numThreadsAvailable); status != OK) {
+    if (status_t status = getRemoteMaxThreads(&numThreadsAvailable); status != OK) {
         ALOGE("Could not get max threads after initial session to %s: %s", addr.toString().c_str(),
               statusToString(status).c_str());
         return false;
@@ -200,49 +213,59 @@ bool RpcSession::setupSocketClient(const RpcSocketAddress& addr) {
 
     // we've already setup one client
     for (size_t i = 0; i + 1 < numThreadsAvailable; i++) {
-        // TODO(b/185167543): avoid race w/ accept4 not being called on server
-        for (size_t tries = 0; tries < 5; tries++) {
-            if (setupOneSocketClient(addr, mId.value())) break;
-            usleep(10000);
-        }
+        // TODO(b/185167543): shutdown existing connections?
+        if (!setupOneSocketClient(addr, mId.value())) return false;
     }
 
     return true;
 }
 
 bool RpcSession::setupOneSocketClient(const RpcSocketAddress& addr, int32_t id) {
-    unique_fd serverFd(
-            TEMP_FAILURE_RETRY(socket(addr.addr()->sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0)));
-    if (serverFd == -1) {
-        int savedErrno = errno;
-        ALOGE("Could not create socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));
-        return false;
+    for (size_t tries = 0; tries < 5; tries++) {
+        if (tries > 0) usleep(10000);
+
+        unique_fd serverFd(
+                TEMP_FAILURE_RETRY(socket(addr.addr()->sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0)));
+        if (serverFd == -1) {
+            int savedErrno = errno;
+            ALOGE("Could not create socket at %s: %s", addr.toString().c_str(),
+                  strerror(savedErrno));
+            return false;
+        }
+
+        if (0 != TEMP_FAILURE_RETRY(connect(serverFd.get(), addr.addr(), addr.addrSize()))) {
+            if (errno == ECONNRESET) {
+                ALOGW("Connection reset on %s", addr.toString().c_str());
+                continue;
+            }
+            int savedErrno = errno;
+            ALOGE("Could not connect socket at %s: %s", addr.toString().c_str(),
+                  strerror(savedErrno));
+            return false;
+        }
+
+        if (sizeof(id) != TEMP_FAILURE_RETRY(write(serverFd.get(), &id, sizeof(id)))) {
+            int savedErrno = errno;
+            ALOGE("Could not write id to socket at %s: %s", addr.toString().c_str(),
+                  strerror(savedErrno));
+            return false;
+        }
+
+        LOG_RPC_DETAIL("Socket at %s client with fd %d", addr.toString().c_str(), serverFd.get());
+
+        addClientConnection(std::move(serverFd));
+        return true;
     }
 
-    if (0 != TEMP_FAILURE_RETRY(connect(serverFd.get(), addr.addr(), addr.addrSize()))) {
-        int savedErrno = errno;
-        ALOGE("Could not connect socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));
-        return false;
-    }
-
-    if (sizeof(id) != TEMP_FAILURE_RETRY(write(serverFd.get(), &id, sizeof(id)))) {
-        int savedErrno = errno;
-        ALOGE("Could not write id to socket at %s: %s", addr.toString().c_str(),
-              strerror(savedErrno));
-        return false;
-    }
-
-    LOG_RPC_DETAIL("Socket at %s client with fd %d", addr.toString().c_str(), serverFd.get());
-
-    addClient(std::move(serverFd));
-    return true;
+    ALOGE("Ran out of retries to connect to %s", addr.toString().c_str());
+    return false;
 }
 
-void RpcSession::addClient(unique_fd fd) {
+void RpcSession::addClientConnection(unique_fd fd) {
     std::lock_guard<std::mutex> _l(mMutex);
     sp<RpcConnection> session = sp<RpcConnection>::make();
     session->fd = std::move(fd);
-    mClients.push_back(session);
+    mClientConnections.push_back(session);
 }
 
 void RpcSession::setForServer(const wp<RpcServer>& server, int32_t sessionId) {
@@ -255,15 +278,19 @@ sp<RpcSession::RpcConnection> RpcSession::assignServerToThisThread(unique_fd fd)
     sp<RpcConnection> session = sp<RpcConnection>::make();
     session->fd = std::move(fd);
     session->exclusiveTid = gettid();
-    mServers.push_back(session);
+    mServerConnections.push_back(session);
 
     return session;
 }
 
 bool RpcSession::removeServerConnection(const sp<RpcConnection>& connection) {
     std::lock_guard<std::mutex> _l(mMutex);
-    if (auto it = std::find(mServers.begin(), mServers.end(), connection); it != mServers.end()) {
-        mServers.erase(it);
+    if (auto it = std::find(mServerConnections.begin(), mServerConnections.end(), connection);
+        it != mServerConnections.end()) {
+        mServerConnections.erase(it);
+        if (mServerConnections.size() == 0) {
+            terminateLocked();
+        }
         return true;
     }
     return false;
@@ -283,10 +310,11 @@ RpcSession::ExclusiveConnection::ExclusiveConnection(const sp<RpcSession>& sessi
         // CHECK FOR DEDICATED CLIENT SOCKET
         //
         // A server/looper should always use a dedicated session if available
-        findConnection(tid, &exclusive, &available, mSession->mClients, mSession->mClientsOffset);
+        findConnection(tid, &exclusive, &available, mSession->mClientConnections,
+                       mSession->mClientConnectionsOffset);
 
         // WARNING: this assumes a server cannot request its client to send
-        // a transaction, as mServers is excluded below.
+        // a transaction, as mServerConnections is excluded below.
         //
         // Imagine we have more than one thread in play, and a single thread
         // sends a synchronous, then an asynchronous command. Imagine the
@@ -296,7 +324,8 @@ RpcSession::ExclusiveConnection::ExclusiveConnection(const sp<RpcSession>& sessi
         // command. So, we move to considering the second available thread
         // for subsequent calls.
         if (use == ConnectionUse::CLIENT_ASYNC && (exclusive != nullptr || available != nullptr)) {
-            mSession->mClientsOffset = (mSession->mClientsOffset + 1) % mSession->mClients.size();
+            mSession->mClientConnectionsOffset =
+                    (mSession->mClientConnectionsOffset + 1) % mSession->mClientConnections.size();
         }
 
         // USE SERVING SOCKET (for nested transaction)
@@ -304,7 +333,7 @@ RpcSession::ExclusiveConnection::ExclusiveConnection(const sp<RpcSession>& sessi
         // asynchronous calls cannot be nested
         if (use != ConnectionUse::CLIENT_ASYNC) {
             // server connections are always assigned to a thread
-            findConnection(tid, &exclusive, nullptr /*available*/, mSession->mServers,
+            findConnection(tid, &exclusive, nullptr /*available*/, mSession->mServerConnections,
                            0 /* index hint */);
         }
 
@@ -320,13 +349,13 @@ RpcSession::ExclusiveConnection::ExclusiveConnection(const sp<RpcSession>& sessi
         }
 
         // in regular binder, this would usually be a deadlock :)
-        LOG_ALWAYS_FATAL_IF(mSession->mClients.size() == 0,
+        LOG_ALWAYS_FATAL_IF(mSession->mClientConnections.size() == 0,
                             "Not a client of any session. You must create a session to an "
                             "RPC server to make any non-nested (e.g. oneway or on another thread) "
                             "calls.");
 
         LOG_RPC_DETAIL("No available session (have %zu clients and %zu servers). Waiting...",
-                       mSession->mClients.size(), mSession->mServers.size());
+                       mSession->mClientConnections.size(), mSession->mServerConnections.size());
         mSession->mAvailableConnectionCv.wait(_l);
     }
     mSession->mWaitingThreads--;
