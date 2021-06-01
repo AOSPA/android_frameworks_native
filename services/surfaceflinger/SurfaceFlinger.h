@@ -897,6 +897,8 @@ private:
     // the Composer HAL for presentation
     void onMessageRefresh();
 
+    // Check if unified draw supported
+    void startUnifiedDraw();
     void beginDraw(const sp<DisplayDevice>& displayDevice);
     void endDraw();
 
