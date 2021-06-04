@@ -23,7 +23,6 @@
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "SurfaceFlinger.h"
-#include "TraceUtils.h"
 
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
@@ -62,6 +61,7 @@
 #include <gui/LayerMetadata.h>
 #include <gui/LayerState.h>
 #include <gui/Surface.h>
+#include <gui/TraceUtils.h>
 #include <hidl/ServiceManagement.h>
 #include <layerproto/LayerProtoParser.h>
 #include <log/log.h>
@@ -136,6 +136,7 @@
 #include "SurfaceFlingerProperties.h"
 #include "SurfaceInterceptor.h"
 #include "TimeStats/TimeStats.h"
+#include "TunnelModeEnabledReporter.h"
 #include "android-base/parseint.h"
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
@@ -325,6 +326,8 @@ const String16 sRotateSurfaceFlinger("android.permission.ROTATE_SURFACE_FLINGER"
 const String16 sReadFramebuffer("android.permission.READ_FRAME_BUFFER");
 const String16 sControlDisplayBrightness("android.permission.CONTROL_DISPLAY_BRIGHTNESS");
 const String16 sDump("android.permission.DUMP");
+const String16 sCaptureBlackoutContent("android.permission.CAPTURE_BLACKOUT_CONTENT");
+
 const char* KERNEL_IDLE_TIMER_PROP = "graphics.display.kernel_idle_timer.enabled";
 
 // ---------------------------------------------------------------------------
@@ -344,6 +347,7 @@ ui::PixelFormat SurfaceFlinger::defaultCompositionPixelFormat = ui::PixelFormat:
 Dataspace SurfaceFlinger::wideColorGamutCompositionDataspace = Dataspace::V0_SRGB;
 ui::PixelFormat SurfaceFlinger::wideColorGamutCompositionPixelFormat = ui::PixelFormat::RGBA_8888;
 bool SurfaceFlinger::useFrameRateApi;
+bool SurfaceFlinger::enableSdrDimming;
 bool SurfaceFlinger::sDirectStreaming;
 
 #ifdef AIDL_DISPLAY_CONFIG_ENABLED
@@ -546,6 +550,12 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mColorSpaceAgnosticDataspace =
             static_cast<ui::Dataspace>(color_space_agnostic_dataspace(Dataspace::UNKNOWN));
 
+    mLayerCachingEnabled = [] {
+        const bool enable =
+                android::sysprop::SurfaceFlingerProperties::enable_layer_caching().value_or(false);
+        return base::GetBoolProperty(std::string("debug.sf.enable_layer_caching"), enable);
+    }();
+
     useContextPriority = use_context_priority(true);
 
     using Values = SurfaceFlingerProperties::primary_display_orientation_values;
@@ -675,6 +685,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     base::SetProperty(KERNEL_IDLE_TIMER_PROP, mKernelIdleTimerEnabled ? "true" : "false");
 
     mRefreshRateOverlaySpinner = property_get_bool("sf.debug.show_refresh_rate_overlay_spinner", 0);
+
+    // Debug property overrides ro. property
+    enableSdrDimming = property_get_bool("debug.sf.enable_sdr_dimming", enable_sdr_dimming(false));
 
 #ifdef AIDL_DISPLAY_CONFIG_ENABLED
     ndk::SpAIBinder binder(
@@ -1091,11 +1104,6 @@ void SurfaceFlinger::readPersistentProperties() {
 
     property_get("persist.sys.sf.color_mode", value, "0");
     mForceColorMode = static_cast<ColorMode>(atoi(value));
-
-    property_get("persist.sys.sf.disable_blurs", value, "0");
-    bool disableBlurs = atoi(value);
-    mDisableBlurs = disableBlurs;
-    ALOGI_IF(disableBlurs, "Disabling blur effects, user preference.");
 }
 
 void SurfaceFlinger::startBootAnim() {
@@ -1866,6 +1874,26 @@ status_t SurfaceFlinger::removeFpsListener(const sp<gui::IFpsListener>& listener
     return NO_ERROR;
 }
 
+status_t SurfaceFlinger::addTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    if (!listener) {
+        return BAD_VALUE;
+    }
+
+    mTunnelModeEnabledReporter->addListener(listener);
+    return NO_ERROR;
+}
+
+status_t SurfaceFlinger::removeTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    if (!listener) {
+        return BAD_VALUE;
+    }
+
+    mTunnelModeEnabledReporter->removeListener(listener);
+    return NO_ERROR;
+}
+
 status_t SurfaceFlinger::getDisplayBrightnessSupport(const sp<IBinder>& displayToken,
                                                      bool* outSupport) const {
     if (!displayToken || !outSupport) {
@@ -1890,8 +1918,13 @@ status_t SurfaceFlinger::setDisplayBrightness(const sp<IBinder>& displayToken,
     }
 
     return ftl::chain(schedule([=]() MAIN_THREAD {
-               if (const auto displayId = getPhysicalDisplayIdLocked(displayToken)) {
-                   return getHwComposer().setDisplayBrightness(*displayId,
+               if (const auto display = getDisplayDeviceLocked(displayToken)) {
+                   if (enableSdrDimming) {
+                       display->getCompositionDisplay()
+                               ->setDisplayBrightness(brightness.sdrWhitePointNits,
+                                                      brightness.displayBrightnessNits);
+                   }
+                   return getHwComposer().setDisplayBrightness(display->getPhysicalId(),
                                                                brightness.displayBrightness);
                } else {
                    ALOGE("%s: Invalid display token %p", __FUNCTION__, displayToken.get());
@@ -2152,11 +2185,11 @@ void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
 }
 
 SurfaceFlinger::FenceWithFenceTime SurfaceFlinger::previousFrameFence() {
-    // We are storing the last 2 present fences. If sf's phase offset is to be
-    // woken up before the actual vsync but targeting the next vsync, we need to check
-    // fence N-2
-    return mVsyncModulator->getVsyncConfig().sfOffset >= 0 ? mPreviousPresentFences[0]
-                                                           : mPreviousPresentFences[1];
+    const auto now = systemTime();
+    const auto vsyncPeriod = mScheduler->getDisplayStatInfo(now).vsyncPeriod;
+    const bool expectedPresentTimeIsTheNextVsync = mExpectedPresentTime - now <= vsyncPeriod;
+    return expectedPresentTimeIsTheNextVsync ? mPreviousPresentFences[0]
+                                             : mPreviousPresentFences[1];
 }
 
 bool SurfaceFlinger::previousFramePending(int graceTimeMs) {
@@ -2391,6 +2424,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
         mRefreshPending = true;
         onMessageRefresh();
     }
+    notifyRegionSamplingThread();
 }
 
 bool SurfaceFlinger::handleMessageTransaction() {
@@ -2753,6 +2787,10 @@ void SurfaceFlinger::postComposition() {
         if (mFpsReporter) {
             mFpsReporter->dispatchLayerFps();
         }
+
+        if (mTunnelModeEnabledReporter) {
+            mTunnelModeEnabledReporter->updateTunnelModeStatus();
+        }
         hdrInfoListeners.reserve(mHdrLayerInfoListeners.size());
         for (auto& [key, value] : mHdrLayerInfoListeners) {
             if (value && value->hasListeners()) {
@@ -2770,20 +2808,10 @@ void SurfaceFlinger::postComposition() {
         mDrawingState.traverse([&, compositionDisplay = compositionDisplay](Layer* layer) {
             if (layer->isVisible() &&
                 compositionDisplay->belongsInOutput(layer->getCompositionEngineLayerFE())) {
-                bool isHdr = false;
-                switch (layer->getDataSpace()) {
-                    case ui::Dataspace::BT2020:
-                    case ui::Dataspace::BT2020_HLG:
-                    case ui::Dataspace::BT2020_PQ:
-                    case ui::Dataspace::BT2020_ITU:
-                    case ui::Dataspace::BT2020_ITU_HLG:
-                    case ui::Dataspace::BT2020_ITU_PQ:
-                        isHdr = true;
-                        break;
-                    default:
-                        isHdr = false;
-                        break;
-                }
+                const Dataspace transfer =
+                        static_cast<Dataspace>(layer->getDataSpace() & Dataspace::TRANSFER_MASK);
+                const bool isHdr = (transfer == Dataspace::TRANSFER_ST2084 ||
+                                    transfer == Dataspace::TRANSFER_HLG);
 
                 if (isHdr) {
                     info.numberOfHdrLayers++;
@@ -2885,10 +2913,6 @@ void SurfaceFlinger::postComposition() {
             mTexturePool.resize(mTexturePoolSize);
             ATRACE_INT("TexturePoolSize", mTexturePool.size());
         }
-    }
-
-    if (mLumaSampling && mRegionSamplingThread) {
-        mRegionSamplingThread->notifyNewContent();
     }
 
     if (mSplitLayerExt && mLayerExt) {
@@ -3363,6 +3387,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     builder.setGpuVirtualDisplayIdGenerator(mGpuVirtualDisplayIdGenerator);
     builder.setName(state.displayName);
     const auto compositionDisplay = getCompositionEngine().createDisplay(builder.build());
+    compositionDisplay->setLayerCachingEnabled(mLayerCachingEnabled);
 
     sp<compositionengine::DisplaySurface> displaySurface;
     sp<IGraphicBufferProducer> producer;
@@ -3858,9 +3883,9 @@ void SurfaceFlinger::initScheduler(const DisplayDeviceState& displayState) {
                            configs.late.sfWorkDuration);
 
     mRegionSamplingThread =
-            new RegionSamplingThread(*this, *mScheduler,
-                                     RegionSamplingThread::EnvironmentTimingTunables());
+            new RegionSamplingThread(*this, RegionSamplingThread::EnvironmentTimingTunables());
     mFpsReporter = new FpsReporter(*mFrameTimeline, *this);
+    mTunnelModeEnabledReporter = new TunnelModeEnabledReporter(*this);
     // Dispatch a mode change request for the primary display on scheduler
     // initialization, so that the EventThreads always contain a reference to a
     // prior configuration.
@@ -4780,7 +4805,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(
         if (layer->setCornerRadius(s.cornerRadius))
             flags |= eTraversalNeeded;
     }
-    if (what & layer_state_t::eBackgroundBlurRadiusChanged && !mDisableBlurs && mSupportsBlur) {
+    if (what & layer_state_t::eBackgroundBlurRadiusChanged && mSupportsBlur) {
         if (layer->setBackgroundBlurRadius(s.backgroundBlurRadius)) flags |= eTraversalNeeded;
     }
     if (what & layer_state_t::eBlurRegionsChanged) {
@@ -4845,6 +4870,13 @@ uint32_t SurfaceFlinger::setClientStateLocked(
     std::optional<nsecs_t> dequeueBufferTimestamp;
     if (what & layer_state_t::eMetadataChanged) {
         dequeueBufferTimestamp = s.metadata.getInt64(METADATA_DEQUEUE_TIME);
+        auto gameMode = s.metadata.getInt32(METADATA_GAME_MODE, -1);
+        if (gameMode != -1) {
+            // The transaction will be received on the Task layer and needs to be applied to all
+            // child layers. Child layers that are added at a later point will obtain the game mode
+            // info through addChild().
+            layer->setGameModeForTree(gameMode);
+        }
         if (layer->setMetadata(s.metadata)) flags |= eTraversalNeeded;
     }
     if (what & layer_state_t::eColorSpaceAgnosticChanged) {
@@ -6212,6 +6244,8 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_DISPLAYED_CONTENT_SAMPLING_ATTRIBUTES:
         case SET_DISPLAY_CONTENT_SAMPLING_ENABLED:
         case GET_DISPLAYED_CONTENT_SAMPLE:
+        case ADD_TUNNEL_MODE_ENABLED_LISTENER:
+        case REMOVE_TUNNEL_MODE_ENABLED_LISTENER:
         case NOTIFY_POWER_BOOST:
         case SET_GLOBAL_SHADOW_SETTINGS:
         case ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN: {
@@ -6334,9 +6368,9 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         code == IBinder::SYSPROPS_TRANSACTION) {
         return OK;
     }
-    // Numbers from 1000 to 1039 and 20000 to 20002 are currently used for backdoors. The code
+    // Numbers from 1000 to 1040 and 20000 to 20002 are currently used for backdoors. The code
     // in onTransact verifies that the user is root, and has access to use SF.
-    if ((code >= 1000 && code <= 1039) || (code >= 20000 && code <= 20002)) {
+    if ((code >= 1000 && code <= 1040) || (code >= 20000 && code <= 20002)) {
         ALOGV("Accessing SurfaceFlinger through backdoor code: %u", code);
         return OK;
     }
@@ -6743,6 +6777,45 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 mScheduler->onFrameRateOverridesChanged(mAppConnectionHandle, displayId);
                 return NO_ERROR;
             }
+            // Toggle caching feature
+            // First argument is an int32 - nonzero enables caching and zero disables caching
+            // Second argument is an optional uint64 - if present, then limits enabling/disabling
+            // caching to a particular physical display
+            case 1040: {
+                status_t error =
+                        schedule([&] {
+                            n = data.readInt32();
+                            std::optional<PhysicalDisplayId> inputId = std::nullopt;
+                            if (uint64_t inputDisplayId;
+                                data.readUint64(&inputDisplayId) == NO_ERROR) {
+                                const auto token = getPhysicalDisplayToken(
+                                        static_cast<PhysicalDisplayId>(inputDisplayId));
+                                if (!token) {
+                                    ALOGE("No display with id: %" PRIu64, inputDisplayId);
+                                    return NAME_NOT_FOUND;
+                                }
+
+                                inputId = std::make_optional<PhysicalDisplayId>(inputDisplayId);
+                            }
+                            {
+                                Mutex::Autolock lock(mStateLock);
+                                mLayerCachingEnabled = n != 0;
+                                for (const auto& [_, display] : mDisplays) {
+                                    if (!inputId || *inputId == display->getPhysicalId()) {
+                                        display->enableLayerCaching(mLayerCachingEnabled);
+                                    }
+                                }
+                            }
+                            return OK;
+                        }).get();
+
+                if (error != OK) {
+                    return error;
+                }
+                invalidateHwcGeometry();
+                repaintEverything();
+                return NO_ERROR;
+            }
             case 20000: {
               uint64_t disp = 0;
               hal::PowerMode power_mode = hal::PowerMode::ON;
@@ -7002,6 +7075,14 @@ static Dataspace pickDataspaceFromColorMode(const ColorMode colorMode) {
     }
 }
 
+static bool hasCaptureBlackoutContentPermission() {
+    IPCThreadState* ipc = IPCThreadState::self();
+    const int pid = ipc->getCallingPid();
+    const int uid = ipc->getCallingUid();
+    return uid == AID_GRAPHICS || uid == AID_SYSTEM ||
+            PermissionCache::checkPermission(sCaptureBlackoutContent, pid, uid);
+}
+
 static status_t validateScreenshotPermissions(const CaptureArgs& captureArgs) {
     IPCThreadState* ipc = IPCThreadState::self();
     const int pid = ipc->getCallingPid();
@@ -7172,6 +7253,10 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
     Rect layerStackSpaceRect;
     ui::Dataspace dataspace;
     bool captureSecureLayers;
+
+    // Call this before holding mStateLock to avoid any deadlocking.
+    bool canCaptureBlackoutContent = hasCaptureBlackoutContentPermission();
+
     {
         Mutex::Autolock lock(mStateLock);
 
@@ -7181,9 +7266,8 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
             return NAME_NOT_FOUND;
         }
 
-        const int uid = IPCThreadState::self()->getCallingUid();
-        const bool forSystem = uid == AID_GRAPHICS || uid == AID_SYSTEM;
-        if (!forSystem && parent->getCurrentState().flags & layer_state_t::eLayerSecure) {
+        if (!canCaptureBlackoutContent &&
+            parent->getCurrentState().flags & layer_state_t::eLayerSecure) {
             ALOGW("Attempting to capture secure layer: PERMISSION_DENIED");
             return PERMISSION_DENIED;
         }
@@ -7333,8 +7417,7 @@ status_t SurfaceFlinger::captureScreenCommon(
         return BAD_VALUE;
     }
 
-    const int uid = IPCThreadState::self()->getCallingUid();
-    const bool forSystem = uid == AID_GRAPHICS || uid == AID_SYSTEM;
+    bool canCaptureBlackoutContent = hasCaptureBlackoutContentPermission();
 
     static_cast<void>(schedule([=, renderAreaFuture = std::move(renderAreaFuture)]() mutable {
         if (mRefreshPending) {
@@ -7354,8 +7437,9 @@ status_t SurfaceFlinger::captureScreenCommon(
 
         status_t result = NO_ERROR;
         renderArea->render([&] {
-            result = renderScreenImplLocked(*renderArea, traverseLayers, buffer, forSystem,
-                                            regionSampling, grayscale, captureResults);
+            result = renderScreenImplLocked(*renderArea, traverseLayers, buffer,
+                                            canCaptureBlackoutContent, regionSampling, grayscale,
+                                            captureResults);
         });
 
         captureResults.result = result;
@@ -7367,8 +7451,9 @@ status_t SurfaceFlinger::captureScreenCommon(
 
 status_t SurfaceFlinger::renderScreenImplLocked(
         const RenderArea& renderArea, TraverseLayersFunction traverseLayers,
-        const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool forSystem,
-        bool regionSampling, bool grayscale, ScreenCaptureResults& captureResults) {
+        const std::shared_ptr<renderengine::ExternalTexture>& buffer,
+        bool canCaptureBlackoutContent, bool regionSampling, bool grayscale,
+        ScreenCaptureResults& captureResults) {
     ATRACE_CALL();
 
     traverseLayers([&](Layer* layer) {
@@ -7381,7 +7466,7 @@ status_t SurfaceFlinger::renderScreenImplLocked(
     // We allow the system server to take screenshots of secure layers for
     // use in situations like the Screen-rotation animation and place
     // the impetus on WindowManager to not persist them.
-    if (captureResults.capturedSecureLayers && !forSystem) {
+    if (captureResults.capturedSecureLayers && !canCaptureBlackoutContent) {
         ALOGW("FB is protected: PERMISSION_DENIED");
         return PERMISSION_DENIED;
     }
@@ -7762,13 +7847,17 @@ wp<Layer> SurfaceFlinger::fromHandleLocked(const sp<IBinder>& handle) const {
 
 void SurfaceFlinger::onLayerFirstRef(Layer* layer) {
     mNumLayers++;
-    mScheduler->registerLayer(layer);
+    if (!layer->isRemovedFromCurrentState()) {
+        mScheduler->registerLayer(layer);
+    }
 }
 
 void SurfaceFlinger::onLayerDestroyed(Layer* layer) {
-    mScheduler->deregisterLayer(layer);
     mNumLayers--;
     removeFromOffscreenLayers(layer);
+    if (!layer->isRemovedFromCurrentState()) {
+        mScheduler->deregisterLayer(layer);
+    }
 }
 
 // WARNING: ONLY CALL THIS FROM LAYER DTOR
@@ -8076,6 +8165,18 @@ sp<Layer> SurfaceFlinger::handleLayerCreatedLocked(const sp<IBinder>& handle, bo
     }
 
     return layer;
+}
+
+void SurfaceFlinger::scheduleRegionSamplingThread() {
+    static_cast<void>(schedule([&] { notifyRegionSamplingThread(); }));
+}
+
+void SurfaceFlinger::notifyRegionSamplingThread() {
+    if (!mLumaSampling || !mRegionSamplingThread) {
+        return;
+    }
+
+    mRegionSamplingThread->onCompositionComplete(mEventQueue->nextExpectedInvalidate());
 }
 
 void SurfaceFlinger::setContentFps(uint32_t contentFps) {

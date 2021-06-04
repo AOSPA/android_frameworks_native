@@ -533,16 +533,15 @@ using DisplayCreateOutputLayerTest = FullDisplayImplTestCommon;
 
 TEST_F(DisplayCreateOutputLayerTest, setsHwcLayer) {
     sp<mock::LayerFE> layerFE = new StrictMock<mock::LayerFE>();
-    StrictMock<HWC2::mock::Layer> hwcLayer;
+    auto hwcLayer = std::make_shared<StrictMock<HWC2::mock::Layer>>();
 
     EXPECT_CALL(mHwComposer, createLayer(HalDisplayId(DEFAULT_DISPLAY_ID)))
-            .WillOnce(Return(&hwcLayer));
+            .WillOnce(Return(hwcLayer));
 
     auto outputLayer = mDisplay->createOutputLayer(layerFE);
 
-    EXPECT_EQ(&hwcLayer, outputLayer->getHwcLayer());
+    EXPECT_EQ(hwcLayer.get(), outputLayer->getHwcLayer());
 
-    EXPECT_CALL(mHwComposer, destroyLayer(HalDisplayId(DEFAULT_DISPLAY_ID), &hwcLayer));
     outputLayer.reset();
 }
 
@@ -627,7 +626,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutIfNotAHwcDisplay) {
 TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutOnHwcError) {
     EXPECT_CALL(*mDisplay, anyLayersRequireClientComposition()).WillOnce(Return(false));
     EXPECT_CALL(mHwComposer,
-                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), false, _))
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), false, _, _))
             .WillOnce(Return(INVALID_OPERATION));
 
     mDisplay->chooseCompositionStrategy();
@@ -649,7 +648,8 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperation) {
             .InSequence(s)
             .WillOnce(Return(false));
 
-    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _))
+    EXPECT_CALL(mHwComposer,
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _))
             .WillOnce(Return(NO_ERROR));
     EXPECT_CALL(*mDisplay, allLayersRequireClientComposition()).WillOnce(Return(false));
 
@@ -679,8 +679,9 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperationWithChanges) {
             .InSequence(s)
             .WillOnce(Return(false));
 
-    EXPECT_CALL(mHwComposer, getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _))
-            .WillOnce(DoAll(SetArgPointee<2>(changes), Return(NO_ERROR)));
+    EXPECT_CALL(mHwComposer,
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _))
+            .WillOnce(DoAll(SetArgPointee<3>(changes), Return(NO_ERROR)));
     EXPECT_CALL(*mDisplay, applyChangedTypesToLayers(changes.changedTypes)).Times(1);
     EXPECT_CALL(*mDisplay, applyDisplayRequests(changes.displayRequests)).Times(1);
     EXPECT_CALL(*mDisplay, applyLayerRequestsToLayers(changes.layerRequests)).Times(1);
@@ -867,7 +868,8 @@ TEST_F(DisplayPresentAndGetFrameFencesTest, returnsPresentAndLayerFences) {
     sp<Fence> layer1Fence = new Fence();
     sp<Fence> layer2Fence = new Fence();
 
-    EXPECT_CALL(mHwComposer, presentAndGetReleaseFences(HalDisplayId(DEFAULT_DISPLAY_ID))).Times(1);
+    EXPECT_CALL(mHwComposer, presentAndGetReleaseFences(HalDisplayId(DEFAULT_DISPLAY_ID), _))
+            .Times(1);
     EXPECT_CALL(mHwComposer, getPresentFence(HalDisplayId(DEFAULT_DISPLAY_ID)))
             .WillOnce(Return(presentFence));
     EXPECT_CALL(mHwComposer,
@@ -1039,7 +1041,7 @@ TEST_F(DisplayFunctionalTest, postFramebufferCriticalCallsAreOrdered) {
 
     mDisplay->editState().isEnabled = true;
 
-    EXPECT_CALL(mHwComposer, presentAndGetReleaseFences(_));
+    EXPECT_CALL(mHwComposer, presentAndGetReleaseFences(_, _));
     EXPECT_CALL(*mDisplaySurface, onFrameCommitted());
 
     mDisplay->postFramebuffer();

@@ -120,9 +120,7 @@ public:
     virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) = 0;
 
     // Attempts to create a new layer on this display
-    virtual HWC2::Layer* createLayer(HalDisplayId) = 0;
-    // Destroy a previously created layer
-    virtual void destroyLayer(HalDisplayId, HWC2::Layer*) = 0;
+    virtual std::shared_ptr<HWC2::Layer> createLayer(HalDisplayId) = 0;
 
     // Gets any required composition change requests from the HWC device.
     //
@@ -133,13 +131,15 @@ public:
     // expected.
     virtual status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
+            std::chrono::steady_clock::time_point earliestPresentTime,
             std::optional<DeviceRequestedChanges>* outChanges) = 0;
 
     virtual status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
                                      const sp<GraphicBuffer>& target, ui::Dataspace) = 0;
 
     // Present layers to the display and read releaseFences.
-    virtual status_t presentAndGetReleaseFences(HalDisplayId) = 0;
+    virtual status_t presentAndGetReleaseFences(
+            HalDisplayId, std::chrono::steady_clock::time_point earliestPresentTime) = 0;
 
     // set power mode
     virtual status_t setPowerMode(PhysicalDisplayId, hal::PowerMode) = 0;
@@ -273,19 +273,19 @@ public:
     void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) override;
 
     // Attempts to create a new layer on this display
-    HWC2::Layer* createLayer(HalDisplayId) override;
-    // Destroy a previously created layer
-    void destroyLayer(HalDisplayId, HWC2::Layer*) override;
+    std::shared_ptr<HWC2::Layer> createLayer(HalDisplayId) override;
 
     status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
+            std::chrono::steady_clock::time_point earliestPresentTime,
             std::optional<DeviceRequestedChanges>* outChanges) override;
 
     status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
                              const sp<GraphicBuffer>& target, ui::Dataspace) override;
 
     // Present layers to the display and read releaseFences.
-    status_t presentAndGetReleaseFences(HalDisplayId) override;
+    status_t presentAndGetReleaseFences(
+            HalDisplayId, std::chrono::steady_clock::time_point earliestPresentTime) override;
 
     // set power mode
     status_t setPowerMode(PhysicalDisplayId, hal::PowerMode mode) override;
