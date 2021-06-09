@@ -81,60 +81,60 @@ class Connection;
  */
 class InputDispatcher : public android::InputDispatcherInterface {
 protected:
-    virtual ~InputDispatcher();
+    ~InputDispatcher() override;
 
 public:
     explicit InputDispatcher(const sp<InputDispatcherPolicyInterface>& policy);
 
-    virtual void dump(std::string& dump) override;
-    virtual void monitor() override;
-    virtual bool waitForIdle() override;
-    virtual status_t start() override;
-    virtual status_t stop() override;
+    void dump(std::string& dump) override;
+    void monitor() override;
+    bool waitForIdle() override;
+    status_t start() override;
+    status_t stop() override;
 
-    virtual void notifyConfigurationChanged(const NotifyConfigurationChangedArgs* args) override;
-    virtual void notifyKey(const NotifyKeyArgs* args) override;
-    virtual void notifyMotion(const NotifyMotionArgs* args) override;
-    virtual void notifySwitch(const NotifySwitchArgs* args) override;
-    virtual void notifySensor(const NotifySensorArgs* args) override;
-    virtual void notifyVibratorState(const NotifyVibratorStateArgs* args) override;
-    virtual void notifyDeviceReset(const NotifyDeviceResetArgs* args) override;
-    virtual void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) override;
+    void notifyConfigurationChanged(const NotifyConfigurationChangedArgs* args) override;
+    void notifyKey(const NotifyKeyArgs* args) override;
+    void notifyMotion(const NotifyMotionArgs* args) override;
+    void notifySwitch(const NotifySwitchArgs* args) override;
+    void notifySensor(const NotifySensorArgs* args) override;
+    void notifyVibratorState(const NotifyVibratorStateArgs* args) override;
+    void notifyDeviceReset(const NotifyDeviceResetArgs* args) override;
+    void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) override;
 
-    virtual android::os::InputEventInjectionResult injectInputEvent(
+    android::os::InputEventInjectionResult injectInputEvent(
             const InputEvent* event, int32_t injectorPid, int32_t injectorUid,
             android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
             uint32_t policyFlags) override;
 
-    virtual std::unique_ptr<VerifiedInputEvent> verifyInputEvent(const InputEvent& event) override;
+    std::unique_ptr<VerifiedInputEvent> verifyInputEvent(const InputEvent& event) override;
 
-    virtual void setInputWindows(
-            const std::unordered_map<int32_t, std::vector<sp<InputWindowHandle>>>&
-                    handlesPerDisplay) override;
-    virtual void setFocusedApplication(
+    void setInputWindows(const std::unordered_map<int32_t, std::vector<sp<InputWindowHandle>>>&
+                                 handlesPerDisplay) override;
+    void setFocusedApplication(
             int32_t displayId,
             const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle) override;
-    virtual void setFocusedDisplay(int32_t displayId) override;
-    virtual void setInputDispatchMode(bool enabled, bool frozen) override;
-    virtual void setInputFilterEnabled(bool enabled) override;
-    virtual void setInTouchMode(bool inTouchMode) override;
-    virtual void setMaximumObscuringOpacityForTouch(float opacity) override;
-    virtual void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) override;
+    void setFocusedDisplay(int32_t displayId) override;
+    void setInputDispatchMode(bool enabled, bool frozen) override;
+    void setInputFilterEnabled(bool enabled) override;
+    void setInTouchMode(bool inTouchMode) override;
+    void setMaximumObscuringOpacityForTouch(float opacity) override;
+    void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) override;
 
-    virtual bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
-                                    bool isDragDrop = false) override;
+    bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
+                            bool isDragDrop = false) override;
+    bool transferTouch(const sp<IBinder>& destChannelToken) override;
 
-    virtual base::Result<std::unique_ptr<InputChannel>> createInputChannel(
+    base::Result<std::unique_ptr<InputChannel>> createInputChannel(
             const std::string& name) override;
-    virtual void setFocusedWindow(const FocusRequest&) override;
-    virtual base::Result<std::unique_ptr<InputChannel>> createInputMonitor(int32_t displayId,
-                                                                           bool isGestureMonitor,
-                                                                           const std::string& name,
-                                                                           int32_t pid) override;
-    virtual status_t removeInputChannel(const sp<IBinder>& connectionToken) override;
-    virtual status_t pilferPointers(const sp<IBinder>& token) override;
-    virtual void requestPointerCapture(const sp<IBinder>& windowToken, bool enabled) override;
-    virtual bool flushSensor(int deviceId, InputDeviceSensorType sensorType) override;
+    void setFocusedWindow(const FocusRequest&) override;
+    base::Result<std::unique_ptr<InputChannel>> createInputMonitor(int32_t displayId,
+                                                                   bool isGestureMonitor,
+                                                                   const std::string& name,
+                                                                   int32_t pid) override;
+    status_t removeInputChannel(const sp<IBinder>& connectionToken) override;
+    status_t pilferPointers(const sp<IBinder>& token) override;
+    void requestPointerCapture(const sp<IBinder>& windowToken, bool enabled) override;
+    bool flushSensor(int deviceId, InputDeviceSensorType sensorType) override;
 
     std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
 
@@ -211,9 +211,6 @@ private:
                                                     bool addPortalWindows = false,
                                                     bool ignoreDragWindow = false) REQUIRES(mLock);
 
-    // All registered connections mapped by channel file descriptor.
-    std::unordered_map<int, sp<Connection>> mConnectionsByFd GUARDED_BY(mLock);
-
     sp<Connection> getConnectionLocked(const sp<IBinder>& inputConnectionToken) const
             REQUIRES(mLock);
 
@@ -221,13 +218,14 @@ private:
 
     void removeConnectionLocked(const sp<Connection>& connection) REQUIRES(mLock);
 
-    struct IBinderHash {
-        std::size_t operator()(const sp<IBinder>& b) const {
-            return std::hash<IBinder*>{}(b.get());
-        }
+    template <typename T>
+    struct StrongPointerHash {
+        std::size_t operator()(const sp<T>& b) const { return std::hash<T*>{}(b.get()); }
     };
-    std::unordered_map<sp<IBinder>, std::shared_ptr<InputChannel>, IBinderHash>
-            mInputChannelsByToken GUARDED_BY(mLock);
+
+    // All registered connections mapped by input channel token.
+    std::unordered_map<sp<IBinder>, sp<Connection>, StrongPointerHash<IBinder>> mConnectionsByToken
+            GUARDED_BY(mLock);
 
     // Finds the display ID of the gesture monitor identified by the provided token.
     std::optional<int32_t> findGestureMonitorDisplayByTokenLocked(const sp<IBinder>& token)
@@ -327,10 +325,11 @@ private:
     // to loop through all displays.
     sp<InputWindowHandle> getWindowHandleLocked(const sp<IBinder>& windowHandleToken,
                                                 int displayId) const REQUIRES(mLock);
+    sp<InputWindowHandle> getWindowHandleLocked(const sp<InputWindowHandle>& windowHandle) const
+            REQUIRES(mLock);
     std::shared_ptr<InputChannel> getInputChannelLocked(const sp<IBinder>& windowToken) const
             REQUIRES(mLock);
     sp<InputWindowHandle> getFocusedWindowHandleLocked(int displayId) const REQUIRES(mLock);
-    bool hasWindowHandleLocked(const sp<InputWindowHandle>& windowHandle) const REQUIRES(mLock);
     bool hasResponsiveConnectionLocked(InputWindowHandle& windowHandle) const REQUIRES(mLock);
 
     /*
@@ -371,7 +370,8 @@ private:
     std::string mLastAnrState GUARDED_BY(mLock);
 
     // The connection tokens of the channels that the user last interacted, for debugging
-    std::unordered_set<sp<IBinder>, IBinderHash> mInteractionConnectionTokens GUARDED_BY(mLock);
+    std::unordered_set<sp<IBinder>, StrongPointerHash<IBinder>> mInteractionConnectionTokens
+            GUARDED_BY(mLock);
     void updateInteractionTokensLocked(const EventEntry& entry,
                                        const std::vector<InputTarget>& targets) REQUIRES(mLock);
 
@@ -543,7 +543,7 @@ private:
                                         bool notify) REQUIRES(mLock);
     void drainDispatchQueue(std::deque<DispatchEntry*>& queue);
     void releaseDispatchEntry(DispatchEntry* dispatchEntry);
-    static int handleReceiveCallback(int fd, int events, void* data);
+    int handleReceiveCallback(int events, sp<IBinder> connectionToken);
     // The action sent should only be of type AMOTION_EVENT_*
     void dispatchPointerDownOutsideFocus(uint32_t source, int32_t action,
                                          const sp<IBinder>& newToken) REQUIRES(mLock);

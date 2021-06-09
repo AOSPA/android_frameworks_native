@@ -81,7 +81,7 @@ cc_defaults {
     name: "libsurfaceflinger_defaults",
     defaults: [
         "surfaceflinger_defaults",
-        "skia_deps",
+        "skia_renderengine_deps",
         "libdisplayconfig_defaults",
         "unfieddraw_defaults",
     ],

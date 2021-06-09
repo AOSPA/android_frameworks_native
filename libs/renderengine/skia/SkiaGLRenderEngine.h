@@ -39,6 +39,7 @@
 #include "debug/SkiaCapture.h"
 #include "filters/BlurFilter.h"
 #include "filters/LinearEffect.h"
+#include "filters/StretchShaderFactory.h"
 
 namespace android {
 namespace renderengine {
@@ -87,21 +88,22 @@ private:
                                                          int hwcFormat, Protection protection);
     inline SkRect getSkRect(const FloatRect& layer);
     inline SkRect getSkRect(const Rect& layer);
-    inline SkRRect getRoundedRect(const LayerSettings* layer);
-    inline BlurRegion getBlurRegion(const LayerSettings* layer);
+    inline std::pair<SkRRect, SkRRect> getBoundsAndClip(const LayerSettings* layer);
     inline bool layerHasBlur(const LayerSettings* layer);
     inline SkColor getSkColor(const vec4& color);
     inline SkM44 getSkM44(const mat4& matrix);
     inline SkPoint3 getSkPoint3(const vec3& vector);
+    inline GrDirectContext* getActiveGrContext() const;
 
     base::unique_fd flush();
     bool waitFence(base::unique_fd fenceFd);
     void initCanvas(SkCanvas* canvas, const DisplaySettings& display);
-    void drawShadow(SkCanvas* canvas, const SkRect& casterRect, float casterCornerRadius,
+    void drawShadow(SkCanvas* canvas, const SkRRect& casterRRect,
                     const ShadowSettings& shadowSettings);
     // If requiresLinearEffect is true or the layer has a stretchEffect a new shader is returned.
     // Otherwise it returns the input shader.
-    sk_sp<SkShader> createRuntimeEffectShader(sk_sp<SkShader> shader, const LayerSettings* layer,
+    sk_sp<SkShader> createRuntimeEffectShader(sk_sp<SkShader> shader,
+                                              const LayerSettings* layer,
                                               const DisplaySettings& display,
                                               bool undoPremultipliedAlpha,
                                               bool requiresLinearEffect);
@@ -116,14 +118,21 @@ private:
     const PixelFormat mDefaultPixelFormat;
     const bool mUseColorManagement;
 
+    // Identifier used or various mappings of layers to various
+    // textures or shaders
+    using GraphicBufferId = uint64_t;
+
     // Number of external holders of ExternalTexture references, per GraphicBuffer ID.
-    std::unordered_map<uint64_t, int32_t> mGraphicBufferExternalRefs GUARDED_BY(mRenderingMutex);
-    // Cache of GL textures that we'll store per GraphicBuffer ID, sliced by GPU context.
-    std::unordered_map<uint64_t, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
+    std::unordered_map<GraphicBufferId, int32_t> mGraphicBufferExternalRefs
             GUARDED_BY(mRenderingMutex);
-    std::unordered_map<uint64_t, std::shared_ptr<AutoBackendTexture::LocalRef>>
+    // Cache of GL textures that we'll store per GraphicBuffer ID, sliced by GPU context.
+    std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
+            GUARDED_BY(mRenderingMutex);
+    std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>>
             mProtectedTextureCache GUARDED_BY(mRenderingMutex);
     std::unordered_map<LinearEffect, sk_sp<SkRuntimeEffect>, LinearEffectHasher> mRuntimeEffects;
+
+    StretchShaderFactory mStretchShaderFactory;
     // Mutex guarding rendering operations, so that:
     // 1. GL operations aren't interleaved, and
     // 2. Internal state related to rendering that is potentially modified by

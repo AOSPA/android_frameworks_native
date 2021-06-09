@@ -135,6 +135,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.fixedTransformHint = ui::Transform::ROT_INVALID;
     mCurrentState.frameTimelineInfo = {};
     mCurrentState.postTime = -1;
+    mCurrentState.destinationFrame.makeInvalid();
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
         // Set an invalid color so there is no color fill.
@@ -317,55 +318,6 @@ FloatRect Layer::getBounds(const Region& activeTransparentRegion) const {
     return reduce(mBounds, activeTransparentRegion);
 }
 
-ui::Transform Layer::getBufferScaleTransform() const {
-    // If the layer is not using NATIVE_WINDOW_SCALING_MODE_FREEZE (e.g.
-    // it isFixedSize) then there may be additional scaling not accounted
-    // for in the layer transform.
-    if (!isFixedSize() || getBuffer() == nullptr) {
-        return {};
-    }
-
-    // If the layer is a buffer state layer, the active width and height
-    // could be infinite. In that case, return the effective transform.
-    const uint32_t activeWidth = getActiveWidth(getDrawingState());
-    const uint32_t activeHeight = getActiveHeight(getDrawingState());
-    if (activeWidth >= UINT32_MAX && activeHeight >= UINT32_MAX) {
-        return {};
-    }
-
-    int bufferWidth = getBuffer()->getWidth();
-    int bufferHeight = getBuffer()->getHeight();
-
-    if (getBufferTransform() & NATIVE_WINDOW_TRANSFORM_ROT_90) {
-        std::swap(bufferWidth, bufferHeight);
-    }
-
-    float sx = activeWidth / static_cast<float>(bufferWidth);
-    float sy = activeHeight / static_cast<float>(bufferHeight);
-
-    ui::Transform extraParentScaling;
-    extraParentScaling.set(sx, 0, 0, sy);
-    return extraParentScaling;
-}
-
-ui::Transform Layer::getTransformWithScale(const ui::Transform& bufferScaleTransform) const {
-    // We need to mirror this scaling to child surfaces or we will break the contract where WM can
-    // treat child surfaces as pixels in the parent surface.
-    if (!isFixedSize() || getBuffer() == nullptr) {
-        return mEffectiveTransform;
-    }
-    return mEffectiveTransform * bufferScaleTransform;
-}
-
-FloatRect Layer::getBoundsPreScaling(const ui::Transform& bufferScaleTransform) const {
-    // We need the pre scaled layer bounds when computing child bounds to make sure the child is
-    // cropped to its parent layer after any buffer transform scaling is applied.
-    if (!isFixedSize() || getBuffer() == nullptr) {
-        return mBounds;
-    }
-    return bufferScaleTransform.inverse().transform(mBounds);
-}
-
 void Layer::computeBounds(FloatRect parentBounds, ui::Transform parentTransform,
                           float parentShadowRadius) {
     const State& s(getDrawingState());
@@ -402,11 +354,8 @@ void Layer::computeBounds(FloatRect parentBounds, ui::Transform parentTransform,
     // don't pass it to its children.
     const float childShadowRadius = canDrawShadows() ? 0.f : mEffectiveShadowRadius;
 
-    // Add any buffer scaling to the layer's children.
-    ui::Transform bufferScaleTransform = getBufferScaleTransform();
     for (const sp<Layer>& child : mDrawingChildren) {
-        child->computeBounds(getBoundsPreScaling(bufferScaleTransform),
-                             getTransformWithScale(bufferScaleTransform), childShadowRadius);
+        child->computeBounds(mBounds, mEffectiveTransform, childShadowRadius);
     }
 }
 
@@ -639,8 +588,10 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
     if (!targetSettings.disableBlurs) {
         layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
         layerSettings.blurRegions = getBlurRegions();
+        layerSettings.blurRegionTransform =
+                getActiveTransform(getDrawingState()).inverse().asMatrix4();
     }
-    layerSettings.stretchEffect = getDrawingState().stretchEffect;
+    layerSettings.stretchEffect = getStretchEffect();
     // Record the name of the layer for debugging further down the stack.
     layerSettings.name = getName();
     return layerSettings;
@@ -880,7 +831,12 @@ uint32_t Layer::doTransaction(uint32_t flags) {
     const State& s(getDrawingState());
     State& c(getCurrentState());
 
-    if (getActiveGeometry(c) != getActiveGeometry(s)) {
+    // Translates dest frame into scale and position updates. This helps align geometry calculations
+    // for BufferStateLayer with other layers. This should ideally happen in the client once client
+    // has the display orientation details from WM.
+    updateGeometry();
+
+    if (c.width != s.width || c.height != s.height || !(c.transform == s.transform)) {
         // invalidate and recompute the visible regions if needed
         flags |= Layer::eVisibleRegion;
     }
@@ -955,20 +911,18 @@ uint32_t Layer::setTransactionFlags(uint32_t flags) {
 }
 
 bool Layer::setPosition(float x, float y) {
-    if (mCurrentState.requested_legacy.transform.tx() == x &&
-        mCurrentState.requested_legacy.transform.ty() == y)
-        return false;
+    if (mCurrentState.transform.tx() == x && mCurrentState.transform.ty() == y) return false;
     mCurrentState.sequence++;
 
     // We update the requested and active position simultaneously because
     // we want to apply the position portion of the transform matrix immediately,
     // but still delay scaling when resizing a SCALING_MODE_FREEZE layer.
-    mCurrentState.requested_legacy.transform.set(x, y);
+    mCurrentState.transform.set(x, y);
     // Here we directly update the active state
     // unlike other setters, because we store it within
     // the transform, but use different latching rules.
     // b/38182305
-    mCurrentState.active_legacy.transform.set(x, y);
+    mCurrentState.transform.set(x, y);
 
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -1087,6 +1041,7 @@ bool Layer::setSize(uint32_t w, uint32_t h) {
     setDefaultBufferSize(mCurrentState.requested_legacy.w, mCurrentState.requested_legacy.h);
     return true;
 }
+
 bool Layer::setAlpha(float alpha) {
     if (mCurrentState.color.a == alpha) return false;
     mCurrentState.sequence++;
@@ -1165,8 +1120,7 @@ bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix,
         return false;
     }
     mCurrentState.sequence++;
-    mCurrentState.requested_legacy.transform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx,
-                                                 matrix.dsdy);
+    mCurrentState.transform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
     mCurrentState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -1588,20 +1542,20 @@ LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const {
     info.mVisibleRegion = getVisibleRegion(display);
     info.mSurfaceDamageRegion = surfaceDamageRegion;
     info.mLayerStack = getLayerStack();
-    info.mX = ds.active_legacy.transform.tx();
-    info.mY = ds.active_legacy.transform.ty();
+    info.mX = ds.transform.tx();
+    info.mY = ds.transform.ty();
     info.mZ = ds.z;
-    info.mWidth = ds.active_legacy.w;
-    info.mHeight = ds.active_legacy.h;
+    info.mWidth = ds.width;
+    info.mHeight = ds.height;
     info.mCrop = ds.crop;
     info.mColor = ds.color;
     info.mFlags = ds.flags;
     info.mPixelFormat = getPixelFormat();
     info.mDataSpace = static_cast<android_dataspace>(getDataSpace());
-    info.mMatrix[0][0] = ds.active_legacy.transform[0][0];
-    info.mMatrix[0][1] = ds.active_legacy.transform[0][1];
-    info.mMatrix[1][0] = ds.active_legacy.transform[1][0];
-    info.mMatrix[1][1] = ds.active_legacy.transform[1][1];
+    info.mMatrix[0][0] = ds.transform[0][0];
+    info.mMatrix[0][1] = ds.transform[0][1];
+    info.mMatrix[1][0] = ds.transform[1][0];
+    info.mMatrix[1][1] = ds.transform[1][1];
     {
         sp<const GraphicBuffer> buffer = getBuffer();
         if (buffer != 0) {
@@ -1800,8 +1754,7 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
 void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
     for (const sp<Layer>& child : mDrawingChildren) {
         child->mDrawingParent = newParent;
-        child->computeBounds(newParent->mBounds,
-                             newParent->getTransformWithScale(newParent->getBufferScaleTransform()),
+        child->computeBounds(newParent->mBounds, newParent->mEffectiveTransform,
                              newParent->mEffectiveShadowRadius);
     }
 }
@@ -2479,6 +2432,8 @@ InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     ui::Transform toPhysicalDisplay;
     if (display) {
         toPhysicalDisplay = display->getTransform();
+        info.displayWidth = display->getWidth();
+        info.displayHeight = display->getHeight();
     }
     fillInputFrameInfo(info, toPhysicalDisplay);
 

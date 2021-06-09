@@ -92,11 +92,6 @@ struct TimelineItem {
     bool operator!=(const TimelineItem& other) const { return !(*this == other); }
 };
 
-struct TokenManagerPrediction {
-    nsecs_t timestamp = 0;
-    TimelineItem predictions;
-};
-
 struct JankClassificationThresholds {
     // The various thresholds for App and SF. If the actual timestamp falls within the threshold
     // compared to prediction, we treat it as on time.
@@ -334,11 +329,10 @@ private:
 
     void flushTokens(nsecs_t flushTime) REQUIRES(mMutex);
 
-    std::map<int64_t, TokenManagerPrediction> mPredictions GUARDED_BY(mMutex);
+    std::map<int64_t, TimelineItem> mPredictions GUARDED_BY(mMutex);
     int64_t mCurrentToken GUARDED_BY(mMutex);
     mutable std::mutex mMutex;
-    static constexpr nsecs_t kMaxRetentionTime =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(120ms).count();
+    static constexpr size_t kMaxTokens = 500;
 };
 
 class FrameTimeline : public android::frametimeline::FrameTimeline {
@@ -370,7 +364,7 @@ public:
         void onSfWakeUp(int64_t token, Fps refreshRate, std::optional<TimelineItem> predictions,
                         nsecs_t wakeUpTime);
         // Sets the appropriate metadata and classifies the jank.
-        void onPresent(nsecs_t signalTime);
+        void onPresent(nsecs_t signalTime, nsecs_t previousPresentTime);
         // Adds the provided SurfaceFrame to the current display frame.
         void addSurfaceFrame(std::shared_ptr<SurfaceFrame> surfaceFrame);
 
@@ -398,7 +392,8 @@ public:
         void dump(std::string& result, nsecs_t baseTime) const;
         void tracePredictions(pid_t surfaceFlingerPid) const;
         void traceActuals(pid_t surfaceFlingerPid) const;
-        void classifyJank(nsecs_t& deadlineDelta, nsecs_t& deltaToVsync);
+        void classifyJank(nsecs_t& deadlineDelta, nsecs_t& deltaToVsync,
+                          nsecs_t previousPresentTime);
 
         int64_t mToken = FrameTimelineInfo::INVALID_VSYNC_ID;
 
@@ -480,6 +475,7 @@ private:
     uint32_t mMaxDisplayFrames;
     std::shared_ptr<TimeStats> mTimeStats;
     const pid_t mSurfaceFlingerPid;
+    nsecs_t mPreviousPresentTime = 0;
     const JankClassificationThresholds mJankClassificationThresholds;
     static constexpr uint32_t kDefaultMaxDisplayFrames = 64;
     // The initial container size for the vector<SurfaceFrames> inside display frame. Although

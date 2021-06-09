@@ -158,8 +158,12 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine,
     const ui::Dataspace& outputDataspace = outputState.dataspace;
     const ui::Transform::RotationFlags orientation =
             ui::Transform::toRotationFlags(outputState.framebufferSpace.orientation);
+
     renderengine::DisplaySettings displaySettings{
-            .physicalDisplay = Rect(0, 0, mBounds.getWidth(), mBounds.getHeight()),
+            .physicalDisplay = Rect(-mBounds.left + outputState.framebufferSpace.content.left,
+                                    -mBounds.top + outputState.framebufferSpace.content.top,
+                                    -mBounds.left + outputState.framebufferSpace.content.right,
+                                    -mBounds.top + outputState.framebufferSpace.content.bottom),
             .clip = viewport,
             .outputDataspace = outputDataspace,
             .orientation = orientation,
@@ -246,9 +250,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine,
 
     if (result == NO_ERROR) {
         mDrawFence = new Fence(drawFence.release());
-        mOutputSpace = ProjectionSpace(ui::Size(outputState.framebufferSpace.bounds.getWidth(),
-                                                outputState.framebufferSpace.bounds.getHeight()),
-                                       mBounds);
+        mOutputSpace = outputState.framebufferSpace;
         mTexture = std::move(texture);
         mOutputSpace.orientation = outputState.framebufferSpace.orientation;
         mOutputDataspace = outputDataspace;
@@ -304,7 +306,7 @@ void CachedSet::addHolePunchLayerIfFeasible(const CachedSet& holePunchLayer, boo
     }
 }
 
-OutputLayer* CachedSet::getHolePunchLayer() const {
+compositionengine::OutputLayer* CachedSet::getHolePunchLayer() const {
     return mHolePunchLayer ? mHolePunchLayer->getOutputLayer() : nullptr;
 }
 

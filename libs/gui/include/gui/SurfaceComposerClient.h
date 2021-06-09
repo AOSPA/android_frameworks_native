@@ -188,6 +188,9 @@ public:
     // Queries whether a given display is wide color display.
     static status_t isWideColorDisplay(const sp<IBinder>& display, bool* outIsWideColorDisplay);
 
+    // Queries whether a given display has support of Hardware RC.
+    static status_t isDeviceRCSupported(const sp<IBinder>& display, bool* outDeviceRCSupported);
+
     /*
      * Returns whether brightness operations are supported on a display.
      *
@@ -538,9 +541,24 @@ public:
         // transactions from blocking each other.
         Transaction& setApplyToken(const sp<IBinder>& token);
 
-        Transaction& setStretchEffect(const sp<SurfaceControl>& sc, float left, float top,
-                                      float right, float bottom, float vecX, float vecY,
-                                      float maxAmount);
+        /**
+         * Provides the stretch effect configured on a container that the
+         * surface is rendered within.
+         * @param sc target surface the stretch should be applied to
+         * @param stretchEffect the corresponding stretch effect to be applied
+         *    to the surface. This can be directly on the surface itself or
+         *    configured from a parent of the surface in which case the
+         *    StretchEffect provided has parameters mapping the position of
+         *    the surface within the container that has the stretch configured
+         *    on it
+         * @return The transaction being constructed
+         */
+        Transaction& setStretchEffect(const sp<SurfaceControl>& sc,
+                                      const StretchEffect& stretchEffect);
+
+        Transaction& setBufferCrop(const sp<SurfaceControl>& sc, const Rect& bufferCrop);
+        Transaction& setDestinationFrame(const sp<SurfaceControl>& sc,
+                                         const Rect& destinationFrame);
 
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);

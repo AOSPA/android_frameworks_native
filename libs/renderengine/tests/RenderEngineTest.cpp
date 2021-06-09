@@ -263,6 +263,11 @@ public:
         }
     }
 
+    void expectBufferColor(const Point& point, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
+                           uint8_t tolerance = 0) {
+        expectBufferColor(Rect(point.x, point.y, point.x + 1, point.y + 1), r, g, b, a, tolerance);
+    }
+
     void expectBufferColor(const Rect& rect, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
                            uint8_t tolerance = 0) {
         auto colorCompare = [tolerance](const uint8_t* colorA, const uint8_t* colorB) {
@@ -485,6 +490,9 @@ public:
 
     template <typename SourceVariant>
     void fillBufferAndBlurBackground();
+
+    template <typename SourceVariant>
+    void fillSmallLayerAndBlurBackground();
 
     template <typename SourceVariant>
     void overlayCorners();
@@ -966,8 +974,41 @@ void RenderEngineTest::fillBufferAndBlurBackground() {
     if (mRE->supportsBackgroundBlur()) {
         // blurred color (downsampling should result in the center color being close to 128)
         expectBufferColor(Rect(center - 1, center - 5, center + 1, center + 5), 128, 128, 0, 255,
-                          10 /* tolerance */);
+                          50 /* tolerance */);
     }
+}
+
+template <typename SourceVariant>
+void RenderEngineTest::fillSmallLayerAndBlurBackground() {
+    auto blurRadius = 50;
+    renderengine::DisplaySettings settings;
+    settings.outputDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = fullscreenRect();
+
+    std::vector<const renderengine::LayerSettings*> layers;
+
+    renderengine::LayerSettings backgroundLayer;
+    backgroundLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    backgroundLayer.geometry.boundaries = fullscreenRect().toFloatRect();
+    SourceVariant::fillColor(backgroundLayer, 1.0f, 0.0f, 0.0f, this);
+    backgroundLayer.alpha = 1.0f;
+    layers.push_back(&backgroundLayer);
+
+    renderengine::LayerSettings blurLayer;
+    blurLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    blurLayer.geometry.boundaries = FloatRect(0.f, 0.f, 1.f, 1.f);
+    blurLayer.backgroundBlurRadius = blurRadius;
+    SourceVariant::fillColor(blurLayer, 0.0f, 0.0f, 1.0f, this);
+    blurLayer.alpha = 0;
+    layers.push_back(&blurLayer);
+
+    invokeDraw(settings, layers);
+
+    // Give a generous tolerance - the blur rectangle is very small and this test is
+    // mainly concerned with ensuring that there's no device failure.
+    expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT), 255, 0, 0, 255,
+                      40 /* tolerance */);
 }
 
 template <typename SourceVariant>
@@ -1402,10 +1443,14 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_color
     fillBufferColorTransformZeroLayerAlpha<ColorSourceVariant>();
 }
 
-// TODO(b/186010146): reenable once swiftshader is happy with this test
-TEST_P(RenderEngineTest, DISABLED_drawLayers_fillBufferAndBlurBackground_colorSource) {
+TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_colorSource) {
     initializeRenderEngine();
     fillBufferAndBlurBackground<ColorSourceVariant>();
+}
+
+TEST_P(RenderEngineTest, drawLayers_fillSmallLayerAndBlurBackground_colorSource) {
+    initializeRenderEngine();
+    fillSmallLayerAndBlurBackground<ColorSourceVariant>();
 }
 
 TEST_P(RenderEngineTest, drawLayers_overlayCorners_colorSource) {
@@ -1478,10 +1523,14 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_opaqu
     fillBufferColorTransformZeroLayerAlpha<BufferSourceVariant<ForceOpaqueBufferVariant>>();
 }
 
-// TODO(b/186010146): reenable once swiftshader is happy with this test
-TEST_P(RenderEngineTest, DISABLED_drawLayers_fillBufferAndBlurBackground_opaqueBufferSource) {
+TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_opaqueBufferSource) {
     initializeRenderEngine();
     fillBufferAndBlurBackground<BufferSourceVariant<ForceOpaqueBufferVariant>>();
+}
+
+TEST_P(RenderEngineTest, drawLayers_fillSmallLayerAndBlurBackground_opaqueBufferSource) {
+    initializeRenderEngine();
+    fillSmallLayerAndBlurBackground<BufferSourceVariant<ForceOpaqueBufferVariant>>();
 }
 
 TEST_P(RenderEngineTest, drawLayers_overlayCorners_opaqueBufferSource) {
@@ -1554,10 +1603,14 @@ TEST_P(RenderEngineTest, drawLayers_fillBufferColorTransformZeroLayerAlpha_buffe
     fillBufferColorTransformZeroLayerAlpha<BufferSourceVariant<RelaxOpaqueBufferVariant>>();
 }
 
-// TODO(b/186010146): reenable once swiftshader is happy with this test
-TEST_P(RenderEngineTest, DISABLED_drawLayers_fillBufferAndBlurBackground_bufferSource) {
+TEST_P(RenderEngineTest, drawLayers_fillBufferAndBlurBackground_bufferSource) {
     initializeRenderEngine();
     fillBufferAndBlurBackground<BufferSourceVariant<RelaxOpaqueBufferVariant>>();
+}
+
+TEST_P(RenderEngineTest, drawLayers_fillSmallLayerAndBlurBackground_bufferSource) {
+    initializeRenderEngine();
+    fillSmallLayerAndBlurBackground<BufferSourceVariant<RelaxOpaqueBufferVariant>>();
 }
 
 TEST_P(RenderEngineTest, drawLayers_overlayCorners_bufferSource) {
@@ -1837,6 +1890,51 @@ TEST_P(RenderEngineTest, testRoundedCornersCrop) {
     expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH - 1, DEFAULT_DISPLAY_HEIGHT - 1,
                            DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT),
                       0, 255, 0, 255);
+}
+
+TEST_P(RenderEngineTest, testRoundedCornersParentCrop) {
+    initializeRenderEngine();
+
+    renderengine::DisplaySettings settings;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = fullscreenRect();
+    settings.outputDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+
+    std::vector<const renderengine::LayerSettings*> layers;
+
+    renderengine::LayerSettings redLayer;
+    redLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    redLayer.geometry.boundaries = fullscreenRect().toFloatRect();
+    redLayer.geometry.roundedCornersRadius = 5.0f;
+    redLayer.geometry.roundedCornersCrop = fullscreenRect().toFloatRect();
+    // Red background.
+    redLayer.source.solidColor = half3(1.0f, 0.0f, 0.0f);
+    redLayer.alpha = 1.0f;
+
+    layers.push_back(&redLayer);
+
+    // Green layer with 1/2 size with parent crop rect.
+    renderengine::LayerSettings greenLayer = redLayer;
+    greenLayer.geometry.boundaries =
+            FloatRect(0, 0, DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT / 2);
+    greenLayer.source.solidColor = half3(0.0f, 1.0f, 0.0f);
+
+    layers.push_back(&greenLayer);
+
+    invokeDraw(settings, layers);
+
+    // Due to roundedCornersRadius, the corners are untouched.
+    expectBufferColor(Point(0, 0), 0, 0, 0, 0);
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH - 1, 0), 0, 0, 0, 0);
+    expectBufferColor(Point(0, DEFAULT_DISPLAY_HEIGHT - 1), 0, 0, 0, 0);
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH - 1, DEFAULT_DISPLAY_HEIGHT - 1), 0, 0, 0, 0);
+
+    // top middle should be green and the bottom middle red
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH / 2, 0), 0, 255, 0, 255);
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH / 2, DEFAULT_DISPLAY_HEIGHT / 2), 255, 0, 0, 255);
+
+    // the bottom edge of the green layer should not be rounded
+    expectBufferColor(Point(0, (DEFAULT_DISPLAY_HEIGHT / 2) - 1), 0, 255, 0, 255);
 }
 
 TEST_P(RenderEngineTest, testClear) {

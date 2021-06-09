@@ -29,6 +29,7 @@
 #include <gui/IProducerListener.h>
 #include <gui/Surface.h>
 #include <utils/Singleton.h>
+#include <string.h>
 
 #include <utils/Trace.h>
 
@@ -158,6 +159,21 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     mBufferItemConsumer->setDefaultBufferFormat(convertBufferFormat(format));
     mBufferItemConsumer->setBlastBufferQueue(this);
 
+    if(strstr(mName.c_str(),"ScreenDecorOverlay") != nullptr){
+       sp<SurfaceComposerClient> client = mSurfaceControl->getClient();
+       if (client != nullptr) {
+           const sp<IBinder> display = client->getInternalDisplayToken();
+           if (display != nullptr) {
+               bool isDeviceRCSupported = false;
+               status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
+               if (!err && isDeviceRCSupported) {
+                   mConsumer->setConsumerUsageBits(GraphicBuffer::USAGE_SW_READ_RARELY |
+                                                   GraphicBuffer::USAGE_SW_WRITE_RARELY);
+                }
+            }
+        }
+    }
+
     mTransformHint = mSurfaceControl->getTransformHint();
     mBufferItemConsumer->setTransformHint(mTransformHint);
     SurfaceComposerClient::Transaction()
@@ -213,7 +229,8 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
             // for this is the scale is calculated based on the requested size and buffer size.
             // If there's no buffer, the scale will always be 1.
             if (mLastBufferInfo.hasBuffer) {
-                setMatrix(&t, mLastBufferInfo);
+                t.setDestinationFrame(mSurfaceControl,
+                                      Rect(0, 0, newSize.getWidth(), newSize.getHeight()));
             }
             applyTransaction = true;
         }
@@ -326,6 +343,7 @@ void BLASTBufferQueue::releaseBufferCallback(uint64_t graphicBufferId,
     mBufferItemConsumer->releaseBuffer(it->second, releaseFence);
     mSubmitted.erase(it);
     mNumAcquired--;
+    mNumUndequeued++;
     processNextBufferLocked(false /* useNextTransaction */);
     mCallbackCV.notify_all();
 }
@@ -416,8 +434,8 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     t->addTransactionCompletedCallback(transactionCallbackThunk, static_cast<void*>(this));
     mSurfaceControlsWithPendingCallback.push(mSurfaceControl);
 
-    setMatrix(t, mLastBufferInfo);
-    t->setCrop(mSurfaceControl, crop);
+    t->setDestinationFrame(mSurfaceControl, Rect(0, 0, mSize.getWidth(), mSize.getHeight()));
+    t->setBufferCrop(mSurfaceControl, crop);
     t->setTransform(mSurfaceControl, bufferItem.mTransform);
     t->setTransformToDisplayInverse(mSurfaceControl, bufferItem.mTransformToDisplayInverse);
     if (!bufferItem.mIsAutoTimestamp) {
@@ -507,6 +525,7 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
 void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::unique_lock _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
+    mNumUndequeued--;
 };
 
 void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {
@@ -541,19 +560,6 @@ bool BLASTBufferQueue::rejectBuffer(const BufferItem& item) {
 
     // reject buffers if the buffer size doesn't match.
     return mSize != bufferSize;
-}
-
-void BLASTBufferQueue::setMatrix(SurfaceComposerClient::Transaction* t,
-                                 const BufferInfo& bufferInfo) {
-    uint32_t bufWidth = bufferInfo.crop.getWidth();
-    uint32_t bufHeight = bufferInfo.crop.getHeight();
-
-    float sx = mSize.width / static_cast<float>(bufWidth);
-    float sy = mSize.height / static_cast<float>(bufHeight);
-
-    t->setMatrix(mSurfaceControl, sx, 0, 0, sy);
-    // Update position based on crop.
-    t->setPosition(mSurfaceControl, bufferInfo.crop.left * sx * -1, bufferInfo.crop.top * sy * -1);
 }
 
 void BLASTBufferQueue::setTransactionCompleteCallback(
@@ -666,12 +672,12 @@ private:
     void run() {
         std::unique_lock<std::mutex> lock(mMutex);
         while (!mDone) {
-            mCv.wait(lock);
             while (!mRunnables.empty()) {
                 std::function<void()> runnable = mRunnables.front();
                 mRunnables.pop_front();
                 runnable();
             }
+            mCv.wait(lock);
         }
     }
 

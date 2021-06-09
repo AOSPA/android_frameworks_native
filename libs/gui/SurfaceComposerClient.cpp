@@ -1648,8 +1648,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setApply
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setStretchEffect(
-        const sp<SurfaceControl>& sc, float left, float top, float right, float bottom, float vecX,
-        float vecY, float maxAmount) {
+    const sp<SurfaceControl>& sc, const StretchEffect& stretchEffect) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1657,10 +1656,37 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setStret
     }
 
     s->what |= layer_state_t::eStretchChanged;
-    s->stretchEffect = StretchEffect{.area = {left, top, right, bottom},
-                                     .vectorX = vecX,
-                                     .vectorY = vecY,
-                                     .maxAmount = maxAmount};
+    s->stretchEffect = stretchEffect;
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBufferCrop(
+        const sp<SurfaceControl>& sc, const Rect& bufferCrop) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+
+    s->what |= layer_state_t::eBufferCropChanged;
+    s->bufferCrop = bufferCrop;
+
+    registerSurfaceControlForCallback(sc);
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDestinationFrame(
+        const sp<SurfaceControl>& sc, const Rect& destinationFrame) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+
+    s->what |= layer_state_t::eDestinationFrameChanged;
+    s->destinationFrame = destinationFrame;
+
+    registerSurfaceControlForCallback(sc);
     return *this;
 }
 
@@ -2027,6 +2053,12 @@ status_t SurfaceComposerClient::isWideColorDisplay(const sp<IBinder>& display,
                                                    bool* outIsWideColorDisplay) {
     return ComposerService::getComposerService()->isWideColorDisplay(display,
                                                                      outIsWideColorDisplay);
+}
+
+status_t SurfaceComposerClient::isDeviceRCSupported(const sp<IBinder>& display,
+                                                    bool* outDeviceRCSupported) {
+    return ComposerService::getComposerService()->isDeviceRCSupported(display,
+                                                                      outDeviceRCSupported);
 }
 
 status_t SurfaceComposerClient::addRegionSamplingListener(

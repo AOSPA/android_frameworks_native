@@ -51,9 +51,6 @@ public:
         return flags;
     }
 
-    uint32_t getActiveWidth(const Layer::State& s) const override { return s.width; }
-    uint32_t getActiveHeight(const Layer::State& s) const override { return s.height; }
-    ui::Transform getActiveTransform(const Layer::State& s) const override { return s.transform; }
     Region getActiveTransparentRegion(const Layer::State& s) const override {
         return s.transparentRegionHint;
     }
@@ -87,6 +84,10 @@ public:
     Rect getBufferSize(const State& s) const override;
     FloatRect computeSourceBounds(const FloatRect& parentBounds) const override;
     void setAutoRefresh(bool autoRefresh) override;
+
+    bool setBufferCrop(const Rect& bufferCrop) override;
+    bool setDestinationFrame(const Rect& destinationFrame) override;
+    void updateGeometry() override;
 
     // -----------------------------------------------------------------------
 
@@ -178,6 +179,10 @@ private:
     //     - If the integer decreases in latchBuffer, that buffer was latched
     //     - If the integer decreases in setBuffer or doTransaction, a buffer was dropped
     std::atomic<int32_t> mPendingBufferTransactions{0};
+
+    // Contains requested position and matrix updates. This will be applied if the client does
+    // not specify a destination frame.
+    ui::Transform mRequestedTransform;
 
     // TODO(marissaw): support sticky transform for LEGACY camera mode
 

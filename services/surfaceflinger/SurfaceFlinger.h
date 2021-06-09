@@ -105,11 +105,6 @@ class LayerExtnIntf;
 
 using composer::LayerExtnIntf;
 
-namespace composer {
-class FrameExtnIntf;
-}
-using composer::FrameExtnIntf;
-
 namespace android {
 
 class Client;
@@ -199,6 +194,23 @@ struct SurfaceFlingerBE {
     // use to differentiate callbacks from different hardware composer
     // instances. Each hardware composer instance gets a different sequence id.
     int32_t mComposerSequenceId = 0;
+};
+
+class DolphinWrapper {
+public:
+    DolphinWrapper() { init(); }
+    ~DolphinWrapper();
+    bool init();
+
+    bool (*dolphinInit)() = nullptr;
+    void (*dolphinSetVsyncPeriod)(nsecs_t vsyncPeriod) = nullptr;
+    void (*dolphinTrackBufferIncrement)(const char* name, int counter) = nullptr;
+    void (*dolphinTrackBufferDecrement)(const char* name, int counter) = nullptr;
+    void (*dolphinTrackVsyncSignal)(nsecs_t vsyncTime, nsecs_t targetWakeupTime,
+                                 nsecs_t readyTime) = nullptr;
+
+private:
+    void *mDolphinHandle = nullptr;
 };
 
 class SmomoWrapper {
@@ -372,6 +384,11 @@ public:
     // utility function to delete a texture on the main thread
     void deleteTextureAsync(uint32_t texture);
 
+    // enable/disable h/w composer event
+    // TODO: this should be made accessible only to EventThread
+    // main thread function to enable/disable h/w composer event
+    void setVsyncEnabledInternal(bool enabled);
+
     // called on the main thread by MessageQueue when an internal message
     // is received
     // TODO: this should be made accessible only to MessageQueue
@@ -498,6 +515,11 @@ private:
             auto it = mCounterByLayerHandle.find(layerHandle);
             if (it != mCounterByLayerHandle.end()) {
                 auto [name, pendingBuffers] = it->second;
+                if (mDolphinWrapper.dolphinTrackBufferIncrement) {
+                    mLock.unlock();
+                    mDolphinWrapper.dolphinTrackBufferIncrement(name.c_str(),
+                        (*pendingBuffers) + 1);
+                }
                 int32_t count = ++(*pendingBuffers);
                 ATRACE_INT(name.c_str(), count);
             } else {
@@ -519,6 +541,7 @@ private:
         std::mutex mLock;
         std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
                 mCounterByLayerHandle GUARDED_BY(mLock);
+        DolphinWrapper mDolphinWrapper;
     };
 
     struct ActiveModeInfo {
@@ -543,24 +566,31 @@ private:
 
     class CountDownLatch {
     public:
-        explicit CountDownLatch(int32_t count) : mCount(count) {}
+        enum {
+            eSyncTransaction = 1 << 0,
+            eSyncInputWindows = 1 << 1,
+        };
+        explicit CountDownLatch(uint32_t flags) : mFlags(flags) {}
 
-        int32_t countDown() {
+        // True if there is no waiting condition after count down.
+        bool countDown(uint32_t flag) {
             std::unique_lock<std::mutex> lock(mMutex);
-            if (mCount == 0) {
-                return 0;
+            if (mFlags == 0) {
+                return true;
             }
-            if (--mCount == 0) {
+            mFlags &= ~flag;
+            if (mFlags == 0) {
                 mCountDownComplete.notify_all();
+                return true;
             }
-            return mCount;
+            return false;
         }
 
         // Return true if triggered.
         bool wait_until(const std::chrono::seconds& timeout) const {
             std::unique_lock<std::mutex> lock(mMutex);
             const auto untilTime = std::chrono::system_clock::now() + timeout;
-            while (mCount != 0) {
+            while (mFlags != 0) {
                 // Conditional variables can be woken up sporadically, so we check count
                 // to verify the wakeup was triggered by |countDown|.
                 if (std::cv_status::timeout == mCountDownComplete.wait_until(lock, untilTime)) {
@@ -571,7 +601,7 @@ private:
         }
 
     private:
-        int32_t mCount;
+        uint32_t mFlags;
         mutable std::condition_variable mCountDownComplete;
         mutable std::mutex mMutex;
     };
@@ -733,6 +763,8 @@ private:
     status_t getProtectedContentSupport(bool* outSupported) const override;
     status_t isWideColorDisplay(const sp<IBinder>& displayToken,
                                 bool* outIsWideColorDisplay) const override;
+    status_t isDeviceRCSupported(const sp<IBinder>& displayToken,
+                                 bool* outDeviceRCSupported) const override;
     status_t addRegionSamplingListener(const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
                                        const sp<IRegionSamplingListener>& listener) override;
     status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) override;
@@ -765,6 +797,7 @@ private:
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
+    status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
 
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
                                   const FrameTimelineInfo& frameTimelineInfo) override;
@@ -1237,7 +1270,11 @@ private:
 
     void updateInternalDisplaysPresentationMode();
 
-    void setupEarlyWakeUpFeature();
+    void setupDisplayExtnFeatures();
+
+    void setupIdleTimeoutHandling(uint32_t displayId);
+
+    bool isDisplayExtnEnabled() { return (mEarlyWakeUpEnabled || mDynamicSfIdleEnabled); }
 
     void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
 
@@ -1252,7 +1289,7 @@ private:
     // Add transaction to the Transaction Queue
     void queueTransaction(TransactionState& state) EXCLUDES(mQueueLock);
     void waitForSynchronousTransaction(const CountDownLatch& transactionCommittedSignal);
-    void signalSynchronousTransactions();
+    void signalSynchronousTransactions(const uint32_t flag);
 
     /*
      * Generic Layer Metadata
@@ -1281,7 +1318,6 @@ private:
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
     mutable Mutex mVsyncLock;
-    mutable Mutex mDolphinStateLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     std::vector<std::shared_ptr<CountDownLatch>> mTransactionCommittedSignals;
@@ -1565,30 +1601,16 @@ private:
     LayerExtWrapper mLayerExt;
 
 public:
-    nsecs_t mRefreshTimeStamp = -1;
     nsecs_t mVsyncPeriod = -1;
-    std::string mNameLayerMax;
-    int mMaxQueuedFrames = -1;
-    int mNumIdle = -1;
+    DolphinWrapper mDolphinWrapper;
 
 private:
     bool mEarlyWakeUpEnabled = false;
+    bool mDynamicSfIdleEnabled = false;
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
-    bool mDolphinFuncsEnabled = false;
     bool mSmomoContentFpsEnabled = false;
-    void *mDolphinHandle = nullptr;
-    bool (*mDolphinInit)() = nullptr;
-    bool (*mDolphinMonitor)(int number, nsecs_t vsyncPeriod) = nullptr;
-    void (*mDolphinScaling)(int numIdle, int maxQueuedFrames) = nullptr;
-    void (*mDolphinRefresh)() = nullptr;
-    void (*mDolphinDequeueBuffer)(const char *name) = nullptr;
-    void (*mDolphinQueueBuffer)(const char *name) = nullptr;
 
-    FrameExtnIntf* mFrameExtn = nullptr;
-    void *mFrameExtnLibHandle = nullptr;
-    bool (*mCreateFrameExtnFunc)(FrameExtnIntf **interface) = nullptr;
-    bool (*mDestroyFrameExtnFunc)(FrameExtnIntf *interface) = nullptr;
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;

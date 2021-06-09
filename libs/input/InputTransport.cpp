@@ -96,28 +96,42 @@ inline static const char* toString(bool value) {
 // --- InputMessage ---
 
 bool InputMessage::isValid(size_t actualSize) const {
-    if (size() == actualSize) {
-        switch (header.type) {
-            case Type::KEY:
-                return true;
-            case Type::MOTION:
-                return body.motion.pointerCount > 0 && body.motion.pointerCount <= MAX_POINTERS;
-            case Type::FINISHED:
-                return true;
-            case Type::FOCUS:
-                return true;
-            case Type::CAPTURE:
-                return true;
-            case Type::DRAG:
-                return true;
-            case Type::TIMELINE:
-                const nsecs_t gpuCompletedTime =
-                        body.timeline.graphicsTimeline[GraphicsTimeline::GPU_COMPLETED_TIME];
-                const nsecs_t presentTime =
-                        body.timeline.graphicsTimeline[GraphicsTimeline::PRESENT_TIME];
-                return presentTime > gpuCompletedTime;
+    if (size() != actualSize) {
+        ALOGE("Received message of incorrect size %zu (expected %zu)", actualSize, size());
+        return false;
+    }
+
+    switch (header.type) {
+        case Type::KEY:
+            return true;
+        case Type::MOTION: {
+            const bool valid =
+                    body.motion.pointerCount > 0 && body.motion.pointerCount <= MAX_POINTERS;
+            if (!valid) {
+                ALOGE("Received invalid MOTION: pointerCount = %" PRIu32, body.motion.pointerCount);
+            }
+            return valid;
+        }
+        case Type::FINISHED:
+        case Type::FOCUS:
+        case Type::CAPTURE:
+        case Type::DRAG:
+            return true;
+        case Type::TIMELINE: {
+            const nsecs_t gpuCompletedTime =
+                    body.timeline.graphicsTimeline[GraphicsTimeline::GPU_COMPLETED_TIME];
+            const nsecs_t presentTime =
+                    body.timeline.graphicsTimeline[GraphicsTimeline::PRESENT_TIME];
+            const bool valid = presentTime > gpuCompletedTime;
+            if (!valid) {
+                ALOGE("Received invalid TIMELINE: gpuCompletedTime = %" PRId64
+                      " presentTime = %" PRId64,
+                      gpuCompletedTime, presentTime);
+            }
+            return valid;
         }
     }
+    ALOGE("Invalid message type: %" PRIu32, header.type);
     return false;
 }
 
@@ -228,6 +242,10 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             msg->body.motion.xCursorPosition = body.motion.xCursorPosition;
             // float yCursorPosition
             msg->body.motion.yCursorPosition = body.motion.yCursorPosition;
+            // int32_t displayW
+            msg->body.motion.displayWidth = body.motion.displayWidth;
+            // int32_t displayH
+            msg->body.motion.displayHeight = body.motion.displayHeight;
             // uint32_t pointerCount
             msg->body.motion.pointerCount = body.motion.pointerCount;
             //struct Pointer pointers[MAX_POINTERS]
@@ -400,9 +418,7 @@ status_t InputChannel::receiveMessage(InputMessage* msg) {
     }
 
     if (!msg->isValid(nRead)) {
-#if DEBUG_CHANNEL_MESSAGES
-        ALOGD("channel '%s' ~ received invalid message", mName.c_str());
-#endif
+        ALOGE("channel '%s' ~ received invalid message of size %zd", mName.c_str(), nRead);
         return BAD_VALUE;
     }
 
@@ -517,9 +533,9 @@ status_t InputPublisher::publishMotionEvent(
         std::array<uint8_t, 32> hmac, int32_t action, int32_t actionButton, int32_t flags,
         int32_t edgeFlags, int32_t metaState, int32_t buttonState,
         MotionClassification classification, const ui::Transform& transform, float xPrecision,
-        float yPrecision, float xCursorPosition, float yCursorPosition, nsecs_t downTime,
-        nsecs_t eventTime, uint32_t pointerCount, const PointerProperties* pointerProperties,
-        const PointerCoords* pointerCoords) {
+        float yPrecision, float xCursorPosition, float yCursorPosition, int32_t displayWidth,
+        int32_t displayHeight, nsecs_t downTime, nsecs_t eventTime, uint32_t pointerCount,
+        const PointerProperties* pointerProperties, const PointerCoords* pointerCoords) {
     if (ATRACE_ENABLED()) {
         std::string message = StringPrintf(
                 "publishMotionEvent(inputChannel=%s, action=%" PRId32 ")",
@@ -577,6 +593,8 @@ status_t InputPublisher::publishMotionEvent(
     msg.body.motion.yPrecision = yPrecision;
     msg.body.motion.xCursorPosition = xCursorPosition;
     msg.body.motion.yCursorPosition = yCursorPosition;
+    msg.body.motion.displayWidth = displayWidth;
+    msg.body.motion.displayHeight = displayHeight;
     msg.body.motion.downTime = downTime;
     msg.body.motion.eventTime = eventTime;
     msg.body.motion.pointerCount = pointerCount;
@@ -1354,6 +1372,7 @@ void InputConsumer::initializeMotionEvent(MotionEvent* event, const InputMessage
                       msg->body.motion.buttonState, msg->body.motion.classification, transform,
                       msg->body.motion.xPrecision, msg->body.motion.yPrecision,
                       msg->body.motion.xCursorPosition, msg->body.motion.yCursorPosition,
+                      msg->body.motion.displayWidth, msg->body.motion.displayHeight,
                       msg->body.motion.downTime, msg->body.motion.eventTime, pointerCount,
                       pointerProperties, pointerCoords);
 }
