@@ -1209,6 +1209,10 @@ void SurfaceFlinger::init() {
 #endif
 
     startUnifiedDraw();
+
+    mRETid = getRenderEngine().getRETid();
+    mSFTid = gettid();
+
     ALOGV("Done initializing");
 }
 
@@ -2475,9 +2479,16 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
             break;
         }
     }
-#ifdef PASS_COMPOSITOR_PID
-    if (mBootFinished && mDisplayExtnIntf) {
-        mDisplayExtnIntf->SendCompositorPid();
+#ifdef PASS_COMPOSITOR_TID
+    if (!mTidSentSuccessfully && mBootFinished && mDisplayExtnIntf) {
+        bool sfTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kSurfaceFlinger,
+                                                         mSFTid) == 0;
+        bool reTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kRenderEngine,
+                                                         mRETid) == 0;
+
+        if (sfTid && reTid) {
+            mTidSentSuccessfully = true;
+        }
     }
 #endif
 }
