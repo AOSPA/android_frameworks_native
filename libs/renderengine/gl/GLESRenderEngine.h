@@ -91,6 +91,7 @@ public:
     std::shared_ptr<ImageManager::Barrier> cacheExternalTextureBufferForTesting(
             const sp<GraphicBuffer>& buffer);
     std::shared_ptr<ImageManager::Barrier> unbindExternalTextureBufferForTesting(uint64_t bufferId);
+    int getRETid() { return gettid(); }
 
 protected:
     Framebuffer* getFramebufferForDrawing();

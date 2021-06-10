@@ -1605,6 +1605,9 @@ private:
     bool mAllowThermalFpsChange = false;
 
     std::unique_ptr<FlagManager> mFlagManager;
+    int mRETid = 0;
+    int mSFTid = 0;
+    bool mTidSentSuccessfully = false;
 };
 
 } // namespace android
