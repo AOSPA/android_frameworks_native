@@ -1317,6 +1317,8 @@ private:
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
 
+    std::future<void> mRenderEnginePrimeCacheFuture;
+
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
     mutable Mutex mVsyncLock;
