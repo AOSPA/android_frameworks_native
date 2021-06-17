@@ -26,6 +26,7 @@
 
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
+#include <aidl/vendor/qti/hardware/display/config/BnDisplayConfigCallback.h>
 #include <android/binder_process.h>
 #include <android/binder_manager.h>
 #include <android-base/properties.h>
@@ -188,6 +189,9 @@ using ui::Dataspace;
 using ui::DisplayPrimaries;
 using ui::RenderIntent;
 using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
+using aidl::vendor::qti::hardware::display::config::BnDisplayConfigCallback;
+using aidl::vendor::qti::hardware::display::config::Attributes;
+using aidl::vendor::qti::hardware::display::config::CameraSmoothOp;
 
 namespace hal = android::hardware::graphics::composer::hal;
 
@@ -303,6 +307,36 @@ public:
     SurfaceFlinger& mFlinger;
 };
 #endif
+
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+class DisplayConfigAidlCallbackHandler: public BnDisplayConfigCallback {
+ public:
+    DisplayConfigAidlCallbackHandler(SurfaceFlinger& flinger) : mFlinger(flinger) {
+    }
+    virtual ndk::ScopedAStatus notifyCameraSmoothInfo(CameraSmoothOp op, int fps) {
+        return ndk::ScopedAStatus::ok();
+    }
+    virtual ndk::ScopedAStatus notifyCWBBufferDone(int32_t in_error,
+                               const ::aidl::android::hardware::common::NativeHandle& in_buffer) {
+        return ndk::ScopedAStatus::ok();
+    }
+    virtual ndk::ScopedAStatus notifyQsyncChange(bool in_qsyncEnabled, int32_t in_refreshRate,
+                                                 int32_t in_qsyncRefreshRate) {
+        return ndk::ScopedAStatus::ok();
+    }
+    virtual ndk::ScopedAStatus notifyIdleStatus(bool in_isIdle) {
+        return ndk::ScopedAStatus::ok();
+    }
+    virtual ndk::ScopedAStatus notifyResolutionChange(int32_t displayId, const Attributes& attr) {
+        ALOGV("received notification for resolution change");
+        ATRACE_CALL();
+        mFlinger.NotifyResolutionSwitch(displayId, attr.xRes, attr.yRes, attr.vsyncPeriod);
+        return ndk::ScopedAStatus::ok();
+    }
+ private:
+    SurfaceFlinger& mFlinger;
+};
+#endif
 }  // namespace anonymous
 
 struct SetInputWindowsListener : os::BnSetInputWindowsListener {
@@ -354,6 +388,8 @@ bool SurfaceFlinger::enableLatchUnsignaled;
 
 #ifdef AIDL_DISPLAY_CONFIG_ENABLED
 std::shared_ptr<IDisplayConfig> displayConfigIntf = nullptr;
+std::shared_ptr<DisplayConfigAidlCallbackHandler> mAidlCallbackHandler = nullptr;
+int64_t callbackClientId = -1;
 #endif
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
@@ -705,6 +741,12 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         displayConfigIntf = IDisplayConfig::fromBinder(binder);
         if (displayConfigIntf == nullptr) {
             ALOGE("Failed to retrieve DisplayConfig AIDL binder");
+        } else {
+            mAidlCallbackHandler = std::make_shared<DisplayConfigAidlCallbackHandler>(*this);
+            displayConfigIntf->registerCallback(mAidlCallbackHandler, &callbackClientId);
+            if (callbackClientId >= 0) {
+               ALOGI("Registered to displayconfig aidl service and enabled callback");
+            }
         }
     }
 #endif
@@ -713,6 +755,12 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    if (displayConfigIntf && callbackClientId >= 0) {
+        displayConfigIntf->unRegisterCallback(callbackClientId);
+        callbackClientId = -1;
+    }
+#endif
 }
 
 void SurfaceFlinger::onFirstRef() {
@@ -8504,6 +8552,51 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
 
 void SurfaceFlinger::NotifyIdleStatus() {
   mScheduler->setIdleState();
+}
+
+void SurfaceFlinger::NotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
+                                            int32_t vsyncPeriod) {
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    const auto dispId = getInternalDisplayId();
+    if (!dispId) {
+        ALOGE("No internal display found.");
+        return;
+    }
+
+    sp<IBinder> displayToken = getPhysicalDisplayToken(*dispId);
+    sp<DisplayDevice> display = nullptr;
+    {
+        Mutex::Autolock lock(mStateLock);
+        display = (getDisplayDeviceLocked(displayToken));
+    }
+    if (!display) {
+        ALOGE("Attempt to notify resolution switch for invalid display token %p",
+               displayToken.get());
+        return;
+    }
+
+    const auto& supportedModes = display->getSupportedModes();
+    int32_t newModeId;
+    for (const auto& mode : supportedModes) {
+
+        auto modeWidth = mode->getWidth();
+        auto modeHeight = mode->getHeight();
+        const int32_t modePeriod = static_cast<int32_t>(mode->getVsyncPeriod());
+
+        if (modeWidth == width && modeHeight == height && vsyncPeriod == modePeriod) {
+            newModeId = static_cast<int32_t>(mode->getId().value());
+            break;
+        }
+    }
+
+    if(isSupportedConfigSwitch(displayToken, newModeId) != NO_ERROR) {
+        return;
+    }
+    status_t result = setActiveMode(displayToken, newModeId);
+    if (result != NO_ERROR) {
+        return;
+    }
+#endif
 }
 
 void SurfaceFlinger::setupDisplayExtnFeatures() {

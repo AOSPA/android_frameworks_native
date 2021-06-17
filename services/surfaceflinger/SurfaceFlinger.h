@@ -431,6 +431,7 @@ public:
 
     nsecs_t mVsyncTimeStamp = -1;
     void NotifyIdleStatus();
+    void NotifyResolutionSwitch(int displayId, int32_t width, int32_t height, int32_t vsyncPeriod);
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
