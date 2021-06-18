@@ -305,20 +305,15 @@ int32_t HWComposer::getAttribute(hal::HWDisplayId hwcDisplayId, hal::HWConfigId 
     return value;
 }
 
-HWC2::Layer* HWComposer::createLayer(HalDisplayId displayId) {
+std::shared_ptr<HWC2::Layer> HWComposer::createLayer(HalDisplayId displayId) {
     RETURN_IF_INVALID_DISPLAY(displayId, nullptr);
 
-    HWC2::Layer* layer;
-    auto error = mDisplayData[displayId].hwcDisplay->createLayer(&layer);
-    RETURN_IF_HWC_ERROR(error, displayId, nullptr);
-    return layer;
-}
-
-void HWComposer::destroyLayer(HalDisplayId displayId, HWC2::Layer* layer) {
-    RETURN_IF_INVALID_DISPLAY(displayId);
-
-    auto error = mDisplayData[displayId].hwcDisplay->destroyLayer(layer);
-    RETURN_IF_HWC_ERROR(error, displayId);
+    auto expected = mDisplayData[displayId].hwcDisplay->createLayer();
+    if (!expected.has_value()) {
+        auto error = std::move(expected).error();
+        RETURN_IF_HWC_ERROR(error, displayId, nullptr);
+    }
+    return std::move(expected).value();
 }
 
 bool HWComposer::isConnected(PhysicalDisplayId displayId) const {
@@ -471,6 +466,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 
 status_t HWComposer::getDeviceCompositionChanges(
         HalDisplayId displayId, bool /*frameUsesClientComposition */,
+        std::chrono::steady_clock::time_point earliestPresentTime,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
 
@@ -487,34 +483,40 @@ status_t HWComposer::getDeviceCompositionChanges(
 
     hal::Error error = hal::Error::NONE;
 
-    // First try to skip validate altogether when there is no client
-    // composition.  When there is client composition, since we haven't
-    // rendered to the client target yet, we should not attempt to skip
-    // validate.
+    // First try to skip validate altogether when we passed the earliest time
+    // to present and there is no client. Otherwise, we may present a frame too
+    // early or in case of client composition we first need to render the
+    // client target buffer.
+    const bool canSkipValidate =
+            std::chrono::steady_clock::now() >= earliestPresentTime;
     displayData.validateWasSkipped = false;
-    sp<Fence> outPresentFence;
-    uint32_t state = UINT32_MAX;
-    error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
-    if (!hasChangesError(error)) {
-        RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
-    }
-    ALOGV("getDeviceCompositionChanges: state: %d", state);
-    // state = 0 --> Only Validate.
-    // state = 1 --> Validate and commit succeeded. Skip validate case. No comp changes.
-    // state = 2 --> Validate and commit succeeded. Query Comp changes.
-    if (state == 1 || state == 2) { //Present Succeeded.
-        std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
-        error = hwcDisplay->getReleaseFences(&releaseFences);
-        displayData.releaseFences = std::move(releaseFences);
-        displayData.lastPresentFence = outPresentFence;
-        displayData.validateWasSkipped = true;
-        displayData.presentError = error;
-        ALOGV("Retrieving fences");
-    }
+    if (canSkipValidate) {
+        sp<Fence> outPresentFence;
+        uint32_t state = UINT32_MAX;
+        error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
+        if (!hasChangesError(error)) {
+            RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
+        }
+        ALOGV("getDeviceCompositionChanges: state: %d", state);
+        // state = 0 --> Only Validate.
+        // state = 1 --> Validate and commit succeeded. Skip validate case. No comp changes.
+        // state = 2 --> Validate and commit succeeded. Query Comp changes.
+        if (state == 1 || state == 2) { //Present Succeeded.
+            std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
+            error = hwcDisplay->getReleaseFences(&releaseFences);
+            displayData.releaseFences = std::move(releaseFences);
+            displayData.lastPresentFence = outPresentFence;
+            displayData.validateWasSkipped = true;
+            displayData.presentError = error;
+            ALOGV("Retrieving fences");
+        }
 
-    if (state == 1) {
-        ALOGV("skip validate case present succeeded");
-        return NO_ERROR;
+        if (state == 1) {
+            ALOGV("skip validate case present succeeded");
+            return NO_ERROR;
+        }
+    } else {
+        error = hwcDisplay->validate(&numTypes, &numRequests);
     }
 
     ALOGV("SkipValidate failed, Falling back to SLOW validate/present");
@@ -561,7 +563,8 @@ sp<Fence> HWComposer::getLayerReleaseFence(HalDisplayId displayId, HWC2::Layer* 
     return fence->second;
 }
 
-status_t HWComposer::presentAndGetReleaseFences(HalDisplayId displayId) {
+status_t HWComposer::presentAndGetReleaseFences(
+        HalDisplayId displayId, std::chrono::steady_clock::time_point earliestPresentTime) {
     ATRACE_CALL();
 
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
@@ -578,6 +581,11 @@ status_t HWComposer::presentAndGetReleaseFences(HalDisplayId displayId) {
     }
 
     displayData.lastPresentFence = Fence::NO_FENCE;
+    {
+        ATRACE_NAME("wait for earliest present time");
+        std::this_thread::sleep_until(earliestPresentTime);
+    }
+
     auto error = hwcDisplay->present(&displayData.lastPresentFence);
     RETURN_IF_HWC_ERROR_FOR("present", error, displayId, UNKNOWN_ERROR);
 

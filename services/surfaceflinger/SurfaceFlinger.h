@@ -110,6 +110,7 @@ namespace android {
 class Client;
 class EventThread;
 class FpsReporter;
+class TunnelModeEnabledReporter;
 class HdrLayerInfoReporter;
 class HWComposer;
 struct SetInputWindowsListener;
@@ -356,6 +357,10 @@ public:
 
     static constexpr SkipInitializationTag SkipInitialization;
 
+    // Whether or not SDR layers should be dimmed to the desired SDR white point instead of
+    // being treated as native display brightness
+    static bool enableSdrDimming;
+
     // must be called before clients can connect
     void init() ANDROID_API;
 
@@ -448,6 +453,7 @@ private:
     friend class BufferStateLayer;
     friend class Client;
     friend class FpsReporter;
+    friend class TunnelModeEnabledReporter;
     friend class Layer;
     friend class MonitoredProducer;
     friend class RefreshRateOverlay;
@@ -770,6 +776,10 @@ private:
     status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) override;
     status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener) override;
     status_t removeFpsListener(const sp<gui::IFpsListener>& listener) override;
+    status_t addTunnelModeEnabledListener(
+            const sp<gui::ITunnelModeEnabledListener>& listener) override;
+    status_t removeTunnelModeEnabledListener(
+            const sp<gui::ITunnelModeEnabledListener>& listener) override;
     status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
                                         ui::DisplayModeId displayModeId, bool allowGroupSwitching,
                                         float primaryRefreshRateMin, float primaryRefreshRateMax,
@@ -1022,8 +1032,8 @@ private:
                                  const sp<IScreenCaptureListener>&);
     status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
                                     const std::shared_ptr<renderengine::ExternalTexture>&,
-                                    bool forSystem, bool regionSampling, bool grayscale,
-                                    ScreenCaptureResults&);
+                                    bool canCaptureBlackoutContent, bool regionSampling,
+                                    bool grayscale, ScreenCaptureResults&);
 
     sp<DisplayDevice> getDisplayByIdOrLayerStack(uint64_t displayOrLayerStack) REQUIRES(mStateLock);
     sp<DisplayDevice> getDisplayById(DisplayId displayId) const REQUIRES(mStateLock);
@@ -1400,6 +1410,7 @@ private:
     bool mVsyncSourceReliableOnDoze = false;
     bool mDebugDisableHWC = false;
     bool mDebugDisableTransformHint = false;
+    bool mLayerCachingEnabled = false;
     volatile nsecs_t mDebugInTransaction = 0;
     bool mForceFullDamage = false;
     bool mPropagateBackpressure = true;
@@ -1418,8 +1429,6 @@ private:
     bool mUseHwcVirtualDisplays = false;
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
-    // Disable blurs, for debugging
-    std::atomic<bool> mDisableBlurs = false;
     // If blurs are considered expensive and should require high GPU frequency.
     bool mBlursAreExpensive = false;
     bool mUseAdvanceSfOffset = false;
@@ -1535,6 +1544,7 @@ private:
     bool mLumaSampling = true;
     sp<RegionSamplingThread> mRegionSamplingThread;
     sp<FpsReporter> mFpsReporter;
+    sp<TunnelModeEnabledReporter> mTunnelModeEnabledReporter;
     ui::DisplayPrimaries mInternalDisplayPrimaries;
 
     const float mInternalDisplayDensity;
@@ -1600,6 +1610,9 @@ private:
             REQUIRES(mStateLock);
 
     std::atomic<ui::Transform::RotationFlags> mDefaultDisplayTransformHint;
+
+    void scheduleRegionSamplingThread();
+    void notifyRegionSamplingThread();
 
     SmomoWrapper mSmoMo;
     LayerExtWrapper mLayerExt;

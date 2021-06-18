@@ -88,8 +88,9 @@ private:
                                                          int hwcFormat, Protection protection);
     inline SkRect getSkRect(const FloatRect& layer);
     inline SkRect getSkRect(const Rect& layer);
-    inline std::pair<SkRRect, SkRRect> getBoundsAndClip(const LayerSettings* layer);
-    inline bool layerHasBlur(const LayerSettings* layer);
+    inline std::pair<SkRRect, SkRRect> getBoundsAndClip(const FloatRect& bounds,
+                                                        const FloatRect& crop, float cornerRadius);
+    inline bool layerHasBlur(const LayerSettings* layer, bool colorTransformModifiesAlpha);
     inline SkColor getSkColor(const vec4& color);
     inline SkM44 getSkM44(const mat4& matrix);
     inline SkPoint3 getSkPoint3(const vec3& vector);

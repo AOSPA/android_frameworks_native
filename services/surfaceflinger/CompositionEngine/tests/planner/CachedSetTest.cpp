@@ -134,6 +134,7 @@ void expectReadyBuffer(const CachedSet& cachedSet) {
     EXPECT_NE(nullptr, cachedSet.getBuffer());
     EXPECT_NE(nullptr, cachedSet.getDrawFence());
     EXPECT_TRUE(cachedSet.hasReadyBuffer());
+    EXPECT_TRUE(cachedSet.hasRenderedBuffer());
 }
 
 TEST_F(CachedSetTest, createFromLayer) {
@@ -565,6 +566,31 @@ TEST_F(CachedSetTest, decompose_removesHolePunch) {
     for (const auto& set : decomposed) {
         EXPECT_EQ(nullptr, set.getHolePunchLayer());
     }
+}
+
+TEST_F(CachedSetTest, hasBlurBehind) {
+    mTestLayers[1]->layerFECompositionState.backgroundBlurRadius = 1;
+    mTestLayers[1]->layerState->update(&mTestLayers[1]->outputLayer);
+    mTestLayers[2]->layerFECompositionState.blurRegions.push_back(
+            BlurRegion{1, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    mTestLayers[2]->layerState->update(&mTestLayers[2]->outputLayer);
+
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet1(layer1);
+    CachedSet cachedSet2(layer2);
+    CachedSet cachedSet3(layer3);
+
+    // Cached set 4 will consist of layers 1 and 2, which will contain a blur behind
+    CachedSet cachedSet4(layer1);
+    cachedSet4.addLayer(layer2.getState(), kStartTime);
+
+    EXPECT_FALSE(cachedSet1.hasBlurBehind());
+    EXPECT_TRUE(cachedSet2.hasBlurBehind());
+    EXPECT_TRUE(cachedSet3.hasBlurBehind());
+    EXPECT_TRUE(cachedSet4.hasBlurBehind());
 }
 
 } // namespace

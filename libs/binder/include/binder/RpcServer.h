@@ -74,6 +74,22 @@ public:
      */
     [[nodiscard]] bool setupInetServer(unsigned int port, unsigned int* assignedPort);
 
+    /**
+     * If setup*Server has been successful, return true. Otherwise return false.
+     */
+    [[nodiscard]] bool hasServer();
+
+    /**
+     * If hasServer(), return the server FD. Otherwise return invalid FD.
+     */
+    [[nodiscard]] base::unique_fd releaseServer();
+
+    /**
+     * Set up server using an external FD previously set up by releaseServer().
+     * Return false if there's already a server.
+     */
+    bool setupExternalServer(base::unique_fd serverFd);
+
     void iUnderstandThisCodeIsExperimentalAndIWillNotUseItInProduction();
 
     /**
@@ -90,8 +106,14 @@ public:
     /**
      * The root object can be retrieved by any client, without any
      * authentication. TODO(b/183988761)
+     *
+     * Holds a strong reference to the root object.
      */
     void setRootObject(const sp<IBinder>& binder);
+    /**
+     * Holds a weak reference to the root object.
+     */
+    void setRootObjectWeak(const wp<IBinder>& binder);
     sp<IBinder> getRootObject();
 
     /**
@@ -102,9 +124,16 @@ public:
     void join();
 
     /**
+     * Accept one connection on this server. You must have at least one client
+     * session before calling this.
+     */
+    [[nodiscard]] bool acceptOne();
+
+    /**
      * For debugging!
      */
     std::vector<sp<RpcSession>> listSessions();
+    size_t numUninitializedSessions();
 
     ~RpcServer();
 
@@ -127,6 +156,7 @@ private:
     std::mutex mLock; // for below
     std::map<std::thread::id, std::thread> mConnectingThreads;
     sp<IBinder> mRootObject;
+    wp<IBinder> mRootObjectWeak;
     std::map<int32_t, sp<RpcSession>> mSessions;
     int32_t mSessionIdCounter = 0;
 };
