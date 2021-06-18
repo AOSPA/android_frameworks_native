@@ -133,7 +133,7 @@ void Output::setLayerCachingEnabled(bool enabled) {
     }
 
     if (enabled) {
-        mPlanner = std::make_unique<planner::Planner>();
+        mPlanner = std::make_unique<planner::Planner>(getCompositionEngine().getRenderEngine());
         if (mRenderSurface) {
             mPlanner->setDisplaySize(mRenderSurface->getSize());
         }
@@ -438,7 +438,7 @@ void Output::present(const compositionengine::CompositionRefreshArgs& refreshArg
     devOptRepaintFlash(refreshArgs);
     finishFrame(refreshArgs);
     postFramebuffer();
-    renderCachedSets();
+    renderCachedSets(refreshArgs);
 }
 
 void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs& refreshArgs,
@@ -1248,19 +1248,6 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                 !layerState.visibleRegion.subtract(layerState.shadowRegion).isEmpty();
 
         if (clientComposition || clearClientComposition) {
-            compositionengine::LayerFE::ClientCompositionTargetSettings
-                    targetSettings{.clip = clip,
-                                   .needsFiltering =
-                                           layer->needsFiltering() || outputState.needsFiltering,
-                                   .isSecure = outputState.isSecure,
-                                   .supportsProtectedContent = supportsProtectedContent,
-                                   .clearRegion = clientComposition ? clearRegion : stubRegion,
-                                   .viewport = outputState.layerStackSpace.content,
-                                   .dataspace = outputDataspace,
-                                   .realContentIsVisible = realContentIsVisible,
-                                   .clearContent = !clientComposition,
-                                   .disableBlurs = disableBlurs};
-
             std::vector<LayerFE::LayerSettings> results;
             if (layer->getState().overrideInfo.buffer != nullptr) {
                 if (layer->getState().overrideInfo.buffer->getBuffer() != previousOverrideBuffer) {
@@ -1272,6 +1259,25 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                           layer->getLayerFE().getDebugName());
                 }
             } else {
+                LayerFE::ClientCompositionTargetSettings::BlurSetting blurSetting = disableBlurs
+                        ? LayerFE::ClientCompositionTargetSettings::BlurSetting::Disabled
+                        : (layer->getState().overrideInfo.disableBackgroundBlur
+                                   ? LayerFE::ClientCompositionTargetSettings::BlurSetting::
+                                             BlurRegionsOnly
+                                   : LayerFE::ClientCompositionTargetSettings::BlurSetting::
+                                             Enabled);
+                compositionengine::LayerFE::ClientCompositionTargetSettings
+                        targetSettings{.clip = clip,
+                                       .needsFiltering = layer->needsFiltering() ||
+                                               outputState.needsFiltering,
+                                       .isSecure = outputState.isSecure,
+                                       .supportsProtectedContent = supportsProtectedContent,
+                                       .clearRegion = clientComposition ? clearRegion : stubRegion,
+                                       .viewport = outputState.layerStackSpace.content,
+                                       .dataspace = outputDataspace,
+                                       .realContentIsVisible = realContentIsVisible,
+                                       .clearContent = !clientComposition,
+                                       .blurSetting = blurSetting};
                 results = layerFE.prepareClientCompositionList(targetSettings);
                 if (realContentIsVisible && !results.empty()) {
                     layer->editState().clientCompositionTimestamp = systemTime();
@@ -1366,9 +1372,9 @@ void Output::postFramebuffer() {
     mReleasedLayers.clear();
 }
 
-void Output::renderCachedSets() {
+void Output::renderCachedSets(const CompositionRefreshArgs& refreshArgs) {
     if (mPlanner) {
-        mPlanner->renderCachedSets(getCompositionEngine().getRenderEngine(), getState());
+        mPlanner->renderCachedSets(getState(), refreshArgs.nextInvalidateTime);
     }
 }
 

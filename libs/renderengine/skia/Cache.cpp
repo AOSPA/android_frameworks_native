@@ -149,6 +149,7 @@ static void drawSolidLayers(SkiaRenderEngine* renderengine, const DisplaySetting
                     PixelSource{
                             .solidColor = half3(0.1f, 0.2f, 0.3f),
                     },
+            .alpha = 0.5,
     };
 
     auto layers = std::vector<const LayerSettings*>{&layer};
@@ -291,7 +292,11 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine) {
 
         drawSolidLayers(renderengine, display, dstTexture);
         drawShadowLayers(renderengine, display, srcTexture);
-        drawBlurLayers(renderengine, display, dstTexture);
+
+        if (renderengine->supportsBackgroundBlur()) {
+            drawBlurLayers(renderengine, display, dstTexture);
+        }
+
         // The majority of shaders are related to sampling images.
         drawImageLayers(renderengine, display, dstTexture, srcTexture);
 
