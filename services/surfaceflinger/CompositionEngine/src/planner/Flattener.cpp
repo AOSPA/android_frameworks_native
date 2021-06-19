@@ -17,10 +17,12 @@
 #undef LOG_TAG
 #define LOG_TAG "Planner"
 // #define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <compositionengine/impl/planner/Flattener.h>
 #include <compositionengine/impl/planner/LayerState.h>
-#include <compositionengine/impl/planner/Predictor.h>
+
+#include <utils/Trace.h>
 
 using time_point = std::chrono::steady_clock::time_point;
 using namespace std::chrono_literals;
@@ -59,6 +61,7 @@ bool isSameStack(const std::vector<const LayerState*>& incomingLayers,
 
 NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& layers,
                                        NonBufferHash hash, time_point now) {
+    ATRACE_CALL();
     const size_t unflattenedDisplayCost = calculateDisplayCost(layers);
     mUnflattenedDisplayCost += unflattenedDisplayCost;
 
@@ -92,7 +95,8 @@ NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& lay
 
 void Flattener::renderCachedSets(renderengine::RenderEngine& renderEngine,
                                  const OutputCompositionState& outputState) {
-    if (!mNewCachedSet) {
+    ATRACE_CALL();
+    if (!mNewCachedSet || mNewCachedSet->hasRenderedBuffer()) {
         return;
     }
 
@@ -126,9 +130,11 @@ void Flattener::dump(std::string& result) const {
         return left.first < right.first;
     };
 
-    const size_t maxLayerCount = std::max_element(mInitialLayerCounts.cbegin(),
-                                                  mInitialLayerCounts.cend(), compareLayerCounts)
-                                         ->first;
+    const size_t maxLayerCount = mInitialLayerCounts.empty()
+            ? 0u
+            : std::max_element(mInitialLayerCounts.cbegin(), mInitialLayerCounts.cend(),
+                               compareLayerCounts)
+                      ->first;
 
     result.append("\n    Initial counts:\n");
     for (size_t count = 1; count < maxLayerCount; ++count) {
@@ -212,6 +218,7 @@ NonBufferHash Flattener::computeLayersHash() const{
 // was already populated with these layers, i.e. on the second and following
 // calls with the same geometry.
 bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers, time_point now) {
+    ATRACE_CALL();
     std::vector<CachedSet> merged;
 
     if (mLayers.empty()) {
@@ -326,89 +333,105 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
     return true;
 }
 
-void Flattener::buildCachedSets(time_point now) {
-    struct Run {
-        Run(std::vector<CachedSet>::const_iterator start, size_t length)
-              : start(start), length(length) {}
-
-        std::vector<CachedSet>::const_iterator start;
-        size_t length;
-    };
-
-    if (mLayers.empty()) {
-        ALOGV("[%s] No layers found, returning", __func__);
-        return;
-    }
-
+std::vector<Flattener::Run> Flattener::findCandidateRuns(time_point now) const {
+    ATRACE_CALL();
     std::vector<Run> runs;
     bool isPartOfRun = false;
-
-    // Keep track of the layer that follows a run. It's possible that we will
-    // render it with a hole-punch.
-    const CachedSet* holePunchLayer = nullptr;
+    Run::Builder builder;
+    bool firstLayer = true;
+    bool runHasFirstLayer = false;
 
     for (auto currentSet = mLayers.cbegin(); currentSet != mLayers.cend(); ++currentSet) {
-        if (now - currentSet->getLastUpdate() > kActiveLayerTimeout) {
-            // Layer is inactive
+        const bool layerIsInactive = now - currentSet->getLastUpdate() > kActiveLayerTimeout;
+        const bool layerHasBlur = currentSet->hasBlurBehind();
+        if (layerIsInactive && (firstLayer || runHasFirstLayer || !layerHasBlur)) {
             if (isPartOfRun) {
-                runs.back().length += currentSet->getLayerCount();
+                builder.append(currentSet->getLayerCount());
             } else {
                 // Runs can't start with a non-buffer layer
                 if (currentSet->getFirstLayer().getBuffer() == nullptr) {
                     ALOGV("[%s] Skipping initial non-buffer layer", __func__);
                 } else {
-                    runs.emplace_back(currentSet, currentSet->getLayerCount());
+                    builder.init(currentSet);
+                    if (firstLayer) {
+                        runHasFirstLayer = true;
+                    }
                     isPartOfRun = true;
                 }
             }
         } else if (isPartOfRun) {
-            // Runs must be at least 2 sets long or there's nothing to combine
-            if (runs.back().start->getLayerCount() == runs.back().length) {
-                runs.pop_back();
-            } else {
-                // The prior run contained at least two sets. Currently, we'll
-                // only possibly merge a single run, so only keep track of a
-                // holePunchLayer if this is the first run.
-                if (runs.size() == 1) {
-                    holePunchLayer = &(*currentSet);
-                }
-
-                // TODO(b/185114532: Break out of the loop? We may find more runs, but we
-                // won't do anything with them.
+            builder.setHolePunchCandidate(&(*currentSet));
+            if (auto run = builder.validateAndBuild(); run) {
+                runs.push_back(*run);
             }
 
+            runHasFirstLayer = false;
+            builder.reset();
             isPartOfRun = false;
         }
+
+        firstLayer = false;
     }
 
-    // Check for at least 2 sets one more time in case the set includes the last layer
-    if (isPartOfRun && runs.back().start->getLayerCount() == runs.back().length) {
-        runs.pop_back();
+    // If we're in the middle of a run at the end, we still need to validate and build it.
+    if (isPartOfRun) {
+        if (auto run = builder.validateAndBuild(); run) {
+            runs.push_back(*run);
+        }
     }
 
     ALOGV("[%s] Found %zu candidate runs", __func__, runs.size());
 
+    return runs;
+}
+
+std::optional<Flattener::Run> Flattener::findBestRun(std::vector<Flattener::Run>& runs) const {
     if (runs.empty()) {
+        return std::nullopt;
+    }
+
+    // TODO (b/181192467): Choose the best run, instead of just the first.
+    return runs[0];
+}
+
+void Flattener::buildCachedSets(time_point now) {
+    ATRACE_CALL();
+    if (mLayers.empty()) {
+        ALOGV("[%s] No layers found, returning", __func__);
         return;
     }
 
-    mNewCachedSet.emplace(*runs[0].start);
+    // Don't try to build a new cached set if we already have a new one in progress
+    if (mNewCachedSet) {
+        return;
+    }
+
+    std::vector<Run> runs = findCandidateRuns(now);
+
+    std::optional<Run> bestRun = findBestRun(runs);
+
+    if (!bestRun) {
+        return;
+    }
+
+    mNewCachedSet.emplace(*bestRun->getStart());
     mNewCachedSet->setLastUpdate(now);
-    auto currentSet = runs[0].start;
-    while (mNewCachedSet->getLayerCount() < runs[0].length) {
+    auto currentSet = bestRun->getStart();
+    while (mNewCachedSet->getLayerCount() < bestRun->getLayerLength()) {
         ++currentSet;
         mNewCachedSet->append(*currentSet);
     }
 
-    if (mEnableHolePunch && holePunchLayer && holePunchLayer->requiresHolePunch()) {
+    if (mEnableHolePunch && bestRun->getHolePunchCandidate() &&
+        bestRun->getHolePunchCandidate()->requiresHolePunch()) {
         // Add the pip layer to mNewCachedSet, but in a special way - it should
         // replace the buffer with a clear round rect.
-        mNewCachedSet->addHolePunchLayerIfFeasible(*holePunchLayer,
-                                                   runs[0].start == mLayers.cbegin());
+        mNewCachedSet->addHolePunchLayerIfFeasible(*bestRun->getHolePunchCandidate(),
+                                                   bestRun->getStart() == mLayers.cbegin());
     }
 
     // TODO(b/181192467): Actually compute new LayerState vector and corresponding hash for each run
-    mPredictor.getPredictedPlan({}, 0);
+    // and feedback into the predictor
 
     ++mCachedSetCreationCount;
     mCachedSetCreationCost += mNewCachedSet->getCreationCost();

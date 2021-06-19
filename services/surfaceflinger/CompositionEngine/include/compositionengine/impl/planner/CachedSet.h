@@ -78,6 +78,7 @@ public:
     size_t getDisplayCost() const;
 
     bool hasBufferUpdate() const;
+    bool hasRenderedBuffer() const { return mTexture != nullptr; }
     bool hasReadyBuffer() const;
 
     // Decomposes this CachedSet into a vector of its layers as individual CachedSets
@@ -109,6 +110,9 @@ public:
     // If it is, we may be able to draw it by placing it behind another
     // CachedSet and punching a hole.
     bool requiresHolePunch() const;
+
+    // True if any constituent layer is configured to blur any layers behind.
+    bool hasBlurBehind() const;
 
     // Add a layer that will be drawn behind this one. ::render() will render a
     // hole in this CachedSet's buffer, allowing the supplied layer to peek

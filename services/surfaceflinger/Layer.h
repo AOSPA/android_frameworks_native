@@ -239,8 +239,8 @@ public:
 
         FrameRate frameRate;
 
-        // Indicates whether parents / children of this layer had set FrameRate
-        bool treeHasFrameRateVote;
+        // The combined frame rate of parents / children of this layer
+        FrameRate frameRateForLayerTree;
 
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that
@@ -769,8 +769,6 @@ public:
     // is ready to acquire a buffer.
     ui::Transform::RotationFlags getFixedTransformHint() const;
 
-    renderengine::ShadowSettings getShadowSettings(const Rect& layerStackRect) const;
-
     /**
      * Traverse this layer and it's hierarchy of children directly. Unlike traverseInZOrder
      * which will not emit children who have relativeZOrder to another layer, this method
@@ -854,6 +852,13 @@ public:
      */
     bool hasInputInfo() const;
 
+    // Sets the parent's gameMode for this layer and all its children. Parent's gameMode is applied
+    // only to layers that do not have the GAME_MODE_METADATA set by WMShell. Any layer(along with
+    // its children) that has the metadata set will use the gameMode from the metadata.
+    void setGameModeForTree(int parentGameMode);
+    void setGameMode(int gameMode) { mGameMode = gameMode; };
+    int getGameMode() const { return mGameMode; }
+
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
     pid_t getOwnerPid() { return mOwnerPid; }
@@ -900,9 +905,6 @@ protected:
     virtual void setInitialValuesForClone(const sp<Layer>& clonedFrom);
     virtual std::optional<compositionengine::LayerFE::LayerSettings> prepareClientComposition(
             compositionengine::LayerFE::ClientCompositionTargetSettings&);
-    virtual std::optional<compositionengine::LayerFE::LayerSettings> prepareShadowClientComposition(
-            const LayerFE::LayerSettings&, const Rect& layerStackRect,
-            ui::Dataspace outputDataspace);
     virtual void preparePerFrameCompositionState();
     virtual void commitTransaction(State& stateToCommit);
     virtual uint32_t doTransactionResize(uint32_t flags, Layer::State* stateToCommit);
@@ -928,6 +930,7 @@ protected:
     // Modifies the passed in layer settings to clear the contents. If the blackout flag is set,
     // the settings clears the content with a solid black fill.
     void prepareClearClientComposition(LayerFE::LayerSettings&, bool blackout) const;
+    void prepareShadowClientComposition(LayerFE::LayerSettings& caster, const Rect& layerStackRect);
 
     void prepareBasicGeometryCompositionState();
     void prepareGeometryCompositionState();
@@ -1067,6 +1070,8 @@ private:
     // Fills in the frame and transform info for the InputWindowInfo
     void fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay);
 
+    bool updateFrameRateForLayerTree(bool treeHasFrameRateVote);
+
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is
     // a transform from the current layer coordinate space to display(screen) coordinate space.
@@ -1100,6 +1105,10 @@ private:
     // final shadow radius for this layer. If a shadow is specified for a layer, then effective
     // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
     float mEffectiveShadowRadius = 0.f;
+
+    // Game mode for the layer. Set by WindowManagerShell, game mode is used in
+    // metrics(SurfaceFlingerStats).
+    int mGameMode = 0;
 
     mutable int32_t mPriority = Layer::PRIORITY_UNSET;
 
