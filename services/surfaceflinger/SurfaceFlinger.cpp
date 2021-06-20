@@ -25,6 +25,10 @@
 #include "SurfaceFlinger.h"
 #include "TraceUtils.h"
 
+#include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
+#include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
+#include <android/binder_process.h>
+#include <android/binder_manager.h>
 #include <android-base/properties.h>
 #include <android/configuration.h>
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
@@ -180,6 +184,7 @@ using ui::ColorMode;
 using ui::Dataspace;
 using ui::DisplayPrimaries;
 using ui::RenderIntent;
+using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
 
 namespace hal = android::hardware::graphics::composer::hal;
 
@@ -340,6 +345,11 @@ Dataspace SurfaceFlinger::wideColorGamutCompositionDataspace = Dataspace::V0_SRG
 ui::PixelFormat SurfaceFlinger::wideColorGamutCompositionPixelFormat = ui::PixelFormat::RGBA_8888;
 bool SurfaceFlinger::useFrameRateApi;
 bool SurfaceFlinger::sDirectStreaming;
+
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+std::shared_ptr<IDisplayConfig> displayConfigIntf = nullptr;
+#endif
+
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
 ::DisplayConfig::ClientInterface *mDisplayConfigIntf = nullptr;
 DisplayConfigCallbackHandler *mDisplayConfigCallbackhandler = nullptr;
@@ -665,6 +675,20 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     base::SetProperty(KERNEL_IDLE_TIMER_PROP, mKernelIdleTimerEnabled ? "true" : "false");
 
     mRefreshRateOverlaySpinner = property_get_bool("sf.debug.show_refresh_rate_overlay_spinner", 0);
+
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    ndk::SpAIBinder binder(
+         AServiceManager_checkService("vendor.qti.hardware.display.config.IDisplayConfig/default"));
+
+    if (binder.get() == nullptr) {
+        ALOGE("DisplayConfig AIDL is not present");
+    } else {
+        displayConfigIntf = IDisplayConfig::fromBinder(binder);
+        if (displayConfigIntf == nullptr) {
+            ALOGE("Failed to retrieve DisplayConfig AIDL binder");
+        }
+    }
+#endif
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
@@ -816,6 +840,10 @@ void SurfaceFlinger::bootFinished() {
     if (mStartPropertySetThread->join() != NO_ERROR) {
         ALOGE("Join StartPropertySetThread failed!");
     }
+
+    if (mRenderEnginePrimeCacheFuture.valid()) {
+        mRenderEnginePrimeCacheFuture.get();
+    }
     const nsecs_t now = systemTime();
     const nsecs_t duration = now - mBootTime;
     ALOGI("Boot is finished (%ld ms)", long(ns2ms(duration)) );
@@ -960,7 +988,15 @@ void SurfaceFlinger::init() {
     char primeShaderCache[PROPERTY_VALUE_MAX];
     property_get("service.sf.prime_shader_cache", primeShaderCache, "1");
     if (atoi(primeShaderCache)) {
-        getRenderEngine().primeCache();
+        if (setSchedFifo(false) != NO_ERROR) {
+            ALOGW("Can't set SCHED_OTHER for primeCache");
+        }
+
+        mRenderEnginePrimeCacheFuture = getRenderEngine().primeCache();
+
+        if (setSchedFifo(true) != NO_ERROR) {
+            ALOGW("Can't set SCHED_OTHER for primeCache");
+        }
     }
 
     getRenderEngine().onPrimaryDisplaySizeChanged(display->getSize());
@@ -1024,21 +1060,32 @@ void SurfaceFlinger::init() {
             ALOGI("Unable to create display extension");
         }
 
+    }
+    startUnifiedDraw();
+    ALOGV("Done initializing");
+}
+
+void SurfaceFlinger::startUnifiedDraw() {
 #ifdef QTI_UNIFIED_DRAW
-        const auto id = HalDisplayId::tryCast(display->getId());
-        if (mDisplayExtnIntf && id) {
-            uint32_t hwcDisplayId;
-            if (!getHwcDisplayId(display, &hwcDisplayId)) {
-               return;
-            }
-            if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
-                getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+    if (mDisplayExtnIntf) {
+        // Displays hotplugged at this point.
+        for (const auto& display : mDisplaysList) {
+            const auto id = HalDisplayId::tryCast(display->getId());
+            if (id) {
+                uint32_t hwcDisplayId;
+                if (!getHwcDisplayId(display, &hwcDisplayId)) {
+                   continue;
+                }
+                ALOGI("calling TryUnifiedDraw for display=%u", hwcDisplayId);
+                if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
+                    ALOGI("Calling tryDrawMethod for display=%u", hwcDisplayId);
+                    getHwComposer().tryDrawMethod(*id,
+                      IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
+                }
             }
         }
-#endif
-
     }
-    ALOGV("Done initializing");
+#endif
 }
 
 void SurfaceFlinger::readPersistentProperties() {
@@ -1656,13 +1703,26 @@ status_t SurfaceFlinger::isSupportedConfigSwitch(const sp<IBinder>& displayToken
                displayToken.get());
         return NAME_NOT_FOUND;
     }
-#if (defined QTI_DISPLAY_CONFIG_ENABLED && defined VALIDATE_CONFIG_SWITCH)
+#ifdef AIDL_DISPLAY_CONFIG_ENABLED
+    if (displayConfigIntf != nullptr) {
+        const auto displayId = PhysicalDisplayId::tryCast(display->getId());
+        const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
+        bool supported = false;
+        displayConfigIntf->isSupportedConfigSwitch(*hwcDisplayId, config, &supported);
+        if (!supported) {
+            ALOGW("AIDL Switching to config:%d is not supported", config);
+            return INVALID_OPERATION;
+        } else {
+            ALOGI("AIDL Switching to config:%d is supported", config);
+        }
+    }
+#elif defined(QTI_DISPLAY_CONFIG_ENABLED)
     const auto displayId = display->getId();
     const auto hwcDisplayId = getHwComposer().fromPhysicalDisplayId(*displayId);
     bool supported = false;
     mDisplayConfigIntf->IsSupportedConfigSwitch(*hwcDisplayId, config, &supported);
     if (!supported) {
-        ALOGW("Switching to config:%d is not supported", config);
+        ALOGW("HIDL Switching to config:%d is not supported", config);
         return INVALID_OPERATION;
     }
 #endif
@@ -2182,7 +2242,9 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
         }
     }
 #ifdef PASS_COMPOSITOR_PID
-    mDisplayExtnIntf->SendCompositorPid();
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SendCompositorPid();
+    }
 #endif
 }
 
@@ -8066,11 +8128,13 @@ void SurfaceFlinger::updateDisplayExtension(uint32_t displayId, uint32_t configI
     ALOGV("updateDisplayExtn: Display:%d, Config:%d, Connected:%d", displayId, configId, connected);
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (connected) {
-        mDisplayExtnIntf->RegisterDisplay(displayId);
-        mDisplayExtnIntf->SetActiveConfig(displayId, configId);
-    } else {
-        mDisplayExtnIntf->UnregisterDisplay(displayId);
+    if (mDisplayExtnIntf) {
+        if (connected) {
+            mDisplayExtnIntf->RegisterDisplay(displayId);
+            mDisplayExtnIntf->SetActiveConfig(displayId, configId);
+        } else {
+            mDisplayExtnIntf->UnregisterDisplay(displayId);
+        }
     }
 #endif
 }
@@ -8079,7 +8143,9 @@ void SurfaceFlinger::setDisplayExtnActiveConfig(uint32_t displayId, uint32_t act
     ALOGV("setDisplayExtnActiveConfig: Display:%d, ActiveConfig:%d", displayId, activeConfigId);
 
 #ifdef EARLY_WAKEUP_FEATURE
-    mDisplayExtnIntf->SetActiveConfig(displayId, activeConfigId);
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SetActiveConfig(displayId, activeConfigId);
+    }
 #endif
 }
 
@@ -8090,7 +8156,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8105,7 +8171,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
@@ -8123,7 +8189,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
 void SurfaceFlinger::handlePresentationDisplaysEarlyWakeup(size_t updatingDisplays,
                                                            uint32_t layerStackId) {
     // Filter-out the updating display(s) for early wake-up in Presentation mode.
-    if (mEarlyWakeUpEnabled && mInternalPresentationDisplays) {
+    if (mDisplayExtnIntf && mEarlyWakeUpEnabled && mInternalPresentationDisplays) {
         ATRACE_CALL();
         uint32_t hwcDisplayId;
         bool internalDisplay = false;
@@ -8222,7 +8288,9 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
             bool enable = (mode == hal::PowerMode::ON) || (mode == hal::PowerMode::DOZE);
             ALOGV("setEarlyWakeUpConfig: Display: %d, Enable: %d", hwcDisplayId, enable);
 #ifdef DYNAMIC_EARLY_WAKEUP_CONFIG
-            mDisplayExtnIntf->SetEarlyWakeUpConfig(hwcDisplayId, enable);
+            if (mDisplayExtnIntf) {
+                mDisplayExtnIntf->SetEarlyWakeUpConfig(hwcDisplayId, enable);
+            }
 #endif
         }
     }
@@ -8230,8 +8298,10 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
 
 void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
 #ifdef SMART_DISPLAY_CONFIG
-    bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
-    mScheduler->handleIdleTimeout(isSmartConfig);
+    if (mDisplayExtnIntf) {
+        bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
+        mScheduler->handleIdleTimeout(isSmartConfig);
+    }
 #endif
 }
 

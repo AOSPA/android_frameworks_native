@@ -25,6 +25,7 @@ cc_test {
     name: "libsurfaceflinger_unittest",
     defaults: [
         "libdisplayconfig_defaults",
+        "libdisplayconfigaidl_defaults",
         "unfieddraw_defaults",
         "surfaceflinger_defaults",
     ],
