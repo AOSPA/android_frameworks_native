@@ -256,7 +256,6 @@ private:
     const hal::HWDisplayId mId;
     hal::DisplayType mType;
     bool mIsConnected = false;
-    bool mSetClient_3_1 = false;
 
     using Layers = std::unordered_map<hal::HWLayerId, std::weak_ptr<HWC2::impl::Layer>>;
     Layers mLayers;

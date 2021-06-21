@@ -408,10 +408,6 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
 Error Display::setClientTarget(uint32_t slot, const sp<GraphicBuffer>& target,
         const sp<Fence>& acquireFence, Dataspace dataspace)
 {
-    // TODO: Properly encode client target surface damage
-    if (mSetClient_3_1) {
-        return Error::NONE;
-    }
     int32_t fenceFd = acquireFence->dup();
     auto intError = mComposer.setClientTarget(mId, slot, target,
             fenceFd, dataspace, std::vector<Hwc2::IComposerClient::Rect>());
@@ -449,11 +445,6 @@ Error Display::setDisplayElapseTime(uint64_t timeStamp)
 Error Display::setClientTarget_3_1(int32_t slot, const sp<Fence>& acquireFence,
         Dataspace dataspace)
 {
-    if (slot == -1) {
-        mSetClient_3_1 = false;
-        return Error::NONE;
-    }
-    mSetClient_3_1 = true;
     int32_t fenceFd = acquireFence->dup();
     auto intError = mComposer.setClientTarget_3_1(mId, slot, fenceFd, dataspace);
     return static_cast<Error>(intError);

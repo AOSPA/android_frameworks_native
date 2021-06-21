@@ -899,7 +899,7 @@ private:
 
     // Check if unified draw supported
     void startUnifiedDraw();
-    void beginDraw(const sp<DisplayDevice>& displayDevice);
+    void InitComposerExtn();
     void endDraw();
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
