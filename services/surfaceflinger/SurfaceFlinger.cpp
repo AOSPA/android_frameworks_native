@@ -1004,6 +1004,7 @@ void SurfaceFlinger::init() {
             "Initializing graphics H/W...");
     Mutex::Autolock _l(mStateLock);
 
+    InitComposerExtn();
     // Get a RenderEngine for the given display / config (can't fail)
     // TODO(b/77156734): We need to stop casting and use HAL types when possible.
     // Sending maxFrameBufferAcquiredBuffers as the cache size is tightly tuned to single-display.
@@ -1119,23 +1120,27 @@ void SurfaceFlinger::init() {
         ALOGI("Layer Extension is enabled");
     }
 
+
+    startUnifiedDraw();
+    ALOGV("Done initializing");
+}
+
+void SurfaceFlinger::InitComposerExtn() {
     mComposerExtnIntf = composer::ComposerExtnLib::GetInstance();
     if (!mComposerExtnIntf) {
         ALOGE("Unable to get composer extension");
-    } else {
-        int ret = mComposerExtnIntf->CreateFrameScheduler(&mFrameSchedulerExtnIntf);
-        if (ret) {
-            ALOGI("Unable to create frame scheduler extension");
-        }
-
-        ret = mComposerExtnIntf->CreateDisplayExtn(&mDisplayExtnIntf);
-        if (ret) {
-            ALOGI("Unable to create display extension");
-        }
-
+        return;
     }
-    startUnifiedDraw();
-    ALOGV("Done initializing");
+    int ret = mComposerExtnIntf->CreateFrameScheduler(&mFrameSchedulerExtnIntf);
+    if (ret) {
+        ALOGI("Unable to create frame scheduler extension");
+    }
+
+    ret = mComposerExtnIntf->CreateDisplayExtn(&mDisplayExtnIntf);
+    if (ret) {
+       ALOGI("Unable to create display extension");
+    }
+    ALOGI("Init: mDisplayExtnIntf: %p", mDisplayExtnIntf);
 }
 
 void SurfaceFlinger::startUnifiedDraw() {
@@ -2510,53 +2515,6 @@ bool SurfaceFlinger::handleMessageTransaction() {
     return runHandleTransaction;
 }
 
-void SurfaceFlinger::beginDraw(const sp<DisplayDevice>& displayDevice) {
-#ifdef QTI_UNIFIED_DRAW
-    ATRACE_CALL();
-    composer::FBTLayerInfo fbtLayerInfo;
-    composer::FBTSlotInfo current;
-    composer::FBTSlotInfo future;
-    std::vector<composer::LayerFlags> displayLayerFlags;
-    ui::Dataspace dataspace;
-    uint32_t hwcDisplayId;
-    if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
-       return;
-    }
-    const auto id = HalDisplayId::tryCast(displayDevice->getId());
-    for (const auto& layer : mDrawingState.layersSortedByZ) {
-         if (layer->getLayerStack() == displayDevice->getLayerStack()) {
-             composer::LayerFlags layerFlags;
-             layerFlags.secure_camera = layer->isSecureCamera();
-             layerFlags.secure_ui     = layer->isSecureDisplay();
-             layerFlags.secure_video  = layer->isProtected();
-             displayLayerFlags.push_back(layerFlags);
-         }
-    }
-    fbtLayerInfo.width = displayDevice->getWidth();
-    fbtLayerInfo.height = displayDevice->getHeight();
-    current.index = displayDevice->getCompositionDisplay()
-                                 ->getRenderSurface()
-                                 ->getClientTargetCurrentSlot();
-    dataspace = displayDevice->getCompositionDisplay()
-                             ->getRenderSurface()
-                             ->getClientTargetCurrentDataspace();
-    fbtLayerInfo.secure = displayDevice->getCompositionDisplay()
-                                       ->getRenderSurface()
-                                       ->isProtected();
-    fbtLayerInfo.dataspace = static_cast<int>(dataspace);
-
-    if (current.index >= 0){
-        if (!mDisplayExtnIntf->BeginDraw(
-            hwcDisplayId, displayLayerFlags, fbtLayerInfo,
-            current, future)) {
-            getHwComposer().setClientTarget_3_1(*id, future.index, future.fence, dataspace);
-        } else if (future.predicted == false) {
-            getHwComposer().setClientTarget_3_1(*id, -1, future.fence, dataspace);
-        }
-    }
-#endif
-}
-
 void SurfaceFlinger::endDraw() {
 #ifdef QTI_UNIFIED_DRAW
      ATRACE_CALL();
@@ -2642,13 +2600,6 @@ void SurfaceFlinger::onMessageRefresh() {
       Mutex::Autolock lock(mStateLock);
       for (const auto& [_, display] : mDisplays) {
            setDisplayElapseTime(display);
-#ifdef QTI_UNIFIED_DRAW
-           if (HalDisplayId::tryCast(display->getId())) {
-               if (mDisplayExtnIntf) {
-                   beginDraw(display);
-               }
-           }
-#endif
       }
     }
     mCompositionEngine->present(refreshArgs);
@@ -3451,6 +3402,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     builder.setLayerStackId(state.layerStack);
     builder.setPowerAdvisor(&mPowerAdvisor);
     builder.setName(state.displayName);
+    builder.setDisplayExtnIntf(mDisplayExtnIntf);
     auto compositionDisplay = getCompositionEngine().createDisplay(builder.build());
     compositionDisplay->setLayerCachingEnabled(mLayerCachingEnabled);
 
