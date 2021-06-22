@@ -71,6 +71,7 @@ public:
     virtual void waitMessage() = 0;
     virtual void postMessage(sp<MessageHandler>&&) = 0;
     virtual void invalidate() = 0;
+    virtual void invalidateImmed() = 0;
     virtual void refresh() = 0;
     virtual std::optional<std::chrono::steady_clock::time_point> nextExpectedInvalidate() = 0;
 };
@@ -98,6 +99,7 @@ protected:
         virtual void dispatchRefresh();
         virtual void dispatchInvalidate(int64_t vsyncId, nsecs_t expectedVSyncTimestamp);
         virtual bool invalidatePending();
+        virtual void dispatchInvalidateImmed();
     };
 
     friend class Handler;
@@ -145,6 +147,8 @@ public:
 
     // sends INVALIDATE message at next VSYNC
     void invalidate() override;
+
+    void invalidateImmed() override;
 
     // sends REFRESH message at next VSYNC
     void refresh() override;

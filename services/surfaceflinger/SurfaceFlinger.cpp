@@ -2236,6 +2236,11 @@ void SurfaceFlinger::signalLayerUpdate() {
     mEventQueue->invalidate();
 }
 
+void SurfaceFlinger::signalImmedLayerUpdate() {
+    notifyDisplayUpdateImminent();
+    mEventQueue->invalidateImmed();
+}
+
 void SurfaceFlinger::signalRefresh() {
     mRefreshPending = true;
     mEventQueue->refresh();
@@ -2476,6 +2481,16 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
     }
 }
 
+void SurfaceFlinger::syncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
+    ATRACE_CALL();
+
+    if (mSmoMo) {
+        nsecs_t timestamp = 0;
+        bool needResync = mSmoMo->SyncToDisplay(previousFrameFence().fence, &timestamp);
+        ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
+    }
+}
+
 void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t expectedVSyncTime) {
     switch (what) {
         case MessageQueue::INVALIDATE: {
@@ -2516,6 +2531,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     const nsecs_t lastScheduledPresentTime = mScheduledPresentTime;
     mScheduledPresentTime = expectedVSyncTime;
     updateFrameScheduler();
+    syncToDisplayHardware();
 
     const auto vsyncIn = [&] {
         if (!ATRACE_ENABLED()) return 0.f;
@@ -4597,6 +4613,12 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
                 ATRACE_NAME("hasPendingBuffer");
                 return false;
             }
+
+            if (mSmoMo) {
+                if (mSmoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
+                    return false;
+                }
+            }
         }
     }
     return true;
@@ -4721,6 +4743,27 @@ status_t SurfaceFlinger::setTransactionState(
     // Check the pending state to make sure the transaction is synchronous.
     if (state.transactionCommittedSignal) {
         waitForSynchronousTransaction(*state.transactionCommittedSignal);
+    }
+
+    if (mSmoMo) {
+        state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+            sp<Layer> layer = fromHandle(state.surface).promote();
+            if (layer != nullptr) {
+                smomo::SmomoBufferStats bufferStats;
+                const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+                bufferStats.id = layer->getSequence();
+                bufferStats.auto_timestamp = isAutoTimestamp;
+                bufferStats.timestamp = now;
+                bufferStats.dequeue_latency = 0;
+                bufferStats.key = desiredPresentTime;
+                mSmoMo->CollectLayerStats(bufferStats);
+
+                const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
+                if (mSmoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+                    signalImmedLayerUpdate();
+                }
+            }
+        });
     }
 
     return NO_ERROR;

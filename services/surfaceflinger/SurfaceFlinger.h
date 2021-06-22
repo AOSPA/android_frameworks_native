@@ -216,8 +216,8 @@ public:
 
     bool init();
 
-    SmomoIntf* operator->() { return mInst; }
-    operator bool() { return mInst != nullptr; }
+    SmomoIntf* operator->() const { return mInst; }
+    operator bool() const { return mInst != nullptr; }
 
     SmomoWrapper(const SmomoWrapper&) = delete;
     SmomoWrapper& operator=(const SmomoWrapper&) = delete;
@@ -241,7 +241,7 @@ public:
 
     bool init();
 
-    LayerExtnIntf* operator->() { return     mInst; }
+    LayerExtnIntf* operator->() { return mInst; }
     operator bool() { return mInst != nullptr; }
 
     LayerExtWrapper(const LayerExtWrapper&) = delete;
@@ -883,6 +883,7 @@ private:
     // Can only be called from the main thread or with mStateLock held
     void signalLayerUpdate();
     void signalRefresh();
+    void signalImmedLayerUpdate();
 
     // Called on the main thread in response to initializeDisplays()
     void onInitializeDisplays() REQUIRES(mStateLock);
@@ -934,6 +935,7 @@ private:
     void commitInputWindowCommands() REQUIRES(mStateLock);
     void updateCursorAsync();
     void updateFrameScheduler();
+    void syncToDisplayHardware();
 
     void initScheduler(const DisplayDeviceState&) REQUIRES(mStateLock);
     void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
@@ -1688,12 +1690,11 @@ private:
     void scheduleRegionSamplingThread();
     void notifyRegionSamplingThread();
 
-    SmomoWrapper mSmoMo;
-    LayerExtWrapper mLayerExt;
-
 public:
     nsecs_t mVsyncPeriod = -1;
     DolphinWrapper mDolphinWrapper;
+    SmomoWrapper mSmoMo;
+    LayerExtWrapper mLayerExt;
 
 private:
     bool mEarlyWakeUpEnabled = false;

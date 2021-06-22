@@ -34,6 +34,7 @@ public:
     MOCK_METHOD0(waitMessage, void());
     MOCK_METHOD1(postMessage, void(sp<MessageHandler>&&));
     MOCK_METHOD0(invalidate, void());
+    MOCK_METHOD0(invalidateImmed, void());
     MOCK_METHOD0(refresh, void());
     MOCK_METHOD3(initVsync,
                  void(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
