@@ -594,11 +594,24 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
-    if (!targetSettings.disableBlurs) {
-        layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
-        layerSettings.blurRegions = getBlurRegions();
-        layerSettings.blurRegionTransform =
-                getActiveTransform(getDrawingState()).inverse().asMatrix4();
+    switch (targetSettings.blurSetting) {
+        case LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled:
+            layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+            layerSettings.blurRegions = getBlurRegions();
+            layerSettings.blurRegionTransform =
+                    getActiveTransform(getDrawingState()).inverse().asMatrix4();
+            break;
+        case LayerFE::ClientCompositionTargetSettings::BlurSetting::BackgroundBlurOnly:
+            layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+            break;
+        case LayerFE::ClientCompositionTargetSettings::BlurSetting::BlurRegionsOnly:
+            layerSettings.blurRegions = getBlurRegions();
+            layerSettings.blurRegionTransform =
+                    getActiveTransform(getDrawingState()).inverse().asMatrix4();
+            break;
+        case LayerFE::ClientCompositionTargetSettings::BlurSetting::Disabled:
+        default:
+            break;
     }
     layerSettings.stretchEffect = getStretchEffect();
     // Record the name of the layer for debugging further down the stack.
@@ -1374,7 +1387,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName,
                                                                  mTransactionName,
-                                                                 /*isBuffer*/ false);
+                                                                 /*isBuffer*/ false, getGameMode());
     // For Transactions, the post time is considered to be both queue and acquire fence time.
     surfaceFrame->setActualQueueTime(postTime);
     surfaceFrame->setAcquireFenceTime(postTime);
@@ -1391,7 +1404,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
     auto surfaceFrame =
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName, debugName,
-                                                                 /*isBuffer*/ true);
+                                                                 /*isBuffer*/ true, getGameMode());
     // For buffers, acquire fence time will set during latch.
     surfaceFrame->setActualQueueTime(queueTime);
     const auto fps = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
@@ -1654,7 +1667,8 @@ void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                      FrameEventHistoryDelta* outDelta) {
     if (newTimestamps) {
         mFlinger->mTimeStats->setPostTime(getSequence(), newTimestamps->frameNumber,
-                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime);
+                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime,
+                                          getGameMode());
         mFlinger->mTimeStats->setAcquireFence(getSequence(), newTimestamps->frameNumber,
                                               newTimestamps->acquireFence);
     }
@@ -2400,6 +2414,16 @@ void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhy
     info.touchableRegion = inputTransform.transform(info.touchableRegion);
 }
 
+void Layer::fillTouchOcclusionMode(InputWindowInfo& info) {
+    sp<Layer> p = this;
+    while (p != nullptr && !p->hasInputInfo()) {
+        p = p->mDrawingParent.promote();
+    }
+    if (p != nullptr) {
+        info.touchOcclusionMode = p->mDrawingState.inputInfo.touchOcclusionMode;
+    }
+}
+
 InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     if (!hasInputInfo()) {
         mDrawingState.inputInfo.name = getName();
@@ -2437,6 +2461,7 @@ InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     // anything.
     info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
     info.alpha = getAlpha();
+    fillTouchOcclusionMode(info);
 
     auto cropLayer = mDrawingState.touchableRegionCrop.promote();
     if (info.replaceTouchableRegionWithCrop) {
