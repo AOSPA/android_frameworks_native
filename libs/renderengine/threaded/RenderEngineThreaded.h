@@ -54,7 +54,7 @@ public:
     bool isProtected() const override;
     bool supportsProtectedContent() const override;
     bool useProtectedContext(bool useProtectedContext) override;
-    bool cleanupPostRender(CleanupMode mode) override;
+    void cleanupPostRender() override;
     void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
 
     status_t drawLayers(const DisplaySettings& display,
@@ -71,6 +71,7 @@ public:
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(const sp<GraphicBuffer>& buffer) override;
+    bool canSkipPostRenderCleanup() const override;
 
 private:
     void threadMain(CreateInstanceFactory factory);
