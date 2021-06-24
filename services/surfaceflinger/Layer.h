@@ -855,9 +855,9 @@ public:
     // Sets the parent's gameMode for this layer and all its children. Parent's gameMode is applied
     // only to layers that do not have the GAME_MODE_METADATA set by WMShell. Any layer(along with
     // its children) that has the metadata set will use the gameMode from the metadata.
-    void setGameModeForTree(int parentGameMode);
-    void setGameMode(int gameMode) { mGameMode = gameMode; };
-    int getGameMode() const { return mGameMode; }
+    void setGameModeForTree(int32_t parentGameMode);
+    void setGameMode(int32_t gameMode) { mGameMode = gameMode; };
+    int32_t getGameMode() const { return mGameMode; }
 
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
@@ -1067,6 +1067,10 @@ private:
     // null.
     sp<Layer> getRootLayer();
 
+    // Fills in the touch occlusion mode of the first parent (including this layer) that
+    // hasInputInfo() or no-op if no such parent is found.
+    void fillTouchOcclusionMode(InputWindowInfo& info);
+
     // Fills in the frame and transform info for the InputWindowInfo
     void fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay);
 
@@ -1108,7 +1112,7 @@ private:
 
     // Game mode for the layer. Set by WindowManagerShell, game mode is used in
     // metrics(SurfaceFlingerStats).
-    int mGameMode = 0;
+    int32_t mGameMode = 0;
 
     mutable int32_t mPriority = Layer::PRIORITY_UNSET;
 

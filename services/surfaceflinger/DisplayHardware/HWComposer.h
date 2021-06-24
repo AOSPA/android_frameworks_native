@@ -39,7 +39,6 @@
 #include <utils/StrongPointer.h>
 #include <utils/Timers.h>
 
-#include "DisplayIdGenerator.h"
 #include "DisplayIdentification.h"
 #include "DisplayMode.h"
 #include "HWC2.h"
@@ -105,7 +104,7 @@ public:
 
     virtual ~HWComposer();
 
-    virtual void setConfiguration(HWC2::ComposerCallback* callback, int32_t sequenceId) = 0;
+    virtual void setCallback(HWC2::ComposerCallback*) = 0;
 
     virtual bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
                                               DisplayIdentificationData* outData) const = 0;
@@ -113,9 +112,16 @@ public:
     virtual bool hasCapability(hal::Capability) const = 0;
     virtual bool hasDisplayCapability(HalDisplayId, hal::DisplayCapability) const = 0;
 
-    // Attempts to allocate a virtual display and returns its ID if created on the HWC device.
-    virtual std::optional<DisplayId> allocateVirtualDisplay(uint32_t width, uint32_t height,
-                                                            ui::PixelFormat*) = 0;
+    virtual size_t getMaxVirtualDisplayCount() const = 0;
+    virtual size_t getMaxVirtualDisplayDimension() const = 0;
+
+    // Attempts to allocate a virtual display on the HWC. The maximum number of virtual displays
+    // supported by the HWC can be queried in advance, but allocation may fail for other reasons.
+    // For virtualized compositors, the PhysicalDisplayId is a hint that this virtual display is
+    // a mirror of a physical display, and that the screen should be captured by the host rather
+    // than guest compositor.
+    virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*,
+                                        std::optional<PhysicalDisplayId> mirror) = 0;
 
     virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) = 0;
 
@@ -257,7 +263,7 @@ public:
 
     ~HWComposer() override;
 
-    void setConfiguration(HWC2::ComposerCallback* callback, int32_t sequenceId) override;
+    void setCallback(HWC2::ComposerCallback*) override;
 
     bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
                                       DisplayIdentificationData* outData) const override;
@@ -265,9 +271,11 @@ public:
     bool hasCapability(hal::Capability) const override;
     bool hasDisplayCapability(HalDisplayId, hal::DisplayCapability) const override;
 
-    // Attempts to allocate a virtual display and returns its ID if created on the HWC device.
-    std::optional<DisplayId> allocateVirtualDisplay(uint32_t width, uint32_t height,
-                                                    ui::PixelFormat*) override;
+    size_t getMaxVirtualDisplayCount() const override;
+    size_t getMaxVirtualDisplayDimension() const override;
+
+    bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*,
+                                std::optional<PhysicalDisplayId>) override;
 
     // Called from SurfaceFlinger, when the state for a new physical display needs to be recreated.
     void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) override;
@@ -421,7 +429,6 @@ private:
 
     void loadCapabilities();
     void loadLayerMetadataSupport();
-    uint32_t getMaxVirtualDisplayCount() const;
 
     std::unordered_map<HalDisplayId, DisplayData> mDisplayData;
 
@@ -435,8 +442,7 @@ private:
     std::optional<hal::HWDisplayId> mExternalHwcDisplayId;
     bool mHasMultiDisplaySupport = false;
 
-    RandomDisplayIdGenerator<HalVirtualDisplayId> mVirtualIdGenerator{getMaxVirtualDisplayCount()};
-
+    const size_t mMaxVirtualDisplayDimension;
     const bool mUpdateDeviceProductInfoOnHotplugReconnect;
 };
 

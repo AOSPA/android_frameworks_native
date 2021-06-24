@@ -231,6 +231,7 @@ public:
     bool hasBlurBehind() const {
         return mBackgroundBlurRadius.get() > 0 || !mBlurRegions.get().empty();
     }
+    int32_t getBackgroundBlurRadius() const { return mBackgroundBlurRadius.get(); }
     hardware::graphics::composer::hal::Composition getCompositionType() const {
         return mCompositionType.get();
     }
@@ -238,6 +239,19 @@ public:
     void incrementFramesSinceBufferUpdate() { ++mFramesSinceBufferUpdate; }
     void resetFramesSinceBufferUpdate() { mFramesSinceBufferUpdate = 0; }
     int64_t getFramesSinceBufferUpdate() const { return mFramesSinceBufferUpdate; }
+
+    ui::Dataspace getDataspace() const { return mOutputDataspace.get(); }
+
+    bool isHdr() const {
+        const ui::Dataspace transfer =
+                static_cast<ui::Dataspace>(getDataspace() & ui::Dataspace::TRANSFER_MASK);
+        return (transfer == ui::Dataspace::TRANSFER_ST2084 ||
+                transfer == ui::Dataspace::TRANSFER_HLG);
+    }
+
+    bool isProtected() const {
+        return getOutputLayer()->getLayerFE().getCompositionState()->hasProtectedContent;
+    }
 
     void dump(std::string& result) const;
     std::optional<std::string> compare(const LayerState& other) const;
