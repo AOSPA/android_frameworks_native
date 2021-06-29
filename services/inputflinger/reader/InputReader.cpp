@@ -406,7 +406,9 @@ void InputReader::getExternalStylusDevicesLocked(std::vector<InputDeviceInfo>& o
     for (auto& devicePair : mDevices) {
         std::shared_ptr<InputDevice>& device = devicePair.second;
         if (device->getClasses().test(InputDeviceClass::EXTERNAL_STYLUS) && !device->isIgnored()) {
-            outDevices.push_back(device->getDeviceInfo());
+            InputDeviceInfo info;
+            device->getDeviceInfo(&info);
+            outDevices.push_back(info);
         }
     }
 }
@@ -496,7 +498,9 @@ std::vector<InputDeviceInfo> InputReader::getInputDevicesLocked() const {
 
     for (const auto& [device, eventHubIds] : mDeviceToEventHubIdsMap) {
         if (!device->isIgnored()) {
-            outInputDevices.push_back(device->getDeviceInfo());
+            InputDeviceInfo info;
+            device->getDeviceInfo(&info);
+            outInputDevices.push_back(info);
         }
     }
     return outInputDevices;
@@ -691,26 +695,28 @@ std::optional<int32_t> InputReader::getBatteryStatus(int32_t deviceId) {
     return std::nullopt;
 }
 
-std::vector<InputDeviceLightInfo> InputReader::getLights(int32_t deviceId) {
+std::vector<int32_t> InputReader::getLightIds(int32_t deviceId) {
     std::scoped_lock _l(mLock);
 
     InputDevice* device = findInputDeviceLocked(deviceId);
-    if (device == nullptr) {
-        return {};
+    if (device) {
+        InputDeviceInfo info;
+        device->getDeviceInfo(&info);
+        return info.getLightIds();
     }
-
-    return device->getDeviceInfo().getLights();
+    return {};
 }
 
-std::vector<InputDeviceSensorInfo> InputReader::getSensors(int32_t deviceId) {
+const InputDeviceLightInfo* InputReader::getLightInfo(int32_t deviceId, int32_t lightId) {
     std::scoped_lock _l(mLock);
 
     InputDevice* device = findInputDeviceLocked(deviceId);
-    if (device == nullptr) {
-        return {};
+    if (device) {
+        InputDeviceInfo info;
+        device->getDeviceInfo(&info);
+        return info.getLightInfo(lightId);
     }
-
-    return device->getDeviceInfo().getSensors();
+    return nullptr;
 }
 
 bool InputReader::setLightColor(int32_t deviceId, int32_t lightId, int32_t color) {

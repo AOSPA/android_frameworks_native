@@ -14,68 +14,76 @@
  * limitations under the License.
  */
 
-#include <gtest/gtest.h>
-#include <ui/DisplayId.h>
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wextra"
 
-#include <algorithm>
-#include <iterator>
+#include <gtest/gtest.h>
+
 #include <vector>
 
+#include <ui/DisplayId.h>
 #include "DisplayIdGenerator.h"
 
 namespace android {
 
-template <typename Id>
-void testGenerateId() {
-    DisplayIdGenerator<Id> generator;
-
-    std::vector<std::optional<Id>> ids;
-    std::generate_n(std::back_inserter(ids), 10, [&] { return generator.generateId(); });
+template <typename T>
+void testNextId(DisplayIdGenerator<T>& generator) {
+    constexpr int kNumIds = 5;
+    std::vector<T> ids;
+    for (int i = 0; i < kNumIds; i++) {
+        const auto id = generator.nextId();
+        ASSERT_TRUE(id);
+        ids.push_back(*id);
+    }
 
     // All IDs should be different.
-    for (auto it = ids.begin(); it != ids.end(); ++it) {
-        EXPECT_TRUE(*it);
-
-        for (auto dup = it + 1; dup != ids.end(); ++dup) {
-            EXPECT_NE(*it, *dup);
+    for (size_t i = 0; i < kNumIds; i++) {
+        for (size_t j = i + 1; j < kNumIds; j++) {
+            EXPECT_NE(ids[i], ids[j]);
         }
     }
 }
 
-TEST(DisplayIdGeneratorTest, generateGpuVirtualDisplayId) {
-    testGenerateId<GpuVirtualDisplayId>();
+TEST(DisplayIdGeneratorTest, nextIdGpuVirtual) {
+    RandomDisplayIdGenerator<GpuVirtualDisplayId> generator;
+    testNextId(generator);
 }
 
-TEST(DisplayIdGeneratorTest, generateHalVirtualDisplayId) {
-    testGenerateId<HalVirtualDisplayId>();
+TEST(DisplayIdGeneratorTest, nextIdHalVirtual) {
+    RandomDisplayIdGenerator<HalVirtualDisplayId> generator;
+    testNextId(generator);
 }
 
-TEST(DisplayIdGeneratorTest, releaseId) {
+TEST(DisplayIdGeneratorTest, markUnused) {
     constexpr size_t kMaxIdsCount = 5;
-    DisplayIdGenerator<GpuVirtualDisplayId> generator(kMaxIdsCount);
+    RandomDisplayIdGenerator<GpuVirtualDisplayId> generator(kMaxIdsCount);
 
-    const auto id = generator.generateId();
+    const auto id = generator.nextId();
     EXPECT_TRUE(id);
 
-    for (size_t i = 1; i < kMaxIdsCount; i++) {
-        EXPECT_TRUE(generator.generateId());
+    for (int i = 1; i < kMaxIdsCount; i++) {
+        EXPECT_TRUE(generator.nextId());
     }
 
-    EXPECT_FALSE(generator.generateId());
+    EXPECT_FALSE(generator.nextId());
 
-    generator.releaseId(*id);
-    EXPECT_TRUE(generator.generateId());
+    generator.markUnused(*id);
+    EXPECT_TRUE(generator.nextId());
 }
 
 TEST(DisplayIdGeneratorTest, maxIdsCount) {
     constexpr size_t kMaxIdsCount = 5;
-    DisplayIdGenerator<GpuVirtualDisplayId> generator(kMaxIdsCount);
+    RandomDisplayIdGenerator<GpuVirtualDisplayId> generator(kMaxIdsCount);
 
-    for (size_t i = 0; i < kMaxIdsCount; i++) {
-        EXPECT_TRUE(generator.generateId());
+    for (int i = 0; i < kMaxIdsCount; i++) {
+        EXPECT_TRUE(generator.nextId());
     }
 
-    EXPECT_FALSE(generator.generateId());
+    EXPECT_FALSE(generator.nextId());
 }
 
 } // namespace android
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wextra"

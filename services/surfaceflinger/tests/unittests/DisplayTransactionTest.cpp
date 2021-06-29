@@ -41,6 +41,9 @@ DisplayTransactionTest::DisplayTransactionTest() {
     mFlinger.mutableUseColorManagement() = false;
     mFlinger.mutableDisplayColorSetting() = DisplayColorSetting::kUnmanaged;
 
+    // Default to using HWC virtual displays
+    mFlinger.mutableUseHwcVirtualDisplays() = true;
+
     mFlinger.setCreateBufferQueueFunction([](auto, auto, auto) {
         ADD_FAILURE() << "Unexpected request to create a buffer queue.";
     });
@@ -82,16 +85,9 @@ void DisplayTransactionTest::injectMockScheduler() {
 }
 
 void DisplayTransactionTest::injectMockComposer(int virtualDisplayCount) {
-    if (mComposer) {
-        // If reinjecting, disable first to prevent the enable below from being a no-op.
-        mFlinger.enableHalVirtualDisplays(false);
-    }
-
     mComposer = new Hwc2::mock::Composer();
-    mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
-
     EXPECT_CALL(*mComposer, getMaxVirtualDisplayCount()).WillOnce(Return(virtualDisplayCount));
-    mFlinger.enableHalVirtualDisplays(true);
+    mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
 
     Mock::VerifyAndClear(mComposer);
 }
@@ -139,21 +135,18 @@ sp<DisplayDevice> DisplayTransactionTest::injectDefaultInternalDisplay(
     EXPECT_CALL(*mNativeWindow, perform(NATIVE_WINDOW_SET_USAGE64));
     EXPECT_CALL(*mNativeWindow, perform(NATIVE_WINDOW_API_DISCONNECT)).Times(AnyNumber());
 
-    constexpr auto kConnectionType = ui::DisplayConnectionType::Internal;
-    constexpr bool kIsPrimary = true;
+    auto compositionDisplay = compositionengine::impl::
+            createDisplay(mFlinger.getCompositionEngine(),
+                          compositionengine::DisplayCreationArgsBuilder()
+                                  .setPhysical(
+                                          {DEFAULT_DISPLAY_ID, ui::DisplayConnectionType::Internal})
+                                  .setPixels({DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT})
+                                  .setPowerAdvisor(&mPowerAdvisor)
+                                  .build());
 
-    auto compositionDisplay =
-            compositionengine::impl::createDisplay(mFlinger.getCompositionEngine(),
-                                                   compositionengine::DisplayCreationArgsBuilder()
-                                                           .setId(DEFAULT_DISPLAY_ID)
-                                                           .setConnectionType(kConnectionType)
-                                                           .setPixels({DEFAULT_DISPLAY_WIDTH,
-                                                                       DEFAULT_DISPLAY_HEIGHT})
-                                                           .setPowerAdvisor(&mPowerAdvisor)
-                                                           .build());
-
-    auto injector = FakeDisplayDeviceInjector(mFlinger, compositionDisplay, kConnectionType,
-                                              DEFAULT_DISPLAY_HWC_DISPLAY_ID, kIsPrimary);
+    auto injector = FakeDisplayDeviceInjector(mFlinger, compositionDisplay,
+                                              ui::DisplayConnectionType::Internal,
+                                              DEFAULT_DISPLAY_HWC_DISPLAY_ID, true /* isPrimary */);
 
     injector.setNativeWindow(mNativeWindow);
     if (injectExtra) {

@@ -136,10 +136,6 @@ std::string jankTypeBitmaskToString(int32_t jankType) {
         janks.emplace_back("Unknown jank");
         jankType &= ~JankType::Unknown;
     }
-    if (jankType & JankType::SurfaceFlingerStuffing) {
-        janks.emplace_back("SurfaceFlinger Stuffing");
-        jankType &= ~JankType::SurfaceFlingerStuffing;
-    }
 
     // jankType should be 0 if all types of jank were checked for.
     LOG_ALWAYS_FATAL_IF(jankType != 0, "Unrecognized jank type value 0x%x", jankType);
@@ -304,7 +300,7 @@ SurfaceFrame::SurfaceFrame(const FrameTimelineInfo& frameTimelineInfo, pid_t own
                            frametimeline::TimelineItem&& predictions,
                            std::shared_ptr<TimeStats> timeStats,
                            JankClassificationThresholds thresholds,
-                           TraceCookieCounter* traceCookieCounter, bool isBuffer, int32_t gameMode)
+                           TraceCookieCounter* traceCookieCounter, bool isBuffer)
       : mToken(frameTimelineInfo.vsyncId),
         mInputEventId(frameTimelineInfo.inputEventId),
         mOwnerPid(ownerPid),
@@ -319,8 +315,7 @@ SurfaceFrame::SurfaceFrame(const FrameTimelineInfo& frameTimelineInfo, pid_t own
         mTimeStats(timeStats),
         mJankClassificationThresholds(thresholds),
         mTraceCookieCounter(*traceCookieCounter),
-        mIsBuffer(isBuffer),
-        mGameMode(gameMode) {}
+        mIsBuffer(isBuffer) {}
 
 void SurfaceFrame::setActualStartTime(nsecs_t actualStartTime) {
     std::scoped_lock lock(mMutex);
@@ -608,8 +603,8 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType, 
     if (mPredictionState != PredictionState::None) {
         // Only update janky frames if the app used vsync predictions
         mTimeStats->incrementJankyFrames({refreshRate, mRenderRate, mOwnerUid, mLayerName,
-                                          mGameMode, mJankType, displayDeadlineDelta,
-                                          displayPresentDelta, deadlineDelta});
+                                          mJankType, displayDeadlineDelta, displayPresentDelta,
+                                          deadlineDelta});
     }
 }
 
@@ -693,7 +688,6 @@ void SurfaceFrame::traceActuals(int64_t displayFrameToken) const {
         actualSurfaceFrameStartEvent->set_gpu_composition(mGpuComposition);
         actualSurfaceFrameStartEvent->set_jank_type(jankTypeBitmaskToProto(mJankType));
         actualSurfaceFrameStartEvent->set_prediction_type(toProto(mPredictionState));
-        actualSurfaceFrameStartEvent->set_is_buffer(mIsBuffer);
     });
 
     // Actual timeline end
@@ -778,14 +772,14 @@ void FrameTimeline::registerDataSource() {
 
 std::shared_ptr<SurfaceFrame> FrameTimeline::createSurfaceFrameForToken(
         const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid, int32_t layerId,
-        std::string layerName, std::string debugName, bool isBuffer, int32_t gameMode) {
+        std::string layerName, std::string debugName, bool isBuffer) {
     ATRACE_CALL();
     if (frameTimelineInfo.vsyncId == FrameTimelineInfo::INVALID_VSYNC_ID) {
         return std::make_shared<SurfaceFrame>(frameTimelineInfo, ownerPid, ownerUid, layerId,
                                               std::move(layerName), std::move(debugName),
                                               PredictionState::None, TimelineItem(), mTimeStats,
                                               mJankClassificationThresholds, &mTraceCookieCounter,
-                                              isBuffer, gameMode);
+                                              isBuffer);
     }
     std::optional<TimelineItem> predictions =
             mTokenManager.getPredictionsForToken(frameTimelineInfo.vsyncId);
@@ -794,13 +788,13 @@ std::shared_ptr<SurfaceFrame> FrameTimeline::createSurfaceFrameForToken(
                                               std::move(layerName), std::move(debugName),
                                               PredictionState::Valid, std::move(*predictions),
                                               mTimeStats, mJankClassificationThresholds,
-                                              &mTraceCookieCounter, isBuffer, gameMode);
+                                              &mTraceCookieCounter, isBuffer);
     }
     return std::make_shared<SurfaceFrame>(frameTimelineInfo, ownerPid, ownerUid, layerId,
                                           std::move(layerName), std::move(debugName),
                                           PredictionState::Expired, TimelineItem(), mTimeStats,
                                           mJankClassificationThresholds, &mTraceCookieCounter,
-                                          isBuffer, gameMode);
+                                          isBuffer);
 }
 
 FrameTimeline::DisplayFrame::DisplayFrame(std::shared_ptr<TimeStats> timeStats,

@@ -71,14 +71,13 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
         mIsPowerModeOverride(false){
     mCompositionDisplay->editState().isSecure = args.isSecure;
     mCompositionDisplay->createRenderSurface(
-            compositionengine::RenderSurfaceCreationArgsBuilder()
-                    .setDisplayWidth(ANativeWindow_getWidth(args.nativeWindow.get()))
-                    .setDisplayHeight(ANativeWindow_getHeight(args.nativeWindow.get()))
-                    .setNativeWindow(std::move(args.nativeWindow))
-                    .setDisplaySurface(std::move(args.displaySurface))
-                    .setMaxTextureCacheSize(
-                            static_cast<size_t>(SurfaceFlinger::maxFrameBufferAcquiredBuffers))
-                    .build());
+            compositionengine::
+                    RenderSurfaceCreationArgs{ANativeWindow_getWidth(args.nativeWindow.get()),
+                                              ANativeWindow_getHeight(args.nativeWindow.get()),
+                                              args.nativeWindow, args.displaySurface,
+                                              static_cast<size_t>(
+                                                      SurfaceFlinger::
+                                                              maxFrameBufferAcquiredBuffers)});
 
     if (!mFlinger->mDisableClientCompositionCache &&
         SurfaceFlinger::maxFrameBufferAcquiredBuffers > 0) {
@@ -138,10 +137,6 @@ uint32_t DisplayDevice::getPageFlipCount() const {
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
     getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
-}
-
-void DisplayDevice::enableLayerCaching(bool enable) {
-    getCompositionDisplay()->setLayerCachingEnabled(enable);
 }
 
 hal::PowerMode DisplayDevice::getPowerMode() const {

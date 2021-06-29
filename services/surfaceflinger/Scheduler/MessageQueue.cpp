@@ -23,6 +23,7 @@
 #include <utils/threads.h>
 
 #include <gui/DisplayEventReceiver.h>
+#include <gui/IDisplayEventConnection.h>
 
 #include "EventThread.h"
 #include "FrameTimeline.h"
@@ -32,32 +33,27 @@
 namespace android::impl {
 
 void MessageQueue::Handler::dispatchRefresh() {
-    if ((mEventMask.fetch_or(eventMaskRefresh) & eventMaskRefresh) == 0) {
+    if ((android_atomic_or(eventMaskRefresh, &mEventMask) & eventMaskRefresh) == 0) {
         mQueue.mLooper->sendMessage(this, Message(MessageQueue::REFRESH));
     }
 }
 
 void MessageQueue::Handler::dispatchInvalidate(int64_t vsyncId, nsecs_t expectedVSyncTimestamp) {
-    if ((mEventMask.fetch_or(eventMaskInvalidate) & eventMaskInvalidate) == 0) {
+    if ((android_atomic_or(eventMaskInvalidate, &mEventMask) & eventMaskInvalidate) == 0) {
         mVsyncId = vsyncId;
         mExpectedVSyncTime = expectedVSyncTimestamp;
         mQueue.mLooper->sendMessage(this, Message(MessageQueue::INVALIDATE));
     }
 }
 
-bool MessageQueue::Handler::invalidatePending() {
-    constexpr auto pendingMask = eventMaskInvalidate | eventMaskRefresh;
-    return (mEventMask.load() & pendingMask) != 0;
-}
-
 void MessageQueue::Handler::handleMessage(const Message& message) {
     switch (message.what) {
         case INVALIDATE:
-            mEventMask.fetch_and(~eventMaskInvalidate);
+            android_atomic_and(~eventMaskInvalidate, &mEventMask);
             mQueue.mFlinger->onMessageReceived(message.what, mVsyncId, mExpectedVSyncTime);
             break;
         case REFRESH:
-            mEventMask.fetch_and(~eventMaskRefresh);
+            android_atomic_and(~eventMaskRefresh, &mEventMask);
             mQueue.mFlinger->onMessageReceived(message.what, mVsyncId, mExpectedVSyncTime);
             break;
     }
@@ -110,7 +106,7 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
     {
         std::lock_guard lock(mVsync.mutex);
         mVsync.lastCallbackTime = std::chrono::nanoseconds(vsyncTime);
-        mVsync.scheduled = false;
+        mVsync.mScheduled = false;
     }
 
     if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
@@ -139,10 +135,9 @@ void MessageQueue::setDuration(std::chrono::nanoseconds workDuration) {
     ATRACE_CALL();
     std::lock_guard lock(mVsync.mutex);
     mVsync.workDuration = workDuration;
-    if (mVsync.scheduled) {
-        mVsync.expectedWakeupTime = mVsync.registration->schedule(
-                {mVsync.workDuration.get().count(),
-                 /*readyDuration=*/0, mVsync.lastCallbackTime.count()});
+    if (mVsync.mScheduled) {
+        mVsync.registration->schedule({mVsync.workDuration.get().count(), /*readyDuration=*/0,
+                                       mVsync.lastCallbackTime.count()});
     }
 }
 
@@ -185,11 +180,10 @@ void MessageQueue::invalidate() {
     }
 
     std::lock_guard lock(mVsync.mutex);
-    mVsync.scheduled = true;
-    mVsync.expectedWakeupTime =
-            mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
-                                           .readyDuration = 0,
-                                           .earliestVsync = mVsync.lastCallbackTime.count()});
+    mVsync.mScheduled = true;
+    mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
+                                   .readyDuration = 0,
+                                   .earliestVsync = mVsync.lastCallbackTime.count()});
 }
 
 void MessageQueue::refresh() {
@@ -209,21 +203,6 @@ void MessageQueue::injectorCallback() {
             }
         }
     }
-}
-
-std::optional<std::chrono::steady_clock::time_point> MessageQueue::nextExpectedInvalidate() {
-    if (mHandler->invalidatePending()) {
-        return std::chrono::steady_clock::now();
-    }
-
-    std::lock_guard lock(mVsync.mutex);
-    if (mVsync.scheduled) {
-        LOG_ALWAYS_FATAL_IF(!mVsync.expectedWakeupTime.has_value(), "callback was never scheduled");
-        const auto expectedWakeupTime = std::chrono::nanoseconds(*mVsync.expectedWakeupTime);
-        return std::optional<std::chrono::steady_clock::time_point>(expectedWakeupTime);
-    }
-
-    return std::nullopt;
 }
 
 } // namespace android::impl

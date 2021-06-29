@@ -190,45 +190,6 @@ struct RefreshRateScore {
 RefreshRate RefreshRateConfigs::getBestRefreshRate(const std::vector<LayerRequirement>& layers,
                                                    const GlobalSignals& globalSignals,
                                                    GlobalSignals* outSignalsConsidered) const {
-    std::lock_guard lock(mLock);
-
-    if (auto cached = getCachedBestRefreshRate(layers, globalSignals, outSignalsConsidered)) {
-        return *cached;
-    }
-
-    GlobalSignals signalsConsidered;
-    RefreshRate result = getBestRefreshRateLocked(layers, globalSignals, &signalsConsidered);
-    lastBestRefreshRateInvocation.emplace(
-            GetBestRefreshRateInvocation{.layerRequirements = layers,
-                                         .globalSignals = globalSignals,
-                                         .outSignalsConsidered = signalsConsidered,
-                                         .resultingBestRefreshRate = result});
-    if (outSignalsConsidered) {
-        *outSignalsConsidered = signalsConsidered;
-    }
-    return result;
-}
-
-std::optional<RefreshRate> RefreshRateConfigs::getCachedBestRefreshRate(
-        const std::vector<LayerRequirement>& layers, const GlobalSignals& globalSignals,
-        GlobalSignals* outSignalsConsidered) const {
-    const bool sameAsLastCall = lastBestRefreshRateInvocation &&
-            lastBestRefreshRateInvocation->layerRequirements == layers &&
-            lastBestRefreshRateInvocation->globalSignals == globalSignals;
-
-    if (sameAsLastCall) {
-        if (outSignalsConsidered) {
-            *outSignalsConsidered = lastBestRefreshRateInvocation->outSignalsConsidered;
-        }
-        return lastBestRefreshRateInvocation->resultingBestRefreshRate;
-    }
-
-    return {};
-}
-
-RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
-        const std::vector<LayerRequirement>& layers, const GlobalSignals& globalSignals,
-        GlobalSignals* outSignalsConsidered) const {
     ATRACE_CALL();
     ALOGV("getBestRefreshRate %zu layers", layers.size());
 
@@ -244,6 +205,8 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
             outSignalsConsidered->idle = true;
         }
     };
+
+    std::lock_guard lock(mLock);
 
     int noVoteLayers = 0;
     int minVoteLayers = 0;
@@ -633,11 +596,6 @@ const RefreshRate& RefreshRateConfigs::getCurrentRefreshRateByPolicyLocked() con
 
 void RefreshRateConfigs::setCurrentModeId(DisplayModeId modeId) {
     std::lock_guard lock(mLock);
-
-    // Invalidate the cached invocation to getBestRefreshRate. This forces
-    // the refresh rate to be recomputed on the next call to getBestRefreshRate.
-    lastBestRefreshRateInvocation.reset();
-
     mCurrentRefreshRate = mRefreshRates.at(modeId).get();
 }
 
@@ -651,15 +609,10 @@ RefreshRateConfigs::RefreshRateConfigs(const DisplayModes& modes, DisplayModeId 
 void RefreshRateConfigs::updateDisplayModes(const DisplayModes& modes,
                                             DisplayModeId currentModeId) {
     std::lock_guard lock(mLock);
-
     // The current mode should be supported
     LOG_ALWAYS_FATAL_IF(std::none_of(modes.begin(), modes.end(), [&](DisplayModePtr mode) {
         return mode->getId() == currentModeId;
     }));
-
-    // Invalidate the cached invocation to getBestRefreshRate. This forces
-    // the refresh rate to be recomputed on the next call to getBestRefreshRate.
-    lastBestRefreshRateInvocation.reset();
 
     mRefreshRates.clear();
     for (const auto& mode : modes) {
@@ -717,7 +670,6 @@ status_t RefreshRateConfigs::setDisplayManagerPolicy(const Policy& policy) {
         ALOGE("Invalid refresh rate policy: %s", policy.toString().c_str());
         return BAD_VALUE;
     }
-    lastBestRefreshRateInvocation.reset();
     Policy previousPolicy = *getCurrentPolicyLocked();
     mDisplayManagerPolicy = policy;
     if (*getCurrentPolicyLocked() == previousPolicy) {
@@ -732,7 +684,6 @@ status_t RefreshRateConfigs::setOverridePolicy(const std::optional<Policy>& poli
     if (policy && !isPolicyValidLocked(*policy)) {
         return BAD_VALUE;
     }
-    lastBestRefreshRateInvocation.reset();
     Policy previousPolicy = *getCurrentPolicyLocked();
     mOverridePolicy = policy;
     if (*getCurrentPolicyLocked() == previousPolicy) {

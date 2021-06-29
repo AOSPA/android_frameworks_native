@@ -29,8 +29,6 @@
 #include "InputState.h"
 #include "InputTarget.h"
 #include "InputThread.h"
-#include "LatencyAggregator.h"
-#include "LatencyTracker.h"
 #include "Monitor.h"
 #include "TouchState.h"
 #include "TouchedWindow.h"
@@ -41,6 +39,7 @@
 #include <input/InputApplication.h>
 #include <input/InputTransport.h>
 #include <input/InputWindow.h>
+#include <input/LatencyStatistics.h>
 #include <limits.h>
 #include <stddef.h>
 #include <ui/Region.h>
@@ -637,11 +636,15 @@ private:
     void doOnPointerDownOutsideFocusLockedInterruptible(CommandEntry* commandEntry) REQUIRES(mLock);
 
     // Statistics gathering.
-    LatencyAggregator mLatencyAggregator GUARDED_BY(mLock);
-    LatencyTracker mLatencyTracker GUARDED_BY(mLock);
+    static constexpr std::chrono::duration TOUCH_STATS_REPORT_PERIOD = 5min;
+    LatencyStatistics mTouchStatistics{TOUCH_STATS_REPORT_PERIOD};
+
+    void reportTouchEventForStatistics(const MotionEntry& entry);
+    void reportDispatchStatistics(std::chrono::nanoseconds eventDuration,
+                                  const Connection& connection, bool handled);
     void traceInboundQueueLengthLocked() REQUIRES(mLock);
-    void traceOutboundQueueLength(const Connection& connection);
-    void traceWaitQueueLength(const Connection& connection);
+    void traceOutboundQueueLength(const sp<Connection>& connection);
+    void traceWaitQueueLength(const sp<Connection>& connection);
 
     sp<InputReporterInterface> mReporter;
     sp<com::android::internal::compat::IPlatformCompatNative> mCompatService;

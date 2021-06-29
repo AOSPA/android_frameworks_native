@@ -165,9 +165,6 @@ public:
     // Enables (or disables) composition on this output
     virtual void setCompositionEnabled(bool) = 0;
 
-    // Enables (or disables) layer caching on this output
-    virtual void setLayerCachingEnabled(bool) = 0;
-
     // Sets the projection state to use
     virtual void setProjection(ui::Rotation orientation, const Rect& layerStackSpaceRect,
                                const Rect& orientedDisplaySpaceRect) = 0;
@@ -185,9 +182,6 @@ public:
 
     // Sets the output color mode
     virtual void setColorProfile(const ColorProfile&) = 0;
-
-    // Sets current calibrated display brightness information
-    virtual void setDisplayBrightness(float sdrWhitePointNits, float displayBrightnessNits) = 0;
 
     // Outputs a string with a state dump
     virtual void dump(std::string&) const = 0;
@@ -288,7 +282,7 @@ protected:
     virtual std::optional<base::unique_fd> composeSurfaces(
             const Region&, const compositionengine::CompositionRefreshArgs& refreshArgs) = 0;
     virtual void postFramebuffer() = 0;
-    virtual void renderCachedSets(const CompositionRefreshArgs&) = 0;
+    virtual void renderCachedSets() = 0;
     virtual void chooseCompositionStrategy() = 0;
     virtual bool getSkipColorTransform() const = 0;
     virtual FrameFences presentAndGetFrameFences() = 0;

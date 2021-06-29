@@ -16,10 +16,8 @@
 
 #pragma once
 
-#include <utils/Log.h>
 #include <utils/Timers.h>
 #include <functional>
-#include <optional>
 #include <string>
 
 #include "StrongTyping.h"
@@ -28,8 +26,7 @@ namespace android::scheduler {
 class TimeKeeper;
 class VSyncTracker;
 
-using ScheduleResult = std::optional<nsecs_t>;
-
+enum class ScheduleResult { Scheduled, CannotSchedule, Error };
 enum class CancelResult { Cancelled, TooLate, Error };
 
 /*
@@ -124,8 +121,11 @@ public:
      *
      * \param [in] token           The callback to schedule.
      * \param [in] scheduleTiming  The timing information for this schedule call
-     * \return                     The expected callback time if a callback was scheduled.
-     *                             std::nullopt if the callback is not registered.
+     * \return                     A ScheduleResult::Scheduled if callback was scheduled.
+     *                             A ScheduleResult::CannotSchedule
+     *                             if (workDuration + readyDuration - earliestVsync) is in the past,
+     * or if a callback was dispatched for the predictedVsync already. A ScheduleResult::Error if
+     * there was another error.
      */
     virtual ScheduleResult schedule(CallbackToken token, ScheduleTiming scheduleTiming) = 0;
 

@@ -29,7 +29,7 @@
 #endif
 #define LOG_TAG "PermissionChecker"
 
-namespace android::permission {
+namespace android {
 
 using android::content::AttributionSourceState;
 
@@ -37,7 +37,7 @@ PermissionChecker::PermissionChecker()
 {
 }
 
-sp<android::permission::IPermissionChecker> PermissionChecker::getService()
+sp<IPermissionChecker> PermissionChecker::getService()
 {
     static String16 permission_checker("permission_checker");
 
@@ -59,74 +59,56 @@ sp<android::permission::IPermissionChecker> PermissionChecker::getService()
             sleep(1);
         } else {
             mService = interface_cast<IPermissionChecker>(binder);
-            break;
         }
     }
     return mService;
 }
 
-PermissionChecker::PermissionResult PermissionChecker::checkPermissionForDataDeliveryFromDatasource(
-        const String16& permission, const AttributionSourceState& attributionSource,
-        const String16& message, int32_t attributedOpCode)
+PermissionChecker::PermissionResult
+    PermissionChecker::checkPermissionForDataDeliveryFromDatasource(
+        const String16& permission, AttributionSourceState& attributionSource,
+        const String16& message)
 {
-    return checkPermission(permission, attributionSource, message, /*forDataDelivery*/ true,
-            /*startDataDelivery*/ false,/*fromDatasource*/ true, attributedOpCode);
+    return static_cast<PermissionResult>(checkPermission(permission, attributionSource, message,
+            /*forDataDelivery*/ true, /*startDataDelivery*/ false,/*fromDatasource*/ true));
 }
 
 PermissionChecker::PermissionResult
-        PermissionChecker::checkPermissionForStartDataDeliveryFromDatasource(
-        const String16& permission, const AttributionSourceState& attributionSource,
-        const String16& message, int32_t attributedOpCode)
+    PermissionChecker::checkPermissionForStartDataDeliveryFromDatasource(
+        const String16& permission, AttributionSourceState& attributionSource,
+        const String16& message)
 {
-    return checkPermission(permission, attributionSource, message, /*forDataDelivery*/ true,
-            /*startDataDelivery*/ true, /*fromDatasource*/ true, attributedOpCode);
+    return static_cast<PermissionResult>(checkPermission(permission, attributionSource, message,
+            /*forDataDelivery*/ true, /*startDataDelivery*/ true, /*fromDatasource*/ true));
 }
 
-PermissionChecker::PermissionResult PermissionChecker::checkPermissionForPreflight(
-        const String16& permission, const AttributionSourceState& attributionSource,
-        const String16& message, int32_t attributedOpCode)
-{
-    return checkPermission(permission, attributionSource, message, /*forDataDelivery*/ false,
-            /*startDataDelivery*/ false, /*fromDatasource*/ false, attributedOpCode);
-}
-
-PermissionChecker::PermissionResult PermissionChecker::checkPermissionForPreflightFromDatasource(
-        const String16& permission, const AttributionSourceState& attributionSource,
-        const String16& message, int32_t attributedOpCode)
-{
-    return checkPermission(permission, attributionSource, message, /*forDataDelivery*/ false,
-            /*startDataDelivery*/ false, /*fromDatasource*/ true, attributedOpCode);
-}
-
-void PermissionChecker::finishDataDeliveryFromDatasource(int32_t op,
-        const AttributionSourceState& attributionSource)
+void PermissionChecker::finishDataDelivery(const String16& op,
+        AttributionSourceState& attributionSource)
 {
     sp<IPermissionChecker> service = getService();
     if (service != nullptr) {
-        binder::Status status = service->finishDataDelivery(op, attributionSource,
-                /*fromDatasource*/ true);
+        binder::Status status = service->finishDataDelivery(op, attributionSource);
         if (!status.isOk()) {
             ALOGE("finishDataDelivery failed: %s", status.exceptionMessage().c_str());
         }
     }
 }
 
-PermissionChecker::PermissionResult PermissionChecker::checkPermission(const String16& permission,
-        const AttributionSourceState& attributionSource, const String16& message,
-        bool forDataDelivery, bool startDataDelivery, bool fromDatasource,
-        int32_t attributedOpCode)
+int32_t PermissionChecker::checkPermission(const String16& permission,
+        AttributionSourceState& attributionSource, const String16& message,
+        bool forDataDelivery, bool startDataDelivery, bool fromDatasource)
 {
     sp<IPermissionChecker> service = getService();
     if (service != nullptr) {
         int32_t result;
         binder::Status status = service->checkPermission(permission, attributionSource, message,
-                forDataDelivery, startDataDelivery, fromDatasource, attributedOpCode, &result);
+                forDataDelivery, startDataDelivery, fromDatasource, &result);
         if (status.isOk()) {
-            return static_cast<PermissionResult>(result);
+            return result;
         }
         ALOGE("checkPermission failed: %s", status.exceptionMessage().c_str());
     }
-    return PERMISSION_HARD_DENIED;
+    return PERMISSION_DENIED;
 }
 
-} // namespace android::permission
+} // namespace android

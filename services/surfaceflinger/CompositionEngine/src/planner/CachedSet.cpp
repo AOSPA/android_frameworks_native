@@ -17,7 +17,6 @@
 #undef LOG_TAG
 #define LOG_TAG "Planner"
 // #define LOG_NDEBUG 0
-#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <android-base/properties.h>
 #include <compositionengine/impl/OutputCompositionState.h>
@@ -25,9 +24,6 @@
 #include <math/HashCombine.h>
 #include <renderengine/DisplaySettings.h>
 #include <renderengine/RenderEngine.h>
-#include <utils/Trace.h>
-
-#include <utils/Trace.h>
 
 namespace android::compositionengine::impl::planner {
 
@@ -134,7 +130,7 @@ bool CachedSet::hasBufferUpdate() const {
 }
 
 bool CachedSet::hasReadyBuffer() const {
-    return mTexture && mDrawFence->getStatus() == Fence::Status::Signaled;
+    return mTexture != nullptr && mDrawFence->getStatus() == Fence::Status::Signaled;
 }
 
 std::vector<CachedSet> CachedSet::decompose() const {
@@ -156,16 +152,18 @@ void CachedSet::updateAge(std::chrono::steady_clock::time_point now) {
     }
 }
 
-void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& texturePool,
+void CachedSet::render(renderengine::RenderEngine& renderEngine,
                        const OutputCompositionState& outputState) {
-    ATRACE_CALL();
     const Rect& viewport = outputState.layerStackSpace.content;
     const ui::Dataspace& outputDataspace = outputState.dataspace;
     const ui::Transform::RotationFlags orientation =
             ui::Transform::toRotationFlags(outputState.framebufferSpace.orientation);
 
     renderengine::DisplaySettings displaySettings{
-            .physicalDisplay = outputState.framebufferSpace.content,
+            .physicalDisplay = Rect(-mBounds.left + outputState.framebufferSpace.content.left,
+                                    -mBounds.top + outputState.framebufferSpace.content.top,
+                                    -mBounds.left + outputState.framebufferSpace.content.right,
+                                    -mBounds.top + outputState.framebufferSpace.content.bottom),
             .clip = viewport,
             .outputDataspace = outputDataspace,
             .orientation = orientation,
@@ -182,7 +180,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
             .dataspace = outputDataspace,
             .realContentIsVisible = true,
             .clearContent = false,
-            .blurSetting = LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            .disableBlurs = false,
     };
 
     std::vector<renderengine::LayerSettings> layerSettings;
@@ -199,24 +197,6 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
     std::transform(layerSettings.cbegin(), layerSettings.cend(),
                    std::back_inserter(layerSettingsPointers),
                    [](const renderengine::LayerSettings& settings) { return &settings; });
-
-    renderengine::LayerSettings blurLayerSettings;
-    if (mBlurLayer) {
-        auto blurSettings = targetSettings;
-        blurSettings.blurSetting =
-                LayerFE::ClientCompositionTargetSettings::BlurSetting::BackgroundBlurOnly;
-        auto clientCompositionList =
-                mBlurLayer->getOutputLayer()->getLayerFE().prepareClientCompositionList(
-                        blurSettings);
-        blurLayerSettings = clientCompositionList.back();
-        // This mimics Layer::prepareClearClientComposition
-        blurLayerSettings.skipContentDraw = true;
-        blurLayerSettings.name = std::string("blur layer");
-        // Clear out the shadow settings
-        blurLayerSettings.shadow = {};
-        layerSettingsPointers.push_back(&blurLayerSettings);
-    }
-
     renderengine::LayerSettings holePunchSettings;
     if (mHolePunchLayer) {
         auto clientCompositionList =
@@ -225,6 +205,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
         // Assume that the final layer contains the buffer that we want to
         // replace with a hole punch.
         holePunchSettings = clientCompositionList.back();
+        LOG_ALWAYS_FATAL_IF(!holePunchSettings.source.buffer.buffer, "Expected to have a buffer!");
         // This mimics Layer::prepareClearClientComposition
         holePunchSettings.source.buffer.buffer = nullptr;
         holePunchSettings.source.solidColor = half3(0.0f, 0.0f, 0.0f);
@@ -252,34 +233,30 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
         layerSettingsPointers.emplace_back(&highlight);
     }
 
-    auto texture = texturePool.borrowTexture();
-    LOG_ALWAYS_FATAL_IF(texture->get()->getBuffer()->initCheck() != OK);
-
-    base::unique_fd bufferFence;
-    if (texture->getReadyFence()) {
-        // Bail out if the buffer is not ready, because there is some pending GPU work left.
-        if (texture->getReadyFence()->getStatus() != Fence::Status::Signaled) {
-            return;
-        }
-        bufferFence.reset(texture->getReadyFence()->dup());
-    }
-
+    const uint64_t usageFlags = GraphicBuffer::USAGE_HW_RENDER | GraphicBuffer::USAGE_HW_COMPOSER |
+            GraphicBuffer::USAGE_HW_TEXTURE;
+    sp<GraphicBuffer> buffer = new GraphicBuffer(static_cast<uint32_t>(mBounds.getWidth()),
+                                                 static_cast<uint32_t>(mBounds.getHeight()),
+                                                 HAL_PIXEL_FORMAT_RGBA_8888, 1, usageFlags);
+    const auto texture = std::make_shared<
+            renderengine::ExternalTexture>(buffer, renderEngine,
+                                           renderengine::ExternalTexture::Usage::READABLE |
+                                                   renderengine::ExternalTexture::Usage::WRITEABLE);
+    LOG_ALWAYS_FATAL_IF(buffer->initCheck() != OK);
     base::unique_fd drawFence;
-    status_t result =
-            renderEngine.drawLayers(displaySettings, layerSettingsPointers, texture->get(), false,
-                                    std::move(bufferFence), &drawFence);
+
+    status_t result = renderEngine.drawLayers(displaySettings, layerSettingsPointers, texture,
+                                              false, base::unique_fd(), &drawFence);
 
     if (result == NO_ERROR) {
         mDrawFence = new Fence(drawFence.release());
         mOutputSpace = outputState.framebufferSpace;
-        mTexture = texture;
-        mTexture->setReadyFence(mDrawFence);
+        mTexture = std::move(texture);
         mOutputSpace.orientation = outputState.framebufferSpace.orientation;
         mOutputDataspace = outputDataspace;
         mOrientation = orientation;
-        mSkipCount = 0;
     } else {
-        mTexture.reset();
+        mTexture = nullptr;
     }
 }
 
@@ -295,23 +272,12 @@ bool CachedSet::requiresHolePunch() const {
         return false;
     }
 
-    // Do not use a hole punch with an HDR layer; this should be done in client
-    // composition to properly mix HDR with SDR.
-    if (hasHdrLayers()) {
-        return false;
-    }
-
     const auto& layerFE = mLayers[0].getState()->getOutputLayer()->getLayerFE();
     if (layerFE.getCompositionState()->forceClientComposition) {
         return false;
     }
 
     return layerFE.hasRoundedCorners();
-}
-
-bool CachedSet::hasBlurBehind() const {
-    return std::any_of(mLayers.cbegin(), mLayers.cend(),
-                       [](const Layer& layer) { return layer.getState()->hasBlurBehind(); });
 }
 
 namespace {
@@ -340,26 +306,8 @@ void CachedSet::addHolePunchLayerIfFeasible(const CachedSet& holePunchLayer, boo
     }
 }
 
-void CachedSet::addBackgroundBlurLayer(const CachedSet& blurLayer) {
-    mBlurLayer = blurLayer.getFirstLayer().getState();
-}
-
 compositionengine::OutputLayer* CachedSet::getHolePunchLayer() const {
     return mHolePunchLayer ? mHolePunchLayer->getOutputLayer() : nullptr;
-}
-
-compositionengine::OutputLayer* CachedSet::getBlurLayer() const {
-    return mBlurLayer ? mBlurLayer->getOutputLayer() : nullptr;
-}
-
-bool CachedSet::hasHdrLayers() const {
-    return std::any_of(mLayers.cbegin(), mLayers.cend(),
-                       [](const Layer& layer) { return layer.getState()->isHdr(); });
-}
-
-bool CachedSet::hasProtectedLayers() const {
-    return std::any_of(mLayers.cbegin(), mLayers.cend(),
-                       [](const Layer& layer) { return layer.getState()->isProtected(); });
 }
 
 void CachedSet::dump(std::string& result) const {
@@ -370,7 +318,7 @@ void CachedSet::dump(std::string& result) const {
     base::StringAppendF(&result, "  + Fingerprint %016zx, last update %sago, age %zd\n",
                         mFingerprint, durationString(lastUpdate).c_str(), mAge);
     {
-        const auto b = mTexture ? mTexture->get()->getBuffer().get() : nullptr;
+        const auto b = mTexture ? mTexture->getBuffer().get() : nullptr;
         base::StringAppendF(&result, "    Override buffer: %p\n", b);
     }
     base::StringAppendF(&result, "    HolePunchLayer: %p\n", mHolePunchLayer);

@@ -131,6 +131,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mCurrentState.frameRateSelectionPriority = PRIORITY_UNSET;
     mCurrentState.metadata = args.metadata;
     mCurrentState.shadowRadius = 0.f;
+    mCurrentState.treeHasFrameRateVote = false;
     mCurrentState.fixedTransformHint = ui::Transform::ROT_INVALID;
     mCurrentState.frameTimelineInfo = {};
     mCurrentState.postTime = -1;
@@ -223,10 +224,7 @@ void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
 }
 
 void Layer::removeFromCurrentState() {
-    if (!mRemovedFromCurrentState) {
-        mRemovedFromCurrentState = true;
-        mFlinger->mScheduler->deregisterLayer(this);
-    }
+    mRemovedFromCurrentState = true;
 
     mFlinger->markLayerPendingRemovalLocked(this);
 }
@@ -251,10 +249,7 @@ void Layer::onRemovedFromCurrentState() {
 }
 
 void Layer::addToCurrentState() {
-    if (mRemovedFromCurrentState) {
-        mRemovedFromCurrentState = false;
-        mFlinger->mScheduler->registerLayer(this);
-    }
+    mRemovedFromCurrentState = false;
 
     for (const auto& child : mCurrentChildren) {
         child->addToCurrentState();
@@ -580,10 +575,6 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
     layerSettings.geometry.boundaries = bounds;
     layerSettings.geometry.positionTransform = getTransform().asMatrix4();
 
-    // skip drawing content if the targetSettings indicate the content will be occluded
-    layerSettings.skipContentDraw =
-            layerSettings.skipContentDraw || !targetSettings.realContentIsVisible;
-
     if (hasColorTransform()) {
         layerSettings.colorTransform = getColorTransform();
     }
@@ -594,29 +585,69 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
-    switch (targetSettings.blurSetting) {
-        case LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled:
-            layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
-            layerSettings.blurRegions = getBlurRegions();
-            layerSettings.blurRegionTransform =
-                    getActiveTransform(getDrawingState()).inverse().asMatrix4();
-            break;
-        case LayerFE::ClientCompositionTargetSettings::BlurSetting::BackgroundBlurOnly:
-            layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
-            break;
-        case LayerFE::ClientCompositionTargetSettings::BlurSetting::BlurRegionsOnly:
-            layerSettings.blurRegions = getBlurRegions();
-            layerSettings.blurRegionTransform =
-                    getActiveTransform(getDrawingState()).inverse().asMatrix4();
-            break;
-        case LayerFE::ClientCompositionTargetSettings::BlurSetting::Disabled:
-        default:
-            break;
+    if (!targetSettings.disableBlurs) {
+        layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
+        layerSettings.blurRegions = getBlurRegions();
+        layerSettings.blurRegionTransform =
+                getActiveTransform(getDrawingState()).inverse().asMatrix4();
     }
     layerSettings.stretchEffect = getStretchEffect();
     // Record the name of the layer for debugging further down the stack.
     layerSettings.name = getName();
     return layerSettings;
+}
+
+std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareShadowClientComposition(
+        const LayerFE::LayerSettings& casterLayerSettings, const Rect& layerStackRect,
+        ui::Dataspace outputDataspace) {
+    renderengine::ShadowSettings shadow = getShadowSettings(layerStackRect);
+    if (shadow.length <= 0.f) {
+        return {};
+    }
+
+    const float casterAlpha = casterLayerSettings.alpha;
+    const bool casterIsOpaque = ((casterLayerSettings.source.buffer.buffer != nullptr) &&
+                                 casterLayerSettings.source.buffer.isOpaque);
+
+    compositionengine::LayerFE::LayerSettings shadowLayer = casterLayerSettings;
+
+    shadowLayer.shadow = shadow;
+    shadowLayer.geometry.boundaries = mBounds; // ignore transparent region
+
+    // If the casting layer is translucent, we need to fill in the shadow underneath the layer.
+    // Otherwise the generated shadow will only be shown around the casting layer.
+    shadowLayer.shadow.casterIsTranslucent = !casterIsOpaque || (casterAlpha < 1.0f);
+    shadowLayer.shadow.ambientColor *= casterAlpha;
+    shadowLayer.shadow.spotColor *= casterAlpha;
+    shadowLayer.sourceDataspace = outputDataspace;
+    shadowLayer.source.buffer.buffer = nullptr;
+    shadowLayer.source.buffer.fence = nullptr;
+    shadowLayer.frameNumber = 0;
+    shadowLayer.bufferId = 0;
+    shadowLayer.name = getName();
+
+    if (shadowLayer.shadow.ambientColor.a <= 0.f && shadowLayer.shadow.spotColor.a <= 0.f) {
+        return {};
+    }
+
+    float casterCornerRadius = shadowLayer.geometry.roundedCornersRadius;
+    const FloatRect& cornerRadiusCropRect = shadowLayer.geometry.roundedCornersCrop;
+    const FloatRect& casterRect = shadowLayer.geometry.boundaries;
+
+    // crop used to set the corner radius may be larger than the content rect. Adjust the corner
+    // radius accordingly.
+    if (casterCornerRadius > 0.f) {
+        float cropRectOffset = std::max(std::abs(cornerRadiusCropRect.top - casterRect.top),
+                                        std::abs(cornerRadiusCropRect.left - casterRect.left));
+        if (cropRectOffset > casterCornerRadius) {
+            casterCornerRadius = 0;
+        } else {
+            casterCornerRadius -= cropRectOffset;
+        }
+        shadowLayer.geometry.roundedCornersRadius = casterCornerRadius;
+    }
+
+    return shadowLayer;
 }
 
 void Layer::prepareClearClientComposition(LayerFE::LayerSettings& layerSettings,
@@ -632,9 +663,6 @@ void Layer::prepareClearClientComposition(LayerFE::LayerSettings& layerSettings,
     layerSettings.name = getName();
 }
 
-// TODO(b/188891810): This method now only ever returns 0 or 1 layers so we should return
-// std::optional instead of a vector.  Additionally, we should consider removing
-// this method entirely in favor of calling prepareClientComposition directly.
 std::vector<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCompositionList(
         compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
     std::optional<compositionengine::LayerFE::LayerSettings> layerSettings =
@@ -650,10 +678,21 @@ std::vector<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCompo
         return {*layerSettings};
     }
 
-    // set the shadow for the layer if needed
-    prepareShadowClientComposition(*layerSettings, targetSettings.viewport);
+    std::optional<compositionengine::LayerFE::LayerSettings> shadowSettings =
+            prepareShadowClientComposition(*layerSettings, targetSettings.viewport,
+                                           targetSettings.dataspace);
+    // There are no shadows to render.
+    if (!shadowSettings) {
+        return {*layerSettings};
+    }
 
-    return {*layerSettings};
+    // If the layer casts a shadow but the content casting the shadow is occluded, skip
+    // composing the non-shadow content and only draw the shadows.
+    if (targetSettings.realContentIsVisible) {
+        return {*shadowSettings, *layerSettings};
+    }
+
+    return {*shadowSettings};
 }
 
 Hwc2::IComposerClient::Composition Layer::getCompositionType(const DisplayDevice& display) const {
@@ -846,14 +885,7 @@ void Layer::commitTransaction(State& stateToCommit) {
         // list.
         addSurfaceFrameDroppedForBuffer(bufferSurfaceFrame);
     }
-    const bool frameRateVoteChanged =
-            mDrawingState.frameRateForLayerTree != stateToCommit.frameRateForLayerTree;
     mDrawingState = stateToCommit;
-
-    if (frameRateVoteChanged) {
-        mFlinger->mScheduler->recordLayerHistory(this, systemTime(),
-                                                 LayerHistory::LayerUpdateType::SetFrameRate);
-    }
 
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
@@ -871,13 +903,11 @@ void Layer::commitTransaction(State& stateToCommit) {
 }
 
 uint32_t Layer::getTransactionFlags(uint32_t flags) {
-    auto ret = mTransactionFlags & flags;
-    mTransactionFlags &= ~flags;
-    return ret;
+    return mTransactionFlags.fetch_and(~flags) & flags;
 }
 
 uint32_t Layer::setTransactionFlags(uint32_t flags) {
-    return mTransactionFlags |= flags;
+    return mTransactionFlags.fetch_or(flags);
 }
 
 bool Layer::setPosition(float x, float y) {
@@ -1265,7 +1295,8 @@ void Layer::updateTreeHasFrameRateVote() {
     };
 
     // update parents and children about the vote
-    // First traverse the tree and count how many layers has votes.
+    // First traverse the tree and count how many layers has votes. In addition
+    // activate the layers in Scheduler's LayerHistory for it to check for changes
     int layersWithVote = 0;
     traverseTree([&layersWithVote](Layer* layer) {
         const auto layerVotedWithDefaultCompatibility =
@@ -1285,11 +1316,20 @@ void Layer::updateTreeHasFrameRateVote() {
         }
     });
 
-    // Now we can update the tree frame rate vote for each layer in the tree
-    const bool treeHasFrameRateVote = layersWithVote > 0;
+    // Now update the other layers
     bool transactionNeeded = false;
-    traverseTree([treeHasFrameRateVote, &transactionNeeded](Layer* layer) {
-        transactionNeeded = layer->updateFrameRateForLayerTree(treeHasFrameRateVote);
+    traverseTree([layersWithVote, &transactionNeeded, this](Layer* layer) {
+        const bool treeHasFrameRateVote = layersWithVote > 0;
+        if (layer->mCurrentState.treeHasFrameRateVote != treeHasFrameRateVote) {
+            layer->mCurrentState.sequence++;
+            layer->mCurrentState.treeHasFrameRateVote = treeHasFrameRateVote;
+            layer->mCurrentState.modified = true;
+            layer->setTransactionFlags(eTransactionNeeded);
+            transactionNeeded = true;
+
+            mFlinger->mScheduler->recordLayerHistory(layer, systemTime(),
+                                                     LayerHistory::LayerUpdateType::SetFrameRate);
+        }
     });
 
     if (transactionNeeded) {
@@ -1389,7 +1429,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName,
                                                                  mTransactionName,
-                                                                 /*isBuffer*/ false, getGameMode());
+                                                                 /*isBuffer*/ false);
     // For Transactions, the post time is considered to be both queue and acquire fence time.
     surfaceFrame->setActualQueueTime(postTime);
     surfaceFrame->setAcquireFenceTime(postTime);
@@ -1406,7 +1446,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
     auto surfaceFrame =
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName, debugName,
-                                                                 /*isBuffer*/ true, getGameMode());
+                                                                 /*isBuffer*/ true);
     // For buffers, acquire fence time will set during latch.
     surfaceFrame->setActualQueueTime(queueTime);
     const auto fps = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
@@ -1418,42 +1458,32 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
     return surfaceFrame;
 }
 
-bool Layer::updateFrameRateForLayerTree(bool treeHasFrameRateVote) {
-    const auto updateCurrentState = [&](FrameRate frameRate) {
-        if (mCurrentState.frameRateForLayerTree == frameRate) {
-            return false;
-        }
-        mCurrentState.frameRateForLayerTree = frameRate;
-        mCurrentState.sequence++;
-        mCurrentState.modified = true;
-        setTransactionFlags(eTransactionNeeded);
-        return true;
-    };
-
-    const auto frameRate = mCurrentState.frameRate;
+Layer::FrameRate Layer::getFrameRateForLayerTree() const {
+    const auto frameRate = getDrawingState().frameRate;
     if (frameRate.rate.isValid() || frameRate.type == FrameRateCompatibility::NoVote) {
-        return updateCurrentState(frameRate);
+        return frameRate;
     }
 
     // This layer doesn't have a frame rate. Check if its ancestors have a vote
-    for (sp<Layer> parent = getParent(); parent; parent = parent->getParent()) {
-        if (parent->mCurrentState.frameRate.rate.isValid()) {
-            return updateCurrentState(parent->mCurrentState.frameRate);
+    if (sp<Layer> parent = getParent(); parent) {
+        if (const auto parentFrameRate = parent->getFrameRateForLayerTree();
+            parentFrameRate.rate.isValid()) {
+            return parentFrameRate;
         }
     }
 
     // This layer and its ancestors don't have a frame rate. If one of successors
     // has a vote, return a NoVote for successors to set the vote
-    if (treeHasFrameRateVote) {
-        return updateCurrentState(FrameRate(Fps(0.0f), FrameRateCompatibility::NoVote));
+    if (getDrawingState().treeHasFrameRateVote) {
+        return {Fps(0.0f), FrameRateCompatibility::NoVote};
     }
 
-    return updateCurrentState(frameRate);
+    return frameRate;
 }
 
-Layer::FrameRate Layer::getFrameRateForLayerTree() const {
-    return getDrawingState().frameRateForLayerTree;
-}
+// ----------------------------------------------------------------------------
+// pageflip handling...
+// ----------------------------------------------------------------------------
 
 bool Layer::isHiddenByPolicy() const {
     const State& s(mDrawingState);
@@ -1669,8 +1699,7 @@ void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                      FrameEventHistoryDelta* outDelta) {
     if (newTimestamps) {
         mFlinger->mTimeStats->setPostTime(getSequence(), newTimestamps->frameNumber,
-                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime,
-                                          getGameMode());
+                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime);
         mFlinger->mTimeStats->setAcquireFence(getSequence(), newTimestamps->frameNumber,
                                               newTimestamps->acquireFence);
     }
@@ -1700,25 +1729,12 @@ size_t Layer::getChildrenCount() const {
     return count;
 }
 
-void Layer::setGameModeForTree(int parentGameMode) {
-    int gameMode = parentGameMode;
-    auto& currentState = getCurrentState();
-    if (currentState.metadata.has(METADATA_GAME_MODE)) {
-        gameMode = currentState.metadata.getInt32(METADATA_GAME_MODE, 0);
-    }
-    setGameMode(gameMode);
-    for (const sp<Layer>& child : mCurrentChildren) {
-        child->setGameModeForTree(gameMode);
-    }
-}
-
 void Layer::addChild(const sp<Layer>& layer) {
     mChildrenChanged = true;
     setTransactionFlags(eTransactionNeeded);
 
     mCurrentChildren.add(layer);
     layer->setParent(this);
-    layer->setGameModeForTree(mGameMode);
     updateTreeHasFrameRateVote();
 }
 
@@ -1730,7 +1746,6 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
     const auto removeResult = mCurrentChildren.remove(layer);
 
     updateTreeHasFrameRateVote();
-    layer->setGameModeForTree(0);
     layer->updateTreeHasFrameRateVote();
 
     return removeResult;
@@ -2083,14 +2098,8 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
             : RoundedCornerState();
 }
 
-void Layer::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
-                                           const Rect& layerStackRect) {
+renderengine::ShadowSettings Layer::getShadowSettings(const Rect& layerStackRect) const {
     renderengine::ShadowSettings state = mFlinger->mDrawingState.globalShadowSettings;
-
-    // Note: this preserves existing behavior of shadowing the entire layer and not cropping it if
-    // transparent regions are present. This may not be necessary since shadows are only cast by
-    // SurfaceFlinger's EffectLayers, which do not typically use transparent regions.
-    state.boundaries = mBounds;
 
     // Shift the spot light x-position to the middle of the display and then
     // offset it by casting layer's screen pos.
@@ -2098,22 +2107,7 @@ void Layer::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
     state.lightPos.y -= mScreenBounds.top;
 
     state.length = mEffectiveShadowRadius;
-
-    if (state.length > 0.f) {
-        const float casterAlpha = caster.alpha;
-        const bool casterIsOpaque =
-                ((caster.source.buffer.buffer != nullptr) && caster.source.buffer.isOpaque);
-
-        // If the casting layer is translucent, we need to fill in the shadow underneath the layer.
-        // Otherwise the generated shadow will only be shown around the casting layer.
-        state.casterIsTranslucent = !casterIsOpaque || (casterAlpha < 1.0f);
-        state.ambientColor *= casterAlpha;
-        state.spotColor *= casterAlpha;
-
-        if (state.ambientColor.a > 0.f && state.spotColor.a > 0.f) {
-            caster.shadow = state;
-        }
-    }
+    return state;
 }
 
 void Layer::commitChildList() {
@@ -2416,16 +2410,6 @@ void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhy
     info.touchableRegion = inputTransform.transform(info.touchableRegion);
 }
 
-void Layer::fillTouchOcclusionMode(InputWindowInfo& info) {
-    sp<Layer> p = this;
-    while (p != nullptr && !p->hasInputInfo()) {
-        p = p->mDrawingParent.promote();
-    }
-    if (p != nullptr) {
-        info.touchOcclusionMode = p->mDrawingState.inputInfo.touchOcclusionMode;
-    }
-}
-
 InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     if (!hasInputInfo()) {
         mDrawingState.inputInfo.name = getName();
@@ -2463,7 +2447,6 @@ InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     // anything.
     info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
     info.alpha = getAlpha();
-    fillTouchOcclusionMode(info);
 
     auto cropLayer = mDrawingState.touchableRegionCrop.promote();
     if (info.replaceTouchableRegionWithCrop) {

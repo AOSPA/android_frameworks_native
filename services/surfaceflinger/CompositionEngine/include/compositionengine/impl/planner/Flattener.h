@@ -20,8 +20,6 @@
 #include <compositionengine/impl/planner/CachedSet.h>
 #include <compositionengine/impl/planner/LayerState.h>
 
-#include <chrono>
-#include <numeric>
 #include <vector>
 
 namespace android {
@@ -38,52 +36,20 @@ class Predictor;
 
 class Flattener {
 public:
-    struct CachedSetRenderSchedulingTunables {
-        // This default assumes that rendering a cached set takes about 3ms. That time is then cut
-        // in half - the next frame using the cached set would have the same workload, meaning that
-        // composition cost is the same. This is best illustrated with the following example:
-        //
-        // Suppose we're at a 120hz cadence so SurfaceFlinger is budgeted 8.3ms per-frame. If
-        // renderCachedSets costs 3ms, then two consecutive frames have timings:
-        //
-        // First frame: Start at 0ms, end at 6.8ms.
-        // renderCachedSets: Start at 6.8ms, end at 9.8ms.
-        // Second frame: Start at 9.8ms, end at 16.6ms.
-        //
-        // Now the second frame won't render a cached set afterwards, but the first frame didn't
-        // really steal time from the second frame.
-        static const constexpr std::chrono::nanoseconds kDefaultCachedSetRenderDuration = 1500us;
+    Flattener(Predictor& predictor, bool enableHolePunch = false)
+          : mEnableHolePunch(enableHolePunch), mPredictor(predictor) {}
 
-        static const constexpr size_t kDefaultMaxDeferRenderAttempts = 240;
-
-        // Duration allocated for rendering a cached set. If we don't have enough time for rendering
-        // a cached set, then rendering is deferred to another frame.
-        const std::chrono::nanoseconds cachedSetRenderDuration;
-        // Maximum of times that we defer rendering a cached set. If we defer rendering a cached set
-        // too many times, then render it anyways so that future frames would benefit from the
-        // flattened cached set.
-        const size_t maxDeferRenderAttempts;
-    };
-    Flattener(renderengine::RenderEngine& renderEngine, bool enableHolePunch = false,
-              std::optional<CachedSetRenderSchedulingTunables> cachedSetRenderSchedulingTunables =
-                      std::nullopt);
-
-    void setDisplaySize(ui::Size size) {
-        mDisplaySize = size;
-        mTexturePool.setDisplaySize(size);
-    }
+    void setDisplaySize(ui::Size size) { mDisplaySize = size; }
 
     NonBufferHash flattenLayers(const std::vector<const LayerState*>& layers, NonBufferHash,
                                 std::chrono::steady_clock::time_point now);
 
     // Renders the newest cached sets with the supplied output composition state
-    void renderCachedSets(const OutputCompositionState& outputState,
-                          std::optional<std::chrono::steady_clock::time_point> renderDeadline);
+    void renderCachedSets(renderengine::RenderEngine& re,
+                          const OutputCompositionState& outputState);
 
     void dump(std::string& result) const;
     void dumpLayers(std::string& result) const;
-
-    const std::optional<CachedSet>& getNewCachedSetForTesting() const { return mNewCachedSet; }
 
 private:
     size_t calculateDisplayCost(const std::vector<const LayerState*>& layers) const;
@@ -95,102 +61,18 @@ private:
     bool mergeWithCachedSets(const std::vector<const LayerState*>& layers,
                              std::chrono::steady_clock::time_point now);
 
-    // A Run is a sequence of CachedSets, which is a candidate for flattening into a single
-    // CachedSet. Because it is wasteful to flatten 1 CachedSet, a Run must contain more than 1
-    // CachedSet
-    class Run {
-    public:
-        // A builder for a Run, to aid in construction
-        class Builder {
-        private:
-            std::vector<CachedSet>::const_iterator mStart;
-            std::vector<size_t> mLengths;
-            const CachedSet* mHolePunchCandidate = nullptr;
-            const CachedSet* mBlurringLayer = nullptr;
-
-        public:
-            // Initializes a Builder a CachedSet to start from.
-            // This start iterator must be an iterator for mLayers
-            void init(const std::vector<CachedSet>::const_iterator& start) {
-                mStart = start;
-                mLengths.push_back(start->getLayerCount());
-            }
-
-            // Appends a new CachedSet to the end of the run
-            // The provided length must be the size of the next sequential CachedSet in layers
-            void append(size_t length) { mLengths.push_back(length); }
-
-            // Sets the hole punch candidate for the Run.
-            void setHolePunchCandidate(const CachedSet* holePunchCandidate) {
-                mHolePunchCandidate = holePunchCandidate;
-            }
-
-            void setBlurringLayer(const CachedSet* blurringLayer) {
-                mBlurringLayer = blurringLayer;
-            }
-
-            // Builds a Run instance, if a valid Run may be built.
-            std::optional<Run> validateAndBuild() {
-                if (mLengths.size() <= 1) {
-                    return std::nullopt;
-                }
-
-                return Run(mStart,
-                           std::reduce(mLengths.cbegin(), mLengths.cend(), 0u,
-                                       [](size_t left, size_t right) { return left + right; }),
-                           mHolePunchCandidate, mBlurringLayer);
-            }
-
-            void reset() { *this = {}; }
-        };
-
-        // Gets the starting CachedSet of this run.
-        // This is an iterator into mLayers
-        const std::vector<CachedSet>::const_iterator& getStart() const { return mStart; }
-        // Gets the total number of layers encompassing this Run.
-        size_t getLayerLength() const { return mLength; }
-        // Gets the hole punch candidate for this Run.
-        const CachedSet* getHolePunchCandidate() const { return mHolePunchCandidate; }
-        const CachedSet* getBlurringLayer() const { return mBlurringLayer; }
-
-    private:
-        Run(std::vector<CachedSet>::const_iterator start, size_t length,
-            const CachedSet* holePunchCandidate, const CachedSet* blurringLayer)
-              : mStart(start),
-                mLength(length),
-                mHolePunchCandidate(holePunchCandidate),
-                mBlurringLayer(blurringLayer) {}
-        const std::vector<CachedSet>::const_iterator mStart;
-        const size_t mLength;
-        const CachedSet* const mHolePunchCandidate;
-        const CachedSet* const mBlurringLayer;
-
-        friend class Builder;
-    };
-
-    std::vector<Run> findCandidateRuns(std::chrono::steady_clock::time_point now) const;
-
-    std::optional<Run> findBestRun(std::vector<Run>& runs) const;
-
     void buildCachedSets(std::chrono::steady_clock::time_point now);
 
-    renderengine::RenderEngine& mRenderEngine;
     const bool mEnableHolePunch;
-    const std::optional<CachedSetRenderSchedulingTunables> mCachedSetRenderSchedulingTunables;
+    Predictor& mPredictor;
 
-    TexturePool mTexturePool;
-
-protected:
-    // mNewCachedSet must be destroyed before mTexturePool is.
-    std::optional<CachedSet> mNewCachedSet;
-
-private:
     ui::Size mDisplaySize;
 
     NonBufferHash mCurrentGeometry;
     std::chrono::steady_clock::time_point mLastGeometryUpdate;
 
     std::vector<CachedSet> mLayers;
+    std::optional<CachedSet> mNewCachedSet;
 
     // Statistics
     size_t mUnflattenedDisplayCost = 0;
@@ -200,7 +82,6 @@ private:
     size_t mCachedSetCreationCount = 0;
     size_t mCachedSetCreationCost = 0;
     std::unordered_map<size_t, size_t> mInvalidatedCachedSetAges;
-    std::chrono::nanoseconds mActiveLayerTimeout = kActiveLayerTimeout;
 
     static constexpr auto kActiveLayerTimeout = std::chrono::nanoseconds(150ms);
 };

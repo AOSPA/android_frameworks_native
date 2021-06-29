@@ -170,7 +170,7 @@ void SurfaceControl::updateDefaultBufferSize(uint32_t width, uint32_t height) {
     Mutex::Autolock _l(mLock);
     mWidth = width; mHeight = height;
     if (mBbq) {
-        mBbq->update(mBbqChild, width, height, mFormat);
+      mBbq->update(this, width, height, mFormat);
     }
 
 }

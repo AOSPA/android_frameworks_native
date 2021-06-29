@@ -143,7 +143,6 @@ struct OutputTest : public testing::Test {
         mOutput->setRenderSurfaceForTest(std::unique_ptr<RenderSurface>(mRenderSurface));
 
         mOutput->editState().displaySpace.bounds = kDefaultDisplaySize;
-        EXPECT_CALL(mCompositionEngine, getRenderEngine()).WillRepeatedly(ReturnRef(mRenderEngine));
     }
 
     void injectOutputLayer(InjectedLayer& layer) {
@@ -157,7 +156,6 @@ struct OutputTest : public testing::Test {
     static const Rect kDefaultDisplaySize;
 
     StrictMock<mock::CompositionEngine> mCompositionEngine;
-    StrictMock<renderengine::mock::RenderEngine> mRenderEngine;
     mock::DisplayColorProfile* mDisplayColorProfile = new StrictMock<mock::DisplayColorProfile>();
     mock::RenderSurface* mRenderSurface = new StrictMock<mock::RenderSurface>();
     std::shared_ptr<Output> mOutput = createOutput(mCompositionEngine);
@@ -237,49 +235,6 @@ TEST_F(OutputTest, setCompositionEnabledSetsDisabledAndDirtiesEntireOutput) {
 
     EXPECT_FALSE(mOutput->getState().isEnabled);
     EXPECT_THAT(mOutput->getState().dirtyRegion, RegionEq(Region(kDefaultDisplaySize)));
-}
-
-/*
- * Output::setLayerCachingEnabled()
- */
-
-TEST_F(OutputTest, setLayerCachingEnabled_enablesCaching) {
-    const auto kSize = ui::Size(1, 1);
-    EXPECT_CALL(*mRenderSurface, getSize()).WillRepeatedly(ReturnRef(kSize));
-    mOutput->setLayerCachingEnabled(false);
-    mOutput->setLayerCachingEnabled(true);
-
-    EXPECT_TRUE(mOutput->plannerEnabled());
-}
-
-TEST_F(OutputTest, setLayerCachingEnabled_disablesCaching) {
-    const auto kSize = ui::Size(1, 1);
-    EXPECT_CALL(*mRenderSurface, getSize()).WillRepeatedly(ReturnRef(kSize));
-    mOutput->setLayerCachingEnabled(true);
-    mOutput->setLayerCachingEnabled(false);
-
-    EXPECT_FALSE(mOutput->plannerEnabled());
-}
-
-TEST_F(OutputTest, setLayerCachingEnabled_disablesCachingAndResetsOverrideInfo) {
-    renderengine::mock::RenderEngine renderEngine;
-    const auto kSize = ui::Size(1, 1);
-    EXPECT_CALL(*mRenderSurface, getSize()).WillRepeatedly(ReturnRef(kSize));
-    mOutput->setLayerCachingEnabled(true);
-
-    // Inject some layers
-    InjectedLayer layer;
-    layer.outputLayerState.overrideInfo.buffer = std::make_shared<
-            renderengine::ExternalTexture>(new GraphicBuffer(), renderEngine,
-                                           renderengine::ExternalTexture::Usage::READABLE |
-                                                   renderengine::ExternalTexture::Usage::WRITEABLE);
-    injectOutputLayer(layer);
-    // inject a null layer to check for null exceptions
-    injectNullOutputLayer();
-
-    EXPECT_NE(nullptr, layer.outputLayerState.overrideInfo.buffer);
-    mOutput->setLayerCachingEnabled(false);
-    EXPECT_EQ(nullptr, layer.outputLayerState.overrideInfo.buffer);
 }
 
 /*
@@ -1017,7 +972,9 @@ TEST_F(OutputPrepareFrameTest, delegatesToChooseCompositionStrategyAndRenderSurf
     mOutput.editState().usesDeviceComposition = true;
 
     EXPECT_CALL(mOutput, chooseCompositionStrategy()).Times(1);
-    EXPECT_CALL(mOutput, getOutputLayerCount()).WillRepeatedly(Return(0u));
+    if (mOutput.plannerEnabled()) {
+        EXPECT_CALL(mOutput, getOutputLayerCount()).WillOnce(Return(0u));
+    }
     EXPECT_CALL(*mRenderSurface, prepareFrame(false, true));
 
     mOutput.prepareFrame();
@@ -1767,7 +1724,7 @@ struct OutputPresentTest : public testing::Test {
         MOCK_METHOD1(devOptRepaintFlash, void(const compositionengine::CompositionRefreshArgs&));
         MOCK_METHOD1(finishFrame, void(const compositionengine::CompositionRefreshArgs&));
         MOCK_METHOD0(postFramebuffer, void());
-        MOCK_METHOD1(renderCachedSets, void(const compositionengine::CompositionRefreshArgs&));
+        MOCK_METHOD0(renderCachedSets, void());
     };
 
     StrictMock<OutputPartialMock> mOutput;
@@ -1787,7 +1744,7 @@ TEST_F(OutputPresentTest, justInvokesChildFunctionsInSequence) {
     EXPECT_CALL(mOutput, devOptRepaintFlash(Ref(args)));
     EXPECT_CALL(mOutput, finishFrame(Ref(args)));
     EXPECT_CALL(mOutput, postFramebuffer());
-    EXPECT_CALL(mOutput, renderCachedSets(Ref(args)));
+    EXPECT_CALL(mOutput, renderCachedSets());
 
     mOutput.present(args);
 }
@@ -3786,46 +3743,6 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, gathersClientCompositi
     EXPECT_TRUE(0 != mLayers[2].mOutputLayerState.clientCompositionTimestamp);
 }
 
-MATCHER_P(ClientCompositionTargetSettingsBlurSettingsEq, expectedBlurSetting, "") {
-    *result_listener << "ClientCompositionTargetSettings' BlurSettings aren't equal \n";
-    *result_listener << "expected " << expectedBlurSetting << "\n";
-    *result_listener << "actual " << arg.blurSetting << "\n";
-
-    return expectedBlurSetting == arg.blurSetting;
-}
-
-TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, overridesBlur) {
-    LayerFE::LayerSettings mShadowSettings;
-    mShadowSettings.source.solidColor = {0.1f, 0.1f, 0.1f};
-
-    mLayers[2].mOutputLayerState.overrideInfo.disableBackgroundBlur = true;
-
-    EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(_))
-            .WillOnce(Return(std::vector<LayerFE::LayerSettings>()));
-    EXPECT_CALL(*mLayers[1].mLayerFE, prepareClientCompositionList(_))
-            .WillOnce(Return(std::vector<LayerFE::LayerSettings>({mLayers[1].mLayerSettings})));
-    EXPECT_CALL(*mLayers[2].mLayerFE,
-                prepareClientCompositionList(ClientCompositionTargetSettingsBlurSettingsEq(
-                        LayerFE::ClientCompositionTargetSettings::BlurSetting::BlurRegionsOnly)))
-            .WillOnce(Return(std::vector<LayerFE::LayerSettings>(
-                    {mShadowSettings, mLayers[2].mLayerSettings})));
-
-    Region accumClearRegion(Rect(10, 11, 12, 13));
-    auto requests = mOutput.generateClientCompositionRequests(false /* supportsProtectedContent */,
-                                                              accumClearRegion, kDisplayDataspace);
-    ASSERT_EQ(3u, requests.size());
-    EXPECT_EQ(mLayers[1].mLayerSettings, requests[0]);
-    EXPECT_EQ(mShadowSettings, requests[1]);
-    EXPECT_EQ(mLayers[2].mLayerSettings, requests[2]);
-
-    EXPECT_THAT(accumClearRegion, RegionEq(Region(Rect(10, 11, 12, 13))));
-
-    // Check that a timestamp was set for the layers that generated requests
-    EXPECT_TRUE(0 == mLayers[0].mOutputLayerState.clientCompositionTimestamp);
-    EXPECT_TRUE(0 != mLayers[1].mOutputLayerState.clientCompositionTimestamp);
-    EXPECT_TRUE(0 != mLayers[2].mOutputLayerState.clientCompositionTimestamp);
-}
-
 TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
        onlyClientComposesClientComposedLayersIfNoClearingNeeded) {
     EXPECT_CALL(mLayers[0].mOutputLayer, requiresClientComposition()).WillOnce(Return(false));
@@ -3909,7 +3826,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
             kDisplayDataspace,
             false /* realContentIsVisible */,
             true /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -3921,7 +3838,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     LayerFE::LayerSettings mBlackoutSettings = mLayers[1].mLayerSettings;
@@ -3965,7 +3882,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(Rect(0, 0, 30, 30)),
@@ -3977,7 +3894,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(Rect(0, 0, 40, 201)),
@@ -3989,7 +3906,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(Eq(ByRef(layer0TargetSettings))))
@@ -4021,7 +3938,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4033,7 +3950,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4045,7 +3962,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(Eq(ByRef(layer0TargetSettings))))
@@ -4077,7 +3994,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
 
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
@@ -4090,7 +4007,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4102,7 +4019,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(Eq(ByRef(layer0TargetSettings))))
@@ -4133,7 +4050,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4145,7 +4062,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4157,7 +4074,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(Eq(ByRef(layer0TargetSettings))))
@@ -4186,7 +4103,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4198,7 +4115,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4210,7 +4127,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientCompositionList(Eq(ByRef(layer0TargetSettings))))
@@ -4348,7 +4265,7 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
             kOutputDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(leftLayer.mOutputLayer, requiresClientComposition()).WillRepeatedly(Return(true));
@@ -4366,7 +4283,7 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
             kOutputDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(rightLayer.mOutputLayer, requiresClientComposition()).WillRepeatedly(Return(true));
@@ -4400,7 +4317,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             false /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     LayerFE::LayerSettings mShadowSettings;
@@ -4446,7 +4363,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             kDisplayDataspace,
             true /* realContentIsVisible */,
             false /* clearContent */,
-            compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
+            false /* disabledBlurs */,
     };
 
     EXPECT_CALL(mLayers[0].mOutputLayer, requiresClientComposition()).WillOnce(Return(false));

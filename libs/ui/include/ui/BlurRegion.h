@@ -20,8 +20,6 @@
 #include <iosfwd>
 #include <iostream>
 
-#include <math/HashCombine.h>
-
 namespace android {
 
 struct BlurRegion {
@@ -35,16 +33,6 @@ struct BlurRegion {
     int top;
     int right;
     int bottom;
-
-    inline bool operator==(const BlurRegion& other) const {
-        return blurRadius == other.blurRadius && cornerRadiusTL == other.cornerRadiusTL &&
-                cornerRadiusTR == other.cornerRadiusTR && cornerRadiusBL == other.cornerRadiusBL &&
-                cornerRadiusBR == other.cornerRadiusBR && alpha == other.alpha &&
-                left == other.left && top == other.top && right == other.right &&
-                bottom == other.bottom;
-    }
-
-    inline bool operator!=(const BlurRegion& other) const { return !(*this == other); }
 };
 
 static inline void PrintTo(const BlurRegion& blurRegion, ::std::ostream* os) {
@@ -63,14 +51,3 @@ static inline void PrintTo(const BlurRegion& blurRegion, ::std::ostream* os) {
 }
 
 } // namespace android
-
-namespace std {
-template <>
-struct hash<android::BlurRegion> {
-    size_t operator()(const android::BlurRegion& region) const {
-        return android::hashCombine(region.blurRadius, region.cornerRadiusTL, region.cornerRadiusTR,
-                                    region.cornerRadiusBL, region.cornerRadiusBR, region.alpha,
-                                    region.left, region.top, region.right, region.bottom);
-    }
-};
-} // namespace std

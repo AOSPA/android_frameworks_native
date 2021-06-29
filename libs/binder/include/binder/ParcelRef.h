@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,30 @@
  * limitations under the License.
  */
 
-#undef LOG_TAG
-#define LOG_TAG "MockHWC2"
+#pragma once
 
-#include "mock/DisplayHardware/MockHWC2.h"
 
-namespace android::HWC2::mock {
+#include <binder/Parcel.h>
+#include <utils/RefBase.h>
 
-// Explicit default instantiation is recommended.
-Display::Display() = default;
-Display::~Display() = default;
+// ---------------------------------------------------------------------------
+namespace android {
 
-Layer::Layer() = default;
-Layer::~Layer() = default;
+/**
+ * internal use only
+ * @internal
+ */
+class ParcelRef : public Parcel, public RefBase
+{
+public:
+    static sp<ParcelRef> create() {
+        return new ParcelRef();
+    }
 
-} // namespace android::HWC2::mock
+private:
+    ParcelRef() = default;
+};
+
+} // namespace android
+
+// ---------------------------------------------------------------------------

@@ -29,8 +29,8 @@ namespace renderengine {
 namespace skia {
 
 AutoBackendTexture::AutoBackendTexture(GrDirectContext* context, AHardwareBuffer* buffer,
-                                       bool isOutputBuffer, CleanupManager& cleanupMgr)
-      : mCleanupMgr(cleanupMgr), mIsOutputBuffer(isOutputBuffer) {
+                                       bool isOutputBuffer)
+      : mIsOutputBuffer(isOutputBuffer) {
     ATRACE_CALL();
     AHardwareBuffer_Desc desc;
     AHardwareBuffer_describe(buffer, &desc);
@@ -49,13 +49,6 @@ AutoBackendTexture::AutoBackendTexture(GrDirectContext* context, AHardwareBuffer
              this, desc.width, desc.height, createProtectedImage, isOutputBuffer, desc.format);
 }
 
-AutoBackendTexture::~AutoBackendTexture() {
-    if (mBackendTexture.isValid()) {
-        mDeleteProc(mImageCtx);
-        mBackendTexture = {};
-    }
-}
-
 void AutoBackendTexture::unref(bool releaseLocalResources) {
     if (releaseLocalResources) {
         mSurface = nullptr;
@@ -64,7 +57,11 @@ void AutoBackendTexture::unref(bool releaseLocalResources) {
 
     mUsageCount--;
     if (mUsageCount <= 0) {
-        mCleanupMgr.add(this);
+        if (mBackendTexture.isValid()) {
+            mDeleteProc(mImageCtx);
+            mBackendTexture = {};
+        }
+        delete this;
     }
 }
 
@@ -90,15 +87,8 @@ sk_sp<SkImage> AutoBackendTexture::makeImage(ui::Dataspace dataspace, SkAlphaTyp
         mUpdateProc(mImageCtx, context);
     }
 
-    auto colorType = mColorType;
-    if (alphaType == kOpaque_SkAlphaType) {
-        if (colorType == kRGBA_8888_SkColorType) {
-            colorType = kRGB_888x_SkColorType;
-        }
-    }
-
     sk_sp<SkImage> image =
-            SkImage::MakeFromTexture(context, mBackendTexture, kTopLeft_GrSurfaceOrigin, colorType,
+            SkImage::MakeFromTexture(context, mBackendTexture, kTopLeft_GrSurfaceOrigin, mColorType,
                                      alphaType, toSkColorSpace(dataspace), releaseImageProc, this);
     if (image.get()) {
         // The following ref will be counteracted by releaseProc, when SkImage is discarded.

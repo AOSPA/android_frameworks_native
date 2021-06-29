@@ -33,7 +33,6 @@
 #include <gui/BufferQueue.h>
 #include <private/gui/SyncFeatures.h>
 #include <renderengine/Image.h>
-#include "TunnelModeEnabledReporter.h"
 
 #include "EffectLayer.h"
 #include "FrameTracer/FrameTracer.h"
@@ -47,13 +46,11 @@ namespace android {
 using PresentState = frametimeline::SurfaceFrame::PresentState;
 namespace {
 void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
-                               const sp<GraphicBuffer>& buffer, const sp<Fence>& releaseFence,
-                               uint32_t transformHint) {
+                               const sp<GraphicBuffer>& buffer, const sp<Fence>& releaseFence) {
     if (!listener) {
         return;
     }
-    listener->onReleaseBuffer(buffer->getId(), releaseFence ? releaseFence : Fence::NO_FENCE,
-                              transformHint);
+    listener->onReleaseBuffer(buffer->getId(), releaseFence ? releaseFence : Fence::NO_FENCE);
 }
 } // namespace
 
@@ -78,8 +75,7 @@ BufferStateLayer::~BufferStateLayer() {
     // issue with the clone layer trying to use the texture.
     if (mBufferInfo.mBuffer != nullptr && !isClone()) {
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
-                                  mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFence,
-                                  mTransformHint);
+                                  mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFence);
     }
 }
 
@@ -461,8 +457,7 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
             // call any release buffer callbacks if set.
             callReleaseBufferCallback(mCurrentState.releaseBufferListener,
                                       mCurrentState.buffer->getBuffer(),
-                                      mCurrentState.acquireFence,
-                                      mTransformHint);
+                                      mCurrentState.acquireFence);
             decrementPendingBufferCount();
             if (mCurrentState.bufferSurfaceFrameTX != nullptr) {
                 addSurfaceFrameDroppedForBuffer(mCurrentState.bufferSurfaceFrameTX);
@@ -479,7 +474,7 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
 
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mCurrentState.frameNumber, getName().c_str(),
-                                      mOwnerUid, postTime, getGameMode());
+                                      mOwnerUid, postTime);
     mCurrentState.desiredPresentTime = desiredPresentTime;
     mCurrentState.isAutoTimestamp = isAutoTimestamp;
 
@@ -731,10 +726,7 @@ void BufferStateLayer::setAutoRefresh(bool autoRefresh) {
 }
 
 bool BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
-    // We need to update the sideband stream if the layer has both a buffer and a sideband stream.
-    const bool updateSidebandStream = hasFrameUpdate() && mSidebandStream.get();
-
-    if (mSidebandStreamChanged.exchange(false) || updateSidebandStream) {
+    if (mSidebandStreamChanged.exchange(false)) {
         const State& s(getDrawingState());
         // mSidebandStreamChanged was true
         mSidebandStream = s.sidebandStream;
@@ -999,8 +991,7 @@ void BufferStateLayer::bufferMayChange(const sp<GraphicBuffer>& newBuffer) {
         // then we will drop a buffer and should decrement the pending buffer count and
         // call any release buffer callbacks if set.
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
-                                  mDrawingState.buffer->getBuffer(), mDrawingState.acquireFence,
-                                  mTransformHint);
+                                  mDrawingState.buffer->getBuffer(), mDrawingState.acquireFence);
         decrementPendingBufferCount();
     }
 }

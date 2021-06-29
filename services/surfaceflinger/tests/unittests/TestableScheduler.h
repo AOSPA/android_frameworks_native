@@ -64,11 +64,6 @@ public:
         return mutableLayerHistory()->mLayerInfos.size();
     }
 
-    size_t getNumActiveLayers() NO_THREAD_SAFETY_ANALYSIS {
-        if (!mLayerHistory) return 0;
-        return mutableLayerHistory()->mActiveLayersEnd;
-    }
-
     void replaceTouchTimer(int64_t millis) {
         if (mTouchTimer) {
             mTouchTimer.reset();

@@ -80,16 +80,14 @@ private:
     void writeOutputIndependentGeometryStateToHWC(HWC2::Layer*, const LayerFECompositionState&,
                                                   bool skipLayer);
     void writeOutputDependentPerFrameStateToHWC(HWC2::Layer*);
-    void writeOutputIndependentPerFrameStateToHWC(HWC2::Layer*, const LayerFECompositionState&,
-                                                  bool skipLayer);
+    void writeOutputIndependentPerFrameStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
     void writeSolidColorStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
     void writeSidebandStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
-    void writeBufferStateToHWC(HWC2::Layer*, const LayerFECompositionState&, bool skipLayer);
+    void writeBufferStateToHWC(HWC2::Layer*, const LayerFECompositionState&);
     void writeCompositionTypeToHWC(HWC2::Layer*, Hwc2::IComposerClient::Composition,
-                                   bool isPeekingThrough, bool skipLayer);
+                                   bool isPeekingThrough);
     void detectDisallowedCompositionTypeChange(Hwc2::IComposerClient::Composition from,
                                                Hwc2::IComposerClient::Composition to) const;
-    bool isClientCompositionForced(bool isPeekingThrough) const;
 };
 
 // This template factory function standardizes the implementation details of the

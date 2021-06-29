@@ -19,7 +19,6 @@
 #include <compositionengine/Output.h>
 #include <compositionengine/ProjectionSpace.h>
 #include <compositionengine/impl/planner/LayerState.h>
-#include <compositionengine/impl/planner/TexturePool.h>
 #include <renderengine/RenderEngine.h>
 
 #include <chrono>
@@ -40,7 +39,6 @@ public:
 
         const LayerState* getState() const { return mState; }
         const std::string& getName() const { return mState->getName(); }
-        int32_t getBackgroundBlurRadius() const { return mState->getBackgroundBlurRadius(); }
         Rect getDisplayFrame() const { return mState->getDisplayFrame(); }
         const Region& getVisibleRegion() const { return mState->getVisibleRegion(); }
         const sp<GraphicBuffer>& getBuffer() const {
@@ -65,12 +63,9 @@ public:
     size_t getLayerCount() const { return mLayers.size(); }
     const Layer& getFirstLayer() const { return mLayers[0]; }
     const Rect& getBounds() const { return mBounds; }
-    Rect getTextureBounds() const { return mOutputSpace.content; }
     const Region& getVisibleRegion() const { return mVisibleRegion; }
     size_t getAge() const { return mAge; }
-    std::shared_ptr<renderengine::ExternalTexture> getBuffer() const {
-        return mTexture ? mTexture->get() : nullptr;
-    }
+    const std::shared_ptr<renderengine::ExternalTexture>& getBuffer() const { return mTexture; }
     const sp<Fence>& getDrawFence() const { return mDrawFence; }
     const ProjectionSpace& getOutputSpace() const { return mOutputSpace; }
     ui::Dataspace getOutputDataspace() const { return mOutputDataspace; }
@@ -83,7 +78,6 @@ public:
     size_t getDisplayCost() const;
 
     bool hasBufferUpdate() const;
-    bool hasRenderedBuffer() const { return mTexture != nullptr; }
     bool hasReadyBuffer() const;
 
     // Decomposes this CachedSet into a vector of its layers as individual CachedSets
@@ -93,12 +87,9 @@ public:
 
     void setLastUpdate(std::chrono::steady_clock::time_point now) { mLastUpdate = now; }
     void append(const CachedSet& other) {
-        mTexture.reset();
+        mTexture = nullptr;
         mOutputDataspace = ui::Dataspace::UNKNOWN;
         mDrawFence = nullptr;
-        mBlurLayer = nullptr;
-        mHolePunchLayer = nullptr;
-        mSkipCount = 0;
 
         mLayers.insert(mLayers.end(), other.mLayers.cbegin(), other.mLayers.cend());
         Region boundingRegion;
@@ -108,12 +99,9 @@ public:
         mVisibleRegion.orSelf(other.mVisibleRegion);
     }
     void incrementAge() { ++mAge; }
-    void incrementSkipCount() { mSkipCount++; }
-    size_t getSkipCount() { return mSkipCount; }
 
     // Renders the cached set with the supplied output composition state.
-    void render(renderengine::RenderEngine& re, TexturePool& texturePool,
-                const OutputCompositionState& outputState);
+    void render(renderengine::RenderEngine& re, const OutputCompositionState& outputState);
 
     void dump(std::string& result) const;
 
@@ -121,9 +109,6 @@ public:
     // If it is, we may be able to draw it by placing it behind another
     // CachedSet and punching a hole.
     bool requiresHolePunch() const;
-
-    // True if any constituent layer is configured to blur any layers behind.
-    bool hasBlurBehind() const;
 
     // Add a layer that will be drawn behind this one. ::render() will render a
     // hole in this CachedSet's buffer, allowing the supplied layer to peek
@@ -134,16 +119,8 @@ public:
     // nothing (besides the hole punch layer) will be drawn behind it.
     void addHolePunchLayerIfFeasible(const CachedSet&, bool isFirstLayer);
 
-    void addBackgroundBlurLayer(const CachedSet&);
-
     // Retrieve the layer that will be drawn behind this one.
     compositionengine::OutputLayer* getHolePunchLayer() const;
-
-    compositionengine::OutputLayer* getBlurLayer() const;
-
-    bool hasHdrLayers() const;
-
-    bool hasProtectedLayers() const;
 
 private:
     CachedSet() = default;
@@ -154,15 +131,11 @@ private:
 
     // Unowned.
     const LayerState* mHolePunchLayer = nullptr;
-    const LayerState* mBlurLayer = nullptr;
     Rect mBounds = Rect::EMPTY_RECT;
     Region mVisibleRegion;
     size_t mAge = 0;
-    size_t mSkipCount = 0;
 
-    // TODO(b/190411067): This is a shared pointer only because CachedSets are copied into different
-    // containers in the Flattener. Logically this should have unique ownership otherwise.
-    std::shared_ptr<TexturePool::AutoTexture> mTexture;
+    std::shared_ptr<renderengine::ExternalTexture> mTexture;
     sp<Fence> mDrawFence;
     ProjectionSpace mOutputSpace;
     ui::Dataspace mOutputDataspace;

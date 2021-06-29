@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 The Android Open Source Project
+ * Copyright 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,23 @@
  * limitations under the License.
  */
 
-package android.gui;
+#pragma once
 
-/** @hide */
-oneway interface ITunnelModeEnabledListener {
+#include <gmock/gmock.h>
 
-    /**
-     * Called when tunnel mode status has changed. Tunnel mode is:
-     *  - enabled when there is a sideband stream attached to one of the layers in
-     *    surface flinger
-     *  - disabled when there is no layer with a sideband stream
-     */
-    void onTunnelModeEnabledChanged(boolean enabled);
-}
+#include "DisplayIdGenerator.h"
+
+namespace android::mock {
+
+template <typename T>
+class DisplayIdGenerator : public android::DisplayIdGenerator<T> {
+public:
+    // Explicit default instantiation is recommended.
+    DisplayIdGenerator() = default;
+    virtual ~DisplayIdGenerator() = default;
+
+    MOCK_METHOD0(nextId, std::optional<T>());
+    MOCK_METHOD1(markUnused, void(T));
+};
+
+} // namespace android::mock

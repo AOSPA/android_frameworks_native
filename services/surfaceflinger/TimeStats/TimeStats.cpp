@@ -58,21 +58,6 @@ FrameTimingHistogram histogramToProto(const std::unordered_map<int32_t, int32_t>
     return histogramProto;
 }
 
-SurfaceflingerStatsLayerInfo_GameMode gameModeToProto(int32_t gameMode) {
-    switch (gameMode) {
-        case TimeStatsHelper::GameModeUnsupported:
-            return SurfaceflingerStatsLayerInfo::GAME_MODE_UNSUPPORTED;
-        case TimeStatsHelper::GameModeStandard:
-            return SurfaceflingerStatsLayerInfo::GAME_MODE_STANDARD;
-        case TimeStatsHelper::GameModePerformance:
-            return SurfaceflingerStatsLayerInfo::GAME_MODE_PERFORMANCE;
-        case TimeStatsHelper::GameModeBattery:
-            return SurfaceflingerStatsLayerInfo::GAME_MODE_BATTERY;
-        default:
-            return SurfaceflingerStatsLayerInfo::GAME_MODE_UNSPECIFIED;
-    }
-}
-
 SurfaceflingerStatsLayerInfo_SetFrameRateVote frameRateVoteToProto(
         const TimeStats::SetFrameRateVote& setFrameRateVote) {
     using FrameRateCompatibilityEnum =
@@ -221,7 +206,6 @@ bool TimeStats::populateLayerAtom(std::string* pulledData) {
         *atom->mutable_app_deadline_misses() =
                 histogramToProto(layer->deltas["appDeadlineDeltas"].hist,
                                  mMaxPulledHistogramBuckets);
-        atom->set_game_mode(gameModeToProto(layer->gameMode));
     }
 
     // Always clear data.
@@ -367,16 +351,12 @@ void TimeStats::recordDisplayEventConnectionCount(int32_t count) {
             std::max(mTimeStats.displayEventConnectionsCountLegacy, count);
 }
 
-static int32_t toMs(nsecs_t nanos) {
-    int64_t millis =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::nanoseconds(nanos))
-                    .count();
-    millis = std::clamp(millis, int64_t(INT32_MIN), int64_t(INT32_MAX));
-    return static_cast<int32_t>(millis);
-}
-
 static int32_t msBetween(nsecs_t start, nsecs_t end) {
-    return toMs(end - start);
+    int64_t delta = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::nanoseconds(end - start))
+                            .count();
+    delta = std::clamp(delta, int64_t(INT32_MIN), int64_t(INT32_MAX));
+    return static_cast<int32_t>(delta);
 }
 
 void TimeStats::recordFrameDuration(nsecs_t startTime, nsecs_t endTime) {
@@ -453,8 +433,7 @@ static int32_t clampToNearestBucket(Fps fps, size_t bucketWidth) {
 
 void TimeStats::flushAvailableRecordsToStatsLocked(int32_t layerId, Fps displayRefreshRate,
                                                    std::optional<Fps> renderRate,
-                                                   SetFrameRateVote frameRateVote,
-                                                   int32_t gameMode) {
+                                                   SetFrameRateVote frameRateVote) {
     ATRACE_CALL();
     ALOGV("[%d]-flushAvailableRecordsToStatsLocked", layerId);
 
@@ -481,13 +460,12 @@ void TimeStats::flushAvailableRecordsToStatsLocked(int32_t layerId, Fps displayR
 
             TimeStatsHelper::TimelineStats& displayStats = mTimeStats.stats[timelineKey];
 
-            TimeStatsHelper::LayerStatsKey layerKey = {uid, layerName, gameMode};
+            TimeStatsHelper::LayerStatsKey layerKey = {uid, layerName};
             if (!displayStats.stats.count(layerKey)) {
                 displayStats.stats[layerKey].displayRefreshRateBucket = refreshRateBucket;
                 displayStats.stats[layerKey].renderRateBucket = renderRateBucket;
                 displayStats.stats[layerKey].uid = uid;
                 displayStats.stats[layerKey].layerName = layerName;
-                displayStats.stats[layerKey].gameMode = gameMode;
             }
             if (frameRateVote.frameRate > 0.0f) {
                 displayStats.stats[layerKey].setFrameRateVote = frameRateVote;
@@ -553,11 +531,10 @@ static bool layerNameIsValid(const std::string& layerName) {
             layerName.compare(0, kMinLenLayerName, kPopupWindowPrefix) != 0;
 }
 
-bool TimeStats::canAddNewAggregatedStats(uid_t uid, const std::string& layerName,
-                                         int32_t gameMode) {
+bool TimeStats::canAddNewAggregatedStats(uid_t uid, const std::string& layerName) {
     uint32_t layerRecords = 0;
     for (const auto& record : mTimeStats.stats) {
-        if (record.second.stats.count({uid, layerName, gameMode}) > 0) {
+        if (record.second.stats.count({uid, layerName}) > 0) {
             return true;
         }
 
@@ -568,7 +545,7 @@ bool TimeStats::canAddNewAggregatedStats(uid_t uid, const std::string& layerName
 }
 
 void TimeStats::setPostTime(int32_t layerId, uint64_t frameNumber, const std::string& layerName,
-                            uid_t uid, nsecs_t postTime, int32_t gameMode) {
+                            uid_t uid, nsecs_t postTime) {
     if (!mEnabled.load()) return;
 
     ATRACE_CALL();
@@ -576,14 +553,13 @@ void TimeStats::setPostTime(int32_t layerId, uint64_t frameNumber, const std::st
           postTime);
 
     std::lock_guard<std::mutex> lock(mMutex);
-    if (!canAddNewAggregatedStats(uid, layerName, gameMode)) {
+    if (!canAddNewAggregatedStats(uid, layerName)) {
         return;
     }
     if (!mTimeStatsTracker.count(layerId) && mTimeStatsTracker.size() < MAX_NUM_LAYER_RECORDS &&
         layerNameIsValid(layerName)) {
         mTimeStatsTracker[layerId].uid = uid;
         mTimeStatsTracker[layerId].layerName = layerName;
-        mTimeStatsTracker[layerId].gameMode = gameMode;
     }
     if (!mTimeStatsTracker.count(layerId)) return;
     LayerRecord& layerRecord = mTimeStatsTracker[layerId];
@@ -718,7 +694,7 @@ void TimeStats::setAcquireFence(int32_t layerId, uint64_t frameNumber,
 
 void TimeStats::setPresentTime(int32_t layerId, uint64_t frameNumber, nsecs_t presentTime,
                                Fps displayRefreshRate, std::optional<Fps> renderRate,
-                               SetFrameRateVote frameRateVote, int32_t gameMode) {
+                               SetFrameRateVote frameRateVote) {
     if (!mEnabled.load()) return;
 
     ATRACE_CALL();
@@ -737,14 +713,13 @@ void TimeStats::setPresentTime(int32_t layerId, uint64_t frameNumber, nsecs_t pr
         layerRecord.waitData++;
     }
 
-    flushAvailableRecordsToStatsLocked(layerId, displayRefreshRate, renderRate, frameRateVote,
-                                       gameMode);
+    flushAvailableRecordsToStatsLocked(layerId, displayRefreshRate, renderRate, frameRateVote);
 }
 
 void TimeStats::setPresentFence(int32_t layerId, uint64_t frameNumber,
                                 const std::shared_ptr<FenceTime>& presentFence,
                                 Fps displayRefreshRate, std::optional<Fps> renderRate,
-                                SetFrameRateVote frameRateVote, int32_t gameMode) {
+                                SetFrameRateVote frameRateVote) {
     if (!mEnabled.load()) return;
 
     ATRACE_CALL();
@@ -764,8 +739,7 @@ void TimeStats::setPresentFence(int32_t layerId, uint64_t frameNumber,
         layerRecord.waitData++;
     }
 
-    flushAvailableRecordsToStatsLocked(layerId, displayRefreshRate, renderRate, frameRateVote,
-                                       gameMode);
+    flushAvailableRecordsToStatsLocked(layerId, displayRefreshRate, renderRate, frameRateVote);
 }
 
 static const constexpr int32_t kValidJankyReason = JankType::DisplayHAL |
@@ -823,7 +797,6 @@ void TimeStats::incrementJankyFrames(const JankyFramesInfo& info) {
     // the first jank record is not dropped.
 
     static const std::string kDefaultLayerName = "none";
-    static constexpr int32_t kDefaultGameMode = TimeStatsHelper::GameModeUnsupported;
 
     const int32_t refreshRateBucket =
             clampToNearestBucket(info.refreshRate, REFRESH_RATE_BUCKET_WIDTH);
@@ -840,14 +813,13 @@ void TimeStats::incrementJankyFrames(const JankyFramesInfo& info) {
 
     updateJankPayload<TimeStatsHelper::TimelineStats>(timelineStats, info.reasons);
 
-    TimeStatsHelper::LayerStatsKey layerKey = {info.uid, info.layerName, info.gameMode};
+    TimeStatsHelper::LayerStatsKey layerKey = {info.uid, info.layerName};
     if (!timelineStats.stats.count(layerKey)) {
-        layerKey = {info.uid, kDefaultLayerName, kDefaultGameMode};
+        layerKey = {info.uid, kDefaultLayerName};
         timelineStats.stats[layerKey].displayRefreshRateBucket = refreshRateBucket;
         timelineStats.stats[layerKey].renderRateBucket = renderRateBucket;
         timelineStats.stats[layerKey].uid = info.uid;
-        timelineStats.stats[layerKey].layerName = kDefaultGameMode;
-        timelineStats.stats[layerKey].gameMode = info.gameMode;
+        timelineStats.stats[layerKey].layerName = kDefaultLayerName;
     }
 
     TimeStatsHelper::TimeStatsLayer& timeStatsLayer = timelineStats.stats[layerKey];
@@ -857,9 +829,10 @@ void TimeStats::incrementJankyFrames(const JankyFramesInfo& info) {
         // TimeStats Histograms only retain positive values, so we don't need to check if these
         // deadlines were really missed if we know that the frame had jank, since deadlines
         // that were met will be dropped.
-        timelineStats.displayDeadlineDeltas.insert(toMs(info.displayDeadlineDelta));
-        timelineStats.displayPresentDeltas.insert(toMs(info.displayPresentJitter));
-        timeStatsLayer.deltas["appDeadlineDeltas"].insert(toMs(info.appDeadlineDelta));
+        timelineStats.displayDeadlineDeltas.insert(static_cast<int32_t>(info.displayDeadlineDelta));
+        timelineStats.displayPresentDeltas.insert(static_cast<int32_t>(info.displayPresentJitter));
+        timeStatsLayer.deltas["appDeadlineDeltas"].insert(
+                static_cast<int32_t>(info.appDeadlineDelta));
     }
 }
 

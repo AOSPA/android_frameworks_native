@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#include "renderengine/ExternalTexture.h"
+#include "ui/GraphicBuffer.h"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wextra"
+
 #include <cstdarg>
 #include <cstdint>
 
@@ -26,9 +32,7 @@
 #include <compositionengine/mock/NativeWindow.h>
 #include <compositionengine/mock/OutputLayer.h>
 #include <gtest/gtest.h>
-#include <renderengine/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
-#include <ui/GraphicBuffer.h>
 
 namespace android::compositionengine {
 namespace {
@@ -63,12 +67,9 @@ public:
     sp<mock::NativeWindow> mNativeWindow = new StrictMock<mock::NativeWindow>();
     sp<mock::DisplaySurface> mDisplaySurface = new StrictMock<mock::DisplaySurface>();
     impl::RenderSurface mSurface{mCompositionEngine, mDisplay,
-                                 RenderSurfaceCreationArgsBuilder()
-                                         .setDisplayWidth(DEFAULT_DISPLAY_WIDTH)
-                                         .setDisplayHeight(DEFAULT_DISPLAY_HEIGHT)
-                                         .setNativeWindow(mNativeWindow)
-                                         .setDisplaySurface(mDisplaySurface)
-                                         .build()};
+                                 RenderSurfaceCreationArgs{DEFAULT_DISPLAY_WIDTH,
+                                                           DEFAULT_DISPLAY_HEIGHT, mNativeWindow,
+                                                           mDisplaySurface}};
 };
 
 /*
@@ -366,8 +367,11 @@ TEST_F(RenderSurfaceTest, flipForwardsSignal) {
 
     mSurface.flip();
 
-    EXPECT_EQ(501u, mSurface.getPageFlipCount());
+    EXPECT_EQ(501, mSurface.getPageFlipCount());
 }
 
 } // namespace
 } // namespace android::compositionengine
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wextra"

@@ -45,7 +45,7 @@ public:
                 ::testing::UnitTest::GetInstance()->current_test_info();
         ALOGD("**** Setting up for %s.%s\n", test_info->test_case_name(), test_info->name());
         setupScheduler();
-        mFlinger.setupComposer(std::make_unique<Hwc2::mock::Composer>());
+        setupComposer(0);
     }
 
     ~TransactionSurfaceFrameTest() {
@@ -91,9 +91,17 @@ public:
                                 std::move(eventThread), std::move(sfEventThread));
     }
 
-    TestableSurfaceFlinger mFlinger;
-    renderengine::mock::RenderEngine mRenderEngine;
+    void setupComposer(uint32_t virtualDisplayCount) {
+        mComposer = new Hwc2::mock::Composer();
+        EXPECT_CALL(*mComposer, getMaxVirtualDisplayCount()).WillOnce(Return(virtualDisplayCount));
+        mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
 
+        Mock::VerifyAndClear(mComposer);
+    }
+
+    TestableSurfaceFlinger mFlinger;
+    Hwc2::mock::Composer* mComposer = nullptr;
+    renderengine::mock::RenderEngine mRenderEngine;
     FenceToFenceTimeMap fenceFactory;
     client_cache_t mClientCache;
 

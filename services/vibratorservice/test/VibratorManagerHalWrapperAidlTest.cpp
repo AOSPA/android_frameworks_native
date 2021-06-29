@@ -308,7 +308,8 @@ TEST_F(VibratorManagerHalWrapperAidlTest, TestTriggerSyncedWithCallbackSupport) 
                                       Return(Status())));
         EXPECT_CALL(*mMockHal.get(), triggerSynced(_))
                 .Times(Exactly(3))
-                .WillOnce(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)))
+                .WillOnce(Return(
+                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)))
                 .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
                 .WillRepeatedly(DoAll(TriggerCallback(), Return(Status())));
     }
@@ -344,7 +345,8 @@ TEST_F(VibratorManagerHalWrapperAidlTest, TestTriggerSyncedWithoutCallbackSuppor
 TEST_F(VibratorManagerHalWrapperAidlTest, TestCancelSynced) {
     EXPECT_CALL(*mMockHal.get(), cancelSynced())
             .Times(Exactly(3))
-            .WillOnce(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)))
+            .WillOnce(
+                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)))
             .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
             .WillRepeatedly(Return(Status()));
 

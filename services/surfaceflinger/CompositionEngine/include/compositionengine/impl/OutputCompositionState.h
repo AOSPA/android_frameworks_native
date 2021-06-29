@@ -118,12 +118,6 @@ struct OutputCompositionState {
     // The earliest time to send the present command to the HAL
     std::chrono::steady_clock::time_point earliestPresentTime;
 
-    // Current display brightness
-    float displayBrightnessNits{-1.f};
-
-    // SDR white point
-    float sdrWhitePointNits{-1.f};
-
     // Debugging
     void dump(std::string& result) const;
 };

@@ -60,7 +60,8 @@ public:
                 mRegistration.schedule({.workDuration = mWorkDuration.count(),
                                         .readyDuration = mReadyDuration.count(),
                                         .earliestVsync = mLastCallTime.count()});
-        LOG_ALWAYS_FATAL_IF((!scheduleResult.has_value()), "Error scheduling callback");
+        LOG_ALWAYS_FATAL_IF((scheduleResult != scheduler::ScheduleResult::Scheduled),
+                            "Error scheduling callback: rc %X", scheduleResult);
     }
 
     void stop() {
@@ -99,7 +100,8 @@ private:
                     mRegistration.schedule({.workDuration = mWorkDuration.count(),
                                             .readyDuration = mReadyDuration.count(),
                                             .earliestVsync = vsyncTime});
-            LOG_ALWAYS_FATAL_IF(!scheduleResult.has_value(), "Error rescheduling callback");
+            LOG_ALWAYS_FATAL_IF((scheduleResult != ScheduleResult::Scheduled),
+                                "Error rescheduling callback: rc %X", scheduleResult);
         }
     }
 

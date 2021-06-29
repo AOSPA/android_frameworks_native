@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+// TODO(b/183120308): This file is a copy of f/b/libs/hwui/utils/TraceUtils.h
+//  It should be migrated to a common place where both SF and hwui could use it.
+
 #pragma once
 
 #include <cutils/trace.h>

@@ -118,12 +118,14 @@ protected:
     SetFrameRateTest();
 
     void setupScheduler();
+    void setupComposer(uint32_t virtualDisplayCount);
 
     void addChild(sp<Layer> layer, sp<Layer> child);
     void removeChild(sp<Layer> layer, sp<Layer> child);
     void commitTransaction();
 
     TestableSurfaceFlinger mFlinger;
+    Hwc2::mock::Composer* mComposer = nullptr;
     mock::MessageQueue* mMessageQueue = new mock::MessageQueue();
 
     std::vector<sp<Layer>> mLayers;
@@ -137,11 +139,10 @@ SetFrameRateTest::SetFrameRateTest() {
     mFlinger.mutableUseFrameRateApi() = true;
 
     setupScheduler();
+    setupComposer(0);
 
-    mFlinger.setupComposer(std::make_unique<Hwc2::mock::Composer>());
     mFlinger.mutableEventQueue().reset(mMessageQueue);
 }
-
 void SetFrameRateTest::addChild(sp<Layer> layer, sp<Layer> child) {
     layer.get()->addChild(child.get());
 }
@@ -181,6 +182,14 @@ void SetFrameRateTest::setupScheduler() {
     mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
                             std::move(eventThread), std::move(sfEventThread), /*callback*/ nullptr,
                             /*hasMultipleModes*/ true);
+}
+
+void SetFrameRateTest::setupComposer(uint32_t virtualDisplayCount) {
+    mComposer = new Hwc2::mock::Composer();
+    EXPECT_CALL(*mComposer, getMaxVirtualDisplayCount()).WillOnce(Return(virtualDisplayCount));
+    mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
+
+    Mock::VerifyAndClear(mComposer);
 }
 
 namespace {

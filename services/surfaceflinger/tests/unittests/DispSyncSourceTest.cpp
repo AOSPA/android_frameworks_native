@@ -66,7 +66,7 @@ public:
             ALOGD("schedule: %zu", token.value());
             if (mCallbacks.count(token) == 0) {
                 ALOGD("schedule: callback %zu not registered", token.value());
-                return scheduler::ScheduleResult{};
+                return scheduler::ScheduleResult::Error;
             }
 
             auto& callback = mCallbacks.at(token);
@@ -75,7 +75,7 @@ public:
             callback.targetWakeupTime =
                     timing.earliestVsync - timing.workDuration - timing.readyDuration;
             ALOGD("schedule: callback %zu scheduled", token.value());
-            return scheduler::ScheduleResult{callback.targetWakeupTime};
+            return scheduler::ScheduleResult::Scheduled;
         });
 
         ON_CALL(*this, cancel).WillByDefault([this](CallbackToken token) {

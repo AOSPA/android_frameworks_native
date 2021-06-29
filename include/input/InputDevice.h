@@ -101,7 +101,7 @@ enum class InputDeviceSensorReportingMode : int32_t {
 };
 
 enum class InputDeviceLightType : int32_t {
-    MONO = 0,
+    SINGLE = 0,
     PLAYER_ID = 1,
     RGB = 2,
     MULTI_COLOR = 3,
@@ -257,9 +257,13 @@ public:
         return mMotionRanges;
     }
 
-    std::vector<InputDeviceSensorInfo> getSensors();
+    const InputDeviceSensorInfo* getSensorInfo(InputDeviceSensorType type);
 
-    std::vector<InputDeviceLightInfo> getLights();
+    const std::vector<InputDeviceSensorType> getSensorTypes();
+
+    const std::vector<int32_t> getLightIds();
+
+    const InputDeviceLightInfo* getLightInfo(int32_t id);
 
 private:
     int32_t mId;
@@ -318,8 +322,6 @@ extern std::string getInputDeviceConfigurationFilePathByName(
         const std::string& name, InputDeviceConfigurationFileType type);
 
 enum ReservedInputDeviceId : int32_t {
-    // Device id assigned to input events generated inside accessibility service
-    ACCESSIBILITY_DEVICE_ID = -2,
     // Device id of a special "virtual" keyboard that is always present.
     VIRTUAL_KEYBOARD_ID = -1,
     // Device id of the "built-in" keyboard if there is one.

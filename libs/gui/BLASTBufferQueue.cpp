@@ -318,27 +318,20 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
 // So we pass in a weak pointer to the BBQ and if it still alive, then we release the buffer.
 // Otherwise, this is a no-op.
 static void releaseBufferCallbackThunk(wp<BLASTBufferQueue> context, uint64_t graphicBufferId,
-                                       const sp<Fence>& releaseFence, uint32_t transformHint) {
+                                       const sp<Fence>& releaseFence) {
     sp<BLASTBufferQueue> blastBufferQueue = context.promote();
     ALOGV("releaseBufferCallbackThunk graphicBufferId=%" PRIu64 " blastBufferQueue=%s",
           graphicBufferId, blastBufferQueue ? "alive" : "dead");
     if (blastBufferQueue) {
-        blastBufferQueue->releaseBufferCallback(graphicBufferId, releaseFence, transformHint);
+        blastBufferQueue->releaseBufferCallback(graphicBufferId, releaseFence);
     }
 }
 
 void BLASTBufferQueue::releaseBufferCallback(uint64_t graphicBufferId,
-                                             const sp<Fence>& releaseFence,
-                                             uint32_t transformHint) {
+                                             const sp<Fence>& releaseFence) {
     ATRACE_CALL();
     std::unique_lock _lock{mMutex};
     BQA_LOGV("releaseBufferCallback graphicBufferId=%" PRIu64, graphicBufferId);
-
-    if (mSurfaceControl != nullptr) {
-        mTransformHint = transformHint;
-        mSurfaceControl->setTransformHint(transformHint);
-        mBufferItemConsumer->setTransformHint(mTransformHint);
-    }
 
     auto it = mSubmitted.find(graphicBufferId);
     if (it == mSubmitted.end()) {
@@ -431,7 +424,7 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
 
     auto releaseBufferCallback =
             std::bind(releaseBufferCallbackThunk, wp<BLASTBufferQueue>(this) /* callbackContext */,
-                      std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+                      std::placeholders::_1, std::placeholders::_2);
     t->setBuffer(mSurfaceControl, buffer, releaseBufferCallback);
     t->setDataspace(mSurfaceControl, static_cast<ui::Dataspace>(bufferItem.mDataSpace));
     t->setHdrMetadata(mSurfaceControl, bufferItem.mHdrMetadata);
@@ -621,14 +614,6 @@ public:
     status_t setFrameTimelineInfo(const FrameTimelineInfo& frameTimelineInfo) override {
         return mBbq->setFrameTimelineInfo(frameTimelineInfo);
     }
- protected:
-    uint32_t getTransformHint() const override {
-        if (mStickyTransform == 0 && !transformToDisplayInverse()) {
-            return mBbq->getLastTransformHint();
-        } else {
-            return 0;
-        }
-    }
 };
 
 // TODO: Can we coalesce this with frame updates? Need to confirm
@@ -796,14 +781,6 @@ PixelFormat BLASTBufferQueue::convertBufferFormat(PixelFormat& format) {
             break;
     }
     return convertedFormat;
-}
-
-uint32_t BLASTBufferQueue::getLastTransformHint() const {
-    if (mSurfaceControl != nullptr) {
-        return mSurfaceControl->getTransformHint();
-    } else {
-        return 0;
-    }
 }
 
 } // namespace android

@@ -158,8 +158,7 @@ public:
 
     virtual void onTransactionCompleted(ListenerStats stats) = 0;
 
-    virtual void onReleaseBuffer(uint64_t graphicBufferId, sp<Fence> releaseFence,
-                                 uint32_t transformHint) = 0;
+    virtual void onReleaseBuffer(uint64_t graphicBufferId, sp<Fence> releaseFence) = 0;
 };
 
 class BnTransactionCompletedListener : public SafeBnInterface<ITransactionCompletedListener> {

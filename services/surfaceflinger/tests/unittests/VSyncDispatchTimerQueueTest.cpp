@@ -232,12 +232,11 @@ TEST_F(VSyncDispatchTimerQueueTest, unregistersSetAlarmOnDestruction) {
         VSyncDispatchTimerQueue mDispatch{createTimeKeeper(), mStubTracker, mDispatchGroupThreshold,
                                           mVsyncMoveThreshold};
         CountingCallback cb(mDispatch);
-        const auto result = mDispatch.schedule(cb,
-                                               {.workDuration = 100,
-                                                .readyDuration = 0,
-                                                .earliestVsync = 1000});
-        EXPECT_TRUE(result.has_value());
-        EXPECT_EQ(900, *result);
+        EXPECT_EQ(mDispatch.schedule(cb,
+                                     {.workDuration = 100,
+                                      .readyDuration = 0,
+                                      .earliestVsync = 1000}),
+                  ScheduleResult::Scheduled);
     }
 }
 
@@ -246,13 +245,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingFuture) {
     EXPECT_CALL(mMockClock, alarmAt(_, 900));
 
     CountingCallback cb(mDispatch);
-    const auto result = mDispatch.schedule(cb,
-                                           {.workDuration = 100,
-                                            .readyDuration = 0,
-                                            .earliestVsync = intended});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(900, *result);
-
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 100,
+                                  .readyDuration = 0,
+                                  .earliestVsync = intended}),
+              ScheduleResult::Scheduled);
     advanceToNextCallback();
 
     ASSERT_THAT(cb.mCalls.size(), Eq(1));
@@ -280,12 +277,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingAdjustmentPast) {
     EXPECT_CALL(mMockClock, alarmAt(_, mPeriod));
 
     CountingCallback cb(mDispatch);
-    const auto result = mDispatch.schedule(cb,
-                                           {.workDuration = workDuration,
-                                            .readyDuration = 0,
-                                            .earliestVsync = mPeriod});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(mPeriod, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = workDuration,
+                                  .readyDuration = 0,
+                                  .earliestVsync = mPeriod}),
+              ScheduleResult::Scheduled);
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, basicAlarmCancel) {
@@ -293,11 +289,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmCancel) {
     EXPECT_CALL(mMockClock, alarmCancel());
 
     CountingCallback cb(mDispatch);
-    const auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 100, .readyDuration = 0, .earliestVsync = mPeriod});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(mPeriod - 100, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 100,
+                                  .readyDuration = 0,
+                                  .earliestVsync = mPeriod}),
+              ScheduleResult::Scheduled);
     EXPECT_EQ(mDispatch.cancel(cb), CancelResult::Cancelled);
 }
 
@@ -306,11 +302,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmCancelTooLate) {
     EXPECT_CALL(mMockClock, alarmCancel());
 
     CountingCallback cb(mDispatch);
-    const auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 100, .readyDuration = 0, .earliestVsync = mPeriod});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(mPeriod - 100, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 100,
+                                  .readyDuration = 0,
+                                  .earliestVsync = mPeriod}),
+              ScheduleResult::Scheduled);
     mMockClock.advanceBy(950);
     EXPECT_EQ(mDispatch.cancel(cb), CancelResult::TooLate);
 }
@@ -320,11 +316,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmCancelTooLateWhenRunning) {
     EXPECT_CALL(mMockClock, alarmCancel());
 
     PausingCallback cb(mDispatch, std::chrono::duration_cast<std::chrono::milliseconds>(1s));
-    const auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 100, .readyDuration = 0, .earliestVsync = mPeriod});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(mPeriod - 100, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 100,
+                                  .readyDuration = 0,
+                                  .earliestVsync = mPeriod}),
+              ScheduleResult::Scheduled);
 
     std::thread pausingThread([&] { mMockClock.advanceToNextCallback(); });
     EXPECT_TRUE(cb.waitForPause());
@@ -341,11 +337,11 @@ TEST_F(VSyncDispatchTimerQueueTest, unregisterSynchronizes) {
 
     PausingCallback cb(mDispatch, 50ms);
     cb.stashResource(resource);
-    const auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 100, .readyDuration = 0, .earliestVsync = mPeriod});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(mPeriod - 100, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 100,
+                                  .readyDuration = 0,
+                                  .earliestVsync = mPeriod}),
+              ScheduleResult::Scheduled);
 
     std::thread pausingThread([&] { mMockClock.advanceToNextCallback(); });
     EXPECT_TRUE(cb.waitForPause());
@@ -539,25 +535,21 @@ TEST_F(VSyncDispatchTimerQueueTest, callbackReentrantWithPastWakeup) {
     std::optional<nsecs_t> lastTarget;
     tmp = mDispatch.registerCallback(
             [&](auto timestamp, auto, auto) {
-                auto result =
-                        mDispatch.schedule(tmp,
-                                           {.workDuration = 400,
-                                            .readyDuration = 0,
-                                            .earliestVsync = timestamp - mVsyncMoveThreshold});
-                EXPECT_TRUE(result.has_value());
-                EXPECT_EQ(mPeriod + timestamp - 400, *result);
-                result = mDispatch.schedule(tmp,
-                                            {.workDuration = 400,
-                                             .readyDuration = 0,
-                                             .earliestVsync = timestamp});
-                EXPECT_TRUE(result.has_value());
-                EXPECT_EQ(mPeriod + timestamp - 400, *result);
-                result = mDispatch.schedule(tmp,
-                                            {.workDuration = 400,
-                                             .readyDuration = 0,
-                                             .earliestVsync = timestamp + mVsyncMoveThreshold});
-                EXPECT_TRUE(result.has_value());
-                EXPECT_EQ(mPeriod + timestamp - 400, *result);
+                EXPECT_EQ(mDispatch.schedule(tmp,
+                                             {.workDuration = 400,
+                                              .readyDuration = 0,
+                                              .earliestVsync = timestamp - mVsyncMoveThreshold}),
+                          ScheduleResult::Scheduled);
+                EXPECT_EQ(mDispatch.schedule(tmp,
+                                             {.workDuration = 400,
+                                              .readyDuration = 0,
+                                              .earliestVsync = timestamp}),
+                          ScheduleResult::Scheduled);
+                EXPECT_EQ(mDispatch.schedule(tmp,
+                                             {.workDuration = 400,
+                                              .readyDuration = 0,
+                                              .earliestVsync = timestamp + mVsyncMoveThreshold}),
+                          ScheduleResult::Scheduled);
                 lastTarget = timestamp;
             },
             "oo");
@@ -635,41 +627,36 @@ TEST_F(VSyncDispatchTimerQueueTest, setsTimerAfterCancellation) {
 
 TEST_F(VSyncDispatchTimerQueueTest, makingUpIdsError) {
     VSyncDispatch::CallbackToken token(100);
-    EXPECT_FALSE(mDispatch
-                         .schedule(token,
-                                   {.workDuration = 100, .readyDuration = 0, .earliestVsync = 1000})
-                         .has_value());
+    EXPECT_THAT(mDispatch.schedule(token,
+                                   {.workDuration = 100,
+                                    .readyDuration = 0,
+                                    .earliestVsync = 1000}),
+                Eq(ScheduleResult::Error));
     EXPECT_THAT(mDispatch.cancel(token), Eq(CancelResult::Error));
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, canMoveCallbackBackwardsInTime) {
     CountingCallback cb0(mDispatch);
-    auto result =
-            mDispatch.schedule(cb0,
-                               {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(500, *result);
-    result = mDispatch.schedule(cb0,
-                                {.workDuration = 100, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 100, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 }
 
 // b/1450138150
 TEST_F(VSyncDispatchTimerQueueTest, doesNotMoveCallbackBackwardsAndSkipAScheduledTargetVSync) {
     EXPECT_CALL(mMockClock, alarmAt(_, 500));
     CountingCallback cb(mDispatch);
-    auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(500, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
     mMockClock.advanceBy(400);
 
-    result = mDispatch.schedule(cb,
-                                {.workDuration = 800, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1200, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 800, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
     advanceToNextCallback();
     ASSERT_THAT(cb.mCalls.size(), Eq(1));
 }
@@ -680,30 +667,24 @@ TEST_F(VSyncDispatchTimerQueueTest, targetOffsetMovingBackALittleCanStillSchedul
             .WillOnce(Return(1000))
             .WillOnce(Return(1002));
     CountingCallback cb(mDispatch);
-    auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(500, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
     mMockClock.advanceBy(400);
-    result = mDispatch.schedule(cb,
-                                {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(602, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, canScheduleNegativeOffsetAgainstDifferentPeriods) {
     CountingCallback cb0(mDispatch);
-    auto result =
-            mDispatch.schedule(cb0,
-                               {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(500, *result);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
     advanceToNextCallback();
-    result = mDispatch.schedule(cb0,
-                                {.workDuration = 1100, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 1100, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, canScheduleLargeNegativeOffset) {
@@ -711,32 +692,26 @@ TEST_F(VSyncDispatchTimerQueueTest, canScheduleLargeNegativeOffset) {
     EXPECT_CALL(mMockClock, alarmAt(_, 500)).InSequence(seq);
     EXPECT_CALL(mMockClock, alarmAt(_, 1100)).InSequence(seq);
     CountingCallback cb0(mDispatch);
-    auto result =
-            mDispatch.schedule(cb0,
-                               {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(500, *result);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
     advanceToNextCallback();
-    result = mDispatch.schedule(cb0,
-                                {.workDuration = 1900, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1100, *result);
+    EXPECT_EQ(mDispatch.schedule(cb0,
+                                 {.workDuration = 1900, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, scheduleUpdatesDoesNotAffectSchedulingState) {
     EXPECT_CALL(mMockClock, alarmAt(_, 600));
 
     CountingCallback cb(mDispatch);
-    auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 
-    result = mDispatch.schedule(cb,
-                                {.workDuration = 1400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 1400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 
     advanceToNextCallback();
 }
@@ -779,19 +754,16 @@ TEST_F(VSyncDispatchTimerQueueTest, skipsSchedulingIfTimerReschedulingIsImminent
     CountingCallback cb1(mDispatch);
     CountingCallback cb2(mDispatch);
 
-    auto result =
-            mDispatch.schedule(cb1,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
+    EXPECT_EQ(mDispatch.schedule(cb1,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 
     mMockClock.setLag(100);
     mMockClock.advanceBy(620);
 
-    result = mDispatch.schedule(cb2,
-                                {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb2,
+                                 {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
     mMockClock.advanceBy(80);
 
     EXPECT_THAT(cb1.mCalls.size(), Eq(1));
@@ -807,19 +779,16 @@ TEST_F(VSyncDispatchTimerQueueTest, skipsSchedulingIfTimerReschedulingIsImminent
     EXPECT_CALL(mMockClock, alarmAt(_, 1630)).InSequence(seq);
     CountingCallback cb(mDispatch);
 
-    auto result =
-            mDispatch.schedule(cb,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 
     mMockClock.setLag(100);
     mMockClock.advanceBy(620);
 
-    result = mDispatch.schedule(cb,
-                                {.workDuration = 370, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1630, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 370, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
     mMockClock.advanceBy(80);
 
     EXPECT_THAT(cb.mCalls.size(), Eq(1));
@@ -833,15 +802,12 @@ TEST_F(VSyncDispatchTimerQueueTest, skipsRearmingWhenNotNextScheduled) {
     CountingCallback cb1(mDispatch);
     CountingCallback cb2(mDispatch);
 
-    auto result =
-            mDispatch.schedule(cb1,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
-    result = mDispatch.schedule(cb2,
-                                {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb1,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
+    EXPECT_EQ(mDispatch.schedule(cb2,
+                                 {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
 
     mMockClock.setLag(100);
     mMockClock.advanceBy(620);
@@ -862,15 +828,12 @@ TEST_F(VSyncDispatchTimerQueueTest, rearmsWhenCancelledAndIsNextScheduled) {
     CountingCallback cb1(mDispatch);
     CountingCallback cb2(mDispatch);
 
-    auto result =
-            mDispatch.schedule(cb1,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
-    result = mDispatch.schedule(cb2,
-                                {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(1900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb1,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
+    EXPECT_EQ(mDispatch.schedule(cb2,
+                                 {.workDuration = 100, .readyDuration = 0, .earliestVsync = 2000}),
+              ScheduleResult::Scheduled);
 
     mMockClock.setLag(100);
     mMockClock.advanceBy(620);
@@ -898,15 +861,12 @@ TEST_F(VSyncDispatchTimerQueueTest, laggedTimerGroupsCallbacksWithinLag) {
             .InSequence(seq)
             .WillOnce(Return(1000));
 
-    auto result =
-            mDispatch.schedule(cb1,
-                               {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(600, *result);
-    result = mDispatch.schedule(cb2,
-                                {.workDuration = 390, .readyDuration = 0, .earliestVsync = 1000});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(610, *result);
+    EXPECT_EQ(mDispatch.schedule(cb1,
+                                 {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
+    EXPECT_EQ(mDispatch.schedule(cb2,
+                                 {.workDuration = 390, .readyDuration = 0, .earliestVsync = 1000}),
+              ScheduleResult::Scheduled);
 
     mMockClock.setLag(100);
     mMockClock.advanceBy(700);
@@ -926,12 +886,11 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingFutureWithReadyDuration) {
     EXPECT_CALL(mMockClock, alarmAt(_, 900));
 
     CountingCallback cb(mDispatch);
-    const auto result = mDispatch.schedule(cb,
-                                           {.workDuration = 70,
-                                            .readyDuration = 30,
-                                            .earliestVsync = intended});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(900, *result);
+    EXPECT_EQ(mDispatch.schedule(cb,
+                                 {.workDuration = 70,
+                                  .readyDuration = 30,
+                                  .earliestVsync = intended}),
+              ScheduleResult::Scheduled);
     advanceToNextCallback();
 
     ASSERT_THAT(cb.mCalls.size(), Eq(1));
@@ -963,9 +922,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, stateScheduling) {
             "test", [](auto, auto, auto) {}, mVsyncMoveThreshold);
 
     EXPECT_FALSE(entry.wakeupTime());
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     auto const wakeup = entry.wakeupTime();
     ASSERT_TRUE(wakeup);
     EXPECT_THAT(*wakeup, Eq(900));
@@ -985,9 +944,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, stateSchedulingReallyLongWakeupLatency)
             "test", [](auto, auto, auto) {}, mVsyncMoveThreshold);
 
     EXPECT_FALSE(entry.wakeupTime());
-    EXPECT_TRUE(entry.schedule({.workDuration = 500, .readyDuration = 0, .earliestVsync = 994},
-                               mStubTracker, now)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 500, .readyDuration = 0, .earliestVsync = 994},
+                               mStubTracker, now),
+                Eq(ScheduleResult::Scheduled));
     auto const wakeup = entry.wakeupTime();
     ASSERT_TRUE(wakeup);
     EXPECT_THAT(*wakeup, Eq(9500));
@@ -1008,9 +967,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, runCallback) {
             },
             mVsyncMoveThreshold);
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     auto const wakeup = entry.wakeupTime();
     ASSERT_TRUE(wakeup);
     EXPECT_THAT(*wakeup, Eq(900));
@@ -1043,9 +1002,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, updateCallback) {
     entry.update(mStubTracker, 0);
     EXPECT_FALSE(entry.wakeupTime());
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     auto wakeup = entry.wakeupTime();
     ASSERT_TRUE(wakeup);
     EXPECT_THAT(wakeup, Eq(900));
@@ -1059,9 +1018,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, updateCallback) {
 TEST_F(VSyncDispatchTimerQueueEntryTest, skipsUpdateIfJustScheduled) {
     VSyncDispatchTimerQueueEntry entry(
             "test", [](auto, auto, auto) {}, mVsyncMoveThreshold);
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     entry.update(mStubTracker, 0);
 
     auto const wakeup = entry.wakeupTime();
@@ -1072,26 +1031,26 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, skipsUpdateIfJustScheduled) {
 TEST_F(VSyncDispatchTimerQueueEntryTest, willSnapToNextTargettableVSync) {
     VSyncDispatchTimerQueueEntry entry(
             "test", [](auto, auto, auto) {}, mVsyncMoveThreshold);
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     entry.executing(); // 1000 is executing
     // had 1000 not been executing, this could have been scheduled for time 800.
-    EXPECT_TRUE(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     EXPECT_THAT(*entry.wakeupTime(), Eq(1800));
     EXPECT_THAT(*entry.readyTime(), Eq(2000));
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 50, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 50, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     EXPECT_THAT(*entry.wakeupTime(), Eq(1950));
     EXPECT_THAT(*entry.readyTime(), Eq(2000));
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 1001},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 1001},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     EXPECT_THAT(*entry.wakeupTime(), Eq(1800));
     EXPECT_THAT(*entry.readyTime(), Eq(2000));
 }
@@ -1112,32 +1071,32 @@ TEST_F(VSyncDispatchTimerQueueEntryTest,
             .InSequence(seq)
             .WillOnce(Return(2000));
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
 
     entry.executing(); // 1000 is executing
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
 }
 
 TEST_F(VSyncDispatchTimerQueueEntryTest, reportsScheduledIfStillTime) {
     VSyncDispatchTimerQueueEntry entry(
             "test", [](auto, auto, auto) {}, mVsyncMoveThreshold);
-    EXPECT_TRUE(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
-    EXPECT_TRUE(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
-    EXPECT_TRUE(entry.schedule({.workDuration = 50, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
-    EXPECT_TRUE(entry.schedule({.workDuration = 1200, .readyDuration = 0, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 100, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
+    EXPECT_THAT(entry.schedule({.workDuration = 200, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
+    EXPECT_THAT(entry.schedule({.workDuration = 50, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
+    EXPECT_THAT(entry.schedule({.workDuration = 1200, .readyDuration = 0, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
 }
 
 TEST_F(VSyncDispatchTimerQueueEntryTest, storesPendingUpdatesUntilUpdate) {
@@ -1169,9 +1128,9 @@ TEST_F(VSyncDispatchTimerQueueEntryTest, runCallbackWithReadyDuration) {
             },
             mVsyncMoveThreshold);
 
-    EXPECT_TRUE(entry.schedule({.workDuration = 70, .readyDuration = 30, .earliestVsync = 500},
-                               mStubTracker, 0)
-                        .has_value());
+    EXPECT_THAT(entry.schedule({.workDuration = 70, .readyDuration = 30, .earliestVsync = 500},
+                               mStubTracker, 0),
+                Eq(ScheduleResult::Scheduled));
     auto const wakeup = entry.wakeupTime();
     ASSERT_TRUE(wakeup);
     EXPECT_THAT(*wakeup, Eq(900));

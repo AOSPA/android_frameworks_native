@@ -96,8 +96,7 @@ public:
 
     void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
             const std::vector<SurfaceControlStats>& stats);
-    void releaseBufferCallback(uint64_t graphicBufferId, const sp<Fence>& releaseFence,
-                               uint32_t transformHint);
+    void releaseBufferCallback(uint64_t graphicBufferId, const sp<Fence>& releaseFence);
     void setNextTransaction(SurfaceComposerClient::Transaction *t);
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
     void setTransactionCompleteCallback(uint64_t frameNumber,
@@ -110,8 +109,6 @@ public:
     status_t setFrameTimelineInfo(const FrameTimelineInfo& info);
 
     void setSidebandStream(const sp<NativeHandle>& stream);
-
-    uint32_t getLastTransformHint() const;
 
     virtual ~BLASTBufferQueue();
 

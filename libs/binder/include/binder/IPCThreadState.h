@@ -162,6 +162,12 @@ public:
             // This constant needs to be kept in sync with Binder.UNSET_WORKSOURCE from the Java
             // side.
             static const int32_t kUnsetWorkSource = -1;
+
+            // Create a temp reference until commands in queue flushed to driver
+            // Internal only.
+            // @internal
+            void                 createTransactionReference(RefBase* ref);
+
 private:
                                 IPCThreadState();
                                 ~IPCThreadState();
@@ -206,7 +212,6 @@ private:
             // Whether the work source should be propagated.
             bool                mPropagateWorkSource;
             bool                mIsLooper;
-            bool mIsFlushing;
             int32_t             mStrictModePolicy;
             int32_t             mLastTransactionBinderFlags;
             CallRestriction     mCallRestriction;

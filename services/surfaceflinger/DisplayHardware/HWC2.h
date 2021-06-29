@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <android-base/expected.h>
 #include <gui/HdrMetadata.h>
 #include <math/mat4.h>
 #include <ui/HdrCapabilities.h>
@@ -60,16 +59,20 @@ using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 // Implement this interface to receive hardware composer events.
 //
 // These callback functions will generally be called on a hwbinder thread, but
-// when first registering the callback the onComposerHalHotplug() function will
+// when first registering the callback the onHotplugReceived() function will
 // immediately be called on the thread calling registerCallback().
+//
+// All calls receive a sequenceId, which will be the value that was supplied to
+// HWC2::Device::registerCallback(). It's used to help differentiate callbacks
+// from different hardware composer instances.
 struct ComposerCallback {
-    virtual void onComposerHalHotplug(hal::HWDisplayId, hal::Connection) = 0;
-    virtual void onComposerHalRefresh(hal::HWDisplayId) = 0;
-    virtual void onComposerHalVsync(hal::HWDisplayId, int64_t timestamp,
-                                    std::optional<hal::VsyncPeriodNanos>) = 0;
-    virtual void onComposerHalVsyncPeriodTimingChanged(hal::HWDisplayId,
-                                                       const hal::VsyncPeriodChangeTimeline&) = 0;
-    virtual void onComposerHalSeamlessPossible(hal::HWDisplayId) = 0;
+    virtual void onHotplugReceived(int32_t sequenceId, hal::HWDisplayId, hal::Connection) = 0;
+    virtual void onRefreshReceived(int32_t sequenceId, hal::HWDisplayId) = 0;
+    virtual void onVsyncReceived(int32_t sequenceId, hal::HWDisplayId, int64_t timestamp,
+                                 std::optional<hal::VsyncPeriodNanos>) = 0;
+    virtual void onVsyncPeriodTimingChangedReceived(int32_t sequenceId, hal::HWDisplayId,
+                                                    const hal::VsyncPeriodChangeTimeline&) = 0;
+    virtual void onSeamlessPossible(int32_t sequenceId, hal::HWDisplayId) = 0;
 
 protected:
     ~ComposerCallback() = default;
@@ -85,11 +88,10 @@ public:
     virtual void setConnected(bool connected) = 0; // For use by Device only
     virtual const std::unordered_set<hal::DisplayCapability>& getCapabilities() const = 0;
     virtual bool isVsyncPeriodSwitchSupported() const = 0;
-    virtual void onLayerDestroyed(hal::HWLayerId layerId) = 0;
 
     [[clang::warn_unused_result]] virtual hal::Error acceptChanges() = 0;
-    [[clang::warn_unused_result]] virtual base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>
-    createLayer() = 0;
+    [[clang::warn_unused_result]] virtual hal::Error createLayer(Layer** outLayer) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error destroyLayer(Layer* layer) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getChangedCompositionTypes(
             std::unordered_map<Layer*, hal::Composition>* outTypes) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getColorModes(
@@ -162,8 +164,6 @@ public:
 
 namespace impl {
 
-class Layer;
-
 class Display : public HWC2::Display {
 public:
     Display(android::Hwc2::Composer&, const std::unordered_set<hal::Capability>&, hal::HWDisplayId,
@@ -172,9 +172,10 @@ public:
 
     // Required by HWC2
     hal::Error acceptChanges() override;
-    base::expected<std::shared_ptr<HWC2::Layer>, hal::Error> createLayer() override;
+    hal::Error createLayer(Layer** outLayer) override;
+    hal::Error destroyLayer(Layer*) override;
     hal::Error getChangedCompositionTypes(
-            std::unordered_map<HWC2::Layer*, hal::Composition>* outTypes) override;
+            std::unordered_map<Layer*, hal::Composition>* outTypes) override;
     hal::Error getColorModes(std::vector<hal::ColorMode>* outModes) const override;
     // Returns a bitmask which contains HdrMetadata::Type::*.
     int32_t getSupportedPerFrameMetadata() const override;
@@ -185,7 +186,7 @@ public:
     hal::Error getName(std::string* outName) const override;
     hal::Error getRequests(
             hal::DisplayRequest* outDisplayRequests,
-            std::unordered_map<HWC2::Layer*, hal::LayerRequest>* outLayerRequests) override;
+            std::unordered_map<Layer*, hal::LayerRequest>* outLayerRequests) override;
     hal::Error getConnectionType(ui::DisplayConnectionType*) const override;
     hal::Error supportsDoze(bool* outSupport) const override;
     hal::Error getHdrCapabilities(android::HdrCapabilities* outCapabilities) const override;
@@ -196,8 +197,8 @@ public:
                                                 uint64_t maxFrames) const override;
     hal::Error getDisplayedContentSample(uint64_t maxFrames, uint64_t timestamp,
                                          android::DisplayedFrameStats* outStats) const override;
-    hal::Error getReleaseFences(std::unordered_map<HWC2::Layer*, android::sp<android::Fence>>*
-                                        outFences) const override;
+    hal::Error getReleaseFences(
+            std::unordered_map<Layer*, android::sp<android::Fence>>* outFences) const override;
     hal::Error present(android::sp<android::Fence>* outPresentFence) override;
     hal::Error setClientTarget(uint32_t slot, const android::sp<android::GraphicBuffer>& target,
                                const android::sp<android::Fence>& acquireFence,
@@ -234,14 +235,13 @@ public:
     const std::unordered_set<hal::DisplayCapability>& getCapabilities() const override {
         return mDisplayCapabilities;
     };
-    bool isVsyncPeriodSwitchSupported() const override;
-    void onLayerDestroyed(hal::HWLayerId layerId) override;
+    virtual bool isVsyncPeriodSwitchSupported() const override;
 
 private:
 
     // This may fail (and return a null pointer) if no layer with this ID exists
     // on this display
-    std::shared_ptr<HWC2::Layer> getLayerById(hal::HWLayerId id) const;
+    Layer* getLayerById(hal::HWLayerId) const;
 
     friend android::TestableSurfaceFlinger;
 
@@ -258,8 +258,7 @@ private:
     bool mIsConnected = false;
     bool mSetClient_3_1 = false;
 
-    using Layers = std::unordered_map<hal::HWLayerId, std::weak_ptr<HWC2::impl::Layer>>;
-    Layers mLayers;
+    std::unordered_map<hal::HWLayerId, std::unique_ptr<Layer>> mLayers;
 
     std::once_flag mDisplayCapabilityQueryFlag;
     std::unordered_set<hal::DisplayCapability> mDisplayCapabilities;
@@ -319,11 +318,9 @@ namespace impl {
 class Layer : public HWC2::Layer {
 public:
     Layer(android::Hwc2::Composer& composer,
-          const std::unordered_set<hal::Capability>& capabilities, HWC2::Display& display,
+          const std::unordered_set<hal::Capability>& capabilities, hal::HWDisplayId displayId,
           hal::HWLayerId layerId);
     ~Layer() override;
-
-    void onOwningDisplayDestroyed();
 
     hal::HWLayerId getId() const override { return mId; }
 
@@ -363,7 +360,7 @@ private:
     android::Hwc2::Composer& mComposer;
     const std::unordered_set<hal::Capability>& mCapabilities;
 
-    HWC2::Display* mDisplay;
+    hal::HWDisplayId mDisplayId;
     hal::HWLayerId mId;
 
     // Cached HWC2 data, to ensure the same commands aren't sent to the HWC

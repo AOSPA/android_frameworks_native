@@ -26,20 +26,6 @@
 namespace android::scheduler {
 using base::StringAppendF;
 
-namespace {
-nsecs_t getExpectedCallbackTime(nsecs_t nextVsyncTime,
-                                const VSyncDispatch::ScheduleTiming& timing) {
-    return nextVsyncTime - timing.readyDuration - timing.workDuration;
-}
-
-nsecs_t getExpectedCallbackTime(VSyncTracker& tracker, nsecs_t now,
-                                const VSyncDispatch::ScheduleTiming& timing) {
-    const auto nextVsyncTime = tracker.nextAnticipatedVSyncTimeFrom(
-            std::max(timing.earliestVsync, now + timing.workDuration + timing.readyDuration));
-    return getExpectedCallbackTime(nextVsyncTime, timing);
-}
-} // namespace
-
 VSyncDispatch::~VSyncDispatch() = default;
 VSyncTracker::~VSyncTracker() = default;
 TimeKeeper::~TimeKeeper() = default;
@@ -88,7 +74,7 @@ ScheduleResult VSyncDispatchTimerQueueEntry::schedule(VSyncDispatch::ScheduleTim
     bool const wouldSkipAVsyncTarget =
             mArmedInfo && (nextVsyncTime > (mArmedInfo->mActualVsyncTime + mMinVsyncDistance));
     if (wouldSkipAVsyncTarget) {
-        return getExpectedCallbackTime(nextVsyncTime, timing);
+        return ScheduleResult::Scheduled;
     }
 
     bool const alreadyDispatchedForVsync = mLastDispatchTime &&
@@ -103,7 +89,7 @@ ScheduleResult VSyncDispatchTimerQueueEntry::schedule(VSyncDispatch::ScheduleTim
     auto const nextReadyTime = nextVsyncTime - timing.readyDuration;
     mScheduleTiming = timing;
     mArmedInfo = {nextWakeupTime, nextVsyncTime, nextReadyTime};
-    return getExpectedCallbackTime(nextVsyncTime, timing);
+    return ScheduleResult::Scheduled;
 }
 
 void VSyncDispatchTimerQueueEntry::addPendingWorkloadUpdate(VSyncDispatch::ScheduleTiming timing) {
@@ -331,7 +317,7 @@ void VSyncDispatchTimerQueue::unregisterCallback(CallbackToken token) {
 
 ScheduleResult VSyncDispatchTimerQueue::schedule(CallbackToken token,
                                                  ScheduleTiming scheduleTiming) {
-    ScheduleResult result;
+    auto result = ScheduleResult::Error;
     {
         std::lock_guard lock(mMutex);
 
@@ -347,11 +333,11 @@ ScheduleResult VSyncDispatchTimerQueue::schedule(CallbackToken token,
         auto const rearmImminent = now > mIntendedWakeupTime;
         if (CC_UNLIKELY(rearmImminent)) {
             callback->addPendingWorkloadUpdate(scheduleTiming);
-            return getExpectedCallbackTime(mTracker, now, scheduleTiming);
+            return ScheduleResult::Scheduled;
         }
 
         result = callback->schedule(scheduleTiming, mTracker, now);
-        if (!result.has_value()) {
+        if (result == ScheduleResult::CannotSchedule) {
             return result;
         }
 
@@ -430,7 +416,7 @@ VSyncCallbackRegistration::~VSyncCallbackRegistration() {
 
 ScheduleResult VSyncCallbackRegistration::schedule(VSyncDispatch::ScheduleTiming scheduleTiming) {
     if (!mValidToken) {
-        return std::nullopt;
+        return ScheduleResult::Error;
     }
     return mDispatch.get().schedule(mToken, scheduleTiming);
 }

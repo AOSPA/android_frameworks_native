@@ -18,20 +18,20 @@
 #include <compositionengine/impl/planner/CachedSet.h>
 #include <compositionengine/impl/planner/Flattener.h>
 #include <compositionengine/impl/planner/LayerState.h>
+#include <compositionengine/impl/planner/Predictor.h>
 #include <compositionengine/mock/LayerFE.h>
 #include <compositionengine/mock/OutputLayer.h>
 #include <gtest/gtest.h>
 #include <renderengine/ExternalTexture.h>
 #include <renderengine/LayerSettings.h>
 #include <renderengine/mock/RenderEngine.h>
-#include <chrono>
 
 namespace android::compositionengine {
 using namespace std::chrono_literals;
-using impl::planner::CachedSet;
 using impl::planner::Flattener;
 using impl::planner::LayerState;
 using impl::planner::NonBufferHash;
+using impl::planner::Predictor;
 
 using testing::_;
 using testing::ByMove;
@@ -45,32 +45,23 @@ using testing::SetArgPointee;
 
 namespace {
 
-class TestableFlattener : public Flattener {
-public:
-    TestableFlattener(renderengine::RenderEngine& renderEngine, bool enableHolePunch,
-                      std::optional<Flattener::CachedSetRenderSchedulingTunables>
-                              cachedSetRenderSchedulingTunables = std::nullopt)
-          : Flattener(renderEngine, enableHolePunch, cachedSetRenderSchedulingTunables) {}
-    const std::optional<CachedSet>& getNewCachedSetForTesting() const { return mNewCachedSet; }
-};
-
 class FlattenerTest : public testing::Test {
 public:
-    FlattenerTest() : FlattenerTest(std::nullopt) {}
+    FlattenerTest() : mFlattener(std::make_unique<Flattener>(mPredictor, true)) {}
     void SetUp() override;
 
 protected:
-    FlattenerTest(std::optional<Flattener::CachedSetRenderSchedulingTunables>
-                          cachedSetRenderSchedulingTunables)
-          : mFlattener(std::make_unique<TestableFlattener>(mRenderEngine, true,
-                                                           cachedSetRenderSchedulingTunables)) {}
     void initializeOverrideBuffer(const std::vector<const LayerState*>& layers);
     void initializeFlattener(const std::vector<const LayerState*>& layers);
     void expectAllLayersFlattened(const std::vector<const LayerState*>& layers);
 
-    // mRenderEngine is held as a reference in mFlattener, so explicitly destroy mFlattener first.
+    // TODO(b/181192467): Once Flattener starts to do something useful with Predictor,
+    // mPredictor should be mocked and checked for expectations.
+    Predictor mPredictor;
+
+    // mRenderEngine may be held as a pointer to mFlattener, so mFlattener must be destroyed first.
     renderengine::mock::RenderEngine mRenderEngine;
-    std::unique_ptr<TestableFlattener> mFlattener;
+    std::unique_ptr<Flattener> mFlattener;
 
     const std::chrono::steady_clock::time_point kStartTime = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point mTime = kStartTime;
@@ -92,7 +83,6 @@ protected:
 };
 
 void FlattenerTest::SetUp() {
-    mFlattener->setDisplaySize({1, 1});
     for (size_t i = 0; i < kNumLayers; i++) {
         auto testLayer = std::make_unique<TestLayer>();
         auto pos = static_cast<int32_t>(i);
@@ -155,13 +145,13 @@ void FlattenerTest::initializeFlattener(const std::vector<const LayerState*>& la
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     // same geometry, update the internal layer stack
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 }
 
 void FlattenerTest::expectAllLayersFlattened(const std::vector<const LayerState*>& layers) {
@@ -171,7 +161,7 @@ void FlattenerTest::expectAllLayersFlattened(const std::vector<const LayerState*
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     for (const auto layer : layers) {
         EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
@@ -181,7 +171,7 @@ void FlattenerTest::expectAllLayersFlattened(const std::vector<const LayerState*
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     const auto buffer = layers[0]->getOutputLayer()->getState().overrideInfo.buffer;
     EXPECT_NE(nullptr, buffer);
@@ -216,7 +206,7 @@ TEST_F(FlattenerTest, flattenLayers_ActiveLayersAreNotFlattened) {
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 }
 
 TEST_F(FlattenerTest, flattenLayers_basicFlatten) {
@@ -262,7 +252,7 @@ TEST_F(FlattenerTest, flattenLayers_FlattenedLayersStayFlattenWhenNoUpdate) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -367,7 +357,7 @@ TEST_F(FlattenerTest, flattenLayers_addLayerToFlattenedCauseReset) {
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_EQ(nullptr, overrideBuffer1);
     EXPECT_EQ(nullptr, overrideBuffer2);
@@ -404,7 +394,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateToFlatten) {
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_EQ(nullptr, overrideBuffer1);
     EXPECT_EQ(nullptr, overrideBuffer2);
@@ -413,7 +403,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateToFlatten) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_EQ(nullptr, overrideBuffer1);
     EXPECT_NE(nullptr, overrideBuffer2);
@@ -426,7 +416,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateToFlatten) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_EQ(nullptr, overrideBuffer1);
     EXPECT_NE(nullptr, overrideBuffer2);
@@ -435,7 +425,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateToFlatten) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -477,7 +467,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateForMiddleLayer) {
     initializeOverrideBuffer(layers);
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_EQ(nullptr, overrideBuffer1);
     EXPECT_EQ(nullptr, overrideBuffer2);
@@ -491,7 +481,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateForMiddleLayer) {
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
     mOutputState.framebufferSpace.orientation = ui::ROTATION_90;
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -504,7 +494,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateForMiddleLayer) {
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
     mOutputState.framebufferSpace.orientation = ui::ROTATION_180;
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -519,7 +509,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateForMiddleLayer) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -531,7 +521,7 @@ TEST_F(FlattenerTest, flattenLayers_BufferUpdateForMiddleLayer) {
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
     mOutputState.framebufferSpace.orientation = ui::ROTATION_270;
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -570,7 +560,7 @@ TEST_F(FlattenerTest, flattenLayers_pipRequiresRoundedCorners) {
 
     // This will render a CachedSet.
     EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     // We've rendered a CachedSet, but we haven't merged it in.
     EXPECT_EQ(nullptr, overrideBuffer1);
@@ -583,7 +573,7 @@ TEST_F(FlattenerTest, flattenLayers_pipRequiresRoundedCorners) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -632,7 +622,7 @@ TEST_F(FlattenerTest, flattenLayers_pip) {
 
     // This will render a CachedSet.
     EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     // We've rendered a CachedSet, but we haven't merged it in.
     EXPECT_EQ(nullptr, overrideBuffer1);
@@ -645,7 +635,7 @@ TEST_F(FlattenerTest, flattenLayers_pip) {
     initializeOverrideBuffer(layers);
     EXPECT_NE(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+    mFlattener->renderCachedSets(mRenderEngine, mOutputState);
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
@@ -658,284 +648,5 @@ TEST_F(FlattenerTest, flattenLayers_pip) {
     EXPECT_EQ(&mTestLayers[2]->outputLayer, peekThroughLayer1);
     EXPECT_EQ(peekThroughLayer1, peekThroughLayer2);
 }
-
-TEST_F(FlattenerTest, flattenLayers_flattensBlurBehindRunIfFirstRun) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-
-    auto& layerState2 = mTestLayers[1]->layerState;
-    mTestLayers[1]->layerFECompositionState.backgroundBlurRadius = 1;
-    layerState2->update(&mTestLayers[1]->outputLayer);
-
-    auto& layerState3 = mTestLayers[2]->layerState;
-    const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer2 = layerState2->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer3 = layerState3->getOutputLayer()->getState().overrideInfo.buffer;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerState2.get(),
-            layerState3.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the first two layers inactive, which contain the blur behind
-    mTime += 200ms;
-    layerState3->resetFramesSinceBufferUpdate();
-
-    // layers would be flattened but the buffer would not be overridden
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    for (const auto layer : layers) {
-        EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
-    }
-
-    // the new flattened layer is replaced
-    initializeOverrideBuffer(layers);
-    EXPECT_NE(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-    EXPECT_NE(nullptr, overrideBuffer1);
-    EXPECT_EQ(overrideBuffer1, overrideBuffer2);
-    EXPECT_EQ(nullptr, overrideBuffer3);
-}
-
-TEST_F(FlattenerTest, flattenLayers_doesNotFlattenBlurBehindRun) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-
-    auto& layerState2 = mTestLayers[1]->layerState;
-    mTestLayers[1]->layerFECompositionState.backgroundBlurRadius = 1;
-    layerState2->update(&mTestLayers[1]->outputLayer);
-
-    auto& layerState3 = mTestLayers[2]->layerState;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerState2.get(),
-            layerState3.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the last two layers inactive, which contains the blur layer, but does not contain the
-    // first layer
-    mTime += 200ms;
-    layerState1->resetFramesSinceBufferUpdate();
-
-    // layers would be flattened but the buffer would not be overridden
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillRepeatedly(Return(NO_ERROR));
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    for (const auto layer : layers) {
-        EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
-    }
-
-    // nothing is flattened because the last two frames cannot be cached due to containing a blur
-    // layer
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-    for (const auto layer : layers) {
-        EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
-    }
-}
-
-TEST_F(FlattenerTest, flattenLayers_flattenSkipsLayerWithBlurBehind) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-
-    auto& layerStateWithBlurBehind = mTestLayers[1]->layerState;
-    mTestLayers[1]->layerFECompositionState.backgroundBlurRadius = 1;
-    layerStateWithBlurBehind->update(&mTestLayers[1]->outputLayer);
-
-    auto& layerState3 = mTestLayers[2]->layerState;
-    auto& layerState4 = mTestLayers[3]->layerState;
-    const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& blurOverrideBuffer =
-            layerStateWithBlurBehind->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer3 = layerState3->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer4 = layerState4->getOutputLayer()->getState().overrideInfo.buffer;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerStateWithBlurBehind.get(),
-            layerState3.get(),
-            layerState4.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the last three layers inactive, which contains the blur layer, but does not contain the
-    // first layer
-    mTime += 200ms;
-    layerState1->resetFramesSinceBufferUpdate();
-
-    // layers would be flattened but the buffer would not be overridden
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    for (const auto layer : layers) {
-        EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
-    }
-
-    // the new flattened layer is replaced
-    initializeOverrideBuffer(layers);
-    EXPECT_NE(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-    EXPECT_EQ(nullptr, overrideBuffer1);
-    EXPECT_EQ(nullptr, blurOverrideBuffer);
-    EXPECT_NE(nullptr, overrideBuffer3);
-    EXPECT_EQ(overrideBuffer3, overrideBuffer4);
-}
-
-TEST_F(FlattenerTest, flattenLayers_whenBlurLayerIsChanging_appliesBlurToInactiveBehindLayers) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-    auto& layerState2 = mTestLayers[1]->layerState;
-
-    auto& layerStateWithBlurBehind = mTestLayers[2]->layerState;
-    mTestLayers[2]->layerFECompositionState.backgroundBlurRadius = 1;
-    layerStateWithBlurBehind->update(&mTestLayers[2]->outputLayer);
-    const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer2 = layerState2->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& blurOverrideBuffer =
-            layerStateWithBlurBehind->getOutputLayer()->getState().overrideInfo.buffer;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerState2.get(),
-            layerStateWithBlurBehind.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the first two layers inactive, but update the blur layer
-    mTime += 200ms;
-    layerStateWithBlurBehind->resetFramesSinceBufferUpdate();
-
-    // layers would be flattened but the buffer would not be overridden
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    const auto& cachedSet = mFlattener->getNewCachedSetForTesting();
-    ASSERT_NE(std::nullopt, cachedSet);
-    EXPECT_EQ(&mTestLayers[2]->outputLayer, cachedSet->getBlurLayer());
-
-    for (const auto layer : layers) {
-        EXPECT_EQ(nullptr, layer->getOutputLayer()->getState().overrideInfo.buffer);
-    }
-
-    // the new flattened layer is replaced
-    initializeOverrideBuffer(layers);
-    EXPECT_NE(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-    EXPECT_NE(nullptr, overrideBuffer1);
-    EXPECT_EQ(overrideBuffer2, overrideBuffer1);
-    EXPECT_EQ(nullptr, blurOverrideBuffer);
-}
-
-TEST_F(FlattenerTest, flattenLayers_renderCachedSets_doesNotRenderTwice) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-    auto& layerState2 = mTestLayers[1]->layerState;
-    const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
-    const auto& overrideBuffer2 = layerState2->getOutputLayer()->getState().overrideInfo.buffer;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerState2.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the layers inactive
-    mTime += 200ms;
-    // layers would be flattened but the buffer would not be overridden
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    EXPECT_EQ(nullptr, overrideBuffer1);
-    EXPECT_EQ(nullptr, overrideBuffer2);
-
-    // Simulate attempting to render prior to merging the new cached set with the layer stack.
-    // Here we should not try to re-render.
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).Times(0);
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    // We provide the override buffer now that it's rendered
-    EXPECT_NE(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-    mFlattener->renderCachedSets(mOutputState, std::nullopt);
-
-    EXPECT_NE(nullptr, overrideBuffer1);
-    EXPECT_EQ(overrideBuffer2, overrideBuffer1);
-}
-
-const constexpr std::chrono::nanoseconds kCachedSetRenderDuration = 0ms;
-const constexpr size_t kMaxDeferRenderAttempts = 2;
-
-class FlattenerRenderSchedulingTest : public FlattenerTest {
-public:
-    FlattenerRenderSchedulingTest()
-          : FlattenerTest(
-                    Flattener::CachedSetRenderSchedulingTunables{.cachedSetRenderDuration =
-                                                                         kCachedSetRenderDuration,
-                                                                 .maxDeferRenderAttempts =
-                                                                         kMaxDeferRenderAttempts}) {
-    }
-};
-
-TEST_F(FlattenerRenderSchedulingTest, flattenLayers_renderCachedSets_defersUpToMaxAttempts) {
-    auto& layerState1 = mTestLayers[0]->layerState;
-    auto& layerState2 = mTestLayers[1]->layerState;
-
-    const std::vector<const LayerState*> layers = {
-            layerState1.get(),
-            layerState2.get(),
-    };
-
-    initializeFlattener(layers);
-
-    // Mark the layers inactive
-    mTime += 200ms;
-
-    initializeOverrideBuffer(layers);
-    EXPECT_EQ(getNonBufferHash(layers),
-              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
-
-    for (size_t i = 0; i < kMaxDeferRenderAttempts; i++) {
-        EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).Times(0);
-        mFlattener->renderCachedSets(mOutputState,
-                                     std::chrono::steady_clock::now() -
-                                             (kCachedSetRenderDuration + 10ms));
-    }
-
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Return(NO_ERROR));
-    mFlattener->renderCachedSets(mOutputState,
-                                 std::chrono::steady_clock::now() -
-                                         (kCachedSetRenderDuration + 10ms));
-}
-
 } // namespace
 } // namespace android::compositionengine

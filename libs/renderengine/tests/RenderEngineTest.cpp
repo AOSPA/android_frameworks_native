@@ -43,7 +43,6 @@ constexpr int DEFAULT_DISPLAY_OFFSET = 64;
 constexpr bool WRITE_BUFFER_TO_FILE_ON_FAILURE = false;
 
 namespace android {
-namespace renderengine {
 
 class RenderEngineFactory {
 public:
@@ -55,7 +54,6 @@ public:
     virtual std::unique_ptr<renderengine::gl::GLESRenderEngine> createGLESRenderEngine() {
         return nullptr;
     }
-    virtual bool useColorManagement() const = 0;
 };
 
 class GLESRenderEngineFactory : public RenderEngineFactory {
@@ -84,8 +82,6 @@ public:
                         .build();
         return renderengine::gl::GLESRenderEngine::create(reCreationArgs);
     }
-
-    bool useColorManagement() const override { return false; }
 };
 
 class GLESCMRenderEngineFactory : public RenderEngineFactory {
@@ -114,8 +110,6 @@ public:
                         .build();
         return renderengine::gl::GLESRenderEngine::create(reCreationArgs);
     }
-
-    bool useColorManagement() const override { return true; }
 };
 
 class SkiaGLESRenderEngineFactory : public RenderEngineFactory {
@@ -136,16 +130,9 @@ public:
                         .setSupportsBackgroundBlur(true)
                         .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
                         .setRenderEngineType(type())
-                        // FIXME (b/189935602): This version is currently color managed.
-                        // We should change it and fix the tests that fail.
-                        //.setUseColorManagerment(false)
                         .build();
         return renderengine::skia::SkiaGLRenderEngine::create(reCreationArgs);
     }
-
-    // FIXME (b/189935602): This version is currently color managed.
-    // We should change it and fix the tests that fail.
-    bool useColorManagement() const override { return true; }
 };
 
 class SkiaGLESCMRenderEngineFactory : public RenderEngineFactory {
@@ -170,8 +157,6 @@ public:
                         .build();
         return renderengine::skia::SkiaGLRenderEngine::create(reCreationArgs);
     }
-
-    bool useColorManagement() const override { return true; }
 };
 
 class RenderEngineTest : public ::testing::TestWithParam<std::shared_ptr<RenderEngineFactory>> {
@@ -310,7 +295,6 @@ public:
                 const uint8_t expected[4] = {r, g, b, a};
                 bool equal = colorCompare(src, expected);
                 EXPECT_TRUE(equal)
-                        << GetParam()->name().c_str() << ": "
                         << "pixel @ (" << region.left + i << ", " << region.top + j << "): "
                         << "expected (" << static_cast<uint32_t>(r) << ", "
                         << static_cast<uint32_t>(g) << ", " << static_cast<uint32_t>(b) << ", "
@@ -1281,7 +1265,6 @@ void RenderEngineTest::drawShadowWithoutCaster(const FloatRect& castingBounds,
     renderengine::LayerSettings shadowLayer;
     shadowLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
     shadowLayer.geometry.boundaries = castingBounds;
-    shadowLayer.skipContentDraw = true;
     shadowLayer.alpha = 1.0f;
     ColorSourceVariant::fillColor(shadowLayer, 0, 0, 0, this);
     shadowLayer.shadow = shadow;
@@ -1780,6 +1763,13 @@ TEST_P(RenderEngineTest, drawLayers_fillShadow_translucentCasterWithAlpha) {
 }
 
 TEST_P(RenderEngineTest, cleanupPostRender_cleansUpOnce) {
+    const auto& renderEngineFactory = GetParam();
+
+    if (renderEngineFactory->type() != renderengine::RenderEngine::RenderEngineType::GLES) {
+        // GLES-specific test
+        return;
+    }
+
     initializeRenderEngine();
 
     renderengine::DisplaySettings settings;
@@ -1804,9 +1794,53 @@ TEST_P(RenderEngineTest, cleanupPostRender_cleansUpOnce) {
         sync_wait(fd, -1);
     }
     // Only cleanup the first time.
-    EXPECT_FALSE(mRE->canSkipPostRenderCleanup());
-    mRE->cleanupPostRender();
-    EXPECT_TRUE(mRE->canSkipPostRenderCleanup());
+    EXPECT_TRUE(mRE->cleanupPostRender(
+            renderengine::RenderEngine::CleanupMode::CLEAN_OUTPUT_RESOURCES));
+    EXPECT_FALSE(mRE->cleanupPostRender(
+            renderengine::RenderEngine::CleanupMode::CLEAN_OUTPUT_RESOURCES));
+}
+
+TEST_P(RenderEngineTest, cleanupPostRender_whenCleaningAll_replacesTextureMemory) {
+    const auto& renderEngineFactory = GetParam();
+
+    if (renderEngineFactory->type() != renderengine::RenderEngine::RenderEngineType::GLES) {
+        // GLES-specific test
+        return;
+    }
+
+    initializeRenderEngine();
+
+    renderengine::DisplaySettings settings;
+    settings.outputDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = fullscreenRect();
+
+    std::vector<const renderengine::LayerSettings*> layers;
+    renderengine::LayerSettings layer;
+    layer.geometry.boundaries = fullscreenRect().toFloatRect();
+    BufferSourceVariant<ForceOpaqueBufferVariant>::fillColor(layer, 1.0f, 0.0f, 0.0f, this);
+    layer.alpha = 1.0;
+    layers.push_back(&layer);
+
+    base::unique_fd fence;
+    mRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd(), &fence);
+
+    const int fd = fence.get();
+    if (fd >= 0) {
+        sync_wait(fd, -1);
+    }
+
+    uint64_t bufferId = layer.source.buffer.buffer->getBuffer()->getId();
+    uint32_t texName = layer.source.buffer.textureName;
+    EXPECT_TRUE(mGLESRE->isImageCachedForTesting(bufferId));
+    EXPECT_EQ(bufferId, mGLESRE->getBufferIdForTextureNameForTesting(texName));
+
+    EXPECT_TRUE(mRE->cleanupPostRender(renderengine::RenderEngine::CleanupMode::CLEAN_ALL));
+
+    // Now check that our view of memory is good.
+    EXPECT_FALSE(mGLESRE->isImageCachedForTesting(bufferId));
+    EXPECT_EQ(std::nullopt, mGLESRE->getBufferIdForTextureNameForTesting(bufferId));
+    EXPECT_TRUE(mGLESRE->isTextureNameKnownForTesting(texName));
 }
 
 TEST_P(RenderEngineTest, testRoundedCornersCrop) {
@@ -1980,57 +2014,6 @@ TEST_P(RenderEngineTest, testDisableBlendingBuffer) {
     expectBufferColor(rect, 0, 128, 0, 128);
 }
 
-TEST_P(RenderEngineTest, test_isOpaque) {
-    initializeRenderEngine();
-
-    const auto rect = Rect(0, 0, 1, 1);
-    const renderengine::DisplaySettings display{
-            .physicalDisplay = rect,
-            .clip = rect,
-            .outputDataspace = ui::Dataspace::DISPLAY_P3,
-    };
-
-    // Create an unpremul buffer that is green with no alpha. Using isOpaque
-    // should make the green show.
-    const auto buf = allocateSourceBuffer(1, 1);
-    {
-        uint8_t* pixels;
-        buf->getBuffer()->lock(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN,
-                               reinterpret_cast<void**>(&pixels));
-        pixels[0] = 0;
-        pixels[1] = 255;
-        pixels[2] = 0;
-        pixels[3] = 0;
-        buf->getBuffer()->unlock();
-    }
-
-    const renderengine::LayerSettings greenLayer{
-            .geometry.boundaries = rect.toFloatRect(),
-            .source =
-                    renderengine::PixelSource{
-                            .buffer =
-                                    renderengine::Buffer{
-                                            .buffer = buf,
-                                            // Although the pixels are not
-                                            // premultiplied in practice, this
-                                            // matches the input we see.
-                                            .usePremultipliedAlpha = true,
-                                            .isOpaque = true,
-                                    },
-                    },
-            .alpha = 1.0f,
-    };
-
-    std::vector<const renderengine::LayerSettings*> layers{&greenLayer};
-    invokeDraw(display, layers);
-
-    if (GetParam()->useColorManagement()) {
-        expectBufferColor(rect, 117, 251, 76, 255);
-    } else {
-        expectBufferColor(rect, 0, 255, 0, 255);
-    }
-}
-} // namespace renderengine
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues

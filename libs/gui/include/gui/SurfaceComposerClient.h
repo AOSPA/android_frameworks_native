@@ -50,7 +50,6 @@ class HdrCapabilities;
 class ISurfaceComposerClient;
 class IGraphicBufferProducer;
 class IRegionSamplingListener;
-class ITunnelModeEnabledListener;
 class Region;
 
 struct SurfaceControlStats {
@@ -82,8 +81,7 @@ using TransactionCompletedCallback =
         std::function<void(nsecs_t /*latchTime*/, const sp<Fence>& /*presentFence*/,
                            const std::vector<SurfaceControlStats>& /*stats*/)>;
 using ReleaseBufferCallback =
-        std::function<void(uint64_t /* graphicsBufferId */, const sp<Fence>& /*releaseFence*/,
-                           uint32_t transformHint)>;
+        std::function<void(uint64_t /* graphicsBufferId */, const sp<Fence>& /*releaseFence*/)>;
 
 using SurfaceStatsCallback =
         std::function<void(void* /*context*/, nsecs_t /*latchTime*/,
@@ -615,10 +613,6 @@ public:
     static status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener);
     static status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener);
     static status_t removeFpsListener(const sp<gui::IFpsListener>& listener);
-    static status_t addTunnelModeEnabledListener(
-            const sp<gui::ITunnelModeEnabledListener>& listener);
-    static status_t removeTunnelModeEnabledListener(
-            const sp<gui::ITunnelModeEnabledListener>& listener);
 
 private:
     virtual void onFirstRef();
@@ -655,12 +649,6 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
 
     std::mutex mMutex;
 
-    // This lock needs to be recursive so we can unregister a callback from within that callback.
-    std::recursive_mutex mJankListenerMutex;
-
-    // This lock needs to be recursive so we can unregister a callback from within that callback.
-    std::recursive_mutex mSurfaceStatsListenerMutex;
-
     bool mListening GUARDED_BY(mMutex) = false;
 
     int64_t mCallbackIdCounter GUARDED_BY(mMutex) = 1;
@@ -683,16 +671,11 @@ class TransactionCompletedListener : public BnTransactionCompletedListener {
 
     std::unordered_map<CallbackId, CallbackTranslation, CallbackIdHash> mCallbacks
             GUARDED_BY(mMutex);
-
-    // This is protected by mJankListenerMutex, but GUARDED_BY isn't supported for
-    // std::recursive_mutex
-    std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners;
+    std::multimap<sp<IBinder>, sp<JankDataListener>> mJankListeners GUARDED_BY(mMutex);
     std::unordered_map<uint64_t /* graphicsBufferId */, ReleaseBufferCallback>
             mReleaseBufferCallbacks GUARDED_BY(mMutex);
-
-    // This is protected by mSurfaceStatsListenerMutex, but GUARDED_BY isn't supported for
-    // std::recursive_mutex
-    std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry> mSurfaceStatsListeners;
+    std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry>
+                mSurfaceStatsListeners GUARDED_BY(mMutex);
 
 public:
     static sp<TransactionCompletedListener> getInstance();
@@ -731,8 +714,7 @@ public:
 
     // BnTransactionCompletedListener overrides
     void onTransactionCompleted(ListenerStats stats) override;
-    void onReleaseBuffer(uint64_t /* graphicsBufferId */, sp<Fence> releaseFence,
-                         uint32_t transformHint) override;
+    void onReleaseBuffer(uint64_t /* graphicsBufferId */, sp<Fence> releaseFence) override;
 
 private:
     ReleaseBufferCallback popReleaseBufferCallbackLocked(uint64_t /* graphicsBufferId */);

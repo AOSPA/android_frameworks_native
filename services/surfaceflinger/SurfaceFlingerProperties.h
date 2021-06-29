@@ -102,8 +102,6 @@ bool enable_frame_rate_override(bool defaultValue);
 
 bool enable_layer_caching(bool defaultValue);
 
-bool enable_sdr_dimming(bool defaultValue);
-
 } // namespace sysprop
 } // namespace android
 #endif // SURFACEFLINGERPROPERTIES_H_

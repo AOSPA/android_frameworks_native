@@ -117,9 +117,6 @@ public:
     // to apply filtering.
     virtual bool bufferNeedsFiltering() const;
 
-    // Loads the corresponding system property once per process
-    static bool latchUnsignaledBuffers();
-
 protected:
     struct BufferInfo {
         nsecs_t mDesiredPresentTime;
@@ -153,6 +150,9 @@ protected:
     const compositionengine::LayerFECompositionState* getCompositionState() const override;
     bool onPreComposition(nsecs_t) override;
     void preparePerFrameCompositionState() override;
+
+    // Loads the corresponding system property once per process
+    static bool latchUnsignaledBuffers();
 
     static bool getOpacityForFormat(uint32_t format);
 

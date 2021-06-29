@@ -76,9 +76,11 @@ protected:
     static constexpr int32_t PRIORITY_UNSET = -1;
 
     void setupScheduler();
+    void setupComposer(uint32_t virtualDisplayCount);
     sp<BufferStateLayer> createBufferStateLayer(LayerMetadata metadata);
 
     TestableSurfaceFlinger mFlinger;
+    Hwc2::mock::Composer* mComposer = nullptr;
     mock::FrameTimeline mFrameTimeline =
             mock::FrameTimeline(std::make_shared<impl::TimeStats>(), 0);
 
@@ -101,8 +103,7 @@ FpsReporterTest::FpsReporterTest() {
     ALOGD("**** Setting up for %s.%s\n", test_info->test_case_name(), test_info->name());
 
     setupScheduler();
-    mFlinger.setupComposer(std::make_unique<Hwc2::mock::Composer>());
-
+    setupComposer(0);
     mFpsListener = new TestableFpsListener();
 }
 
@@ -144,11 +145,19 @@ void FpsReporterTest::setupScheduler() {
                             std::move(eventThread), std::move(sfEventThread));
 }
 
+void FpsReporterTest::setupComposer(uint32_t virtualDisplayCount) {
+    mComposer = new Hwc2::mock::Composer();
+    EXPECT_CALL(*mComposer, getMaxVirtualDisplayCount()).WillOnce(Return(virtualDisplayCount));
+    mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
+
+    Mock::VerifyAndClear(mComposer);
+}
+
 namespace {
 
 TEST_F(FpsReporterTest, callsListeners) {
     mParent = createBufferStateLayer();
-    constexpr int32_t kTaskId = 12;
+    const constexpr int32_t kTaskId = 12;
     LayerMetadata targetMetadata;
     targetMetadata.setInt32(METADATA_TASK_ID, kTaskId);
     mTarget = createBufferStateLayer(targetMetadata);
