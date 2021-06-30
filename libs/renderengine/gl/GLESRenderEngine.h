@@ -57,7 +57,7 @@ public:
                      EGLSurface protectedStub);
     ~GLESRenderEngine() override EXCLUDES(mRenderingMutex);
 
-    void primeCache() override;
+    std::future<void> primeCache() override;
     void genTextures(size_t count, uint32_t* names) override;
     void deleteTextures(size_t count, uint32_t const* names) override;
     bool isProtected() const override { return mInProtectedContext; }
@@ -68,7 +68,7 @@ public:
                         const std::shared_ptr<ExternalTexture>& buffer,
                         const bool useFramebufferCache, base::unique_fd&& bufferFence,
                         base::unique_fd* drawFence) override;
-    bool cleanupPostRender(CleanupMode mode) override;
+    void cleanupPostRender() override;
     int getContextPriority() override;
     bool supportsBackgroundBlur() override { return mBlurFilter != nullptr; }
     void onPrimaryDisplaySizeChanged(ui::Size size) override {}
@@ -106,6 +106,7 @@ protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable)
             EXCLUDES(mRenderingMutex);
     void unmapExternalTextureBuffer(const sp<GraphicBuffer>& buffer) EXCLUDES(mRenderingMutex);
+    bool canSkipPostRenderCleanup() const override;
 
 private:
     friend class BindNativeBufferAsFramebuffer;

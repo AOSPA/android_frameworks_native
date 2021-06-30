@@ -17,10 +17,13 @@
 #undef LOG_TAG
 #define LOG_TAG "Planner"
 // #define LOG_NDEBUG 0
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#include <android-base/properties.h>
 #include <compositionengine/impl/planner/Flattener.h>
 #include <compositionengine/impl/planner/LayerState.h>
-#include <compositionengine/impl/planner/Predictor.h>
+
+#include <gui/TraceUtils.h>
 
 using time_point = std::chrono::steady_clock::time_point;
 using namespace std::chrono_literals;
@@ -57,8 +60,23 @@ bool isSameStack(const std::vector<const LayerState*>& incomingLayers,
 
 } // namespace
 
+Flattener::Flattener(
+        renderengine::RenderEngine& renderEngine, bool enableHolePunch,
+        std::optional<CachedSetRenderSchedulingTunables> cachedSetRenderSchedulingTunables)
+      : mRenderEngine(renderEngine),
+        mEnableHolePunch(enableHolePunch),
+        mCachedSetRenderSchedulingTunables(cachedSetRenderSchedulingTunables),
+        mTexturePool(mRenderEngine) {
+    const int timeoutInMs =
+            base::GetIntProperty(std::string("debug.sf.layer_caching_active_layer_timeout_ms"), 0);
+    if (timeoutInMs != 0) {
+        mActiveLayerTimeout = std::chrono::milliseconds(timeoutInMs);
+    }
+}
+
 NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& layers,
                                        NonBufferHash hash, time_point now) {
+    ATRACE_CALL();
     const size_t unflattenedDisplayCost = calculateDisplayCost(layers);
     mUnflattenedDisplayCost += unflattenedDisplayCost;
 
@@ -90,13 +108,46 @@ NonBufferHash Flattener::flattenLayers(const std::vector<const LayerState*>& lay
     return hash;
 }
 
-void Flattener::renderCachedSets(renderengine::RenderEngine& renderEngine,
-                                 const OutputCompositionState& outputState) {
+void Flattener::renderCachedSets(
+        const OutputCompositionState& outputState,
+        std::optional<std::chrono::steady_clock::time_point> renderDeadline) {
+    ATRACE_CALL();
+
     if (!mNewCachedSet) {
         return;
     }
 
-    mNewCachedSet->render(renderEngine, outputState);
+    // Ensure that a cached set has a valid buffer first
+    if (mNewCachedSet->hasRenderedBuffer()) {
+        ATRACE_NAME("mNewCachedSet->hasRenderedBuffer()");
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+
+    // If we have a render deadline, and the flattener is configured to skip rendering if we don't
+    // have enough time, then we skip rendering the cached set if we think that we'll steal too much
+    // time from the next frame.
+    if (renderDeadline && mCachedSetRenderSchedulingTunables) {
+        if (const auto estimatedRenderFinish =
+                    now + mCachedSetRenderSchedulingTunables->cachedSetRenderDuration;
+            estimatedRenderFinish > *renderDeadline) {
+            mNewCachedSet->incrementSkipCount();
+
+            if (mNewCachedSet->getSkipCount() <=
+                mCachedSetRenderSchedulingTunables->maxDeferRenderAttempts) {
+                ATRACE_FORMAT("DeadlinePassed: exceeded deadline by: %d us",
+                              std::chrono::duration_cast<std::chrono::microseconds>(
+                                      estimatedRenderFinish - *renderDeadline)
+                                      .count());
+                return;
+            } else {
+                ATRACE_NAME("DeadlinePassed: exceeded max skips");
+            }
+        }
+    }
+
+    mNewCachedSet->render(mRenderEngine, mTexturePool, outputState);
 }
 
 void Flattener::dumpLayers(std::string& result) const {
@@ -126,9 +177,11 @@ void Flattener::dump(std::string& result) const {
         return left.first < right.first;
     };
 
-    const size_t maxLayerCount = std::max_element(mInitialLayerCounts.cbegin(),
-                                                  mInitialLayerCounts.cend(), compareLayerCounts)
-                                         ->first;
+    const size_t maxLayerCount = mInitialLayerCounts.empty()
+            ? 0u
+            : std::max_element(mInitialLayerCounts.cbegin(), mInitialLayerCounts.cend(),
+                               compareLayerCounts)
+                      ->first;
 
     result.append("\n    Initial counts:\n");
     for (size_t count = 1; count < maxLayerCount; ++count) {
@@ -212,6 +265,7 @@ NonBufferHash Flattener::computeLayersHash() const{
 // was already populated with these layers, i.e. on the second and following
 // calls with the same geometry.
 bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers, time_point now) {
+    ATRACE_CALL();
     std::vector<CachedSet> merged;
 
     if (mLayers.empty()) {
@@ -224,6 +278,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
         return false;
     }
 
+    // the compiler should strip out the following no-op loops when ALOGV is off
     ALOGV("[%s] Incoming layers:", __func__);
     for (const LayerState* layer : layers) {
         ALOGV("%s", layer->getName().c_str());
@@ -231,13 +286,22 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
 
     ALOGV("[%s] Current layers:", __func__);
     for (const CachedSet& layer : mLayers) {
-        std::string dump;
-        layer.dump(dump);
-        ALOGV("%s", dump.c_str());
+        const auto dumper = [&] {
+            std::string dump;
+            layer.dump(dump);
+            return dump;
+        };
+        ALOGV("%s", dumper().c_str());
     }
 
     auto currentLayerIter = mLayers.begin();
     auto incomingLayerIter = layers.begin();
+
+    // If not null, this represents the layer that is blurring the layer before
+    // currentLayerIter. The blurring was stored in the override buffer, so the
+    // layer that requests the blur no longer needs to do any blurring.
+    compositionengine::OutputLayer* priorBlurLayer = nullptr;
+
     while (incomingLayerIter != layers.end()) {
         if (mNewCachedSet &&
             mNewCachedSet->getFirstLayer().getState()->getId() == (*incomingLayerIter)->getId()) {
@@ -252,17 +316,20 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                     auto* peekThroughLayer = mNewCachedSet->getHolePunchLayer();
                     const size_t layerCount = currentLayerIter->getLayerCount();
                     for (size_t i = 0; i < layerCount; ++i) {
+                        bool disableBlur = priorBlurLayer &&
+                                priorBlurLayer == (*incomingLayerIter)->getOutputLayer();
                         OutputLayer::CompositionState& state =
                                 (*incomingLayerIter)->getOutputLayer()->editState();
                         state.overrideInfo = {
                                 .buffer = mNewCachedSet->getBuffer(),
                                 .acquireFence = mNewCachedSet->getDrawFence(),
-                                .displayFrame = mNewCachedSet->getBounds(),
+                                .displayFrame = mNewCachedSet->getTextureBounds(),
                                 .dataspace = mNewCachedSet->getOutputDataspace(),
                                 .displaySpace = mNewCachedSet->getOutputSpace(),
                                 .damageRegion = Region::INVALID_REGION,
                                 .visibleRegion = mNewCachedSet->getVisibleRegion(),
                                 .peekThroughLayer = peekThroughLayer,
+                                .disableBackgroundBlur = disableBlur,
                         };
                         ++incomingLayerIter;
                     }
@@ -274,6 +341,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
 
                     skipCount -= layerCount;
                 }
+                priorBlurLayer = mNewCachedSet->getBlurLayer();
                 merged.emplace_back(std::move(*mNewCachedSet));
                 mNewCachedSet = std::nullopt;
                 continue;
@@ -288,17 +356,20 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
             const size_t layerCount = currentLayerIter->getLayerCount();
             auto* peekThroughLayer = currentLayerIter->getHolePunchLayer();
             for (size_t i = 0; i < layerCount; ++i) {
+                bool disableBlur =
+                        priorBlurLayer && priorBlurLayer == (*incomingLayerIter)->getOutputLayer();
                 OutputLayer::CompositionState& state =
                         (*incomingLayerIter)->getOutputLayer()->editState();
                 state.overrideInfo = {
                         .buffer = currentLayerIter->getBuffer(),
                         .acquireFence = currentLayerIter->getDrawFence(),
-                        .displayFrame = currentLayerIter->getBounds(),
+                        .displayFrame = currentLayerIter->getTextureBounds(),
                         .dataspace = currentLayerIter->getOutputDataspace(),
                         .displaySpace = currentLayerIter->getOutputSpace(),
                         .damageRegion = Region(),
                         .visibleRegion = currentLayerIter->getVisibleRegion(),
                         .peekThroughLayer = peekThroughLayer,
+                        .disableBackgroundBlur = disableBlur,
                 };
                 ++incomingLayerIter;
             }
@@ -306,15 +377,26 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
             // Break the current layer into its constituent layers
             ++mInvalidatedCachedSetAges[currentLayerIter->getAge()];
             for (CachedSet& layer : currentLayerIter->decompose()) {
+                bool disableBlur =
+                        priorBlurLayer && priorBlurLayer == (*incomingLayerIter)->getOutputLayer();
+                OutputLayer::CompositionState& state =
+                        (*incomingLayerIter)->getOutputLayer()->editState();
+                state.overrideInfo.disableBackgroundBlur = disableBlur;
                 layer.updateAge(now);
                 merged.emplace_back(layer);
                 ++incomingLayerIter;
             }
         } else {
+            bool disableBlur =
+                    priorBlurLayer && priorBlurLayer == (*incomingLayerIter)->getOutputLayer();
+            OutputLayer::CompositionState& state =
+                    (*incomingLayerIter)->getOutputLayer()->editState();
+            state.overrideInfo.disableBackgroundBlur = disableBlur;
             currentLayerIter->updateAge(now);
             merged.emplace_back(*currentLayerIter);
             ++incomingLayerIter;
         }
+        priorBlurLayer = currentLayerIter->getBlurLayer();
         ++currentLayerIter;
     }
 
@@ -326,95 +408,130 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
     return true;
 }
 
-void Flattener::buildCachedSets(time_point now) {
-    struct Run {
-        Run(std::vector<CachedSet>::const_iterator start, size_t length)
-              : start(start), length(length) {}
-
-        std::vector<CachedSet>::const_iterator start;
-        size_t length;
-    };
-
-    if (mLayers.empty()) {
-        ALOGV("[%s] No layers found, returning", __func__);
-        return;
-    }
-
+std::vector<Flattener::Run> Flattener::findCandidateRuns(time_point now) const {
+    ATRACE_CALL();
     std::vector<Run> runs;
     bool isPartOfRun = false;
-
-    // Keep track of the layer that follows a run. It's possible that we will
-    // render it with a hole-punch.
-    const CachedSet* holePunchLayer = nullptr;
+    Run::Builder builder;
+    bool firstLayer = true;
+    bool runHasFirstLayer = false;
 
     for (auto currentSet = mLayers.cbegin(); currentSet != mLayers.cend(); ++currentSet) {
-        if (now - currentSet->getLastUpdate() > kActiveLayerTimeout) {
-            // Layer is inactive
+        const bool layerIsInactive = now - currentSet->getLastUpdate() > mActiveLayerTimeout;
+        const bool layerHasBlur = currentSet->hasBlurBehind();
+        if (layerIsInactive && (firstLayer || runHasFirstLayer || !layerHasBlur) &&
+            !currentSet->hasHdrLayers() && !currentSet->hasProtectedLayers()) {
             if (isPartOfRun) {
-                runs.back().length += currentSet->getLayerCount();
+                builder.append(currentSet->getLayerCount());
             } else {
                 // Runs can't start with a non-buffer layer
                 if (currentSet->getFirstLayer().getBuffer() == nullptr) {
                     ALOGV("[%s] Skipping initial non-buffer layer", __func__);
                 } else {
-                    runs.emplace_back(currentSet, currentSet->getLayerCount());
+                    builder.init(currentSet);
+                    if (firstLayer) {
+                        runHasFirstLayer = true;
+                    }
                     isPartOfRun = true;
                 }
             }
         } else if (isPartOfRun) {
-            // Runs must be at least 2 sets long or there's nothing to combine
-            if (runs.back().start->getLayerCount() == runs.back().length) {
-                runs.pop_back();
-            } else {
-                // The prior run contained at least two sets. Currently, we'll
-                // only possibly merge a single run, so only keep track of a
-                // holePunchLayer if this is the first run.
-                if (runs.size() == 1) {
-                    holePunchLayer = &(*currentSet);
-                }
+            builder.setHolePunchCandidate(&(*currentSet));
 
-                // TODO(b/185114532: Break out of the loop? We may find more runs, but we
-                // won't do anything with them.
+            // If we're here then this blur layer recently had an active buffer updating, meaning
+            // that there is exactly one layer. Blur radius currently is part of layer stack
+            // geometry, so we're also guaranteed that the background blur radius hasn't changed for
+            // at least as long as this new inactive cached set.
+            if (runHasFirstLayer && layerHasBlur &&
+                currentSet->getFirstLayer().getBackgroundBlurRadius() > 0) {
+                builder.setBlurringLayer(&(*currentSet));
+            }
+            if (auto run = builder.validateAndBuild(); run) {
+                runs.push_back(*run);
             }
 
+            runHasFirstLayer = false;
+            builder.reset();
             isPartOfRun = false;
         }
+
+        firstLayer = false;
     }
 
-    // Check for at least 2 sets one more time in case the set includes the last layer
-    if (isPartOfRun && runs.back().start->getLayerCount() == runs.back().length) {
-        runs.pop_back();
+    // If we're in the middle of a run at the end, we still need to validate and build it.
+    if (isPartOfRun) {
+        if (auto run = builder.validateAndBuild(); run) {
+            runs.push_back(*run);
+        }
     }
 
     ALOGV("[%s] Found %zu candidate runs", __func__, runs.size());
 
+    return runs;
+}
+
+std::optional<Flattener::Run> Flattener::findBestRun(std::vector<Flattener::Run>& runs) const {
     if (runs.empty()) {
+        return std::nullopt;
+    }
+
+    // TODO (b/181192467): Choose the best run, instead of just the first.
+    return runs[0];
+}
+
+void Flattener::buildCachedSets(time_point now) {
+    ATRACE_CALL();
+    if (mLayers.empty()) {
+        ALOGV("[%s] No layers found, returning", __func__);
         return;
     }
 
-    mNewCachedSet.emplace(*runs[0].start);
+    // Don't try to build a new cached set if we already have a new one in progress
+    if (mNewCachedSet) {
+        return;
+    }
+
+    std::vector<Run> runs = findCandidateRuns(now);
+
+    std::optional<Run> bestRun = findBestRun(runs);
+
+    if (!bestRun) {
+        return;
+    }
+
+    mNewCachedSet.emplace(*bestRun->getStart());
     mNewCachedSet->setLastUpdate(now);
-    auto currentSet = runs[0].start;
-    while (mNewCachedSet->getLayerCount() < runs[0].length) {
+    auto currentSet = bestRun->getStart();
+    while (mNewCachedSet->getLayerCount() < bestRun->getLayerLength()) {
         ++currentSet;
         mNewCachedSet->append(*currentSet);
     }
 
-    if (mEnableHolePunch && holePunchLayer && holePunchLayer->requiresHolePunch()) {
+    if (bestRun->getBlurringLayer()) {
+        mNewCachedSet->addBackgroundBlurLayer(*bestRun->getBlurringLayer());
+    }
+
+    if (mEnableHolePunch && bestRun->getHolePunchCandidate() &&
+        bestRun->getHolePunchCandidate()->requiresHolePunch()) {
         // Add the pip layer to mNewCachedSet, but in a special way - it should
         // replace the buffer with a clear round rect.
-        mNewCachedSet->addHolePunchLayerIfFeasible(*holePunchLayer,
-                                                   runs[0].start == mLayers.cbegin());
+        mNewCachedSet->addHolePunchLayerIfFeasible(*bestRun->getHolePunchCandidate(),
+                                                   bestRun->getStart() == mLayers.cbegin());
     }
 
     // TODO(b/181192467): Actually compute new LayerState vector and corresponding hash for each run
-    mPredictor.getPredictedPlan({}, 0);
+    // and feedback into the predictor
 
     ++mCachedSetCreationCount;
     mCachedSetCreationCost += mNewCachedSet->getCreationCost();
-    std::string setDump;
-    mNewCachedSet->dump(setDump);
-    ALOGV("[%s] Added new cached set:\n%s", __func__, setDump.c_str());
+
+    // note the compiler should strip the follow no-op statements when ALOGV is off
+    const auto dumper = [&] {
+        std::string setDump;
+        mNewCachedSet->dump(setDump);
+        return setDump;
+    };
+    ALOGV("[%s] Added new cached set:\n%s", __func__, dumper().c_str());
 }
 
 } // namespace android::compositionengine::impl::planner

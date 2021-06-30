@@ -53,13 +53,14 @@ public:
                        EGLSurface protectedPlaceholder);
     ~SkiaGLRenderEngine() override EXCLUDES(mRenderingMutex);
 
-    void primeCache() override;
+    std::future<void> primeCache() override;
     status_t drawLayers(const DisplaySettings& display,
                         const std::vector<const LayerSettings*>& layers,
                         const std::shared_ptr<ExternalTexture>& buffer,
                         const bool useFramebufferCache, base::unique_fd&& bufferFence,
                         base::unique_fd* drawFence) override;
-    void cleanFramebufferCache() override {}
+    void cleanupPostRender() override;
+    void cleanFramebufferCache() override{};
     int getContextPriority() override;
     bool isProtected() const override { return mInProtectedContext; }
     bool supportsProtectedContent() const override;
@@ -75,6 +76,7 @@ protected:
     size_t getMaxViewportDims() const override;
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(const sp<GraphicBuffer>& buffer) override;
+    bool canSkipPostRenderCleanup() const override;
 
 private:
     static EGLConfig chooseEglConfig(EGLDisplay display, int format, bool logConfig);
@@ -88,8 +90,9 @@ private:
                                                          int hwcFormat, Protection protection);
     inline SkRect getSkRect(const FloatRect& layer);
     inline SkRect getSkRect(const Rect& layer);
-    inline std::pair<SkRRect, SkRRect> getBoundsAndClip(const LayerSettings* layer);
-    inline bool layerHasBlur(const LayerSettings* layer);
+    inline std::pair<SkRRect, SkRRect> getBoundsAndClip(const FloatRect& bounds,
+                                                        const FloatRect& crop, float cornerRadius);
+    inline bool layerHasBlur(const LayerSettings* layer, bool colorTransformModifiesAlpha);
     inline SkColor getSkColor(const vec4& color);
     inline SkM44 getSkM44(const mat4& matrix);
     inline SkPoint3 getSkPoint3(const vec3& vector);
@@ -125,19 +128,18 @@ private:
     // Number of external holders of ExternalTexture references, per GraphicBuffer ID.
     std::unordered_map<GraphicBufferId, int32_t> mGraphicBufferExternalRefs
             GUARDED_BY(mRenderingMutex);
-    // Cache of GL textures that we'll store per GraphicBuffer ID, sliced by GPU context.
+    // Cache of GL textures that we'll store per GraphicBuffer ID, shared between GPU contexts.
     std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>> mTextureCache
             GUARDED_BY(mRenderingMutex);
-    std::unordered_map<GraphicBufferId, std::shared_ptr<AutoBackendTexture::LocalRef>>
-            mProtectedTextureCache GUARDED_BY(mRenderingMutex);
     std::unordered_map<LinearEffect, sk_sp<SkRuntimeEffect>, LinearEffectHasher> mRuntimeEffects;
+    AutoBackendTexture::CleanupManager mTextureCleanupMgr GUARDED_BY(mRenderingMutex);
 
     StretchShaderFactory mStretchShaderFactory;
     // Mutex guarding rendering operations, so that:
     // 1. GL operations aren't interleaved, and
     // 2. Internal state related to rendering that is potentially modified by
     // multiple threads is guaranteed thread-safe.
-    std::mutex mRenderingMutex;
+    mutable std::mutex mRenderingMutex;
 
     sp<Fence> mLastDrawFence;
 

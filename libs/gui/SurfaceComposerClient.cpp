@@ -65,12 +65,12 @@ ComposerService::ComposerService()
     connectLocked();
 }
 
-void ComposerService::connectLocked() {
+bool ComposerService::connectLocked() {
     const String16 name("SurfaceFlinger");
-    while (getService(name, &mComposerService) != NO_ERROR) {
-        usleep(250000);
+    mComposerService = waitForService<ISurfaceComposer>(name);
+    if (mComposerService == nullptr) {
+        return false; // fatal error or permission problem
     }
-    assert(mComposerService != nullptr);
 
     // Create the death listener.
     class DeathObserver : public IBinder::DeathRecipient {
@@ -86,15 +86,16 @@ void ComposerService::connectLocked() {
 
     mDeathObserver = new DeathObserver(*const_cast<ComposerService*>(this));
     IInterface::asBinder(mComposerService)->linkToDeath(mDeathObserver);
+    return true;
 }
 
 /*static*/ sp<ISurfaceComposer> ComposerService::getComposerService() {
     ComposerService& instance = ComposerService::getInstance();
     Mutex::Autolock _l(instance.mLock);
     if (instance.mComposerService == nullptr) {
-        ComposerService::getInstance().connectLocked();
-        assert(instance.mComposerService != nullptr);
-        ALOGD("ComposerService reconnected");
+        if (ComposerService::getInstance().connectLocked()) {
+            ALOGD("ComposerService reconnected");
+        }
     }
     return instance.mComposerService;
 }
@@ -181,12 +182,12 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
 
 void TransactionCompletedListener::addJankListener(const sp<JankDataListener>& listener,
                                                    sp<SurfaceControl> surfaceControl) {
-    std::lock_guard<std::mutex> lock(mMutex);
+    std::scoped_lock<std::recursive_mutex> lock(mJankListenerMutex);
     mJankListeners.insert({surfaceControl->getHandle(), listener});
 }
 
 void TransactionCompletedListener::removeJankListener(const sp<JankDataListener>& listener) {
-    std::lock_guard<std::mutex> lock(mMutex);
+    std::scoped_lock<std::recursive_mutex> lock(mJankListenerMutex);
     for (auto it = mJankListeners.begin(); it != mJankListeners.end();) {
         if (it->second == listener) {
             it = mJankListeners.erase(it);
@@ -209,13 +210,13 @@ void TransactionCompletedListener::removeReleaseBufferCallback(uint64_t graphicB
 
 void TransactionCompletedListener::addSurfaceStatsListener(void* context, void* cookie,
         sp<SurfaceControl> surfaceControl, SurfaceStatsCallback listener) {
-    std::lock_guard<std::mutex> lock(mMutex);
+    std::scoped_lock<std::recursive_mutex> lock(mSurfaceStatsListenerMutex);
     mSurfaceStatsListeners.insert({surfaceControl->getHandle(),
             SurfaceStatsCallbackEntry(context, cookie, listener)});
 }
 
 void TransactionCompletedListener::removeSurfaceStatsListener(void* context, void* cookie) {
-    std::lock_guard<std::mutex> lock(mMutex);
+    std::scoped_lock<std::recursive_mutex> lock(mSurfaceStatsListenerMutex);
     for (auto it = mSurfaceStatsListeners.begin(); it != mSurfaceStatsListeners.end();) {
         auto [itContext, itCookie, itListener] = it->second;
         if (itContext == context && itCookie == cookie) {
@@ -241,8 +242,6 @@ void TransactionCompletedListener::addSurfaceControlToCallbacks(
 
 void TransactionCompletedListener::onTransactionCompleted(ListenerStats listenerStats) {
     std::unordered_map<CallbackId, CallbackTranslation, CallbackIdHash> callbacksMap;
-    std::multimap<sp<IBinder>, sp<JankDataListener>> jankListenersMap;
-    std::multimap<sp<IBinder>, SurfaceStatsCallbackEntry> surfaceListeners;
     {
         std::lock_guard<std::mutex> lock(mMutex);
 
@@ -258,8 +257,6 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
          * sp<SurfaceControl> that could possibly exist for the callbacks.
          */
         callbacksMap = mCallbacks;
-        jankListenersMap = mJankListeners;
-        surfaceListeners = mSurfaceStatsListeners;
         for (const auto& transactionStats : listenerStats.transactionStats) {
             for (auto& callbackId : transactionStats.callbackIds) {
                 mCallbacks.erase(callbackId);
@@ -330,7 +327,8 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                         callback(surfaceStats.previousBufferId,
                                  surfaceStats.previousReleaseFence
                                          ? surfaceStats.previousReleaseFence
-                                         : Fence::NO_FENCE);
+                                         : Fence::NO_FENCE,
+                                 surfaceStats.transformHint);
                     }
                 }
             }
@@ -339,15 +337,26 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                              surfaceControlStats);
         }
         for (const auto& surfaceStats : transactionStats.surfaceStats) {
-            auto listenerRange = surfaceListeners.equal_range(surfaceStats.surfaceControl);
-            for (auto it = listenerRange.first; it != listenerRange.second; it++) {
-                auto entry = it->second;
-                entry.callback(entry.context, transactionStats.latchTime,
-                    transactionStats.presentFence, surfaceStats);
+            {
+                // Acquire surface stats listener lock such that we guarantee that after calling
+                // unregister, there won't be any further callback.
+                std::scoped_lock<std::recursive_mutex> lock(mSurfaceStatsListenerMutex);
+                auto listenerRange = mSurfaceStatsListeners.equal_range(
+                        surfaceStats.surfaceControl);
+                for (auto it = listenerRange.first; it != listenerRange.second; it++) {
+                    auto entry = it->second;
+                    entry.callback(entry.context, transactionStats.latchTime,
+                        transactionStats.presentFence, surfaceStats);
+                }
             }
 
             if (surfaceStats.jankData.empty()) continue;
-            auto jankRange = jankListenersMap.equal_range(surfaceStats.surfaceControl);
+
+            // Acquire jank listener lock such that we guarantee that after calling unregister,
+            // there won't be any further callback.
+            std::scoped_lock<std::recursive_mutex> lock(mJankListenerMutex);
+            auto copy = mJankListeners;
+            auto jankRange = copy.equal_range(surfaceStats.surfaceControl);
             for (auto it = jankRange.first; it != jankRange.second; it++) {
                 it->second->onJankDataAvailable(surfaceStats.jankData);
             }
@@ -356,7 +365,8 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
 }
 
 void TransactionCompletedListener::onReleaseBuffer(uint64_t graphicBufferId,
-                                                   sp<Fence> releaseFence) {
+                                                   sp<Fence> releaseFence,
+                                                   uint32_t transformHint) {
     ReleaseBufferCallback callback;
     {
         std::scoped_lock<std::mutex> lock(mMutex);
@@ -366,7 +376,7 @@ void TransactionCompletedListener::onReleaseBuffer(uint64_t graphicBufferId,
         ALOGE("Could not call release buffer callback, buffer not found %" PRIu64, graphicBufferId);
         return;
     }
-    callback(graphicBufferId, releaseFence);
+    callback(graphicBufferId, releaseFence, transformHint);
 }
 
 ReleaseBufferCallback TransactionCompletedListener::popReleaseBufferCallbackLocked(
@@ -2081,6 +2091,16 @@ status_t SurfaceComposerClient::addFpsListener(int32_t taskId,
 
 status_t SurfaceComposerClient::removeFpsListener(const sp<gui::IFpsListener>& listener) {
     return ComposerService::getComposerService()->removeFpsListener(listener);
+}
+
+status_t SurfaceComposerClient::addTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    return ComposerService::getComposerService()->addTunnelModeEnabledListener(listener);
+}
+
+status_t SurfaceComposerClient::removeTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    return ComposerService::getComposerService()->removeTunnelModeEnabledListener(listener);
 }
 
 bool SurfaceComposerClient::getDisplayBrightnessSupport(const sp<IBinder>& displayToken) {

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <DisplayHardware/Hal.h>
 #include <android-base/stringprintf.h>
 #include <compositionengine/DisplayColorProfile.h>
 #include <compositionengine/LayerFECompositionState.h>
@@ -353,14 +354,16 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
     }
 
     writeOutputDependentPerFrameStateToHWC(hwcLayer.get());
-    writeOutputIndependentPerFrameStateToHWC(hwcLayer.get(), *outputIndependentState);
+    writeOutputIndependentPerFrameStateToHWC(hwcLayer.get(), *outputIndependentState, skipLayer);
 
-    writeCompositionTypeToHWC(hwcLayer.get(), requestedCompositionType, isPeekingThrough);
+    writeCompositionTypeToHWC(hwcLayer.get(), requestedCompositionType, isPeekingThrough,
+                              skipLayer);
 
     // Always set the layer color after setting the composition type.
     writeSolidColorStateToHWC(hwcLayer.get(), *outputIndependentState);
 
     editState().hwc->stateOverridden = isOverridden;
+    editState().hwc->layerSkipped = skipLayer;
 }
 
 void OutputLayer::writeOutputDependentGeometryStateToHWC(HWC2::Layer* hwcLayer,
@@ -473,7 +476,8 @@ void OutputLayer::writeOutputDependentPerFrameStateToHWC(HWC2::Layer* hwcLayer) 
 }
 
 void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
-        HWC2::Layer* hwcLayer, const LayerFECompositionState& outputIndependentState) {
+        HWC2::Layer* hwcLayer, const LayerFECompositionState& outputIndependentState,
+        bool skipLayer) {
     switch (auto error = hwcLayer->setColorTransform(outputIndependentState.colorTransform)) {
         case hal::Error::NONE:
             break;
@@ -487,7 +491,8 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
 
     const Region& surfaceDamage = getState().overrideInfo.buffer
             ? getState().overrideInfo.damageRegion
-            : outputIndependentState.surfaceDamage;
+            : (getState().hwc->stateOverridden ? Region::INVALID_REGION
+                                               : outputIndependentState.surfaceDamage);
 
     if (auto error = hwcLayer->setSurfaceDamage(surfaceDamage); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set surface damage: %s (%d)", getLayerFE().getDebugName(),
@@ -505,7 +510,7 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
             break;
         case hal::Composition::CURSOR:
         case hal::Composition::DEVICE:
-            writeBufferStateToHWC(hwcLayer, outputIndependentState);
+            writeBufferStateToHWC(hwcLayer, outputIndependentState, skipLayer);
             break;
         case hal::Composition::INVALID:
         case hal::Composition::CLIENT:
@@ -548,7 +553,8 @@ void OutputLayer::writeSidebandStateToHWC(HWC2::Layer* hwcLayer,
 }
 
 void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
-                                        const LayerFECompositionState& outputIndependentState) {
+                                        const LayerFECompositionState& outputIndependentState,
+                                        bool skipLayer) {
     auto supportedPerFrameMetadata =
             getOutput().getDisplayColorProfile()->getSupportedPerFrameMetadata();
     if (auto error = hwcLayer->setPerFrameMetadata(supportedPerFrameMetadata,
@@ -561,7 +567,7 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
     sp<GraphicBuffer> buffer = outputIndependentState.buffer;
     sp<Fence> acquireFence = outputIndependentState.acquireFence;
     int slot = outputIndependentState.bufferSlot;
-    if (getState().overrideInfo.buffer != nullptr) {
+    if (getState().overrideInfo.buffer != nullptr && !skipLayer) {
         buffer = getState().overrideInfo.buffer->getBuffer();
         acquireFence = getState().overrideInfo.acquireFence;
         slot = HwcBufferCache::FLATTENER_CACHING_SLOT;
@@ -584,17 +590,19 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
 
 void OutputLayer::writeCompositionTypeToHWC(HWC2::Layer* hwcLayer,
                                             hal::Composition requestedCompositionType,
-                                            bool isPeekingThrough) {
+                                            bool isPeekingThrough, bool skipLayer) {
     auto& outputDependentState = editState();
 
-    // If we are forcing client composition, we need to tell the HWC
-    if (outputDependentState.forceClientComposition ||
-        (!isPeekingThrough && getLayerFE().hasRoundedCorners())) {
+    if (isClientCompositionForced(isPeekingThrough)) {
+        // If we are forcing client composition, we need to tell the HWC
         requestedCompositionType = hal::Composition::CLIENT;
     }
 
     // Set the requested composition type with the HWC whenever it changes
-    if (outputDependentState.hwc->hwcCompositionType != requestedCompositionType) {
+    // We also resend the composition type when this layer was previously skipped, to ensure that
+    // the composition type is up-to-date.
+    if (outputDependentState.hwc->hwcCompositionType != requestedCompositionType ||
+        (outputDependentState.hwc->layerSkipped && !skipLayer)) {
         outputDependentState.hwc->hwcCompositionType = requestedCompositionType;
 
         if (auto error = hwcLayer->setCompositionType(requestedCompositionType);
@@ -690,12 +698,22 @@ void OutputLayer::detectDisallowedCompositionTypeChange(hal::Composition from,
     }
 }
 
+bool OutputLayer::isClientCompositionForced(bool isPeekingThrough) const {
+    return getState().forceClientComposition ||
+            (!isPeekingThrough && getLayerFE().hasRoundedCorners());
+}
+
 void OutputLayer::applyDeviceCompositionTypeChange(hal::Composition compositionType) {
     auto& state = editState();
     LOG_FATAL_IF(!state.hwc);
     auto& hwcState = *state.hwc;
 
-    detectDisallowedCompositionTypeChange(hwcState.hwcCompositionType, compositionType);
+    // Only detected disallowed changes if this was not a skip layer, because the
+    // validated composition type may be arbitrary (usually DEVICE, to reflect that there were
+    // fewer GPU layers)
+    if (!hwcState.layerSkipped) {
+        detectDisallowedCompositionTypeChange(hwcState.hwcCompositionType, compositionType);
+    }
 
     hwcState.hwcCompositionType = compositionType;
 }

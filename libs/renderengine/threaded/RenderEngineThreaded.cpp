@@ -24,6 +24,7 @@
 
 #include <android-base/stringprintf.h>
 #include <private/gui/SyncFeatures.h>
+#include <processgroup/processgroup.h>
 #include <utils/Trace.h>
 
 #include "gl/GLESRenderEngine.h"
@@ -48,44 +49,74 @@ RenderEngineThreaded::RenderEngineThreaded(CreateInstanceFactory factory, Render
 }
 
 RenderEngineThreaded::~RenderEngineThreaded() {
-    {
-        std::lock_guard lock(mThreadMutex);
-        mRunning = false;
-        mCondition.notify_one();
-    }
+    mRunning = false;
+    mCondition.notify_one();
 
     if (mThread.joinable()) {
         mThread.join();
     }
 }
 
+status_t RenderEngineThreaded::setSchedFifo(bool enabled) {
+    static constexpr int kFifoPriority = 2;
+    static constexpr int kOtherPriority = 0;
+
+    struct sched_param param = {0};
+    int sched_policy;
+    if (enabled) {
+        sched_policy = SCHED_FIFO;
+        param.sched_priority = kFifoPriority;
+    } else {
+        sched_policy = SCHED_OTHER;
+        param.sched_priority = kOtherPriority;
+    }
+
+    if (sched_setscheduler(0, sched_policy, &param) != 0) {
+        return -errno;
+    }
+    return NO_ERROR;
+}
+
 // NO_THREAD_SAFETY_ANALYSIS is because std::unique_lock presently lacks thread safety annotations.
 void RenderEngineThreaded::threadMain(CreateInstanceFactory factory) NO_THREAD_SAFETY_ANALYSIS {
     ATRACE_CALL();
 
-    struct sched_param param = {0};
-    param.sched_priority = 2;
-    if (sched_setscheduler(0, SCHED_FIFO, &param) != 0) {
-        ALOGE("Couldn't set SCHED_FIFO");
+    if (!SetTaskProfiles(0, {"SFRenderEnginePolicy"})) {
+        ALOGW("Failed to set render-engine task profile!");
+    }
+
+    if (setSchedFifo(true) != NO_ERROR) {
+        ALOGW("Couldn't set SCHED_FIFO");
     }
 
     mRenderEngine = factory();
 
-    std::unique_lock<std::mutex> lock(mThreadMutex);
     pthread_setname_np(pthread_self(), mThreadName);
 
     {
-        std::unique_lock<std::mutex> lock(mInitializedMutex);
+        std::scoped_lock lock(mInitializedMutex);
         mIsInitialized = true;
     }
     mInitializedCondition.notify_all();
 
     while (mRunning) {
-        if (!mFunctionCalls.empty()) {
-            auto task = mFunctionCalls.front();
-            mFunctionCalls.pop();
-            task(*mRenderEngine);
+        const auto getNextTask = [this]() -> std::optional<Work> {
+            std::scoped_lock lock(mThreadMutex);
+            if (!mFunctionCalls.empty()) {
+                Work task = mFunctionCalls.front();
+                mFunctionCalls.pop();
+                return std::make_optional<Work>(task);
+            }
+            return std::nullopt;
+        };
+
+        const auto task = getNextTask();
+
+        if (task) {
+            (*task)(*mRenderEngine);
         }
+
+        std::unique_lock<std::mutex> lock(mThreadMutex);
         mCondition.wait(lock, [this]() REQUIRES(mThreadMutex) {
             return !mRunning || !mFunctionCalls.empty();
         });
@@ -100,18 +131,31 @@ void RenderEngineThreaded::waitUntilInitialized() const {
     mInitializedCondition.wait(lock, [=] { return mIsInitialized; });
 }
 
-void RenderEngineThreaded::primeCache() {
+std::future<void> RenderEngineThreaded::primeCache() {
+    const auto resultPromise = std::make_shared<std::promise<void>>();
+    std::future<void> resultFuture = resultPromise->get_future();
     ATRACE_CALL();
     // This function is designed so it can run asynchronously, so we do not need to wait
     // for the futures.
     {
         std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([](renderengine::RenderEngine& instance) {
+        mFunctionCalls.push([resultPromise](renderengine::RenderEngine& instance) {
             ATRACE_NAME("REThreaded::primeCache");
+            if (setSchedFifo(false) != NO_ERROR) {
+                ALOGW("Couldn't set SCHED_OTHER for primeCache");
+            }
+
             instance.primeCache();
+            resultPromise->set_value();
+
+            if (setSchedFifo(true) != NO_ERROR) {
+                ALOGW("Couldn't set SCHED_FIFO for primeCache");
+            }
         });
     }
     mCondition.notify_one();
+
+    return resultFuture;
 }
 
 void RenderEngineThreaded::dump(std::string& result) {
@@ -231,19 +275,26 @@ bool RenderEngineThreaded::useProtectedContext(bool useProtectedContext) {
     return resultFuture.get();
 }
 
-bool RenderEngineThreaded::cleanupPostRender(CleanupMode mode) {
-    std::promise<bool> resultPromise;
-    std::future<bool> resultFuture = resultPromise.get_future();
+void RenderEngineThreaded::cleanupPostRender() {
+    if (canSkipPostRenderCleanup()) {
+        return;
+    }
+
+    // This function is designed so it can run asynchronously, so we do not need to wait
+    // for the futures.
     {
         std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise, mode](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::cleanupPostRender");
-            bool returnValue = instance.cleanupPostRender(mode);
-            resultPromise.set_value(returnValue);
+        mFunctionCalls.push([=](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::unmapExternalTextureBuffer");
+            instance.cleanupPostRender();
         });
     }
     mCondition.notify_one();
-    return resultFuture.get();
+}
+
+bool RenderEngineThreaded::canSkipPostRenderCleanup() const {
+    waitUntilInitialized();
+    return mRenderEngine->canSkipPostRenderCleanup();
 }
 
 void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCrop) {
