@@ -754,6 +754,11 @@ Error Composer::presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
 
    mReader.takePresentOrValidateStage(display, state);
 
+   if (*state == 2) { // Validate and present succeeded.
+       mReader.takePresentFence(display, outPresentFence);
+       mReader.hasChanges(display, outNumTypes, outNumRequests);
+   }
+
    if (*state == 1) { // Present succeeded
        mReader.takePresentFence(display, outPresentFence);
    }

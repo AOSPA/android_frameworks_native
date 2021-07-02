@@ -74,6 +74,9 @@ void Display::setConfiguration(const compositionengine::DisplayCreationArgs& arg
         mDisplayConfigIntf = nullptr;
     }
 #endif
+
+    mDisplayExtnIntf = args.displayExtnIntf;
+    ALOGI("Display::setConfiguration: mDisplayExtnIntf: %p", mDisplayExtnIntf);
 }
 
 bool Display::isValid() const {
@@ -268,6 +271,7 @@ void Display::chooseCompositionStrategy() {
         mHasScreenshot = hasScreenshot;
     }
 #endif
+    beginDraw();
     if (status_t result =
                 hwc.getDeviceCompositionChanges(*halDisplayId, anyLayersRequireClientComposition(),
                                                 getState().earliestPresentTime, &changes);
@@ -287,6 +291,54 @@ void Display::chooseCompositionStrategy() {
     auto& state = editState();
     state.usesClientComposition = anyLayersRequireClientComposition();
     state.usesDeviceComposition = !allLayersRequireClientComposition();
+}
+
+void Display::beginDraw() {
+    ATRACE_CALL();
+    if (mDisplayExtnIntf == nullptr) {
+        return;
+    }
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
+    if (!physicalDisplayId.has_value() || mIsVirtual) {
+        return;
+    }
+#ifdef QTI_UNIFIED_DRAW
+    composer::FBTLayerInfo fbtLayerInfo;
+    composer::FBTSlotInfo current;
+    composer::FBTSlotInfo future;
+    std::vector<composer::LayerFlags> displayLayerFlags;
+    ui::Dataspace dataspace;
+    auto& hwc = getCompositionEngine().getHwComposer();
+    const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
+    for (const auto& layer : getOutputLayersOrderedByZ()) {
+         composer::LayerFlags layerFlags;
+         auto layerCompositionState = layer->getLayerFE().getCompositionState();
+         layerFlags.secure_camera = layerCompositionState->isSecureCamera;
+         layerFlags.secure_ui     = layerCompositionState->isSecureDisplay;
+         layerFlags.secure_video  = layerCompositionState->hasProtectedContent;
+         displayLayerFlags.push_back(layerFlags);
+    }
+    fbtLayerInfo.width = getState().orientedDisplaySpace.bounds.width();
+    fbtLayerInfo.height = getState().orientedDisplaySpace.bounds.height();
+    auto renderSurface = getRenderSurface();
+    fbtLayerInfo.secure = renderSurface->isProtected();
+    fbtLayerInfo.dataspace = static_cast<int>(renderSurface->getClientTargetCurrentDataspace());
+    current.index = renderSurface->getClientTargetCurrentSlot();
+    dataspace = renderSurface->getClientTargetCurrentDataspace();
+
+    if (current.index < 0) {
+        return;
+    }
+    const auto id = HalDisplayId::tryCast(mId);
+    if (!mDisplayExtnIntf->BeginDraw(
+        static_cast<uint32_t>(*hwcDisplayId), displayLayerFlags, fbtLayerInfo,
+        current, future)) {
+        hwc.setClientTarget_3_1(*id, future.index, future.fence, dataspace);
+        ALOGV("Slot predicted %d", future.index);
+    } else {
+        ALOGV("Slot not predicted");
+    }
+#endif
 }
 
 bool Display::getSkipColorTransform() const {

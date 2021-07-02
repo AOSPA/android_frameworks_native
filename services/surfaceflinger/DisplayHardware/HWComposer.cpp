@@ -461,6 +461,11 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
                                      ui::Dataspace dataspace) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
+    auto& displayData = mDisplayData[displayId];
+    if (displayData.validateWasSkipped) {
+      return NO_ERROR;
+    }
+
     ALOGV("%s for display %s", __FUNCTION__, to_string(displayId).c_str());
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
     auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
