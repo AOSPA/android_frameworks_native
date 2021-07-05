@@ -1354,6 +1354,10 @@ private:
     static int calculateMaxAcquiredBufferCount(Fps refreshRate,
                                                std::chrono::nanoseconds presentLatency);
     int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
+    void setDesiredModeByThermalLevel(float newFpsRequest);
+    bool isFpsDeferNeeded(const ActiveModeInfo& info);
+    void getModeFromFps(float fps,DisplayModePtr& outMode);
+    void handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
 
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
@@ -1673,6 +1677,9 @@ private:
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     bool mUseLayerExt = false;
     bool mSplitLayerExt = false;
+    float mThermalLevelFps = 0;
+    float mLastCachedFps = 0;
+    bool mAllowThermalFpsChange = false;
 };
 
 } // namespace android

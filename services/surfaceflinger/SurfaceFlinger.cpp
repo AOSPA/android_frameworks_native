@@ -1148,6 +1148,26 @@ void SurfaceFlinger::InitComposerExtn() {
        ALOGI("Unable to create display extension");
     }
     ALOGI("Init: mDisplayExtnIntf: %p", mDisplayExtnIntf);
+
+#ifdef FPS_MITIGATION_ENABLED
+    const auto display = getDefaultDisplayDeviceLocked();
+    auto currMode = display->getActiveMode();
+    const auto& supportedModes = display->getSupportedModes();
+    std::vector<float> fps_list;
+    for (auto mode : supportedModes) {
+        if (mode->getWidth() == currMode->getWidth() &&
+            mode->getHeight() == currMode->getHeight()) {
+            fps_list.push_back(int32_t(mode->getFps().getValue()));
+        }
+    }
+
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SetFpsMitigationCallback(
+                          [this](float newLevelFps){
+                              setDesiredModeByThermalLevel(newLevelFps);
+                          }, fps_list);
+    }
+#endif
 }
 
 void SurfaceFlinger::startUnifiedDraw() {
@@ -1394,8 +1414,33 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* st
     return NO_ERROR;
 }
 
+bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
+    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    if (!display || !mThermalLevelFps) {
+        return false;
+    }
+
+    auto requestedRefreshRate = mRefreshRateConfigs->getRefreshRateFromModeId(info.modeId);
+    float newFpsRequest = requestedRefreshRate.getFps().getValue();
+    if (mAllowThermalFpsChange) {
+        return false;
+    }
+
+    mLastCachedFps = newFpsRequest;
+    if (newFpsRequest > mThermalLevelFps) {
+        return true;
+    }
+
+    return false;
+}
+
 void SurfaceFlinger::setDesiredActiveMode(const ActiveModeInfo& info) {
     ATRACE_CALL();
+
+    if (isFpsDeferNeeded(info)) {
+        return;
+    }
+
     auto refreshRate = mRefreshRateConfigs->getRefreshRateFromModeId(info.modeId);
     mVsyncPeriod = refreshRate.getVsyncPeriod();
     if (mDolphinWrapper.dolphinSetVsyncPeriod) {
@@ -8468,6 +8513,96 @@ void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
         mScheduler->handleIdleTimeout(isSmartConfig);
     }
 #endif
+}
+
+void SurfaceFlinger::getModeFromFps(float fps,DisplayModePtr& outMode) {
+    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    const auto& supportedModes = display->getSupportedModes();
+    auto currMode = display->getActiveMode();
+
+    for (auto mode : supportedModes) {
+        if (mode->getWidth() == currMode->getWidth() &&
+            mode->getHeight() == currMode->getHeight() &&
+            (int32_t)(mode->getFps().getValue()) == (int32_t)(fps)) {
+            outMode = mode;
+            return;
+        }
+    }
+    outMode = nullptr;
+}
+
+void SurfaceFlinger::handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet) {
+    if (!mThermalLevelFps) { // Thermal hint not running already, cache current fps
+        mLastCachedFps = currFps;
+    }
+
+    if(newLevelFps > mThermalLevelFps) {
+        *fpsToSet = std::min(newLevelFps, mLastCachedFps);
+    } else if (newLevelFps < mThermalLevelFps && newLevelFps > currFps) {
+        *fpsToSet = currFps;
+    } else if(newLevelFps < currFps){
+        *fpsToSet = newLevelFps;
+    }
+}
+
+void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
+    if (mThermalLevelFps == newLevelFps) {
+        return;
+    }
+
+    const auto displayId = ON_MAIN_THREAD(getInternalDisplayId());
+    const auto display = ON_MAIN_THREAD(getDisplayDeviceLocked
+                                        (getPhysicalDisplayToken(*displayId))
+                                       );
+    auto currRefreshRate = mRefreshRateConfigs->getRefreshRateFromModeId
+                                                (display->getActiveMode()->getId());
+
+    float currFps = currRefreshRate.getFps().getValue();
+
+    float fps = 0;
+    handleNewLevelFps(currFps, newLevelFps, &fps);
+
+    if (!fps) {
+        return;
+    }
+
+    auto mode = display->getMode(display->getActiveMode()->getId());
+    getModeFromFps(fps, mode);
+
+    if (!mode) {
+        return;
+    }
+
+    mThermalLevelFps = newLevelFps;
+
+    auto future = schedule([=]() -> status_t {
+        int ret = 0;
+        if (!display) {
+            ALOGE("Attempt to set desired display modes for invalid display token %p",
+            getPhysicalDisplayToken(*displayId).get());
+            return NAME_NOT_FOUND;
+        }
+        if (display->isVirtual()) {
+            ALOGW("Attempt to set desired display modes for virtual display");
+            return INVALID_OPERATION;
+        }
+        scheduler::RefreshRateConfigs::Policy policy =
+                                                  mRefreshRateConfigs->getCurrentPolicy();
+
+        if (fps < policy.primaryRange.min.getValue() ||
+            fps < policy.appRequestRange.min.getValue()) {
+            return ret;
+        }
+
+        policy.primaryRange.max = Fps(fps);
+        policy.appRequestRange.max = Fps(fps);
+        policy.defaultMode = mode->getId();
+
+        mAllowThermalFpsChange = true;
+        ret = setDesiredDisplayModeSpecsInternal(display, policy, false);
+        mAllowThermalFpsChange = false;
+        return ret;
+    });
 }
 
 } // namespace android
