@@ -140,10 +140,11 @@ cc_library {
                 profile_file: "libbinder/libbinder.profdata",
             },
             // b/189438896 Add exported symbols in a map file for ABI stability
-            version_script: "libbinder.arm64.map",
+            // TODO(b/193052800): Revert this change, use specific map files.
+            version_script: "libbinder.map",
             target: {
                 vendor: {
-                    version_script: "libbinder.arm64.vendor.map",
+                    version_script: "libbinder.map",
                 },
             },
         },
@@ -154,10 +155,10 @@ cc_library {
                 profile_file: "libbinder/libbinder.profdata",
             },
             // b/189438896 Add exported symbols in a map file for ABI stability
-            version_script: "libbinder.arm32.map",
+            version_script: "libbinder.map",
             target: {
                 vendor: {
-                    version_script: "libbinder.arm32.vendor.map",
+                    version_script: "libbinder.map",
                 },
             },
         },
