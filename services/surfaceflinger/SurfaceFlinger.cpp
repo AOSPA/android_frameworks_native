@@ -804,8 +804,10 @@ void SurfaceFlinger::enableHalVirtualDisplays(bool enable) {
 }
 
 VirtualDisplayId SurfaceFlinger::acquireVirtualDisplay(ui::Size resolution, ui::PixelFormat format,
-                                                       ui::LayerStack layerStack) {
-    if (auto& generator = mVirtualDisplayIdGenerators.hal) {
+                                                       ui::LayerStack layerStack,
+                                                       bool canAllocateHwcForVDS) {
+    auto& generator = mVirtualDisplayIdGenerators.hal;
+    if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {
             std::optional<PhysicalDisplayId> mirror;
 
@@ -3391,7 +3393,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         builder.setId(physical->id);
         builder.setConnectionType(physical->type);
     } else {
-        builder.setId(acquireVirtualDisplay(resolution, pixelFormat, state.layerStack));
+        builder.setId(acquireVirtualDisplay(resolution, pixelFormat, state.layerStack,
+                                            canAllocateHwcForVDS));
     }
 
     builder.setPixels(resolution);
@@ -4467,6 +4470,14 @@ status_t SurfaceFlinger::setTransactionState(
 
     // Check for incoming buffer updates and increment the pending buffer count.
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+        sp<Layer> layer = nullptr;
+        {
+            Mutex::Autolock _l(mStateLock);
+            layer = fromHandleLocked(state.surface).promote();
+            if (layer != nullptr) {
+                layer->getPreviousGfxInfo();
+            }
+        }
         mBufferCountTracker.increment(state.surface->localBinder());
     });
     queueTransaction(state);

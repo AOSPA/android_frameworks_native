@@ -2689,6 +2689,10 @@ bool Layer::getPrimaryDisplayOnly() const {
     return parent == nullptr ? false : parent->getPrimaryDisplayOnly();
 }
 
+nsecs_t Layer::getPreviousGfxInfo() {
+    return mFrameTracker.getPreviousGfxInfo();
+}
+
 // ---------------------------------------------------------------------------
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate) {
