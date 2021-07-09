@@ -24,6 +24,7 @@
 #include <renderengine/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
 #include <ui/GraphicTypes.h>
+#include <utils/Errors.h>
 #include <memory>
 
 namespace android::compositionengine {
@@ -39,8 +40,18 @@ using testing::SetArgPointee;
 using impl::planner::CachedSet;
 using impl::planner::LayerState;
 using impl::planner::LayerStateField;
+using impl::planner::TexturePool;
 
 namespace {
+
+MATCHER_P(ClientCompositionTargetSettingsBlurSettingsEq, expectedBlurSetting, "") {
+    *result_listener << "ClientCompositionTargetSettings' BlurSettings aren't equal \n";
+    *result_listener << "expected " << expectedBlurSetting << "\n";
+    *result_listener << "actual " << arg.blurSetting << "\n";
+
+    return expectedBlurSetting == arg.blurSetting;
+}
+static const ui::Size kOutputSize = ui::Size(1, 1);
 
 class CachedSetTest : public testing::Test {
 public:
@@ -67,9 +78,11 @@ protected:
     impl::OutputCompositionState mOutputState;
 
     android::renderengine::mock::RenderEngine mRenderEngine;
+    TexturePool mTexturePool = TexturePool(mRenderEngine);
 };
 
 void CachedSetTest::SetUp() {
+    mTexturePool.setDisplaySize(kOutputSize);
     for (size_t i = 0; i < kNumLayers; i++) {
         auto testLayer = std::make_unique<TestLayer>();
         auto pos = static_cast<int32_t>(i);
@@ -134,6 +147,7 @@ void expectReadyBuffer(const CachedSet& cachedSet) {
     EXPECT_NE(nullptr, cachedSet.getBuffer());
     EXPECT_NE(nullptr, cachedSet.getDrawFence());
     EXPECT_TRUE(cachedSet.hasReadyBuffer());
+    EXPECT_TRUE(cachedSet.hasRenderedBuffer());
 }
 
 TEST_F(CachedSetTest, createFromLayer) {
@@ -209,6 +223,16 @@ TEST_F(CachedSetTest, incrementAge) {
     EXPECT_EQ(2u, cachedSet.getAge());
 }
 
+TEST_F(CachedSetTest, incrementSkipCount) {
+    CachedSet::Layer& layer = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet cachedSet(layer);
+    EXPECT_EQ(0u, cachedSet.getSkipCount());
+    cachedSet.incrementSkipCount();
+    EXPECT_EQ(1u, cachedSet.getSkipCount());
+    cachedSet.incrementSkipCount();
+    EXPECT_EQ(2u, cachedSet.getSkipCount());
+}
+
 TEST_F(CachedSetTest, hasBufferUpdate_NoUpdate) {
     CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
     CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
@@ -243,6 +267,8 @@ TEST_F(CachedSetTest, append) {
     CachedSet cachedSet1(layer1);
     CachedSet cachedSet2(layer2);
     cachedSet1.addLayer(layer3.getState(), kStartTime + 10ms);
+    cachedSet1.incrementSkipCount();
+    EXPECT_EQ(1u, cachedSet1.getSkipCount());
     cachedSet1.append(cachedSet2);
 
     EXPECT_EQ(kStartTime, cachedSet1.getLastUpdate());
@@ -254,6 +280,8 @@ TEST_F(CachedSetTest, append) {
     EXPECT_TRUE(cachedSet1.getVisibleRegion().hasSameRects(expectedRegion));
     EXPECT_EQ(3u, cachedSet1.getLayerCount());
     EXPECT_EQ(0u, cachedSet1.getAge());
+    EXPECT_EQ(0u, cachedSet1.getSkipCount());
+
     expectNoBuffer(cachedSet1);
     // TODO(b/181192080): check that getNonBufferHash returns the correct hash value
     // EXPECT_EQ(android::hashCombine(layer1.getHash(), layer2.getHash()),
@@ -309,7 +337,7 @@ TEST_F(CachedSetTest, render) {
                                 const std::vector<const renderengine::LayerSettings*>& layers,
                                 const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
                                 base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(Rect(-1, -1, 9, 4), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.framebufferSpace.content, displaySettings.physicalDisplay);
         EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
         EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
                   displaySettings.orientation);
@@ -323,10 +351,11 @@ TEST_F(CachedSetTest, render) {
     EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
     EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
     EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
-    cachedSet.render(mRenderEngine, mOutputState);
+    cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
     expectReadyBuffer(cachedSet);
 
     EXPECT_EQ(mOutputState.framebufferSpace, cachedSet.getOutputSpace());
+    EXPECT_EQ(mOutputState.framebufferSpace.content, cachedSet.getTextureBounds());
 
     // Now check that appending a new cached set properly cleans up RenderEngine resources.
     CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
@@ -357,7 +386,7 @@ TEST_F(CachedSetTest, rendersWithOffsetFramebufferContent) {
                                 const std::vector<const renderengine::LayerSettings*>& layers,
                                 const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
                                 base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(Rect(1, 2, 9, 4), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.framebufferSpace.content, displaySettings.physicalDisplay);
         EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
         EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
                   displaySettings.orientation);
@@ -371,7 +400,7 @@ TEST_F(CachedSetTest, rendersWithOffsetFramebufferContent) {
     EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
     EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
     EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
-    cachedSet.render(mRenderEngine, mOutputState);
+    cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
     expectReadyBuffer(cachedSet);
 
     EXPECT_EQ(mOutputState.framebufferSpace, cachedSet.getOutputSpace());
@@ -410,6 +439,20 @@ TEST_F(CachedSetTest, holePunch_requiresSingleLayer) {
 
     CachedSet cachedSet(layer1);
     cachedSet.append(layer2);
+
+    EXPECT_FALSE(cachedSet.requiresHolePunch());
+}
+
+TEST_F(CachedSetTest, holePunch_requiresNonHdr) {
+    mTestLayers[0]->outputLayerCompositionState.dataspace = ui::Dataspace::BT2020_PQ;
+    mTestLayers[0]->layerState->update(&mTestLayers[0]->outputLayer);
+
+    CachedSet::Layer& layer = *mTestLayers[0]->cachedSetLayer.get();
+    mTestLayers[0]->layerFECompositionState.buffer = sp<GraphicBuffer>::make();
+    sp<mock::LayerFE> layerFE = mTestLayers[0]->layerFE;
+
+    CachedSet cachedSet(layer);
+    EXPECT_CALL(*layerFE, hasRoundedCorners()).WillRepeatedly(Return(true));
 
     EXPECT_FALSE(cachedSet.requiresHolePunch());
 }
@@ -544,7 +587,76 @@ TEST_F(CachedSetTest, addHolePunch) {
     };
 
     EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
-    cachedSet.render(mRenderEngine, mOutputState);
+    cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
+}
+
+TEST_F(CachedSetTest, addHolePunch_noBuffer) {
+    // Same as addHolePunch, except that clientCompList3 does not contain a
+    // buffer. This imitates the case where the buffer had protected content, so
+    // BufferLayer did not add it to the LayerSettings. This should not assert.
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[0]->layerFE;
+
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE2 = mTestLayers[1]->layerFE;
+
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE3 = mTestLayers[2]->layerFE;
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, true);
+
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList1;
+    clientCompList1.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList2;
+    clientCompList2.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList3;
+    clientCompList3.push_back({});
+
+    EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
+    EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
+    EXPECT_CALL(*layerFE3, prepareClientCompositionList(_)).WillOnce(Return(clientCompList3));
+
+    const auto drawLayers = [&](const renderengine::DisplaySettings&,
+                                const std::vector<const renderengine::LayerSettings*>& layers,
+                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                                base::unique_fd&&, base::unique_fd*) -> size_t {
+        // If the highlight layer is enabled, it will increase the size by 1.
+        // We're interested in the third layer either way.
+        EXPECT_GE(layers.size(), 3u);
+        const auto* holePunchSettings = layers[2];
+        EXPECT_EQ(nullptr, holePunchSettings->source.buffer.buffer);
+        EXPECT_EQ(half3(0.0f, 0.0f, 0.0f), holePunchSettings->source.solidColor);
+        EXPECT_TRUE(holePunchSettings->disableBlending);
+        EXPECT_EQ(0.0f, holePunchSettings->alpha);
+
+        return NO_ERROR;
+    };
+
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
+}
+
+TEST_F(CachedSetTest, append_removesHolePunch) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    mTestLayers[0]->layerFECompositionState.isOpaque = true;
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addHolePunchLayerIfFeasible(layer3, false);
+
+    ASSERT_EQ(&mTestLayers[2]->outputLayer, cachedSet.getHolePunchLayer());
+
+    CachedSet cachedSet3(layer3);
+    cachedSet.append(cachedSet3);
+    ASSERT_EQ(nullptr, cachedSet.getHolePunchLayer());
 }
 
 TEST_F(CachedSetTest, decompose_removesHolePunch) {
@@ -565,6 +677,104 @@ TEST_F(CachedSetTest, decompose_removesHolePunch) {
     for (const auto& set : decomposed) {
         EXPECT_EQ(nullptr, set.getHolePunchLayer());
     }
+}
+
+TEST_F(CachedSetTest, hasBlurBehind) {
+    mTestLayers[1]->layerFECompositionState.backgroundBlurRadius = 1;
+    mTestLayers[1]->layerState->update(&mTestLayers[1]->outputLayer);
+    mTestLayers[2]->layerFECompositionState.blurRegions.push_back(
+            BlurRegion{1, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    mTestLayers[2]->layerState->update(&mTestLayers[2]->outputLayer);
+
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+
+    CachedSet cachedSet1(layer1);
+    CachedSet cachedSet2(layer2);
+    CachedSet cachedSet3(layer3);
+
+    // Cached set 4 will consist of layers 1 and 2, which will contain a blur behind
+    CachedSet cachedSet4(layer1);
+    cachedSet4.addLayer(layer2.getState(), kStartTime);
+
+    EXPECT_FALSE(cachedSet1.hasBlurBehind());
+    EXPECT_TRUE(cachedSet2.hasBlurBehind());
+    EXPECT_TRUE(cachedSet3.hasBlurBehind());
+    EXPECT_TRUE(cachedSet4.hasBlurBehind());
+}
+
+TEST_F(CachedSetTest, addBackgroundBlurLayer) {
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    CachedSet cachedSet(layer1);
+
+    EXPECT_EQ(nullptr, cachedSet.getBlurLayer());
+
+    cachedSet.addBackgroundBlurLayer(layer2);
+    EXPECT_EQ(layer2.getState()->getOutputLayer(), cachedSet.getBlurLayer());
+}
+
+TEST_F(CachedSetTest, addBlur) {
+    mTestLayers[0]->outputLayerCompositionState.displayFrame = Rect(0, 0, 5, 5);
+    CachedSet::Layer& layer1 = *mTestLayers[0]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE1 = mTestLayers[0]->layerFE;
+
+    CachedSet::Layer& layer2 = *mTestLayers[1]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE2 = mTestLayers[1]->layerFE;
+
+    CachedSet::Layer& layer3 = *mTestLayers[2]->cachedSetLayer.get();
+    sp<mock::LayerFE> layerFE3 = mTestLayers[2]->layerFE;
+
+    CachedSet cachedSet(layer1);
+    cachedSet.addLayer(layer2.getState(), kStartTime + 10ms);
+
+    cachedSet.addBackgroundBlurLayer(layer3);
+
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList1;
+    clientCompList1.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList2;
+    clientCompList2.push_back({});
+    std::vector<compositionengine::LayerFE::LayerSettings> clientCompList3;
+    clientCompList3.push_back({});
+
+    clientCompList3[0].source.buffer.buffer = std::make_shared<
+            renderengine::ExternalTexture>(sp<GraphicBuffer>::make(), mRenderEngine,
+                                           renderengine::ExternalTexture::READABLE);
+
+    EXPECT_CALL(*layerFE1,
+                prepareClientCompositionList(ClientCompositionTargetSettingsBlurSettingsEq(
+                        compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::
+                                Enabled)))
+            .WillOnce(Return(clientCompList1));
+    EXPECT_CALL(*layerFE2,
+                prepareClientCompositionList(ClientCompositionTargetSettingsBlurSettingsEq(
+                        compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::
+                                Enabled)))
+            .WillOnce(Return(clientCompList2));
+    EXPECT_CALL(*layerFE3,
+                prepareClientCompositionList(ClientCompositionTargetSettingsBlurSettingsEq(
+                        compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::
+                                BackgroundBlurOnly)))
+            .WillOnce(Return(clientCompList3));
+
+    const auto drawLayers = [&](const renderengine::DisplaySettings&,
+                                const std::vector<const renderengine::LayerSettings*>& layers,
+                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                                base::unique_fd&&, base::unique_fd*) -> int32_t {
+        // If the highlight layer is enabled, it will increase the size by 1.
+        // We're interested in the third layer either way.
+        EXPECT_GE(layers.size(), 3u);
+        const auto* blurSettings = layers[2];
+        EXPECT_TRUE(blurSettings->skipContentDraw);
+        EXPECT_EQ(half3(0.0f, 0.0f, 0.0f), blurSettings->source.solidColor);
+        EXPECT_EQ(0.0f, blurSettings->alpha);
+
+        return NO_ERROR;
+    };
+
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
 }
 
 } // namespace

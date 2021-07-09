@@ -44,6 +44,16 @@
  */
 #define PROPERTY_DEBUG_RENDERENGINE_CAPTURE_SKIA_MS "debug.renderengine.capture_skia_ms"
 
+/**
+ * Set to the most recently saved file once the capture is finished.
+ */
+#define PROPERTY_DEBUG_RENDERENGINE_CAPTURE_FILENAME "debug.renderengine.capture_filename"
+
+/**
+ * Allows recording of Skia drawing commands with systrace.
+ */
+#define PROPERTY_SKIA_ATRACE_ENABLED "debug.renderengine.skia_atrace_enabled"
+
 struct ANativeWindowBuffer;
 
 namespace android {
@@ -90,10 +100,6 @@ public:
 
     static std::unique_ptr<RenderEngine> create(const RenderEngineCreationArgs& args);
 
-    RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
-
-    RenderEngine(RenderEngineType type) : mRenderEngineType(type) {}
-
     virtual ~RenderEngine() = 0;
 
     // ----- BEGIN DEPRECATED INTERFACE -----
@@ -107,25 +113,6 @@ public:
 
     virtual void genTextures(size_t count, uint32_t* names) = 0;
     virtual void deleteTextures(size_t count, uint32_t const* names) = 0;
-
-    enum class CleanupMode {
-        CLEAN_OUTPUT_RESOURCES,
-        CLEAN_ALL,
-    };
-    // Clean-up method that should be called on the main thread after the
-    // drawFence returned by drawLayers fires. This method will free up
-    // resources used by the most recently drawn frame. If the frame is still
-    // being drawn, then this call is silently ignored.
-    //
-    // If mode is CLEAN_OUTPUT_RESOURCES, then only resources related to the
-    // output framebuffer are cleaned up, including the sibling texture.
-    //
-    // If mode is CLEAN_ALL, then we also cleanup resources related to any input
-    // buffers.
-    //
-    // Returns true if resources were cleaned up, and false if we didn't need to
-    // do any work.
-    virtual bool cleanupPostRender(CleanupMode mode = CleanupMode::CLEAN_OUTPUT_RESOURCES) = 0;
 
     // queries that are required to be thread safe
     virtual size_t getMaxTextureSize() const = 0;
@@ -182,6 +169,13 @@ public:
                                 const std::shared_ptr<ExternalTexture>& buffer,
                                 const bool useFramebufferCache, base::unique_fd&& bufferFence,
                                 base::unique_fd* drawFence) = 0;
+
+    // Clean-up method that should be called on the main thread after the
+    // drawFence returned by drawLayers fires. This method will free up
+    // resources used by the most recently drawn frame. If the frame is still
+    // being drawn, then the implementation is free to silently ignore this call.
+    virtual void cleanupPostRender() = 0;
+
     virtual void cleanFramebufferCache() = 0;
     // Returns the priority this context was actually created with. Note: this may not be
     // the same as specified at context creation time, due to implementation limits on the
@@ -202,6 +196,10 @@ public:
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
 
 protected:
+    RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
+
+    RenderEngine(RenderEngineType type) : mRenderEngineType(type) {}
+
     // Maps GPU resources for this buffer.
     // Note that work may be deferred to an additional thread, i.e. this call
     // is made asynchronously, but the caller can expect that map/unmap calls
@@ -226,8 +224,15 @@ protected:
     // that's conflict serializable, i.e. unmap a buffer should never occur before binding the
     // buffer if the caller called mapExternalTextureBuffer before calling unmap.
     virtual void unmapExternalTextureBuffer(const sp<GraphicBuffer>& buffer) = 0;
+
+    // A thread safe query to determine if any post rendering cleanup is necessary.  Returning true
+    // is a signal that calling the postRenderCleanup method would be a no-op and that callers can
+    // avoid any thread synchronization that may be required by directly calling postRenderCleanup.
+    virtual bool canSkipPostRenderCleanup() const = 0;
+
     friend class ExternalTexture;
     friend class threaded::RenderEngineThreaded;
+    friend class RenderEngineTest_cleanupPostRender_cleansUpOnce_Test;
     const RenderEngineType mRenderEngineType;
 };
 

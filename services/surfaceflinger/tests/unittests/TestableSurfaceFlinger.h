@@ -42,7 +42,6 @@
 #include "SurfaceInterceptor.h"
 #include "TestableScheduler.h"
 #include "mock/DisplayHardware/MockComposer.h"
-#include "mock/MockDisplayIdGenerator.h"
 #include "mock/MockFrameTimeline.h"
 #include "mock/MockFrameTracer.h"
 
@@ -185,9 +184,6 @@ public:
 
     SurfaceFlinger* flinger() { return mFlinger.get(); }
     TestableScheduler* scheduler() { return mScheduler; }
-    mock::DisplayIdGenerator<GpuVirtualDisplayId>& gpuVirtualDisplayIdGenerator() {
-        return mGpuVirtualDisplayIdGenerator;
-    }
 
     // Extend this as needed for accessing SurfaceFlinger private (and public)
     // functions.
@@ -276,6 +272,7 @@ public:
     static void setLayerSidebandStream(const sp<Layer>& layer,
                                        const sp<NativeHandle>& sidebandStream) {
         layer->mDrawingState.sidebandStream = sidebandStream;
+        layer->mCurrentState.sidebandStream = sidebandStream;
         layer->mSidebandStream = sidebandStream;
         layer->editCompositionState()->sidebandStream = sidebandStream;
     }
@@ -308,6 +305,8 @@ public:
         return mFlinger->destroyDisplay(displayToken);
     }
 
+    void enableHalVirtualDisplays(bool enable) { mFlinger->enableHalVirtualDisplays(enable); }
+
     auto setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
             std::shared_ptr<compositionengine::Display> compositionDisplay,
@@ -323,9 +322,8 @@ public:
         return mFlinger->handleTransactionLocked(transactionFlags);
     }
 
-    auto onHotplugReceived(int32_t sequenceId, hal::HWDisplayId display,
-                           hal::Connection connection) {
-        return mFlinger->onHotplugReceived(sequenceId, display, connection);
+    void onComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection) {
+        mFlinger->onComposerHalHotplug(hwcDisplayId, connection);
     }
 
     auto setDisplayStateLocked(const DisplayState& s) {
@@ -436,11 +434,9 @@ public:
     auto& mutablePhysicalDisplayTokens() { return mFlinger->mPhysicalDisplayTokens; }
     auto& mutableTexturePool() { return mFlinger->mTexturePool; }
     auto& mutableTransactionFlags() { return mFlinger->mTransactionFlags; }
-    auto& mutableUseHwcVirtualDisplays() { return mFlinger->mUseHwcVirtualDisplays; }
     auto& mutablePowerAdvisor() { return mFlinger->mPowerAdvisor; }
     auto& mutableDebugDisableHWC() { return mFlinger->mDebugDisableHWC; }
 
-    auto& mutableComposerSequenceId() { return mFlinger->getBE().mComposerSequenceId; }
     auto& mutableHwcDisplayData() { return getHwComposer().mDisplayData; }
     auto& mutableHwcPhysicalDisplayIdMap() { return getHwComposer().mPhysicalDisplayIdMap; }
     auto& mutableInternalHwcDisplayId() { return getHwComposer().mInternalHwcDisplayId; }
@@ -775,7 +771,6 @@ private:
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);
     TestableScheduler* mScheduler = nullptr;
-    mock::DisplayIdGenerator<GpuVirtualDisplayId> mGpuVirtualDisplayIdGenerator;
 };
 
 } // namespace android

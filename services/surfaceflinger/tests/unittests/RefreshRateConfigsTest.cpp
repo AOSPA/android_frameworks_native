@@ -45,8 +45,15 @@ using LayerRequirement = RefreshRateConfigs::LayerRequirement;
 
 class RefreshRateConfigsTest : public testing::Test {
 protected:
+    using GetBestRefreshRateInvocation = RefreshRateConfigs::GetBestRefreshRateInvocation;
+
     RefreshRateConfigsTest();
     ~RefreshRateConfigsTest();
+
+    RefreshRate createRefreshRate(DisplayModePtr displayMode) {
+        return {displayMode->getId(), displayMode, displayMode->getFps(),
+                RefreshRate::ConstructorTag(0)};
+    }
 
     Fps findClosestKnownFrameRate(const RefreshRateConfigs& refreshRateConfigs, Fps frameRate) {
         return refreshRateConfigs.findClosestKnownFrameRate(frameRate);
@@ -69,6 +76,19 @@ protected:
     RefreshRate getMaxSupportedRefreshRate(const RefreshRateConfigs& refreshRateConfigs) {
         std::lock_guard lock(refreshRateConfigs.mLock);
         return *refreshRateConfigs.mMaxSupportedRefreshRate;
+    }
+
+    void setLastBestRefreshRateInvocation(RefreshRateConfigs& refreshRateConfigs,
+                                          const GetBestRefreshRateInvocation& invocation) {
+        std::lock_guard lock(refreshRateConfigs.mLock);
+        refreshRateConfigs.lastBestRefreshRateInvocation.emplace(
+                GetBestRefreshRateInvocation(invocation));
+    }
+
+    std::optional<GetBestRefreshRateInvocation> getLastBestRefreshRateInvocation(
+            const RefreshRateConfigs& refreshRateConfigs) {
+        std::lock_guard lock(refreshRateConfigs.mLock);
+        return refreshRateConfigs.lastBestRefreshRateInvocation;
     }
 
     // Test config IDs
@@ -1450,16 +1470,37 @@ TEST_F(RefreshRateConfigsTest, nonSeamlessExactAndSeamlessMultipleLayers) {
                                                .seamlessness = Seamlessness::OnlySeamless,
                                                .weight = 1.0f,
                                                .focused = true}};
-    auto& seamedLayer = layers[0];
 
     ASSERT_EQ(HWC_CONFIG_ID_50,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
                       .getModeId());
 
+    auto& seamedLayer = layers[0];
     seamedLayer.name = "30Hz ExplicitDefault", seamedLayer.desiredRefreshRate = Fps(30.0f);
     refreshRateConfigs->setCurrentModeId(HWC_CONFIG_ID_30);
 
     ASSERT_EQ(HWC_CONFIG_ID_25,
+              refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
+                      .getModeId());
+}
+
+TEST_F(RefreshRateConfigsTest, minLayersDontTrigerSeamedSwitch) {
+    auto refreshRateConfigs =
+            std::make_unique<RefreshRateConfigs>(m60_90DeviceWithDifferentGroups,
+                                                 /*currentConfigId=*/HWC_CONFIG_ID_90);
+
+    // Allow group switching.
+    RefreshRateConfigs::Policy policy;
+    policy.defaultMode = refreshRateConfigs->getCurrentPolicy().defaultMode;
+    policy.allowGroupSwitching = true;
+    ASSERT_GE(refreshRateConfigs->setDisplayManagerPolicy(policy), 0);
+
+    auto layers = std::vector<LayerRequirement>{LayerRequirement{.name = "Min",
+                                                                 .vote = LayerVoteType::Min,
+                                                                 .weight = 1.f,
+                                                                 .focused = true}};
+
+    ASSERT_EQ(HWC_CONFIG_ID_90,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false})
                       .getModeId());
 }
@@ -1729,6 +1770,78 @@ TEST_F(RefreshRateConfigsTest, getBestRefreshRate_ExplicitExactEnableFrameRateOv
     explicitExactLayer.desiredRefreshRate = Fps(120);
     EXPECT_EQ(mExpected120Config,
               refreshRateConfigs->getBestRefreshRate(layers, {.touch = false, .idle = false}));
+}
+
+TEST_F(RefreshRateConfigsTest, getBestRefreshRate_ReadsCached) {
+    using GlobalSignals = RefreshRateConfigs::GlobalSignals;
+
+    auto refreshRateConfigs =
+            std::make_unique<RefreshRateConfigs>(m30_60_72_90_120Device,
+                                                 /*currentConfigId=*/HWC_CONFIG_ID_60);
+
+    setLastBestRefreshRateInvocation(*refreshRateConfigs,
+                                     GetBestRefreshRateInvocation{.layerRequirements = std::vector<
+                                                                          LayerRequirement>(),
+                                                                  .globalSignals = {.touch = true,
+                                                                                    .idle = true},
+                                                                  .outSignalsConsidered =
+                                                                          {.touch = true,
+                                                                           .idle = false},
+                                                                  .resultingBestRefreshRate =
+                                                                          createRefreshRate(
+                                                                                  mConfig90)});
+
+    EXPECT_EQ(createRefreshRate(mConfig90),
+              refreshRateConfigs->getBestRefreshRate(std::vector<LayerRequirement>(),
+                                                     {.touch = true, .idle = true}));
+
+    const GlobalSignals cachedSignalsConsidered{.touch = true, .idle = false};
+    setLastBestRefreshRateInvocation(*refreshRateConfigs,
+                                     GetBestRefreshRateInvocation{.layerRequirements = std::vector<
+                                                                          LayerRequirement>(),
+                                                                  .globalSignals = {.touch = true,
+                                                                                    .idle = true},
+                                                                  .outSignalsConsidered =
+                                                                          cachedSignalsConsidered,
+                                                                  .resultingBestRefreshRate =
+                                                                          createRefreshRate(
+                                                                                  mConfig30)});
+
+    GlobalSignals signalsConsidered;
+    EXPECT_EQ(createRefreshRate(mConfig30),
+              refreshRateConfigs->getBestRefreshRate(std::vector<LayerRequirement>(),
+                                                     {.touch = true, .idle = true},
+                                                     &signalsConsidered));
+
+    EXPECT_EQ(cachedSignalsConsidered, signalsConsidered);
+}
+
+TEST_F(RefreshRateConfigsTest, getBestRefreshRate_WritesCache) {
+    using GlobalSignals = RefreshRateConfigs::GlobalSignals;
+
+    auto refreshRateConfigs =
+            std::make_unique<RefreshRateConfigs>(m30_60_72_90_120Device,
+                                                 /*currentConfigId=*/HWC_CONFIG_ID_60);
+    ASSERT_FALSE(getLastBestRefreshRateInvocation(*refreshRateConfigs).has_value());
+
+    GlobalSignals globalSignals{.touch = true, .idle = true};
+    auto layers = std::vector<LayerRequirement>{LayerRequirement{.weight = 1.0f},
+                                                LayerRequirement{.weight = 0.5f}};
+    const auto lastResult =
+            refreshRateConfigs->getBestRefreshRate(layers, globalSignals,
+                                                   /* outSignalsConsidered */ nullptr);
+
+    const auto lastInvocation = getLastBestRefreshRateInvocation(*refreshRateConfigs);
+
+    ASSERT_TRUE(lastInvocation.has_value());
+    ASSERT_EQ(layers, lastInvocation->layerRequirements);
+    ASSERT_EQ(globalSignals, lastInvocation->globalSignals);
+    ASSERT_EQ(lastResult, lastInvocation->resultingBestRefreshRate);
+
+    // outSignalsConsidered needs to be populated even tho earlier we gave nullptr
+    // to getBestRefreshRate()
+    GlobalSignals detaultSignals;
+    ASSERT_FALSE(detaultSignals == lastInvocation->outSignalsConsidered);
 }
 
 TEST_F(RefreshRateConfigsTest, testComparisonOperator) {

@@ -43,24 +43,27 @@ public:
     HWComposer();
     ~HWComposer() override;
 
-    MOCK_METHOD2(setConfiguration, void(HWC2::ComposerCallback*, int32_t));
+    MOCK_METHOD1(setCallback, void(HWC2::ComposerCallback*));
     MOCK_CONST_METHOD3(getDisplayIdentificationData,
                        bool(hal::HWDisplayId, uint8_t*, DisplayIdentificationData*));
     MOCK_CONST_METHOD1(hasCapability, bool(hal::Capability));
     MOCK_CONST_METHOD2(hasDisplayCapability, bool(HalDisplayId, hal::DisplayCapability));
 
-    MOCK_METHOD3(allocateVirtualDisplay,
-                 std::optional<DisplayId>(uint32_t, uint32_t, ui::PixelFormat*));
+    MOCK_CONST_METHOD0(getMaxVirtualDisplayCount, size_t());
+    MOCK_CONST_METHOD0(getMaxVirtualDisplayDimension, size_t());
+    MOCK_METHOD4(allocateVirtualDisplay,
+                 bool(HalVirtualDisplayId, ui::Size, ui::PixelFormat*,
+                      std::optional<PhysicalDisplayId>));
     MOCK_METHOD2(allocatePhysicalDisplay, void(hal::HWDisplayId, PhysicalDisplayId));
-    MOCK_METHOD1(createLayer, HWC2::Layer*(HalDisplayId));
-    MOCK_METHOD2(destroyLayer, void(HalDisplayId, HWC2::Layer*));
-    MOCK_METHOD3(getDeviceCompositionChanges,
-                 status_t(HalDisplayId, bool,
+    MOCK_METHOD1(createLayer, std::shared_ptr<HWC2::Layer>(HalDisplayId));
+    MOCK_METHOD4(getDeviceCompositionChanges,
+                 status_t(HalDisplayId, bool, std::chrono::steady_clock::time_point,
                           std::optional<android::HWComposer::DeviceRequestedChanges>*));
     MOCK_METHOD5(setClientTarget,
                  status_t(HalDisplayId, uint32_t, const sp<Fence>&, const sp<GraphicBuffer>&,
                           ui::Dataspace));
-    MOCK_METHOD1(presentAndGetReleaseFences, status_t(HalDisplayId));
+    MOCK_METHOD2(presentAndGetReleaseFences,
+                 status_t(HalDisplayId, std::chrono::steady_clock::time_point));
     MOCK_METHOD2(setPowerMode, status_t(PhysicalDisplayId, hal::PowerMode));
     MOCK_METHOD2(setActiveConfig, status_t(HalDisplayId, size_t));
     MOCK_METHOD2(setColorTransform, status_t(HalDisplayId, const mat4&));
