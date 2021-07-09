@@ -499,6 +499,7 @@ status_t HWComposer::getDeviceCompositionChanges(
     const bool canSkipValidate =
             std::chrono::steady_clock::now() >= earliestPresentTime;
     displayData.validateWasSkipped = false;
+    bool acceptChanges = true;
     if (canSkipValidate) {
         sp<Fence> outPresentFence;
         uint32_t state = UINT32_MAX;
@@ -524,6 +525,8 @@ status_t HWComposer::getDeviceCompositionChanges(
             ALOGV("skip validate case present succeeded");
             return NO_ERROR;
         }
+
+        acceptChanges = (state != 2);
     } else {
         error = hwcDisplay->validate(&numTypes, &numRequests);
     }
@@ -550,8 +553,11 @@ status_t HWComposer::getDeviceCompositionChanges(
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
                                                std::move(clientTargetProperty)});
-    error = hwcDisplay->acceptChanges();
-    RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
+
+    if (acceptChanges) {
+        error = hwcDisplay->acceptChanges();
+        RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
+    }
 
     return NO_ERROR;
 }
