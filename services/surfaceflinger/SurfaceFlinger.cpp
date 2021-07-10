@@ -507,6 +507,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
         mEventQueue(mFactory.createMessageQueue()),
         mCompositionEngine(mFactory.createCompositionEngine()),
         mHwcServiceName(base::GetProperty("debug.sf.hwc_service_name"s, "default"s)),
+        mTunnelModeEnabledReporter(new TunnelModeEnabledReporter()),
         mInternalDisplayDensity(getDensityFromProperty("ro.sf.lcd_density", true)),
         mEmulatedDisplayDensity(getDensityFromProperty("qemu.sf.lcd_density", false)) {
     ALOGI("Using HWComposer service: %s", mHwcServiceName.c_str());
@@ -1505,6 +1506,10 @@ void SurfaceFlinger::setActiveModeInternal() {
     updatePhaseConfiguration(refreshRate);
     ATRACE_INT("ActiveConfigFPS", refreshRate.getValue());
 
+    if (mRefreshRateOverlay) {
+        mRefreshRateOverlay->changeRefreshRate(upcomingMode->getFps());
+    }
+
     if (mUpcomingActiveMode.event != Scheduler::ModeEvent::None) {
         const nsecs_t vsyncPeriod = refreshRate.getPeriodNsecs();
         const auto physicalId = display->getPhysicalId();
@@ -1587,9 +1592,6 @@ void SurfaceFlinger::performSetActiveMode() {
     }
 
     mScheduler->onNewVsyncPeriodChangeTimeline(outTimeline);
-    if (mRefreshRateOverlay) {
-        mRefreshRateOverlay->changeRefreshRate(desiredMode->getFps());
-    }
 
     // Scheduler will submit an empty frame to HWC if needed.
     mSetActiveModePending = true;
@@ -3723,23 +3725,12 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags) {
         processDisplayChangesLocked();
         processDisplayHotplugEventsLocked();
     }
+    mForceTraversal = false;
+    mForceTransactionDisplayChange = displayTransactionNeeded;
 
-    // Commit layer transactions. This needs to happen after display transactions are
-    // committed because some geometry logic relies on display orientation.
-    if ((transactionFlags & eTraversalNeeded) || mForceTraversal || displayTransactionNeeded) {
-        mForceTraversal = false;
-        mCurrentState.traverse([&](Layer* layer) {
-            uint32_t trFlags = layer->getTransactionFlags(eTransactionNeeded);
-            if (!trFlags && !displayTransactionNeeded) return;
-
-            const uint32_t flags = layer->doTransaction(0);
-            if (flags & Layer::eVisibleRegion)
-                mVisibleRegionsDirty = true;
-
-            if (flags & Layer::eInputInfoChanged) {
-                mInputInfoChanged = true;
-            }
-        });
+    if (mSomeChildrenChanged) {
+        mVisibleRegionsDirty = true;
+        mSomeChildrenChanged = false;
     }
 
     // Update transform hint
@@ -3964,7 +3955,6 @@ void SurfaceFlinger::initScheduler(const DisplayDeviceState& displayState) {
     mRegionSamplingThread =
             new RegionSamplingThread(*this, RegionSamplingThread::EnvironmentTimingTunables());
     mFpsReporter = new FpsReporter(*mFrameTimeline, *this);
-    mTunnelModeEnabledReporter = new TunnelModeEnabledReporter(*this);
     // Dispatch a mode change request for the primary display on scheduler
     // initialization, so that the EventThreads always contain a reference to a
     // prior configuration.
@@ -4035,22 +4025,16 @@ void SurfaceFlinger::commitTransactionLocked() {
     // clear the "changed" flags in current state
     mCurrentState.colorMatrixChanged = false;
 
-    for (const auto& rootLayer : mDrawingState.layersSortedByZ) {
-        rootLayer->commitChildList();
-    }
-    // TODO(b/163019109): See if this traversal is needed at all...
-    if (!mOffscreenLayers.empty()) {
-        mDrawingState.traverse([&](Layer* layer) {
-            // If the layer can be reached when traversing mDrawingState, then the layer is no
-            // longer offscreen. Remove the layer from the offscreenLayer set.
-            if (mOffscreenLayers.count(layer)) {
-                mOffscreenLayers.erase(layer);
-            }
-        });
+    if (mVisibleRegionsDirty) {
+        for (const auto& rootLayer : mDrawingState.layersSortedByZ) {
+            rootLayer->commitChildList();
+        }
     }
 
     commitOffscreenLayers();
-    mDrawingState.traverse([&](Layer* layer) { layer->updateMirrorInfo(); });
+    if (mNumClones > 0) {
+        mDrawingState.traverse([&](Layer* layer) { layer->updateMirrorInfo(); });
+    }
 }
 
 void SurfaceFlinger::commitOffscreenLayers() {
@@ -4098,7 +4082,14 @@ bool SurfaceFlinger::handlePageFlip() {
     // Display is now waiting on Layer 1's frame, which is behind layer 0's
     // second frame. But layer 0's second frame could be waiting on display.
     mDrawingState.traverse([&](Layer* layer) {
-        if (layer->hasReadyFrame()) {
+         uint32_t trFlags = layer->getTransactionFlags(eTransactionNeeded);
+         if (trFlags || mForceTransactionDisplayChange) {
+             const uint32_t flags = layer->doTransaction(0);
+             if (flags & Layer::eVisibleRegion)
+                 mVisibleRegionsDirty = true;
+         }
+
+         if (layer->hasReadyFrame()) {
             frameQueued = true;
             if (layer->shouldPresentNow(expectedPresentTime)) {
                 mLayersWithQueuedFrames.emplace(layer);
@@ -4108,10 +4099,11 @@ bool SurfaceFlinger::handlePageFlip() {
                 ATRACE_NAME("!layer->shouldPresentNow()");
                 layer->useEmptyDamage();
             }
-        } else {
+         } else {
             layer->useEmptyDamage();
         }
     });
+    mForceTransactionDisplayChange = false;
 
     if (wakeUpPresentationDisplays && !mLayersWithQueuedFrames.empty()) {
         handlePresentationDisplaysEarlyWakeup(layerStackIds.size(), layerStackId);
@@ -4156,7 +4148,9 @@ bool SurfaceFlinger::handlePageFlip() {
         mBootStage = BootStage::BOOTANIMATION;
     }
 
-    mDrawingState.traverse([&](Layer* layer) { layer->updateCloneBufferInfo(); });
+    if (mNumClones > 0) {
+        mDrawingState.traverse([&](Layer* layer) { layer->updateCloneBufferInfo(); });
+    }
 
     // Only continue with the refresh if there is actually new work to do
     return !mLayersWithQueuedFrames.empty() && newDataLatched;
@@ -5094,7 +5088,7 @@ status_t SurfaceFlinger::mirrorLayer(const sp<Client>& client, const sp<IBinder>
             return result;
         }
 
-        mirrorLayer->mClonedChild = mirrorFrom->createClone();
+        mirrorLayer->setClonedChild(mirrorFrom->createClone());
     }
 
     *outLayerId = mirrorLayer->sequence;
@@ -7966,7 +7960,7 @@ void SurfaceFlinger::onLayerFirstRef(Layer* layer) {
 
 void SurfaceFlinger::onLayerDestroyed(Layer* layer) {
     mNumLayers--;
-    removeFromOffscreenLayers(layer);
+    removeHierarchyFromOffscreenLayers(layer);
     if (!layer->isRemovedFromCurrentState()) {
         mScheduler->deregisterLayer(layer);
     }
@@ -7979,10 +7973,14 @@ void SurfaceFlinger::onLayerDestroyed(Layer* layer) {
 // from dangling children layers such that they are not reachable from the
 // Drawing state nor the offscreen layer list
 // See b/141111965
-void SurfaceFlinger::removeFromOffscreenLayers(Layer* layer) {
+void SurfaceFlinger::removeHierarchyFromOffscreenLayers(Layer* layer) {
     for (auto& child : layer->getCurrentChildren()) {
         mOffscreenLayers.emplace(child.get());
     }
+    mOffscreenLayers.erase(layer);
+}
+
+void SurfaceFlinger::removeFromOffscreenLayers(Layer* layer) {
     mOffscreenLayers.erase(layer);
 }
 
