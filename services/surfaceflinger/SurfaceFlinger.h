@@ -457,6 +457,7 @@ private:
     // For unit tests
     friend class TestableSurfaceFlinger;
     friend class TransactionApplicationTest;
+    friend class TunnelModeEnabledReporterTest;
 
     using RefreshRate = scheduler::RefreshRateConfigs::RefreshRate;
     using VsyncModulator = scheduler::VsyncModulator;
@@ -811,7 +812,7 @@ private:
 
     int getGPUContextPriority() override;
 
-    status_t getExtraBufferCount(int* extraBuffers) const override;
+    status_t getMaxAcquiredBufferCount(int* buffers) const override;
 
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
@@ -1038,6 +1039,8 @@ private:
     size_t getMaxTextureSize() const;
     size_t getMaxViewportDims() const;
 
+    int getMaxAcquiredBufferCountForCurrentRefreshRate(uid_t uid) const;
+
     /*
      * Display and layer stack management
      */
@@ -1183,6 +1186,7 @@ private:
 
     // Calculates the expected present time for this frame. For negative offsets, performs a
     // correction using the predicted vsync for the next frame instead.
+
     nsecs_t calculateExpectedPresentTime(DisplayStatInfo) const;
 
     /*
@@ -1338,8 +1342,9 @@ private:
     std::vector<ui::ColorMode> getDisplayColorModes(PhysicalDisplayId displayId)
             REQUIRES(mStateLock);
 
-    static int calculateExtraBufferCount(Fps maxSupportedRefreshRate,
-                                         std::chrono::nanoseconds presentLatency);
+    static int calculateMaxAcquiredBufferCount(Fps refreshRate,
+                                               std::chrono::nanoseconds presentLatency);
+    int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
 
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
@@ -1386,8 +1391,14 @@ private:
     // don't need synchronization
     State mDrawingState{LayerVector::StateSet::Drawing};
     bool mVisibleRegionsDirty = false;
-    // Set during transaction commit stage to track if the input info for a layer has changed.
+
+    // Set during transaction application stage to track if the input info or children
+    // for a layer has changed.
+    // TODO: Also move visibleRegions over to a boolean system.
     bool mInputInfoChanged = false;
+    bool mSomeChildrenChanged;
+    bool mForceTransactionDisplayChange = false;
+
     bool mGeometryInvalid = false;
     bool mAnimCompositionPending = false;
 

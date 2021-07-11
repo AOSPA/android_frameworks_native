@@ -48,12 +48,12 @@ using PresentState = frametimeline::SurfaceFrame::PresentState;
 namespace {
 void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                const sp<GraphicBuffer>& buffer, const sp<Fence>& releaseFence,
-                               uint32_t transformHint) {
+                               uint32_t transformHint, uint32_t currentMaxAcquiredBufferCount) {
     if (!listener) {
         return;
     }
     listener->onReleaseBuffer(buffer->getId(), releaseFence ? releaseFence : Fence::NO_FENCE,
-                              transformHint);
+                              transformHint, currentMaxAcquiredBufferCount);
 }
 } // namespace
 
@@ -68,7 +68,7 @@ const std::array<float, 16> BufferStateLayer::IDENTITY_MATRIX{
 
 BufferStateLayer::BufferStateLayer(const LayerCreationArgs& args)
       : BufferLayer(args), mHwcSlotGenerator(new HwcSlotGenerator()) {
-    mCurrentState.dataspace = ui::Dataspace::V0_SRGB;
+    mDrawingState.dataspace = ui::Dataspace::V0_SRGB;
 }
 
 BufferStateLayer::~BufferStateLayer() {
@@ -79,7 +79,9 @@ BufferStateLayer::~BufferStateLayer() {
     if (mBufferInfo.mBuffer != nullptr && !isClone()) {
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                   mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFence,
-                                  mTransformHint);
+                                  mTransformHint,
+                                  mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
+                                          mOwnerUid));
     }
 }
 
@@ -203,6 +205,8 @@ void BufferStateLayer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
     for (const auto& handle : mDrawingState.callbackHandles) {
         handle->transformHint = mTransformHint;
         handle->dequeueReadyTime = dequeueReadyTime;
+        handle->currentMaxAcquiredBufferCount =
+                mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mOwnerUid);
     }
 
     // If there are multiple transactions in this frame, set the previous id on the earliest
@@ -256,17 +260,17 @@ void BufferStateLayer::finalizeFrameEventHistory(const std::shared_ptr<FenceTime
 bool BufferStateLayer::willPresentCurrentTransaction() const {
     // Returns true if the most recent Transaction applied to CurrentState will be presented.
     return (getSidebandStreamChanged() || getAutoRefresh() ||
-            (mCurrentState.modified &&
-             (mCurrentState.buffer != nullptr || mCurrentState.bgColorLayer != nullptr)));
+            (mDrawingState.modified &&
+             (mDrawingState.buffer != nullptr || mDrawingState.bgColorLayer != nullptr)));
 }
 
 /* TODO: vhau uncomment once deferred transaction migration complete in
  * WindowManager
 void BufferStateLayer::pushPendingState() {
-    if (!mCurrentState.modified) {
+    if (!mDrawingState.modified) {
         return;
     }
-    mPendingStates.push_back(mCurrentState);
+    mPendingStates.push_back(mDrawingState);
     ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
 }
 */
@@ -278,8 +282,8 @@ bool BufferStateLayer::isBufferDue(nsecs_t expectedPresentTime) const {
         smomo::SmomoBufferStats bufferStats;
         bufferStats.id = getSequence();
         bufferStats.queued_frames = mPendingBufferTransactions;
-        bufferStats.auto_timestamp = mCurrentState.isAutoTimestamp;
-        bufferStats.timestamp = mCurrentState.desiredPresentTime;
+        bufferStats.auto_timestamp = mDrawingState.isAutoTimestamp;
+        bufferStats.timestamp = mDrawingState.desiredPresentTime;
         bufferStats.dequeue_latency = 0;
         isDue = mFlinger->mSmoMo->ShouldPresentNow(bufferStats, expectedPresentTime);
     }
@@ -292,65 +296,72 @@ Rect BufferStateLayer::getCrop(const Layer::State& s) const {
 }
 
 bool BufferStateLayer::setTransform(uint32_t transform) {
-    if (mCurrentState.bufferTransform == transform) return false;
-    mCurrentState.bufferTransform = transform;
-    mCurrentState.modified = true;
+    if (mDrawingState.bufferTransform == transform) return false;
+    mDrawingState.bufferTransform = transform;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setTransformToDisplayInverse(bool transformToDisplayInverse) {
-    if (mCurrentState.transformToDisplayInverse == transformToDisplayInverse) return false;
-    mCurrentState.sequence++;
-    mCurrentState.transformToDisplayInverse = transformToDisplayInverse;
-    mCurrentState.modified = true;
+    if (mDrawingState.transformToDisplayInverse == transformToDisplayInverse) return false;
+    mDrawingState.sequence++;
+    mDrawingState.transformToDisplayInverse = transformToDisplayInverse;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setCrop(const Rect& crop) {
-    if (mCurrentState.crop == crop) return false;
-    mCurrentState.sequence++;
-    mCurrentState.crop = crop;
+    if (mDrawingState.crop == crop) return false;
+    mDrawingState.sequence++;
+    mDrawingState.crop = crop;
 
-    mCurrentState.modified = true;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setBufferCrop(const Rect& bufferCrop) {
-    if (mCurrentState.bufferCrop == bufferCrop) return false;
+    if (mDrawingState.bufferCrop == bufferCrop) return false;
 
-    mCurrentState.sequence++;
-    mCurrentState.bufferCrop = bufferCrop;
+    mDrawingState.sequence++;
+    mDrawingState.bufferCrop = bufferCrop;
 
-    mCurrentState.modified = true;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setDestinationFrame(const Rect& destinationFrame) {
-    if (mCurrentState.destinationFrame == destinationFrame) return false;
+    if (mDrawingState.destinationFrame == destinationFrame) return false;
 
-    mCurrentState.sequence++;
-    mCurrentState.destinationFrame = destinationFrame;
+    mDrawingState.sequence++;
+    mDrawingState.destinationFrame = destinationFrame;
 
-    mCurrentState.modified = true;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+static bool assignTransform(ui::Transform* dst, ui::Transform& from) {
+    if (*dst == from) {
+        return false;
+    }
+    *dst = from;
     return true;
 }
 
 // Translate destination frame into scale and position. If a destination frame is not set, use the
 // provided scale and position
-void BufferStateLayer::updateGeometry() {
-    if (mCurrentState.destinationFrame.isEmpty()) {
+bool BufferStateLayer::updateGeometry() {
+    if (mDrawingState.destinationFrame.isEmpty()) {
         // If destination frame is not set, use the requested transform set via
         // BufferStateLayer::setPosition and BufferStateLayer::setMatrix.
-        mCurrentState.transform = mRequestedTransform;
-        return;
+        return assignTransform(&mDrawingState.transform, mRequestedTransform);
     }
 
-    Rect destRect = mCurrentState.destinationFrame;
+    Rect destRect = mDrawingState.destinationFrame;
     int32_t destW = destRect.width();
     int32_t destH = destRect.height();
     if (destRect.left < 0) {
@@ -362,21 +373,20 @@ void BufferStateLayer::updateGeometry() {
         destRect.bottom = destH;
     }
 
-    if (!mCurrentState.buffer) {
+    if (!mDrawingState.buffer) {
         ui::Transform t;
         t.set(destRect.left, destRect.top);
-        mCurrentState.transform = t;
-        return;
+        return assignTransform(&mDrawingState.transform, t);
     }
 
-    uint32_t bufferWidth = mCurrentState.buffer->getBuffer()->getWidth();
-    uint32_t bufferHeight = mCurrentState.buffer->getBuffer()->getHeight();
+    uint32_t bufferWidth = mDrawingState.buffer->getBuffer()->getWidth();
+    uint32_t bufferHeight = mDrawingState.buffer->getBuffer()->getHeight();
     // Undo any transformations on the buffer.
-    if (mCurrentState.bufferTransform & ui::Transform::ROT_90) {
+    if (mDrawingState.bufferTransform & ui::Transform::ROT_90) {
         std::swap(bufferWidth, bufferHeight);
     }
     uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
-    if (mCurrentState.transformToDisplayInverse) {
+    if (mDrawingState.transformToDisplayInverse) {
         if (invTransform & ui::Transform::ROT_90) {
             std::swap(bufferWidth, bufferHeight);
         }
@@ -387,8 +397,7 @@ void BufferStateLayer::updateGeometry() {
     ui::Transform t;
     t.set(sx, 0, 0, sy);
     t.set(destRect.left, destRect.top);
-    mCurrentState.transform = t;
-    return;
+    return assignTransform(&mDrawingState.transform, t);
 }
 
 bool BufferStateLayer::setMatrix(const layer_state_t::matrix22_t& matrix,
@@ -409,8 +418,8 @@ bool BufferStateLayer::setMatrix(const layer_state_t::matrix22_t& matrix,
 
     mRequestedTransform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
 
-    mCurrentState.sequence++;
-    mCurrentState.modified = true;
+    mDrawingState.sequence++;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
     return true;
@@ -423,8 +432,8 @@ bool BufferStateLayer::setPosition(float x, float y) {
 
     mRequestedTransform.set(x, y);
 
-    mCurrentState.sequence++;
-    mCurrentState.modified = true;
+    mDrawingState.sequence++;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
     return true;
@@ -436,7 +445,7 @@ bool BufferStateLayer::addFrameEvent(const sp<Fence>& acquireFence, nsecs_t post
     mAcquireTimeline.updateSignalTimes();
     std::shared_ptr<FenceTime> acquireFenceTime =
             std::make_shared<FenceTime>((acquireFence ? acquireFence : Fence::NO_FENCE));
-    NewFrameEventsEntry newTimestamps = {mCurrentState.frameNumber, postedTime, desiredPresentTime,
+    NewFrameEventsEntry newTimestamps = {mDrawingState.frameNumber, postedTime, desiredPresentTime,
                                          acquireFenceTime};
     mFrameEventHistory.setProducerWantsEvents();
     mFrameEventHistory.addQueue(newTimestamps);
@@ -451,37 +460,39 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
                                  const sp<ITransactionCompletedListener>& releaseBufferListener) {
     ATRACE_CALL();
 
-    if (mCurrentState.buffer) {
+    if (mDrawingState.buffer) {
         mReleasePreviousBuffer = true;
-        if (!mDrawingState.buffer ||
-            mCurrentState.buffer->getBuffer() != mDrawingState.buffer->getBuffer()) {
-            // If mCurrentState has a buffer, and we are about to update again
+        if (mDrawingState.buffer != mBufferInfo.mBuffer) {
+            // If mDrawingState has a buffer, and we are about to update again
             // before swapping to drawing state, then the first buffer will be
             // dropped and we should decrement the pending buffer count and
             // call any release buffer callbacks if set.
-            callReleaseBufferCallback(mCurrentState.releaseBufferListener,
-                                      mCurrentState.buffer->getBuffer(),
-                                      mCurrentState.acquireFence,
-                                      mTransformHint);
+            callReleaseBufferCallback(mDrawingState.releaseBufferListener,
+                                      mDrawingState.buffer->getBuffer(), mDrawingState.acquireFence,
+                                      mTransformHint,
+                                      mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
+                                              mOwnerUid));
             decrementPendingBufferCount();
-            if (mCurrentState.bufferSurfaceFrameTX != nullptr) {
-                addSurfaceFrameDroppedForBuffer(mCurrentState.bufferSurfaceFrameTX);
-                mCurrentState.bufferSurfaceFrameTX.reset();
+            if (mDrawingState.bufferSurfaceFrameTX != nullptr &&
+                mDrawingState.bufferSurfaceFrameTX->getPresentState() != PresentState::Presented) {
+              addSurfaceFrameDroppedForBuffer(mDrawingState.bufferSurfaceFrameTX);
+              mDrawingState.bufferSurfaceFrameTX.reset();
             }
         }
     }
-    mCurrentState.frameNumber = frameNumber;
-    mCurrentState.releaseBufferListener = releaseBufferListener;
-    mCurrentState.buffer = buffer;
-    mCurrentState.clientCacheId = clientCacheId;
-    mCurrentState.modified = true;
+
+    mDrawingState.frameNumber = frameNumber;
+    mDrawingState.releaseBufferListener = releaseBufferListener;
+    mDrawingState.buffer = buffer;
+    mDrawingState.clientCacheId = clientCacheId;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
     const int32_t layerId = getSequence();
-    mFlinger->mTimeStats->setPostTime(layerId, mCurrentState.frameNumber, getName().c_str(),
+    mFlinger->mTimeStats->setPostTime(layerId, mDrawingState.frameNumber, getName().c_str(),
                                       mOwnerUid, postTime, getGameMode());
-    mCurrentState.desiredPresentTime = desiredPresentTime;
-    mCurrentState.isAutoTimestamp = isAutoTimestamp;
+    mDrawingState.desiredPresentTime = desiredPresentTime;
+    mDrawingState.isAutoTimestamp = isAutoTimestamp;
 
     const nsecs_t presentTime = [&] {
         if (!isAutoTimestamp) return desiredPresentTime;
@@ -508,15 +519,15 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
                                                FrameTracer::FrameEvent::QUEUE);
     }
 
-    mCurrentState.width = mCurrentState.buffer->getBuffer()->getWidth();
-    mCurrentState.height = mCurrentState.buffer->getBuffer()->getHeight();
+    mDrawingState.width = mDrawingState.buffer->getBuffer()->getWidth();
+    mDrawingState.height = mDrawingState.buffer->getBuffer()->getHeight();
 
     if (mFlinger->mSmoMo) {
         smomo::SmomoBufferStats bufferStats;
         bufferStats.id = getSequence();
         bufferStats.queued_frames = mPendingBufferTransactions;
-        bufferStats.auto_timestamp = mCurrentState.isAutoTimestamp;
-        bufferStats.timestamp = mCurrentState.desiredPresentTime;
+        bufferStats.auto_timestamp = mDrawingState.isAutoTimestamp;
+        bufferStats.timestamp = mDrawingState.desiredPresentTime;
         bufferStats.dequeue_latency = 0;
         mFlinger->mSmoMo->CollectLayerStats(bufferStats);
     }
@@ -525,54 +536,60 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
 }
 
 bool BufferStateLayer::setAcquireFence(const sp<Fence>& fence) {
-    mCurrentState.acquireFence = fence;
-    mCurrentState.acquireFenceTime = std::make_unique<FenceTime>(fence);
+    mDrawingState.acquireFence = fence;
+    mDrawingState.acquireFenceTime = std::make_unique<FenceTime>(fence);
 
     // The acquire fences of BufferStateLayers have already signaled before they are set
-    mCallbackHandleAcquireTime = mCurrentState.acquireFenceTime->getSignalTime();
+    mCallbackHandleAcquireTime = mDrawingState.acquireFenceTime->getSignalTime();
 
-    mCurrentState.modified = true;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setDataspace(ui::Dataspace dataspace) {
-    if (mCurrentState.dataspace == dataspace) return false;
-    mCurrentState.dataspace = dataspace;
-    mCurrentState.modified = true;
+    if (mDrawingState.dataspace == dataspace) return false;
+    mDrawingState.dataspace = dataspace;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setHdrMetadata(const HdrMetadata& hdrMetadata) {
-    if (mCurrentState.hdrMetadata == hdrMetadata) return false;
-    mCurrentState.hdrMetadata = hdrMetadata;
-    mCurrentState.modified = true;
+    if (mDrawingState.hdrMetadata == hdrMetadata) return false;
+    mDrawingState.hdrMetadata = hdrMetadata;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setSurfaceDamageRegion(const Region& surfaceDamage) {
-    mCurrentState.surfaceDamageRegion = surfaceDamage;
-    mCurrentState.modified = true;
+    mDrawingState.surfaceDamageRegion = surfaceDamage;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setApi(int32_t api) {
-    if (mCurrentState.api == api) return false;
-    mCurrentState.api = api;
-    mCurrentState.modified = true;
+    if (mDrawingState.api == api) return false;
+    mDrawingState.api = api;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
 bool BufferStateLayer::setSidebandStream(const sp<NativeHandle>& sidebandStream) {
-    if (mCurrentState.sidebandStream == sidebandStream) return false;
-    mCurrentState.sidebandStream = sidebandStream;
-    mCurrentState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
+    if (mDrawingState.sidebandStream == sidebandStream) return false;
 
+    if (mDrawingState.sidebandStream != nullptr && sidebandStream == nullptr) {
+        mFlinger->mTunnelModeEnabledReporter->decrementTunnelModeCount();
+    } else if (sidebandStream != nullptr) {
+        mFlinger->mTunnelModeEnabledReporter->incrementTunnelModeCount();
+    }
+
+    mDrawingState.sidebandStream = sidebandStream;
+    mDrawingState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
     if (!mSidebandStreamChanged.exchange(true)) {
         // mSidebandStreamChanged was false
         mFlinger->signalLayerUpdate();
@@ -598,14 +615,14 @@ bool BufferStateLayer::setTransactionCompletedListeners(
         if (willPresent) {
             // If this transaction set an acquire fence on this layer, set its acquire time
             handle->acquireTime = mCallbackHandleAcquireTime;
-            handle->frameNumber = mCurrentState.frameNumber;
+            handle->frameNumber = mDrawingState.frameNumber;
 
             // Notify the transaction completed thread that there is a pending latched callback
             // handle
             mFlinger->getTransactionCallbackInvoker().registerPendingCallbackHandle(handle);
 
             // Store so latched time and release fence can be set
-            mCurrentState.callbackHandles.push_back(handle);
+            mDrawingState.callbackHandles.push_back(handle);
 
         } else { // If this layer will NOT need to be relatched and presented this frame
             // Notify the transaction completed thread this handle is done
@@ -620,8 +637,8 @@ bool BufferStateLayer::setTransactionCompletedListeners(
 }
 
 bool BufferStateLayer::setTransparentRegionHint(const Region& transparent) {
-    mCurrentState.transparentRegionHint = transparent;
-    mCurrentState.modified = true;
+    mDrawingState.transparentRegionHint = transparent;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -684,7 +701,7 @@ bool BufferStateLayer::framePresentTimeIsCurrent(nsecs_t expectedPresentTime) co
         return true;
     }
 
-    return mCurrentState.isAutoTimestamp || mCurrentState.desiredPresentTime <= expectedPresentTime;
+    return mDrawingState.isAutoTimestamp || mDrawingState.desiredPresentTime <= expectedPresentTime;
 }
 
 bool BufferStateLayer::onPreComposition(nsecs_t refreshStartTime) {
@@ -713,7 +730,7 @@ uint64_t BufferStateLayer::getFrameNumber(nsecs_t /*expectedPresentTime*/) const
  *  }
  * Now imagine getHeadFrameNumber returned mDrawingState.mFrameNumber (or mCurrentFrameNumber).
  * Prior to doTransaction SurfaceFlinger will call notifyAvailableFrames, but because we
- * haven't swapped mCurrentState to mDrawingState yet we will think the sync point
+ * haven't swapped mDrawingState to mDrawingState yet we will think the sync point
  * is not ready. So we will return false from applyPendingState and not swap
  * current state to drawing state. But because we don't swap current state
  * to drawing state the number will never update and we will be stuck. This way
@@ -721,7 +738,7 @@ uint64_t BufferStateLayer::getFrameNumber(nsecs_t /*expectedPresentTime*/) const
  * to apply.
  */
 uint64_t BufferStateLayer::getHeadFrameNumber(nsecs_t /* expectedPresentTime */) const {
-    return mCurrentState.frameNumber;
+    return mDrawingState.frameNumber;
 }
 
 void BufferStateLayer::setAutoRefresh(bool autoRefresh) {
@@ -751,8 +768,8 @@ bool BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
 }
 
 bool BufferStateLayer::hasFrameUpdate() const {
-    const State& c(getCurrentState());
-    return mCurrentStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
+    const State& c(getDrawingState());
+    return mDrawingStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
 status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
@@ -795,6 +812,7 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
         addSurfaceFramePresentedForBuffer(bufferSurfaceFrame,
                                           mDrawingState.acquireFenceTime->getSignalTime(),
                                           latchTime);
+        mDrawingState.bufferSurfaceFrameTX.reset();
     }
 
     std::deque<sp<CallbackHandle>> remainingHandles;
@@ -802,7 +820,7 @@ status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nse
             .finalizeOnCommitCallbackHandles(mDrawingState.callbackHandles, remainingHandles);
     mDrawingState.callbackHandles = remainingHandles;
 
-    mCurrentStateModified = false;
+    mDrawingStateModified = false;
 
     return NO_ERROR;
 }
@@ -1000,7 +1018,9 @@ void BufferStateLayer::bufferMayChange(const sp<GraphicBuffer>& newBuffer) {
         // call any release buffer callbacks if set.
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                   mDrawingState.buffer->getBuffer(), mDrawingState.acquireFence,
-                                  mTransformHint);
+                                  mTransformHint,
+                                  mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
+                                          mOwnerUid));
         decrementPendingBufferCount();
     }
 }
