@@ -179,6 +179,9 @@ Layer::~Layer() {
     if (mDrawingState.sidebandStream != nullptr) {
         mFlinger->mTunnelModeEnabledReporter->decrementTunnelModeCount();
     }
+    if (mHadClonedChild) {
+        mFlinger->mNumClones--;
+    }
 }
 
 LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client, std::string name,
@@ -256,6 +259,7 @@ void Layer::addToCurrentState() {
     if (mRemovedFromDrawingState) {
         mRemovedFromDrawingState = false;
         mFlinger->mScheduler->registerLayer(this);
+        mFlinger->removeFromOffscreenLayers(this);
     }
 
     for (const auto& child : mCurrentChildren) {
@@ -2569,6 +2573,12 @@ bool Layer::getPrimaryDisplayOnly() const {
 
 nsecs_t Layer::getPreviousGfxInfo() {
     return mFrameTracker.getPreviousGfxInfo();
+}
+
+void Layer::setClonedChild(const sp<Layer>& clonedChild) {
+    mClonedChild = clonedChild;
+    mHadClonedChild = true;
+    mFlinger->mNumClones++;
 }
 
 // ---------------------------------------------------------------------------
