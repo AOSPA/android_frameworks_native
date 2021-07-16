@@ -900,7 +900,6 @@ private:
     // Check if unified draw supported
     void startUnifiedDraw();
     void InitComposerExtn();
-    void endDraw();
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();

@@ -2515,33 +2515,6 @@ bool SurfaceFlinger::handleMessageTransaction() {
     return runHandleTransaction;
 }
 
-void SurfaceFlinger::endDraw() {
-#ifdef QTI_UNIFIED_DRAW
-     ATRACE_CALL();
-     Mutex::Autolock lock(mStateLock);
-     for (const auto& [_, displayDevice ] : mDisplays) {
-          uint32_t hwcDisplayId;
-          if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
-             continue;
-          }
-          if (HalDisplayId::tryCast(displayDevice->getId()) &&
-              displayDevice->getCompositionDisplay()
-                           ->getState().usesClientComposition) {
-              composer::FBTSlotInfo current;
-              current.index = displayDevice->getCompositionDisplay()
-                                           ->getRenderSurface()
-                                           ->getClientTargetCurrentSlot();
-              const sp<Fence>glCompositionDoneFence =
-                      displayDevice->getCompositionDisplay()
-                                   ->getRenderSurface()
-                                   ->getClientTargetAcquireFence();
-              current.fence = glCompositionDoneFence;
-              mDisplayExtnIntf->EndDraw(hwcDisplayId, current);
-          }
-    }
-#endif
-}
-
 void SurfaceFlinger::onMessageRefresh() {
     ATRACE_CALL();
 
@@ -2606,11 +2579,6 @@ void SurfaceFlinger::onMessageRefresh() {
     mTimeStats->recordFrameDuration(mFrameStartTime, systemTime());
     // Reset the frame start time now that we've recorded this frame.
     mFrameStartTime = 0;
-#ifdef QTI_UNIFIED_DRAW
-    if (mDisplayExtnIntf) {
-        endDraw();
-    }
-#endif
     mScheduler->onDisplayRefreshed(presentTime);
 
     postFrame();
