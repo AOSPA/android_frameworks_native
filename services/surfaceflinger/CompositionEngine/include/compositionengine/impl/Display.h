@@ -91,6 +91,7 @@ private:
     ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     void beginDraw();
+    void endDraw();
 };
 
 // This template factory function standardizes the implementation details of the
