@@ -36,6 +36,7 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/Errors.h>
 #include <utils/Trace.h>
+#include <cutils/properties.h>
 
 #include "../Layer.h" // needed only for debugging
 #include "../SurfaceFlingerProperties.h"
@@ -140,7 +141,8 @@ HWComposer::HWComposer(std::unique_ptr<Hwc2::Composer> composer)
       : mComposer(std::move(composer)),
         mMaxVirtualDisplayDimension(static_cast<size_t>(sysprop::max_virtual_display_dimension(0))),
         mUpdateDeviceProductInfoOnHotplugReconnect(
-                sysprop::update_device_product_info_on_hotplug_reconnect(false)) {}
+                sysprop::update_device_product_info_on_hotplug_reconnect(false)),
+        mSpecFenceEnabled(property_get_bool("vendor.display.enable_spec_fence", 0)) {}
 
 HWComposer::HWComposer(const std::string& composerServiceName)
       : HWComposer(std::make_unique<Hwc2::impl::Composer>(composerServiceName)) {}
@@ -496,7 +498,7 @@ status_t HWComposer::getDeviceCompositionChanges(
     // to present and there is no client. Otherwise, we may present a frame too
     // early or in case of client composition we first need to render the
     // client target buffer.
-    const bool canSkipValidate =
+    const bool canSkipValidate = mSpecFenceEnabled ||
             std::chrono::steady_clock::now() >= earliestPresentTime;
     displayData.validateWasSkipped = false;
     bool acceptChanges = true;
