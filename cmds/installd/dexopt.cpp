@@ -1231,6 +1231,14 @@ class RunDexoptAnalyzer : public ExecVHelper {
             }
         }
 
+        // On-device signing related. odsign sets the system property odsign.verification.success if
+        // AOT artifacts have the expected signatures.
+        const bool trust_art_apex_data_files =
+                ::android::base::GetBoolProperty("odsign.verification.success", false);
+        if (!trust_art_apex_data_files) {
+            AddRuntimeArg("-Xdeny-art-apex-data-files");
+        }
+
         PrepareArgs(dexoptanalyzer_bin);
     }
 
