@@ -441,6 +441,8 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
 
     hwc.clearReleaseFences(*halDisplayIdOpt);
 
+    endDraw();
+
     return fences;
 }
 
@@ -464,6 +466,41 @@ void Display::finishFrame(const compositionengine::CompositionRefreshArgs& refre
     }
 
     impl::Output::finishFrame(refreshArgs);
+}
+
+void Display::endDraw() {
+#ifdef QTI_UNIFIED_DRAW
+  ATRACE_CALL();
+  auto& outputState = editState();
+  if (!outputState.usesClientComposition || isVirtual()) {
+      return;
+  }
+
+  auto displayId = getDisplayId();
+  if (!displayId.has_value()) {
+      return;
+  }
+
+  auto const physicalDisplayId = PhysicalDisplayId::tryCast(*displayId);
+  if (!physicalDisplayId) {
+      return;
+  }
+
+  auto& hwc = getCompositionEngine().getHwComposer();
+  auto const halDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
+  if (!halDisplayId.has_value()) {
+      return;
+  }
+
+  composer::FBTSlotInfo info;
+  auto renderSurface = getRenderSurface();
+  info.index = renderSurface->getClientTargetCurrentSlot();
+  info.fence = renderSurface->getClientTargetAcquireFence();
+  uint32_t hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
+  if (mDisplayExtnIntf != nullptr) {
+      mDisplayExtnIntf->EndDraw(hwcDisplayId, info);
+  }
+#endif
 }
 
 } // namespace android::compositionengine::impl
