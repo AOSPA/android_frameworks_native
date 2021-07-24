@@ -186,7 +186,6 @@ public:
         float cornerRadius;
         int backgroundBlurRadius;
 
-        bool inputInfoChanged;
         InputWindowInfo inputInfo;
         wp<Layer> touchableRegionCrop;
 
@@ -869,6 +868,8 @@ public:
     // The layers in the cloned hierarchy will match the lifetime of the real layers. That is
     // if the real layer is destroyed, then the clone layer will also be destroyed.
     sp<Layer> mClonedChild;
+    bool mHadClonedChild = false;
+    void setClonedChild(const sp<Layer>& mClonedChild);
 
     mutable bool contentDirty{false};
     Region surfaceDamageRegion;
@@ -1007,14 +1008,11 @@ protected:
     // This layer can be a cursor on some displays.
     bool mPotentialCursor{false};
 
-    LayerVector mCurrentChildren{LayerVector::StateSet::Drawing};
+    LayerVector mCurrentChildren{LayerVector::StateSet::Current};
     LayerVector mDrawingChildren{LayerVector::StateSet::Drawing};
 
     wp<Layer> mCurrentParent;
     wp<Layer> mDrawingParent;
-
-    // Can only be accessed with the SF state lock held.
-    bool mChildrenChanged{false};
 
     // Window types from WindowManager.LayoutParams
     const InputWindowInfo::Type mWindowType;

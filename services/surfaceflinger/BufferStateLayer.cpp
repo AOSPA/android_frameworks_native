@@ -575,10 +575,16 @@ bool BufferStateLayer::setApi(int32_t api) {
 
 bool BufferStateLayer::setSidebandStream(const sp<NativeHandle>& sidebandStream) {
     if (mDrawingState.sidebandStream == sidebandStream) return false;
+
+    if (mDrawingState.sidebandStream != nullptr && sidebandStream == nullptr) {
+        mFlinger->mTunnelModeEnabledReporter->decrementTunnelModeCount();
+    } else if (sidebandStream != nullptr) {
+        mFlinger->mTunnelModeEnabledReporter->incrementTunnelModeCount();
+    }
+
     mDrawingState.sidebandStream = sidebandStream;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
-
     if (!mSidebandStreamChanged.exchange(true)) {
         // mSidebandStreamChanged was false
         mFlinger->signalLayerUpdate();
@@ -758,7 +764,8 @@ bool BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
 
 bool BufferStateLayer::hasFrameUpdate() const {
     const State& c(getDrawingState());
-    return mDrawingStateModified && (c.buffer != nullptr || c.bgColorLayer != nullptr);
+    return (mDrawingStateModified || mDrawingState.modified) &&
+           (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
 status_t BufferStateLayer::updateTexImage(bool& /*recomputeVisibleRegions*/, nsecs_t latchTime,
