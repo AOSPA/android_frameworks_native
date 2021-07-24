@@ -3920,6 +3920,7 @@ void SurfaceFlinger::setVsyncConfig(const VsyncModulator::VsyncConfig& config,
 }
 
 void SurfaceFlinger::commitTransaction() {
+    ATRACE_CALL();
     commitTransactionLocked();
     signalSynchronousTransactions(CountDownLatch::eSyncTransaction);
     mAnimTransactionPending = false;
@@ -7295,12 +7296,12 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
         }
 
         if (!canCaptureBlackoutContent &&
-            parent->getCurrentState().flags & layer_state_t::eLayerSecure) {
+            parent->getDrawingState().flags & layer_state_t::eLayerSecure) {
             ALOGW("Attempting to capture secure layer: PERMISSION_DENIED");
             return PERMISSION_DENIED;
         }
 
-        Rect parentSourceBounds = parent->getCroppedBufferSize(parent->getCurrentState());
+        Rect parentSourceBounds = parent->getCroppedBufferSize(parent->getDrawingState());
         if (args.sourceCrop.width() <= 0) {
             crop.left = 0;
             crop.right = parentSourceBounds.getWidth();
@@ -7542,7 +7543,7 @@ status_t SurfaceFlinger::renderScreenImplLocked(
         if (layer->isSecureDisplay()) {
             return;
         }
-        disableBlurs |= layer->getCurrentState().sidebandStream != nullptr;
+        disableBlurs |= layer->getDrawingState().sidebandStream != nullptr;
 
         Region clip(renderArea.getBounds());
         compositionengine::LayerFE::ClientCompositionTargetSettings targetSettings{
