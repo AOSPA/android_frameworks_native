@@ -2785,8 +2785,71 @@ bool SurfaceFlinger::handleMessageInvalidate() {
         visibleReg.set(layer->getScreenBounds());
         invalidateLayerStack(layer, visibleReg);
     }
+
+    setDisplayAnimating();
+
     mLayersPendingRefresh.clear();
     return refreshNeeded;
+}
+
+void SurfaceFlinger::setDisplayAnimating() {
+    bool hasScreenshot = false;
+    for (const auto& pair : ON_MAIN_THREAD(mDisplays)) {
+        const auto& displayDevice = pair.second;
+        if (!IsDisplayExternalOrVirtual(displayDevice)) {
+           continue;
+        }
+        const auto display = displayDevice->getCompositionDisplay();
+        for (const auto& layer : mDrawingState.layersSortedByZ) {
+            // only consider the layers on the given layer stack
+            if (layer->getLayerStack() == displayDevice->getLayerStack()) {
+               hasScreenshot |= layer->isScreenshot();
+            }
+        }
+        auto layers = displayDevice->getCompositionDisplay()->getOutputLayersOrderedByZ();
+        hasScreenshot |= std::any_of(layers.begin(), layers.end(), [](auto* layer) {
+                                    return layer->getLayerFE().getCompositionState()->isScreenshot;
+                                    });
+    }
+
+    for (auto& layer : mLayersPendingRefresh) {
+        for (const auto& [token, displayDevice] : ON_MAIN_THREAD(mDisplays)) {
+            auto display = displayDevice->getCompositionDisplay();
+            if (!IsDisplayExternalOrVirtual(displayDevice)) {
+               continue;
+            }
+            if (display->belongsInOutput(layer->getLayerStack(), layer->getPrimaryDisplayOnly())) {
+               hasScreenshot |= layer->isScreenshot();
+            }
+        }
+    }
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+    for (const auto& [token, displayDevice] : ON_MAIN_THREAD(mDisplays)) {
+        if (!IsDisplayExternalOrVirtual(displayDevice)) {
+           continue;
+        }
+        uint32_t hwcDisplayId;
+        getHwcDisplayId(displayDevice, &hwcDisplayId);
+        if (mDisplayConfigIntf && (hasScreenshot != mHasScreenshot)) {
+           mDisplayConfigIntf->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
+           mHasScreenshot = hasScreenshot;
+        }
+    }
+#endif
+}
+
+bool SurfaceFlinger::IsDisplayExternalOrVirtual(const sp<DisplayDevice>& displayDevice) {
+    uint32_t hwcDisplayId;
+    bool hasHwcId = getHwcDisplayId(displayDevice, &hwcDisplayId);
+    if (displayDevice->isVirtual()) {
+      return hasHwcId && displayDevice->isVirtual();
+    }
+    auto displayId = displayDevice->getId();
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId).value();
+    bool isExternal = displayId.value &&
+          (getHwComposer().getDisplayConnectionType(physicalDisplayId) ==
+           ui::DisplayConnectionType::External);
+    return hasHwcId && isExternal;
 }
 
 void SurfaceFlinger::updateCompositorTiming(const DisplayStatInfo& stats, nsecs_t compositeTime,
@@ -8442,21 +8505,35 @@ bool SurfaceFlinger::isInternalDisplay(const sp<DisplayDevice>& display) {
 }
 
 bool SurfaceFlinger::getHwcDisplayId(const sp<DisplayDevice>& display, uint32_t *hwcDisplayId) {
-    if (display) {
-        const auto displayId = display->getId();
-        if (displayId.value) {
-            const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
-            if (!physicalDisplayId) {
-                return false;
-            }
-            const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
-            if (halDisplayId) {
-                *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
-                return true;
-            }
-        }
+    if (!display) {
+        return false;
     }
-    return false;
+    const auto displayId = display->getId();
+    if (!displayId.value) {
+        return false;
+    }
+    if (display->isVirtual()) {
+        const auto virtualDisplayId = HalVirtualDisplayId::tryCast(displayId);
+        if (!virtualDisplayId) {
+            return false;
+        }
+        const auto halDisplayId = getHwComposer().fromVirtualDisplayId(*virtualDisplayId);
+        if (!halDisplayId) {
+            return false;
+        }
+        *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
+    } else {
+        const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+        if (!physicalDisplayId) {
+            return false;
+        }
+        const auto halDisplayId = getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
+        if (!halDisplayId) {
+            return false;
+        }
+        *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
+    }
+    return true;
 }
 
 void SurfaceFlinger::updateDisplayExtension(uint32_t displayId, uint32_t configId, bool connected) {

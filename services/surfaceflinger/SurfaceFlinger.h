@@ -1329,6 +1329,10 @@ private:
 
     void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
 
+    bool IsDisplayExternalOrVirtual(const sp<DisplayDevice>& displayDevice);
+
+    void setDisplayAnimating();
+
     static mat4 calculateColorMatrix(float saturation);
 
     void updateColorMatrixLocked();
@@ -1699,6 +1703,7 @@ private:
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     bool mUseLayerExt = false;
     bool mSplitLayerExt = false;
+    bool mHasScreenshot = false;
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
