@@ -423,6 +423,8 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
         return fences;
     }
 
+    endDraw();
+
     auto& hwc = getCompositionEngine().getHwComposer();
     hwc.presentAndGetReleaseFences(*halDisplayIdOpt, getState().earliestPresentTime,
                                    getState().previousPresentFence);
@@ -440,8 +442,6 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
     }
 
     hwc.clearReleaseFences(*halDisplayIdOpt);
-
-    endDraw();
 
     return fences;
 }
