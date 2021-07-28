@@ -49,6 +49,7 @@
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/RenderSurface.h>
 #include <compositionengine/impl/OutputCompositionState.h>
+#include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <configstore/Utils.h>
 #include <cutils/compiler.h>
 #include <cutils/properties.h>
@@ -1148,6 +1149,26 @@ void SurfaceFlinger::InitComposerExtn() {
        ALOGI("Unable to create display extension");
     }
     ALOGI("Init: mDisplayExtnIntf: %p", mDisplayExtnIntf);
+
+#ifdef FPS_MITIGATION_ENABLED
+    const auto display = getDefaultDisplayDeviceLocked();
+    auto currMode = display->getActiveMode();
+    const auto& supportedModes = display->getSupportedModes();
+    std::vector<float> fps_list;
+    for (auto mode : supportedModes) {
+        if (mode->getWidth() == currMode->getWidth() &&
+            mode->getHeight() == currMode->getHeight()) {
+            fps_list.push_back(int32_t(mode->getFps().getValue()));
+        }
+    }
+
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SetFpsMitigationCallback(
+                          [this](float newLevelFps){
+                              setDesiredModeByThermalLevel(newLevelFps);
+                          }, fps_list);
+    }
+#endif
 }
 
 void SurfaceFlinger::startUnifiedDraw() {
@@ -1394,8 +1415,33 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* st
     return NO_ERROR;
 }
 
+bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
+    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    if (!display || !mThermalLevelFps) {
+        return false;
+    }
+
+    auto requestedRefreshRate = mRefreshRateConfigs->getRefreshRateFromModeId(info.modeId);
+    float newFpsRequest = requestedRefreshRate.getFps().getValue();
+    if (mAllowThermalFpsChange) {
+        return false;
+    }
+
+    mLastCachedFps = newFpsRequest;
+    if (newFpsRequest > mThermalLevelFps) {
+        return true;
+    }
+
+    return false;
+}
+
 void SurfaceFlinger::setDesiredActiveMode(const ActiveModeInfo& info) {
     ATRACE_CALL();
+
+    if (isFpsDeferNeeded(info)) {
+        return;
+    }
+
     auto refreshRate = mRefreshRateConfigs->getRefreshRateFromModeId(info.modeId);
     mVsyncPeriod = refreshRate.getVsyncPeriod();
     if (mDolphinWrapper.dolphinSetVsyncPeriod) {
@@ -2349,7 +2395,7 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
         }
     }
 #ifdef PASS_COMPOSITOR_PID
-    if (mDisplayExtnIntf) {
+    if (mBootFinished && mDisplayExtnIntf) {
         mDisplayExtnIntf->SendCompositorPid();
     }
 #endif
@@ -2808,21 +2854,24 @@ void SurfaceFlinger::postComposition() {
         HdrLayerInfoReporter::HdrLayerInfo info;
         int32_t maxArea = 0;
         mDrawingState.traverse([&, compositionDisplay = compositionDisplay](Layer* layer) {
-            if (layer->isVisible() &&
-                compositionDisplay->belongsInOutput(layer->getCompositionEngineLayerFE())) {
+            const auto layerFe = layer->getCompositionEngineLayerFE();
+            if (layer->isVisible() && compositionDisplay->belongsInOutput(layerFe)) {
                 const Dataspace transfer =
                         static_cast<Dataspace>(layer->getDataSpace() & Dataspace::TRANSFER_MASK);
                 const bool isHdr = (transfer == Dataspace::TRANSFER_ST2084 ||
                                     transfer == Dataspace::TRANSFER_HLG);
 
                 if (isHdr) {
-                    info.numberOfHdrLayers++;
-                    auto bufferRect = layer->getCompositionState()->geomBufferSize;
-                    int32_t area = bufferRect.width() * bufferRect.height();
-                    if (area > maxArea) {
-                        maxArea = area;
-                        info.maxW = bufferRect.width();
-                        info.maxH = bufferRect.height();
+                    const auto* outputLayer = compositionDisplay->getOutputLayerForLayer(layerFe);
+                    if (outputLayer) {
+                        info.numberOfHdrLayers++;
+                        const auto displayFrame = outputLayer->getState().displayFrame;
+                        const int32_t area = displayFrame.width() * displayFrame.height();
+                        if (area > maxArea) {
+                            maxArea = area;
+                            info.maxW = displayFrame.width();
+                            info.maxH = displayFrame.height();
+                        }
                     }
                 }
             }
@@ -4967,6 +5016,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(
                 : nullptr;
         if (layer->reparent(parentHandle)) {
             if (!hadParent) {
+                layer->setIsAtRoot(false);
                 mCurrentState.layersSortedByZ.remove(layer);
             }
             flags |= eTransactionNeeded | eTraversalNeeded;
@@ -5233,7 +5283,8 @@ void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer) {
     // with the idea that the parent holds a reference and will eventually
     // be cleaned up. However no one cleans up the top-level so we do so
     // here.
-    if (layer->getParent() == nullptr) {
+    if (layer->isAtRoot()) {
+        layer->setIsAtRoot(false);
         mCurrentState.layersSortedByZ.remove(layer);
     }
     markLayerPendingRemovalLocked(layer);
@@ -8153,7 +8204,7 @@ int SurfaceFlinger::getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) con
 void SurfaceFlinger::TransactionState::traverseStatesWithBuffers(
         std::function<void(const layer_state_t&)> visitor) {
     for (const auto& state : states) {
-        if (state.state.hasBufferChanges() && (state.state.surface)) {
+        if (state.state.hasBufferChanges() && state.state.hasValidBuffer() && state.state.surface) {
             visitor(state.state);
         }
     }
@@ -8215,6 +8266,7 @@ sp<Layer> SurfaceFlinger::handleLayerCreatedLocked(const sp<IBinder>& handle, bo
     }
 
     if (parent == nullptr && allowAddRoot) {
+        layer->setIsAtRoot(true);
         mCurrentState.layersSortedByZ.add(layer);
     } else if (parent == nullptr) {
         layer->onRemovedFromCurrentState();
@@ -8321,7 +8373,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mBootFinished && mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8336,7 +8388,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mBootFinished && mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
@@ -8367,12 +8419,14 @@ void SurfaceFlinger::handlePresentationDisplaysEarlyWakeup(size_t updatingDispla
         }
 
 #ifdef EARLY_WAKEUP_FEATURE
-        if (!singleUpdatingDisplay) {
-            // Notify Display Extn for Early Wakeup of displays
-            mDisplayExtnIntf->NotifyEarlyWakeUp(false, true);
-        } else if (internalDisplay) {
-            // Notify Display Extn for Early Wakeup of given display
-            mDisplayExtnIntf->NotifyDisplayEarlyWakeUp(hwcDisplayId);
+        if (mBootFinished) {
+            if (!singleUpdatingDisplay) {
+                // Notify Display Extn for Early Wakeup of displays
+                mDisplayExtnIntf->NotifyEarlyWakeUp(false, true);
+            } else if (internalDisplay) {
+                // Notify Display Extn for Early Wakeup of given display
+                mDisplayExtnIntf->NotifyDisplayEarlyWakeUp(hwcDisplayId);
+            }
         }
 #endif
 
@@ -8468,6 +8522,96 @@ void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
         mScheduler->handleIdleTimeout(isSmartConfig);
     }
 #endif
+}
+
+void SurfaceFlinger::getModeFromFps(float fps,DisplayModePtr& outMode) {
+    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    const auto& supportedModes = display->getSupportedModes();
+    auto currMode = display->getActiveMode();
+
+    for (auto mode : supportedModes) {
+        if (mode->getWidth() == currMode->getWidth() &&
+            mode->getHeight() == currMode->getHeight() &&
+            (int32_t)(mode->getFps().getValue()) == (int32_t)(fps)) {
+            outMode = mode;
+            return;
+        }
+    }
+    outMode = nullptr;
+}
+
+void SurfaceFlinger::handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet) {
+    if (!mThermalLevelFps) { // Thermal hint not running already, cache current fps
+        mLastCachedFps = currFps;
+    }
+
+    if(newLevelFps > mThermalLevelFps) {
+        *fpsToSet = std::min(newLevelFps, mLastCachedFps);
+    } else if (newLevelFps < mThermalLevelFps && newLevelFps > currFps) {
+        *fpsToSet = currFps;
+    } else if(newLevelFps < currFps){
+        *fpsToSet = newLevelFps;
+    }
+}
+
+void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
+    if (mThermalLevelFps == newLevelFps) {
+        return;
+    }
+
+    const auto displayId = ON_MAIN_THREAD(getInternalDisplayId());
+    const auto display = ON_MAIN_THREAD(getDisplayDeviceLocked
+                                        (getPhysicalDisplayToken(*displayId))
+                                       );
+    auto currRefreshRate = mRefreshRateConfigs->getRefreshRateFromModeId
+                                                (display->getActiveMode()->getId());
+
+    float currFps = currRefreshRate.getFps().getValue();
+
+    float fps = 0;
+    handleNewLevelFps(currFps, newLevelFps, &fps);
+
+    if (!fps) {
+        return;
+    }
+
+    auto mode = display->getMode(display->getActiveMode()->getId());
+    getModeFromFps(fps, mode);
+
+    if (!mode) {
+        return;
+    }
+
+    mThermalLevelFps = newLevelFps;
+
+    auto future = schedule([=]() -> status_t {
+        int ret = 0;
+        if (!display) {
+            ALOGE("Attempt to set desired display modes for invalid display token %p",
+            getPhysicalDisplayToken(*displayId).get());
+            return NAME_NOT_FOUND;
+        }
+        if (display->isVirtual()) {
+            ALOGW("Attempt to set desired display modes for virtual display");
+            return INVALID_OPERATION;
+        }
+        scheduler::RefreshRateConfigs::Policy policy =
+                                                  mRefreshRateConfigs->getCurrentPolicy();
+
+        if (fps < policy.primaryRange.min.getValue() ||
+            fps < policy.appRequestRange.min.getValue()) {
+            return ret;
+        }
+
+        policy.primaryRange.max = Fps(fps);
+        policy.appRequestRange.max = Fps(fps);
+        policy.defaultMode = mode->getId();
+
+        mAllowThermalFpsChange = true;
+        ret = setDesiredDisplayModeSpecsInternal(display, policy, false);
+        mAllowThermalFpsChange = false;
+        return ret;
+    });
 }
 
 } // namespace android
