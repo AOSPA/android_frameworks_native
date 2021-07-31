@@ -811,7 +811,8 @@ private:
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
-    status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
+    status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
+        std::chrono::steady_clock::time_point earliestPresentTime) const;
     status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
 
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,

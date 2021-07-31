@@ -1818,7 +1818,8 @@ status_t SurfaceFlinger::setDisplayContentSamplingEnabled(const sp<IBinder>& dis
             .get();
 }
 
-status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) const {
+status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display,
+    std::chrono::steady_clock::time_point earliestPresentTime) const {
     nsecs_t sfOffset = mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
     if (!mUseAdvanceSfOffset || (sfOffset >= 0)) {
         return OK;
@@ -1829,13 +1830,13 @@ status_t SurfaceFlinger::setDisplayElapseTime(const sp<DisplayDevice>& display) 
         return OK;
     }
 
-    // TODO(b/171604397): Fix timeStamp value.
-    uint64_t timeStamp = 0; //static_cast<uint64_t>(mVsyncTimeStamp + (sfOffset * -1));
+    auto timeStamp =
+      std::chrono::time_point_cast<std::chrono::nanoseconds>(earliestPresentTime);
     const auto id = HalDisplayId::tryCast(display->getId());
     if (!id) {
         return BAD_VALUE;
     }
-    return getHwComposer().setDisplayElapseTime(*id, timeStamp);
+    return getHwComposer().setDisplayElapseTime(*id, timeStamp.time_since_epoch().count());
 }
 
 status_t SurfaceFlinger::isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) {
@@ -2641,7 +2642,7 @@ void SurfaceFlinger::onMessageRefresh() {
     {
       Mutex::Autolock lock(mStateLock);
       for (const auto& [_, display] : mDisplays) {
-           setDisplayElapseTime(display);
+           setDisplayElapseTime(display, refreshArgs.earliestPresentTime);
       }
     }
     mCompositionEngine->present(refreshArgs);
