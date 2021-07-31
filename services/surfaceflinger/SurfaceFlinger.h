@@ -527,9 +527,16 @@ private:
             if (it != mCounterByLayerHandle.end()) {
                 auto [name, pendingBuffers] = it->second;
                 if (mDolphinWrapper.dolphinTrackBufferIncrement) {
+                    const std::string transactionName(name);
+                    int newCount = (*pendingBuffers) + 1;
                     mLock.unlock();
-                    mDolphinWrapper.dolphinTrackBufferIncrement(name.c_str(),
-                        (*pendingBuffers) + 1);
+                    mDolphinWrapper.dolphinTrackBufferIncrement(transactionName.c_str(),
+                            newCount);
+                    mLock.lock();
+                    it = mCounterByLayerHandle.find(layerHandle);
+                    if (it == mCounterByLayerHandle.end()) {
+                        return;
+                    }
                 }
                 int32_t count = ++(*pendingBuffers);
                 ATRACE_INT(name.c_str(), count);
