@@ -1127,6 +1127,24 @@ void SurfaceFlinger::init() {
         ALOGI("Layer Extension is enabled");
     }
 
+#ifdef FPS_MITIGATION_ENABLED
+    auto currMode = display->getActiveMode();
+    const auto& supportedModes = display->getSupportedModes();
+    std::vector<float> fps_list;
+    for (auto mode : supportedModes) {
+        if (mode->getWidth() == currMode->getWidth() &&
+            mode->getHeight() == currMode->getHeight()) {
+            fps_list.push_back(int32_t(mode->getFps().getValue()));
+        }
+    }
+
+    if (mDisplayExtnIntf) {
+        mDisplayExtnIntf->SetFpsMitigationCallback(
+                          [this](float newLevelFps){
+                              setDesiredModeByThermalLevel(newLevelFps);
+                          }, fps_list);
+    }
+#endif
 
     startUnifiedDraw();
     ALOGV("Done initializing");
@@ -1148,26 +1166,6 @@ void SurfaceFlinger::InitComposerExtn() {
        ALOGI("Unable to create display extension");
     }
     ALOGI("Init: mDisplayExtnIntf: %p", mDisplayExtnIntf);
-
-#ifdef FPS_MITIGATION_ENABLED
-    const auto display = getDefaultDisplayDeviceLocked();
-    auto currMode = display->getActiveMode();
-    const auto& supportedModes = display->getSupportedModes();
-    std::vector<float> fps_list;
-    for (auto mode : supportedModes) {
-        if (mode->getWidth() == currMode->getWidth() &&
-            mode->getHeight() == currMode->getHeight()) {
-            fps_list.push_back(int32_t(mode->getFps().getValue()));
-        }
-    }
-
-    if (mDisplayExtnIntf) {
-        mDisplayExtnIntf->SetFpsMitigationCallback(
-                          [this](float newLevelFps){
-                              setDesiredModeByThermalLevel(newLevelFps);
-                          }, fps_list);
-    }
-#endif
 }
 
 void SurfaceFlinger::startUnifiedDraw() {
