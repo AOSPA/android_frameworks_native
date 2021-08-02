@@ -3787,7 +3787,7 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs* args) {
         if (shouldSendKeyToInputFilterLocked(args)) {
             mLock.unlock();
 
-            policyFlags |= POLICY_FLAG_FILTERED | POLICY_FLAG_INPUTFILTER_TRUSTED;
+            policyFlags |= POLICY_FLAG_FILTERED;
             if (!mPolicy->filterInputEvent(&event, policyFlags)) {
                 return; // event was consumed by the filter
             }
@@ -4010,16 +4010,14 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
     }
 
     // For all injected events, set device id = VIRTUAL_KEYBOARD_ID. The only exception is events
-    // that have gone through the InputFilter. If the event passed through the InputFilter,
-    // but did not get modified, assign the provided device id. If the InputFilter modifies the
-    // events in any way, it is responsible for removing this flag.
-    // If the injected event originated from accessibility, assign the accessibility device id,
-    // so that it can be distinguished from regular injected events.
+    // that have gone through the InputFilter. If the event passed through the InputFilter, assign
+    // the provided device id. If the InputFilter is accessibility, and it modifies or synthesizes
+    // the injected event, it is responsible for setting POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY.
+    // For those events, we will set FLAG_IS_ACCESSIBILITY_EVENT to allow apps to distinguish them
+    // from events that originate from actual hardware.
     int32_t resolvedDeviceId = VIRTUAL_KEYBOARD_ID;
-    if (policyFlags & POLICY_FLAG_INPUTFILTER_TRUSTED) {
+    if (policyFlags & POLICY_FLAG_FILTERED) {
         resolvedDeviceId = event->getDeviceId();
-    } else if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
-        resolvedDeviceId = ACCESSIBILITY_DEVICE_ID;
     }
 
     std::queue<std::unique_ptr<EventEntry>> injectedEntries;
@@ -4032,6 +4030,9 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
             }
 
             int32_t flags = incomingKey.getFlags();
+            if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
+                flags |= AKEY_EVENT_FLAG_IS_ACCESSIBILITY_EVENT;
+            }
             int32_t keyCode = incomingKey.getKeyCode();
             int32_t metaState = incomingKey.getMetaState();
             accelerateMetaShortcuts(resolvedDeviceId, action,
@@ -4073,6 +4074,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
             size_t pointerCount = motionEvent.getPointerCount();
             const PointerProperties* pointerProperties = motionEvent.getPointerProperties();
             int32_t actionButton = motionEvent.getActionButton();
+            int32_t flags = motionEvent.getFlags();
             int32_t displayId = motionEvent.getDisplayId();
             if (!validateMotionEvent(action, actionButton, pointerCount, pointerProperties)) {
                 return InputEventInjectionResult::FAILED;
@@ -4088,6 +4090,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
                 }
             }
 
+            if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
+                flags |= AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT;
+            }
+
             mLock.lock();
             const nsecs_t* sampleEventTimes = motionEvent.getSampleEventTimes();
             const PointerCoords* samplePointerCoords = motionEvent.getSamplePointerCoords();
@@ -4095,8 +4101,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
                     std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
                                                   resolvedDeviceId, motionEvent.getSource(),
                                                   motionEvent.getDisplayId(), policyFlags, action,
-                                                  actionButton, motionEvent.getFlags(),
-                                                  motionEvent.getMetaState(),
+                                                  actionButton, flags, motionEvent.getMetaState(),
                                                   motionEvent.getButtonState(),
                                                   motionEvent.getClassification(),
                                                   motionEvent.getEdgeFlags(),
@@ -4116,7 +4121,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(
                         std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
                                                       resolvedDeviceId, motionEvent.getSource(),
                                                       motionEvent.getDisplayId(), policyFlags,
-                                                      action, actionButton, motionEvent.getFlags(),
+                                                      action, actionButton, flags,
                                                       motionEvent.getMetaState(),
                                                       motionEvent.getButtonState(),
                                                       motionEvent.getClassification(),
@@ -4613,28 +4618,32 @@ void InputDispatcher::setFocusedApplication(
     }
     { // acquire lock
         std::scoped_lock _l(mLock);
-
-        std::shared_ptr<InputApplicationHandle> oldFocusedApplicationHandle =
-                getValueByKey(mFocusedApplicationHandlesByDisplay, displayId);
-
-        if (sharedPointersEqual(oldFocusedApplicationHandle, inputApplicationHandle)) {
-            return; // This application is already focused. No need to wake up or change anything.
-        }
-
-        // Set the new application handle.
-        if (inputApplicationHandle != nullptr) {
-            mFocusedApplicationHandlesByDisplay[displayId] = inputApplicationHandle;
-        } else {
-            mFocusedApplicationHandlesByDisplay.erase(displayId);
-        }
-
-        // No matter what the old focused application was, stop waiting on it because it is
-        // no longer focused.
-        resetNoFocusedWindowTimeoutLocked();
+        setFocusedApplicationLocked(displayId, inputApplicationHandle);
     } // release lock
 
     // Wake up poll loop since it may need to make new input dispatching choices.
     mLooper->wake();
+}
+
+void InputDispatcher::setFocusedApplicationLocked(
+        int32_t displayId, const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle) {
+    std::shared_ptr<InputApplicationHandle> oldFocusedApplicationHandle =
+            getValueByKey(mFocusedApplicationHandlesByDisplay, displayId);
+
+    if (sharedPointersEqual(oldFocusedApplicationHandle, inputApplicationHandle)) {
+        return; // This application is already focused. No need to wake up or change anything.
+    }
+
+    // Set the new application handle.
+    if (inputApplicationHandle != nullptr) {
+        mFocusedApplicationHandlesByDisplay[displayId] = inputApplicationHandle;
+    } else {
+        mFocusedApplicationHandlesByDisplay.erase(displayId);
+    }
+
+    // No matter what the old focused application was, stop waiting on it because it is
+    // no longer focused.
+    resetNoFocusedWindowTimeoutLocked();
 }
 
 /**
@@ -6206,6 +6215,21 @@ void InputDispatcher::doSetPointerCaptureLockedInterruptible(
     mPolicy->setPointerCapture(commandEntry->enabled);
 
     mLock.lock();
+}
+
+void InputDispatcher::displayRemoved(int32_t displayId) {
+    { // acquire lock
+        std::scoped_lock _l(mLock);
+        // Set an empty list to remove all handles from the specific display.
+        setInputWindowsLocked(/* window handles */ {}, displayId);
+        setFocusedApplicationLocked(displayId, nullptr);
+        // Call focus resolver to clean up stale requests. This must be called after input windows
+        // have been removed for the removed display.
+        mFocusResolver.displayRemoved(displayId);
+    } // release lock
+
+    // Wake up poll loop since it may need to make new input dispatching choices.
+    mLooper->wake();
 }
 
 } // namespace android::inputdispatcher

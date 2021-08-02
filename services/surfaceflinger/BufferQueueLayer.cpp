@@ -138,6 +138,12 @@ bool BufferQueueLayer::isBufferDue(nsecs_t expectedPresentTime) const {
 // -----------------------------------------------------------------------
 
 bool BufferQueueLayer::fenceHasSignaled() const {
+    Mutex::Autolock lock(mQueueItemLock);
+
+    if (SurfaceFlinger::enableLatchUnsignaled) {
+        return true;
+    }
+
     if (latchUnsignaledBuffers()) {
         return true;
     }
@@ -146,7 +152,6 @@ bool BufferQueueLayer::fenceHasSignaled() const {
         return true;
     }
 
-    Mutex::Autolock lock(mQueueItemLock);
     if (mQueueItems[0].item.mIsDroppable) {
         // Even though this buffer's fence may not have signaled yet, it could
         // be replaced by another buffer before it has a chance to, which means

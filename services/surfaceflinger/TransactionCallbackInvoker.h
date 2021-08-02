@@ -45,12 +45,13 @@ public:
     nsecs_t acquireTime = -1;
     nsecs_t latchTime = -1;
     uint32_t transformHint = 0;
+    uint32_t currentMaxAcquiredBufferCount = 0;
     std::shared_ptr<FenceTime> gpuCompositionDoneFence{FenceTime::NO_FENCE};
     CompositorTiming compositorTiming;
     nsecs_t refreshStartTime = 0;
     nsecs_t dequeueReadyTime = 0;
     uint64_t frameNumber = 0;
-    uint64_t previousBufferId = 0;
+    ReleaseCallbackId previousReleaseCallbackId = ReleaseCallbackId::INVALID_ID;
 };
 
 class TransactionCallbackInvoker {

@@ -342,8 +342,7 @@ static int restorecon_app_data_lazy(const std::string& path, const std::string& 
 
     // If the initial top-level restorecon above changed the label, then go
     // back and restorecon everything recursively
-    // TODO(b/190567190, b/188141923) Remove recursive fixup of com.google.android.gsf.
-    if (strcmp(before, after) || (path.find("com.google.android.gsf") != std::string::npos)) {
+    if (strcmp(before, after)) {
         if (existing) {
             LOG(DEBUG) << "Detected label change from " << before << " to " << after << " at "
                     << path << "; running recursive restorecon";
@@ -2357,7 +2356,7 @@ binder::Status InstalldNativeService::copySystemProfile(const std::string& syste
 
 // TODO: Consider returning error codes.
 binder::Status InstalldNativeService::mergeProfiles(int32_t uid, const std::string& packageName,
-        const std::string& profileName, bool* _aidl_return) {
+        const std::string& profileName, int* _aidl_return) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_PACKAGE_NAME(packageName);
     std::lock_guard<std::recursive_mutex> lock(mLock);
@@ -2657,7 +2656,8 @@ binder::Status InstalldNativeService::moveAb(const std::string& apkPath,
 }
 
 binder::Status InstalldNativeService::deleteOdex(const std::string& apkPath,
-        const std::string& instructionSet, const std::optional<std::string>& outputPath) {
+        const std::string& instructionSet, const std::optional<std::string>& outputPath,
+        int64_t* _aidl_return) {
     ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_PATH(apkPath);
     CHECK_ARGUMENT_PATH(outputPath);
@@ -2667,8 +2667,8 @@ binder::Status InstalldNativeService::deleteOdex(const std::string& apkPath,
     const char* instruction_set = instructionSet.c_str();
     const char* oat_dir = outputPath ? outputPath->c_str() : nullptr;
 
-    bool res = delete_odex(apk_path, instruction_set, oat_dir);
-    return res ? ok() : error();
+    *_aidl_return = delete_odex(apk_path, instruction_set, oat_dir);
+    return *_aidl_return == -1 ? error() : ok();
 }
 
 // This kernel feature is experimental.

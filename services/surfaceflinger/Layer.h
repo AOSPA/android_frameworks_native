@@ -1115,6 +1115,8 @@ private:
 
     // A list of regions on this layer that should have blurs.
     const std::vector<BlurRegion> getBlurRegions() const;
+public:
+    nsecs_t getPreviousGfxInfo();
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

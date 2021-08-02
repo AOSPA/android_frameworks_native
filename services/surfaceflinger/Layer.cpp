@@ -1934,7 +1934,7 @@ int32_t Layer::getBackgroundBlurRadius() const {
 
 const std::vector<BlurRegion> Layer::getBlurRegions() const {
     auto regionsCopy(getDrawingState().blurRegions);
-    int layerAlpha = getAlpha();
+    float layerAlpha = getAlpha();
     for (auto& region : regionsCopy) {
         region.alpha = region.alpha * layerAlpha;
     }
@@ -2569,6 +2569,10 @@ bool Layer::getPrimaryDisplayOnly() const {
 
     sp<Layer> parent = mDrawingParent.promote();
     return parent == nullptr ? false : parent->getPrimaryDisplayOnly();
+}
+
+nsecs_t Layer::getPreviousGfxInfo() {
+    return mFrameTracker.getPreviousGfxInfo();
 }
 
 void Layer::setClonedChild(const sp<Layer>& clonedChild) {

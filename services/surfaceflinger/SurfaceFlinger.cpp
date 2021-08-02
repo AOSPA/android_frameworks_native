@@ -349,6 +349,7 @@ ui::PixelFormat SurfaceFlinger::wideColorGamutCompositionPixelFormat = ui::Pixel
 bool SurfaceFlinger::useFrameRateApi;
 bool SurfaceFlinger::enableSdrDimming;
 bool SurfaceFlinger::sDirectStreaming;
+bool SurfaceFlinger::enableLatchUnsignaled;
 
 #ifdef AIDL_DISPLAY_CONFIG_ENABLED
 std::shared_ptr<IDisplayConfig> displayConfigIntf = nullptr;
@@ -509,7 +510,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
         mHwcServiceName(base::GetProperty("debug.sf.hwc_service_name"s, "default"s)),
         mTunnelModeEnabledReporter(new TunnelModeEnabledReporter()),
         mInternalDisplayDensity(getDensityFromProperty("ro.sf.lcd_density", true)),
-        mEmulatedDisplayDensity(getDensityFromProperty("qemu.sf.lcd_density", false)) {
+        mEmulatedDisplayDensity(getDensityFromProperty("qemu.sf.lcd_density", false)),
+        mPowerAdvisor(*this) {
     ALOGI("Using HWComposer service: %s", mHwcServiceName.c_str());
 
     mSetInputWindowsListener = new SetInputWindowsListener([&]() { setInputWindowsFinished(); });
@@ -697,6 +699,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         }
     }
 #endif
+
+    enableLatchUnsignaled = base::GetBoolProperty("debug.sf.latch_unsignaled"s, false);
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
@@ -1059,6 +1063,8 @@ void SurfaceFlinger::init() {
 
     // set initial conditions (e.g. unblank default device)
     initializeDisplays();
+
+    mPowerAdvisor.init();
 
     char primeShaderCache[PROPERTY_VALUE_MAX];
     property_get("service.sf.prime_shader_cache", primeShaderCache, "1");
@@ -1600,6 +1606,19 @@ void SurfaceFlinger::performSetActiveMode() {
 
     // Scheduler will submit an empty frame to HWC if needed.
     mSetActiveModePending = true;
+}
+
+void SurfaceFlinger::disableExpensiveRendering() {
+    schedule([=]() MAIN_THREAD {
+        ATRACE_CALL();
+        if (mPowerAdvisor.isUsingExpensiveRendering()) {
+            const auto& displays = ON_MAIN_THREAD(mDisplays);
+            for (const auto& [_, display] : displays) {
+                const static constexpr auto kDisable = false;
+                mPowerAdvisor.setExpensiveRenderingExpected(display->getId(), kDisable);
+            }
+        }
+    }).wait();
 }
 
 std::vector<ColorMode> SurfaceFlinger::getDisplayColorModes(PhysicalDisplayId displayId) {
@@ -2562,7 +2581,10 @@ void SurfaceFlinger::onMessageRefresh() {
                 std::chrono::milliseconds(mDebugRegion > 1 ? mDebugRegion : 0);
     }
 
-    refreshArgs.earliestPresentTime = mScheduler->getPreviousVsyncFrom(mExpectedPresentTime);
+    const auto prevVsyncTime = mScheduler->getPreviousVsyncFrom(mExpectedPresentTime);
+    const auto hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration;
+    refreshArgs.earliestPresentTime = prevVsyncTime - hwcMinWorkDuration;
+    refreshArgs.previousPresentFence = mPreviousPresentFences[0].fenceTime;
     refreshArgs.nextInvalidateTime = mEventQueue->nextExpectedInvalidate();
 
     mGeometryInvalid = false;
@@ -2731,18 +2753,15 @@ void SurfaceFlinger::postComposition() {
 
     getBE().mDisplayTimeline.push(mPreviousPresentFences[0].fenceTime);
 
+    nsecs_t now = systemTime();
+
     // Set presentation information before calling Layer::releasePendingBuffer, such that jank
     // information from previous' frame classification is already available when sending jank info
     // to clients, so they get jank classification as early as possible.
-    mFrameTimeline->setSfPresent(systemTime(), mPreviousPresentFences[0].fenceTime,
+    mFrameTimeline->setSfPresent(/* sfPresentTime */ now, mPreviousPresentFences[0].fenceTime,
                                  glCompositionDoneFenceTime);
 
-    nsecs_t dequeueReadyTime = systemTime();
-    for (const auto& layer : mLayersWithQueuedFrames) {
-        layer->releasePendingBuffer(dequeueReadyTime);
-    }
-
-    const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(systemTime());
+    const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
 
     // We use the CompositionEngine::getLastFrameRefreshTimestamp() which might
     // be sampled a little later than when we started doing work for this frame,
@@ -2759,6 +2778,7 @@ void SurfaceFlinger::postComposition() {
         const bool frameLatched =
                 layer->onPostComposition(display, glCompositionDoneFenceTime,
                                          mPreviousPresentFences[0].fenceTime, compositorTiming);
+        layer->releasePendingBuffer(/*dequeueReadyTime*/ now);
         if (frameLatched) {
             recordBufferingStats(layer->getName(), layer->getOccupancyHistory(false));
         }
@@ -3291,9 +3311,7 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
 
     sp<DisplayDevice> display = getFactory().createDisplayDevice(creationArgs);
 
-    if (maxFrameBufferAcquiredBuffers >= 3) {
-        nativeWindowSurface->preallocateBuffers();
-    }
+    nativeWindowSurface->preallocateBuffers();
 
     ColorMode defaultColorMode = ColorMode::NATIVE;
     Dataspace defaultDataSpace = Dataspace::UNKNOWN;
@@ -3552,7 +3570,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
                 display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
                                        currentState.orientedDisplaySpaceRect);
             }
-            mDefaultDisplayTransformHint = display->getTransformHint();
+            if (display->isPrimary()) {
+                mDefaultDisplayTransformHint = display->getTransformHint();
+            }
         }
         if (currentState.width != drawingState.width ||
             currentState.height != drawingState.height) {
@@ -3841,10 +3861,15 @@ void SurfaceFlinger::initScheduler(const DisplayDeviceState& displayState) {
         return;
     }
     const auto displayId = displayState.physical->id;
-    mRefreshRateConfigs = std::make_unique<
-            scheduler::RefreshRateConfigs>(displayState.physical->supportedModes,
-                                           displayState.physical->activeMode->getId(),
-                                           android::sysprop::enable_frame_rate_override(false));
+    scheduler::RefreshRateConfigs::Config config =
+            {.enableFrameRateOverride = android::sysprop::enable_frame_rate_override(false),
+             .frameRateMultipleThreshold =
+                     base::GetIntProperty("debug.sf.frame_rate_multiple_threshold", 0)};
+    mRefreshRateConfigs =
+            std::make_unique<scheduler::RefreshRateConfigs>(displayState.physical->supportedModes,
+                                                            displayState.physical->activeMode
+                                                                    ->getId(),
+                                                            config);
     const auto currRefreshRate = displayState.physical->activeMode->getFps();
     mRefreshRateStats = std::make_unique<scheduler::RefreshRateStats>(*mTimeStats, currRefreshRate,
                                                                       hal::PowerMode::OFF);
@@ -4296,7 +4321,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
     for (const ComposerState& state : states) {
         const layer_state_t& s = state.state;
         const bool acquireFenceChanged = (s.what & layer_state_t::eAcquireFenceChanged);
-        if (!BufferLayer::latchUnsignaledBuffers() &&  acquireFenceChanged && s.acquireFence &&
+        if (BufferLayer::latchUnsignaledBuffers() && acquireFenceChanged && s.acquireFence && !enableLatchUnsignaled &&
             s.acquireFence->getStatus() == Fence::Status::Unsignaled) {
             ATRACE_NAME("fence unsignaled");
             return false;
@@ -4433,6 +4458,14 @@ status_t SurfaceFlinger::setTransactionState(
 
     // Check for incoming buffer updates and increment the pending buffer count.
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+        sp<Layer> layer = nullptr;
+        {
+            Mutex::Autolock _l(mStateLock);
+            layer = fromHandleLocked(state.surface).promote();
+            if (layer != nullptr) {
+                layer->getPreviousGfxInfo();
+            }
+        }
         mBufferCountTracker.increment(state.surface->localBinder());
     });
     queueTransaction(state);
@@ -5243,10 +5276,11 @@ void SurfaceFlinger::onInitializeDisplays() {
     d.height = 0;
     displays.add(d);
 
+    nsecs_t now = systemTime();
     // It should be on the main thread, apply it directly.
     applyTransactionState(FrameTimelineInfo{}, state, displays, 0, mInputWindowCommands,
-                          systemTime(), true, {}, systemTime(), true, false, {}, getpid(), getuid(),
-                          0 /* Undefined transactionId */);
+                          /* desiredPresentTime */ now, true, {}, /* postTime */ now, true, false,
+                          {}, getpid(), getuid(), 0 /* Undefined transactionId */);
 
     setPowerModeInternal(display, hal::PowerMode::ON);
     const nsecs_t vsyncPeriod = mRefreshRateConfigs->getCurrentRefreshRate().getVsyncPeriod();
@@ -6314,7 +6348,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case SET_DISPLAY_BRIGHTNESS:
         case SET_FRAME_TIMELINE_INFO:
         case GET_GPU_CONTEXT_PRIORITY:
-        case GET_EXTRA_BUFFER_COUNT: {
+        case GET_MAX_ACQUIRED_BUFFER_COUNT: {
             // This is not sensitive information, so should not require permission control.
             return OK;
         }
@@ -7049,8 +7083,6 @@ void SurfaceFlinger::toggleKernelIdleTimer() {
                 base::SetProperty(KERNEL_IDLE_TIMER_PROP, "true");
                 mKernelIdleTimerEnabled = true;
             }
-            break;
-        case KernelIdleTimerAction::NoChange:
             break;
     }
 }
@@ -8087,23 +8119,36 @@ int SurfaceFlinger::getGPUContextPriority() {
     return getRenderEngine().getContextPriority();
 }
 
-int SurfaceFlinger::calculateExtraBufferCount(Fps maxSupportedRefreshRate,
-                                              std::chrono::nanoseconds presentLatency) {
-    auto pipelineDepth = presentLatency.count() / maxSupportedRefreshRate.getPeriodNsecs();
-    if (presentLatency.count() % maxSupportedRefreshRate.getPeriodNsecs()) {
+int SurfaceFlinger::calculateMaxAcquiredBufferCount(Fps refreshRate,
+                                                    std::chrono::nanoseconds presentLatency) {
+    auto pipelineDepth = presentLatency.count() / refreshRate.getPeriodNsecs();
+    if (presentLatency.count() % refreshRate.getPeriodNsecs()) {
         pipelineDepth++;
     }
-    return std::max(0ll, pipelineDepth - 2);
+    return std::max(1ll, pipelineDepth - 1);
 }
 
-status_t SurfaceFlinger::getExtraBufferCount(int* extraBuffers) const {
+status_t SurfaceFlinger::getMaxAcquiredBufferCount(int* buffers) const {
     const auto maxSupportedRefreshRate = mRefreshRateConfigs->getSupportedRefreshRateRange().max;
-    const auto vsyncConfig =
-            mVsyncConfiguration->getConfigsForRefreshRate(maxSupportedRefreshRate).late;
-    const auto presentLatency = vsyncConfig.appWorkDuration + vsyncConfig.sfWorkDuration;
-
-    *extraBuffers = calculateExtraBufferCount(maxSupportedRefreshRate, presentLatency);
+    *buffers = getMaxAcquiredBufferCountForRefreshRate(maxSupportedRefreshRate);
     return NO_ERROR;
+}
+
+int SurfaceFlinger::getMaxAcquiredBufferCountForCurrentRefreshRate(uid_t uid) const {
+    const auto refreshRate = [&] {
+        const auto frameRateOverride = mScheduler->getFrameRateOverride(uid);
+        if (frameRateOverride.has_value()) {
+            return frameRateOverride.value();
+        }
+        return mRefreshRateConfigs->getCurrentRefreshRate().getFps();
+    }();
+    return getMaxAcquiredBufferCountForRefreshRate(refreshRate);
+}
+
+int SurfaceFlinger::getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const {
+    const auto vsyncConfig = mVsyncConfiguration->getConfigsForRefreshRate(refreshRate).late;
+    const auto presentLatency = vsyncConfig.appWorkDuration + vsyncConfig.sfWorkDuration;
+    return calculateMaxAcquiredBufferCount(refreshRate, presentLatency);
 }
 
 void SurfaceFlinger::TransactionState::traverseStatesWithBuffers(
@@ -8180,6 +8225,8 @@ sp<Layer> SurfaceFlinger::handleLayerCreatedLocked(const sp<IBinder>& handle, bo
     } else {
         parent->addChild(layer);
     }
+
+    layer->updateTransformHint(mDefaultDisplayTransformHint);
 
     if (state->initialProducer != nullptr) {
         mGraphicBufferProducerList.insert(state->initialProducer);

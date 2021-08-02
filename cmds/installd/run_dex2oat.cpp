@@ -283,6 +283,13 @@ void RunDex2Oat::PrepareCompilerConfigFlags(const UniqueFile& input_vdex,
         }
     }
 
+    // On-device signing related. odsign sets the system property odsign.verification.success if
+    // AOT artifacts have the expected signatures.
+    const bool trust_art_apex_data_files = GetBoolProperty("odsign.verification.success", false);
+    if (!trust_art_apex_data_files) {
+        AddRuntimeArg("-Xdeny-art-apex-data-files");
+    }
+
     if (target_sdk_version != 0) {
         AddRuntimeArg(StringPrintf("-Xtarget-sdk-version:%d", target_sdk_version));
     }
@@ -324,6 +331,12 @@ void RunDex2Oat::PrepareCompilerRuntimeAndPerfConfigFlags(bool post_bootcomplete
 
     AddRuntimeArg(MapPropertyToArg("dalvik.vm.dex2oat-Xms", "-Xms%s"));
     AddRuntimeArg(MapPropertyToArg("dalvik.vm.dex2oat-Xmx", "-Xmx%s"));
+
+    // Enable compiling dex files in isolation on low ram devices.
+    // It takes longer but reduces the memory footprint.
+    if (GetBoolProperty("ro.config.low_ram", false)) {
+      AddArg("--compile-individually");
+    }
 }
 
 void RunDex2Oat::Exec(int exit_code) {

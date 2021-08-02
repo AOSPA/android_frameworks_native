@@ -119,12 +119,13 @@ status_t SurfaceStats::writeToParcel(Parcel* output) const {
         SAFE_PARCEL(output->writeBool, false);
     }
     SAFE_PARCEL(output->writeUint32, transformHint);
+    SAFE_PARCEL(output->writeUint32, currentMaxAcquiredBufferCount);
     SAFE_PARCEL(output->writeParcelable, eventStats);
     SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(jankData.size()));
     for (const auto& data : jankData) {
         SAFE_PARCEL(output->writeParcelable, data);
     }
-    SAFE_PARCEL(output->writeUint64, previousBufferId);
+    SAFE_PARCEL(output->writeParcelable, previousReleaseCallbackId);
     return NO_ERROR;
 }
 
@@ -138,6 +139,7 @@ status_t SurfaceStats::readFromParcel(const Parcel* input) {
         SAFE_PARCEL(input->read, *previousReleaseFence);
     }
     SAFE_PARCEL(input->readUint32, &transformHint);
+    SAFE_PARCEL(input->readUint32, &currentMaxAcquiredBufferCount);
     SAFE_PARCEL(input->readParcelable, &eventStats);
 
     int32_t jankData_size = 0;
@@ -147,7 +149,7 @@ status_t SurfaceStats::readFromParcel(const Parcel* input) {
         SAFE_PARCEL(input->readParcelable, &data);
         jankData.push_back(data);
     }
-    SAFE_PARCEL(input->readUint64, &previousBufferId);
+    SAFE_PARCEL(input->readParcelable, &previousReleaseCallbackId);
     return NO_ERROR;
 }
 
@@ -251,11 +253,13 @@ public:
                                                                   stats);
     }
 
-    void onReleaseBuffer(uint64_t graphicBufferId, sp<Fence> releaseFence,
-                         uint32_t transformHint) override {
+    void onReleaseBuffer(ReleaseCallbackId callbackId, sp<Fence> releaseFence,
+                         uint32_t transformHint, uint32_t currentMaxAcquiredBufferCount) override {
         callRemoteAsync<decltype(
                 &ITransactionCompletedListener::onReleaseBuffer)>(Tag::ON_RELEASE_BUFFER,
-                graphicBufferId, releaseFence, transformHint);
+                                                                  callbackId, releaseFence,
+                                                                  transformHint,
+                                                                  currentMaxAcquiredBufferCount);
     }
 };
 
@@ -303,5 +307,19 @@ status_t CallbackId::readFromParcel(const Parcel* input) {
     type = static_cast<CallbackId::Type>(typeAsInt);
     return NO_ERROR;
 }
+
+status_t ReleaseCallbackId::writeToParcel(Parcel* output) const {
+    SAFE_PARCEL(output->writeUint64, bufferId);
+    SAFE_PARCEL(output->writeUint64, framenumber);
+    return NO_ERROR;
+}
+
+status_t ReleaseCallbackId::readFromParcel(const Parcel* input) {
+    SAFE_PARCEL(input->readUint64, &bufferId);
+    SAFE_PARCEL(input->readUint64, &framenumber);
+    return NO_ERROR;
+}
+
+const ReleaseCallbackId ReleaseCallbackId::INVALID_ID = ReleaseCallbackId(0, 0);
 
 }; // namespace android

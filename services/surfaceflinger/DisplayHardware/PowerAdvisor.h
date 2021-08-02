@@ -25,14 +25,20 @@
 #include "DisplayIdentification.h"
 
 namespace android {
+
+class SurfaceFlinger;
+
 namespace Hwc2 {
 
 class PowerAdvisor {
 public:
     virtual ~PowerAdvisor();
 
+    // Initializes resources that cannot be initialized on construction
+    virtual void init() = 0;
     virtual void onBootFinished() = 0;
     virtual void setExpensiveRenderingExpected(DisplayId displayId, bool expected) = 0;
+    virtual bool isUsingExpensiveRendering() = 0;
     virtual void notifyDisplayUpdateImminent() = 0;
     virtual bool canNotifyDisplayUpdateImminent() = 0;
 };
@@ -51,11 +57,13 @@ public:
         virtual bool notifyDisplayUpdateImminent() = 0;
     };
 
-    PowerAdvisor();
+    PowerAdvisor(SurfaceFlinger& flinger);
     ~PowerAdvisor() override;
 
+    void init() override;
     void onBootFinished() override;
     void setExpensiveRenderingExpected(DisplayId displayId, bool expected) override;
+    bool isUsingExpensiveRendering() override { return mNotifiedExpensiveRendering; }
     void notifyDisplayUpdateImminent() override;
     bool canNotifyDisplayUpdateImminent() override;
 
@@ -69,9 +77,10 @@ private:
     std::unordered_set<DisplayId> mExpensiveDisplays;
     bool mNotifiedExpensiveRendering = false;
 
-    const bool mUseUpdateImminentTimer;
+    SurfaceFlinger& mFlinger;
+    const bool mUseScreenUpdateTimer;
     std::atomic_bool mSendUpdateImminent = true;
-    scheduler::OneShotTimer mUpdateImminentTimer;
+    scheduler::OneShotTimer mScreenUpdateTimer;
 };
 
 } // namespace impl
