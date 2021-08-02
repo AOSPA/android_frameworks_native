@@ -448,7 +448,6 @@ private:
 
     const size_t mMaxVirtualDisplayDimension;
     const bool mUpdateDeviceProductInfoOnHotplugReconnect;
-    bool mSpecFenceEnabled = false;
 };
 
 } // namespace impl
