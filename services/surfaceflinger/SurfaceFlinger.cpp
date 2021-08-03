@@ -2992,17 +2992,22 @@ void SurfaceFlinger::postComposition() {
         }
     }
 
-    if (mSplitLayerExt && mLayerExt) {
-        std::vector<std::string> layerInfo;
-        mDrawingState.traverse([&](Layer* layer) {
-            if (layer->findOutputLayerForDisplay(display)) {
-                layerInfo.push_back(layer->getName());
-            }
-        });
-        mLayerExt->UpdateLayerState(layerInfo, mNumLayers);
+    std::vector<std::string> layerName;
+    std::vector<int32_t> layerSequence;
+    bool layerExtEnabled = (mSplitLayerExt && mLayerExt);
+    bool visibleLayersInfo = false;
+
+    if (mSmoMo || layerExtEnabled) {
+        const auto compositionDisplay = display->getCompositionDisplay();
+        compositionDisplay->getVisibleLayerInfo(&layerName, &layerSequence);
+        visibleLayersInfo = (layerName.size() != 0);
     }
 
-    if (mSmoMo) {
+    if (layerExtEnabled && visibleLayersInfo) {
+        mLayerExt->UpdateLayerState(layerName, mNumLayers);
+    }
+
+    if (mSmoMo && visibleLayersInfo) {
         ATRACE_NAME("SmoMoUpdateState");
         Mutex::Autolock lock(mStateLock);
 
@@ -3011,14 +3016,12 @@ void SurfaceFlinger::postComposition() {
 
         // Disable SmoMo by passing empty layer stack in multiple display case
         if (mDisplays.size() == 1) {
-            mDrawingState.traverse([&](Layer* layer) {
-                if (layer->findOutputLayerForDisplay(display)) {
-                    smomo::SmomoLayerStats layerStats;
-                    layerStats.id = layer->getSequence();
-                    layerStats.name = layer->getName();
-                    layers.push_back(layerStats);
-                }
-            });
+            for (int i = 0; i < layerName.size(); i++) {
+                smomo::SmomoLayerStats layerStats;
+                layerStats.name = layerName.at(i);
+                layerStats.id = layerSequence.at(i);
+                layers.push_back(layerStats);
+            }
 
             fps = mRefreshRateConfigs->getCurrentRefreshRate().getFps().getValue();
         }
