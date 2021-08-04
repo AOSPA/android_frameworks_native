@@ -118,6 +118,7 @@ public:
                  void(const Region&, std::vector<LayerFE::LayerSettings>&));
     MOCK_METHOD1(setExpensiveRenderingExpected, void(bool));
     MOCK_METHOD1(cacheClientCompositionRequests, void(uint32_t));
+    MOCK_CONST_METHOD2(getVisibleLayerInfo, void(std::vector<std::string>*, std::vector<int32_t>*));
 };
 
 } // namespace android::compositionengine::mock
