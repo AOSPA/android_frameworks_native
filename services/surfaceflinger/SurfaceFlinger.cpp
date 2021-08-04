@@ -2159,6 +2159,9 @@ status_t SurfaceFlinger::addHdrLayerInfoListener(const sp<IBinder>& displayToken
         hdrInfoReporter = sp<HdrLayerInfoReporter>::make();
     }
     hdrInfoReporter->addListener(listener);
+
+
+    mAddingHDRLayerInfoListener = true;
     return OK;
 }
 
@@ -2757,6 +2760,8 @@ void SurfaceFlinger::onMessageRefresh() {
             mTracing.notify("bufferLatched");
         }
     }
+
+    mVisibleRegionsWereDirtyThisFrame = mVisibleRegionsDirty; // Cache value for use in post-comp
     mVisibleRegionsDirty = false;
 
     if (mCompositionEngine->needsAnotherUpdate()) {
@@ -2906,6 +2911,7 @@ void SurfaceFlinger::postComposition() {
 
     std::vector<std::pair<std::shared_ptr<compositionengine::Display>, sp<HdrLayerInfoReporter>>>
             hdrInfoListeners;
+    bool haveNewListeners = false;
     {
         Mutex::Autolock lock(mStateLock);
         if (mFpsReporter) {
@@ -2923,36 +2929,44 @@ void SurfaceFlinger::postComposition() {
                 }
             }
         }
+        haveNewListeners = mAddingHDRLayerInfoListener; // grab this with state lock
+        mAddingHDRLayerInfoListener = false;
     }
 
-    for (auto& [compositionDisplay, listener] : hdrInfoListeners) {
-        HdrLayerInfoReporter::HdrLayerInfo info;
-        int32_t maxArea = 0;
-        mDrawingState.traverse([&, compositionDisplay = compositionDisplay](Layer* layer) {
-            const auto layerFe = layer->getCompositionEngineLayerFE();
-            if (layer->isVisible() && compositionDisplay->belongsInOutput(layerFe)) {
-                const Dataspace transfer =
+    if (haveNewListeners || mSomeDataspaceChanged || mVisibleRegionsWereDirtyThisFrame) {
+        for (auto& [compositionDisplay, listener] : hdrInfoListeners) {
+            HdrLayerInfoReporter::HdrLayerInfo info;
+            int32_t maxArea = 0;
+            mDrawingState.traverse([&, compositionDisplay = compositionDisplay](Layer* layer) {
+                const auto layerFe = layer->getCompositionEngineLayerFE();
+                if (layer->isVisible() && compositionDisplay->belongsInOutput(layerFe)) {
+                    const Dataspace transfer =
                         static_cast<Dataspace>(layer->getDataSpace() & Dataspace::TRANSFER_MASK);
-                const bool isHdr = (transfer == Dataspace::TRANSFER_ST2084 ||
-                                    transfer == Dataspace::TRANSFER_HLG);
+                    const bool isHdr = (transfer == Dataspace::TRANSFER_ST2084 ||
+                                        transfer == Dataspace::TRANSFER_HLG);
 
-                if (isHdr) {
-                    const auto* outputLayer = compositionDisplay->getOutputLayerForLayer(layerFe);
-                    if (outputLayer) {
-                        info.numberOfHdrLayers++;
-                        const auto displayFrame = outputLayer->getState().displayFrame;
-                        const int32_t area = displayFrame.width() * displayFrame.height();
-                        if (area > maxArea) {
-                            maxArea = area;
-                            info.maxW = displayFrame.width();
-                            info.maxH = displayFrame.height();
+                    if (isHdr) {
+                        const auto* outputLayer =
+                            compositionDisplay->getOutputLayerForLayer(layerFe);
+                        if (outputLayer) {
+                            info.numberOfHdrLayers++;
+                            const auto displayFrame = outputLayer->getState().displayFrame;
+                            const int32_t area = displayFrame.width() * displayFrame.height();
+                            if (area > maxArea) {
+                                maxArea = area;
+                                info.maxW = displayFrame.width();
+                                info.maxH = displayFrame.height();
+                            }
                         }
                     }
                 }
-            }
-        });
-        listener->dispatchHdrLayerInfo(info);
+            });
+            listener->dispatchHdrLayerInfo(info);
+        }
     }
+
+    mSomeDataspaceChanged = false;
+    mVisibleRegionsWereDirtyThisFrame = false;
 
     mTransactionCallbackInvoker.addPresentFence(mPreviousPresentFences[0].fence);
     mTransactionCallbackInvoker.sendCallbacks();
@@ -3216,7 +3230,6 @@ void SurfaceFlinger::handleTransaction(uint32_t transactionFlags) {
     handleTransactionLocked(transactionFlags);
 
     mDebugInTransaction = 0;
-    invalidateHwcGeometry();
     // here the transaction has been committed
 }
 
@@ -5083,6 +5096,15 @@ uint32_t SurfaceFlinger::setClientStateLocked(
     }
     if (what & layer_state_t::eAutoRefreshChanged) {
         layer->setAutoRefresh(s.autoRefresh);
+    }
+    if (what & layer_state_t::eTrustedOverlayChanged) {
+        if (privileged) {
+            if (layer->setTrustedOverlay(s.isTrustedOverlay)) {
+                flags |= eTraversalNeeded;
+            }
+        } else {
+            ALOGE("Attempt to set trusted overlay without permission ACCESS_SURFACE_FLINGER");
+        }
     }
     if (what & layer_state_t::eStretchChanged) {
         if (layer->setStretchEffect(s.stretchEffect)) {
