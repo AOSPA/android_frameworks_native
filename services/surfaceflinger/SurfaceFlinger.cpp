@@ -7983,8 +7983,9 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::captureScre
         auto future = mScheduler->schedule([=]() {
             bool protectedLayerFound = false;
             traverseLayers([&](Layer* layer) {
-                protectedLayerFound =
-                        protectedLayerFound || (layer->isVisible() && layer->isProtected());
+                protectedLayerFound = protectedLayerFound ||
+                        (layer->isVisible() && layer->isProtected() &&
+                         !layer->isSecureCamera() && !layer->isSecureDisplay());
             });
             return protectedLayerFound;
         });
