@@ -8467,7 +8467,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mBootFinished && mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8482,7 +8482,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mBootFinished && mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
@@ -8513,14 +8513,12 @@ void SurfaceFlinger::handlePresentationDisplaysEarlyWakeup(size_t updatingDispla
         }
 
 #ifdef EARLY_WAKEUP_FEATURE
-        if (mBootFinished) {
-            if (!singleUpdatingDisplay) {
-                // Notify Display Extn for Early Wakeup of displays
-                mDisplayExtnIntf->NotifyEarlyWakeUp(false, true);
-            } else if (internalDisplay) {
-                // Notify Display Extn for Early Wakeup of given display
-                mDisplayExtnIntf->NotifyDisplayEarlyWakeUp(hwcDisplayId);
-            }
+        if (!singleUpdatingDisplay) {
+            // Notify Display Extn for Early Wakeup of displays
+            mDisplayExtnIntf->NotifyEarlyWakeUp(false, true);
+        } else if (internalDisplay) {
+            // Notify Display Extn for Early Wakeup of given display
+            mDisplayExtnIntf->NotifyDisplayEarlyWakeUp(hwcDisplayId);
         }
 #endif
 
