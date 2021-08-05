@@ -904,11 +904,9 @@ Error Composer::setLayerZOrder(Display display, Layer layer, uint32_t z)
 Error Composer::setLayerType(Display display, Layer layer, uint32_t type)
 {
     if (mClient_2_4) {
-        if (sp<IQtiComposerClient> qClient = IQtiComposerClient::castFrom(mClient_2_4)) {
-            mWriter.selectDisplay(display);
-            mWriter.selectLayer(layer);
-            mWriter.setLayerType(type);
-        }
+        mWriter.selectDisplay(display);
+        mWriter.selectLayer(layer);
+        mWriter.setLayerType(type);
     }
 
     return Error::NONE;
