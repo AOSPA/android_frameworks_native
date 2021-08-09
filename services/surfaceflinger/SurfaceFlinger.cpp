@@ -7435,7 +7435,8 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
                                 bool protectedLayerFound = false;
                                 traverseLayers([&](Layer* layer) {
                                     protectedLayerFound = protectedLayerFound ||
-                                            (layer->isVisible() && layer->isProtected());
+                                            (layer->isVisible() && layer->isProtected() &&
+                                             !layer->isSecureCamera() && !layer->isSecureDisplay());
                                 });
                                 return protectedLayerFound;
                             }).get();
