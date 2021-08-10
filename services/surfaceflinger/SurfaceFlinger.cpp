@@ -1482,7 +1482,7 @@ bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
     }
 
     mLastCachedFps = newFpsRequest;
-    if (newFpsRequest > mThermalLevelFps) {
+    if ((int32_t)newFpsRequest > mThermalLevelFps) {
         return true;
     }
 
