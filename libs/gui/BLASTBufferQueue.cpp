@@ -172,8 +172,12 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
                bool isDeviceRCSupported = false;
                status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
                if (!err && isDeviceRCSupported) {
-                   mConsumer->setConsumerUsageBits(GraphicBuffer::USAGE_SW_READ_RARELY |
-                                                   GraphicBuffer::USAGE_SW_WRITE_RARELY);
+                   // retain original flags and append SW Flags
+                   uint64_t usage = GraphicBuffer::USAGE_HW_COMPOSER |
+                                    GraphicBuffer::USAGE_HW_TEXTURE |
+                                    GraphicBuffer::USAGE_SW_READ_RARELY |
+                                    GraphicBuffer::USAGE_SW_WRITE_RARELY;
+                   mConsumer->setConsumerUsageBits(usage);
                 }
             }
         }
