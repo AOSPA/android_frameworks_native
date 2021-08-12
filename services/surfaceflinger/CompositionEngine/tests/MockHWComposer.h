@@ -127,6 +127,7 @@ public:
     MOCK_CONST_METHOD0(getExternalHwcDisplayId, std::optional<hal::HWDisplayId>());
     MOCK_CONST_METHOD1(toPhysicalDisplayId, std::optional<PhysicalDisplayId>(hal::HWDisplayId));
     MOCK_CONST_METHOD1(fromPhysicalDisplayId, std::optional<hal::HWDisplayId>(PhysicalDisplayId));
+    MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
 };
 
 } // namespace mock
