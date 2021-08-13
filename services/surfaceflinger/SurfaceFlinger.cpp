@@ -2208,11 +2208,13 @@ sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
 }
 
 void SurfaceFlinger::signalTransaction() {
+    mScheduler->resetIdleTimer();
     notifyDisplayUpdateImminent();
     mEventQueue->invalidate();
 }
 
 void SurfaceFlinger::signalLayerUpdate() {
+    mScheduler->resetIdleTimer();
     notifyDisplayUpdateImminent();
     mEventQueue->invalidate();
 }
@@ -2498,7 +2500,6 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     ATRACE_FORMAT("onMessageInvalidate %" PRId64 " vsyncIn %.2fms%s", vsyncId, vsyncIn,
                   mExpectedPresentTime == expectedVSyncTime ? "" : " (adjusted)");
 
-    mScheduler->resetIdleTimer();
     // When Backpressure propagation is enabled we want to give a small grace period
     // for the present fence to fire instead of just giving up on this frame to handle cases
     // where present fence is just about to get signaled.
