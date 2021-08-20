@@ -4256,8 +4256,10 @@ bool SurfaceFlinger::handlePageFlip() {
             frameQueued = true;
             if (layer->shouldPresentNow(expectedPresentTime)) {
                 mLayersWithQueuedFrames.emplace(layer);
-                layerStackId = layer->getLayerStack();
-                layerStackIds.insert(layerStackId);
+                if (wakeUpPresentationDisplays) {
+                    layerStackId = layer->getLayerStack();
+                    layerStackIds.insert(layerStackId);
+                }
             } else {
                 ATRACE_NAME("!layer->shouldPresentNow()");
                 layer->useEmptyDamage();
