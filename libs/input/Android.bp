@@ -99,9 +99,6 @@ cc_library {
                 "libui",
             ],
 
-            sanitize: {
-                misc_undefined: ["integer"],
-            },
         },
         host: {
             shared: {
