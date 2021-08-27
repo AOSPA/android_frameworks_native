@@ -172,8 +172,12 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
                bool isDeviceRCSupported = false;
                status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
                if (!err && isDeviceRCSupported) {
-                   mConsumer->setConsumerUsageBits(GraphicBuffer::USAGE_SW_READ_RARELY |
-                                                   GraphicBuffer::USAGE_SW_WRITE_RARELY);
+                   // retain original flags and append SW Flags
+                   uint64_t usage = GraphicBuffer::USAGE_HW_COMPOSER |
+                                    GraphicBuffer::USAGE_HW_TEXTURE |
+                                    GraphicBuffer::USAGE_SW_READ_RARELY |
+                                    GraphicBuffer::USAGE_SW_WRITE_RARELY;
+                   mConsumer->setConsumerUsageBits(usage);
                 }
             }
         }
@@ -182,11 +186,14 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
     mTransformHint = mSurfaceControl->getTransformHint();
     mBufferItemConsumer->setTransformHint(mTransformHint);
     SurfaceComposerClient::Transaction()
-          .setFlags(surface, layer_state_t::eEnableBackpressure,
-                    layer_state_t::eEnableBackpressure)
-          .apply();
+            .setFlags(surface, layer_state_t::eEnableBackpressure,
+                      layer_state_t::eEnableBackpressure)
+            .setApplyToken(mApplyToken)
+            .apply();
     mNumAcquired = 0;
     mNumFrameAvailable = 0;
+    BQA_LOGV("BLASTBufferQueue created width=%d height=%d format=%d mTransformHint=%d", width,
+             height, format, mTransformHint);
 }
 
 BLASTBufferQueue::~BLASTBufferQueue() {
@@ -204,9 +211,8 @@ BLASTBufferQueue::~BLASTBufferQueue() {
 }
 
 void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height,
-                              int32_t format) {
+                              int32_t format, SurfaceComposerClient::Transaction* outTransaction) {
     std::unique_lock _lock{mMutex};
-    BQA_LOGV("update width=%d height=%d format=%d", width, height, format);
     if (mFormat != format) {
         mFormat = format;
         mBufferItemConsumer->setDefaultBufferFormat(convertBufferFormat(format));
@@ -228,6 +234,8 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
         mTransformHint = mSurfaceControl->getTransformHint();
         mBufferItemConsumer->setTransformHint(mTransformHint);
     }
+    BQA_LOGV("update width=%d height=%d format=%d mTransformHint=%d", width, height, format,
+             mTransformHint);
 
     ui::Size newSize(width, height);
     if (mRequestedSize != newSize) {
@@ -240,15 +248,18 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
             // We only need to update the scale if we've received at least one buffer. The reason
             // for this is the scale is calculated based on the requested size and buffer size.
             // If there's no buffer, the scale will always be 1.
+            SurfaceComposerClient::Transaction* destFrameTransaction =
+                    (outTransaction) ? outTransaction : &t;
             if (mSurfaceControl != nullptr && mLastBufferInfo.hasBuffer) {
-                t.setDestinationFrame(mSurfaceControl,
-                                      Rect(0, 0, newSize.getWidth(), newSize.getHeight()));
+                destFrameTransaction->setDestinationFrame(mSurfaceControl,
+                                                          Rect(0, 0, newSize.getWidth(),
+                                                               newSize.getHeight()));
             }
             applyTransaction = true;
         }
     }
     if (applyTransaction) {
-        t.apply();
+        t.setApplyToken(mApplyToken).apply();
     }
 }
 
@@ -283,6 +294,7 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
 
                 mTransformHint = stat.transformHint;
                 mBufferItemConsumer->setTransformHint(mTransformHint);
+                BQA_LOGV("updated mTransformHint=%d", mTransformHint);
                 // Update frametime stamps if the frame was latched and presented, indicated by a
                 // valid latch time.
                 if (stat.latchTime > 0) {
@@ -355,6 +367,7 @@ void BLASTBufferQueue::releaseBufferCallback(const ReleaseCallbackId& id,
         mTransformHint = transformHint;
         mSurfaceControl->setTransformHint(transformHint);
         mBufferItemConsumer->setTransformHint(mTransformHint);
+        BQA_LOGV("updated mTransformHint=%d", mTransformHint);
     }
 
     // Calculate how many buffers we need to hold before we release them back
@@ -439,7 +452,7 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     }
 
     if (rejectBuffer(bufferItem)) {
-        BQA_LOGE("rejecting buffer:active_size=%dx%d, requested_size=%dx%d"
+        BQA_LOGE("rejecting buffer:active_size=%dx%d, requested_size=%dx%d "
                  "buffer{size=%dx%d transform=%d}",
                  mSize.width, mSize.height, mRequestedSize.width, mRequestedSize.height,
                  buffer->getWidth(), buffer->getHeight(), bufferItem.mTransform);
@@ -465,6 +478,9 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     incStrong((void*)transactionCallbackThunk);
 
     Rect crop = computeCrop(bufferItem);
+    const bool updateDestinationFrame =
+            bufferItem.mScalingMode == NATIVE_WINDOW_SCALING_MODE_FREEZE ||
+            !mLastBufferInfo.hasBuffer;
     mLastBufferInfo.update(true /* hasBuffer */, bufferItem.mGraphicBuffer->getWidth(),
                            bufferItem.mGraphicBuffer->getHeight(), bufferItem.mTransform,
                            bufferItem.mScalingMode, crop);
@@ -482,7 +498,9 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     t->addTransactionCompletedCallback(transactionCallbackThunk, static_cast<void*>(this));
     mSurfaceControlsWithPendingCallback.push(mSurfaceControl);
 
-    t->setDestinationFrame(mSurfaceControl, Rect(0, 0, mSize.getWidth(), mSize.getHeight()));
+    if (updateDestinationFrame) {
+        t->setDestinationFrame(mSurfaceControl, Rect(0, 0, mSize.getWidth(), mSize.getHeight()));
+    }
     t->setBufferCrop(mSurfaceControl, crop);
     t->setTransform(mSurfaceControl, bufferItem.mTransform);
     t->setTransformToDisplayInverse(mSurfaceControl, bufferItem.mTransformToDisplayInverse);
@@ -532,11 +550,11 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
 
     BQA_LOGV("processNextBufferLocked size=%dx%d mFrameNumber=%" PRIu64
              " applyTransaction=%s mTimestamp=%" PRId64 "%s mPendingTransactions.size=%d"
-             " graphicBufferId=%" PRIu64 "%s",
+             " graphicBufferId=%" PRIu64 "%s transform=%d",
              mSize.width, mSize.height, bufferItem.mFrameNumber, toString(applyTransaction),
              bufferItem.mTimestamp, bufferItem.mIsAutoTimestamp ? "(auto)" : "",
              static_cast<uint32_t>(mPendingTransactions.size()), bufferItem.mGraphicBuffer->getId(),
-             bufferItem.mAutoRefresh ? " mAutoRefresh" : "");
+             bufferItem.mAutoRefresh ? " mAutoRefresh" : "", bufferItem.mTransform);
 }
 
 Rect BLASTBufferQueue::computeCrop(const BufferItem& item) {
@@ -663,14 +681,6 @@ public:
 
     status_t setFrameTimelineInfo(const FrameTimelineInfo& frameTimelineInfo) override {
         return mBbq->setFrameTimelineInfo(frameTimelineInfo);
-    }
- protected:
-    uint32_t getTransformHint() const override {
-        if (mStickyTransform == 0 && !transformToDisplayInverse()) {
-            return mBbq->getLastTransformHint();
-        } else {
-            return 0;
-        }
     }
 };
 

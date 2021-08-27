@@ -175,7 +175,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
     LayerFE::ClientCompositionTargetSettings targetSettings{
             .clip = Region(viewport),
             .needsFiltering = false,
-            .isSecure = true,
+            .isSecure = outputState.isSecure,
             .supportsProtectedContent = false,
             .clearRegion = clearRegion,
             .viewport = viewport,
@@ -218,6 +218,7 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
     }
 
     renderengine::LayerSettings holePunchSettings;
+    renderengine::LayerSettings holePunchBackgroundSettings;
     if (mHolePunchLayer) {
         auto clientCompositionList =
                 mHolePunchLayer->getOutputLayer()->getLayerFE().prepareClientCompositionList(
@@ -232,6 +233,15 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
         holePunchSettings.alpha = 0.0f;
         holePunchSettings.name = std::string("hole punch layer");
         layerSettingsPointers.push_back(&holePunchSettings);
+
+        // Add a solid background as the first layer in case there is no opaque
+        // buffer behind the punch hole
+        holePunchBackgroundSettings.alpha = 1.0f;
+        holePunchBackgroundSettings.name = std::string("holePunchBackground");
+        holePunchBackgroundSettings.geometry.boundaries = holePunchSettings.geometry.boundaries;
+        holePunchBackgroundSettings.geometry.positionTransform =
+                holePunchSettings.geometry.positionTransform;
+        layerSettingsPointers.insert(layerSettingsPointers.begin(), &holePunchBackgroundSettings);
     }
 
     if (sDebugHighlighLayers) {

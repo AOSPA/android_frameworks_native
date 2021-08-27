@@ -88,6 +88,11 @@ public:
     MOCK_METHOD(hal::Error, setContentType, (hal::ContentType), (override));
     MOCK_METHOD(hal::Error, getClientTargetProperty, (hal::ClientTargetProperty *), (override));
     MOCK_METHOD(hal::Error, setDisplayElapseTime, (uint64_t), (override));
+#ifdef QTI_UNIFIED_DRAW
+    MOCK_METHOD(hal::Error, setClientTarget_3_1, (int32_t, const android::sp<android::Fence>&,
+                hal::Dataspace), (override));
+    MOCK_METHOD(hal::Error, tryDrawMethod, (IQtiComposerClient::DrawMethod), (override));
+#endif
 };
 
 class Layer : public HWC2::Layer {

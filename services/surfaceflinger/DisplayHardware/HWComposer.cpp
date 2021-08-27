@@ -36,7 +36,6 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/Errors.h>
 #include <utils/Trace.h>
-#include <cutils/properties.h>
 
 #include "../Layer.h" // needed only for debugging
 #include "../SurfaceFlingerProperties.h"
@@ -141,8 +140,7 @@ HWComposer::HWComposer(std::unique_ptr<Hwc2::Composer> composer)
       : mComposer(std::move(composer)),
         mMaxVirtualDisplayDimension(static_cast<size_t>(sysprop::max_virtual_display_dimension(0))),
         mUpdateDeviceProductInfoOnHotplugReconnect(
-                sysprop::update_device_product_info_on_hotplug_reconnect(false)),
-        mSpecFenceEnabled(property_get_bool("vendor.display.enable_spec_fence", 0)) {}
+                sysprop::update_device_product_info_on_hotplug_reconnect(false)) {}
 
 HWComposer::HWComposer(const std::string& composerServiceName)
       : HWComposer(std::make_unique<Hwc2::impl::Composer>(composerServiceName)) {}
@@ -477,7 +475,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 
 status_t HWComposer::getDeviceCompositionChanges(
         HalDisplayId displayId, bool /*frameUsesClientComposition */,
-        std::chrono::steady_clock::time_point earliestPresentTime,
+        std::chrono::steady_clock::time_point earliestPresentTime __attribute__((unused)),
         const std::shared_ptr<FenceTime>& previousPresentFence __attribute__((unused)),
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
@@ -500,8 +498,7 @@ status_t HWComposer::getDeviceCompositionChanges(
     // earliest time to present. Otherwise, we may present a frame too early.
     // 2. There is no client composition. Otherwise, we first need to render the
     // client target buffer.
-    const bool canSkipValidate = mSpecFenceEnabled ||
-            std::chrono::steady_clock::now() >= earliestPresentTime;
+    const bool canSkipValidate = true;
     displayData.validateWasSkipped = false;
     bool acceptChanges = true;
     if (canSkipValidate) {
@@ -877,6 +874,15 @@ std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(
         PhysicalDisplayId displayId) const {
     if (const auto it = mDisplayData.find(displayId);
         it != mDisplayData.end() && !it->second.isVirtual) {
+        return it->second.hwcDisplay->getId();
+    }
+    return {};
+}
+
+std::optional<hal::HWDisplayId> HWComposer::fromVirtualDisplayId(
+        HalVirtualDisplayId displayId) const {
+    if (const auto it = mDisplayData.find(displayId);
+        it != mDisplayData.end() && it->second.isVirtual) {
         return it->second.hwcDisplay->getId();
     }
     return {};

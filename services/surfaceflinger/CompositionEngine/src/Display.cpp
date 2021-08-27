@@ -257,20 +257,6 @@ void Display::chooseCompositionStrategy() {
     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
     auto& hwc = getCompositionEngine().getHwComposer();
 
-#ifdef QTI_DISPLAY_CONFIG_ENABLED
-    auto layers = getOutputLayersOrderedByZ();
-    bool hasScreenshot = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-         return layer->getLayerFE().getCompositionState()->isScreenshot;
-    });
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
-    if (physicalDisplayId.has_value() &&
-        (mConnectionType == ui::DisplayConnectionType::External) &&
-        (hasScreenshot != mHasScreenshot) && mDisplayConfigIntf) {
-        const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
-        mDisplayConfigIntf->SetDisplayAnimating(*hwcDisplayId, hasScreenshot);
-        mHasScreenshot = hasScreenshot;
-    }
-#endif
     beginDraw();
     if (status_t result =
                 hwc.getDeviceCompositionChanges(*halDisplayId, anyLayersRequireClientComposition(),
@@ -423,6 +409,8 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
         return fences;
     }
 
+    endDraw();
+
     auto& hwc = getCompositionEngine().getHwComposer();
     hwc.presentAndGetReleaseFences(*halDisplayIdOpt, getState().earliestPresentTime,
                                    getState().previousPresentFence);
@@ -440,8 +428,6 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
     }
 
     hwc.clearReleaseFences(*halDisplayIdOpt);
-
-    endDraw();
 
     return fences;
 }

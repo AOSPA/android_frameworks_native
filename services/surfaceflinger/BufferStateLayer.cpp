@@ -455,7 +455,8 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
 
     if (mDrawingState.buffer) {
         mReleasePreviousBuffer = true;
-        if (mDrawingState.buffer != mBufferInfo.mBuffer) {
+        if (mDrawingState.buffer != mBufferInfo.mBuffer ||
+            mDrawingState.frameNumber != mBufferInfo.mFrameNumber) {
             // If mDrawingState has a buffer, and we are about to update again
             // before swapping to drawing state, then the first buffer will be
             // dropped and we should decrement the pending buffer count and
@@ -630,6 +631,7 @@ bool BufferStateLayer::setTransactionCompletedListeners(
 }
 
 bool BufferStateLayer::setTransparentRegionHint(const Region& transparent) {
+    mDrawingState.sequence++;
     mDrawingState.transparentRegionHint = transparent;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -933,7 +935,11 @@ void BufferStateLayer::gatherBufferInfo() {
     mBufferInfo.mFenceTime = std::make_shared<FenceTime>(s.acquireFence);
     mBufferInfo.mFence = s.acquireFence;
     mBufferInfo.mTransform = s.bufferTransform;
+    auto lastDataspace = mBufferInfo.mDataspace;
     mBufferInfo.mDataspace = translateDataspace(s.dataspace);
+    if (lastDataspace != mBufferInfo.mDataspace) {
+        mFlinger->mSomeDataspaceChanged = true;
+    }
     mBufferInfo.mCrop = computeBufferCrop(s);
     mBufferInfo.mScaleMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
     mBufferInfo.mSurfaceDamage = s.surfaceDamageRegion;
@@ -1006,22 +1012,6 @@ void BufferStateLayer::tracePendingBufferCount(int32_t pendingBuffers) {
     ATRACE_INT(mBlastTransactionName.c_str(), pendingBuffers);
 }
 
-void BufferStateLayer::bufferMayChange(const sp<GraphicBuffer>& newBuffer) {
-    if (mDrawingState.buffer != nullptr &&
-        (!mBufferInfo.mBuffer ||
-         mDrawingState.buffer->getBuffer() != mBufferInfo.mBuffer->getBuffer()) &&
-        newBuffer != mDrawingState.buffer->getBuffer()) {
-        // If we are about to update mDrawingState.buffer but it has not yet latched
-        // then we will drop a buffer and should decrement the pending buffer count and
-        // call any release buffer callbacks if set.
-        callReleaseBufferCallback(mDrawingState.releaseBufferListener,
-                                  mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
-                                  mDrawingState.acquireFence, mTransformHint,
-                                  mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
-                                          mOwnerUid));
-        decrementPendingBufferCount();
-    }
-}
 
 /*
  * We don't want to send the layer's transform to input, but rather the

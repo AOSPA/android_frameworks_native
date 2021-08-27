@@ -29,7 +29,7 @@ soong_config_module_type {
               "-Wno-unused-parameter",
               "-DQTI_DISPLAY_CONFIG_ENABLED"
               ],
-              shared_libs : ["libdisplayconfig.qti"]
+              shared_libs : ["libdisplayconfig.system.qti"]
           }
       }
   }
@@ -69,7 +69,7 @@ cc_defaults {
     ],
     shared_libs: [
        "libbinder_ndk",
-       "vendor.qti.hardware.display.config-V2-ndk_platform",
+       "vendor.qti.hardware.display.config-V4-ndk_platform",
     ],
 }
 
