@@ -222,6 +222,8 @@ public:
     SmomoWrapper(const SmomoWrapper&) = delete;
     SmomoWrapper& operator=(const SmomoWrapper&) = delete;
 
+    void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
+
 private:
     SmomoIntf *mInst = nullptr;
     void *mSmoMoLibHandle = nullptr;
