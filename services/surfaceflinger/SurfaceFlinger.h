@@ -1608,6 +1608,8 @@ private:
     int mRETid = 0;
     int mSFTid = 0;
     bool mTidSentSuccessfully = false;
+    bool mSendEarlyWakeUp = false;
+    std::mutex mEarlyWakeUpMutex;
 };
 
 } // namespace android
