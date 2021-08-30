@@ -879,6 +879,15 @@ std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(
     return {};
 }
 
+std::optional<hal::HWDisplayId> HWComposer::fromVirtualDisplayId(
+        HalVirtualDisplayId displayId) const {
+    if (const auto it = mDisplayData.find(displayId);
+        it != mDisplayData.end() && it->second.isVirtual) {
+        return it->second.hwcDisplay->getId();
+    }
+    return {};
+}
+
 bool HWComposer::shouldIgnoreHotplugConnect(hal::HWDisplayId hwcDisplayId,
                                             bool hasDisplayIdentificationData) const {
     if (mHasMultiDisplaySupport && !hasDisplayIdentificationData) {

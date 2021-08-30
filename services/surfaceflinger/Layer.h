@@ -275,6 +275,9 @@ public:
         // Stretch effect to apply to this layer
         StretchEffect stretchEffect;
 
+        // Whether or not this layer is a trusted overlay for input
+        bool isTrustedOverlay;
+
         Rect bufferCrop;
         Rect destinationFrame;
     };
@@ -393,6 +396,7 @@ public:
     virtual bool setBackgroundBlurRadius(int backgroundBlurRadius);
     virtual bool setBlurRegions(const std::vector<BlurRegion>& effectRegions);
     virtual bool setTransparentRegionHint(const Region& transparent);
+    virtual bool setTrustedOverlay(bool);
     virtual bool setFlags(uint32_t flags, uint32_t mask);
     virtual bool setLayerStack(uint32_t layerStack);
     virtual uint32_t getLayerStack() const;
@@ -702,12 +706,6 @@ public:
      * out which attributes of the surface have changed.
      */
     virtual uint32_t doTransaction(uint32_t transactionFlags);
-
-    /*
-     * Called before updating the drawing state buffer. Used by BufferStateLayer to release any
-     * unlatched buffers in the drawing state.
-     */
-    virtual void bufferMayChange(const sp<GraphicBuffer>& /* newBuffer */){};
 
     /*
      * Remove relative z for the layer if its relative parent is not part of the
@@ -1059,7 +1057,10 @@ private:
                                           const std::vector<Layer*>& layersInTree);
 
     void updateTreeHasFrameRateVote();
+    bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded);
+    bool setFrameRateForLayerTree(FrameRate);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
+    bool isTrustedOverlay() const;
 
     // Find the root of the cloned hierarchy, this means the first non cloned parent.
     // This will return null if first non cloned parent is not found.
@@ -1075,8 +1076,6 @@ private:
 
     // Fills in the frame and transform info for the InputWindowInfo
     void fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay);
-
-    bool updateFrameRateForLayerTree(bool treeHasFrameRateVote);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

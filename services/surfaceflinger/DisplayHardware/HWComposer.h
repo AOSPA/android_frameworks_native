@@ -247,6 +247,7 @@ public:
 
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
+    virtual std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const = 0;
     virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
     virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
@@ -393,6 +394,7 @@ public:
 
     std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const override;
     std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const override;
+    std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const override;
 #ifdef QTI_UNIFIED_DRAW
     virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
                                          const sp<Fence>& acquireFence,

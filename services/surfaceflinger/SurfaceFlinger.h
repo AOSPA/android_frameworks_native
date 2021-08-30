@@ -431,6 +431,7 @@ public:
 
     nsecs_t mVsyncTimeStamp = -1;
     void NotifyIdleStatus();
+    void NotifyResolutionSwitch(int displayId, int32_t width, int32_t height, int32_t vsyncPeriod);
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -818,7 +819,8 @@ private:
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
-    status_t setDisplayElapseTime(const sp<DisplayDevice>& display) const;
+    status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
+        std::chrono::steady_clock::time_point earliestPresentTime) const;
     status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
 
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
@@ -1327,6 +1329,10 @@ private:
 
     void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
 
+    bool IsDisplayExternalOrVirtual(const sp<DisplayDevice>& displayDevice);
+
+    void setDisplayAnimating();
+
     static mat4 calculateColorMatrix(float saturation);
 
     void updateColorMatrixLocked();
@@ -1412,11 +1418,19 @@ private:
     State mDrawingState{LayerVector::StateSet::Drawing};
     bool mVisibleRegionsDirty = false;
 
+    // VisibleRegions dirty is already cleared by postComp, but we need to track it to prevent
+    // extra work in the HDR layer info listener.
+    bool mVisibleRegionsWereDirtyThisFrame = false;
+    // Used to ensure we omit a callback when HDR layer info listener is newly added but the
+    // scene hasn't changed
+    bool mAddingHDRLayerInfoListener = false;
+
     // Set during transaction application stage to track if the input info or children
     // for a layer has changed.
     // TODO: Also move visibleRegions over to a boolean system.
     bool mInputInfoChanged = false;
     bool mSomeChildrenChanged;
+    bool mSomeDataspaceChanged = false;
     bool mForceTransactionDisplayChange = false;
 
     bool mGeometryInvalid = false;
@@ -1689,6 +1703,7 @@ private:
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     bool mUseLayerExt = false;
     bool mSplitLayerExt = false;
+    bool mHasScreenshot = false;
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
