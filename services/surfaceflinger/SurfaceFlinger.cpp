@@ -2846,10 +2846,8 @@ bool SurfaceFlinger::IsDisplayExternalOrVirtual(const sp<DisplayDevice>& display
       return hasHwcId && displayDevice->isVirtual();
     }
     auto displayId = displayDevice->getId();
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId).value();
     bool isExternal = displayId.value &&
-          (getHwComposer().getDisplayConnectionType(physicalDisplayId) ==
-           ui::DisplayConnectionType::External);
+          (displayDevice->getConnectionType() == ui::DisplayConnectionType::External);
     return hasHwcId && isExternal;
 }
 
