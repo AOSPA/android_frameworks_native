@@ -458,6 +458,20 @@ SmomoWrapper::~SmomoWrapper() {
     }
 }
 
+void SmomoWrapper::setRefreshRates(
+        std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
+    std::vector<float> refreshRates;
+
+    auto iter = refreshRateConfigs->getAllRefreshRates().cbegin();
+    while (iter != refreshRateConfigs->getAllRefreshRates().cend()) {
+        if (refreshRateConfigs->isModeAllowed(iter->second->getModeId())) {
+            refreshRates.push_back(iter->second->getFps().getValue());
+        }
+        ++iter;
+    }
+    mInst->SetDisplayRefreshRates(refreshRates);
+}
+
 bool LayerExtWrapper::init() {
     mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
     if (!mLayerExtLibHandle) {
@@ -1157,16 +1171,7 @@ void SurfaceFlinger::init() {
                 setRefreshRateTo(refreshRate);
             });
 
-        std::vector<float> refreshRates;
-
-        auto iter = mRefreshRateConfigs->getAllRefreshRates().cbegin();
-        while (iter != mRefreshRateConfigs->getAllRefreshRates().cend()) {
-            if (iter->second->getFps().getValue() > 0) {
-                refreshRates.push_back(iter->second->getFps().getValue());
-            }
-            ++iter;
-        }
-        mSmoMo->SetDisplayRefreshRates(refreshRates);
+        mSmoMo.setRefreshRates(mRefreshRateConfigs);
 
         ALOGI("SmoMo is enabled");
     }
@@ -8014,6 +8019,9 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                          preferredRefreshRate.getModeId().value());
     }
 
+    if (mSmoMo) {
+        mSmoMo.setRefreshRates(mRefreshRateConfigs);
+    }
     return NO_ERROR;
 }
 
