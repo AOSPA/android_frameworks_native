@@ -87,6 +87,7 @@ public:
 private:
     DisplayId mId;
     bool mIsDisconnected = false;
+    bool mIsColorModeChanged = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
     int32_t mPreferredBootDisplayModeId = -1;
     bool mHasScreenshot = false;
