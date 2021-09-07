@@ -2664,6 +2664,11 @@ bool SurfaceFlinger::handleMessageTransaction() {
 void SurfaceFlinger::onMessageRefresh() {
     ATRACE_CALL();
 
+    {
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        mSendEarlyWakeUp = false;
+    }
+
     mRefreshPending = false;
 
     compositionengine::CompositionRefreshArgs refreshArgs;
@@ -8579,7 +8584,17 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    bool doEarlyWakeUp = false;
+    {
+        // Synchronize the critical section.
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        if (!mSendEarlyWakeUp) {
+            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
+            doEarlyWakeUp = mSendEarlyWakeUp;
+        }
+    }
+
+    if (mDisplayExtnIntf && doEarlyWakeUp) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8594,7 +8609,17 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    bool doEarlyWakeUp = false;
+    {
+        // Synchronize the critical section.
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        if (!mSendEarlyWakeUp) {
+            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
+            doEarlyWakeUp = mSendEarlyWakeUp;
+        }
+    }
+
+    if (mDisplayExtnIntf && doEarlyWakeUp) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {

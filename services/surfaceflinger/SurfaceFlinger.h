@@ -1709,6 +1709,8 @@ private:
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
+    bool mSendEarlyWakeUp = false;
+    std::mutex mEarlyWakeUpMutex;
 };
 
 } // namespace android
