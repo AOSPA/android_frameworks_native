@@ -389,6 +389,21 @@ void RenderEngineThreaded::onPrimaryDisplaySizeChanged(ui::Size size) {
     mCondition.notify_one();
 }
 
+int RenderEngineThreaded::getRETid() {
+    std::promise<int> resultPromise;
+    std::future<int> resultFuture = resultPromise.get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::getRETid");
+            int tid = instance.getRETid();
+            resultPromise.set_value(tid);
+        });
+    }
+    mCondition.notify_one();
+    return resultFuture.get();
+}
+
 } // namespace threaded
 } // namespace renderengine
 } // namespace android

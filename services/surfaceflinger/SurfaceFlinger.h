@@ -1711,6 +1711,9 @@ private:
     bool mAllowThermalFpsChange = false;
     bool mSendEarlyWakeUp = false;
     std::mutex mEarlyWakeUpMutex;
+    int mRETid = 0;
+    int mSFTid = 0;
+    bool mTidSentSuccessfully = false;
 };
 
 } // namespace android
