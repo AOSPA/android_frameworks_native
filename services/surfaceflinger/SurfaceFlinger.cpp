@@ -174,6 +174,13 @@ class ClientInterface;
 
 composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 
+#ifdef PHASE_OFFSET_EXTN
+struct ComposerExtnIntf {
+    composer::PhaseOffsetExtnIntf *phaseOffsetExtnIntf = nullptr;
+};
+struct ComposerExtnIntf g_comp_ext_intf_;
+#endif
+
 namespace android {
 
 using namespace std::string_literals;
@@ -1255,6 +1262,7 @@ void SurfaceFlinger::startUnifiedDraw() {
         }
     }
 #endif
+    createPhaseOffsetExtn();
 }
 
 void SurfaceFlinger::readPersistentProperties() {
@@ -8692,6 +8700,30 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
             compareStack = true;
         }
     }
+}
+
+void SurfaceFlinger::createPhaseOffsetExtn() {
+#ifdef PHASE_OFFSET_EXTN
+    if (mUseAdvanceSfOffset && mComposerExtnIntf) {
+        int ret = mComposerExtnIntf->CreatePhaseOffsetExtn(&g_comp_ext_intf_.phaseOffsetExtnIntf);
+        if (ret) {
+            ALOGI("Unable to create PhaseOffset extension");
+            return;
+        }
+
+        // Get the Advanced SF Offsets from Phase Offset Extn
+        std::unordered_map<float, int64_t> advancedSfOffsets;
+        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
+
+        // Update the Advanced SF Offsets
+        std::lock_guard<std::mutex> lock(mActiveModeLock);
+        mVsyncConfiguration->UpdateSfOffsets(advancedSfOffsets);
+        const auto vsyncConfig =
+            mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
+        ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
+        ALOGI("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
+    }
+#endif
 }
 
 void SurfaceFlinger::NotifyIdleStatus() {
