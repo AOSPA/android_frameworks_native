@@ -1323,6 +1323,8 @@ private:
 
     void updateInternalDisplaysPresentationMode();
 
+    void createPhaseOffsetExtn();
+
     void setupDisplayExtnFeatures();
 
     void setupIdleTimeoutHandling(uint32_t displayId);
