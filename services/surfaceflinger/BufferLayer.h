@@ -117,9 +117,6 @@ public:
     // to apply filtering.
     virtual bool bufferNeedsFiltering() const;
 
-    // Loads the corresponding system property once per process
-    static bool latchUnsignaledBuffers();
-
 protected:
     struct BufferInfo {
         nsecs_t mDesiredPresentTime;
