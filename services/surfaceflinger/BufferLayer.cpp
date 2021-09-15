@@ -586,21 +586,6 @@ bool BufferLayer::isProtected() const {
             (mBufferInfo.mBuffer->getBuffer()->getUsage() & GRALLOC_USAGE_PROTECTED);
 }
 
-bool BufferLayer::latchUnsignaledBuffers() {
-    static bool propertyLoaded = false;
-    static bool latch = false;
-    static std::mutex mutex;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (!propertyLoaded) {
-        char value[PROPERTY_VALUE_MAX] = {};
-        property_get("debug.sf.latch_unsignaled", value, "0");
-        latch = atoi(value);
-        propertyLoaded = true;
-    }
-    return latch;
-}
-
-
 // As documented in libhardware header, formats in the range
 // 0x100 - 0x1FF are specific to the HAL implementation, and
 // are known to have no alpha channel
