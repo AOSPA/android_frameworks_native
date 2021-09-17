@@ -174,13 +174,6 @@ class ClientInterface;
 
 composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 
-#ifdef PHASE_OFFSET_EXTN
-struct ComposerExtnIntf {
-    composer::PhaseOffsetExtnIntf *phaseOffsetExtnIntf = nullptr;
-};
-struct ComposerExtnIntf g_comp_ext_intf_;
-#endif
-
 namespace android {
 
 using namespace std::string_literals;
@@ -463,20 +456,6 @@ SmomoWrapper::~SmomoWrapper() {
     if (mSmoMoLibHandle) {
       dlclose(mSmoMoLibHandle);
     }
-}
-
-void SmomoWrapper::setRefreshRates(
-        std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
-    std::vector<float> refreshRates;
-
-    auto iter = refreshRateConfigs->getAllRefreshRates().cbegin();
-    while (iter != refreshRateConfigs->getAllRefreshRates().cend()) {
-        if (refreshRateConfigs->isModeAllowed(iter->second->getModeId())) {
-            refreshRates.push_back(iter->second->getFps().getValue());
-        }
-        ++iter;
-    }
-    mInst->SetDisplayRefreshRates(refreshRates);
 }
 
 bool LayerExtWrapper::init() {
@@ -1178,7 +1157,16 @@ void SurfaceFlinger::init() {
                 setRefreshRateTo(refreshRate);
             });
 
-        mSmoMo.setRefreshRates(mRefreshRateConfigs);
+        std::vector<float> refreshRates;
+
+        auto iter = mRefreshRateConfigs->getAllRefreshRates().cbegin();
+        while (iter != mRefreshRateConfigs->getAllRefreshRates().cend()) {
+            if (iter->second->getFps().getValue() > 0) {
+                refreshRates.push_back(iter->second->getFps().getValue());
+            }
+            ++iter;
+        }
+        mSmoMo->SetDisplayRefreshRates(refreshRates);
 
         ALOGI("SmoMo is enabled");
     }
@@ -1216,10 +1204,6 @@ void SurfaceFlinger::init() {
 #endif
 
     startUnifiedDraw();
-
-    mRETid = getRenderEngine().getRETid();
-    mSFTid = gettid();
-
     ALOGV("Done initializing");
 }
 
@@ -1262,7 +1246,6 @@ void SurfaceFlinger::startUnifiedDraw() {
         }
     }
 #endif
-    createPhaseOffsetExtn();
 }
 
 void SurfaceFlinger::readPersistentProperties() {
@@ -2487,16 +2470,9 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
             break;
         }
     }
-#ifdef PASS_COMPOSITOR_TID
-    if (!mTidSentSuccessfully && mBootFinished && mDisplayExtnIntf) {
-        bool sfTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kSurfaceFlinger,
-                                                         mSFTid) == 0;
-        bool reTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kRenderEngine,
-                                                         mRETid) == 0;
-
-        if (sfTid && reTid) {
-            mTidSentSuccessfully = true;
-        }
+#ifdef PASS_COMPOSITOR_PID
+    if (mBootFinished && mDisplayExtnIntf) {
+        mDisplayExtnIntf->SendCompositorPid();
     }
 #endif
 }
@@ -2682,11 +2658,6 @@ bool SurfaceFlinger::handleMessageTransaction() {
 
 void SurfaceFlinger::onMessageRefresh() {
     ATRACE_CALL();
-
-    {
-        std::lock_guard lock(mEarlyWakeUpMutex);
-        mSendEarlyWakeUp = false;
-    }
 
     mRefreshPending = false;
 
@@ -2875,8 +2846,10 @@ bool SurfaceFlinger::IsDisplayExternalOrVirtual(const sp<DisplayDevice>& display
       return hasHwcId && displayDevice->isVirtual();
     }
     auto displayId = displayDevice->getId();
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId).value();
     bool isExternal = displayId.value &&
-          (displayDevice->getConnectionType() == ui::DisplayConnectionType::External);
+          (getHwComposer().getDisplayConnectionType(physicalDisplayId) ==
+           ui::DisplayConnectionType::External);
     return hasHwcId && isExternal;
 }
 
@@ -4569,7 +4542,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
     for (const ComposerState& state : states) {
         const layer_state_t& s = state.state;
         const bool acquireFenceChanged = (s.what & layer_state_t::eAcquireFenceChanged);
-        if (acquireFenceChanged && s.acquireFence && !enableLatchUnsignaled &&
+        if (BufferLayer::latchUnsignaledBuffers() && acquireFenceChanged && s.acquireFence && !enableLatchUnsignaled &&
             s.acquireFence->getStatus() == Fence::Status::Unsignaled) {
             ATRACE_NAME("fence unsignaled");
             return false;
@@ -8041,9 +8014,6 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                          preferredRefreshRate.getModeId().value());
     }
 
-    if (mSmoMo) {
-        mSmoMo.setRefreshRates(mRefreshRateConfigs);
-    }
     return NO_ERROR;
 }
 
@@ -8601,17 +8571,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    bool doEarlyWakeUp = false;
-    {
-        // Synchronize the critical section.
-        std::lock_guard lock(mEarlyWakeUpMutex);
-        if (!mSendEarlyWakeUp) {
-            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
-            doEarlyWakeUp = mSendEarlyWakeUp;
-        }
-    }
-
-    if (mDisplayExtnIntf && doEarlyWakeUp) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8626,17 +8586,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    bool doEarlyWakeUp = false;
-    {
-        // Synchronize the critical section.
-        std::lock_guard lock(mEarlyWakeUpMutex);
-        if (!mSendEarlyWakeUp) {
-            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
-            doEarlyWakeUp = mSendEarlyWakeUp;
-        }
-    }
-
-    if (mDisplayExtnIntf && doEarlyWakeUp) {
+    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
@@ -8700,30 +8650,6 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
             compareStack = true;
         }
     }
-}
-
-void SurfaceFlinger::createPhaseOffsetExtn() {
-#ifdef PHASE_OFFSET_EXTN
-    if (mUseAdvanceSfOffset && mComposerExtnIntf) {
-        int ret = mComposerExtnIntf->CreatePhaseOffsetExtn(&g_comp_ext_intf_.phaseOffsetExtnIntf);
-        if (ret) {
-            ALOGI("Unable to create PhaseOffset extension");
-            return;
-        }
-
-        // Get the Advanced SF Offsets from Phase Offset Extn
-        std::unordered_map<float, int64_t> advancedSfOffsets;
-        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
-
-        // Update the Advanced SF Offsets
-        std::lock_guard<std::mutex> lock(mActiveModeLock);
-        mVsyncConfiguration->UpdateSfOffsets(advancedSfOffsets);
-        const auto vsyncConfig =
-            mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
-        ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
-        ALOGI("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
-    }
-#endif
 }
 
 void SurfaceFlinger::NotifyIdleStatus() {

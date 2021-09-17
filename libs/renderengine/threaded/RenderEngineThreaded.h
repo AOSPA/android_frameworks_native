@@ -67,7 +67,6 @@ public:
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
     void onPrimaryDisplaySizeChanged(ui::Size size) override;
-    int getRETid() override;
 
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;

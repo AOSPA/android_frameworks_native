@@ -145,9 +145,6 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
 
     const auto physicalId = PhysicalDisplayId::tryCast(mId);
     LOG_FATAL_IF(!physicalId);
-
-    mIsColorModeChanged = true;
-
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,
                                                               colorProfile.renderIntent);
 }
@@ -313,13 +310,6 @@ void Display::beginDraw() {
     auto renderSurface = getRenderSurface();
     fbtLayerInfo.secure = renderSurface->isProtected();
     fbtLayerInfo.dataspace = static_cast<int>(renderSurface->getClientTargetCurrentDataspace());
-
-    // Reset cache if there is a color mode change
-    if (mIsColorModeChanged ) {
-        fbtLayerInfo.dataspace = static_cast<int>(ui::Dataspace::UNKNOWN);
-        mIsColorModeChanged = false;
-    }
-
     current.index = renderSurface->getClientTargetCurrentSlot();
     dataspace = renderSurface->getClientTargetCurrentDataspace();
 

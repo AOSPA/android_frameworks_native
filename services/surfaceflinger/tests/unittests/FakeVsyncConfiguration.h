@@ -41,7 +41,6 @@ struct FakePhaseOffsets : VsyncConfiguration {
     void reset() override {}
     void setRefreshRateFps(Fps) override {}
     void dump(std::string&) const override {}
-    void UpdateSfOffsets(std::unordered_map<float, int64_t>) override {}
 };
 
 } // namespace android::scheduler

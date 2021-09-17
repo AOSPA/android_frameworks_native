@@ -144,6 +144,10 @@ bool BufferQueueLayer::fenceHasSignaled() const {
         return true;
     }
 
+    if (latchUnsignaledBuffers()) {
+        return true;
+    }
+
     if (!hasFrameUpdate()) {
         return true;
     }

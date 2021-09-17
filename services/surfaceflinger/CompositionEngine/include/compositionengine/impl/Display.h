@@ -85,7 +85,6 @@ public:
 private:
     bool mIsVirtual = false;
     bool mIsDisconnected = false;
-    bool mIsColorModeChanged = false;
     DisplayId mId;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
     bool mHasScreenshot = false;

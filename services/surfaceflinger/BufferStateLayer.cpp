@@ -681,6 +681,10 @@ bool BufferStateLayer::fenceHasSignaled() const {
         return true;
     }
 
+    if (latchUnsignaledBuffers()) {
+        return true;
+    }
+
     const bool fenceSignaled =
             getDrawingState().acquireFence->getStatus() == Fence::Status::Signaled;
     if (!fenceSignaled) {
