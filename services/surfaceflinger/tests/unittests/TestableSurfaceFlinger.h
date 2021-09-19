@@ -766,6 +766,7 @@ private:
     void repaintEverythingForHWC() override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() {}
+    void getModeFromFps(float, DisplayModePtr&) override {}
 
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);

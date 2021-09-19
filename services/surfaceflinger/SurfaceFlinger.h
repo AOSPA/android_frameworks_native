@@ -1373,7 +1373,7 @@ private:
     int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
     void setDesiredModeByThermalLevel(float newFpsRequest);
     bool isFpsDeferNeeded(const ActiveModeInfo& info);
-    void getModeFromFps(float fps,DisplayModePtr& outMode);
+    virtual void getModeFromFps(float fps,DisplayModePtr& outMode);
     void handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
 
     sp<StartPropertySetThread> mStartPropertySetThread;

@@ -151,7 +151,7 @@ LayerHistory::Summary LayerHistory::summarize(nsecs_t now) {
         ALOGV("%s has priority: %d %s focused", info->getName().c_str(), frameRateSelectionPriority,
               layerFocused ? "" : "not");
 
-        const auto vote = info->getRefreshRateVote(now);
+        auto vote = info->getRefreshRateVote(now);
         // Skip NoVote layer as those don't have any requirements
         if (vote.type == LayerHistory::LayerVoteType::NoVote) {
             continue;
@@ -165,6 +165,11 @@ LayerHistory::Summary LayerHistory::summarize(nsecs_t now) {
 
         const float layerArea = transformed.getWidth() * transformed.getHeight();
         float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
+
+        if (mThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mThermalFps) {
+            vote.fps = Fps{mThermalFps};
+        }
+
         summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
                            vote.seamlessness, weight, layerFocused});
 
