@@ -27,6 +27,7 @@ struct SchedulerCallback final : ISchedulerCallback {
     MOCK_METHOD(void, requestDisplayMode, (DisplayModePtr, DisplayModeEvent), (override));
     MOCK_METHOD(void, kernelTimerChanged, (bool), (override));
     MOCK_METHOD(void, triggerOnFrameRateOverridesChanged, (), (override));
+    MOCK_METHOD0(getVsyncPeriodFromHWCcb, nsecs_t());
     MOCK_METHOD2(getModeFromFps, void(float, DisplayModePtr&));
 };
 
@@ -35,6 +36,7 @@ struct NoOpSchedulerCallback final : ISchedulerCallback {
     void requestDisplayMode(DisplayModePtr, DisplayModeEvent) override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() override {}
+    nsecs_t getVsyncPeriodFromHWCcb() { return 0; }
     void getModeFromFps(float, DisplayModePtr&) override {}
 };
 
