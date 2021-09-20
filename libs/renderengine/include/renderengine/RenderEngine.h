@@ -194,6 +194,7 @@ public:
 
     static void validateInputBufferUsage(const sp<GraphicBuffer>&);
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
+    virtual int getRETid() = 0;
 
 protected:
     RenderEngine() : RenderEngine(RenderEngineType::GLES) {}

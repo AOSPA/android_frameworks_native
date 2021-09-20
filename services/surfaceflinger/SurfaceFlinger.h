@@ -222,6 +222,8 @@ public:
     SmomoWrapper(const SmomoWrapper&) = delete;
     SmomoWrapper& operator=(const SmomoWrapper&) = delete;
 
+    void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
+
 private:
     SmomoIntf *mInst = nullptr;
     void *mSmoMoLibHandle = nullptr;
@@ -1707,6 +1709,11 @@ private:
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
+    bool mSendEarlyWakeUp = false;
+    std::mutex mEarlyWakeUpMutex;
+    int mRETid = 0;
+    int mSFTid = 0;
+    bool mTidSentSuccessfully = false;
 };
 
 } // namespace android

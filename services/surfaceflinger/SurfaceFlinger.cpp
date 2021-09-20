@@ -458,6 +458,20 @@ SmomoWrapper::~SmomoWrapper() {
     }
 }
 
+void SmomoWrapper::setRefreshRates(
+        std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
+    std::vector<float> refreshRates;
+
+    auto iter = refreshRateConfigs->getAllRefreshRates().cbegin();
+    while (iter != refreshRateConfigs->getAllRefreshRates().cend()) {
+        if (refreshRateConfigs->isModeAllowed(iter->second->getModeId())) {
+            refreshRates.push_back(iter->second->getFps().getValue());
+        }
+        ++iter;
+    }
+    mInst->SetDisplayRefreshRates(refreshRates);
+}
+
 bool LayerExtWrapper::init() {
     mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
     if (!mLayerExtLibHandle) {
@@ -1157,16 +1171,7 @@ void SurfaceFlinger::init() {
                 setRefreshRateTo(refreshRate);
             });
 
-        std::vector<float> refreshRates;
-
-        auto iter = mRefreshRateConfigs->getAllRefreshRates().cbegin();
-        while (iter != mRefreshRateConfigs->getAllRefreshRates().cend()) {
-            if (iter->second->getFps().getValue() > 0) {
-                refreshRates.push_back(iter->second->getFps().getValue());
-            }
-            ++iter;
-        }
-        mSmoMo->SetDisplayRefreshRates(refreshRates);
+        mSmoMo.setRefreshRates(mRefreshRateConfigs);
 
         ALOGI("SmoMo is enabled");
     }
@@ -1204,6 +1209,10 @@ void SurfaceFlinger::init() {
 #endif
 
     startUnifiedDraw();
+
+    mRETid = getRenderEngine().getRETid();
+    mSFTid = gettid();
+
     ALOGV("Done initializing");
 }
 
@@ -2470,9 +2479,16 @@ void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t ex
             break;
         }
     }
-#ifdef PASS_COMPOSITOR_PID
-    if (mBootFinished && mDisplayExtnIntf) {
-        mDisplayExtnIntf->SendCompositorPid();
+#ifdef PASS_COMPOSITOR_TID
+    if (!mTidSentSuccessfully && mBootFinished && mDisplayExtnIntf) {
+        bool sfTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kSurfaceFlinger,
+                                                         mSFTid) == 0;
+        bool reTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kRenderEngine,
+                                                         mRETid) == 0;
+
+        if (sfTid && reTid) {
+            mTidSentSuccessfully = true;
+        }
     }
 #endif
 }
@@ -2658,6 +2674,11 @@ bool SurfaceFlinger::handleMessageTransaction() {
 
 void SurfaceFlinger::onMessageRefresh() {
     ATRACE_CALL();
+
+    {
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        mSendEarlyWakeUp = false;
+    }
 
     mRefreshPending = false;
 
@@ -2846,10 +2867,8 @@ bool SurfaceFlinger::IsDisplayExternalOrVirtual(const sp<DisplayDevice>& display
       return hasHwcId && displayDevice->isVirtual();
     }
     auto displayId = displayDevice->getId();
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId).value();
     bool isExternal = displayId.value &&
-          (getHwComposer().getDisplayConnectionType(physicalDisplayId) ==
-           ui::DisplayConnectionType::External);
+          (displayDevice->getConnectionType() == ui::DisplayConnectionType::External);
     return hasHwcId && isExternal;
 }
 
@@ -8014,6 +8033,9 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                          preferredRefreshRate.getModeId().value());
     }
 
+    if (mSmoMo) {
+        mSmoMo.setRefreshRates(mRefreshRateConfigs);
+    }
     return NO_ERROR;
 }
 
@@ -8571,7 +8593,17 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    bool doEarlyWakeUp = false;
+    {
+        // Synchronize the critical section.
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        if (!mSendEarlyWakeUp) {
+            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
+            doEarlyWakeUp = mSendEarlyWakeUp;
+        }
+    }
+
+    if (mDisplayExtnIntf && doEarlyWakeUp) {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
@@ -8586,7 +8618,17 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
     }
 
 #ifdef EARLY_WAKEUP_FEATURE
-    if (mDisplayExtnIntf && mPowerAdvisor.canNotifyDisplayUpdateImminent()) {
+    bool doEarlyWakeUp = false;
+    {
+        // Synchronize the critical section.
+        std::lock_guard lock(mEarlyWakeUpMutex);
+        if (!mSendEarlyWakeUp) {
+            mSendEarlyWakeUp = mPowerAdvisor.canNotifyDisplayUpdateImminent();
+            doEarlyWakeUp = mSendEarlyWakeUp;
+        }
+    }
+
+    if (mDisplayExtnIntf && doEarlyWakeUp) {
         ATRACE_CALL();
 
         if (mInternalPresentationDisplays) {
