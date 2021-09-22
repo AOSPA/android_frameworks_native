@@ -33,8 +33,8 @@ static constexpr bool DEBUG_TRANSPORT_ACTIONS = false;
 #include <log/log.h>
 #include <utils/Trace.h>
 
+#include <ftl/NamedEnum.h>
 #include <input/InputTransport.h>
-#include <input/NamedEnum.h>
 
 using android::base::StringPrintf;
 
@@ -116,6 +116,7 @@ bool InputMessage::isValid(size_t actualSize) const {
         case Type::FOCUS:
         case Type::CAPTURE:
         case Type::DRAG:
+        case Type::TOUCH_MODE:
             return true;
         case Type::TIMELINE: {
             const nsecs_t gpuCompletedTime =
@@ -151,6 +152,8 @@ size_t InputMessage::size() const {
             return sizeof(Header) + body.drag.size();
         case Type::TIMELINE:
             return sizeof(Header) + body.timeline.size();
+        case Type::TOUCH_MODE:
+            return sizeof(Header) + body.touchMode.size();
     }
     return sizeof(Header);
 }
@@ -242,9 +245,11 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             msg->body.motion.xCursorPosition = body.motion.xCursorPosition;
             // float yCursorPosition
             msg->body.motion.yCursorPosition = body.motion.yCursorPosition;
-            // int32_t displayW
+            // uint32_t displayOrientation
+            msg->body.motion.displayOrientation = body.motion.displayOrientation;
+            // int32_t displayWidth
             msg->body.motion.displayWidth = body.motion.displayWidth;
-            // int32_t displayH
+            // int32_t displayHeight
             msg->body.motion.displayHeight = body.motion.displayHeight;
             // uint32_t pointerCount
             msg->body.motion.pointerCount = body.motion.pointerCount;
@@ -290,6 +295,10 @@ void InputMessage::getSanitizedCopy(InputMessage* msg) const {
             msg->body.timeline.eventId = body.timeline.eventId;
             msg->body.timeline.graphicsTimeline = body.timeline.graphicsTimeline;
             break;
+        }
+        case InputMessage::Type::TOUCH_MODE: {
+            msg->body.touchMode.eventId = body.touchMode.eventId;
+            msg->body.touchMode.isInTouchMode = body.touchMode.isInTouchMode;
         }
     }
 }
@@ -533,9 +542,10 @@ status_t InputPublisher::publishMotionEvent(
         std::array<uint8_t, 32> hmac, int32_t action, int32_t actionButton, int32_t flags,
         int32_t edgeFlags, int32_t metaState, int32_t buttonState,
         MotionClassification classification, const ui::Transform& transform, float xPrecision,
-        float yPrecision, float xCursorPosition, float yCursorPosition, int32_t displayWidth,
-        int32_t displayHeight, nsecs_t downTime, nsecs_t eventTime, uint32_t pointerCount,
-        const PointerProperties* pointerProperties, const PointerCoords* pointerCoords) {
+        float yPrecision, float xCursorPosition, float yCursorPosition, uint32_t displayOrientation,
+        int32_t displayWidth, int32_t displayHeight, nsecs_t downTime, nsecs_t eventTime,
+        uint32_t pointerCount, const PointerProperties* pointerProperties,
+        const PointerCoords* pointerCoords) {
     if (ATRACE_ENABLED()) {
         std::string message = StringPrintf(
                 "publishMotionEvent(inputChannel=%s, action=%" PRId32 ")",
@@ -593,6 +603,7 @@ status_t InputPublisher::publishMotionEvent(
     msg.body.motion.yPrecision = yPrecision;
     msg.body.motion.xCursorPosition = xCursorPosition;
     msg.body.motion.yCursorPosition = yCursorPosition;
+    msg.body.motion.displayOrientation = displayOrientation;
     msg.body.motion.displayWidth = displayWidth;
     msg.body.motion.displayHeight = displayHeight;
     msg.body.motion.downTime = downTime;
@@ -658,6 +669,22 @@ status_t InputPublisher::publishDragEvent(uint32_t seq, int32_t eventId, float x
     msg.body.drag.isExiting = isExiting;
     msg.body.drag.x = x;
     msg.body.drag.y = y;
+    return mChannel->sendMessage(&msg);
+}
+
+status_t InputPublisher::publishTouchModeEvent(uint32_t seq, int32_t eventId, bool isInTouchMode) {
+    if (ATRACE_ENABLED()) {
+        std::string message =
+                StringPrintf("publishTouchModeEvent(inputChannel=%s, isInTouchMode=%s)",
+                             mChannel->getName().c_str(), toString(isInTouchMode));
+        ATRACE_NAME(message.c_str());
+    }
+
+    InputMessage msg;
+    msg.header.type = InputMessage::Type::TOUCH_MODE;
+    msg.header.seq = seq;
+    msg.body.touchMode.eventId = eventId;
+    msg.body.touchMode.isInTouchMode = isInTouchMode;
     return mChannel->sendMessage(&msg);
 }
 
@@ -871,6 +898,16 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 initializeDragEvent(dragEvent, &mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = dragEvent;
+                break;
+            }
+
+            case InputMessage::Type::TOUCH_MODE: {
+                TouchModeEvent* touchModeEvent = factory->createTouchModeEvent();
+                if (!touchModeEvent) return NO_MEMORY;
+
+                initializeTouchModeEvent(touchModeEvent, &mMsg);
+                *outSeq = mMsg.header.seq;
+                *outEvent = touchModeEvent;
                 break;
             }
         }
@@ -1372,9 +1409,13 @@ void InputConsumer::initializeMotionEvent(MotionEvent* event, const InputMessage
                       msg->body.motion.buttonState, msg->body.motion.classification, transform,
                       msg->body.motion.xPrecision, msg->body.motion.yPrecision,
                       msg->body.motion.xCursorPosition, msg->body.motion.yCursorPosition,
-                      msg->body.motion.displayWidth, msg->body.motion.displayHeight,
-                      msg->body.motion.downTime, msg->body.motion.eventTime, pointerCount,
-                      pointerProperties, pointerCoords);
+                      msg->body.motion.displayOrientation, msg->body.motion.displayWidth,
+                      msg->body.motion.displayHeight, msg->body.motion.downTime,
+                      msg->body.motion.eventTime, pointerCount, pointerProperties, pointerCoords);
+}
+
+void InputConsumer::initializeTouchModeEvent(TouchModeEvent* event, const InputMessage* msg) {
+    event->initialize(msg->body.touchMode.eventId, msg->body.touchMode.isInTouchMode);
 }
 
 void InputConsumer::addSample(MotionEvent* event, const InputMessage* msg) {
@@ -1481,6 +1522,11 @@ std::string InputConsumer::dump() const {
                                                        ", presentTime=%" PRId64,
                                                        msg.body.timeline.eventId, gpuCompletedTime,
                                                        presentTime);
+                    break;
+                }
+                case InputMessage::Type::TOUCH_MODE: {
+                    out += android::base::StringPrintf("isInTouchMode=%s",
+                                                       toString(msg.body.touchMode.isInTouchMode));
                     break;
                 }
             }

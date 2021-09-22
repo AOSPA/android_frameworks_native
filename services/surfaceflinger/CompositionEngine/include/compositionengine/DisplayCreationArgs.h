@@ -41,7 +41,7 @@ struct DisplayCreationArgs {
     std::optional<ui::DisplayConnectionType> connectionType;
 
     // Size of the display in pixels
-    ui::Size pixels = ui::Size::INVALID;
+    ui::Size pixels = ui::kInvalidSize;
 
     // True if this display should be considered secure
     bool isSecure = false;

@@ -77,7 +77,7 @@ constexpr hal::HWDisplayId HWC_DISPLAY = FakeHwcDisplayInjector::DEFAULT_HWC_DIS
 constexpr hal::HWLayerId HWC_LAYER = 5000;
 constexpr Transform DEFAULT_TRANSFORM = static_cast<Transform>(0);
 
-constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID(42);
+constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID = PhysicalDisplayId::fromPort(42u);
 constexpr int DEFAULT_DISPLAY_WIDTH = 1920;
 constexpr int DEFAULT_DISPLAY_HEIGHT = 1024;
 
@@ -108,6 +108,8 @@ public:
 
         mComposer = new Hwc2::mock::Composer();
         mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
+
+        mFlinger.mutableMaxRenderTargetSize() = 16384;
     }
 
     ~CompositionTest() {
@@ -519,8 +521,6 @@ struct BaseLayerProperties {
 
     static void setupLatchedBuffer(CompositionTest* test, sp<BufferQueueLayer> layer) {
         // TODO: Eliminate the complexity of actually creating a buffer
-        EXPECT_CALL(*test->mRenderEngine, getMaxTextureSize()).WillOnce(Return(16384));
-        EXPECT_CALL(*test->mRenderEngine, getMaxViewportDims()).WillOnce(Return(16384));
         status_t err =
                 layer->setDefaultBufferProperties(LayerProperties::WIDTH, LayerProperties::HEIGHT,
                                                   LayerProperties::FORMAT);

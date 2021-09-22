@@ -22,7 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <input/Flags.h>
+#include <ftl/Flags.h>
 #include <filesystem>
 
 #include <batteryservice/BatteryService.h>
@@ -663,6 +663,9 @@ private:
     const std::unordered_map<int32_t, RawLightInfo>& getLightInfoLocked(int32_t deviceId) const
             REQUIRES(mLock);
 
+    void addDeviceInputInotify();
+    void addDeviceInotify();
+
     // Protect all internal state.
     mutable std::mutex mLock;
 
@@ -702,8 +705,8 @@ private:
     int mWakeReadPipeFd;
     int mWakeWritePipeFd;
 
-    int mInputWd;
-    int mVideoWd;
+    int mDeviceInputWd;
+    int mDeviceWd = -1;
 
     // Maximum number of signalled FDs to handle at a time.
     static const int EPOLL_MAX_EVENTS = 16;

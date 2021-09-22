@@ -524,10 +524,6 @@ public:
 
     void fillGreenColorBufferThenClearRegion();
 
-    void clearLeftRegion();
-
-    void clearRegion();
-
     template <typename SourceVariant>
     void drawShadow(const renderengine::LayerSettings& castingLayer,
                     const renderengine::ShadowSettings& shadow, const ubyte4& casterColor,
@@ -1195,28 +1191,6 @@ void RenderEngineTest::fillBufferWithoutPremultiplyAlpha() {
     expectBufferColor(fullscreenRect(), 128, 0, 0, 128, 1);
 }
 
-void RenderEngineTest::clearLeftRegion() {
-    renderengine::DisplaySettings settings;
-    settings.physicalDisplay = fullscreenRect();
-    // Here logical space is 4x4
-    settings.clip = Rect(4, 4);
-    settings.clearRegion = Region(Rect(2, 4));
-    std::vector<const renderengine::LayerSettings*> layers;
-    // fake layer, without bounds should not render anything
-    renderengine::LayerSettings layer;
-    layers.push_back(&layer);
-    invokeDraw(settings, layers);
-}
-
-void RenderEngineTest::clearRegion() {
-    // Reuse mBuffer
-    clearLeftRegion();
-    expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH / 2, DEFAULT_DISPLAY_HEIGHT), 0, 0, 0, 255);
-    expectBufferColor(Rect(DEFAULT_DISPLAY_WIDTH / 2, 0, DEFAULT_DISPLAY_WIDTH,
-                           DEFAULT_DISPLAY_HEIGHT),
-                      0, 0, 0, 0);
-}
-
 template <typename SourceVariant>
 void RenderEngineTest::drawShadow(const renderengine::LayerSettings& castingLayer,
                                   const renderengine::ShadowSettings& shadow,
@@ -1647,11 +1621,6 @@ TEST_P(RenderEngineTest, drawLayers_fillBuffer_withoutPremultiplyingAlpha) {
     fillBufferWithoutPremultiplyAlpha();
 }
 
-TEST_P(RenderEngineTest, drawLayers_clearRegion) {
-    initializeRenderEngine();
-    clearRegion();
-}
-
 TEST_P(RenderEngineTest, drawLayers_fillShadow_castsWithoutCasterLayer) {
     initializeRenderEngine();
 
@@ -1898,6 +1867,40 @@ TEST_P(RenderEngineTest, testRoundedCornersParentCrop) {
 
     // the bottom edge of the green layer should not be rounded
     expectBufferColor(Point(0, (DEFAULT_DISPLAY_HEIGHT / 2) - 1), 0, 255, 0, 255);
+}
+
+TEST_P(RenderEngineTest, testRoundedCornersParentCropSmallBounds) {
+    initializeRenderEngine();
+
+    renderengine::DisplaySettings settings;
+    settings.physicalDisplay = fullscreenRect();
+    settings.clip = fullscreenRect();
+    settings.outputDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+
+    std::vector<const renderengine::LayerSettings*> layers;
+
+    renderengine::LayerSettings redLayer;
+    redLayer.sourceDataspace = ui::Dataspace::V0_SRGB_LINEAR;
+    redLayer.geometry.boundaries = FloatRect(0, 0, DEFAULT_DISPLAY_WIDTH, 32);
+    redLayer.geometry.roundedCornersRadius = 64;
+    redLayer.geometry.roundedCornersCrop = FloatRect(0, 0, DEFAULT_DISPLAY_WIDTH, 128);
+    // Red background.
+    redLayer.source.solidColor = half3(1.0f, 0.0f, 0.0f);
+    redLayer.alpha = 1.0f;
+
+    layers.push_back(&redLayer);
+    invokeDraw(settings, layers);
+
+    // Due to roundedCornersRadius, the top corners are untouched.
+    expectBufferColor(Point(0, 0), 0, 0, 0, 0);
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH - 1, 0), 0, 0, 0, 0);
+
+    // ensure that the entire height of the red layer was clipped by the rounded corners crop.
+    expectBufferColor(Point(0, 31), 0, 0, 0, 0);
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH - 1, 31), 0, 0, 0, 0);
+
+    // the bottom middle should be red
+    expectBufferColor(Point(DEFAULT_DISPLAY_WIDTH / 2, 31), 255, 0, 0, 255);
 }
 
 TEST_P(RenderEngineTest, testClear) {

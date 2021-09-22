@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <android/gui/IWindowInfosListener.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/SortedVector.h>
@@ -39,13 +40,10 @@
 #include <gui/LayerState.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
+#include <gui/WindowInfo.h>
 #include <private/gui/ParcelUtils.h>
 #include <ui/DisplayMode.h>
 #include <ui/DynamicDisplayInfo.h>
-
-#ifndef NO_INPUT
-#include <input/InputWindow.h>
-#endif
 
 #include <private/gui/ComposerService.h>
 
@@ -54,6 +52,10 @@
 
 namespace android {
 
+using gui::FocusRequest;
+using gui::WindowInfo;
+using gui::WindowInfoHandle;
+using gui::WindowInfosListener;
 using ui::ColorMode;
 // ---------------------------------------------------------------------------
 
@@ -95,6 +97,7 @@ bool ComposerService::connectLocked() {
     if (instance.mComposerService == nullptr) {
         if (ComposerService::getInstance().connectLocked()) {
             ALOGD("ComposerService reconnected");
+            WindowInfosListenerReporter::getInstance()->reconnect(instance.mComposerService);
         }
     }
     return instance.mComposerService;
@@ -144,8 +147,16 @@ int64_t TransactionCompletedListener::getNextIdLocked() {
     return mCallbackIdCounter++;
 }
 
+sp<TransactionCompletedListener> TransactionCompletedListener::sInstance = nullptr;
+
+void TransactionCompletedListener::setInstance(const sp<TransactionCompletedListener>& listener) {
+    sInstance = listener;
+}
+
 sp<TransactionCompletedListener> TransactionCompletedListener::getInstance() {
-    static sp<TransactionCompletedListener> sInstance = new TransactionCompletedListener;
+    if (sInstance == nullptr) {
+        sInstance = new TransactionCompletedListener;
+    }
     return sInstance;
 }
 
@@ -1271,6 +1282,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
     removeReleaseBufferCallback(s);
     s->what |= layer_state_t::eBufferChanged;
     s->buffer = buffer;
+    s->releaseBufferEndpoint = IInterface::asBinder(TransactionCompletedListener::getIInstance());
     if (mIsAutoTimestamp) {
         mDesiredPresentTime = systemTime();
     }
@@ -1491,16 +1503,14 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFrame
     return *this;
 }
 
-#ifndef NO_INPUT
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setInputWindowInfo(
-        const sp<SurfaceControl>& sc,
-        const InputWindowInfo& info) {
+        const sp<SurfaceControl>& sc, const WindowInfo& info) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
         return *this;
     }
-    s->inputHandle = new InputWindowHandle(info);
+    s->windowInfoHandle = new WindowInfoHandle(info);
     s->what |= layer_state_t::eInputInfoChanged;
     return *this;
 }
@@ -1515,8 +1525,6 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::syncInpu
     mInputWindowCommands.syncInputWindows = true;
     return *this;
 }
-
-#endif
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setColorTransform(
     const sp<SurfaceControl>& sc, const mat3& matrix, const vec3& translation) {
@@ -1758,6 +1766,12 @@ void SurfaceComposerClient::Transaction::setDisplayLayerStack(const sp<IBinder>&
     s.what |= DisplayState::eLayerStackChanged;
 }
 
+void SurfaceComposerClient::Transaction::setDisplayFlags(const sp<IBinder>& token, uint32_t flags) {
+    DisplayState& s(getDisplayState(token));
+    s.flags = flags;
+    s.what |= DisplayState::eFlagsChanged;
+}
+
 void SurfaceComposerClient::Transaction::setDisplayProjection(const sp<IBinder>& token,
                                                               ui::Rotation orientation,
                                                               const Rect& layerStackRect,
@@ -1779,15 +1793,10 @@ void SurfaceComposerClient::Transaction::setDisplaySize(const sp<IBinder>& token
 
 // ---------------------------------------------------------------------------
 
-SurfaceComposerClient::SurfaceComposerClient()
-    : mStatus(NO_INIT)
-{
-}
+SurfaceComposerClient::SurfaceComposerClient() : mStatus(NO_INIT) {}
 
 SurfaceComposerClient::SurfaceComposerClient(const sp<ISurfaceComposerClient>& client)
-    : mStatus(NO_ERROR), mClient(client)
-{
-}
+      : mStatus(NO_ERROR), mClient(client) {}
 
 void SurfaceComposerClient::onFirstRef() {
     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
@@ -2159,6 +2168,18 @@ int SurfaceComposerClient::getGPUContextPriority() {
     return ComposerService::getComposerService()->getGPUContextPriority();
 }
 
+status_t SurfaceComposerClient::addWindowInfosListener(
+        const sp<WindowInfosListener>& windowInfosListener) {
+    return WindowInfosListenerReporter::getInstance()
+            ->addWindowInfosListener(windowInfosListener, ComposerService::getComposerService());
+}
+
+status_t SurfaceComposerClient::removeWindowInfosListener(
+        const sp<WindowInfosListener>& windowInfosListener) {
+    return WindowInfosListenerReporter::getInstance()
+            ->removeWindowInfosListener(windowInfosListener, ComposerService::getComposerService());
+}
+
 // ----------------------------------------------------------------------------
 
 status_t ScreenshotClient::captureDisplay(const DisplayCaptureArgs& captureArgs,
@@ -2169,12 +2190,12 @@ status_t ScreenshotClient::captureDisplay(const DisplayCaptureArgs& captureArgs,
     return s->captureDisplay(captureArgs, captureListener);
 }
 
-status_t ScreenshotClient::captureDisplay(uint64_t displayOrLayerStack,
+status_t ScreenshotClient::captureDisplay(DisplayId displayId,
                                           const sp<IScreenCaptureListener>& captureListener) {
     sp<ISurfaceComposer> s(ComposerService::getComposerService());
     if (s == nullptr) return NO_INIT;
 
-    return s->captureDisplay(displayOrLayerStack, captureListener);
+    return s->captureDisplay(displayId, captureListener);
 }
 
 status_t ScreenshotClient::captureLayers(const LayerCaptureArgs& captureArgs,

@@ -71,7 +71,6 @@
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
-#include "input/InputWindow.h"
 #include "QtiGralloc.h"
 
 #define DEBUG_RESIZE 0
@@ -85,6 +84,7 @@ constexpr int kDumpTableRowLength = 159;
 using base::StringAppendF;
 using namespace android::flag_operators;
 using PresentState = frametimeline::SurfaceFrame::PresentState;
+using gui::WindowInfo;
 
 std::atomic<int32_t> Layer::sSequence{1};
 
@@ -92,8 +92,8 @@ Layer::Layer(const LayerCreationArgs& args)
       : mFlinger(args.flinger),
         mName(args.name),
         mClientRef(args.client),
-        mWindowType(static_cast<InputWindowInfo::Type>(
-                args.metadata.getInt32(METADATA_WINDOW_TYPE, 0))) {
+        mWindowType(
+                static_cast<WindowInfo::Type>(args.metadata.getInt32(METADATA_WINDOW_TYPE, 0))) {
     uint32_t layerFlags = 0;
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
@@ -843,11 +843,7 @@ void Layer::setZOrderRelativeOf(const wp<Layer>& relativeOf) {
 }
 
 bool Layer::setRelativeLayer(const sp<IBinder>& relativeToHandle, int32_t relativeZ) {
-    sp<Handle> handle = static_cast<Handle*>(relativeToHandle.get());
-    if (handle == nullptr) {
-        return false;
-    }
-    sp<Layer> relative = handle->owner.promote();
+    sp<Layer> relative = fromHandle(relativeToHandle).promote();
     if (relative == nullptr) {
         return false;
     }
@@ -1641,8 +1637,7 @@ void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
 bool Layer::reparent(const sp<IBinder>& newParentHandle) {
     sp<Layer> newParent;
     if (newParentHandle != nullptr) {
-        auto handle = static_cast<Handle*>(newParentHandle.get());
-        newParent = handle->owner.promote();
+        newParent = fromHandle(newParentHandle).promote();
         if (newParent == nullptr) {
             ALOGE("Unable to promote Layer handle");
             return false;
@@ -2017,24 +2012,10 @@ void Layer::commitChildList() {
     mDrawingParent = mCurrentParent;
 }
 
-static wp<Layer> extractLayerFromBinder(const wp<IBinder>& weakBinderHandle) {
-    if (weakBinderHandle == nullptr) {
-        return nullptr;
-    }
-    sp<IBinder> binderHandle = weakBinderHandle.promote();
-    if (binderHandle == nullptr) {
-        return nullptr;
-    }
-    sp<Layer::Handle> handle = static_cast<Layer::Handle*>(binderHandle.get());
-    if (handle == nullptr) {
-        return nullptr;
-    }
-    return handle->owner;
-}
 
-void Layer::setInputInfo(const InputWindowInfo& info) {
+void Layer::setInputInfo(const WindowInfo& info) {
     mDrawingState.inputInfo = info;
-    mDrawingState.touchableRegionCrop = extractLayerFromBinder(info.touchableRegionCropHandle);
+    mDrawingState.touchableRegionCrop = fromHandle(info.touchableRegionCropHandle.promote());
     mDrawingState.modified = true;
     mFlinger->mInputInfoChanged = true;
     setTransactionFlags(eTransactionNeeded);
@@ -2183,7 +2164,7 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     }
 
     if (traceFlags & SurfaceTracing::TRACE_INPUT) {
-        InputWindowInfo info;
+        WindowInfo info;
         if (useDrawing) {
             info = fillInputInfo({nullptr});
         } else {
@@ -2214,7 +2195,7 @@ Rect Layer::getInputBounds() const {
     return getCroppedBufferSize(getDrawingState());
 }
 
-void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay) {
+void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& toPhysicalDisplay) {
     // Transform layer size to screen space and inset it by surface insets.
     // If this is a portal window, set the touchableRegion to the layerBounds.
     Rect layerBounds = info.portalToDisplayId == ADISPLAY_ID_NONE
@@ -2309,7 +2290,7 @@ void Layer::fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhy
     info.touchableRegion = inputTransform.transform(info.touchableRegion);
 }
 
-void Layer::fillTouchOcclusionMode(InputWindowInfo& info) {
+void Layer::fillTouchOcclusionMode(WindowInfo& info) {
     sp<Layer> p = this;
     while (p != nullptr && !p->hasInputInfo()) {
         p = p->mDrawingParent.promote();
@@ -2319,28 +2300,29 @@ void Layer::fillTouchOcclusionMode(InputWindowInfo& info) {
     }
 }
 
-InputWindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
+WindowInfo Layer::fillInputInfo(const sp<DisplayDevice>& display) {
     if (!hasInputInfo()) {
         mDrawingState.inputInfo.name = getName();
         mDrawingState.inputInfo.ownerUid = mOwnerUid;
         mDrawingState.inputInfo.ownerPid = mOwnerPid;
-        mDrawingState.inputInfo.inputFeatures = InputWindowInfo::Feature::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.flags = InputWindowInfo::Flag::NOT_TOUCH_MODAL;
+        mDrawingState.inputInfo.inputFeatures = WindowInfo::Feature::NO_INPUT_CHANNEL;
+        mDrawingState.inputInfo.flags = WindowInfo::Flag::NOT_TOUCH_MODAL;
         mDrawingState.inputInfo.displayId = getLayerStack();
     }
 
-    InputWindowInfo info = mDrawingState.inputInfo;
+    WindowInfo info = mDrawingState.inputInfo;
     info.id = sequence;
-
-    if (info.displayId == ADISPLAY_ID_NONE) {
-        info.displayId = getLayerStack();
-    }
+    info.displayId = getLayerStack();
 
     // Transform that goes from "logical(rotated)" display to physical/unrotated display.
     // This is for when inputflinger operates in physical display-space.
     ui::Transform toPhysicalDisplay;
     if (display) {
         toPhysicalDisplay = display->getTransform();
+        // getOrientation() without masking can contain more-significant bits (eg. ROT_INVALID).
+        static constexpr uint32_t ALL_ROTATIONS_MASK =
+                ui::Transform::ROT_90 | ui::Transform::ROT_180 | ui::Transform::ROT_270;
+        info.displayOrientation = toPhysicalDisplay.getOrientation() & ALL_ROTATIONS_MASK;
         info.displayWidth = display->getWidth();
         info.displayHeight = display->getHeight();
     }
@@ -2508,7 +2490,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
     }
     // Cloned layers shouldn't handle watch outside since their z order is not determined by
     // WM or the client.
-    mDrawingState.inputInfo.flags &= ~InputWindowInfo::Flag::WATCH_OUTSIDE_TOUCH;
+    mDrawingState.inputInfo.flags &= ~WindowInfo::Flag::WATCH_OUTSIDE_TOUCH;
 }
 
 void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {
@@ -2595,6 +2577,23 @@ void Layer::setClonedChild(const sp<Layer>& clonedChild) {
     mClonedChild = clonedChild;
     mHadClonedChild = true;
     mFlinger->mNumClones++;
+}
+
+const String16 Layer::Handle::kDescriptor = String16("android.Layer.Handle");
+
+wp<Layer> Layer::fromHandle(const sp<IBinder>& handleBinder) {
+    if (handleBinder == nullptr) {
+        return nullptr;
+    }
+
+    BBinder* b = handleBinder->localBinder();
+    if (b == nullptr || b->getInterfaceDescriptor() != Handle::kDescriptor) {
+        return nullptr;
+    }
+
+    // We can safely cast this binder since its local and we verified its interface descriptor.
+    sp<Handle> handle = static_cast<Handle*>(handleBinder.get());
+    return handle->owner;
 }
 
 // ---------------------------------------------------------------------------

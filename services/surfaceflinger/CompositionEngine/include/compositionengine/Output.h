@@ -168,6 +168,9 @@ public:
     // Enables (or disables) layer caching on this output
     virtual void setLayerCachingEnabled(bool) = 0;
 
+    // Enables (or disables) layer caching texture pool on this output
+    virtual void setLayerCachingTexturePoolEnabled(bool) = 0;
+
     // Sets the projection state to use
     virtual void setProjection(ui::Rotation orientation, const Rect& layerStackSpaceRect,
                                const Rect& orientedDisplaySpaceRect) = 0;
@@ -297,7 +300,7 @@ protected:
     virtual bool getSkipColorTransform() const = 0;
     virtual FrameFences presentAndGetFrameFences() = 0;
     virtual std::vector<LayerFE::LayerSettings> generateClientCompositionRequests(
-            bool supportsProtectedContent, Region& clearRegion, ui::Dataspace outputDataspace) = 0;
+            bool supportsProtectedContent, ui::Dataspace outputDataspace) = 0;
     virtual void appendRegionFlashRequests(
             const Region& flashRegion,
             std::vector<LayerFE::LayerSettings>& clientCompositionLayers) = 0;

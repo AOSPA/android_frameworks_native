@@ -124,15 +124,6 @@ constexpr int32_t VERIFIED_MOTION_EVENT_FLAGS = AMOTION_EVENT_FLAG_WINDOW_IS_OBS
 constexpr int32_t AMOTION_EVENT_FLAG_CANCELED = 0x20;
 
 enum {
-    /* Used when a motion event is not associated with any display.
-     * Typically used for non-pointer events. */
-    ADISPLAY_ID_NONE = -1,
-
-    /* The default display id. */
-    ADISPLAY_ID_DEFAULT = 0,
-};
-
-enum {
     /*
      * Indicates that an input device has switches.
      * This input source flag is hidden from the API because switches are only used by the system
@@ -354,12 +345,6 @@ private:
  */
 constexpr float AMOTION_EVENT_INVALID_CURSOR_POSITION = std::numeric_limits<float>::quiet_NaN();
 
-/**
- * Invalid value for display size. Used when display size isn't available for an event or doesn't
- * matter. This is just a constant 0 so that it has no effect if unused.
- */
-constexpr int32_t AMOTION_EVENT_INVALID_DISPLAY_SIZE = 0;
-
 /*
  * Pointer coordinate data.
  */
@@ -383,8 +368,6 @@ struct PointerCoords {
 
     float getAxisValue(int32_t axis) const;
     status_t setAxisValue(int32_t axis, float value);
-
-    void scale(float globalScale);
 
     // Scale the pointer coordinates according to a global scale and a
     // window scale. The global scale will be applied to TOUCH/TOOL_MAJOR/MINOR
@@ -592,6 +575,8 @@ public:
 
     void setCursorPosition(float x, float y);
 
+    uint32_t getDisplayOrientation() const { return mDisplayOrientation; }
+
     int2 getDisplaySize() const { return {mDisplayWidth, mDisplayHeight}; }
 
     static inline bool isValidCursorPosition(float x, float y) { return !isnan(x) && !isnan(y); }
@@ -768,8 +753,8 @@ public:
                     int32_t flags, int32_t edgeFlags, int32_t metaState, int32_t buttonState,
                     MotionClassification classification, const ui::Transform& transform,
                     float xPrecision, float yPrecision, float rawXCursorPosition,
-                    float rawYCursorPosition, int32_t displayWidth, int32_t displayHeight,
-                    nsecs_t downTime, nsecs_t eventTime, size_t pointerCount,
+                    float rawYCursorPosition, uint32_t displayOrientation, int32_t displayWidth,
+                    int32_t displayHeight, nsecs_t downTime, nsecs_t eventTime, size_t pointerCount,
                     const PointerProperties* pointerProperties, const PointerCoords* pointerCoords);
 
     void copyFrom(const MotionEvent* other, bool keepHistory);
@@ -827,6 +812,7 @@ protected:
     float mYPrecision;
     float mRawXCursorPosition;
     float mRawYCursorPosition;
+    uint32_t mDisplayOrientation;
     int32_t mDisplayWidth;
     int32_t mDisplayHeight;
     nsecs_t mDownTime;
@@ -900,6 +886,25 @@ protected:
     float mX, mY;
 };
 
+/*
+ * Touch mode events.
+ */
+class TouchModeEvent : public InputEvent {
+public:
+    virtual ~TouchModeEvent() {}
+
+    virtual int32_t getType() const override { return AINPUT_EVENT_TYPE_TOUCH_MODE; }
+
+    inline bool isInTouchMode() const { return mIsInTouchMode; }
+
+    void initialize(int32_t id, bool isInTouchMode);
+
+    void initialize(const TouchModeEvent& from);
+
+protected:
+    bool mIsInTouchMode;
+};
+
 /**
  * Base class for verified events.
  * Do not create a VerifiedInputEvent explicitly.
@@ -964,6 +969,7 @@ public:
     virtual FocusEvent* createFocusEvent() = 0;
     virtual CaptureEvent* createCaptureEvent() = 0;
     virtual DragEvent* createDragEvent() = 0;
+    virtual TouchModeEvent* createTouchModeEvent() = 0;
 };
 
 /*
@@ -980,6 +986,7 @@ public:
     virtual FocusEvent* createFocusEvent() override { return &mFocusEvent; }
     virtual CaptureEvent* createCaptureEvent() override { return &mCaptureEvent; }
     virtual DragEvent* createDragEvent() override { return &mDragEvent; }
+    virtual TouchModeEvent* createTouchModeEvent() override { return &mTouchModeEvent; }
 
 private:
     KeyEvent mKeyEvent;
@@ -987,6 +994,7 @@ private:
     FocusEvent mFocusEvent;
     CaptureEvent mCaptureEvent;
     DragEvent mDragEvent;
+    TouchModeEvent mTouchModeEvent;
 };
 
 /*
@@ -1002,6 +1010,7 @@ public:
     virtual FocusEvent* createFocusEvent() override;
     virtual CaptureEvent* createCaptureEvent() override;
     virtual DragEvent* createDragEvent() override;
+    virtual TouchModeEvent* createTouchModeEvent() override;
 
     void recycle(InputEvent* event);
 
@@ -1013,6 +1022,7 @@ private:
     std::queue<std::unique_ptr<FocusEvent>> mFocusEventPool;
     std::queue<std::unique_ptr<CaptureEvent>> mCaptureEventPool;
     std::queue<std::unique_ptr<DragEvent>> mDragEventPool;
+    std::queue<std::unique_ptr<TouchModeEvent>> mTouchModeEventPool;
 };
 
 } // namespace android

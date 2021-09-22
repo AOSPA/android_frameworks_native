@@ -812,28 +812,6 @@ status_t SkiaGLRenderEngine::drawLayers(const DisplaySettings& display,
     canvas->clear(SK_ColorTRANSPARENT);
     initCanvas(canvas, display);
 
-    // TODO: clearRegion was required for SurfaceView when a buffer is not yet available but the
-    // view is still on-screen. The clear region could be re-specified as a black color layer,
-    // however.
-    if (!display.clearRegion.isEmpty()) {
-        ATRACE_NAME("ClearRegion");
-        size_t numRects = 0;
-        Rect const* rects = display.clearRegion.getArray(&numRects);
-        SkIRect skRects[numRects];
-        for (int i = 0; i < numRects; ++i) {
-            skRects[i] =
-                    SkIRect::MakeLTRB(rects[i].left, rects[i].top, rects[i].right, rects[i].bottom);
-        }
-        SkRegion clearRegion;
-        SkPaint paint;
-        sk_sp<SkShader> shader =
-                SkShaders::Color(SkColor4f{.fR = 0., .fG = 0., .fB = 0., .fA = 1.0},
-                                 toSkColorSpace(dstDataspace));
-        paint.setShader(shader);
-        clearRegion.setRects(skRects, numRects);
-        canvas->drawRegion(clearRegion, paint);
-    }
-
     for (const auto& layer : layers) {
         ATRACE_FORMAT("DrawLayer: %s", layer->name.c_str());
 
@@ -1149,6 +1127,73 @@ inline SkRect SkiaGLRenderEngine::getSkRect(const Rect& rect) {
     return SkRect::MakeLTRB(rect.left, rect.top, rect.right, rect.bottom);
 }
 
+/**
+ *  Verifies that common, simple bounds + clip combinations can be converted into
+ *  a single RRect draw call returning true if possible. If true the radii parameter
+ *  will be filled with the correct radii values that combined with bounds param will
+ *  produce the insected roundRect. If false, the returned state of the radii param is undefined.
+ */
+static bool intersectionIsRoundRect(const SkRect& bounds, const SkRect& crop,
+                                    const SkRect& insetCrop, float cornerRadius,
+                                    SkVector radii[4]) {
+    const bool leftEqual = bounds.fLeft == crop.fLeft;
+    const bool topEqual = bounds.fTop == crop.fTop;
+    const bool rightEqual = bounds.fRight == crop.fRight;
+    const bool bottomEqual = bounds.fBottom == crop.fBottom;
+
+    // In the event that the corners of the bounds only partially align with the crop we
+    // need to ensure that the resulting shape can still be represented as a round rect.
+    // In particular the round rect implementation will scale the value of all corner radii
+    // if the sum of the radius along any edge is greater than the length of that edge.
+    // See https://www.w3.org/TR/css-backgrounds-3/#corner-overlap
+    const bool requiredWidth = bounds.width() > (cornerRadius * 2);
+    const bool requiredHeight = bounds.height() > (cornerRadius * 2);
+    if (!requiredWidth || !requiredHeight) {
+        return false;
+    }
+
+    // Check each cropped corner to ensure that it exactly matches the crop or its corner is
+    // contained within the cropped shape and does not need rounded.
+    // compute the UpperLeft corner radius
+    if (leftEqual && topEqual) {
+        radii[0].set(cornerRadius, cornerRadius);
+    } else if ((leftEqual && bounds.fTop >= insetCrop.fTop) ||
+               (topEqual && bounds.fLeft >= insetCrop.fLeft)) {
+        radii[0].set(0, 0);
+    } else {
+        return false;
+    }
+    // compute the UpperRight corner radius
+    if (rightEqual && topEqual) {
+        radii[1].set(cornerRadius, cornerRadius);
+    } else if ((rightEqual && bounds.fTop >= insetCrop.fTop) ||
+               (topEqual && bounds.fRight <= insetCrop.fRight)) {
+        radii[1].set(0, 0);
+    } else {
+        return false;
+    }
+    // compute the BottomRight corner radius
+    if (rightEqual && bottomEqual) {
+        radii[2].set(cornerRadius, cornerRadius);
+    } else if ((rightEqual && bounds.fBottom <= insetCrop.fBottom) ||
+               (bottomEqual && bounds.fRight <= insetCrop.fRight)) {
+        radii[2].set(0, 0);
+    } else {
+        return false;
+    }
+    // compute the BottomLeft corner radius
+    if (leftEqual && bottomEqual) {
+        radii[3].set(cornerRadius, cornerRadius);
+    } else if ((leftEqual && bounds.fBottom <= insetCrop.fBottom) ||
+               (bottomEqual && bounds.fLeft >= insetCrop.fLeft)) {
+        radii[3].set(0, 0);
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
 inline std::pair<SkRRect, SkRRect> SkiaGLRenderEngine::getBoundsAndClip(const FloatRect& boundsRect,
                                                                         const FloatRect& cropRect,
                                                                         const float cornerRadius) {
@@ -1166,66 +1211,20 @@ inline std::pair<SkRRect, SkRRect> SkiaGLRenderEngine::getBoundsAndClip(const Fl
         // converting them to a single RRect draw. It is possible there are other cases
         // that can be converted.
         if (crop.contains(bounds)) {
-            bool intersectionIsRoundRect = true;
-            // check each cropped corner to ensure that it exactly matches the crop or is full
-            SkVector radii[4];
-
             const auto insetCrop = crop.makeInset(cornerRadius, cornerRadius);
-
-            const bool leftEqual = bounds.fLeft == crop.fLeft;
-            const bool topEqual = bounds.fTop == crop.fTop;
-            const bool rightEqual = bounds.fRight == crop.fRight;
-            const bool bottomEqual = bounds.fBottom == crop.fBottom;
-
-            // compute the UpperLeft corner radius
-            if (leftEqual && topEqual) {
-                radii[0].set(cornerRadius, cornerRadius);
-            } else if ((leftEqual && bounds.fTop >= insetCrop.fTop) ||
-                       (topEqual && bounds.fLeft >= insetCrop.fLeft) ||
-                       insetCrop.contains(bounds.fLeft, bounds.fTop)) {
-                radii[0].set(0, 0);
-            } else {
-                intersectionIsRoundRect = false;
-            }
-            // compute the UpperRight corner radius
-            if (rightEqual && topEqual) {
-                radii[1].set(cornerRadius, cornerRadius);
-            } else if ((rightEqual && bounds.fTop >= insetCrop.fTop) ||
-                       (topEqual && bounds.fRight <= insetCrop.fRight) ||
-                       insetCrop.contains(bounds.fRight, bounds.fTop)) {
-                radii[1].set(0, 0);
-            } else {
-                intersectionIsRoundRect = false;
-            }
-            // compute the BottomRight corner radius
-            if (rightEqual && bottomEqual) {
-                radii[2].set(cornerRadius, cornerRadius);
-            } else if ((rightEqual && bounds.fBottom <= insetCrop.fBottom) ||
-                       (bottomEqual && bounds.fRight <= insetCrop.fRight) ||
-                       insetCrop.contains(bounds.fRight, bounds.fBottom)) {
-                radii[2].set(0, 0);
-            } else {
-                intersectionIsRoundRect = false;
-            }
-            // compute the BottomLeft corner radius
-            if (leftEqual && bottomEqual) {
-                radii[3].set(cornerRadius, cornerRadius);
-            } else if ((leftEqual && bounds.fBottom <= insetCrop.fBottom) ||
-                       (bottomEqual && bounds.fLeft >= insetCrop.fLeft) ||
-                       insetCrop.contains(bounds.fLeft, bounds.fBottom)) {
-                radii[3].set(0, 0);
-            } else {
-                intersectionIsRoundRect = false;
+            if (insetCrop.contains(bounds)) {
+                return {SkRRect::MakeRect(bounds), clip}; // clip is empty - no rounding required
             }
 
-            if (intersectionIsRoundRect) {
+            SkVector radii[4];
+            if (intersectionIsRoundRect(bounds, crop, insetCrop, cornerRadius, radii)) {
                 SkRRect intersectionBounds;
                 intersectionBounds.setRectRadii(bounds, radii);
                 return {intersectionBounds, clip};
             }
         }
 
-        // we didn't it any of our fast paths so set the clip to the cropRect
+        // we didn't hit any of our fast paths so set the clip to the cropRect
         clip.setRectXY(crop, cornerRadius, cornerRadius);
     }
 
@@ -1398,7 +1397,7 @@ int SkiaGLRenderEngine::getContextPriority() {
     return value;
 }
 
-void SkiaGLRenderEngine::onPrimaryDisplaySizeChanged(ui::Size size) {
+void SkiaGLRenderEngine::onActiveDisplaySizeChanged(ui::Size size) {
     // This cache multiplier was selected based on review of cache sizes relative
     // to the screen resolution. Looking at the worst case memory needed by blur (~1.5x),
     // shadows (~1x), and general data structures (e.g. vertex buffers) we selected this as a

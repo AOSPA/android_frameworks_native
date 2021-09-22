@@ -74,10 +74,10 @@ void TestInputMessageAlignment() {
   CHECK_OFFSET(InputMessage::Body::Motion, yPrecision, 124);
   CHECK_OFFSET(InputMessage::Body::Motion, xCursorPosition, 128);
   CHECK_OFFSET(InputMessage::Body::Motion, yCursorPosition, 132);
-  CHECK_OFFSET(InputMessage::Body::Motion, displayWidth, 136);
-  CHECK_OFFSET(InputMessage::Body::Motion, displayHeight, 140);
-  CHECK_OFFSET(InputMessage::Body::Motion, pointerCount, 144);
-  CHECK_OFFSET(InputMessage::Body::Motion, empty3, 148);
+  CHECK_OFFSET(InputMessage::Body::Motion, displayOrientation, 136);
+  CHECK_OFFSET(InputMessage::Body::Motion, displayWidth, 140);
+  CHECK_OFFSET(InputMessage::Body::Motion, displayHeight, 144);
+  CHECK_OFFSET(InputMessage::Body::Motion, pointerCount, 148);
   CHECK_OFFSET(InputMessage::Body::Motion, pointers, 152);
 
   CHECK_OFFSET(InputMessage::Body::Focus, eventId, 0);
@@ -102,6 +102,10 @@ void TestInputMessageAlignment() {
   CHECK_OFFSET(InputMessage::Body::Timeline, eventId, 0);
   CHECK_OFFSET(InputMessage::Body::Timeline, empty, 4);
   CHECK_OFFSET(InputMessage::Body::Timeline, graphicsTimeline, 8);
+
+  CHECK_OFFSET(InputMessage::Body::TouchMode, eventId, 0);
+  CHECK_OFFSET(InputMessage::Body::TouchMode, isInTouchMode, 4);
+  CHECK_OFFSET(InputMessage::Body::TouchMode, empty, 5);
 }
 
 void TestHeaderSize() {
@@ -123,6 +127,7 @@ void TestBodySize() {
     static_assert(sizeof(InputMessage::Body::Focus) == 8);
     static_assert(sizeof(InputMessage::Body::Capture) == 8);
     static_assert(sizeof(InputMessage::Body::Drag) == 16);
+    static_assert(sizeof(InputMessage::Body::TouchMode) == 8);
     // Timeline
     static_assert(GraphicsTimeline::SIZE == 2);
     static_assert(sizeof(InputMessage::Body::Timeline) == 24);

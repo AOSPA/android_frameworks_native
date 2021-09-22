@@ -41,10 +41,13 @@ namespace android {
 
 namespace {
 
-constexpr PhysicalDisplayId INTERNAL_DISPLAY_ID(111);
-constexpr PhysicalDisplayId EXTERNAL_DISPLAY_ID(222);
-constexpr PhysicalDisplayId DISPLAY_ID_64BIT(0xabcd12349876fedcULL);
+constexpr PhysicalDisplayId INTERNAL_DISPLAY_ID = PhysicalDisplayId::fromPort(111u);
+constexpr PhysicalDisplayId EXTERNAL_DISPLAY_ID = PhysicalDisplayId::fromPort(222u);
+constexpr PhysicalDisplayId DISPLAY_ID_64BIT =
+        PhysicalDisplayId::fromEdid(0xffu, 0xffffu, 0xffff'ffffu);
+
 constexpr std::chrono::duration VSYNC_PERIOD(16ms);
+
 class MockVSyncSource : public VSyncSource {
 public:
     const char* getName() const override { return "test"; }
@@ -543,17 +546,34 @@ TEST_F(EventThreadTest, postHotplugExternalConnect) {
 }
 
 TEST_F(EventThreadTest, postConfigChangedPrimary) {
-    mThread->onModeChanged(INTERNAL_DISPLAY_ID, DisplayModeId(7), 16666666);
+    const auto mode = DisplayMode::Builder(hal::HWConfigId(0))
+                              .setPhysicalDisplayId(INTERNAL_DISPLAY_ID)
+                              .setId(DisplayModeId(7))
+                              .setVsyncPeriod(16666666)
+                              .build();
+
+    mThread->onModeChanged(mode);
     expectConfigChangedEventReceivedByConnection(INTERNAL_DISPLAY_ID, 7, 16666666);
 }
 
 TEST_F(EventThreadTest, postConfigChangedExternal) {
-    mThread->onModeChanged(EXTERNAL_DISPLAY_ID, DisplayModeId(5), 16666666);
+    const auto mode = DisplayMode::Builder(hal::HWConfigId(0))
+                              .setPhysicalDisplayId(EXTERNAL_DISPLAY_ID)
+                              .setId(DisplayModeId(5))
+                              .setVsyncPeriod(16666666)
+                              .build();
+
+    mThread->onModeChanged(mode);
     expectConfigChangedEventReceivedByConnection(EXTERNAL_DISPLAY_ID, 5, 16666666);
 }
 
 TEST_F(EventThreadTest, postConfigChangedPrimary64bit) {
-    mThread->onModeChanged(DISPLAY_ID_64BIT, DisplayModeId(7), 16666666);
+    const auto mode = DisplayMode::Builder(hal::HWConfigId(0))
+                              .setPhysicalDisplayId(DISPLAY_ID_64BIT)
+                              .setId(DisplayModeId(7))
+                              .setVsyncPeriod(16666666)
+                              .build();
+    mThread->onModeChanged(mode);
     expectConfigChangedEventReceivedByConnection(DISPLAY_ID_64BIT, 7, 16666666);
 }
 
@@ -562,7 +582,13 @@ TEST_F(EventThreadTest, suppressConfigChanged) {
     sp<MockEventThreadConnection> suppressConnection =
             createConnection(suppressConnectionEventRecorder);
 
-    mThread->onModeChanged(INTERNAL_DISPLAY_ID, DisplayModeId(9), 16666666);
+    const auto mode = DisplayMode::Builder(hal::HWConfigId(0))
+                              .setPhysicalDisplayId(INTERNAL_DISPLAY_ID)
+                              .setId(DisplayModeId(9))
+                              .setVsyncPeriod(16666666)
+                              .build();
+
+    mThread->onModeChanged(mode);
     expectConfigChangedEventReceivedByConnection(INTERNAL_DISPLAY_ID, 9, 16666666);
 
     auto args = suppressConnectionEventRecorder.waitForCall();

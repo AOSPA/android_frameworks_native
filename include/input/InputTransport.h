@@ -72,6 +72,7 @@ struct InputMessage {
         CAPTURE,
         DRAG,
         TIMELINE,
+        TOUCH_MODE,
     };
 
     struct Header {
@@ -136,10 +137,10 @@ struct InputMessage {
             float yPrecision;
             float xCursorPosition;
             float yCursorPosition;
+            uint32_t displayOrientation;
             int32_t displayWidth;
             int32_t displayHeight;
             uint32_t pointerCount;
-            uint32_t empty3;
             /**
              * The "pointers" field must be the last field of the struct InputMessage.
              * When we send the struct InputMessage across the socket, we are not
@@ -206,6 +207,15 @@ struct InputMessage {
 
             inline size_t size() const { return sizeof(Timeline); }
         } timeline;
+
+        struct TouchMode {
+            int32_t eventId;
+            // The following 2 fields take up 4 bytes total
+            bool isInTouchMode;
+            uint8_t empty[3];
+
+            inline size_t size() const { return sizeof(TouchMode); }
+        } touchMode;
     } __attribute__((aligned(8))) body;
 
     bool isValid(size_t actualSize) const;
@@ -355,8 +365,9 @@ public:
                                 int32_t metaState, int32_t buttonState,
                                 MotionClassification classification, const ui::Transform& transform,
                                 float xPrecision, float yPrecision, float xCursorPosition,
-                                float yCursorPosition, int32_t displayWidth, int32_t displayHeight,
-                                nsecs_t downTime, nsecs_t eventTime, uint32_t pointerCount,
+                                float yCursorPosition, uint32_t displayOrientation,
+                                int32_t displayWidth, int32_t displayHeight, nsecs_t downTime,
+                                nsecs_t eventTime, uint32_t pointerCount,
                                 const PointerProperties* pointerProperties,
                                 const PointerCoords* pointerCoords);
 
@@ -386,6 +397,15 @@ public:
      * Other errors probably indicate that the channel is broken.
      */
     status_t publishDragEvent(uint32_t seq, int32_t eventId, float x, float y, bool isExiting);
+
+    /* Publishes a touch mode event to the input channel.
+     *
+     * Returns OK on success.
+     * Returns WOULD_BLOCK if the channel is full.
+     * Returns DEAD_OBJECT if the channel's peer has been closed.
+     * Other errors probably indicate that the channel is broken.
+     */
+    status_t publishTouchModeEvent(uint32_t seq, int32_t eventId, bool isInTouchMode);
 
     struct Finished {
         uint32_t seq;
@@ -662,6 +682,7 @@ private:
     static void initializeFocusEvent(FocusEvent* event, const InputMessage* msg);
     static void initializeCaptureEvent(CaptureEvent* event, const InputMessage* msg);
     static void initializeDragEvent(DragEvent* event, const InputMessage* msg);
+    static void initializeTouchModeEvent(TouchModeEvent* event, const InputMessage* msg);
     static void addSample(MotionEvent* event, const InputMessage* msg);
     static bool canAddSample(const Batch& batch, const InputMessage* msg);
     static ssize_t findSampleNoLaterThan(const Batch& batch, nsecs_t time);

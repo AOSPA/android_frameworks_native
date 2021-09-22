@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_SF_HWCOMPOSER_H
-#define ANDROID_SF_HWCOMPOSER_H
+#pragma once
 
 #include <cstdint>
 #include <future>
@@ -117,11 +116,7 @@ public:
 
     // Attempts to allocate a virtual display on the HWC. The maximum number of virtual displays
     // supported by the HWC can be queried in advance, but allocation may fail for other reasons.
-    // For virtualized compositors, the PhysicalDisplayId is a hint that this virtual display is
-    // a mirror of a physical display, and that the screen should be captured by the host rather
-    // than guest compositor.
-    virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*,
-                                        std::optional<PhysicalDisplayId> mirror) = 0;
+    virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) = 0;
 
     virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) = 0;
 
@@ -236,14 +231,18 @@ public:
     virtual const std::unordered_map<std::string, bool>& getSupportedLayerGenericMetadata()
             const = 0;
 
-    // for debugging ----------------------------------------------------------
     virtual void dump(std::string& out) const = 0;
 
     virtual Hwc2::Composer* getComposer() const = 0;
 
-    // TODO(b/74619554): Remove special cases for internal/external display.
-    virtual std::optional<hal::HWDisplayId> getInternalHwcDisplayId() const = 0;
-    virtual std::optional<hal::HWDisplayId> getExternalHwcDisplayId() const = 0;
+    // Returns the first display connected at boot. It cannot be disconnected, which implies an
+    // internal connection type. Its connection via HWComposer::onHotplug, which in practice is
+    // immediately after HWComposer construction, must occur before any call to this function.
+    //
+    // TODO(b/182939859): Remove special cases for primary display.
+    virtual hal::HWDisplayId getPrimaryHwcDisplayId() const = 0;
+    virtual PhysicalDisplayId getPrimaryDisplayId() const = 0;
+    virtual bool isHeadless() const = 0;
 
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
@@ -277,8 +276,7 @@ public:
     size_t getMaxVirtualDisplayCount() const override;
     size_t getMaxVirtualDisplayDimension() const override;
 
-    bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*,
-                                std::optional<PhysicalDisplayId>) override;
+    bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) override;
 
     // Called from SurfaceFlinger, when the state for a new physical display needs to be recreated.
     void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) override;
@@ -384,13 +382,18 @@ public:
 
     Hwc2::Composer* getComposer() const override { return mComposer.get(); }
 
-    // TODO(b/74619554): Remove special cases for internal/external display.
-    std::optional<hal::HWDisplayId> getInternalHwcDisplayId() const override {
-        return mInternalHwcDisplayId;
+    hal::HWDisplayId getPrimaryHwcDisplayId() const override {
+        LOG_ALWAYS_FATAL_IF(!mPrimaryHwcDisplayId, "Missing HWC primary display");
+        return *mPrimaryHwcDisplayId;
     }
-    std::optional<hal::HWDisplayId> getExternalHwcDisplayId() const override {
-        return mExternalHwcDisplayId;
+
+    PhysicalDisplayId getPrimaryDisplayId() const override {
+        const auto id = toPhysicalDisplayId(getPrimaryHwcDisplayId());
+        LOG_ALWAYS_FATAL_IF(!id, "Missing primary display");
+        return *id;
     }
+
+    virtual bool isHeadless() const override { return !mPrimaryHwcDisplayId; }
 
     std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const override;
     std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const override;
@@ -408,12 +411,9 @@ private:
     friend TestableSurfaceFlinger;
 
     struct DisplayData {
-        bool isVirtual = false;
         std::unique_ptr<HWC2::Display> hwcDisplay;
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
         std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
-        buffer_handle_t outbufHandle = nullptr;
-        sp<Fence> outbufAcquireFence = Fence::NO_FENCE;
 
         bool validateWasSkipped;
         hal::Error presentError;
@@ -444,8 +444,7 @@ private:
     bool mRegisteredCallback = false;
 
     std::unordered_map<hal::HWDisplayId, PhysicalDisplayId> mPhysicalDisplayIdMap;
-    std::optional<hal::HWDisplayId> mInternalHwcDisplayId;
-    std::optional<hal::HWDisplayId> mExternalHwcDisplayId;
+    std::optional<hal::HWDisplayId> mPrimaryHwcDisplayId;
     bool mHasMultiDisplaySupport = false;
 
     const size_t mMaxVirtualDisplayDimension;
@@ -454,5 +453,3 @@ private:
 
 } // namespace impl
 } // namespace android
-
-#endif // ANDROID_SF_HWCOMPOSER_H
