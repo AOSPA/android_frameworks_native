@@ -35,8 +35,6 @@
 #include "Scheduler/LayerHistory.h"
 #include "TimeStats/TimeStats.h"
 
-#include "smomo_interface.h"
-
 namespace android {
 using PresentState = frametimeline::SurfaceFrame::PresentState;
 
@@ -119,16 +117,6 @@ bool BufferQueueLayer::isBufferDue(nsecs_t expectedPresentTime) const {
     }
 
     bool isDue = addedTime < expectedPresentTime;
-
-    if (isDue && mFlinger->mSmoMo) {
-        smomo::SmomoBufferStats bufferStats;
-        bufferStats.id = getSequence();
-        bufferStats.queued_frames = getQueuedFrameCount();
-        bufferStats.auto_timestamp = mQueueItems[0].item.mIsAutoTimestamp;
-        bufferStats.timestamp = mQueueItems[0].item.mTimestamp;
-        bufferStats.dequeue_latency = 0;
-        isDue = mFlinger->mSmoMo->ShouldPresentNow(bufferStats, expectedPresentTime);
-    }
 
     return isDue || !isPlausible;
 }
@@ -454,16 +442,6 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
 
     mFlinger->mInterceptor->saveBufferUpdate(layerId, item.mGraphicBuffer->getWidth(),
                                              item.mGraphicBuffer->getHeight(), item.mFrameNumber);
-
-    if (mFlinger->mSmoMo) {
-        smomo::SmomoBufferStats bufferStats;
-        bufferStats.id = getSequence();
-        bufferStats.queued_frames = getQueuedFrameCount();
-        bufferStats.auto_timestamp = item.mIsAutoTimestamp;
-        bufferStats.timestamp = item.mTimestamp;
-        bufferStats.dequeue_latency = 0;
-        mFlinger->mSmoMo->CollectLayerStats(bufferStats);
-    }
 
     mFlinger->signalLayerUpdate();
     mConsumer->onBufferAvailable(item);
