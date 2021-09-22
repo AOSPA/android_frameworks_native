@@ -1498,8 +1498,8 @@ bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
         return false;
     }
 
-    mLastCachedFps = newFpsRequest;
-    if ((int32_t)newFpsRequest > mThermalLevelFps) {
+    if ((int32_t)newFpsRequest > (int32_t)mThermalLevelFps) {
+        mLastCachedFps = (int32_t)newFpsRequest;
         return true;
     }
 
@@ -8862,9 +8862,9 @@ void SurfaceFlinger::handleNewLevelFps(float currFps, float newLevelFps, float* 
 
     if(newLevelFps > mThermalLevelFps) {
         *fpsToSet = std::min(newLevelFps, mLastCachedFps);
-    } else if (newLevelFps < mThermalLevelFps && newLevelFps > currFps) {
+    } else if (newLevelFps < mThermalLevelFps && newLevelFps > (int32_t)currFps) {
         *fpsToSet = currFps;
-    } else if(newLevelFps < currFps){
+    } else if(newLevelFps <= (int32_t)currFps){
         *fpsToSet = newLevelFps;
     }
 }
@@ -8899,6 +8899,11 @@ void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
 
     mThermalLevelFps = newLevelFps;
 
+    if (fps == currFps) {
+        mScheduler->updateThermalFps(newLevelFps);
+        return;
+    }
+
     auto future = schedule([=]() -> status_t {
         int ret = 0;
         if (!display) {
@@ -8918,6 +8923,7 @@ void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
             return ret;
         }
 
+        mScheduler->updateThermalFps(newLevelFps);
         policy.primaryRange.max = Fps(fps);
         policy.appRequestRange.max = Fps(fps);
         policy.defaultMode = mode->getId();

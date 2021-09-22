@@ -73,6 +73,7 @@ public:
 
     void deregisterLayer(Layer*);
     std::string dump() const;
+    void updateThermalFps(float fps) { mThermalFps = fps; }
 
 private:
     friend LayerHistoryTest;
@@ -113,6 +114,9 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
+
+    // If Thermal mitigation enabled, limit to thermal Fps
+    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler
