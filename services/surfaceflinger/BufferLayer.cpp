@@ -56,6 +56,7 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "smomo_interface.h"
 #include "layer_extn_intf.h"
 
 namespace android {
@@ -452,6 +453,10 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
                                                actualPresentTime,
                                                FrameTracer::FrameEvent::PRESENT_FENCE);
         mFrameTracker.setActualPresentTime(actualPresentTime);
+    }
+
+    if (mFlinger->mSmoMo) {
+        mFlinger->mSmoMo->SetPresentTime(layerId, mBufferInfo.mDesiredPresentTime);
     }
 
     mFrameTracker.advanceFrame();
