@@ -22,11 +22,12 @@
 #include <android/gui/IScreenCaptureListener.h>
 #include <android/gui/ITransactionTraceListener.h>
 #include <android/gui/ITunnelModeEnabledListener.h>
+#include <android/gui/IWindowInfosListener.h>
 #include <binder/IBinder.h>
 #include <binder/IInterface.h>
+#include <ftl/Flags.h>
 #include <gui/FrameTimelineInfo.h>
 #include <gui/ITransactionCompletedListener.h>
-#include <input/Flags.h>
 #include <math/vec4.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -114,6 +115,11 @@ public:
     };
 
     using EventRegistrationFlags = Flags<EventRegistration>;
+
+    template <typename T>
+    struct SpHash {
+        size_t operator()(const sp<T>& k) const { return std::hash<T*>()(k.get()); }
+    };
 
     /*
      * Create a connection with SurfaceFlinger.
@@ -238,24 +244,17 @@ public:
      * The subregion can be optionally rotated.  It will also be scaled to
      * match the size of the output buffer.
      */
-    virtual status_t captureDisplay(const DisplayCaptureArgs& args,
-                                    const sp<IScreenCaptureListener>& captureListener) = 0;
+    virtual status_t captureDisplay(const DisplayCaptureArgs&,
+                                    const sp<IScreenCaptureListener>&) = 0;
 
-    virtual status_t captureDisplay(uint64_t displayOrLayerStack,
-                                    const sp<IScreenCaptureListener>& captureListener) = 0;
-
-    template <class AA>
-    struct SpHash {
-        size_t operator()(const sp<AA>& k) const { return std::hash<AA*>()(k.get()); }
-    };
+    virtual status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&) = 0;
 
     /**
      * Capture a subtree of the layer hierarchy, potentially ignoring the root node.
      * This requires READ_FRAME_BUFFER permission. This function will fail if there
      * is a secure window on screen
      */
-    virtual status_t captureLayers(const LayerCaptureArgs& args,
-                                   const sp<IScreenCaptureListener>& captureListener) = 0;
+    virtual status_t captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&) = 0;
 
     /* Clears the frame statistics for animations.
      *
@@ -558,6 +557,11 @@ public:
      * in MIN_UNDEQUEUED_BUFFERS.
      */
     virtual status_t getMaxAcquiredBufferCount(int* buffers) const = 0;
+
+    virtual status_t addWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& windowInfosListener) const = 0;
+    virtual status_t removeWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& windowInfosListener) const = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -631,6 +635,8 @@ public:
         ON_PULL_ATOM,
         ADD_TUNNEL_MODE_ENABLED_LISTENER,
         REMOVE_TUNNEL_MODE_ENABLED_LISTENER,
+        ADD_WINDOW_INFOS_LISTENER,
+        REMOVE_WINDOW_INFOS_LISTENER,
         // Always append new enum to the end.
     };
 

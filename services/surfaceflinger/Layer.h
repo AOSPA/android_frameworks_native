@@ -21,7 +21,7 @@
 #include <gui/BufferQueue.h>
 #include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerState.h>
-#include <input/InputWindow.h>
+#include <gui/WindowInfo.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/vec4.h>
 #include <renderengine/Mesh.h>
@@ -186,7 +186,7 @@ public:
         float cornerRadius;
         int backgroundBlurRadius;
 
-        InputWindowInfo inputInfo;
+        gui::WindowInfo inputInfo;
         wp<Layer> touchableRegionCrop;
 
         // dataspace is only used by BufferStateLayer and EffectLayer
@@ -280,6 +280,8 @@ public:
 
         Rect bufferCrop;
         Rect destinationFrame;
+
+        sp<IBinder> releaseBufferEndpoint;
     };
 
     /*
@@ -289,16 +291,17 @@ public:
     class LayerCleaner {
         sp<SurfaceFlinger> mFlinger;
         sp<Layer> mLayer;
+        BBinder* mHandle;
 
     protected:
         ~LayerCleaner() {
             // destroy client resources
-            mFlinger->onHandleDestroyed(mLayer);
+            mFlinger->onHandleDestroyed(mHandle, mLayer);
         }
 
     public:
-        LayerCleaner(const sp<SurfaceFlinger>& flinger, const sp<Layer>& layer)
-              : mFlinger(flinger), mLayer(layer) {}
+        LayerCleaner(const sp<SurfaceFlinger>& flinger, const sp<Layer>& layer, BBinder* handle)
+              : mFlinger(flinger), mLayer(layer), mHandle(handle) {}
     };
 
     /*
@@ -312,10 +315,14 @@ public:
     class Handle : public BBinder, public LayerCleaner {
     public:
         Handle(const sp<SurfaceFlinger>& flinger, const sp<Layer>& layer)
-              : LayerCleaner(flinger, layer), owner(layer) {}
+              : LayerCleaner(flinger, layer, this), owner(layer) {}
+        const String16& getInterfaceDescriptor() const override { return kDescriptor; }
 
+        static const String16 kDescriptor;
         wp<Layer> owner;
     };
+
+    static wp<Layer> fromHandle(const sp<IBinder>& handle);
 
     explicit Layer(const LayerCreationArgs& args);
     virtual ~Layer();
@@ -417,7 +424,8 @@ public:
                            const client_cache_t& /*clientCacheId*/, uint64_t /* frameNumber */,
                            std::optional<nsecs_t> /* dequeueTime */,
                            const FrameTimelineInfo& /*info*/,
-                           const sp<ITransactionCompletedListener>& /* releaseBufferListener */) {
+                           const sp<ITransactionCompletedListener>& /* releaseBufferListener */,
+                           const sp<IBinder>& /* releaseBufferEndpoint */) {
         return false;
     };
     virtual bool setAcquireFence(const sp<Fence>& /*fence*/) { return false; };
@@ -695,7 +703,7 @@ public:
     void writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet,
                                  uint32_t traceFlags = SurfaceTracing::TRACE_ALL);
 
-    InputWindowInfo::Type getWindowType() const { return mWindowType; }
+    gui::WindowInfo::Type getWindowType() const { return mWindowType; }
 
     bool getPrimaryDisplayOnly() const;
 
@@ -846,9 +854,9 @@ public:
     sp<IBinder> getHandle();
     const std::string& getName() const { return mName; }
     bool getPremultipledAlpha() const;
-    void setInputInfo(const InputWindowInfo& info);
+    void setInputInfo(const gui::WindowInfo& info);
 
-    InputWindowInfo fillInputInfo(const sp<DisplayDevice>& display);
+    gui::WindowInfo fillInputInfo(const sp<DisplayDevice>& display);
     /**
      * Returns whether this layer has an explicitly set input-info.
      */
@@ -1018,7 +1026,7 @@ protected:
     wp<Layer> mDrawingParent;
 
     // Window types from WindowManager.LayoutParams
-    const InputWindowInfo::Type mWindowType;
+    const gui::WindowInfo::Type mWindowType;
 
     // The owner of the layer. If created from a non system process, it will be the calling uid.
     // If created from a system process, the value can be passed in.
@@ -1072,10 +1080,10 @@ private:
 
     // Fills in the touch occlusion mode of the first parent (including this layer) that
     // hasInputInfo() or no-op if no such parent is found.
-    void fillTouchOcclusionMode(InputWindowInfo& info);
+    void fillTouchOcclusionMode(gui::WindowInfo& info);
 
-    // Fills in the frame and transform info for the InputWindowInfo
-    void fillInputFrameInfo(InputWindowInfo& info, const ui::Transform& toPhysicalDisplay);
+    // Fills in the frame and transform info for the gui::WindowInfo
+    void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& toPhysicalDisplay);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

@@ -752,21 +752,19 @@ public:
     }
     status_t setActiveColorMode(const sp<IBinder>& /*display*/,
         ColorMode /*colorMode*/) override { return NO_ERROR; }
-    status_t captureDisplay(const DisplayCaptureArgs& /* captureArgs */,
-                            const sp<IScreenCaptureListener>& /* captureListener */) override {
-        return NO_ERROR;
-    }
     void setAutoLowLatencyMode(const sp<IBinder>& /*display*/, bool /*on*/) override {}
     void setGameContentType(const sp<IBinder>& /*display*/, bool /*on*/) override {}
-    status_t captureDisplay(uint64_t /*displayOrLayerStack*/,
-                            const sp<IScreenCaptureListener>& /* captureListener */) override {
+
+    status_t captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&) override {
         return NO_ERROR;
     }
-    virtual status_t captureLayers(
-            const LayerCaptureArgs& /* captureArgs */,
-            const sp<IScreenCaptureListener>& /* captureListener */) override {
+    status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&) override {
         return NO_ERROR;
     }
+    status_t captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&) override {
+        return NO_ERROR;
+    }
+
     status_t clearAnimationFrameStats() override { return NO_ERROR; }
     status_t getAnimationFrameStats(FrameStats* /*outStats*/) const override {
         return NO_ERROR;
@@ -904,6 +902,16 @@ public:
     int getGPUContextPriority() override { return 0; };
 
     status_t getMaxAcquiredBufferCount(int* /*buffers*/) const override { return NO_ERROR; }
+
+    status_t addWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& /*windowInfosListener*/) const override {
+        return NO_ERROR;
+    }
+
+    status_t removeWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& /*windowInfosListener*/) const override {
+        return NO_ERROR;
+    }
 
 protected:
     IBinder* onAsBinder() override { return nullptr; }

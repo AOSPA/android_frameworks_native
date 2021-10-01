@@ -60,7 +60,7 @@ constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID = PhysicalDisplayId::fromPort(123
 constexpr HalVirtualDisplayId HAL_VIRTUAL_DISPLAY_ID{456u};
 constexpr GpuVirtualDisplayId GPU_VIRTUAL_DISPLAY_ID{789u};
 
-const ui::Size DEFAULT_RESOLUTION{1920, 1080};
+constexpr ui::Size DEFAULT_RESOLUTION{1920, 1080};
 constexpr uint32_t DEFAULT_LAYER_STACK = 42;
 
 struct Layer {

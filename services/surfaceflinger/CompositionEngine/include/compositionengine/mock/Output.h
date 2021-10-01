@@ -37,6 +37,7 @@ public:
 
     MOCK_METHOD1(setCompositionEnabled, void(bool));
     MOCK_METHOD1(setLayerCachingEnabled, void(bool));
+    MOCK_METHOD1(setLayerCachingTexturePoolEnabled, void(bool));
     MOCK_METHOD3(setProjection, void(ui::Rotation, const Rect&, const Rect&));
     MOCK_METHOD1(setDisplaySize, void(const ui::Size&));
     MOCK_METHOD2(setLayerStackFilter, void(uint32_t, bool));
@@ -112,8 +113,8 @@ public:
     MOCK_METHOD1(renderCachedSets, void(const CompositionRefreshArgs&));
     MOCK_METHOD0(presentAndGetFrameFences, compositionengine::Output::FrameFences());
 
-    MOCK_METHOD3(generateClientCompositionRequests,
-                 std::vector<LayerFE::LayerSettings>(bool, Region&, ui::Dataspace));
+    MOCK_METHOD2(generateClientCompositionRequests,
+                 std::vector<LayerFE::LayerSettings>(bool, ui::Dataspace));
     MOCK_METHOD2(appendRegionFlashRequests,
                  void(const Region&, std::vector<LayerFE::LayerSettings>&));
     MOCK_METHOD1(setExpensiveRenderingExpected, void(bool));

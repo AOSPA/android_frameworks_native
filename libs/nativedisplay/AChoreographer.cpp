@@ -20,7 +20,6 @@
 #include <android-base/thread_annotations.h>
 #include <gui/DisplayEventDispatcher.h>
 #include <gui/ISurfaceComposer.h>
-#include <gui/SurfaceComposerClient.h>
 #include <jni.h>
 #include <private/android/choreographer.h>
 #include <utils/Looper.h>
@@ -306,8 +305,9 @@ void Choreographer::scheduleLatestConfigRequest() {
         // Fortunately, these events are small so sending packets across the
         // socket should be atomic across processes.
         DisplayEventReceiver::Event event;
-        event.header = DisplayEventReceiver::Event::Header{DisplayEventReceiver::DISPLAY_EVENT_NULL,
-                                                           PhysicalDisplayId(0), systemTime()};
+        event.header =
+                DisplayEventReceiver::Event::Header{DisplayEventReceiver::DISPLAY_EVENT_NULL,
+                                                    PhysicalDisplayId::fromPort(0), systemTime()};
         injectEvent(event);
     }
 }

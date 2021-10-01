@@ -176,10 +176,11 @@ std::string KeyEntry::getDescription() const {
     }
     return StringPrintf("KeyEvent(deviceId=%d, eventTime=%" PRIu64
                         ", source=0x%08x, displayId=%" PRId32 ", action=%s, "
-                        "flags=0x%08x, keyCode=%d, scanCode=%d, metaState=0x%08x, "
+                        "flags=0x%08x, keyCode=%s(%d), scanCode=%d, metaState=0x%08x, "
                         "repeatCount=%d), policyFlags=0x%08x",
                         deviceId, eventTime, source, displayId, KeyEvent::actionToString(action),
-                        flags, keyCode, scanCode, metaState, repeatCount, policyFlags);
+                        flags, KeyEvent::getLabel(keyCode), keyCode, scanCode, metaState,
+                        repeatCount, policyFlags);
 }
 
 void KeyEntry::recycle() {
@@ -296,12 +297,14 @@ std::string SensorEntry::getDescription() const {
 volatile int32_t DispatchEntry::sNextSeqAtomic;
 
 DispatchEntry::DispatchEntry(std::shared_ptr<EventEntry> eventEntry, int32_t targetFlags,
-                             ui::Transform transform, float globalScaleFactor, int2 displaySize)
+                             ui::Transform transform, float globalScaleFactor,
+                             uint32_t displayOrientation, int2 displaySize)
       : seq(nextSeq()),
         eventEntry(std::move(eventEntry)),
         targetFlags(targetFlags),
         transform(transform),
         globalScaleFactor(globalScaleFactor),
+        displayOrientation(displayOrientation),
         displaySize(displaySize),
         deliveryTime(0),
         resolvedAction(0),
@@ -315,18 +318,5 @@ uint32_t DispatchEntry::nextSeq() {
     } while (!seq);
     return seq;
 }
-
-// --- CommandEntry ---
-
-CommandEntry::CommandEntry(Command command)
-      : command(command),
-        eventTime(0),
-        keyEntry(nullptr),
-        userActivityEventType(0),
-        seq(0),
-        handled(false),
-        enabled(false) {}
-
-CommandEntry::~CommandEntry() {}
 
 } // namespace android::inputdispatcher
