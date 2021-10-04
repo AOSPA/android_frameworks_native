@@ -5774,29 +5774,14 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     }
 
     ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
-    switch (power_mode) {
-        case hal::PowerMode::ON: hwcMode = ::DisplayConfig::PowerMode::kOn; break;
-        case hal::PowerMode::DOZE: hwcMode = ::DisplayConfig::PowerMode::kDoze; break;
-        case hal::PowerMode::DOZE_SUSPEND:
-            hwcMode = ::DisplayConfig::PowerMode::kDozeSuspend; break;
-        default: hwcMode = ::DisplayConfig::PowerMode::kOff; break;
+    if (power_mode == hal::PowerMode::ON) {
+        hwcMode = ::DisplayConfig::PowerMode::kOn;
     }
 
     bool step_up = false;
-    if (currentDisplayPowerMode == hal::PowerMode::OFF) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE_SUSPEND) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE) {
-        if (newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
+    if (currentDisplayPowerMode == hal::PowerMode::OFF &&
+        newDisplayPowerMode == hal::PowerMode::ON) {
+        step_up = true;
     }
     // Change hardware state first while stepping up.
     if (step_up) {
