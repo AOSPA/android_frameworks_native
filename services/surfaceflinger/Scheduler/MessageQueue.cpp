@@ -29,6 +29,8 @@
 #include "MessageQueue.h"
 #include "SurfaceFlinger.h"
 
+#include "smomo_interface.h"
+
 namespace android::impl {
 
 void MessageQueue::Handler::dispatchRefresh() {
@@ -48,6 +50,12 @@ void MessageQueue::Handler::dispatchInvalidate(int64_t vsyncId, nsecs_t expected
 bool MessageQueue::Handler::invalidatePending() {
     constexpr auto pendingMask = eventMaskInvalidate | eventMaskRefresh;
     return (mEventMask.load() & pendingMask) != 0;
+}
+
+void MessageQueue::Handler::dispatchInvalidateImmed() {
+    if ((mEventMask.fetch_or(eventMaskInvalidate) & eventMaskInvalidate) == 0) {
+        mQueue.mLooper->sendMessage(this, Message(MessageQueue::INVALIDATE));
+    }
 }
 
 void MessageQueue::Handler::handleMessage(const Message& message) {
@@ -116,6 +124,11 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
     if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
         mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
     }
+
+    if (mFlinger->mSmoMo) {
+        mFlinger->mSmoMo->OnVsync(vsyncTime);
+    }
+
     mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
                                          {targetWakeupTime, readyTime, vsyncTime}),
                                  vsyncTime);
@@ -170,6 +183,12 @@ void MessageQueue::waitMessage() {
 
 void MessageQueue::postMessage(sp<MessageHandler>&& handler) {
     mLooper->sendMessage(handler, Message());
+}
+
+void MessageQueue::invalidateImmed() {
+    ATRACE_CALL();
+
+    mHandler->dispatchInvalidateImmed();
 }
 
 void MessageQueue::invalidate() {

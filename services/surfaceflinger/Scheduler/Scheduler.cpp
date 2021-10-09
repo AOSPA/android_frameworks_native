@@ -668,14 +668,34 @@ void Scheduler::chooseRefreshRateForContent() {
             frameRateChanged = false;
         } else {
             mFeatures.modeId = newModeId;
+
+            if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+                (int32_t)mThermalFps) {
+                DisplayModePtr mode;
+                mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+                mFeatures.modeId = mode->getId();
+            }
+
             frameRateChanged = true;
         }
     }
     if (frameRateChanged) {
         auto newRefreshRate = mRefreshRateConfigs.getRefreshRateFromModeId(newModeId);
-        mSchedulerCallback.changeRefreshRate(newRefreshRate,
+
+        if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+            (int32_t)mThermalFps) {
+            DisplayModePtr mode;
+            mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+            auto newThermalRefreshRate = mRefreshRateConfigs.
+                                         getRefreshRateFromModeId(mode->getId());
+            mSchedulerCallback.changeRefreshRate(newThermalRefreshRate,
+                                              consideredSignals.idle ? ModeEvent::None
+                                                                     : ModeEvent::Changed);
+        } else {
+            mSchedulerCallback.changeRefreshRate(newRefreshRate,
                                              consideredSignals.idle ? ModeEvent::None
                                                                     : ModeEvent::Changed);
+        }
     }
     if (frameRateOverridesChanged) {
         mSchedulerCallback.triggerOnFrameRateOverridesChanged();
@@ -844,15 +864,34 @@ bool Scheduler::handleTimerStateChanged(T* currentState, T newState) {
             }
         } else {
             mFeatures.modeId = newModeId;
+
+            if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+                (int32_t)mThermalFps) {
+                DisplayModePtr mode;
+                mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+                mFeatures.modeId = mode->getId();
+            }
+
             refreshRateChanged = true;
         }
     }
     if (refreshRateChanged) {
         const RefreshRate& newRefreshRate = mRefreshRateConfigs.getRefreshRateFromModeId(newModeId);
 
-        mSchedulerCallback.changeRefreshRate(newRefreshRate,
+        if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+            (int32_t)mThermalFps) {
+            DisplayModePtr mode;
+            mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+            auto newThermalRefreshRate = mRefreshRateConfigs.
+                                         getRefreshRateFromModeId(mode->getId());
+            mSchedulerCallback.changeRefreshRate(newThermalRefreshRate,
+                                              consideredSignals.idle ? ModeEvent::None
+                                                                     : ModeEvent::Changed);
+        } else {
+            mSchedulerCallback.changeRefreshRate(newRefreshRate,
                                              consideredSignals.idle ? ModeEvent::None
                                                                     : ModeEvent::Changed);
+        }
     }
     if (frameRateOverridesChanged) {
         mSchedulerCallback.triggerOnFrameRateOverridesChanged();
@@ -950,6 +989,11 @@ std::chrono::steady_clock::time_point Scheduler::getPreviousVsyncFrom(
 
 void Scheduler::setIdleState() {
     mDisplayIdle = true;
+}
+
+void Scheduler::updateThermalFps(float fps) {
+    mThermalFps = fps;
+    mLayerHistory->updateThermalFps(fps);
 }
 
 } // namespace android

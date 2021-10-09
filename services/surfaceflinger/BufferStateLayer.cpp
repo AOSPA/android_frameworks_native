@@ -39,9 +39,6 @@
 #include "FrameTracer/FrameTracer.h"
 #include "TimeStats/TimeStats.h"
 
-#include "smomo_interface.h"
-#include "layer_extn_intf.h"
-
 namespace android {
 
 using PresentState = frametimeline::SurfaceFrame::PresentState;
@@ -267,22 +264,6 @@ void BufferStateLayer::pushPendingState() {
     ATRACE_INT(mTransactionName.c_str(), mPendingStates.size());
 }
 */
-
-bool BufferStateLayer::isBufferDue(nsecs_t expectedPresentTime) const {
-    bool isDue = true;
-
-    if (mFlinger->mSmoMo) {
-        smomo::SmomoBufferStats bufferStats;
-        bufferStats.id = getSequence();
-        bufferStats.queued_frames = mPendingBufferTransactions;
-        bufferStats.auto_timestamp = mDrawingState.isAutoTimestamp;
-        bufferStats.timestamp = mDrawingState.desiredPresentTime;
-        bufferStats.dequeue_latency = 0;
-        isDue = mFlinger->mSmoMo->ShouldPresentNow(bufferStats, expectedPresentTime);
-    }
-
-    return isDue;
-}
 
 Rect BufferStateLayer::getCrop(const Layer::State& s) const {
     return s.crop;
@@ -516,16 +497,6 @@ bool BufferStateLayer::setBuffer(const std::shared_ptr<renderengine::ExternalTex
     mDrawingState.width = mDrawingState.buffer->getBuffer()->getWidth();
     mDrawingState.height = mDrawingState.buffer->getBuffer()->getHeight();
 
-    if (mFlinger->mSmoMo) {
-        smomo::SmomoBufferStats bufferStats;
-        bufferStats.id = getSequence();
-        bufferStats.queued_frames = mPendingBufferTransactions;
-        bufferStats.auto_timestamp = mDrawingState.isAutoTimestamp;
-        bufferStats.timestamp = mDrawingState.desiredPresentTime;
-        bufferStats.dequeue_latency = 0;
-        mFlinger->mSmoMo->CollectLayerStats(bufferStats);
-    }
-
     return true;
 }
 
@@ -678,10 +649,6 @@ FloatRect BufferStateLayer::computeSourceBounds(const FloatRect& parentBounds) c
 // -----------------------------------------------------------------------
 bool BufferStateLayer::fenceHasSignaled() const {
     if (SurfaceFlinger::enableLatchUnsignaled) {
-        return true;
-    }
-
-    if (latchUnsignaledBuffers()) {
         return true;
     }
 

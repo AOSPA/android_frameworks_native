@@ -174,6 +174,13 @@ class ClientInterface;
 
 composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 
+#ifdef PHASE_OFFSET_EXTN
+struct ComposerExtnIntf {
+    composer::PhaseOffsetExtnIntf *phaseOffsetExtnIntf = nullptr;
+};
+struct ComposerExtnIntf g_comp_ext_intf_;
+#endif
+
 namespace android {
 
 using namespace std::string_literals;
@@ -1255,6 +1262,7 @@ void SurfaceFlinger::startUnifiedDraw() {
         }
     }
 #endif
+    createPhaseOffsetExtn();
 }
 
 void SurfaceFlinger::readPersistentProperties() {
@@ -1490,8 +1498,8 @@ bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
         return false;
     }
 
-    mLastCachedFps = newFpsRequest;
-    if ((int32_t)newFpsRequest > mThermalLevelFps) {
+    if ((int32_t)newFpsRequest > (int32_t)mThermalLevelFps) {
+        mLastCachedFps = (int32_t)newFpsRequest;
         return true;
     }
 
@@ -2228,6 +2236,11 @@ void SurfaceFlinger::signalLayerUpdate() {
     mEventQueue->invalidate();
 }
 
+void SurfaceFlinger::signalImmedLayerUpdate() {
+    notifyDisplayUpdateImminent();
+    mEventQueue->invalidateImmed();
+}
+
 void SurfaceFlinger::signalRefresh() {
     mRefreshPending = true;
     mEventQueue->refresh();
@@ -2402,11 +2415,8 @@ void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
 }
 
 SurfaceFlinger::FenceWithFenceTime SurfaceFlinger::previousFrameFence() {
-    const auto now = systemTime();
-    const auto vsyncPeriod = mScheduler->getDisplayStatInfo(now).vsyncPeriod;
-    const bool expectedPresentTimeIsTheNextVsync = mExpectedPresentTime - now <= vsyncPeriod;
-    return expectedPresentTimeIsTheNextVsync ? mPreviousPresentFences[0]
-                                             : mPreviousPresentFences[1];
+     return mVsyncModulator->getVsyncConfig().sfOffset >= 0 ? mPreviousPresentFences[0]
+                                                           : mPreviousPresentFences[1];
 }
 
 bool SurfaceFlinger::previousFramePending(int graceTimeMs) {
@@ -2468,6 +2478,16 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
     }
 }
 
+void SurfaceFlinger::syncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
+    ATRACE_CALL();
+
+    if (mSmoMo) {
+        nsecs_t timestamp = 0;
+        bool needResync = mSmoMo->SyncToDisplay(previousFrameFence().fence, &timestamp);
+        ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
+    }
+}
+
 void SurfaceFlinger::onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t expectedVSyncTime) {
     switch (what) {
         case MessageQueue::INVALIDATE: {
@@ -2508,6 +2528,7 @@ void SurfaceFlinger::onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncT
     const nsecs_t lastScheduledPresentTime = mScheduledPresentTime;
     mScheduledPresentTime = expectedVSyncTime;
     updateFrameScheduler();
+    syncToDisplayHardware();
 
     const auto vsyncIn = [&] {
         if (!ATRACE_ENABLED()) return 0.f;
@@ -4561,7 +4582,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
     for (const ComposerState& state : states) {
         const layer_state_t& s = state.state;
         const bool acquireFenceChanged = (s.what & layer_state_t::eAcquireFenceChanged);
-        if (BufferLayer::latchUnsignaledBuffers() && acquireFenceChanged && s.acquireFence && !enableLatchUnsignaled &&
+        if (acquireFenceChanged && s.acquireFence && !enableLatchUnsignaled &&
             s.acquireFence->getStatus() == Fence::Status::Unsignaled) {
             ATRACE_NAME("fence unsignaled");
             return false;
@@ -4588,6 +4609,12 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
             if (layer->backpressureEnabled() && hasPendingBuffer && isAutoTimestamp) {
                 ATRACE_NAME("hasPendingBuffer");
                 return false;
+            }
+
+            if (mSmoMo) {
+                if (mSmoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
+                    return false;
+                }
             }
         }
     }
@@ -4713,6 +4740,27 @@ status_t SurfaceFlinger::setTransactionState(
     // Check the pending state to make sure the transaction is synchronous.
     if (state.transactionCommittedSignal) {
         waitForSynchronousTransaction(*state.transactionCommittedSignal);
+    }
+
+    if (mSmoMo) {
+        state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+            sp<Layer> layer = fromHandle(state.surface).promote();
+            if (layer != nullptr) {
+                smomo::SmomoBufferStats bufferStats;
+                const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+                bufferStats.id = layer->getSequence();
+                bufferStats.auto_timestamp = isAutoTimestamp;
+                bufferStats.timestamp = now;
+                bufferStats.dequeue_latency = 0;
+                bufferStats.key = desiredPresentTime;
+                mSmoMo->CollectLayerStats(bufferStats);
+
+                const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
+                if (mSmoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+                    signalImmedLayerUpdate();
+                }
+            }
+        });
     }
 
     return NO_ERROR;
@@ -5726,29 +5774,14 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     }
 
     ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
-    switch (power_mode) {
-        case hal::PowerMode::ON: hwcMode = ::DisplayConfig::PowerMode::kOn; break;
-        case hal::PowerMode::DOZE: hwcMode = ::DisplayConfig::PowerMode::kDoze; break;
-        case hal::PowerMode::DOZE_SUSPEND:
-            hwcMode = ::DisplayConfig::PowerMode::kDozeSuspend; break;
-        default: hwcMode = ::DisplayConfig::PowerMode::kOff; break;
+    if (power_mode == hal::PowerMode::ON) {
+        hwcMode = ::DisplayConfig::PowerMode::kOn;
     }
 
     bool step_up = false;
-    if (currentDisplayPowerMode == hal::PowerMode::OFF) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE_SUSPEND) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE) {
-        if (newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
+    if (currentDisplayPowerMode == hal::PowerMode::OFF &&
+        newDisplayPowerMode == hal::PowerMode::ON) {
+        step_up = true;
     }
     // Change hardware state first while stepping up.
     if (step_up) {
@@ -6611,7 +6644,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
             IPCThreadState* ipc = IPCThreadState::self();
             const int pid = ipc->getCallingPid();
             const int uid = ipc->getCallingUid();
-            if ((uid != AID_GRAPHICS) &&
+            if ((uid != AID_GRAPHICS) && (uid != AID_SYSTEM) &&
                 !PermissionCache::checkPermission(sControlDisplayBrightness, pid, uid)) {
                 ALOGE("Permission Denial: can't control brightness pid=%d, uid=%d", pid, uid);
                 return PERMISSION_DENIED;
@@ -8607,6 +8640,7 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
+        setTransactionFlags(eDisplayTransactionNeeded, TransactionSchedule::EarlyEnd);
     }
 #endif
 }
@@ -8639,6 +8673,7 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
             // Notify Display Extn for GPU and Display Early Wakeup
             mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
         }
+        setTransactionFlags(eDisplayTransactionNeeded, TransactionSchedule::EarlyEnd);
     }
 #endif
 }
@@ -8692,6 +8727,30 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
             compareStack = true;
         }
     }
+}
+
+void SurfaceFlinger::createPhaseOffsetExtn() {
+#ifdef PHASE_OFFSET_EXTN
+    if (mUseAdvanceSfOffset && mComposerExtnIntf) {
+        int ret = mComposerExtnIntf->CreatePhaseOffsetExtn(&g_comp_ext_intf_.phaseOffsetExtnIntf);
+        if (ret) {
+            ALOGI("Unable to create PhaseOffset extension");
+            return;
+        }
+
+        // Get the Advanced SF Offsets from Phase Offset Extn
+        std::unordered_map<float, int64_t> advancedSfOffsets;
+        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
+
+        // Update the Advanced SF Offsets
+        std::lock_guard<std::mutex> lock(mActiveModeLock);
+        mVsyncConfiguration->UpdateSfOffsets(advancedSfOffsets);
+        const auto vsyncConfig =
+            mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
+        ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
+        ALOGI("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
+    }
+#endif
 }
 
 void SurfaceFlinger::NotifyIdleStatus() {
@@ -8830,9 +8889,9 @@ void SurfaceFlinger::handleNewLevelFps(float currFps, float newLevelFps, float* 
 
     if(newLevelFps > mThermalLevelFps) {
         *fpsToSet = std::min(newLevelFps, mLastCachedFps);
-    } else if (newLevelFps < mThermalLevelFps && newLevelFps > currFps) {
+    } else if (newLevelFps < mThermalLevelFps && newLevelFps > (int32_t)currFps) {
         *fpsToSet = currFps;
-    } else if(newLevelFps < currFps){
+    } else if(newLevelFps <= (int32_t)currFps){
         *fpsToSet = newLevelFps;
     }
 }
@@ -8867,6 +8926,11 @@ void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
 
     mThermalLevelFps = newLevelFps;
 
+    if (fps == currFps) {
+        mScheduler->updateThermalFps(newLevelFps);
+        return;
+    }
+
     auto future = schedule([=]() -> status_t {
         int ret = 0;
         if (!display) {
@@ -8886,6 +8950,7 @@ void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
             return ret;
         }
 
+        mScheduler->updateThermalFps(newLevelFps);
         policy.primaryRange.max = Fps(fps);
         policy.appRequestRange.max = Fps(fps);
         policy.defaultMode = mode->getId();
