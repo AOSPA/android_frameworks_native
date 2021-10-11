@@ -1176,6 +1176,8 @@ private:
      * VSYNC
      */
     nsecs_t getVsyncPeriodFromHWC() const REQUIRES(mStateLock);
+    nsecs_t getVsyncPeriodFromHWCcb();
+    sp<DisplayDevice> getCurrentVsyncSource();
 
     // Sets the refresh rate by switching active configs, if they are available for
     // the desired refresh rate.
