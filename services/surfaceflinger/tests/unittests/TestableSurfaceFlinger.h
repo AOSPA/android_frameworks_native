@@ -767,6 +767,7 @@ private:
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() {}
     void getModeFromFps(float, DisplayModePtr&) override {}
+    nsecs_t getVsyncPeriodFromHWCcb() { return 0; }
 
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);

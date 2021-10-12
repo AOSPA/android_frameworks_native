@@ -63,6 +63,7 @@ struct ISchedulerCallback {
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
     virtual void getModeFromFps(float, DisplayModePtr&) = 0;
+    virtual nsecs_t getVsyncPeriodFromHWCcb() = 0;
 
 protected:
     ~ISchedulerCallback() = default;
