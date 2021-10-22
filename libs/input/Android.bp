@@ -37,6 +37,8 @@ filegroup {
 cc_library {
     name: "libinput",
     host_supported: true,
+    // Disable sdclang
+    sdclang: false,
     cflags: [
         "-Wall",
         "-Wextra",
