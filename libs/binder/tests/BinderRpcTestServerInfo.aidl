@@ -14,13 +14,9 @@
  * limitations under the License.
  */
 
-#pragma once
+import ParcelableCertificateData;
 
-extern "C" {
-
-struct AIBinder;
-
-bool RunRpcServer(AIBinder* service, unsigned int port);
-AIBinder* RpcClient(unsigned int cid, unsigned int port);
-
+parcelable BinderRpcTestServerInfo {
+    long port;
+    ParcelableCertificateData cert;
 }

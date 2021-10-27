@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <android/gui/DropInputMode.h>
 #include <compositionengine/LayerFE.h>
 #include <gui/BufferQueue.h>
 #include <gui/ISurfaceComposerClient.h>
@@ -151,12 +152,7 @@ public:
         Geometry requested_legacy;
         int32_t z;
 
-        // The identifier of the layer stack this layer belongs to. A layer can
-        // only be associated to a single layer stack. A layer stack is a
-        // z-ordered group of layers which can be associated to one or more
-        // displays. Using the same layer stack on different displays is a way
-        // to achieve mirroring.
-        uint32_t layerStack;
+        ui::LayerStack layerStack;
 
         uint32_t flags;
         uint8_t reserved[2];
@@ -282,6 +278,8 @@ public:
         Rect destinationFrame;
 
         sp<IBinder> releaseBufferEndpoint;
+
+        gui::DropInputMode dropInputMode;
     };
 
     /*
@@ -405,8 +403,8 @@ public:
     virtual bool setTransparentRegionHint(const Region& transparent);
     virtual bool setTrustedOverlay(bool);
     virtual bool setFlags(uint32_t flags, uint32_t mask);
-    virtual bool setLayerStack(uint32_t layerStack);
-    virtual uint32_t getLayerStack() const;
+    virtual bool setLayerStack(ui::LayerStack);
+    virtual ui::LayerStack getLayerStack() const;
     virtual bool setMetadata(const LayerMetadata& data);
     virtual void setChildrenDrawingParent(const sp<Layer>&);
     virtual bool reparent(const sp<IBinder>& newParentHandle);
@@ -418,17 +416,11 @@ public:
     // Used only to set BufferStateLayer state
     virtual bool setTransform(uint32_t /*transform*/) { return false; };
     virtual bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/) { return false; };
-    virtual bool setBuffer(const std::shared_ptr<renderengine::ExternalTexture>& /*buffer*/,
-                           const sp<Fence>& /*acquireFence*/, nsecs_t /*postTime*/,
-                           nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
-                           const client_cache_t& /*clientCacheId*/, uint64_t /* frameNumber */,
-                           std::optional<nsecs_t> /* dequeueTime */,
-                           const FrameTimelineInfo& /*info*/,
-                           const sp<ITransactionCompletedListener>& /* releaseBufferListener */,
-                           const sp<IBinder>& /* releaseBufferEndpoint */) {
+    virtual bool setBuffer(const BufferData&, nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
+                           bool /*isAutoTimestamp*/, std::optional<nsecs_t> /* dequeueTime */,
+                           const FrameTimelineInfo& /*info*/) {
         return false;
     };
-    virtual bool setAcquireFence(const sp<Fence>& /*fence*/) { return false; };
     virtual bool setDataspace(ui::Dataspace /*dataspace*/) { return false; };
     virtual bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/) { return false; };
     virtual bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/) { return false; };
@@ -447,6 +439,8 @@ public:
     virtual bool setFrameRateSelectionPriority(int32_t priority);
     virtual bool setFixedTransformHint(ui::Transform::RotationFlags fixedTransformHint);
     virtual void setAutoRefresh(bool /* autoRefresh */) {}
+    bool setDropInputMode(gui::DropInputMode);
+
     //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
@@ -528,8 +522,6 @@ public:
 
     virtual bool shouldPresentNow(nsecs_t /*expectedPresentTime*/) const { return false; }
 
-    virtual uint64_t getHeadFrameNumber(nsecs_t /* expectedPresentTime */) const { return 0; }
-
     /*
      * called after composition.
      * returns true if the layer latched a new buffer this frame.
@@ -607,10 +599,8 @@ public:
     virtual bool getTransformToDisplayInverse() const { return false; }
 
     // Returns how rounded corners should be drawn for this layer.
-    // This will traverse the hierarchy until it reaches its root, finding topmost rounded
-    // corner definition and converting it into current layer's coordinates.
-    // As of now, only 1 corner radius per display list is supported. Subsequent ones will be
-    // ignored.
+    // A layer can override its parent's rounded corner settings if the parent's rounded
+    // corner crop does not intersect with its own rounded corner crop.
     virtual RoundedCornerState getRoundedCornerState() const;
 
     bool hasRoundedCorners() const override { return getRoundedCornerState().radius > .0f; }
@@ -634,6 +624,11 @@ public:
     std::vector<compositionengine::LayerFE::LayerSettings> prepareClientCompositionList(
             compositionengine::LayerFE::ClientCompositionTargetSettings&) override;
     void onLayerDisplayed(const sp<Fence>& releaseFence) override;
+
+    void setWasClientComposed(const sp<Fence>& fence) override {
+        mLastClientCompositionFence = fence;
+    }
+
     const char* getDebugName() const override;
 
     bool setShadowRadius(float shadowRadius);
@@ -646,13 +641,12 @@ public:
     bool isLegacyDataSpace() const;
 
     uint32_t getTransactionFlags() const { return mTransactionFlags; }
-    uint32_t getTransactionFlags(uint32_t flags);
-    uint32_t setTransactionFlags(uint32_t flags);
 
-    // Deprecated, please use compositionengine::Output::belongsInOutput()
-    // instead.
-    // TODO(lpique): Move the remaining callers (screencap) to the new function.
-    bool belongsToDisplay(uint32_t layerStack) const { return getLayerStack() == layerStack; }
+    // Sets the masked bits.
+    void setTransactionFlags(uint32_t mask);
+
+    // Clears and returns the masked bits.
+    uint32_t clearTransactionFlags(uint32_t mask);
 
     FloatRect getBounds(const Region& activeTransparentRegion) const;
     FloatRect getBounds() const;
@@ -689,6 +683,14 @@ public:
      */
     bool isHiddenByPolicy() const;
 
+    // True if the layer should be skipped in screenshots, screen recordings,
+    // and mirroring to external or virtual displays.
+    bool isInternalDisplayOverlay() const;
+
+    ui::LayerFilter getOutputFilter() const {
+        return {getLayerStack(), isInternalDisplayOverlay()};
+    }
+
     bool isRemovedFromCurrentState() const;
 
     LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags, const DisplayDevice*);
@@ -704,8 +706,6 @@ public:
                                  uint32_t traceFlags = SurfaceTracing::TRACE_ALL);
 
     gui::WindowInfo::Type getWindowType() const { return mWindowType; }
-
-    bool getPrimaryDisplayOnly() const;
 
     void updateMirrorInfo();
 
@@ -856,7 +856,8 @@ public:
     bool getPremultipledAlpha() const;
     void setInputInfo(const gui::WindowInfo& info);
 
-    gui::WindowInfo fillInputInfo(const sp<DisplayDevice>& display);
+    gui::WindowInfo fillInputInfo(const ui::Transform& displayTransform, bool displayIsSecure);
+
     /**
      * Returns whether this layer has an explicitly set input-info.
      */
@@ -1042,6 +1043,8 @@ protected:
 
     mutable bool mDrawingStateModified = false;
 
+    sp<Fence> mLastClientCompositionFence;
+    bool mLastClientCompositionDisplayed = false;
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}
 
@@ -1069,6 +1072,8 @@ private:
     bool setFrameRateForLayerTree(FrameRate);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
     bool isTrustedOverlay() const;
+    gui::DropInputMode getDropInputMode() const;
+    void handleDropInputMode(gui::WindowInfo& info) const;
 
     // Find the root of the cloned hierarchy, this means the first non cloned parent.
     // This will return null if first non cloned parent is not found.
@@ -1082,8 +1087,8 @@ private:
     // hasInputInfo() or no-op if no such parent is found.
     void fillTouchOcclusionMode(gui::WindowInfo& info);
 
-    // Fills in the frame and transform info for the gui::WindowInfo
-    void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& toPhysicalDisplay);
+    // Fills in the frame and transform info for the gui::WindowInfo.
+    void fillInputFrameInfo(gui::WindowInfo&, const ui::Transform& displayTransform);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

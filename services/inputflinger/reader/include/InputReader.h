@@ -52,8 +52,7 @@ struct StylusState;
 class InputReader : public InputReaderInterface {
 public:
     InputReader(std::shared_ptr<EventHubInterface> eventHub,
-                const sp<InputReaderPolicyInterface>& policy,
-                const sp<InputListenerInterface>& listener);
+                const sp<InputReaderPolicyInterface>& policy, InputListenerInterface& listener);
     virtual ~InputReader();
 
     void dump(std::string& dump) override;
@@ -143,7 +142,7 @@ protected:
         void dispatchExternalStylusState(const StylusState& outState)
                 REQUIRES(mReader->mLock) override;
         InputReaderPolicyInterface* getPolicy() REQUIRES(mReader->mLock) override;
-        InputListenerInterface* getListener() REQUIRES(mReader->mLock) override;
+        InputListenerInterface& getListener() REQUIRES(mReader->mLock) override;
         EventHubInterface* getEventHub() REQUIRES(mReader->mLock) override;
         int32_t getNextId() NO_THREAD_SAFETY_ANALYSIS override;
         void updateLedMetaState(int32_t metaState) REQUIRES(mReader->mLock) override;
@@ -164,7 +163,7 @@ private:
     // in parallel to passing it to the InputReader.
     std::shared_ptr<EventHubInterface> mEventHub;
     sp<InputReaderPolicyInterface> mPolicy;
-    sp<QueuedInputListener> mQueuedListener;
+    QueuedInputListener mQueuedListener;
 
     InputReaderConfiguration mConfig GUARDED_BY(mLock);
 
@@ -229,6 +228,8 @@ private:
 
     uint32_t mConfigurationChangesToRefresh GUARDED_BY(mLock);
     void refreshConfigurationLocked(uint32_t changes) REQUIRES(mLock);
+
+    PointerCaptureRequest mCurrentPointerCaptureRequest GUARDED_BY(mLock);
 
     // state queries
     typedef int32_t (InputDevice::*GetStateFunc)(uint32_t sourceMask, int32_t code);

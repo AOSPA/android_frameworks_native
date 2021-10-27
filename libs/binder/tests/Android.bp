@@ -120,15 +120,49 @@ aidl_interface {
     host_supported: true,
     unstable: true,
     srcs: [
+        "BinderRpcTestClientInfo.aidl",
+        "BinderRpcTestServerInfo.aidl",
         "IBinderRpcCallback.aidl",
         "IBinderRpcSession.aidl",
         "IBinderRpcTest.aidl",
+        "ParcelableCertificateData.aidl",
     ],
     backend: {
         java: {
             enabled: false,
         },
     },
+}
+
+cc_library_static {
+    name: "libbinder_tls_test_utils",
+    host_supported: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    defaults: [
+        "binder_test_defaults",
+        "libbinder_tls_shared_deps",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libbase",
+        "liblog",
+    ],
+    static_libs: [
+        "libbinder_tls_static",
+    ],
+    srcs: [
+        "RpcTlsTestUtils.cpp",
+    ],
+    export_include_dirs: [
+        "include_tls_test_utils",
+    ],
+    visibility: [
+        ":__subpackages__",
+    ],
 }
 
 cc_test {
@@ -145,6 +179,7 @@ cc_test {
     defaults: [
         "binder_test_defaults",
         "libbinder_ndk_host_user",
+        "libbinder_tls_shared_deps",
     ],
 
     srcs: [
@@ -159,6 +194,8 @@ cc_test {
         "liblog",
     ],
     static_libs: [
+        "libbinder_tls_static",
+        "libbinder_tls_test_utils",
         "binderRpcTestIface-cpp",
         "binderRpcTestIface-ndk",
     ],
@@ -166,9 +203,43 @@ cc_test {
     require_root: true,
 }
 
+cc_test {
+    name: "RpcTlsUtilsTest",
+    host_supported: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+        android: {
+            test_suites: ["vts"],
+        },
+    },
+    defaults: [
+        "binder_test_defaults",
+        "libbinder_tls_shared_deps",
+    ],
+    srcs: [
+        "RpcTlsUtilsTest.cpp",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libbase",
+        "libutils",
+        "liblog",
+    ],
+    static_libs: [
+        "libbinder_tls_test_utils",
+        "libbinder_tls_static",
+    ],
+    test_suites: ["general-tests", "device-tests"],
+}
+
 cc_benchmark {
     name: "binderRpcBenchmark",
-    defaults: ["binder_test_defaults"],
+    defaults: [
+        "binder_test_defaults",
+        "libbinder_tls_shared_deps",
+    ],
     host_supported: true,
     target: {
         darwin: {
@@ -185,6 +256,37 @@ cc_benchmark {
         "liblog",
         "libutils",
     ],
+    static_libs: [
+        "libbinder_tls_test_utils",
+        "libbinder_tls_static",
+    ],
+}
+
+cc_test {
+    name: "binderRpcWireProtocolTest",
+    host_supported: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+        android: {
+            test_suites: ["vts"],
+        },
+    },
+    defaults: [
+        "binder_test_defaults",
+    ],
+    srcs: [
+        "binderRpcWireProtocolTest.cpp",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libbase",
+        "libutils",
+        "libcutils",
+        "liblog",
+    ],
+    test_suites: ["general-tests"],
 }
 
 cc_test {

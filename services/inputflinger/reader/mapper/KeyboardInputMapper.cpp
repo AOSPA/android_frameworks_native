@@ -354,7 +354,7 @@ void KeyboardInputMapper::processKey(nsecs_t when, nsecs_t readTime, bool down, 
                        getDisplayId(), policyFlags,
                        down ? AKEY_EVENT_ACTION_DOWN : AKEY_EVENT_ACTION_UP,
                        AKEY_EVENT_FLAG_FROM_SYSTEM, keyCode, scanCode, keyMetaState, downTime);
-    getListener()->notifyKey(&args);
+    getListener().notifyKey(&args);
 }
 
 ssize_t KeyboardInputMapper::findKeyDown(int32_t scanCode) {
@@ -384,8 +384,13 @@ int32_t KeyboardInputMapper::getMetaState() {
     return mMetaState;
 }
 
-void KeyboardInputMapper::updateMetaState(int32_t keyCode) {
+bool KeyboardInputMapper::updateMetaState(int32_t keyCode) {
+    if (!android::isMetaKey(keyCode) || !getDeviceContext().hasKeyCode(keyCode)) {
+        return false;
+    }
+
     updateMetaStateIfNeeded(keyCode, false);
+    return true;
 }
 
 bool KeyboardInputMapper::updateMetaStateIfNeeded(int32_t keyCode, bool down) {

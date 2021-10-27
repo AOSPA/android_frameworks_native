@@ -86,9 +86,7 @@ public:
 
     bool isVirtual() const { return !mConnectionType; }
     bool isPrimary() const { return mIsPrimary; }
-    bool isInternal() const {
-        return !isVirtual() && mConnectionType == ui::DisplayConnectionType::Internal;
-    }
+    bool isInternal() const { return mConnectionType == ui::DisplayConnectionType::Internal; }
 
     // isSecure indicates whether this display can be trusted to display
     // secure surfaces.
@@ -158,8 +156,8 @@ public:
     // Return true if intent is supported by the display.
     bool hasRenderIntent(ui::RenderIntent intent) const;
 
-    const Rect& getBounds() const;
-    const Rect& bounds() const { return getBounds(); }
+    const Rect getBounds() const;
+    const Rect bounds() const { return getBounds(); }
 
     void setDisplayName(const std::string& displayName);
     const std::string& getDisplayName() const { return mDisplayName; }
@@ -168,6 +166,10 @@ public:
     const std::optional<DeviceProductInfo>& getDeviceProductInfo() const {
         return mDeviceProductInfo;
     }
+
+    // Get the DisplayInfo that will be sent to InputFlinger, and the display transform that should
+    // be applied to all the input windows on the display.
+    std::pair<gui::DisplayInfo, ui::Transform> getInputInfo() const;
 
     /* ------------------------------------------------------------------------
      * Display power mode management.
@@ -315,7 +317,7 @@ struct DisplayDeviceState {
     int32_t sequenceId = sNextSequenceId++;
     std::optional<Physical> physical;
     sp<IGraphicBufferProducer> surface;
-    ui::LayerStack layerStack = ui::NO_LAYER_STACK;
+    ui::LayerStack layerStack;
     uint32_t flags = 0;
     Rect layerStackSpaceRect;
     Rect orientedDisplaySpaceRect;

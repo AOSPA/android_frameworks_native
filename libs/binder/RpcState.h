@@ -73,17 +73,38 @@ public:
     status_t getMaxThreads(const sp<RpcSession::RpcConnection>& connection,
                            const sp<RpcSession>& session, size_t* maxThreadsOut);
     status_t getSessionId(const sp<RpcSession::RpcConnection>& connection,
-                          const sp<RpcSession>& session, RpcAddress* sessionIdOut);
+                          const sp<RpcSession>& session, std::vector<uint8_t>* sessionIdOut);
 
     [[nodiscard]] status_t transact(const sp<RpcSession::RpcConnection>& connection,
                                     const sp<IBinder>& address, uint32_t code, const Parcel& data,
                                     const sp<RpcSession>& session, Parcel* reply, uint32_t flags);
     [[nodiscard]] status_t transactAddress(const sp<RpcSession::RpcConnection>& connection,
-                                           const RpcAddress& address, uint32_t code,
-                                           const Parcel& data, const sp<RpcSession>& session,
-                                           Parcel* reply, uint32_t flags);
-    [[nodiscard]] status_t sendDecStrong(const sp<RpcSession::RpcConnection>& connection,
-                                         const sp<RpcSession>& session, const RpcAddress& address);
+                                           uint64_t address, uint32_t code, const Parcel& data,
+                                           const sp<RpcSession>& session, Parcel* reply,
+                                           uint32_t flags);
+
+    /**
+     * The ownership model here carries an implicit strong refcount whenever a
+     * binder is sent across processes. Since we have a local strong count in
+     * sp<> over these objects, we only ever need to keep one of these. So,
+     * typically we tell the remote process that we drop all the implicit dec
+     * strongs, and we hold onto the last one. 'target' here is the target
+     * timesRecd (the number of remaining reference counts) we wish to keep.
+     * Typically this should be '0' or '1'. The target is used instead of an
+     * explicit decrement count in order to allow multiple threads to lower the
+     * number of counts simultaneously. Since we only lower the count to 0 when
+     * a binder is deleted, targets of '1' should only be sent when the caller
+     * owns a local strong reference to the binder. Larger targets may be used
+     * for testing, and to make the function generic, but generally this should
+     * be avoided because it would be hard to guarantee another thread doesn't
+     * lower the number of held refcounts to '1'. Note also, these refcounts
+     * must be sent actively. If they are sent when binders are deleted, this
+     * can cause leaks, since even remote binders carry an implicit strong ref
+     * when they are sent to another process.
+     */
+    [[nodiscard]] status_t sendDecStrongToTarget(const sp<RpcSession::RpcConnection>& connection,
+                                                 const sp<RpcSession>& session, uint64_t address,
+                                                 size_t target);
 
     enum class CommandType {
         ANY,
@@ -99,15 +120,22 @@ public:
      * ownership to the outgoing binder.
      */
     [[nodiscard]] status_t onBinderLeaving(const sp<RpcSession>& session, const sp<IBinder>& binder,
-                                           RpcAddress* outAddress);
+                                           uint64_t* outAddress);
 
     /**
      * Called by Parcel for incoming binders. This either returns the refcount
      * to the process, if this process already has one, or it takes ownership of
      * that refcount
      */
-    [[nodiscard]] status_t onBinderEntering(const sp<RpcSession>& session,
-                                            const RpcAddress& address, sp<IBinder>* out);
+    [[nodiscard]] status_t onBinderEntering(const sp<RpcSession>& session, uint64_t address,
+                                            sp<IBinder>* out);
+    /**
+     * Called on incoming binders to update refcounting information. This should
+     * only be called when it is done as part of making progress on a
+     * transaction.
+     */
+    [[nodiscard]] status_t flushExcessBinderRefs(const sp<RpcSession>& session, uint64_t address,
+                                                 const sp<IBinder>& binder);
 
     size_t countBinders();
     void dump();
@@ -149,7 +177,8 @@ private:
 
     [[nodiscard]] status_t rpcSend(const sp<RpcSession::RpcConnection>& connection,
                                    const sp<RpcSession>& session, const char* what,
-                                   const void* data, size_t size);
+                                   const void* data, size_t size,
+                                   const std::function<status_t()>& altPoll = nullptr);
     [[nodiscard]] status_t rpcRec(const sp<RpcSession::RpcConnection>& connection,
                                   const sp<RpcSession>& session, const char* what, void* data,
                                   size_t size);
@@ -221,15 +250,16 @@ private:
     // happens, and there is a strong reference to the binder kept by
     // binderNode, this returns that strong reference, so that it can be
     // dropped after any locks are removed.
-    sp<IBinder> tryEraseNode(std::map<RpcAddress, BinderNode>::iterator& it);
+    sp<IBinder> tryEraseNode(std::map<uint64_t, BinderNode>::iterator& it);
     // true - success
     // false - session shutdown, halt
     [[nodiscard]] bool nodeProgressAsyncNumber(BinderNode* node);
 
     std::mutex mNodeMutex;
     bool mTerminated = false;
+    uint32_t mNextId = 0;
     // binders known by both sides of a session
-    std::map<RpcAddress, BinderNode> mNodeForAddress;
+    std::map<uint64_t, BinderNode> mNodeForAddress;
 };
 
 } // namespace android

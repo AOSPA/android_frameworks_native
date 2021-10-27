@@ -82,8 +82,8 @@ std::optional<bool> AIBinder::associateClassInternal(const AIBinder_Class* clazz
         const String16& currentDescriptor = mClazz->getInterfaceDescriptor();
         if (newDescriptor == currentDescriptor) {
             LOG(ERROR) << __func__ << ": Class descriptors '" << currentDescriptor
-                       << "' match during associateClass, but they are different class objects. "
-                          "Class descriptor collision?";
+                       << "' match during associateClass, but they are different class objects ("
+                       << clazz << " vs " << mClazz << "). Class descriptor collision?";
         } else {
             LOG(ERROR) << __func__
                        << ": Class cannot be associated on object which already has a class. "
@@ -172,7 +172,7 @@ status_t ABBinder::dump(int fd, const ::android::Vector<String16>& args) {
 status_t ABBinder::onTransact(transaction_code_t code, const Parcel& data, Parcel* reply,
                               binder_flags_t flags) {
     if (isUserCommand(code)) {
-        if (!data.checkInterface(this)) {
+        if (getClass()->writeHeader && !data.checkInterface(this)) {
             return STATUS_BAD_TYPE;
         }
 
@@ -354,6 +354,12 @@ void AIBinder_Class_setOnDump(AIBinder_Class* clazz, AIBinder_onDump onDump) {
     clazz->onDump = onDump;
 }
 
+void AIBinder_Class_disableInterfaceTokenHeader(AIBinder_Class* clazz) {
+    CHECK(clazz != nullptr) << "disableInterfaceTokenHeader requires non-null clazz";
+
+    clazz->writeHeader = false;
+}
+
 void AIBinder_Class_setHandleShellCommand(AIBinder_Class* clazz,
                                           AIBinder_handleShellCommand handleShellCommand) {
     CHECK(clazz != nullptr) << "setHandleShellCommand requires non-null clazz";
@@ -365,6 +371,12 @@ const char* AIBinder_Class_getDescriptor(const AIBinder_Class* clazz) {
     CHECK(clazz != nullptr) << "getDescriptor requires non-null clazz";
 
     return clazz->getInterfaceDescriptorUtf8();
+}
+
+AIBinder_DeathRecipient::TransferDeathRecipient::~TransferDeathRecipient() {
+    if (mOnUnlinked != nullptr) {
+        mOnUnlinked(mCookie);
+    }
 }
 
 void AIBinder_DeathRecipient::TransferDeathRecipient::binderDied(const wp<IBinder>& who) {
@@ -388,7 +400,7 @@ void AIBinder_DeathRecipient::TransferDeathRecipient::binderDied(const wp<IBinde
 }
 
 AIBinder_DeathRecipient::AIBinder_DeathRecipient(AIBinder_DeathRecipient_onBinderDied onDied)
-    : mOnDied(onDied) {
+    : mOnDied(onDied), mOnUnlinked(nullptr) {
     CHECK(onDied != nullptr);
 }
 
@@ -406,10 +418,12 @@ binder_status_t AIBinder_DeathRecipient::linkToDeath(const sp<IBinder>& binder, 
     std::lock_guard<std::mutex> l(mDeathRecipientsMutex);
 
     sp<TransferDeathRecipient> recipient =
-            new TransferDeathRecipient(binder, cookie, this, mOnDied);
+            new TransferDeathRecipient(binder, cookie, this, mOnDied, mOnUnlinked);
 
     status_t status = binder->linkToDeath(recipient, cookie, 0 /*flags*/);
     if (status != STATUS_OK) {
+        // When we failed to link, the destructor of TransferDeathRecipient runs here, which
+        // ensures that mOnUnlinked is called before we return with an error from this method.
         return PruneStatusT(status);
     }
 
@@ -440,6 +454,10 @@ binder_status_t AIBinder_DeathRecipient::unlinkToDeath(const sp<IBinder>& binder
     }
 
     return STATUS_NAME_NOT_FOUND;
+}
+
+void AIBinder_DeathRecipient::setOnUnlinked(AIBinder_DeathRecipient_onBinderUnlinked onUnlinked) {
+    mOnUnlinked = onUnlinked;
 }
 
 // start of C-API methods
@@ -606,7 +624,10 @@ binder_status_t AIBinder_prepareTransaction(AIBinder* binder, AParcel** in) {
     *in = new AParcel(binder);
     (*in)->get()->markForBinder(binder->getBinder());
 
-    status_t status = (*in)->get()->writeInterfaceToken(clazz->getInterfaceDescriptor());
+    status_t status = android::OK;
+    if (clazz->writeHeader) {
+        status = (*in)->get()->writeInterfaceToken(clazz->getInterfaceDescriptor());
+    }
     binder_status_t ret = PruneStatusT(status);
 
     if (ret != STATUS_OK) {
@@ -678,6 +699,15 @@ AIBinder_DeathRecipient* AIBinder_DeathRecipient_new(
     auto ret = new AIBinder_DeathRecipient(onBinderDied);
     ret->incStrong(nullptr);
     return ret;
+}
+
+void AIBinder_DeathRecipient_setOnUnlinked(AIBinder_DeathRecipient* recipient,
+                                           AIBinder_DeathRecipient_onBinderUnlinked onUnlinked) {
+    if (recipient == nullptr) {
+        return;
+    }
+
+    recipient->setOnUnlinked(onUnlinked);
 }
 
 void AIBinder_DeathRecipient_delete(AIBinder_DeathRecipient* recipient) {

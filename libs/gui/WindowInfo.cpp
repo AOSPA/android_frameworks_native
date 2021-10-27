@@ -54,12 +54,11 @@ bool WindowInfo::operator==(const WindowInfo& info) const {
             info.frameLeft == frameLeft && info.frameTop == frameTop &&
             info.frameRight == frameRight && info.frameBottom == frameBottom &&
             info.surfaceInset == surfaceInset && info.globalScaleFactor == globalScaleFactor &&
-            info.transform == transform && info.displayWidth == displayWidth &&
-            info.displayHeight == displayHeight &&
-            info.touchableRegion.hasSameRects(touchableRegion) && info.visible == visible &&
-            info.trustedOverlay == trustedOverlay && info.focusable == focusable &&
-            info.touchOcclusionMode == touchOcclusionMode && info.hasWallpaper == hasWallpaper &&
-            info.paused == paused && info.ownerPid == ownerPid && info.ownerUid == ownerUid &&
+            info.transform == transform && info.touchableRegion.hasSameRects(touchableRegion) &&
+            info.visible == visible && info.trustedOverlay == trustedOverlay &&
+            info.focusable == focusable && info.touchOcclusionMode == touchOcclusionMode &&
+            info.hasWallpaper == hasWallpaper && info.paused == paused &&
+            info.ownerPid == ownerPid && info.ownerUid == ownerUid &&
             info.packageName == packageName && info.inputFeatures == inputFeatures &&
             info.displayId == displayId && info.portalToDisplayId == portalToDisplayId &&
             info.replaceTouchableRegionWithCrop == replaceTouchableRegionWithCrop &&
@@ -97,8 +96,6 @@ status_t WindowInfo::writeToParcel(android::Parcel* parcel) const {
         parcel->writeFloat(transform.dtdy()) ?:
         parcel->writeFloat(transform.dsdy()) ?:
         parcel->writeFloat(transform.ty()) ?:
-        parcel->writeInt32(displayWidth) ?:
-        parcel->writeInt32(displayHeight) ?:
         parcel->writeBool(visible) ?:
         parcel->writeBool(focusable) ?:
         parcel->writeBool(hasWallpaper) ?:
@@ -114,7 +111,8 @@ status_t WindowInfo::writeToParcel(android::Parcel* parcel) const {
         applicationInfo.writeToParcel(parcel) ?:
         parcel->write(touchableRegion) ?:
         parcel->writeBool(replaceTouchableRegionWithCrop) ?:
-        parcel->writeStrongBinder(touchableRegionCropHandle.promote());
+        parcel->writeStrongBinder(touchableRegionCropHandle.promote()) ?:
+        parcel->writeStrongBinder(windowToken);
     // clang-format on
     return status;
 }
@@ -153,8 +151,6 @@ status_t WindowInfo::readFromParcel(const android::Parcel* parcel) {
         parcel->readFloat(&dtdy) ?:
         parcel->readFloat(&dsdy) ?:
         parcel->readFloat(&ty) ?:
-        parcel->readInt32(&displayWidth) ?:
-        parcel->readInt32(&displayHeight) ?:
         parcel->readBool(&visible) ?:
         parcel->readBool(&focusable) ?:
         parcel->readBool(&hasWallpaper) ?:
@@ -188,7 +184,8 @@ status_t WindowInfo::readFromParcel(const android::Parcel* parcel) {
     touchableRegionCropHandle = parcel->readStrongBinder();
     transform.set({dsdx, dtdx, tx, dtdy, dsdy, ty, 0, 0, 1});
 
-    return OK;
+    status = parcel->readNullableStrongBinder(&windowToken);
+    return status;
 }
 
 // --- WindowInfoHandle ---

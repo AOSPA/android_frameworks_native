@@ -62,11 +62,12 @@ private:
     uint64_t mCurrentFrameNumber = 0;
 
     Mutex mMutex;
+    std::mutex mBufferQueueMutex;
     ConsumerFrameEventHistory mFrameEventHistory GUARDED_BY(mMutex);
     std::queue<uint64_t> mDisconnectEvents GUARDED_BY(mMutex);
     bool mCurrentlyConnected GUARDED_BY(mMutex);
     bool mPreviouslyConnected GUARDED_BY(mMutex);
-    BLASTBufferQueue* mBLASTBufferQueue GUARDED_BY(mMutex);
+    BLASTBufferQueue* mBLASTBufferQueue GUARDED_BY(mBufferQueueMutex);
 };
 
 class BLASTBufferQueue
@@ -100,12 +101,12 @@ public:
                                uint32_t transformHint, uint32_t currentMaxAcquiredBufferCount);
     void setNextTransaction(SurfaceComposerClient::Transaction *t);
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
+    void applyPendingTransactions(uint64_t frameNumber);
     void setTransactionCompleteCallback(uint64_t frameNumber,
                                         std::function<void(int64_t)>&& transactionCompleteCallback);
 
     void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height, int32_t format,
                 SurfaceComposerClient::Transaction* outTransaction = nullptr);
-    void flushShadowQueue() {}
 
     status_t setFrameRate(float frameRate, int8_t compatibility, bool shouldBeSeamless);
     status_t setFrameTimelineInfo(const FrameTimelineInfo& info);
@@ -113,6 +114,7 @@ public:
     void setSidebandStream(const sp<NativeHandle>& stream);
 
     uint32_t getLastTransformHint() const;
+    uint64_t getLastAcquiredFrameNum();
 
     virtual ~BLASTBufferQueue();
 
@@ -131,6 +133,8 @@ private:
     bool rejectBuffer(const BufferItem& item) REQUIRES(mMutex);
     bool maxBuffersAcquired(bool includeExtraAcquire) const REQUIRES(mMutex);
     static PixelFormat convertBufferFormat(PixelFormat& format);
+    void mergePendingTransactions(SurfaceComposerClient::Transaction* t, uint64_t frameNumber)
+            REQUIRES(mMutex);
 
     std::string mName;
     // Represents the queued buffer count from buffer queue,

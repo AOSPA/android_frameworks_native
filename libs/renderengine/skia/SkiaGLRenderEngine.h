@@ -54,11 +54,6 @@ public:
     ~SkiaGLRenderEngine() override EXCLUDES(mRenderingMutex);
 
     std::future<void> primeCache() override;
-    status_t drawLayers(const DisplaySettings& display,
-                        const std::vector<const LayerSettings*>& layers,
-                        const std::shared_ptr<ExternalTexture>& buffer,
-                        const bool useFramebufferCache, base::unique_fd&& bufferFence,
-                        base::unique_fd* drawFence) override;
     void cleanupPostRender() override;
     void cleanFramebufferCache() override{};
     int getContextPriority() override;
@@ -77,6 +72,11 @@ protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(const sp<GraphicBuffer>& buffer) override;
     bool canSkipPostRenderCleanup() const override;
+    void drawLayersInternal(const std::shared_ptr<std::promise<RenderEngineResult>>&& resultPromise,
+                            const DisplaySettings& display,
+                            const std::vector<const LayerSettings*>& layers,
+                            const std::shared_ptr<ExternalTexture>& buffer,
+                            const bool useFramebufferCache, base::unique_fd&& bufferFence) override;
 
 private:
     static EGLConfig chooseEglConfig(EGLDisplay display, int format, bool logConfig);
@@ -99,7 +99,10 @@ private:
     inline GrDirectContext* getActiveGrContext() const;
 
     base::unique_fd flush();
-    bool waitFence(base::unique_fd fenceFd);
+    // waitFence attempts to wait in the GPU, and if unable to waits on the CPU instead.
+    void waitFence(base::borrowed_fd fenceFd);
+    bool waitGpuFence(base::borrowed_fd fenceFd);
+
     void initCanvas(SkCanvas* canvas, const DisplaySettings& display);
     void drawShadow(SkCanvas* canvas, const SkRRect& casterRRect,
                     const ShadowSettings& shadowSettings);

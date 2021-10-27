@@ -16,6 +16,7 @@
 
 #include <memory>
 
+#include <android-base/result.h>
 #include <android-base/unique_fd.h>
 #include <utils/Errors.h>
 
@@ -34,9 +35,13 @@ public:
     void trigger();
 
     /**
-     * Whether this has been triggered.
+     * Check whether this has been triggered by checking the write end. Note:
+     * this has no internal locking, and it is inherently racey, but this is
+     * okay, because if we accidentally return false when a trigger has already
+     * happened, we can imagine that instead, the scheduler actually executed
+     * the code which is polling isTriggered earlier.
      */
-    bool isTriggered();
+    [[nodiscard]] bool isTriggered();
 
     /**
      * Poll for a read event.
@@ -47,7 +52,7 @@ public:
      *   true - time to read!
      *   false - trigger happened
      */
-    status_t triggerablePoll(base::borrowed_fd fd, int16_t event);
+    [[nodiscard]] status_t triggerablePoll(base::borrowed_fd fd, int16_t event);
 
 private:
     base::unique_fd mWrite;

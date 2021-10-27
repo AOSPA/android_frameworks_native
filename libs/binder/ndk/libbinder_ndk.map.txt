@@ -141,6 +141,14 @@ LIBBINDER_NDK31 { # introduced=31
     AParcel_reset;
 };
 
+LIBBINDER_NDK33 { # introduced=33
+  global:
+    AIBinder_Class_disableInterfaceTokenHeader;
+    AIBinder_DeathRecipient_setOnUnlinked;
+    AParcel_marshal;
+    AParcel_unmarshal;
+};
+
 LIBBINDER_NDK_PLATFORM {
   global:
     AParcel_getAllowFds;

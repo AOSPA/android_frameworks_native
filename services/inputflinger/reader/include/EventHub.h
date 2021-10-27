@@ -146,6 +146,8 @@ enum class InputDeviceClass : uint32_t {
 enum class SysfsClass : uint32_t {
     POWER_SUPPLY = 0,
     LEDS = 1,
+
+    ftl_last = LEDS
 };
 
 enum class LightColor : uint32_t {
@@ -312,6 +314,7 @@ public:
                                        uint8_t* outFlags) const = 0;
 
     virtual bool hasScanCode(int32_t deviceId, int32_t scanCode) const = 0;
+    virtual bool hasKeyCode(int32_t deviceId, int32_t keyCode) const = 0;
 
     /* LED related functions expect Android LED constants, not scan codes or HID usages */
     virtual bool hasLed(int32_t deviceId, int32_t led) const = 0;
@@ -489,6 +492,7 @@ public:
     std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) override final;
 
     bool hasScanCode(int32_t deviceId, int32_t scanCode) const override final;
+    bool hasKeyCode(int32_t deviceId, int32_t keyCode) const override final;
     bool hasLed(int32_t deviceId, int32_t led) const override final;
     void setLedState(int32_t deviceId, int32_t led, bool on) override final;
 

@@ -55,6 +55,7 @@ cc_library_headers {
 filegroup {
     name: "guiconstants_aidl",
     srcs: [
+        "android/gui/DropInputMode.aidl",
         "android/**/TouchOcclusionMode.aidl",
     ],
 }
@@ -65,11 +66,13 @@ cc_library_static {
     host_supported: true,
     srcs: [
         ":guiconstants_aidl",
+        "android/gui/DisplayInfo.aidl",
         "android/gui/FocusRequest.aidl",
         "android/gui/InputApplicationInfo.aidl",
         "android/gui/IWindowInfosListener.aidl",
         "android/gui/IWindowInfosReportedListener.aidl",
         "android/gui/WindowInfo.aidl",
+        "DisplayInfo.cpp",
         "WindowInfo.cpp",
     ],
 
@@ -90,7 +93,7 @@ cc_library_static {
     ],
 
     aidl: {
-        export_aidl_headers: true
+        export_aidl_headers: true,
     },
 
     include_dirs: [
@@ -135,8 +138,8 @@ cc_library_static {
     ],
 
     aidl: {
-        export_aidl_headers: true
-    }
+        export_aidl_headers: true,
+    },
 }
 
 

@@ -27,6 +27,8 @@
 #include <utils/Errors.h>
 #include <memory>
 
+#include "tests/TestUtils.h"
+
 namespace android::compositionengine {
 using namespace std::chrono_literals;
 
@@ -121,7 +123,7 @@ void CachedSetTest::SetUp() {
         // set up minimium params needed for rendering
         mOutputState.dataspace = ui::Dataspace::SRGB;
         mOutputState.framebufferSpace = ProjectionSpace(ui::Size(10, 20), Rect(10, 5));
-        mOutputState.framebufferSpace.orientation = ui::ROTATION_90;
+        mOutputState.framebufferSpace.setOrientation(ui::ROTATION_90);
         mOutputState.layerStackSpace = ProjectionSpace(ui::Size(20, 10), Rect(5, 10));
     }
 }
@@ -342,19 +344,19 @@ TEST_F(CachedSetTest, renderUnsecureOutput) {
     clientCompList2.push_back({});
     clientCompList2[0].alpha = 0.75f;
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings& displaySettings,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(mOutputState.framebufferSpace.content, displaySettings.physicalDisplay);
-        EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
-        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings& displaySettings,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
+        EXPECT_EQ(mOutputState.framebufferSpace.getContent(), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.layerStackSpace.getContent(), displaySettings.clip);
+        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.getOrientation()),
                   displaySettings.orientation);
         EXPECT_EQ(0.5f, layers[0]->alpha);
         EXPECT_EQ(0.75f, layers[1]->alpha);
         EXPECT_EQ(ui::Dataspace::SRGB, displaySettings.outputDataspace);
-
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
     EXPECT_CALL(*layerFE1,
@@ -363,7 +365,7 @@ TEST_F(CachedSetTest, renderUnsecureOutput) {
     EXPECT_CALL(*layerFE2,
                 prepareClientCompositionList(ClientCompositionTargetSettingsSecureEq(false)))
             .WillOnce(Return(clientCompList2));
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     mOutputState.isSecure = false;
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
     expectReadyBuffer(cachedSet);
@@ -394,19 +396,20 @@ TEST_F(CachedSetTest, renderSecureOutput) {
     clientCompList2.push_back({});
     clientCompList2[0].alpha = 0.75f;
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings& displaySettings,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(mOutputState.framebufferSpace.content, displaySettings.physicalDisplay);
-        EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
-        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings& displaySettings,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
+        EXPECT_EQ(mOutputState.framebufferSpace.getContent(), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.layerStackSpace.getContent(), displaySettings.clip);
+        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.getOrientation()),
                   displaySettings.orientation);
         EXPECT_EQ(0.5f, layers[0]->alpha);
         EXPECT_EQ(0.75f, layers[1]->alpha);
         EXPECT_EQ(ui::Dataspace::SRGB, displaySettings.outputDataspace);
 
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
     EXPECT_CALL(*layerFE1,
@@ -415,7 +418,7 @@ TEST_F(CachedSetTest, renderSecureOutput) {
     EXPECT_CALL(*layerFE2,
                 prepareClientCompositionList(ClientCompositionTargetSettingsSecureEq(true)))
             .WillOnce(Return(clientCompList2));
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     mOutputState.isSecure = true;
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
     expectReadyBuffer(cachedSet);
@@ -448,24 +451,25 @@ TEST_F(CachedSetTest, rendersWithOffsetFramebufferContent) {
 
     mOutputState.framebufferSpace = ProjectionSpace(ui::Size(10, 20), Rect(2, 3, 10, 5));
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings& displaySettings,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> size_t {
-        EXPECT_EQ(mOutputState.framebufferSpace.content, displaySettings.physicalDisplay);
-        EXPECT_EQ(mOutputState.layerStackSpace.content, displaySettings.clip);
-        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.orientation),
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings& displaySettings,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
+        EXPECT_EQ(mOutputState.framebufferSpace.getContent(), displaySettings.physicalDisplay);
+        EXPECT_EQ(mOutputState.layerStackSpace.getContent(), displaySettings.clip);
+        EXPECT_EQ(ui::Transform::toRotationFlags(mOutputState.framebufferSpace.getOrientation()),
                   displaySettings.orientation);
         EXPECT_EQ(0.5f, layers[0]->alpha);
         EXPECT_EQ(0.75f, layers[1]->alpha);
         EXPECT_EQ(ui::Dataspace::SRGB, displaySettings.outputDataspace);
 
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
     EXPECT_CALL(*layerFE1, prepareClientCompositionList(_)).WillOnce(Return(clientCompList1));
     EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
     expectReadyBuffer(cachedSet);
 
@@ -650,10 +654,11 @@ TEST_F(CachedSetTest, addHolePunch) {
     EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
     EXPECT_CALL(*layerFE3, prepareClientCompositionList(_)).WillOnce(Return(clientCompList3));
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings&,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> size_t {
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings&,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
         // If the highlight layer is enabled, it will increase the size by 1.
         // We're interested in the third layer either way.
         EXPECT_GE(layers.size(), 4u);
@@ -673,10 +678,10 @@ TEST_F(CachedSetTest, addHolePunch) {
             EXPECT_EQ(1.0f, holePunchBackgroundSettings->alpha);
         }
 
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
 }
 
@@ -710,10 +715,11 @@ TEST_F(CachedSetTest, addHolePunch_noBuffer) {
     EXPECT_CALL(*layerFE2, prepareClientCompositionList(_)).WillOnce(Return(clientCompList2));
     EXPECT_CALL(*layerFE3, prepareClientCompositionList(_)).WillOnce(Return(clientCompList3));
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings&,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> size_t {
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings&,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
         // If the highlight layer is enabled, it will increase the size by 1.
         // We're interested in the third layer either way.
         EXPECT_GE(layers.size(), 4u);
@@ -734,10 +740,10 @@ TEST_F(CachedSetTest, addHolePunch_noBuffer) {
             EXPECT_EQ(1.0f, holePunchBackgroundSettings->alpha);
         }
 
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
 }
 
@@ -859,10 +865,11 @@ TEST_F(CachedSetTest, addBlur) {
                                 BackgroundBlurOnly)))
             .WillOnce(Return(clientCompList3));
 
-    const auto drawLayers = [&](const renderengine::DisplaySettings&,
-                                const std::vector<const renderengine::LayerSettings*>& layers,
-                                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                                base::unique_fd&&, base::unique_fd*) -> int32_t {
+    const auto drawLayers =
+            [&](const renderengine::DisplaySettings&,
+                const std::vector<const renderengine::LayerSettings*>& layers,
+                const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
+                base::unique_fd &&) -> std::future<renderengine::RenderEngineResult> {
         // If the highlight layer is enabled, it will increase the size by 1.
         // We're interested in the third layer either way.
         EXPECT_GE(layers.size(), 3u);
@@ -871,10 +878,10 @@ TEST_F(CachedSetTest, addBlur) {
         EXPECT_EQ(half3(0.0f, 0.0f, 0.0f), blurSettings->source.solidColor);
         EXPECT_EQ(0.0f, blurSettings->alpha);
 
-        return NO_ERROR;
+        return futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()});
     };
 
-    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _, _)).WillOnce(Invoke(drawLayers));
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).WillOnce(Invoke(drawLayers));
     cachedSet.render(mRenderEngine, mTexturePool, mOutputState);
 }
 

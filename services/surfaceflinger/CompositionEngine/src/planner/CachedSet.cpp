@@ -159,13 +159,13 @@ void CachedSet::updateAge(std::chrono::steady_clock::time_point now) {
 void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& texturePool,
                        const OutputCompositionState& outputState) {
     ATRACE_CALL();
-    const Rect& viewport = outputState.layerStackSpace.content;
+    const Rect& viewport = outputState.layerStackSpace.getContent();
     const ui::Dataspace& outputDataspace = outputState.dataspace;
     const ui::Transform::RotationFlags orientation =
-            ui::Transform::toRotationFlags(outputState.framebufferSpace.orientation);
+            ui::Transform::toRotationFlags(outputState.framebufferSpace.getOrientation());
 
     renderengine::DisplaySettings displaySettings{
-            .physicalDisplay = outputState.framebufferSpace.content,
+            .physicalDisplay = outputState.framebufferSpace.getContent(),
             .clip = viewport,
             .outputDataspace = outputDataspace,
             .orientation = orientation,
@@ -272,17 +272,17 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
         bufferFence.reset(texture->getReadyFence()->dup());
     }
 
-    base::unique_fd drawFence;
-    status_t result =
-            renderEngine.drawLayers(displaySettings, layerSettingsPointers, texture->get(), false,
-                                    std::move(bufferFence), &drawFence);
+    auto [status, drawFence] = renderEngine
+                                       .drawLayers(displaySettings, layerSettingsPointers,
+                                                   texture->get(), false, std::move(bufferFence))
+                                       .get();
 
-    if (result == NO_ERROR) {
+    if (status == NO_ERROR) {
         mDrawFence = new Fence(drawFence.release());
         mOutputSpace = outputState.framebufferSpace;
         mTexture = texture;
         mTexture->setReadyFence(mDrawFence);
-        mOutputSpace.orientation = outputState.framebufferSpace.orientation;
+        mOutputSpace.setOrientation(outputState.framebufferSpace.getOrientation());
         mOutputDataspace = outputDataspace;
         mOrientation = orientation;
         mSkipCount = 0;

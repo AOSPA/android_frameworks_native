@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <BinderRpcTestClientInfo.h>
+#include <BinderRpcTestServerInfo.h>
 #include <BnBinderRpcCallback.h>
 #include <BnBinderRpcSession.h>
 #include <BnBinderRpcTest.h>
@@ -29,8 +31,11 @@
 #include <binder/ProcessState.h>
 #include <binder/RpcServer.h>
 #include <binder/RpcSession.h>
+#include <binder/RpcTlsTestUtils.h>
+#include <binder/RpcTlsUtils.h>
 #include <binder/RpcTransport.h>
 #include <binder/RpcTransportRaw.h>
+#include <binder/RpcTransportTls.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -39,14 +44,20 @@
 #include <thread>
 #include <type_traits>
 
+#include <poll.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 
+#include "../FdTrigger.h"
 #include "../RpcSocketAddress.h" // for testing preconnected clients
-#include "../RpcState.h"   // for debugging
-#include "../vm_sockets.h" // for VMADDR_*
+#include "../RpcState.h"         // for debugging
+#include "../vm_sockets.h"       // for VMADDR_*
 
 using namespace std::chrono_literals;
+using namespace std::placeholders;
+using testing::AssertionFailure;
+using testing::AssertionResult;
+using testing::AssertionSuccess;
 
 namespace android {
 
@@ -54,16 +65,27 @@ static_assert(RPC_WIRE_PROTOCOL_VERSION + 1 == RPC_WIRE_PROTOCOL_VERSION_NEXT ||
               RPC_WIRE_PROTOCOL_VERSION == RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL);
 const char* kLocalInetAddress = "127.0.0.1";
 
-enum class RpcSecurity { RAW };
+enum class RpcSecurity { RAW, TLS };
 
 static inline std::vector<RpcSecurity> RpcSecurityValues() {
-    return {RpcSecurity::RAW};
+    return {RpcSecurity::RAW, RpcSecurity::TLS};
 }
 
-static inline std::unique_ptr<RpcTransportCtxFactory> newFactory(RpcSecurity rpcSecurity) {
+static inline std::unique_ptr<RpcTransportCtxFactory> newFactory(
+        RpcSecurity rpcSecurity, std::shared_ptr<RpcCertificateVerifier> verifier = nullptr,
+        std::unique_ptr<RpcAuth> auth = nullptr) {
     switch (rpcSecurity) {
         case RpcSecurity::RAW:
             return RpcTransportCtxFactoryRaw::make();
+        case RpcSecurity::TLS: {
+            if (verifier == nullptr) {
+                verifier = std::make_shared<RpcCertificateVerifierSimple>();
+            }
+            if (auth == nullptr) {
+                auth = std::make_unique<RpcAuthSelfSigned>();
+            }
+            return RpcTransportCtxFactoryTls::make(std::move(verifier), std::move(auth));
+        }
         default:
             LOG_ALWAYS_FATAL("Unknown RpcSecurity %d", rpcSecurity);
     }
@@ -301,14 +323,17 @@ sp<IBinder> MyBinderRpcTest::mHeldBinder;
 class Process {
 public:
     Process(Process&&) = default;
-    Process(const std::function<void(android::base::borrowed_fd /* writeEnd */)>& f) {
-        android::base::unique_fd writeEnd;
-        CHECK(android::base::Pipe(&mReadEnd, &writeEnd)) << strerror(errno);
+    Process(const std::function<void(android::base::borrowed_fd /* writeEnd */,
+                                     android::base::borrowed_fd /* readEnd */)>& f) {
+        android::base::unique_fd childWriteEnd;
+        android::base::unique_fd childReadEnd;
+        CHECK(android::base::Pipe(&mReadEnd, &childWriteEnd)) << strerror(errno);
+        CHECK(android::base::Pipe(&childReadEnd, &mWriteEnd)) << strerror(errno);
         if (0 == (mPid = fork())) {
             // racey: assume parent doesn't crash before this is set
             prctl(PR_SET_PDEATHSIG, SIGHUP);
 
-            f(writeEnd);
+            f(childWriteEnd, childReadEnd);
 
             exit(0);
         }
@@ -319,16 +344,20 @@ public:
         }
     }
     android::base::borrowed_fd readEnd() { return mReadEnd; }
+    android::base::borrowed_fd writeEnd() { return mWriteEnd; }
 
 private:
     pid_t mPid = 0;
     android::base::unique_fd mReadEnd;
+    android::base::unique_fd mWriteEnd;
 };
 
 static std::string allocateSocketAddress() {
     static size_t id = 0;
     std::string temp = getenv("TMPDIR") ?: "/tmp";
-    return temp + "/binderRpcTest_" + std::to_string(id++);
+    auto ret = temp + "/binderRpcTest_" + std::to_string(id++);
+    unlink(ret.c_str());
+    return ret;
 };
 
 static unsigned int allocateVsockPort() {
@@ -431,16 +460,17 @@ static inline std::string PrintToString(SocketType socketType) {
     }
 }
 
-static base::unique_fd connectToUds(const char* addrStr) {
-    UnixSocketAddress addr(addrStr);
+static base::unique_fd connectTo(const RpcSocketAddress& addr) {
     base::unique_fd serverFd(
             TEMP_FAILURE_RETRY(socket(addr.addr()->sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0)));
     int savedErrno = errno;
-    CHECK(serverFd.ok()) << "Could not create socket " << addrStr << ": " << strerror(savedErrno);
+    CHECK(serverFd.ok()) << "Could not create socket " << addr.toString() << ": "
+                         << strerror(savedErrno);
 
     if (0 != TEMP_FAILURE_RETRY(connect(serverFd.get(), addr.addr(), addr.addrSize()))) {
         int savedErrno = errno;
-        LOG(FATAL) << "Could not connect to socket " << addrStr << ": " << strerror(savedErrno);
+        LOG(FATAL) << "Could not connect to socket " << addr.toString() << ": "
+                   << strerror(savedErrno);
     }
     return serverFd;
 }
@@ -458,6 +488,37 @@ public:
         return PrintToString(type) + "_" + newFactory(security)->toCString();
     }
 
+    static inline void writeString(android::base::borrowed_fd fd, std::string_view str) {
+        uint64_t length = str.length();
+        CHECK(android::base::WriteFully(fd, &length, sizeof(length)));
+        CHECK(android::base::WriteFully(fd, str.data(), str.length()));
+    }
+
+    static inline std::string readString(android::base::borrowed_fd fd) {
+        uint64_t length;
+        CHECK(android::base::ReadFully(fd, &length, sizeof(length)));
+        std::string ret(length, '\0');
+        CHECK(android::base::ReadFully(fd, ret.data(), length));
+        return ret;
+    }
+
+    static inline void writeToFd(android::base::borrowed_fd fd, const Parcelable& parcelable) {
+        Parcel parcel;
+        CHECK_EQ(OK, parcelable.writeToParcel(&parcel));
+        writeString(fd,
+                    std::string(reinterpret_cast<const char*>(parcel.data()), parcel.dataSize()));
+    }
+
+    template <typename T>
+    static inline T readFromFd(android::base::borrowed_fd fd) {
+        std::string data = readString(fd);
+        Parcel parcel;
+        CHECK_EQ(OK, parcel.setData(reinterpret_cast<const uint8_t*>(data.data()), data.size()));
+        T object;
+        CHECK_EQ(OK, object.readFromParcel(&parcel));
+        return object;
+    }
+
     // This creates a new process serving an interface on a certain number of
     // threads.
     ProcessSession createRpcTestSocketServerProcess(
@@ -469,11 +530,12 @@ public:
 
         unsigned int vsockPort = allocateVsockPort();
         std::string addr = allocateSocketAddress();
-        unlink(addr.c_str());
 
         auto ret = ProcessSession{
-                .host = Process([&](android::base::borrowed_fd writeEnd) {
-                    sp<RpcServer> server = RpcServer::make(newFactory(rpcSecurity));
+                .host = Process([&](android::base::borrowed_fd writeEnd,
+                                    android::base::borrowed_fd readEnd) {
+                    auto certVerifier = std::make_shared<RpcCertificateVerifierSimple>();
+                    sp<RpcServer> server = RpcServer::make(newFactory(rpcSecurity, certVerifier));
 
                     server->iUnderstandThisCodeIsExperimentalAndIWillNotUseItInProduction();
                     server->setMaxThreads(options.numThreads);
@@ -498,7 +560,20 @@ public:
                             LOG_ALWAYS_FATAL("Unknown socket type");
                     }
 
-                    CHECK(android::base::WriteFully(writeEnd, &outPort, sizeof(outPort)));
+                    BinderRpcTestServerInfo serverInfo;
+                    serverInfo.port = static_cast<int64_t>(outPort);
+                    serverInfo.cert.data = server->getCertificate(RpcCertificateFormat::PEM);
+                    writeToFd(writeEnd, serverInfo);
+                    auto clientInfo = readFromFd<BinderRpcTestClientInfo>(readEnd);
+
+                    if (rpcSecurity == RpcSecurity::TLS) {
+                        for (const auto& clientCert : clientInfo.certs) {
+                            CHECK_EQ(OK,
+                                     certVerifier
+                                             ->addTrustedPeerCertificate(RpcCertificateFormat::PEM,
+                                                                         clientCert.data));
+                        }
+                    }
 
                     configure(server);
 
@@ -509,43 +584,56 @@ public:
                 }),
         };
 
-        // always read socket, so that we have waited for the server to start
-        unsigned int outPort = 0;
-        CHECK(android::base::ReadFully(ret.host.readEnd(), &outPort, sizeof(outPort)));
+        std::vector<sp<RpcSession>> sessions;
+        auto certVerifier = std::make_shared<RpcCertificateVerifierSimple>();
+        for (size_t i = 0; i < options.numSessions; i++) {
+            sessions.emplace_back(RpcSession::make(newFactory(rpcSecurity, certVerifier)));
+        }
+
+        auto serverInfo = readFromFd<BinderRpcTestServerInfo>(ret.host.readEnd());
+        BinderRpcTestClientInfo clientInfo;
+        for (const auto& session : sessions) {
+            auto& parcelableCert = clientInfo.certs.emplace_back();
+            parcelableCert.data = session->getCertificate(RpcCertificateFormat::PEM);
+        }
+        writeToFd(ret.host.writeEnd(), clientInfo);
+
+        CHECK_LE(serverInfo.port, std::numeric_limits<unsigned int>::max());
         if (socketType == SocketType::INET) {
-            CHECK_NE(0, outPort);
+            CHECK_NE(0, serverInfo.port);
+        }
+
+        if (rpcSecurity == RpcSecurity::TLS) {
+            const auto& serverCert = serverInfo.cert.data;
+            CHECK_EQ(OK,
+                     certVerifier->addTrustedPeerCertificate(RpcCertificateFormat::PEM,
+                                                             serverCert));
         }
 
         status_t status;
 
-        for (size_t i = 0; i < options.numSessions; i++) {
-            sp<RpcSession> session = RpcSession::make(newFactory(rpcSecurity));
+        for (const auto& session : sessions) {
             session->setMaxThreads(options.numIncomingConnections);
 
             switch (socketType) {
                 case SocketType::PRECONNECTED:
                     status = session->setupPreconnectedClient({}, [=]() {
-                        return connectToUds(addr.c_str());
+                        return connectTo(UnixSocketAddress(addr.c_str()));
                     });
-                    if (status == OK) goto success;
                     break;
                 case SocketType::UNIX:
                     status = session->setupUnixDomainClient(addr.c_str());
-                    if (status == OK) goto success;
                     break;
                 case SocketType::VSOCK:
                     status = session->setupVsockClient(VMADDR_CID_LOCAL, vsockPort);
-                    if (status == OK) goto success;
                     break;
                 case SocketType::INET:
-                    status = session->setupInetClient("127.0.0.1", outPort);
-                    if (status == OK) goto success;
+                    status = session->setupInetClient("127.0.0.1", serverInfo.port);
                     break;
                 default:
                     LOG_ALWAYS_FATAL("Unknown socket type");
             }
-            LOG_ALWAYS_FATAL("Could not connect %s", statusToString(status).c_str());
-        success:
+            CHECK_EQ(status, OK) << "Could not connect: " << statusToString(status);
             ret.sessions.push_back({session, session->getRootObject()});
         }
         return ret;
@@ -953,10 +1041,18 @@ TEST_P(BinderRpc, ThreadingStressTest) {
     for (auto& t : threads) t.join();
 }
 
+static void saturateThreadPool(size_t threadCount, const sp<IBinderRpcTest>& iface) {
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < threadCount; i++) {
+        threads.push_back(std::thread([&] { EXPECT_OK(iface->sleepMs(500)); }));
+    }
+    for (auto& t : threads) t.join();
+}
+
 TEST_P(BinderRpc, OnewayStressTest) {
     constexpr size_t kNumClientThreads = 10;
     constexpr size_t kNumServerThreads = 10;
-    constexpr size_t kNumCalls = 500;
+    constexpr size_t kNumCalls = 1000;
 
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumServerThreads});
 
@@ -966,13 +1062,12 @@ TEST_P(BinderRpc, OnewayStressTest) {
             for (size_t j = 0; j < kNumCalls; j++) {
                 EXPECT_OK(proc.rootIface->sendString("a"));
             }
-
-            // check threads are not stuck
-            EXPECT_OK(proc.rootIface->sleepMs(250));
         }));
     }
 
     for (auto& t : threads) t.join();
+
+    saturateThreadPool(kNumServerThreads, proc.rootIface);
 }
 
 TEST_P(BinderRpc, OnewayCallDoesNotWait) {
@@ -999,26 +1094,23 @@ TEST_P(BinderRpc, OnewayCallQueueing) {
 
     EXPECT_OK(proc.rootIface->lock());
 
-    for (size_t i = 0; i < kNumSleeps; i++) {
-        // these should be processed serially
+    size_t epochMsBefore = epochMillis();
+
+    // all these *Async commands should be queued on the server sequentially,
+    // even though there are multiple threads.
+    for (size_t i = 0; i + 1 < kNumSleeps; i++) {
         proc.rootIface->sleepMsAsync(kSleepMs);
     }
-    // should also be processesed serially
     EXPECT_OK(proc.rootIface->unlockInMsAsync(kSleepMs));
 
-    size_t epochMsBefore = epochMillis();
+    // this can only return once the final async call has unlocked
     EXPECT_OK(proc.rootIface->lockUnlock());
+
     size_t epochMsAfter = epochMillis();
 
     EXPECT_GT(epochMsAfter, epochMsBefore + kSleepMs * kNumSleeps);
 
-    // pending oneway transactions hold ref, make sure we read data on all
-    // sockets
-    std::vector<std::thread> threads;
-    for (size_t i = 0; i < 1 + kNumExtraServerThreads; i++) {
-        threads.push_back(std::thread([&] { EXPECT_OK(proc.rootIface->sleepMs(250)); }));
-    }
-    for (auto& t : threads) t.join();
+    saturateThreadPool(1 + kNumExtraServerThreads, proc.rootIface);
 }
 
 TEST_P(BinderRpc, OnewayCallExhaustion) {
@@ -1211,8 +1303,10 @@ static bool testSupportVsockLoopback() {
     return status == OK;
 }
 
-static std::vector<SocketType> testSocketTypes() {
-    std::vector<SocketType> ret = {SocketType::PRECONNECTED, SocketType::UNIX, SocketType::INET};
+static std::vector<SocketType> testSocketTypes(bool hasPreconnected = true) {
+    std::vector<SocketType> ret = {SocketType::UNIX, SocketType::INET};
+
+    if (hasPreconnected) ret.push_back(SocketType::PRECONNECTED);
 
     static bool hasVsockLoopback = testSupportVsockLoopback();
 
@@ -1281,7 +1375,6 @@ private:
 
 TEST_P(BinderRpcSimple, Shutdown) {
     auto addr = allocateSocketAddress();
-    unlink(addr.c_str());
     auto server = RpcServer::make(newFactory(GetParam()));
     server->iUnderstandThisCodeIsExperimentalAndIWillNotUseItInProduction();
     ASSERT_EQ(OK, server->setupUnixDomainServer(addr.c_str()));
@@ -1345,6 +1438,479 @@ TEST(BinderRpc, Java) {
 
 INSTANTIATE_TEST_CASE_P(BinderRpc, BinderRpcSimple, ::testing::ValuesIn(RpcSecurityValues()),
                         BinderRpcSimple::PrintTestParam);
+
+class RpcTransportTestUtils {
+public:
+    using Param = std::tuple<SocketType, RpcSecurity, std::optional<RpcCertificateFormat>>;
+    using ConnectToServer = std::function<base::unique_fd()>;
+
+    // A server that handles client socket connections.
+    class Server {
+    public:
+        explicit Server() {}
+        Server(Server&&) = default;
+        ~Server() { shutdownAndWait(); }
+        [[nodiscard]] AssertionResult setUp(
+                const Param& param,
+                std::unique_ptr<RpcAuth> auth = std::make_unique<RpcAuthSelfSigned>()) {
+            auto [socketType, rpcSecurity, certificateFormat] = param;
+            auto rpcServer = RpcServer::make(newFactory(rpcSecurity));
+            rpcServer->iUnderstandThisCodeIsExperimentalAndIWillNotUseItInProduction();
+            switch (socketType) {
+                case SocketType::PRECONNECTED: {
+                    return AssertionFailure() << "Not supported by this test";
+                } break;
+                case SocketType::UNIX: {
+                    auto addr = allocateSocketAddress();
+                    auto status = rpcServer->setupUnixDomainServer(addr.c_str());
+                    if (status != OK) {
+                        return AssertionFailure()
+                                << "setupUnixDomainServer: " << statusToString(status);
+                    }
+                    mConnectToServer = [addr] {
+                        return connectTo(UnixSocketAddress(addr.c_str()));
+                    };
+                } break;
+                case SocketType::VSOCK: {
+                    auto port = allocateVsockPort();
+                    auto status = rpcServer->setupVsockServer(port);
+                    if (status != OK) {
+                        return AssertionFailure() << "setupVsockServer: " << statusToString(status);
+                    }
+                    mConnectToServer = [port] {
+                        return connectTo(VsockSocketAddress(VMADDR_CID_LOCAL, port));
+                    };
+                } break;
+                case SocketType::INET: {
+                    unsigned int port;
+                    auto status = rpcServer->setupInetServer(kLocalInetAddress, 0, &port);
+                    if (status != OK) {
+                        return AssertionFailure() << "setupInetServer: " << statusToString(status);
+                    }
+                    mConnectToServer = [port] {
+                        const char* addr = kLocalInetAddress;
+                        auto aiStart = InetSocketAddress::getAddrInfo(addr, port);
+                        if (aiStart == nullptr) return base::unique_fd{};
+                        for (auto ai = aiStart.get(); ai != nullptr; ai = ai->ai_next) {
+                            auto fd = connectTo(
+                                    InetSocketAddress(ai->ai_addr, ai->ai_addrlen, addr, port));
+                            if (fd.ok()) return fd;
+                        }
+                        ALOGE("None of the socket address resolved for %s:%u can be connected",
+                              addr, port);
+                        return base::unique_fd{};
+                    };
+                }
+            }
+            mFd = rpcServer->releaseServer();
+            if (!mFd.ok()) return AssertionFailure() << "releaseServer returns invalid fd";
+            mCtx = newFactory(rpcSecurity, mCertVerifier, std::move(auth))->newServerCtx();
+            if (mCtx == nullptr) return AssertionFailure() << "newServerCtx";
+            mSetup = true;
+            return AssertionSuccess();
+        }
+        RpcTransportCtx* getCtx() const { return mCtx.get(); }
+        std::shared_ptr<RpcCertificateVerifierSimple> getCertVerifier() const {
+            return mCertVerifier;
+        }
+        ConnectToServer getConnectToServerFn() { return mConnectToServer; }
+        void start() {
+            LOG_ALWAYS_FATAL_IF(!mSetup, "Call Server::setup first!");
+            mThread = std::make_unique<std::thread>(&Server::run, this);
+        }
+        void run() {
+            LOG_ALWAYS_FATAL_IF(!mSetup, "Call Server::setup first!");
+
+            std::vector<std::thread> threads;
+            while (OK == mFdTrigger->triggerablePoll(mFd, POLLIN)) {
+                base::unique_fd acceptedFd(
+                        TEMP_FAILURE_RETRY(accept4(mFd.get(), nullptr, nullptr /*length*/,
+                                                   SOCK_CLOEXEC | SOCK_NONBLOCK)));
+                threads.emplace_back(&Server::handleOne, this, std::move(acceptedFd));
+            }
+
+            for (auto& thread : threads) thread.join();
+        }
+        void handleOne(android::base::unique_fd acceptedFd) {
+            ASSERT_TRUE(acceptedFd.ok());
+            auto serverTransport = mCtx->newTransport(std::move(acceptedFd), mFdTrigger.get());
+            if (serverTransport == nullptr) return; // handshake failed
+            ASSERT_TRUE(mPostConnect(serverTransport.get(), mFdTrigger.get()));
+        }
+        void shutdownAndWait() {
+            shutdown();
+            join();
+        }
+        void shutdown() { mFdTrigger->trigger(); }
+
+        void setPostConnect(
+                std::function<AssertionResult(RpcTransport*, FdTrigger* fdTrigger)> fn) {
+            mPostConnect = std::move(fn);
+        }
+
+    private:
+        std::unique_ptr<std::thread> mThread;
+        ConnectToServer mConnectToServer;
+        std::unique_ptr<FdTrigger> mFdTrigger = FdTrigger::make();
+        base::unique_fd mFd;
+        std::unique_ptr<RpcTransportCtx> mCtx;
+        std::shared_ptr<RpcCertificateVerifierSimple> mCertVerifier =
+                std::make_shared<RpcCertificateVerifierSimple>();
+        bool mSetup = false;
+        // The function invoked after connection and handshake. By default, it is
+        // |defaultPostConnect| that sends |kMessage| to the client.
+        std::function<AssertionResult(RpcTransport*, FdTrigger* fdTrigger)> mPostConnect =
+                Server::defaultPostConnect;
+
+        void join() {
+            if (mThread != nullptr) {
+                mThread->join();
+                mThread = nullptr;
+            }
+        }
+
+        static AssertionResult defaultPostConnect(RpcTransport* serverTransport,
+                                                  FdTrigger* fdTrigger) {
+            std::string message(kMessage);
+            auto status = serverTransport->interruptableWriteFully(fdTrigger, message.data(),
+                                                                   message.size(), {});
+            if (status != OK) return AssertionFailure() << statusToString(status);
+            return AssertionSuccess();
+        }
+    };
+
+    class Client {
+    public:
+        explicit Client(ConnectToServer connectToServer) : mConnectToServer(connectToServer) {}
+        Client(Client&&) = default;
+        [[nodiscard]] AssertionResult setUp(const Param& param) {
+            auto [socketType, rpcSecurity, certificateFormat] = param;
+            mFdTrigger = FdTrigger::make();
+            mCtx = newFactory(rpcSecurity, mCertVerifier)->newClientCtx();
+            if (mCtx == nullptr) return AssertionFailure() << "newClientCtx";
+            return AssertionSuccess();
+        }
+        RpcTransportCtx* getCtx() const { return mCtx.get(); }
+        std::shared_ptr<RpcCertificateVerifierSimple> getCertVerifier() const {
+            return mCertVerifier;
+        }
+        // connect() and do handshake
+        bool setUpTransport() {
+            mFd = mConnectToServer();
+            if (!mFd.ok()) return AssertionFailure() << "Cannot connect to server";
+            mClientTransport = mCtx->newTransport(std::move(mFd), mFdTrigger.get());
+            return mClientTransport != nullptr;
+        }
+        AssertionResult readMessage(const std::string& expectedMessage = kMessage) {
+            LOG_ALWAYS_FATAL_IF(mClientTransport == nullptr, "setUpTransport not called or failed");
+            std::string readMessage(expectedMessage.size(), '\0');
+            status_t readStatus =
+                    mClientTransport->interruptableReadFully(mFdTrigger.get(), readMessage.data(),
+                                                             readMessage.size(), {});
+            if (readStatus != OK) {
+                return AssertionFailure() << statusToString(readStatus);
+            }
+            if (readMessage != expectedMessage) {
+                return AssertionFailure()
+                        << "Expected " << expectedMessage << ", actual " << readMessage;
+            }
+            return AssertionSuccess();
+        }
+        void run(bool handshakeOk = true, bool readOk = true) {
+            if (!setUpTransport()) {
+                ASSERT_FALSE(handshakeOk) << "newTransport returns nullptr, but it shouldn't";
+                return;
+            }
+            ASSERT_TRUE(handshakeOk) << "newTransport does not return nullptr, but it should";
+            ASSERT_EQ(readOk, readMessage());
+        }
+
+    private:
+        ConnectToServer mConnectToServer;
+        base::unique_fd mFd;
+        std::unique_ptr<FdTrigger> mFdTrigger = FdTrigger::make();
+        std::unique_ptr<RpcTransportCtx> mCtx;
+        std::shared_ptr<RpcCertificateVerifierSimple> mCertVerifier =
+                std::make_shared<RpcCertificateVerifierSimple>();
+        std::unique_ptr<RpcTransport> mClientTransport;
+    };
+
+    // Make A trust B.
+    template <typename A, typename B>
+    static status_t trust(RpcSecurity rpcSecurity,
+                          std::optional<RpcCertificateFormat> certificateFormat, const A& a,
+                          const B& b) {
+        if (rpcSecurity != RpcSecurity::TLS) return OK;
+        LOG_ALWAYS_FATAL_IF(!certificateFormat.has_value());
+        auto bCert = b->getCtx()->getCertificate(*certificateFormat);
+        return a->getCertVerifier()->addTrustedPeerCertificate(*certificateFormat, bCert);
+    }
+
+    static constexpr const char* kMessage = "hello";
+};
+
+class RpcTransportTest : public testing::TestWithParam<RpcTransportTestUtils::Param> {
+public:
+    using Server = RpcTransportTestUtils::Server;
+    using Client = RpcTransportTestUtils::Client;
+    static inline std::string PrintParamInfo(const testing::TestParamInfo<ParamType>& info) {
+        auto [socketType, rpcSecurity, certificateFormat] = info.param;
+        auto ret = PrintToString(socketType) + "_" + newFactory(rpcSecurity)->toCString();
+        if (certificateFormat.has_value()) ret += "_" + PrintToString(*certificateFormat);
+        return ret;
+    }
+    static std::vector<ParamType> getRpcTranportTestParams() {
+        std::vector<ParamType> ret;
+        for (auto socketType : testSocketTypes(false /* hasPreconnected */)) {
+            for (auto rpcSecurity : RpcSecurityValues()) {
+                switch (rpcSecurity) {
+                    case RpcSecurity::RAW: {
+                        ret.emplace_back(socketType, rpcSecurity, std::nullopt);
+                    } break;
+                    case RpcSecurity::TLS: {
+                        ret.emplace_back(socketType, rpcSecurity, RpcCertificateFormat::PEM);
+                        ret.emplace_back(socketType, rpcSecurity, RpcCertificateFormat::DER);
+                    } break;
+                }
+            }
+        }
+        return ret;
+    }
+    template <typename A, typename B>
+    status_t trust(const A& a, const B& b) {
+        auto [socketType, rpcSecurity, certificateFormat] = GetParam();
+        return RpcTransportTestUtils::trust(rpcSecurity, certificateFormat, a, b);
+    }
+};
+
+TEST_P(RpcTransportTest, GoodCertificate) {
+    auto server = std::make_unique<Server>();
+    ASSERT_TRUE(server->setUp(GetParam()));
+
+    Client client(server->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(GetParam()));
+
+    ASSERT_EQ(OK, trust(&client, server));
+    ASSERT_EQ(OK, trust(server, &client));
+
+    server->start();
+    client.run();
+}
+
+TEST_P(RpcTransportTest, MultipleClients) {
+    auto server = std::make_unique<Server>();
+    ASSERT_TRUE(server->setUp(GetParam()));
+
+    std::vector<Client> clients;
+    for (int i = 0; i < 2; i++) {
+        auto& client = clients.emplace_back(server->getConnectToServerFn());
+        ASSERT_TRUE(client.setUp(GetParam()));
+        ASSERT_EQ(OK, trust(&client, server));
+        ASSERT_EQ(OK, trust(server, &client));
+    }
+
+    server->start();
+    for (auto& client : clients) client.run();
+}
+
+TEST_P(RpcTransportTest, UntrustedServer) {
+    auto [socketType, rpcSecurity, certificateFormat] = GetParam();
+
+    auto untrustedServer = std::make_unique<Server>();
+    ASSERT_TRUE(untrustedServer->setUp(GetParam()));
+
+    Client client(untrustedServer->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(GetParam()));
+
+    ASSERT_EQ(OK, trust(untrustedServer, &client));
+
+    untrustedServer->start();
+
+    // For TLS, this should reject the certificate. For RAW sockets, it should pass because
+    // the client can't verify the server's identity.
+    bool handshakeOk = rpcSecurity != RpcSecurity::TLS;
+    client.run(handshakeOk);
+}
+TEST_P(RpcTransportTest, MaliciousServer) {
+    auto [socketType, rpcSecurity, certificateFormat] = GetParam();
+    auto validServer = std::make_unique<Server>();
+    ASSERT_TRUE(validServer->setUp(GetParam()));
+
+    auto maliciousServer = std::make_unique<Server>();
+    ASSERT_TRUE(maliciousServer->setUp(GetParam()));
+
+    Client client(maliciousServer->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(GetParam()));
+
+    ASSERT_EQ(OK, trust(&client, validServer));
+    ASSERT_EQ(OK, trust(validServer, &client));
+    ASSERT_EQ(OK, trust(maliciousServer, &client));
+
+    maliciousServer->start();
+
+    // For TLS, this should reject the certificate. For RAW sockets, it should pass because
+    // the client can't verify the server's identity.
+    bool handshakeOk = rpcSecurity != RpcSecurity::TLS;
+    client.run(handshakeOk);
+}
+
+TEST_P(RpcTransportTest, UntrustedClient) {
+    auto [socketType, rpcSecurity, certificateFormat] = GetParam();
+    auto server = std::make_unique<Server>();
+    ASSERT_TRUE(server->setUp(GetParam()));
+
+    Client client(server->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(GetParam()));
+
+    ASSERT_EQ(OK, trust(&client, server));
+
+    server->start();
+
+    // For TLS, Client should be able to verify server's identity, so client should see
+    // do_handshake() successfully executed. However, server shouldn't be able to verify client's
+    // identity and should drop the connection, so client shouldn't be able to read anything.
+    bool readOk = rpcSecurity != RpcSecurity::TLS;
+    client.run(true, readOk);
+}
+
+TEST_P(RpcTransportTest, MaliciousClient) {
+    auto [socketType, rpcSecurity, certificateFormat] = GetParam();
+    auto server = std::make_unique<Server>();
+    ASSERT_TRUE(server->setUp(GetParam()));
+
+    Client validClient(server->getConnectToServerFn());
+    ASSERT_TRUE(validClient.setUp(GetParam()));
+    Client maliciousClient(server->getConnectToServerFn());
+    ASSERT_TRUE(maliciousClient.setUp(GetParam()));
+
+    ASSERT_EQ(OK, trust(&validClient, server));
+    ASSERT_EQ(OK, trust(&maliciousClient, server));
+
+    server->start();
+
+    // See UntrustedClient.
+    bool readOk = rpcSecurity != RpcSecurity::TLS;
+    maliciousClient.run(true, readOk);
+}
+
+TEST_P(RpcTransportTest, Trigger) {
+    std::string msg2 = ", world!";
+    std::mutex writeMutex;
+    std::condition_variable writeCv;
+    bool shouldContinueWriting = false;
+    auto serverPostConnect = [&](RpcTransport* serverTransport, FdTrigger* fdTrigger) {
+        std::string message(RpcTransportTestUtils::kMessage);
+        auto status = serverTransport->interruptableWriteFully(fdTrigger, message.data(),
+                                                               message.size(), {});
+        if (status != OK) return AssertionFailure() << statusToString(status);
+
+        {
+            std::unique_lock<std::mutex> lock(writeMutex);
+            if (!writeCv.wait_for(lock, 3s, [&] { return shouldContinueWriting; })) {
+                return AssertionFailure() << "write barrier not cleared in time!";
+            }
+        }
+
+        status = serverTransport->interruptableWriteFully(fdTrigger, msg2.data(), msg2.size(), {});
+        if (status != DEAD_OBJECT)
+            return AssertionFailure() << "When FdTrigger is shut down, interruptableWriteFully "
+                                         "should return DEAD_OBJECT, but it is "
+                                      << statusToString(status);
+        return AssertionSuccess();
+    };
+
+    auto server = std::make_unique<Server>();
+    ASSERT_TRUE(server->setUp(GetParam()));
+
+    // Set up client
+    Client client(server->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(GetParam()));
+
+    // Exchange keys
+    ASSERT_EQ(OK, trust(&client, server));
+    ASSERT_EQ(OK, trust(server, &client));
+
+    server->setPostConnect(serverPostConnect);
+
+    server->start();
+    // connect() to server and do handshake
+    ASSERT_TRUE(client.setUpTransport());
+    // read the first message. This ensures that server has finished handshake and start handling
+    // client fd. Server thread should pause at writeCv.wait_for().
+    ASSERT_TRUE(client.readMessage(RpcTransportTestUtils::kMessage));
+    // Trigger server shutdown after server starts handling client FD. This ensures that the second
+    // write is on an FdTrigger that has been shut down.
+    server->shutdown();
+    // Continues server thread to write the second message.
+    {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        shouldContinueWriting = true;
+    }
+    writeCv.notify_all();
+    // After this line, server thread unblocks and attempts to write the second message, but
+    // shutdown is triggered, so write should failed with DEAD_OBJECT. See |serverPostConnect|.
+    // On the client side, second read fails with DEAD_OBJECT
+    ASSERT_FALSE(client.readMessage(msg2));
+}
+
+INSTANTIATE_TEST_CASE_P(BinderRpc, RpcTransportTest,
+                        ::testing::ValuesIn(RpcTransportTest::getRpcTranportTestParams()),
+                        RpcTransportTest::PrintParamInfo);
+
+class RpcTransportTlsKeyTest
+      : public testing::TestWithParam<std::tuple<SocketType, RpcCertificateFormat, RpcKeyFormat>> {
+public:
+    template <typename A, typename B>
+    status_t trust(const A& a, const B& b) {
+        auto [socketType, certificateFormat, keyFormat] = GetParam();
+        return RpcTransportTestUtils::trust(RpcSecurity::TLS, certificateFormat, a, b);
+    }
+    static std::string PrintParamInfo(const testing::TestParamInfo<ParamType>& info) {
+        auto [socketType, certificateFormat, keyFormat] = info.param;
+        auto ret = PrintToString(socketType) + "_certificate_" + PrintToString(certificateFormat) +
+                "_key_" + PrintToString(keyFormat);
+        return ret;
+    };
+};
+
+TEST_P(RpcTransportTlsKeyTest, PreSignedCertificate) {
+    auto [socketType, certificateFormat, keyFormat] = GetParam();
+
+    std::vector<uint8_t> pkeyData, certData;
+    {
+        auto pkey = makeKeyPairForSelfSignedCert();
+        ASSERT_NE(nullptr, pkey);
+        auto cert = makeSelfSignedCert(pkey.get(), kCertValidSeconds);
+        ASSERT_NE(nullptr, cert);
+        pkeyData = serializeUnencryptedPrivatekey(pkey.get(), keyFormat);
+        certData = serializeCertificate(cert.get(), certificateFormat);
+    }
+
+    auto desPkey = deserializeUnencryptedPrivatekey(pkeyData, keyFormat);
+    auto desCert = deserializeCertificate(certData, certificateFormat);
+    auto auth = std::make_unique<RpcAuthPreSigned>(std::move(desPkey), std::move(desCert));
+    auto utilsParam =
+            std::make_tuple(socketType, RpcSecurity::TLS, std::make_optional(certificateFormat));
+
+    auto server = std::make_unique<RpcTransportTestUtils::Server>();
+    ASSERT_TRUE(server->setUp(utilsParam, std::move(auth)));
+
+    RpcTransportTestUtils::Client client(server->getConnectToServerFn());
+    ASSERT_TRUE(client.setUp(utilsParam));
+
+    ASSERT_EQ(OK, trust(&client, server));
+    ASSERT_EQ(OK, trust(server, &client));
+
+    server->start();
+    client.run();
+}
+
+INSTANTIATE_TEST_CASE_P(
+        BinderRpc, RpcTransportTlsKeyTest,
+        testing::Combine(testing::ValuesIn(testSocketTypes(false /* hasPreconnected*/)),
+                         testing::Values(RpcCertificateFormat::PEM, RpcCertificateFormat::DER),
+                         testing::Values(RpcKeyFormat::PEM, RpcKeyFormat::DER)),
+        RpcTransportTlsKeyTest::PrintParamInfo);
 
 } // namespace android
 

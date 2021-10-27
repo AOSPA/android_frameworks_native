@@ -559,7 +559,13 @@ int32_t InputDevice::getMetaState() {
 }
 
 void InputDevice::updateMetaState(int32_t keyCode) {
-    for_each_mapper([keyCode](InputMapper& mapper) { mapper.updateMetaState(keyCode); });
+    first_in_mappers<bool>([keyCode](InputMapper& mapper) {
+        if (sourcesMatchMask(mapper.getSources(), AINPUT_SOURCE_KEYBOARD) &&
+            mapper.updateMetaState(keyCode)) {
+            return std::make_optional(true);
+        }
+        return std::optional<bool>();
+    });
 }
 
 void InputDevice::bumpGeneration() {
@@ -568,7 +574,7 @@ void InputDevice::bumpGeneration() {
 
 void InputDevice::notifyReset(nsecs_t when) {
     NotifyDeviceResetArgs args(mContext->getNextId(), when, mId);
-    mContext->getListener()->notifyDeviceReset(&args);
+    mContext->getListener().notifyDeviceReset(&args);
 }
 
 std::optional<int32_t> InputDevice::getAssociatedDisplayId() {

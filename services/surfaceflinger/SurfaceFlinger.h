@@ -109,6 +109,7 @@ namespace android {
 
 class Client;
 class EventThread;
+class FlagManager;
 class FpsReporter;
 class TunnelModeEnabledReporter;
 class HdrLayerInfoReporter;
@@ -326,7 +327,7 @@ public:
     static ui::Rotation internalDisplayOrientation;
 
     // Indicate if device wants color management on its display.
-    static bool useColorManagement;
+    static const constexpr bool useColorManagement = true;
 
     static bool useContextPriority;
 
@@ -370,8 +371,12 @@ public:
     template <typename F, typename T = std::invoke_result_t<F>>
     [[nodiscard]] std::future<T> schedule(F&&);
 
-    // force full composition on all displays
-    void repaintEverything();
+    // Schedule commit of transactions on the main thread ahead of the next VSYNC.
+    void scheduleInvalidate(FrameHint);
+    // As above, but also force refresh regardless if transactions were committed.
+    void scheduleRefresh(FrameHint) override;
+    // As above, but also force dirty geometry to repaint.
+    void scheduleRepaint();
 
     surfaceflinger::Factory& getFactory() { return mFactory; }
 
@@ -442,14 +447,6 @@ protected:
             uint32_t permissions,
             std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
             REQUIRES(mStateLock);
-    virtual void commitTransactionLocked();
-
-    // Used internally by computeLayerBounds() to gets the clip rectangle to use for the
-    // root layers on a particular display in layer-coordinate space. The
-    // layers (and effectively their children) will be clipped against this
-    // rectangle. The base behavior is to clip to the visible region of the
-    // display.
-    virtual FloatRect getLayerClipBoundsForDisplay(const DisplayDevice&) const;
 
     virtual void processDisplayAdded(const wp<IBinder>& displayToken, const DisplayDeviceState&)
             REQUIRES(mStateLock);
@@ -458,6 +455,10 @@ protected:
     template <typename Predicate>
     bool hasDisplay(Predicate p) const REQUIRES(mStateLock) {
         return static_cast<bool>(findDisplay(p));
+    }
+
+    bool exceedsMaxRenderTargetSize(uint32_t width, uint32_t height) const {
+        return width > mMaxRenderTargetSize || height > mMaxRenderTargetSize;
     }
 
 private:
@@ -725,6 +726,8 @@ private:
         Mutex::Autolock lock(mStateLock);
         return getPhysicalDisplayIdsLocked();
     }
+    status_t getPrimaryPhysicalDisplayId(PhysicalDisplayId*) const override EXCLUDES(mStateLock);
+
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const override;
     status_t setTransactionState(const FrameTimelineInfo& frameTimelineInfo,
                                  const Vector<ComposerState>& state,
@@ -864,8 +867,6 @@ private:
     void setVsyncEnabled(bool) override;
     // Initiates a refresh rate change to be applied on invalidate.
     void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ModeEvent) override;
-    // Forces full composition on all displays without resetting the scheduler idle timer.
-    void repaintEverythingForHWC() override;
     // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
     void kernelTimerChanged(bool expired) override;
     // Called when the frame rate override list changed to trigger an event.
@@ -875,16 +876,12 @@ private:
     // Keeps track of whether the kernel idle timer is currently enabled, so we don't have to
     // make calls to sys prop each time.
     bool mKernelIdleTimerEnabled = false;
-    // Keeps track of whether the kernel timer is supported on the SF side.
-    bool mSupportKernelIdleTimer = false;
     // Show spinner with refresh rate overlay
     bool mRefreshRateOverlaySpinner = false;
 
     /*
      * Message handling
      */
-    // Can only be called from the main thread or with mStateLock held
-    void signalTransaction();
     // Can only be called from the main thread or with mStateLock held
     void signalLayerUpdate();
     void signalRefresh();
@@ -917,8 +914,12 @@ private:
     // incoming transactions
     void onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncTime);
 
-    // Returns whether the transaction actually modified any state
-    bool handleMessageTransaction();
+    // Returns whether transactions were committed.
+    bool flushAndCommitTransactions() EXCLUDES(mStateLock);
+
+    void commitTransactions() EXCLUDES(mStateLock);
+    void commitTransactionsLocked(uint32_t transactionFlags) REQUIRES(mStateLock);
+    void doCommitTransactions() REQUIRES(mStateLock);
 
     // Handle the REFRESH message queue event, sending the current frame down to RenderEngine and
     // the Composer HAL for presentation
@@ -930,9 +931,6 @@ private:
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();
-
-    void handleTransaction(uint32_t transactionFlags);
-    void handleTransactionLocked(uint32_t transactionFlags) REQUIRES(mStateLock);
 
     void updateInputFlinger();
     void notifyWindowInfos();
@@ -966,18 +964,23 @@ private:
     void flushTransactionQueues();
     // Returns true if there is at least one transaction that needs to be flushed
     bool transactionFlushNeeded();
-    uint32_t getTransactionFlags(uint32_t flags);
-    uint32_t peekTransactionFlags();
-    // Can only be called from the main thread or with mStateLock held
-    uint32_t setTransactionFlags(uint32_t flags);
+
+    uint32_t getTransactionFlags() const;
+
+    // Sets the masked bits, and returns the old flags.
+    uint32_t setTransactionFlags(uint32_t mask);
+
+    // Clears and returns the masked bits.
+    uint32_t clearTransactionFlags(uint32_t mask);
+
     // Indicate SF should call doTraversal on layers, but don't trigger a wakeup! We use this cases
     // where there are still pending transactions but we know they won't be ready until a frame
     // arrives from a different layer. So we need to ensure we performTransaction from invalidate
     // but there is no need to try and wake up immediately to do it. Rather we rely on
     // onFrameAvailable or another layer update to wake us up.
     void setTraversalNeeded();
-    uint32_t setTransactionFlags(uint32_t flags, TransactionSchedule, const sp<IBinder>& = {});
-    void commitTransaction() REQUIRES(mStateLock);
+    uint32_t setTransactionFlags(uint32_t mask, TransactionSchedule,
+                                 const sp<IBinder>& applyToken = {});
     void commitOffscreenLayers();
     bool transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
@@ -1061,10 +1064,6 @@ private:
 
     void readPersistentProperties();
 
-    bool exceedsMaxRenderTargetSize(uint32_t width, uint32_t height) const {
-        return width > mMaxRenderTargetSize || height > mMaxRenderTargetSize;
-    }
-
     uint32_t getMaxAcquiredBufferCountForCurrentRefreshRate(uid_t uid) const;
 
     /*
@@ -1138,7 +1137,7 @@ private:
 
     sp<DisplayDevice> getDisplayWithInputByLayer(Layer* layer) const REQUIRES(mStateLock);
 
-    bool isDisplayActiveLocked(const sp<const DisplayDevice>& display) REQUIRES(mStateLock) {
+    bool isDisplayActiveLocked(const sp<const DisplayDevice>& display) const REQUIRES(mStateLock) {
         return display->getDisplayToken() == mActiveDisplayToken;
     }
 
@@ -1156,8 +1155,6 @@ private:
     /*
      * Compositing
      */
-    void invalidateHwcGeometry();
-
     sp<DisplayDevice> getVsyncSource();
     void updateVsyncSource();
     void postComposition();
@@ -1301,6 +1298,8 @@ private:
     LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(LayersProto& layersProto,
                                   uint32_t traceFlags = SurfaceTracing::TRACE_ALL) const;
+    void dumpDisplayProto(LayersTraceProto& layersTraceProto) const;
+
     // Dumps state from HW Composer
     void dumpHwc(std::string& result) const;
     LayersProto dumpProtoFromMainThread(uint32_t traceFlags = SurfaceTracing::TRACE_ALL)
@@ -1430,7 +1429,8 @@ private:
     bool mLayersRemoved = false;
     bool mLayersAdded = false;
 
-    std::atomic<bool> mRepaintEverything = false;
+    std::atomic_bool mForceRefresh = false;
+    std::atomic_bool mGeometryDirty = false;
 
     // constant members (no synchronization needed for access)
     const nsecs_t mBootTime = systemTime();
@@ -1457,7 +1457,6 @@ private:
     bool mSomeDataspaceChanged = false;
     bool mForceTransactionDisplayChange = false;
 
-    bool mGeometryInvalid = false;
     bool mAnimCompositionPending = false;
 
     // Tracks layers that have pending frames which are candidates for being
@@ -1496,11 +1495,13 @@ private:
     int mDebugRegion = 0;
     bool mVsyncSourceReliableOnDoze = false;
     bool mPluggableVsyncPrioritized = false;
-    bool mDebugDisableHWC = false;
-    bool mDebugDisableTransformHint = false;
+    std::atomic_uint mDebugFlashDelay = 0;
+    std::atomic_bool mDebugDisableHWC = false;
+    std::atomic_bool mDebugDisableTransformHint = false;
+    std::atomic<nsecs_t> mDebugInTransaction = 0;
+    std::atomic_bool mForceFullDamage = false;
+
     bool mLayerCachingEnabled = false;
-    volatile nsecs_t mDebugInTransaction = 0;
-    bool mForceFullDamage = false;
     bool mPropagateBackpressure = true;
     bool mPropagateBackpressureClientComposition = false;
     sp<SurfaceInterceptor> mInterceptor;
@@ -1690,7 +1691,7 @@ private:
     auto getLayerCreatedState(const sp<IBinder>& handle);
     sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
 
-    std::atomic<ui::Transform::RotationFlags> mDefaultDisplayTransformHint;
+    std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
     void scheduleRegionSamplingThread();
     void notifyRegionSamplingThread();
@@ -1729,6 +1730,8 @@ private:
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
+
+    std::unique_ptr<FlagManager> mFlagManager;
 };
 
 } // namespace android

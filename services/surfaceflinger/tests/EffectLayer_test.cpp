@@ -33,7 +33,7 @@ protected:
 
         mParentLayer = createColorLayer("Parent layer", Color::RED);
         asTransaction([&](Transaction& t) {
-            t.setDisplayLayerStack(display, 0);
+            t.setDisplayLayerStack(display, ui::DEFAULT_LAYER_STACK);
             t.setLayer(mParentLayer, INT32_MAX - 2).show(mParentLayer);
             t.setFlags(mParentLayer, layer_state_t::eLayerOpaque, layer_state_t::eLayerOpaque);
         });
@@ -174,6 +174,15 @@ TEST_F(EffectLayerTest, BlurEffectLayerIsVisible) {
             shot->checkPixel(canvasSize - 1, y, 0, 255, 0);
         }
     }
+}
+
+TEST_F(EffectLayerTest, EffectLayerWithColorNoCrop) {
+    const auto display = SurfaceComposerClient::getInternalDisplayToken();
+    ui::DisplayMode mode;
+    ASSERT_EQ(NO_ERROR, SurfaceComposerClient::getActiveDisplayMode(display, &mode));
+    const ui::Size& resolution = mode.resolution;
+    auto shot = screenshot();
+    shot->expectColor(Rect(0, 0, resolution.getWidth(), resolution.getHeight()), Color::RED);
 }
 
 } // namespace android

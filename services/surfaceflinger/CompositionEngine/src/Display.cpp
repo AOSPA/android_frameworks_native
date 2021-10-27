@@ -60,12 +60,9 @@ Display::~Display() = default;
 
 void Display::setConfiguration(const compositionengine::DisplayCreationArgs& args) {
     mId = args.id;
-    mIsVirtual = !args.connectionType;
     mPowerAdvisor = args.powerAdvisor;
     editState().isSecure = args.isSecure;
-    editState().displaySpace.bounds = Rect(args.pixels);
-    setLayerStackFilter(args.layerStackId,
-                        args.connectionType == ui::DisplayConnectionType::Internal);
+    editState().displaySpace.setBounds(args.pixels);
     setName(args.name);
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
     int ret = ::DisplayConfig::ClientInterface::Create(args.name, nullptr, &mDisplayConfigIntf);
@@ -92,7 +89,7 @@ bool Display::isSecure() const {
 }
 
 bool Display::isVirtual() const {
-    return mIsVirtual;
+    return VirtualDisplayId::tryCast(mId).has_value();
 }
 
 std::optional<DisplayId> Display::getDisplayId() const {
@@ -136,8 +133,8 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
         return;
     }
 
-    if (mIsVirtual) {
-        ALOGW("%s: Invalid operation on virtual display", __FUNCTION__);
+    if (isVirtual()) {
+        ALOGW("%s: Invalid operation on virtual display", __func__);
         return;
     }
 
@@ -155,7 +152,7 @@ void Display::dump(std::string& out) const {
     StringAppendF(&out, "   Composition Display State: [\"%s\"]", getName().c_str());
 
     out.append("\n   ");
-    dumpVal(out, "isVirtual", mIsVirtual);
+    dumpVal(out, "isVirtual", isVirtual());
     dumpVal(out, "DisplayId", to_string(mId));
     out.append("\n");
 
@@ -187,7 +184,7 @@ std::unique_ptr<compositionengine::OutputLayer> Display::createOutputLayer(
                  getName().c_str());
         outputLayer->setHwcLayer(std::move(hwcLayer));
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
-        if (layerFE->getCompositionState()->internalOnly && mDisplayConfigIntf) {
+        if (layerFE->getCompositionState()->outputFilter.toInternalDisplay && mDisplayConfigIntf) {
             const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
             if (physicalDisplayId) {
                 const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
@@ -286,7 +283,7 @@ void Display::beginDraw() {
         return;
     }
     const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
-    if (!physicalDisplayId.has_value() || mIsVirtual) {
+    if (!physicalDisplayId.has_value() || isVirtual()) {
         return;
     }
 #ifdef QTI_UNIFIED_DRAW
@@ -305,8 +302,8 @@ void Display::beginDraw() {
          layerFlags.secure_video  = layerCompositionState->hasProtectedContent;
          displayLayerFlags.push_back(layerFlags);
     }
-    fbtLayerInfo.width = getState().orientedDisplaySpace.bounds.width();
-    fbtLayerInfo.height = getState().orientedDisplaySpace.bounds.height();
+    fbtLayerInfo.width = getState().orientedDisplaySpace.getBounds().width;
+    fbtLayerInfo.height = getState().orientedDisplaySpace.getBounds().height;
     auto renderSurface = getRenderSurface();
     fbtLayerInfo.secure = renderSurface->isProtected();
     fbtLayerInfo.dataspace = static_cast<int>(renderSurface->getClientTargetCurrentDataspace());
@@ -445,8 +442,7 @@ void Display::finishFrame(const compositionengine::CompositionRefreshArgs& refre
     // 1) It is being handled by hardware composer, which may need this to
     //    keep its virtual display state machine in sync, or
     // 2) There is work to be done (the dirty region isn't empty)
-    if (GpuVirtualDisplayId::tryCast(mId) &&
-        getDirtyRegion(refreshArgs.repaintEverything).isEmpty()) {
+    if (GpuVirtualDisplayId::tryCast(mId) && getDirtyRegion().isEmpty()) {
         ALOGV("Skipping display composition");
         return;
     }
