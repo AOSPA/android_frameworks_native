@@ -154,9 +154,9 @@ void CursorInputMapper::configure(nsecs_t when, const InputReaderConfiguration* 
         mHWheelScale = 1.0f;
     }
 
-    if ((!changes && config->pointerCapture) ||
+    if ((!changes && config->pointerCaptureRequest.enable) ||
         (changes & InputReaderConfiguration::CHANGE_POINTER_CAPTURE)) {
-        if (config->pointerCapture) {
+        if (config->pointerCaptureRequest.enable) {
             if (mParameters.mode == Parameters::MODE_POINTER) {
                 mParameters.mode = Parameters::MODE_POINTER_RELATIVE;
                 mSource = AINPUT_SOURCE_MOUSE_RELATIVE;
@@ -176,7 +176,7 @@ void CursorInputMapper::configure(nsecs_t when, const InputReaderConfiguration* 
         bumpGeneration();
         if (changes) {
             NotifyDeviceResetArgs args(getContext()->getNextId(), when, getDeviceId());
-            getListener()->notifyDeviceReset(&args);
+            getListener().notifyDeviceReset(&args);
         }
     }
 
@@ -424,7 +424,7 @@ void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
                                              &pointerCoords, mXPrecision, mYPrecision,
                                              xCursorPosition, yCursorPosition, downTime,
                                              /* videoFrames */ {});
-                getListener()->notifyMotion(&releaseArgs);
+                getListener().notifyMotion(&releaseArgs);
             }
         }
 
@@ -434,7 +434,7 @@ void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
                               AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties, &pointerCoords,
                               mXPrecision, mYPrecision, xCursorPosition, yCursorPosition, downTime,
                               /* videoFrames */ {});
-        getListener()->notifyMotion(&args);
+        getListener().notifyMotion(&args);
 
         if (buttonsPressed) {
             BitSet32 pressed(buttonsPressed);
@@ -449,7 +449,7 @@ void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
                                            &pointerCoords, mXPrecision, mYPrecision,
                                            xCursorPosition, yCursorPosition, downTime,
                                            /* videoFrames */ {});
-                getListener()->notifyMotion(&pressArgs);
+                getListener().notifyMotion(&pressArgs);
             }
         }
 
@@ -464,7 +464,7 @@ void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
                                        AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
                                        &pointerCoords, mXPrecision, mYPrecision, xCursorPosition,
                                        yCursorPosition, downTime, /* videoFrames */ {});
-            getListener()->notifyMotion(&hoverArgs);
+            getListener().notifyMotion(&hoverArgs);
         }
 
         // Send scroll events.
@@ -479,7 +479,7 @@ void CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
                                         AMOTION_EVENT_EDGE_FLAG_NONE, 1, &pointerProperties,
                                         &pointerCoords, mXPrecision, mYPrecision, xCursorPosition,
                                         yCursorPosition, downTime, /* videoFrames */ {});
-            getListener()->notifyMotion(&scrollArgs);
+            getListener().notifyMotion(&scrollArgs);
         }
     }
 

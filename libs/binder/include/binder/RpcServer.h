@@ -17,7 +17,6 @@
 
 #include <android-base/unique_fd.h>
 #include <binder/IBinder.h>
-#include <binder/RpcAddress.h>
 #include <binder/RpcSession.h>
 #include <binder/RpcTransport.h>
 #include <utils/Errors.h>
@@ -134,6 +133,11 @@ public:
     sp<IBinder> getRootObject();
 
     /**
+     * See RpcTransportCtx::getCertificate
+     */
+    std::vector<uint8_t> getCertificate(RpcCertificateFormat);
+
+    /**
      * Runs join() in a background thread. Immediately returns.
      */
     void start();
@@ -170,7 +174,7 @@ public:
 
 private:
     friend sp<RpcServer>;
-    explicit RpcServer(std::unique_ptr<RpcTransportCtxFactory> rpcTransportCtxFactory);
+    explicit RpcServer(std::unique_ptr<RpcTransportCtx> ctx);
 
     void onSessionAllIncomingThreadsEnded(const sp<RpcSession>& session) override;
     void onSessionIncomingThreadEnded() override;
@@ -178,7 +182,7 @@ private:
     static void establishConnection(sp<RpcServer>&& server, base::unique_fd clientFd);
     status_t setupSocketServer(const RpcSocketAddress& address);
 
-    const std::unique_ptr<RpcTransportCtxFactory> mRpcTransportCtxFactory;
+    const std::unique_ptr<RpcTransportCtx> mCtx;
     bool mAgreedExperimental = false;
     size_t mMaxThreads = 1;
     std::optional<uint32_t> mProtocolVersion;
@@ -190,10 +194,9 @@ private:
     std::map<std::thread::id, std::thread> mConnectingThreads;
     sp<IBinder> mRootObject;
     wp<IBinder> mRootObjectWeak;
-    std::map<RpcAddress, sp<RpcSession>> mSessions;
+    std::map<std::vector<uint8_t>, sp<RpcSession>> mSessions;
     std::unique_ptr<FdTrigger> mShutdownTrigger;
     std::condition_variable mShutdownCv;
-    std::unique_ptr<RpcTransportCtx> mCtx;
 };
 
 } // namespace android

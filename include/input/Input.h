@@ -524,12 +524,16 @@ public:
 
     inline int32_t getAction() const { return mAction; }
 
-    inline int32_t getActionMasked() const { return mAction & AMOTION_EVENT_ACTION_MASK; }
+    static int32_t getActionMasked(int32_t action) { return action & AMOTION_EVENT_ACTION_MASK; }
 
-    inline int32_t getActionIndex() const {
-        return (mAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
-                >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    inline int32_t getActionMasked() const { return getActionMasked(mAction); }
+
+    static int32_t getActionIndex(int32_t action) {
+        return (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
     }
+
+    inline int32_t getActionIndex() const { return getActionIndex(mAction); }
 
     inline void setAction(int32_t action) { mAction = action; }
 
@@ -575,9 +579,7 @@ public:
 
     void setCursorPosition(float x, float y);
 
-    uint32_t getDisplayOrientation() const { return mDisplayOrientation; }
-
-    int2 getDisplaySize() const { return {mDisplayWidth, mDisplayHeight}; }
+    ui::Transform getRawTransform() const { return mRawTransform; }
 
     static inline bool isValidCursorPosition(float x, float y) { return !isnan(x) && !isnan(y); }
 
@@ -753,8 +755,8 @@ public:
                     int32_t flags, int32_t edgeFlags, int32_t metaState, int32_t buttonState,
                     MotionClassification classification, const ui::Transform& transform,
                     float xPrecision, float yPrecision, float rawXCursorPosition,
-                    float rawYCursorPosition, uint32_t displayOrientation, int32_t displayWidth,
-                    int32_t displayHeight, nsecs_t downTime, nsecs_t eventTime, size_t pointerCount,
+                    float rawYCursorPosition, const ui::Transform& rawTransform, nsecs_t downTime,
+                    nsecs_t eventTime, size_t pointerCount,
                     const PointerProperties* pointerProperties, const PointerCoords* pointerCoords);
 
     void copyFrom(const MotionEvent* other, bool keepHistory);
@@ -799,6 +801,8 @@ public:
 
     static std::string actionToString(int32_t action);
 
+    static vec2 calculateTransformedXY(uint32_t source, const ui::Transform&, const vec2& xy);
+
 protected:
     int32_t mAction;
     int32_t mActionButton;
@@ -812,9 +816,7 @@ protected:
     float mYPrecision;
     float mRawXCursorPosition;
     float mRawYCursorPosition;
-    uint32_t mDisplayOrientation;
-    int32_t mDisplayWidth;
-    int32_t mDisplayHeight;
+    ui::Transform mRawTransform;
     nsecs_t mDownTime;
     Vector<PointerProperties> mPointerProperties;
     std::vector<nsecs_t> mSampleEventTimes;
@@ -1023,6 +1025,25 @@ private:
     std::queue<std::unique_ptr<CaptureEvent>> mCaptureEventPool;
     std::queue<std::unique_ptr<DragEvent>> mDragEventPool;
     std::queue<std::unique_ptr<TouchModeEvent>> mTouchModeEventPool;
+};
+
+/*
+ * Describes a unique request to enable or disable Pointer Capture.
+ */
+struct PointerCaptureRequest {
+public:
+    inline PointerCaptureRequest() : enable(false), seq(0) {}
+    inline PointerCaptureRequest(bool enable, uint32_t seq) : enable(enable), seq(seq) {}
+    inline bool operator==(const PointerCaptureRequest& other) const {
+        return enable == other.enable && seq == other.seq;
+    }
+    explicit inline operator bool() const { return enable; }
+
+    // True iff this is a request to enable Pointer Capture.
+    bool enable;
+
+    // The sequence number for the request.
+    uint32_t seq;
 };
 
 } // namespace android

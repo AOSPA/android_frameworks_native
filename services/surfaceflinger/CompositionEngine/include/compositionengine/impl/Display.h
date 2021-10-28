@@ -83,9 +83,8 @@ public:
     std::unique_ptr<compositionengine::OutputLayer> createOutputLayer(const sp<LayerFE>&) const;
 
 private:
-    bool mIsVirtual = false;
-    bool mIsDisconnected = false;
     DisplayId mId;
+    bool mIsDisconnected = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
     bool mHasScreenshot = false;
     ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;

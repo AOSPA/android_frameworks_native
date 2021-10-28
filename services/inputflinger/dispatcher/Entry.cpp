@@ -40,14 +40,15 @@ VerifiedKeyEvent verifiedKeyEventFromKeyEntry(const KeyEntry& entry) {
             entry.repeatCount};
 }
 
-VerifiedMotionEvent verifiedMotionEventFromMotionEntry(const MotionEntry& entry) {
-    const float rawX = entry.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X);
-    const float rawY = entry.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y);
+VerifiedMotionEvent verifiedMotionEventFromMotionEntry(const MotionEntry& entry,
+                                                       const ui::Transform& rawTransform) {
+    const vec2 rawXY = MotionEvent::calculateTransformedXY(entry.source, rawTransform,
+                                                           entry.pointerCoords[0].getXYValue());
     const int actionMasked = entry.action & AMOTION_EVENT_ACTION_MASK;
     return {{VerifiedInputEvent::Type::MOTION, entry.deviceId, entry.eventTime, entry.source,
              entry.displayId},
-            rawX,
-            rawY,
+            rawXY.x,
+            rawXY.y,
             actionMasked,
             entry.downTime,
             entry.flags & VERIFIED_MOTION_EVENT_FLAGS,
@@ -119,15 +120,15 @@ std::string FocusEntry::getDescription() const {
 // PointerCaptureChanged notifications always go to apps, so set the flag POLICY_FLAG_PASS_TO_USER
 // for all entries.
 PointerCaptureChangedEntry::PointerCaptureChangedEntry(int32_t id, nsecs_t eventTime,
-                                                       bool hasPointerCapture)
+                                                       const PointerCaptureRequest& request)
       : EventEntry(id, Type::POINTER_CAPTURE_CHANGED, eventTime, POLICY_FLAG_PASS_TO_USER),
-        pointerCaptureEnabled(hasPointerCapture) {}
+        pointerCaptureRequest(request) {}
 
 PointerCaptureChangedEntry::~PointerCaptureChangedEntry() {}
 
 std::string PointerCaptureChangedEntry::getDescription() const {
     return StringPrintf("PointerCaptureChangedEvent(pointerCaptureEnabled=%s)",
-                        pointerCaptureEnabled ? "true" : "false");
+                        pointerCaptureRequest.enable ? "true" : "false");
 }
 
 // --- DragEntry ---
@@ -190,6 +191,18 @@ void KeyEntry::recycle() {
     syntheticRepeat = false;
     interceptKeyResult = KeyEntry::INTERCEPT_KEY_RESULT_UNKNOWN;
     interceptKeyWakeupTime = 0;
+}
+
+// --- TouchModeEntry ---
+
+TouchModeEntry::TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode)
+      : EventEntry(id, Type::TOUCH_MODE_CHANGED, eventTime, POLICY_FLAG_PASS_TO_USER),
+        inTouchMode(inTouchMode) {}
+
+TouchModeEntry::~TouchModeEntry() {}
+
+std::string TouchModeEntry::getDescription() const {
+    return StringPrintf("TouchModeEvent(inTouchMode=%s)", inTouchMode ? "true" : "false");
 }
 
 // --- MotionEntry ---
@@ -297,15 +310,14 @@ std::string SensorEntry::getDescription() const {
 volatile int32_t DispatchEntry::sNextSeqAtomic;
 
 DispatchEntry::DispatchEntry(std::shared_ptr<EventEntry> eventEntry, int32_t targetFlags,
-                             ui::Transform transform, float globalScaleFactor,
-                             uint32_t displayOrientation, int2 displaySize)
+                             const ui::Transform& transform, const ui::Transform& rawTransform,
+                             float globalScaleFactor)
       : seq(nextSeq()),
         eventEntry(std::move(eventEntry)),
         targetFlags(targetFlags),
         transform(transform),
+        rawTransform(rawTransform),
         globalScaleFactor(globalScaleFactor),
-        displayOrientation(displayOrientation),
-        displaySize(displaySize),
         deliveryTime(0),
         resolvedAction(0),
         resolvedFlags(0) {}

@@ -1410,7 +1410,8 @@ void IPCThreadState::threadDestructor(void *st)
         }
 }
 
-status_t IPCThreadState::getProcessFreezeInfo(pid_t pid, bool *sync_received, bool *async_received)
+status_t IPCThreadState::getProcessFreezeInfo(pid_t pid, uint32_t *sync_received,
+                                              uint32_t *async_received)
 {
     int ret = 0;
     binder_frozen_status_info info;

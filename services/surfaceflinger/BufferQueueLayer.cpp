@@ -17,7 +17,6 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
-#pragma clang diagnostic ignored "-Wextra"
 
 #undef LOG_TAG
 #define LOG_TAG "BufferQueueLayer"
@@ -179,46 +178,12 @@ bool BufferQueueLayer::framePresentTimeIsCurrent(nsecs_t expectedPresentTime) co
     return mQueueItems[0].item.mTimestamp <= expectedPresentTime;
 }
 
-uint64_t BufferQueueLayer::getFrameNumber(nsecs_t expectedPresentTime) const {
-    Mutex::Autolock lock(mQueueItemLock);
-    uint64_t frameNumber = mQueueItems[0].item.mFrameNumber;
-
-    // The head of the queue will be dropped if there are signaled and timely frames behind it
-    if (isRemovedFromCurrentState()) {
-        expectedPresentTime = 0;
-    }
-
-    for (int i = 1; i < mQueueItems.size(); i++) {
-        const bool fenceSignaled =
-                mQueueItems[i].item.mFenceTime->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
-        if (!fenceSignaled) {
-            break;
-        }
-
-        // We don't drop frames without explicit timestamps
-        if (mQueueItems[i].item.mIsAutoTimestamp) {
-            break;
-        }
-
-        const nsecs_t desiredPresent = mQueueItems[i].item.mTimestamp;
-        if (desiredPresent < expectedPresentTime - BufferQueueConsumer::MAX_REASONABLE_NSEC ||
-            desiredPresent > expectedPresentTime) {
-            break;
-        }
-
-        frameNumber = mQueueItems[i].item.mFrameNumber;
-    }
-
-    return frameNumber;
-}
-
 bool BufferQueueLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
     // We need to update the sideband stream if the layer has both a buffer and a sideband stream.
-    const bool updateSidebandStream = hasFrameUpdate() && mSidebandStream.get();
+    editCompositionState()->sidebandStreamHasFrame = hasFrameUpdate() && mSidebandStream.get();
 
     bool sidebandStreamChanged = true;
-    if (mSidebandStreamChanged.compare_exchange_strong(sidebandStreamChanged, false) ||
-        updateSidebandStream) {
+    if (mSidebandStreamChanged.compare_exchange_strong(sidebandStreamChanged, false)) {
         // mSidebandStreamChanged was changed to false
         mSidebandStream = mConsumer->getSidebandStream();
         auto* layerCompositionState = editCompositionState();
@@ -261,7 +226,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
     uint64_t lastSignaledFrameNumber = mLastFrameNumberReceived;
     {
         Mutex::Autolock lock(mQueueItemLock);
-        for (int i = 0; i < mQueueItems.size(); i++) {
+        for (size_t i = 0; i < mQueueItems.size(); i++) {
             bool fenceSignaled =
                     mQueueItems[i].item.mFenceTime->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
             if (!fenceSignaled) {
@@ -657,4 +622,4 @@ void BufferQueueLayer::ContentsChangedListener::abandon() {
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
+#pragma clang diagnostic pop // ignored "-Wconversion"

@@ -205,7 +205,7 @@ class FakeInputReaderPolicy : public InputReaderPolicyInterface {
     std::condition_variable mDevicesChangedCondition;
 
     InputReaderConfiguration mConfig;
-    std::unordered_map<int32_t, std::shared_ptr<FakePointerController>> mPointerControllers;
+    std::shared_ptr<FakePointerController> mPointerController;
     std::vector<InputDeviceInfo> mInputDevices GUARDED_BY(mLock);
     bool mInputDevicesChanged GUARDED_BY(mLock){false};
     std::vector<DisplayViewport> mViewports;
@@ -250,14 +250,35 @@ public:
         return mConfig.getDisplayViewportByPort(displayPort);
     }
 
+    void addDisplayViewport(DisplayViewport viewport) {
+        mViewports.push_back(std::move(viewport));
+        mConfig.setDisplayViewports(mViewports);
+    }
+
     void addDisplayViewport(int32_t displayId, int32_t width, int32_t height, int32_t orientation,
                             bool isActive, const std::string& uniqueId,
-                            std::optional<uint8_t> physicalPort, ViewportType viewportType) {
-        const DisplayViewport viewport =
-                createDisplayViewport(displayId, width, height, orientation, isActive, uniqueId,
-                                      physicalPort, viewportType);
-        mViewports.push_back(viewport);
-        mConfig.setDisplayViewports(mViewports);
+                            std::optional<uint8_t> physicalPort, ViewportType type) {
+        const bool isRotated =
+                (orientation == DISPLAY_ORIENTATION_90 || orientation == DISPLAY_ORIENTATION_270);
+        DisplayViewport v;
+        v.displayId = displayId;
+        v.orientation = orientation;
+        v.logicalLeft = 0;
+        v.logicalTop = 0;
+        v.logicalRight = isRotated ? height : width;
+        v.logicalBottom = isRotated ? width : height;
+        v.physicalLeft = 0;
+        v.physicalTop = 0;
+        v.physicalRight = isRotated ? height : width;
+        v.physicalBottom = isRotated ? width : height;
+        v.deviceWidth = isRotated ? height : width;
+        v.deviceHeight = isRotated ? width : height;
+        v.isActive = isActive;
+        v.uniqueId = uniqueId;
+        v.physicalPort = physicalPort;
+        v.type = type;
+
+        addDisplayViewport(v);
     }
 
     bool updateViewport(const DisplayViewport& viewport) {
@@ -291,8 +312,8 @@ public:
 
     void removeDisabledDevice(int32_t deviceId) { mConfig.disabledDevices.erase(deviceId); }
 
-    void setPointerController(int32_t deviceId, std::shared_ptr<FakePointerController> controller) {
-        mPointerControllers.insert_or_assign(deviceId, std::move(controller));
+    void setPointerController(std::shared_ptr<FakePointerController> controller) {
+        mPointerController = std::move(controller);
     }
 
     const InputReaderConfiguration* getReaderConfiguration() const {
@@ -312,8 +333,9 @@ public:
         transform = t;
     }
 
-    void setPointerCapture(bool enabled) {
-        mConfig.pointerCapture = enabled;
+    PointerCaptureRequest setPointerCapture(bool enabled) {
+        mConfig.pointerCaptureRequest = {enabled, mNextPointerCaptureSequenceNumber++};
+        return mConfig.pointerCaptureRequest;
     }
 
     void setShowTouches(bool enabled) {
@@ -327,38 +349,15 @@ public:
     float getPointerGestureMovementSpeedRatio() { return mConfig.pointerGestureMovementSpeedRatio; }
 
 private:
-    DisplayViewport createDisplayViewport(int32_t displayId, int32_t width, int32_t height,
-                                          int32_t orientation, bool isActive,
-                                          const std::string& uniqueId,
-                                          std::optional<uint8_t> physicalPort, ViewportType type) {
-        bool isRotated = (orientation == DISPLAY_ORIENTATION_90
-                || orientation == DISPLAY_ORIENTATION_270);
-        DisplayViewport v;
-        v.displayId = displayId;
-        v.orientation = orientation;
-        v.logicalLeft = 0;
-        v.logicalTop = 0;
-        v.logicalRight = isRotated ? height : width;
-        v.logicalBottom = isRotated ? width : height;
-        v.physicalLeft = 0;
-        v.physicalTop = 0;
-        v.physicalRight = isRotated ? height : width;
-        v.physicalBottom = isRotated ? width : height;
-        v.deviceWidth = isRotated ? height : width;
-        v.deviceHeight = isRotated ? width : height;
-        v.isActive = isActive;
-        v.uniqueId = uniqueId;
-        v.physicalPort = physicalPort;
-        v.type = type;
-        return v;
-    }
+    uint32_t mNextPointerCaptureSequenceNumber = 0;
 
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override {
         *outConfig = mConfig;
     }
 
-    std::shared_ptr<PointerControllerInterface> obtainPointerController(int32_t deviceId) override {
-        return mPointerControllers[deviceId];
+    std::shared_ptr<PointerControllerInterface> obtainPointerController(
+            int32_t /*deviceId*/) override {
+        return mPointerController;
     }
 
     void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) override {
@@ -870,6 +869,24 @@ private:
         return false;
     }
 
+    bool hasKeyCode(int32_t deviceId, int32_t keyCode) const override {
+        Device* device = getDevice(deviceId);
+        if (!device) {
+            return false;
+        }
+        for (size_t i = 0; i < device->keysByScanCode.size(); i++) {
+            if (keyCode == device->keysByScanCode.valueAt(i).keyCode) {
+                return true;
+            }
+        }
+        for (size_t j = 0; j < device->keysByUsageCode.size(); j++) {
+            if (keyCode == device->keysByUsageCode.valueAt(j).keyCode) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool hasLed(int32_t deviceId, int32_t led) const override {
         Device* device = getDevice(deviceId);
         return device && device->leds.indexOfKey(led) >= 0;
@@ -1169,7 +1186,7 @@ class InstrumentedInputReader : public InputReader {
 public:
     InstrumentedInputReader(std::shared_ptr<EventHubInterface> eventHub,
                             const sp<InputReaderPolicyInterface>& policy,
-                            const sp<InputListenerInterface>& listener)
+                            InputListenerInterface& listener)
           : InputReader(eventHub, policy, listener), mFakeContext(this) {}
 
     virtual ~InstrumentedInputReader() {}
@@ -1482,7 +1499,7 @@ TEST_F(InputReaderPolicyTest, Viewports_GetByPort) {
 
 class InputReaderTest : public testing::Test {
 protected:
-    sp<TestInputListener> mFakeListener;
+    std::unique_ptr<TestInputListener> mFakeListener;
     sp<FakeInputReaderPolicy> mFakePolicy;
     std::shared_ptr<FakeEventHub> mFakeEventHub;
     std::unique_ptr<InstrumentedInputReader> mReader;
@@ -1490,14 +1507,14 @@ protected:
     void SetUp() override {
         mFakeEventHub = std::make_unique<FakeEventHub>();
         mFakePolicy = new FakeInputReaderPolicy();
-        mFakeListener = new TestInputListener();
+        mFakeListener = std::make_unique<TestInputListener>();
 
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
-                                                            mFakeListener);
+                                                            *mFakeListener);
     }
 
     void TearDown() override {
-        mFakeListener.clear();
+        mFakeListener.reset();
         mFakePolicy.clear();
     }
 
@@ -1974,24 +1991,24 @@ TEST_F(InputReaderTest, GetKeyCodeState_ForwardsRequestsToSubdeviceMappers) {
 TEST_F(InputReaderTest, ChangingPointerCaptureNotifiesInputListener) {
     NotifyPointerCaptureChangedArgs args;
 
-    mFakePolicy->setPointerCapture(true);
+    auto request = mFakePolicy->setPointerCapture(true);
     mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     mReader->loopOnce();
     mFakeListener->assertNotifyCaptureWasCalled(&args);
-    ASSERT_TRUE(args.enabled) << "Pointer Capture should be enabled.";
+    ASSERT_TRUE(args.request.enable) << "Pointer Capture should be enabled.";
+    ASSERT_EQ(args.request, request) << "Pointer Capture sequence number should match.";
 
     mFakePolicy->setPointerCapture(false);
     mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     mReader->loopOnce();
     mFakeListener->assertNotifyCaptureWasCalled(&args);
-    ASSERT_FALSE(args.enabled) << "Pointer Capture should be disabled.";
+    ASSERT_FALSE(args.request.enable) << "Pointer Capture should be disabled.";
 
-    // Verify that the Pointer Capture state is re-configured correctly when the configuration value
+    // Verify that the Pointer Capture state is not updated when the configuration value
     // does not change.
     mReader->requestRefreshConfiguration(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     mReader->loopOnce();
-    mFakeListener->assertNotifyCaptureWasCalled(&args);
-    ASSERT_FALSE(args.enabled) << "Pointer Capture should be disabled.";
+    mFakeListener->assertNotifyCaptureWasNotCalled();
 }
 
 class FakeVibratorInputMapper : public FakeInputMapper {
@@ -2128,16 +2145,21 @@ TEST_F(InputReaderTest, LightGetColor) {
 // the tests to fail.
 class InputReaderIntegrationTest : public testing::Test {
 protected:
-    sp<TestInputListener> mTestListener;
+    std::unique_ptr<TestInputListener> mTestListener;
     sp<FakeInputReaderPolicy> mFakePolicy;
-    sp<InputReaderInterface> mReader;
+    std::unique_ptr<InputReaderInterface> mReader;
+
+    std::shared_ptr<FakePointerController> mFakePointerController;
 
     void SetUp() override {
         mFakePolicy = new FakeInputReaderPolicy();
-        mTestListener = new TestInputListener(2000ms /*eventHappenedTimeout*/,
-                                              30ms /*eventDidNotHappenTimeout*/);
+        mFakePointerController = std::make_shared<FakePointerController>();
+        mFakePolicy->setPointerController(mFakePointerController);
+        mTestListener = std::make_unique<TestInputListener>(2000ms /*eventHappenedTimeout*/,
+                                                            30ms /*eventDidNotHappenTimeout*/);
 
-        mReader = new InputReader(std::make_shared<EventHub>(), mFakePolicy, mTestListener);
+        mReader = std::make_unique<InputReader>(std::make_shared<EventHub>(), mFakePolicy,
+                                                *mTestListener);
         ASSERT_EQ(mReader->start(), OK);
 
         // Since this test is run on a real device, all the input devices connected
@@ -2149,7 +2171,8 @@ protected:
 
     void TearDown() override {
         ASSERT_EQ(mReader->stop(), OK);
-        mTestListener.clear();
+        mReader.reset();
+        mTestListener.reset();
         mFakePolicy.clear();
     }
 };
@@ -2403,16 +2426,16 @@ protected:
 
     std::shared_ptr<FakeEventHub> mFakeEventHub;
     sp<FakeInputReaderPolicy> mFakePolicy;
-    sp<TestInputListener> mFakeListener;
+    std::unique_ptr<TestInputListener> mFakeListener;
     std::unique_ptr<InstrumentedInputReader> mReader;
     std::shared_ptr<InputDevice> mDevice;
 
     void SetUp() override {
         mFakeEventHub = std::make_unique<FakeEventHub>();
         mFakePolicy = new FakeInputReaderPolicy();
-        mFakeListener = new TestInputListener();
+        mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
-                                                            mFakeListener);
+                                                            *mFakeListener);
         InputDeviceIdentifier identifier;
         identifier.name = DEVICE_NAME;
         identifier.location = DEVICE_LOCATION;
@@ -2424,7 +2447,7 @@ protected:
     }
 
     void TearDown() override {
-        mFakeListener.clear();
+        mFakeListener.reset();
         mFakePolicy.clear();
     }
 };
@@ -2676,16 +2699,16 @@ protected:
 
     std::shared_ptr<FakeEventHub> mFakeEventHub;
     sp<FakeInputReaderPolicy> mFakePolicy;
-    sp<TestInputListener> mFakeListener;
+    std::unique_ptr<TestInputListener> mFakeListener;
     std::unique_ptr<InstrumentedInputReader> mReader;
     std::shared_ptr<InputDevice> mDevice;
 
     virtual void SetUp(Flags<InputDeviceClass> classes) {
         mFakeEventHub = std::make_unique<FakeEventHub>();
         mFakePolicy = new FakeInputReaderPolicy();
-        mFakeListener = new TestInputListener();
+        mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
-                                                            mFakeListener);
+                                                            *mFakeListener);
         mDevice = newDevice(DEVICE_ID, DEVICE_NAME, DEVICE_LOCATION, EVENTHUB_ID, classes);
     }
 
@@ -2697,7 +2720,7 @@ protected:
     }
 
     void TearDown() override {
-        mFakeListener.clear();
+        mFakeListener.reset();
         mFakePolicy.clear();
 
         sysprop::InputFlingerProperties::per_window_input_rotation(
@@ -3729,6 +3752,25 @@ TEST_F(KeyboardInputMapperTest, Process_LockedKeysShouldToggleAfterReattach) {
               mapper2.getMetaState());
 }
 
+TEST_F(KeyboardInputMapperTest, Process_toggleCapsLockState) {
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_CAPSLOCK, 0, AKEYCODE_CAPS_LOCK, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_NUMLOCK, 0, AKEYCODE_NUM_LOCK, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_SCROLLLOCK, 0, AKEYCODE_SCROLL_LOCK, 0);
+
+    // Suppose we have two mappers. (DPAD + KEYBOARD)
+    addMapperAndConfigure<KeyboardInputMapper>(AINPUT_SOURCE_DPAD,
+                                               AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC);
+    KeyboardInputMapper& mapper =
+            addMapperAndConfigure<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD,
+                                                       AINPUT_KEYBOARD_TYPE_ALPHABETIC);
+    // Initialize metastate to AMETA_NUM_LOCK_ON.
+    ASSERT_EQ(AMETA_NUM_LOCK_ON, mapper.getMetaState());
+    mapper.updateMetaState(AKEYCODE_NUM_LOCK);
+
+    mReader->toggleCapsLockState(DEVICE_ID);
+    ASSERT_EQ(AMETA_CAPS_LOCK_ON, mapper.getMetaState());
+}
+
 // --- KeyboardInputMapperTest_ExternalDevice ---
 
 class KeyboardInputMapperTest_ExternalDevice : public InputMapperTest {
@@ -3825,7 +3867,7 @@ protected:
         InputMapperTest::SetUp();
 
         mFakePointerController = std::make_shared<FakePointerController>();
-        mFakePolicy->setPointerController(mDevice->getId(), mFakePointerController);
+        mFakePolicy->setPointerController(mFakePointerController);
     }
 
     void testMotionRotation(CursorInputMapper& mapper, int32_t originalX, int32_t originalY,
@@ -4659,6 +4701,8 @@ protected:
     void prepareLocationCalibration();
     int32_t toRawX(float displayX);
     int32_t toRawY(float displayY);
+    int32_t toRotatedRawX(float displayX);
+    int32_t toRotatedRawY(float displayY);
     float toCookedX(float rawX, float rawY);
     float toCookedY(float rawX, float rawY);
     float toDisplayX(int32_t rawX);
@@ -4739,6 +4783,14 @@ int32_t TouchInputMapperTest::toRawX(float displayX) {
 
 int32_t TouchInputMapperTest::toRawY(float displayY) {
     return int32_t(displayY * (RAW_Y_MAX - RAW_Y_MIN + 1) / DISPLAY_HEIGHT + RAW_Y_MIN);
+}
+
+int32_t TouchInputMapperTest::toRotatedRawX(float displayX) {
+    return int32_t(displayX * (RAW_X_MAX - RAW_X_MIN + 1) / DISPLAY_HEIGHT + RAW_X_MIN);
+}
+
+int32_t TouchInputMapperTest::toRotatedRawY(float displayY) {
+    return int32_t(displayY * (RAW_Y_MAX - RAW_Y_MIN + 1) / DISPLAY_WIDTH + RAW_Y_MIN);
 }
 
 float TouchInputMapperTest::toCookedX(float rawX, float rawY) {
@@ -5487,6 +5539,172 @@ TEST_F(SingleTouchInputMapperTest, Process_WhenNotOrientationAware_RotatesMotion
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
 }
 
+TEST_F(SingleTouchInputMapperTest, Process_WhenOrientation0_RotatesMotions) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareButtons();
+    prepareAxes(POSITION);
+    addConfigurationProperty("touch.orientationAware", "1");
+    addConfigurationProperty("touch.orientation", "ORIENTATION_0");
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    NotifyMotionArgs args;
+
+    // Orientation 0.
+    processDown(mapper, toRawX(50), toRawY(75));
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+}
+
+TEST_F(SingleTouchInputMapperTest, Process_WhenOrientation90_RotatesMotions) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareButtons();
+    prepareAxes(POSITION);
+    addConfigurationProperty("touch.orientationAware", "1");
+    addConfigurationProperty("touch.orientation", "ORIENTATION_90");
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    NotifyMotionArgs args;
+
+    // Orientation 90.
+    processDown(mapper, RAW_X_MAX - toRotatedRawX(75) + RAW_X_MIN, toRotatedRawY(50));
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+}
+
+TEST_F(SingleTouchInputMapperTest, Process_WhenOrientation180_RotatesMotions) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareButtons();
+    prepareAxes(POSITION);
+    addConfigurationProperty("touch.orientationAware", "1");
+    addConfigurationProperty("touch.orientation", "ORIENTATION_180");
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    NotifyMotionArgs args;
+
+    // Orientation 180.
+    processDown(mapper, RAW_X_MAX - toRawX(50) + RAW_X_MIN, RAW_Y_MAX - toRawY(75) + RAW_Y_MIN);
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+}
+
+TEST_F(SingleTouchInputMapperTest, Process_WhenOrientation270_RotatesMotions) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareButtons();
+    prepareAxes(POSITION);
+    addConfigurationProperty("touch.orientationAware", "1");
+    addConfigurationProperty("touch.orientation", "ORIENTATION_270");
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    NotifyMotionArgs args;
+
+    // Orientation 270.
+    processDown(mapper, toRotatedRawX(75), RAW_Y_MAX - toRotatedRawY(50) + RAW_Y_MIN);
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+}
+
+TEST_F(SingleTouchInputMapperTest, Process_WhenOrientationSpecified_RotatesMotionWithDisplay) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareButtons();
+    prepareAxes(POSITION);
+    // Since InputReader works in the un-rotated coordinate space, only devices that are not
+    // orientation-aware are affected by display rotation.
+    addConfigurationProperty("touch.orientationAware", "0");
+    addConfigurationProperty("touch.orientation", "ORIENTATION_90");
+    auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+
+    NotifyMotionArgs args;
+
+    // Orientation 90, Rotation 0.
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    processDown(mapper, RAW_X_MAX - toRotatedRawX(75) + RAW_X_MIN, toRotatedRawY(50));
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+
+    // Orientation 90, Rotation 90.
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_90);
+    processDown(mapper, toRotatedRawX(50), toRotatedRawY(75));
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+
+    // Orientation 90, Rotation 180.
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_180);
+    processDown(mapper, toRotatedRawX(75), RAW_Y_MAX - toRotatedRawY(50) + RAW_Y_MIN);
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+
+    // Orientation 90, Rotation 270.
+    clearViewports();
+    prepareDisplay(DISPLAY_ORIENTATION_270);
+    processDown(mapper, RAW_X_MAX - toRotatedRawX(50) + RAW_X_MIN,
+                RAW_Y_MAX - toRotatedRawY(75) + RAW_Y_MIN);
+    processSync(mapper);
+
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    EXPECT_NEAR(50, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
+    EXPECT_NEAR(75, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
+
+    processUp(mapper);
+    processSync(mapper);
+    EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+}
+
 TEST_F(SingleTouchInputMapperTest, Process_AllAxes_DefaultCalibration) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     prepareDisplay(DISPLAY_ORIENTATION_0);
@@ -6073,6 +6291,172 @@ TEST_F(SingleTouchInputMapperTest, Process_WhenAbsPressureIsPresent_HoversIfItsV
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+}
+
+// --- TouchDisplayProjectionTest ---
+
+class TouchDisplayProjectionTest : public SingleTouchInputMapperTest {
+public:
+    // The values inside DisplayViewport are expected to be pre-rotated. This updates the current
+    // DisplayViewport to pre-rotate the values. The viewport's physical display will be set to the
+    // rotated equivalent of the given un-rotated physical display bounds.
+    void configurePhysicalDisplay(int32_t orientation, Rect naturalPhysicalDisplay) {
+        uint32_t inverseRotationFlags;
+        auto width = DISPLAY_WIDTH;
+        auto height = DISPLAY_HEIGHT;
+        switch (orientation) {
+            case DISPLAY_ORIENTATION_90:
+                inverseRotationFlags = ui::Transform::ROT_270;
+                std::swap(width, height);
+                break;
+            case DISPLAY_ORIENTATION_180:
+                inverseRotationFlags = ui::Transform::ROT_180;
+                break;
+            case DISPLAY_ORIENTATION_270:
+                inverseRotationFlags = ui::Transform::ROT_90;
+                std::swap(width, height);
+                break;
+            case DISPLAY_ORIENTATION_0:
+                inverseRotationFlags = ui::Transform::ROT_0;
+                break;
+            default:
+                FAIL() << "Invalid orientation: " << orientation;
+        }
+
+        const ui::Transform rotation(inverseRotationFlags, width, height);
+        const Rect rotatedPhysicalDisplay = rotation.transform(naturalPhysicalDisplay);
+
+        std::optional<DisplayViewport> internalViewport =
+                *mFakePolicy->getDisplayViewportByType(ViewportType::INTERNAL);
+        DisplayViewport& v = *internalViewport;
+        v.displayId = DISPLAY_ID;
+        v.orientation = orientation;
+
+        v.logicalLeft = 0;
+        v.logicalTop = 0;
+        v.logicalRight = 100;
+        v.logicalBottom = 100;
+
+        v.physicalLeft = rotatedPhysicalDisplay.left;
+        v.physicalTop = rotatedPhysicalDisplay.top;
+        v.physicalRight = rotatedPhysicalDisplay.right;
+        v.physicalBottom = rotatedPhysicalDisplay.bottom;
+
+        v.deviceWidth = width;
+        v.deviceHeight = height;
+
+        v.isActive = true;
+        v.uniqueId = UNIQUE_ID;
+        v.type = ViewportType::INTERNAL;
+        mFakePolicy->updateViewport(v);
+        configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    }
+
+    void assertReceivedMove(const Point& point) {
+        NotifyMotionArgs motionArgs;
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+        ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, motionArgs.action);
+        ASSERT_EQ(size_t(1), motionArgs.pointerCount);
+        ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], point.x, point.y,
+                                                    1, 0, 0, 0, 0, 0, 0, 0));
+    }
+};
+
+TEST_F(TouchDisplayProjectionTest, IgnoresTouchesOutsidePhysicalDisplay) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+
+    NotifyMotionArgs motionArgs;
+
+    // Configure the DisplayViewport such that the logical display maps to a subsection of
+    // the display panel called the physical display. Here, the physical display is bounded by the
+    // points (10, 20) and (70, 160) inside the display space, which is of the size 400 x 800.
+    static const Rect kPhysicalDisplay{10, 20, 70, 160};
+    static const std::array<Point, 6> kPointsOutsidePhysicalDisplay{
+            {{-10, -10}, {0, 0}, {5, 100}, {50, 15}, {75, 100}, {50, 165}}};
+
+    for (auto orientation : {DISPLAY_ORIENTATION_0, DISPLAY_ORIENTATION_90, DISPLAY_ORIENTATION_180,
+                             DISPLAY_ORIENTATION_270}) {
+        configurePhysicalDisplay(orientation, kPhysicalDisplay);
+
+        // Touches outside the physical display should be ignored, and should not generate any
+        // events. Ensure touches at the following points that lie outside of the physical display
+        // area do not generate any events.
+        for (const auto& point : kPointsOutsidePhysicalDisplay) {
+            processDown(mapper, toRawX(point.x), toRawY(point.y));
+            processSync(mapper);
+            processUp(mapper);
+            processSync(mapper);
+            ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled())
+                    << "Unexpected event generated for touch outside physical display at point: "
+                    << point.x << ", " << point.y;
+        }
+    }
+}
+
+TEST_F(TouchDisplayProjectionTest, EmitsTouchDownAfterEnteringPhysicalDisplay) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+
+    NotifyMotionArgs motionArgs;
+
+    // Configure the DisplayViewport such that the logical display maps to a subsection of
+    // the display panel called the physical display. Here, the physical display is bounded by the
+    // points (10, 20) and (70, 160) inside the display space, which is of the size 400 x 800.
+    static const Rect kPhysicalDisplay{10, 20, 70, 160};
+
+    for (auto orientation : {DISPLAY_ORIENTATION_0, DISPLAY_ORIENTATION_90, DISPLAY_ORIENTATION_180,
+                             DISPLAY_ORIENTATION_270}) {
+        configurePhysicalDisplay(orientation, kPhysicalDisplay);
+
+        // Touches that start outside the physical display should be ignored until it enters the
+        // physical display bounds, at which point it should generate a down event. Start a touch at
+        // the point (5, 100), which is outside the physical display bounds.
+        static const Point kOutsidePoint{5, 100};
+        processDown(mapper, toRawX(kOutsidePoint.x), toRawY(kOutsidePoint.y));
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+
+        // Move the touch into the physical display area. This should generate a pointer down.
+        processMove(mapper, toRawX(11), toRawY(21));
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+        ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+        ASSERT_EQ(size_t(1), motionArgs.pointerCount);
+        ASSERT_NO_FATAL_FAILURE(
+                assertPointerCoords(motionArgs.pointerCoords[0], 11, 21, 1, 0, 0, 0, 0, 0, 0, 0));
+
+        // Move the touch inside the physical display area. This should generate a pointer move.
+        processMove(mapper, toRawX(69), toRawY(159));
+        processSync(mapper);
+        assertReceivedMove({69, 159});
+
+        // Move outside the physical display area. Since the pointer is already down, this should
+        // now continue generating events.
+        processMove(mapper, toRawX(kOutsidePoint.x), toRawY(kOutsidePoint.y));
+        processSync(mapper);
+        assertReceivedMove(kOutsidePoint);
+
+        // Release. This should generate a pointer up.
+        processUp(mapper);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+        ASSERT_EQ(AMOTION_EVENT_ACTION_UP, motionArgs.action);
+        ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], kOutsidePoint.x,
+                                                    kOutsidePoint.y, 1, 0, 0, 0, 0, 0, 0, 0));
+
+        // Ensure no more events were generated.
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasNotCalled());
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    }
 }
 
 // --- MultiTouchInputMapperTest ---
@@ -7614,7 +7998,7 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShouldHandleDisplayId) {
     fakePointerController->setBounds(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
     fakePointerController->setPosition(100, 200);
     fakePointerController->setButtonState(0);
-    mFakePolicy->setPointerController(mDevice->getId(), fakePointerController);
+    mFakePolicy->setPointerController(fakePointerController);
 
     mFakePolicy->setDefaultPointerDisplayId(SECONDARY_DISPLAY_ID);
     prepareSecondaryDisplay(ViewportType::EXTERNAL);
@@ -7767,8 +8151,7 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShowTouches) {
     // Setup PointerController.
     std::shared_ptr<FakePointerController> fakePointerController =
             std::make_shared<FakePointerController>();
-    mFakePolicy->setPointerController(mDevice->getId(), fakePointerController);
-    mFakePolicy->setPointerController(SECOND_DEVICE_ID, fakePointerController);
+    mFakePolicy->setPointerController(fakePointerController);
 
     // Setup policy for associated displays and show touches.
     const uint8_t hdmi1 = 0;
@@ -8409,173 +8792,6 @@ TEST_F(MultiTouchInputMapperTest_ExternalDevice, Viewports_Fallback) {
     ASSERT_EQ(SECONDARY_DISPLAY_ID, motionArgs.displayId);
 }
 
-/**
- * Test touch should not work if outside of surface.
- */
-class MultiTouchInputMapperTest_SurfaceRange : public MultiTouchInputMapperTest {
-protected:
-    void halfDisplayToCenterHorizontal(int32_t orientation) {
-        std::optional<DisplayViewport> internalViewport =
-                mFakePolicy->getDisplayViewportByType(ViewportType::INTERNAL);
-
-        // Half display to (width/4, 0, width * 3/4, height) to make display has offset.
-        internalViewport->orientation = orientation;
-        if (orientation == DISPLAY_ORIENTATION_90 || orientation == DISPLAY_ORIENTATION_270) {
-            internalViewport->logicalLeft = 0;
-            internalViewport->logicalTop = 0;
-            internalViewport->logicalRight = DISPLAY_HEIGHT;
-            internalViewport->logicalBottom = DISPLAY_WIDTH / 2;
-
-            internalViewport->physicalLeft = 0;
-            internalViewport->physicalTop = DISPLAY_WIDTH / 4;
-            internalViewport->physicalRight = DISPLAY_HEIGHT;
-            internalViewport->physicalBottom = DISPLAY_WIDTH * 3 / 4;
-
-            internalViewport->deviceWidth = DISPLAY_HEIGHT;
-            internalViewport->deviceHeight = DISPLAY_WIDTH;
-        } else {
-            internalViewport->logicalLeft = 0;
-            internalViewport->logicalTop = 0;
-            internalViewport->logicalRight = DISPLAY_WIDTH / 2;
-            internalViewport->logicalBottom = DISPLAY_HEIGHT;
-
-            internalViewport->physicalLeft = DISPLAY_WIDTH / 4;
-            internalViewport->physicalTop = 0;
-            internalViewport->physicalRight = DISPLAY_WIDTH * 3 / 4;
-            internalViewport->physicalBottom = DISPLAY_HEIGHT;
-
-            internalViewport->deviceWidth = DISPLAY_WIDTH;
-            internalViewport->deviceHeight = DISPLAY_HEIGHT;
-        }
-
-        mFakePolicy->updateViewport(internalViewport.value());
-        configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
-    }
-
-    void processPositionAndVerify(MultiTouchInputMapper& mapper, int32_t xOutside, int32_t yOutside,
-                                  int32_t xInside, int32_t yInside, int32_t xExpected,
-                                  int32_t yExpected) {
-        // touch on outside area should not work.
-        processPosition(mapper, toRawX(xOutside), toRawY(yOutside));
-        processSync(mapper);
-        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
-
-        // touch on inside area should receive the event.
-        NotifyMotionArgs args;
-        processPosition(mapper, toRawX(xInside), toRawY(yInside));
-        processSync(mapper);
-        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-        ASSERT_NEAR(xExpected, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_X), 1);
-        ASSERT_NEAR(yExpected, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_Y), 1);
-
-        // Reset.
-        mapper.reset(ARBITRARY_TIME);
-    }
-};
-
-TEST_F(MultiTouchInputMapperTest_SurfaceRange, Viewports_SurfaceRange) {
-    addConfigurationProperty("touch.deviceType", "touchScreen");
-    prepareDisplay(DISPLAY_ORIENTATION_0);
-    prepareAxes(POSITION);
-    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
-
-    // Touch on center of normal display should work.
-    const int32_t x = DISPLAY_WIDTH / 4;
-    const int32_t y = DISPLAY_HEIGHT / 2;
-    processPosition(mapper, toRawX(x), toRawY(y));
-    processSync(mapper);
-    NotifyMotionArgs args;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0], x, y, 1.0f, 0.0f, 0.0f, 0.0f,
-                                                0.0f, 0.0f, 0.0f, 0.0f));
-    // Reset.
-    mapper.reset(ARBITRARY_TIME);
-
-    // Let physical display be different to device, and make surface and physical could be 1:1 in
-    // all four orientations.
-    for (int orientation : {DISPLAY_ORIENTATION_0, DISPLAY_ORIENTATION_90, DISPLAY_ORIENTATION_180,
-                            DISPLAY_ORIENTATION_270}) {
-        halfDisplayToCenterHorizontal(orientation);
-
-        const int32_t xExpected = (x + 1) - (DISPLAY_WIDTH / 4);
-        const int32_t yExpected = y;
-        processPositionAndVerify(mapper, x - 1, y, x + 1, y, xExpected, yExpected);
-    }
-}
-
-TEST_F(MultiTouchInputMapperTest_SurfaceRange, Viewports_SurfaceRange_90_NotOrientationAware) {
-    addConfigurationProperty("touch.deviceType", "touchScreen");
-    prepareDisplay(DISPLAY_ORIENTATION_0);
-    prepareAxes(POSITION);
-    // Since InputReader works in the un-rotated coordinate space, only devices that are not
-    // orientation-aware are affected by display rotation.
-    addConfigurationProperty("touch.orientationAware", "0");
-    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
-
-    // Half display to (width/4, 0, width * 3/4, height) and rotate 90-degrees.
-    halfDisplayToCenterHorizontal(DISPLAY_ORIENTATION_90);
-
-    const int32_t x = DISPLAY_WIDTH / 4;
-    const int32_t y = DISPLAY_HEIGHT / 2;
-
-    // expect x/y = swap x/y then reverse x.
-    constexpr int32_t xExpected = DISPLAY_HEIGHT - y;
-    constexpr int32_t yExpected = (x + 1) - DISPLAY_WIDTH / 4;
-    processPositionAndVerify(mapper, x - 1, y, x + 1, y, xExpected, yExpected);
-}
-
-TEST_F(MultiTouchInputMapperTest_SurfaceRange, Viewports_SurfaceRange_270_NotOrientationAware) {
-    addConfigurationProperty("touch.deviceType", "touchScreen");
-    prepareDisplay(DISPLAY_ORIENTATION_0);
-    prepareAxes(POSITION);
-    // Since InputReader works in the un-rotated coordinate space, only devices that are not
-    // orientation-aware are affected by display rotation.
-    addConfigurationProperty("touch.orientationAware", "0");
-    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
-
-    // Half display to (width/4, 0, width * 3/4, height) and rotate 270-degrees.
-    halfDisplayToCenterHorizontal(DISPLAY_ORIENTATION_270);
-
-    const int32_t x = DISPLAY_WIDTH / 4;
-    const int32_t y = DISPLAY_HEIGHT / 2;
-
-    // expect x/y = swap x/y then reverse y.
-    const int32_t xExpected = y;
-    const int32_t yExpected = (DISPLAY_WIDTH * 3 / 4) - (x + 1);
-    processPositionAndVerify(mapper, x - 1, y, x + 1, y, xExpected, yExpected);
-}
-
-TEST_F(MultiTouchInputMapperTest_SurfaceRange, Viewports_SurfaceRange_Corner_NotOrientationAware) {
-    addConfigurationProperty("touch.deviceType", "touchScreen");
-    prepareDisplay(DISPLAY_ORIENTATION_0);
-    prepareAxes(POSITION);
-    // Since InputReader works in the un-rotated coordinate space, only devices that are not
-    // orientation-aware are affected by display rotation.
-    addConfigurationProperty("touch.orientationAware", "0");
-    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
-
-    const int32_t x = 0;
-    const int32_t y = 0;
-
-    const int32_t xExpected = x;
-    const int32_t yExpected = y;
-    processPositionAndVerify(mapper, x - 1, y, x, y, xExpected, yExpected);
-
-    clearViewports();
-    prepareDisplay(DISPLAY_ORIENTATION_90);
-    // expect x/y = swap x/y then reverse x.
-    const int32_t xExpected90 = DISPLAY_HEIGHT - 1;
-    const int32_t yExpected90 = x;
-    processPositionAndVerify(mapper, x - 1, y, x, y, xExpected90, yExpected90);
-
-    clearViewports();
-    prepareDisplay(DISPLAY_ORIENTATION_270);
-    // expect x/y = swap x/y then reverse y.
-    const int32_t xExpected270 = y;
-    const int32_t yExpected270 = DISPLAY_WIDTH - 1;
-    processPositionAndVerify(mapper, x - 1, y, x, y, xExpected270, yExpected270);
-}
-
 TEST_F(MultiTouchInputMapperTest, Process_TouchpadCapture) {
     // we need a pointer controller for mouse mode of touchpad (start pointer at 0,0)
     std::shared_ptr<FakePointerController> fakePointerController =
@@ -8590,7 +8806,7 @@ TEST_F(MultiTouchInputMapperTest, Process_TouchpadCapture) {
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_LEFT, 0, AKEYCODE_UNKNOWN, 0);
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_TOUCH, 0, AKEYCODE_UNKNOWN, 0);
     mFakePolicy->setPointerCapture(true);
-    mFakePolicy->setPointerController(mDevice->getId(), fakePointerController);
+    mFakePolicy->setPointerController(fakePointerController);
     MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
 
     // captured touchpad should be a touchpad source
@@ -8740,7 +8956,7 @@ TEST_F(MultiTouchInputMapperTest, Process_UnCapturedTouchpadPointer) {
     prepareAxes(POSITION | ID | SLOT);
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_LEFT, 0, AKEYCODE_UNKNOWN, 0);
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_TOUCH, 0, AKEYCODE_UNKNOWN, 0);
-    mFakePolicy->setPointerController(mDevice->getId(), fakePointerController);
+    mFakePolicy->setPointerController(fakePointerController);
     MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
     // run uncaptured pointer tests - pushes out generic events
     // FINGER 0 DOWN
@@ -8780,7 +8996,7 @@ TEST_F(MultiTouchInputMapperTest, WhenCapturedAndNotCaptured_GetSources) {
     prepareDisplay(DISPLAY_ORIENTATION_0);
     prepareAxes(POSITION | ID | SLOT);
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_LEFT, 0, AKEYCODE_UNKNOWN, 0);
-    mFakePolicy->setPointerController(mDevice->getId(), fakePointerController);
+    mFakePolicy->setPointerController(fakePointerController);
     mFakePolicy->setPointerCapture(false);
     MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
 
@@ -8807,23 +9023,23 @@ protected:
 
     std::shared_ptr<FakeEventHub> mFakeEventHub;
     sp<FakeInputReaderPolicy> mFakePolicy;
-    sp<TestInputListener> mFakeListener;
+    std::unique_ptr<TestInputListener> mFakeListener;
     std::unique_ptr<InstrumentedInputReader> mReader;
     std::shared_ptr<InputDevice> mDevice;
 
     virtual void SetUp(Flags<InputDeviceClass> classes) {
         mFakeEventHub = std::make_unique<FakeEventHub>();
         mFakePolicy = new FakeInputReaderPolicy();
-        mFakeListener = new TestInputListener();
+        mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
-                                                            mFakeListener);
+                                                            *mFakeListener);
         mDevice = newDevice(DEVICE_ID, DEVICE_NAME, DEVICE_LOCATION, EVENTHUB_ID, classes);
     }
 
     void SetUp() override { SetUp(DEVICE_CLASSES); }
 
     void TearDown() override {
-        mFakeListener.clear();
+        mFakeListener.reset();
         mFakePolicy.clear();
     }
 

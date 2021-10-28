@@ -120,27 +120,14 @@ private:
 Scheduler::Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>& configs,
                      ISchedulerCallback& callback)
       : Scheduler(configs, callback,
-                  {.supportKernelTimer = sysprop::support_kernel_idle_timer(false),
-                   .useContentDetection = sysprop::use_content_detection_for_refresh_rate(false)}) {
+                  {.useContentDetection = sysprop::use_content_detection_for_refresh_rate(false)}) {
 }
 
 Scheduler::Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>& configs,
                      ISchedulerCallback& callback, Options options)
-      : Scheduler(createVsyncSchedule(options.supportKernelTimer), configs, callback,
+      : Scheduler(createVsyncSchedule(configs->supportsKernelIdleTimer()), configs, callback,
                   createLayerHistory(), options) {
     using namespace sysprop;
-
-    const int setIdleTimerMs = base::GetIntProperty("debug.sf.set_idle_timer_ms"s, 0);
-
-    if (const auto millis = setIdleTimerMs ? setIdleTimerMs : set_idle_timer_ms(0); millis > 0) {
-        const auto callback = mOptions.supportKernelTimer ? &Scheduler::kernelIdleTimerCallback
-                                                          : &Scheduler::idleTimerCallback;
-        mIdleTimer.emplace(
-                "IdleTimer", std::chrono::milliseconds(millis),
-                [this, callback] { std::invoke(callback, this, TimerState::Reset); },
-                [this, callback] { std::invoke(callback, this, TimerState::Expired); });
-        mIdleTimer->start();
-    }
 
     if (const int64_t millis = set_touch_timer_ms(0); millis > 0) {
         // Touch events are coming to SF every 100ms, so the timer needs to be higher than that
@@ -168,11 +155,11 @@ Scheduler::Scheduler(VsyncSchedule schedule,
         mVsyncSchedule(std::move(schedule)),
         mLayerHistory(std::move(layerHistory)),
         mSchedulerCallback(schedulerCallback),
-        mRefreshRateConfigs(configs),
         mPredictedVsyncTracer(
                 base::GetBoolProperty("debug.sf.show_predicted_vsync", false)
                         ? std::make_unique<PredictedVsyncTracer>(*mVsyncSchedule.dispatch)
                         : nullptr) {
+    setRefreshRateConfigs(configs);
     mSchedulerCallback.setVsyncEnabled(false);
 }
 
@@ -180,7 +167,7 @@ Scheduler::~Scheduler() {
     // Ensure the OneShotTimer threads are joined before we start destroying state.
     mDisplayPowerTimer.reset();
     mTouchTimer.reset();
-    mIdleTimer.reset();
+    mRefreshRateConfigs.reset();
 }
 
 Scheduler::VsyncSchedule Scheduler::createVsyncSchedule(bool supportKernelTimer) {
@@ -404,6 +391,14 @@ void Scheduler::dispatchCachedReportedMode() {
         return;
     }
 
+    // If the mode is not the current mode, this means that a
+    // mode change is in progress. In that case we shouldn't dispatch an event
+    // as it will be dispatched when the current mode changes.
+    if (std::scoped_lock lock(mRefreshRateConfigsLock);
+        mRefreshRateConfigs->getCurrentRefreshRate().getMode() != mFeatures.mode) {
+        return;
+    }
+
     // If there is no change from cached mode, there is no need to dispatch an event
     if (mFeatures.mode == mFeatures.cachedModeChangedParams->mode) {
         return;
@@ -547,7 +542,7 @@ void Scheduler::resyncAndRefresh() {
         std::scoped_lock lock(mRefreshRateConfigsLock);
         return mRefreshRateConfigs->getCurrentRefreshRate();
     }();
-    mSchedulerCallback.repaintEverythingForHWC();
+    mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
     resyncToHardwareVsync(true /* makeAvailable */, refreshRate.getVsyncPeriod(), true);
     mDisplayIdle = false;
 }
@@ -691,18 +686,16 @@ void Scheduler::chooseRefreshRateForContent() {
 }
 
 void Scheduler::resetIdleTimer() {
-    if (mIdleTimer) {
-        mIdleTimer->reset();
-    }
+    std::scoped_lock lock(mRefreshRateConfigsLock);
+    mRefreshRateConfigs->resetIdleTimer(/*kernelOnly*/ false);
 }
 
-void Scheduler::notifyTouchEvent() {
+void Scheduler::onTouchHint() {
     if (mTouchTimer) {
         mTouchTimer->reset();
 
-        if (mOptions.supportKernelTimer && mIdleTimer) {
-            mIdleTimer->reset();
-        }
+        std::scoped_lock lock(mRefreshRateConfigsLock);
+        mRefreshRateConfigs->resetIdleTimer(/*kernelOnly*/ true);
     }
 }
 
@@ -776,7 +769,6 @@ void Scheduler::displayPowerTimerCallback(TimerState state) {
 void Scheduler::dump(std::string& result) const {
     using base::StringAppendF;
 
-    StringAppendF(&result, "+  Idle timer: %s\n", mIdleTimer ? mIdleTimer->dump().c_str() : "off");
     StringAppendF(&result, "+  Touch timer: %s\n",
                   mTouchTimer ? mTouchTimer->dump().c_str() : "off");
     StringAppendF(&result, "+  Content detection: %s %s\n\n",
@@ -888,7 +880,7 @@ DisplayModePtr Scheduler::calculateRefreshRateModeId(
     }
 
     const bool touchActive = mTouchTimer && mFeatures.touch == TouchState::Active;
-    const bool idle = mIdleTimer && mFeatures.idleTimer == TimerState::Expired;
+    const bool idle = mFeatures.idleTimer == TimerState::Expired;
 
     return refreshRateConfigs
             ->getBestRefreshRate(mFeatures.contentRequirements,
@@ -907,7 +899,7 @@ DisplayModePtr Scheduler::getPreferredDisplayMode() {
 
 void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline) {
     if (timeline.refreshRequired) {
-        mSchedulerCallback.repaintEverythingForHWC();
+        mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
     }
 
     std::lock_guard<std::mutex> lock(mVsyncTimelineLock);
@@ -920,21 +912,21 @@ void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimel
 }
 
 void Scheduler::onDisplayRefreshed(nsecs_t timestamp) {
-    bool callRepaint = false;
-    {
+    const bool refresh = [=] {
         std::lock_guard<std::mutex> lock(mVsyncTimelineLock);
         if (mLastVsyncPeriodChangeTimeline && mLastVsyncPeriodChangeTimeline->refreshRequired) {
-            if (mLastVsyncPeriodChangeTimeline->refreshTimeNanos < timestamp) {
-                mLastVsyncPeriodChangeTimeline->refreshRequired = false;
-            } else {
-                // We need to send another refresh as refreshTimeNanos is still in the future
-                callRepaint = true;
+            if (timestamp < mLastVsyncPeriodChangeTimeline->refreshTimeNanos) {
+                // We need to schedule another refresh as refreshTimeNanos is still in the future.
+                return true;
             }
-        }
-    }
 
-    if (callRepaint) {
-        mSchedulerCallback.repaintEverythingForHWC();
+            mLastVsyncPeriodChangeTimeline->refreshRequired = false;
+        }
+        return false;
+    }();
+
+    if (refresh) {
+        mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
     }
 }
 

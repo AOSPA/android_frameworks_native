@@ -71,8 +71,9 @@ struct WindowInfo : public Parcelable {
         SLIPPERY = 0x20000000,
         LAYOUT_ATTACHED_IN_DECOR = 0x40000000,
         DRAWS_SYSTEM_BAR_BACKGROUNDS = 0x80000000,
-    }; // Window types from WindowManager.LayoutParams
+    };
 
+    // Window types from WindowManager.LayoutParams
     enum class Type : int32_t {
         UNKNOWN = 0,
         FIRST_APPLICATION_WINDOW = 1,
@@ -87,43 +88,55 @@ struct WindowInfo : public Parcelable {
         APPLICATION_ATTACHED_DIALOG = FIRST_SUB_WINDOW + 3,
         APPLICATION_MEDIA_OVERLAY = FIRST_SUB_WINDOW + 4,
         LAST_SUB_WINDOW = 1999,
-        FIRST_SYSTEM_WINDOW = 2000,
-        STATUS_BAR = FIRST_SYSTEM_WINDOW,
-        SEARCH_BAR = FIRST_SYSTEM_WINDOW + 1,
-        PHONE = FIRST_SYSTEM_WINDOW + 2,
-        SYSTEM_ALERT = FIRST_SYSTEM_WINDOW + 3,
-        KEYGUARD = FIRST_SYSTEM_WINDOW + 4,
-        TOAST = FIRST_SYSTEM_WINDOW + 5,
-        SYSTEM_OVERLAY = FIRST_SYSTEM_WINDOW + 6,
-        PRIORITY_PHONE = FIRST_SYSTEM_WINDOW + 7,
-        SYSTEM_DIALOG = FIRST_SYSTEM_WINDOW + 8,
-        KEYGUARD_DIALOG = FIRST_SYSTEM_WINDOW + 9,
-        SYSTEM_ERROR = FIRST_SYSTEM_WINDOW + 10,
-        INPUT_METHOD = FIRST_SYSTEM_WINDOW + 11,
-        INPUT_METHOD_DIALOG = FIRST_SYSTEM_WINDOW + 12,
-        WALLPAPER = FIRST_SYSTEM_WINDOW + 13,
-        STATUS_BAR_PANEL = FIRST_SYSTEM_WINDOW + 14,
-        SECURE_SYSTEM_OVERLAY = FIRST_SYSTEM_WINDOW + 15,
-        DRAG = FIRST_SYSTEM_WINDOW + 16,
-        STATUS_BAR_SUB_PANEL = FIRST_SYSTEM_WINDOW + 17,
-        POINTER = FIRST_SYSTEM_WINDOW + 18,
-        NAVIGATION_BAR = FIRST_SYSTEM_WINDOW + 19,
-        VOLUME_OVERLAY = FIRST_SYSTEM_WINDOW + 20,
-        BOOT_PROGRESS = FIRST_SYSTEM_WINDOW + 21,
-        INPUT_CONSUMER = FIRST_SYSTEM_WINDOW + 22,
-        NAVIGATION_BAR_PANEL = FIRST_SYSTEM_WINDOW + 24,
-        MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW + 27,
-        ACCESSIBILITY_OVERLAY = FIRST_SYSTEM_WINDOW + 32,
-        DOCK_DIVIDER = FIRST_SYSTEM_WINDOW + 34,
-        ACCESSIBILITY_MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW + 39,
-        NOTIFICATION_SHADE = FIRST_SYSTEM_WINDOW + 40,
+
+#define FIRST_SYSTEM_WINDOW_ 2000
+
+        STATUS_BAR = FIRST_SYSTEM_WINDOW_,
+        SEARCH_BAR = FIRST_SYSTEM_WINDOW_ + 1,
+        PHONE = FIRST_SYSTEM_WINDOW_ + 2,
+        SYSTEM_ALERT = FIRST_SYSTEM_WINDOW_ + 3,
+        KEYGUARD = FIRST_SYSTEM_WINDOW_ + 4,
+        TOAST = FIRST_SYSTEM_WINDOW_ + 5,
+        SYSTEM_OVERLAY = FIRST_SYSTEM_WINDOW_ + 6,
+        PRIORITY_PHONE = FIRST_SYSTEM_WINDOW_ + 7,
+        SYSTEM_DIALOG = FIRST_SYSTEM_WINDOW_ + 8,
+        KEYGUARD_DIALOG = FIRST_SYSTEM_WINDOW_ + 9,
+        SYSTEM_ERROR = FIRST_SYSTEM_WINDOW_ + 10,
+        INPUT_METHOD = FIRST_SYSTEM_WINDOW_ + 11,
+        INPUT_METHOD_DIALOG = FIRST_SYSTEM_WINDOW_ + 12,
+        WALLPAPER = FIRST_SYSTEM_WINDOW_ + 13,
+        STATUS_BAR_PANEL = FIRST_SYSTEM_WINDOW_ + 14,
+        SECURE_SYSTEM_OVERLAY = FIRST_SYSTEM_WINDOW_ + 15,
+        DRAG = FIRST_SYSTEM_WINDOW_ + 16,
+        STATUS_BAR_SUB_PANEL = FIRST_SYSTEM_WINDOW_ + 17,
+        POINTER = FIRST_SYSTEM_WINDOW_ + 18,
+        NAVIGATION_BAR = FIRST_SYSTEM_WINDOW_ + 19,
+        VOLUME_OVERLAY = FIRST_SYSTEM_WINDOW_ + 20,
+        BOOT_PROGRESS = FIRST_SYSTEM_WINDOW_ + 21,
+        INPUT_CONSUMER = FIRST_SYSTEM_WINDOW_ + 22,
+        NAVIGATION_BAR_PANEL = FIRST_SYSTEM_WINDOW_ + 24,
+        MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW_ + 27,
+        ACCESSIBILITY_OVERLAY = FIRST_SYSTEM_WINDOW_ + 32,
+        DOCK_DIVIDER = FIRST_SYSTEM_WINDOW_ + 34,
+        ACCESSIBILITY_MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW_ + 39,
+        NOTIFICATION_SHADE = FIRST_SYSTEM_WINDOW_ + 40,
+
+        FIRST_SYSTEM_WINDOW = FIRST_SYSTEM_WINDOW_,
         LAST_SYSTEM_WINDOW = 2999,
+
+#undef FIRST_SYSTEM_WINDOW_
+
+        // Small range to limit LUT size.
+        ftl_first = FIRST_SYSTEM_WINDOW,
+        ftl_last = FIRST_SYSTEM_WINDOW + 15
     };
 
-    enum class Feature {
-        DISABLE_TOUCH_PAD_GESTURES = 0x00000001,
-        NO_INPUT_CHANNEL = 0x00000002,
-        DISABLE_USER_ACTIVITY = 0x00000004,
+    enum class Feature : uint32_t {
+        DISABLE_TOUCH_PAD_GESTURES = 1u << 0,
+        NO_INPUT_CHANNEL = 1u << 1,
+        DISABLE_USER_ACTIVITY = 1u << 2,
+        DROP_INPUT = 1u << 3,
+        DROP_INPUT_IF_OBSCURED = 1u << 4,
     };
 
     /* These values are filled in by the WM and passed through SurfaceFlinger
@@ -132,6 +145,10 @@ struct WindowInfo : public Parcelable {
     // This value should NOT be used to uniquely identify the window. There may be different
     // input windows that have the same token.
     sp<IBinder> token;
+
+    // The token that identifies which client window this WindowInfo was created for.
+    sp<IBinder> windowToken;
+
     // This uniquely identifies the input window.
     int32_t id = -1;
     std::string name;
@@ -163,13 +180,6 @@ struct WindowInfo : public Parcelable {
 
     // Transform applied to individual windows.
     ui::Transform transform;
-
-    // Display orientation. Used for compatibility raw coordinates.
-    uint32_t displayOrientation = ui::Transform::ROT_0;
-
-    // Display size in its natural rotation. Used to rotate raw coordinates for compatibility.
-    int32_t displayWidth = 0;
-    int32_t displayHeight = 0;
 
     /*
      * This is filled in by the WM relative to the frame and then translated

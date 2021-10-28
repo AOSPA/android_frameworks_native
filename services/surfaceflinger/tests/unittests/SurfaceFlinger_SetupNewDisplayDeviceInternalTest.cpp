@@ -34,7 +34,6 @@ struct WideColorP3ColorimetricSupportedVariant {
     static constexpr bool WIDE_COLOR_SUPPORTED = true;
 
     static void injectConfigChange(DisplayTransactionTest* test) {
-        test->mFlinger.mutableUseColorManagement() = true;
         test->mFlinger.mutableHasWideColorDisplay() = true;
         test->mFlinger.mutableDisplayColorSetting() = DisplayColorSetting::kUnmanaged;
     }
@@ -257,6 +256,7 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
     }
 
     state.isSecure = static_cast<bool>(Case::Display::SECURE);
+    state.flags = Case::Display::DISPLAY_FLAGS;
 
     auto device = mFlinger.setupNewDisplayDeviceInternal(displayToken, compositionDisplay, state,
                                                          displaySurface, producer);
@@ -279,6 +279,8 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
     EXPECT_EQ(Case::HdrSupport::HDR_DOLBY_VISION_SUPPORTED, device->hasDolbyVisionSupport());
     EXPECT_EQ(Case::PerFrameMetadataSupport::PER_FRAME_METADATA_KEYS,
               device->getSupportedPerFrameMetadata());
+    EXPECT_EQ(Case::Display::DISPLAY_FLAGS & DisplayDevice::eReceivesInput,
+              device->receivesInput());
 
     if constexpr (Case::Display::CONNECTION_TYPE::value) {
         EXPECT_EQ(1, device->getSupportedModes().size());

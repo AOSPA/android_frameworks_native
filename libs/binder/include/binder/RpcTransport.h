@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -25,50 +26,70 @@
 #include <android-base/unique_fd.h>
 #include <utils/Errors.h>
 
+#include <binder/RpcCertificateFormat.h>
+
 namespace android {
 
 class FdTrigger;
 
 // Represents a socket connection.
+// No thread-safety is guaranteed for these APIs.
 class RpcTransport {
 public:
     virtual ~RpcTransport() = default;
 
     // replacement of ::recv(MSG_PEEK). Error code may not be set if TLS is enabled.
-    virtual android::base::Result<size_t> peek(void *buf, size_t size) = 0;
+    [[nodiscard]] virtual android::base::Result<size_t> peek(void *buf, size_t size) = 0;
 
     /**
      * Read (or write), but allow to be interrupted by a trigger.
+     *
+     * altPoll - function to be called instead of polling, when needing to wait
+     * to read/write data. If this returns an error, that error is returned from
+     * this function.
      *
      * Return:
      *   OK - succeeded in completely processing 'size'
      *   error - interrupted (failure or trigger)
      */
-    virtual status_t interruptableWriteFully(FdTrigger *fdTrigger, const void *buf,
-                                             size_t size) = 0;
-    virtual status_t interruptableReadFully(FdTrigger *fdTrigger, void *buf, size_t size) = 0;
+    [[nodiscard]] virtual status_t interruptableWriteFully(
+            FdTrigger *fdTrigger, const void *buf, size_t size,
+            const std::function<status_t()> &altPoll) = 0;
+    [[nodiscard]] virtual status_t interruptableReadFully(
+            FdTrigger *fdTrigger, void *buf, size_t size,
+            const std::function<status_t()> &altPoll) = 0;
 
 protected:
     RpcTransport() = default;
 };
 
 // Represents the context that generates the socket connection.
+// All APIs are thread-safe. See RpcTransportCtxRaw and RpcTransportCtxTls for details.
 class RpcTransportCtx {
 public:
     virtual ~RpcTransportCtx() = default;
 
     // Create a new RpcTransport object.
     //
-    // Implemenion details: for TLS, this function may incur I/O. |fdTrigger| may be used
+    // Implementation details: for TLS, this function may incur I/O. |fdTrigger| may be used
     // to interrupt I/O. This function blocks until handshake is finished.
     [[nodiscard]] virtual std::unique_ptr<RpcTransport> newTransport(
             android::base::unique_fd fd, FdTrigger *fdTrigger) const = 0;
+
+    // Return the preconfigured certificate of this context.
+    //
+    // Implementation details:
+    // - For raw sockets, this always returns empty string.
+    // - For TLS, this returns the certificate. See RpcTransportTls for details.
+    [[nodiscard]] virtual std::vector<uint8_t> getCertificate(
+            RpcCertificateFormat format) const = 0;
 
 protected:
     RpcTransportCtx() = default;
 };
 
 // A factory class that generates RpcTransportCtx.
+// All APIs are thread-safe.
 class RpcTransportCtxFactory {
 public:
     virtual ~RpcTransportCtxFactory() = default;

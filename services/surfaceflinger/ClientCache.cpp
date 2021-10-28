@@ -21,11 +21,11 @@
 
 #include <cinttypes>
 
+#include <android-base/stringprintf.h>
+
 #include "ClientCache.h"
 
 namespace android {
-
-using base::StringAppendF;
 
 ANDROID_SINGLETON_STATIC_INSTANCE(ClientCache);
 
@@ -82,10 +82,13 @@ bool ClientCache::add(const client_cache_t& cacheId, const sp<GraphicBuffer>& bu
             return false;
         }
 
-        status_t err = token->linkToDeath(mDeathRecipient);
-        if (err != NO_ERROR) {
-            ALOGE("failed to cache buffer: could not link to death");
-            return false;
+        // Only call linkToDeath if not a local binder
+        if (token->localBinder() == nullptr) {
+            status_t err = token->linkToDeath(mDeathRecipient);
+            if (err != NO_ERROR) {
+                ALOGE("failed to cache buffer: could not link to death");
+                return false;
+            }
         }
         auto [itr, success] =
                 mBuffers.emplace(processToken,
@@ -212,16 +215,15 @@ void ClientCache::CacheDeathRecipient::binderDied(const wp<IBinder>& who) {
 
 void ClientCache::dump(std::string& result) {
     std::lock_guard lock(mMutex);
-    for (auto i : mBuffers) {
-        const sp<IBinder>& cacheOwner = i.second.first;
-        StringAppendF(&result," Cache owner: %p\n", cacheOwner.get());
-        auto &buffers = i.second.second;
-        for (auto& [id, clientCacheBuffer] : buffers) {
-            StringAppendF(&result, "\t ID: %d, Width/Height: %d,%d\n", (int)id,
-                          (int)clientCacheBuffer.buffer->getBuffer()->getWidth(),
-                          (int)clientCacheBuffer.buffer->getBuffer()->getHeight());
+    for (const auto& [_, cache] : mBuffers) {
+        base::StringAppendF(&result, " Cache owner: %p\n", cache.first.get());
+
+        for (const auto& [id, entry] : cache.second) {
+            const auto& buffer = entry.buffer->getBuffer();
+            base::StringAppendF(&result, "\tID: %" PRIu64 ", size: %ux%u\n", id, buffer->getWidth(),
+                                buffer->getHeight());
         }
     }
 }
 
-}; // namespace android
+} // namespace android

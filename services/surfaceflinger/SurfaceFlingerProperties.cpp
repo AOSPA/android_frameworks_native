@@ -34,6 +34,8 @@ using android::hardware::graphics::common::V1_2::Dataspace;
 using android::hardware::graphics::common::V1_2::PixelFormat;
 using android::ui::DisplayPrimaries;
 
+// Keep logic in sync with WindowManagerService functions that query SurfaceFlinger properties.
+// Consider exposing properties via ISurfaceComposer instead.
 int64_t vsync_event_phase_offset_ns(int64_t defaultValue) {
     auto temp = SurfaceFlingerProperties::vsync_event_phase_offset_ns();
     if (temp.has_value()) {
@@ -191,17 +193,6 @@ SurfaceFlingerProperties::primary_display_orientation_values primary_display_ori
             break;
     }
     return SurfaceFlingerProperties::primary_display_orientation_values::ORIENTATION_0;
-}
-
-bool use_color_management(bool defaultValue) {
-    auto tmpuseColorManagement = SurfaceFlingerProperties::use_color_management();
-    auto tmpHasHDRDisplayVal = has_HDR_display(defaultValue);
-    auto tmpHasWideColorDisplayVal = has_wide_color_display(defaultValue);
-
-    auto tmpuseColorManagementVal = tmpuseColorManagement.has_value() ? *tmpuseColorManagement :
-        defaultValue;
-
-    return tmpuseColorManagementVal || tmpHasHDRDisplayVal || tmpHasWideColorDisplayVal;
 }
 
 int64_t default_composition_dataspace(Dataspace defaultValue) {

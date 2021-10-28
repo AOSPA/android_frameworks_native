@@ -185,6 +185,8 @@ protected:
         UNSCALED,   // unscaled mapping (touchpad)
         NAVIGATION, // unscaled mapping with assist gesture (touch navigation)
         POINTER,    // pointer mapping (pointer)
+
+        ftl_last = POINTER
     };
     DeviceMode mDeviceMode;
 
@@ -198,18 +200,33 @@ protected:
             TOUCH_PAD,
             TOUCH_NAVIGATION,
             POINTER,
+
+            ftl_last = POINTER
         };
 
         DeviceType deviceType;
         bool hasAssociatedDisplay;
         bool associatedDisplayIsExternal;
         bool orientationAware;
+
+        enum class Orientation : int32_t {
+            ORIENTATION_0 = DISPLAY_ORIENTATION_0,
+            ORIENTATION_90 = DISPLAY_ORIENTATION_90,
+            ORIENTATION_180 = DISPLAY_ORIENTATION_180,
+            ORIENTATION_270 = DISPLAY_ORIENTATION_270,
+
+            ftl_last = ORIENTATION_270
+        };
+        Orientation orientation;
+
         bool hasButtonUnderPad;
         std::string uniqueDisplayId;
 
         enum class GestureMode {
             SINGLE_TOUCH,
             MULTI_TOUCH,
+
+            ftl_last = MULTI_TOUCH
         };
         GestureMode gestureMode;
 
@@ -418,6 +435,7 @@ private:
 
     // The surface origin specifies how the surface coordinates should be translated
     // to align with the logical display coordinate space.
+    // TODO(b/188939842): Remove surface coordinates when Per-Window Input Rotation is enabled.
     int32_t mSurfaceLeft;
     int32_t mSurfaceTop;
     int32_t mSurfaceRight;

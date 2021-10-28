@@ -20,17 +20,23 @@ namespace android {
 #pragma clang diagnostic push
 #pragma clang diagnostic error "-Wpadded"
 
-enum : uint8_t {
-    RPC_CONNECTION_OPTION_INCOMING = 0x1, // default is outgoing
-};
+constexpr uint8_t RPC_CONNECTION_OPTION_INCOMING = 0x1; // default is outgoing
 
-constexpr uint64_t RPC_WIRE_ADDRESS_OPTION_CREATED = 1 << 0; // distinguish from '0' address
-constexpr uint64_t RPC_WIRE_ADDRESS_OPTION_FOR_SERVER = 1 << 1;
+constexpr uint32_t RPC_WIRE_ADDRESS_OPTION_CREATED = 1 << 0; // distinguish from '0' address
+constexpr uint32_t RPC_WIRE_ADDRESS_OPTION_FOR_SERVER = 1 << 1;
 
 struct RpcWireAddress {
-    uint64_t options;
-    uint8_t address[32];
+    uint32_t options;
+    uint32_t address;
+
+    static inline RpcWireAddress fromRaw(uint64_t raw) {
+        return *reinterpret_cast<RpcWireAddress*>(&raw);
+    }
+    static inline uint64_t toRaw(RpcWireAddress addr) {
+        return *reinterpret_cast<uint64_t*>(&addr);
+    }
 };
+static_assert(sizeof(RpcWireAddress) == sizeof(uint64_t));
 
 /**
  * This is sent to an RpcServer in order to request a new connection is created,
@@ -38,11 +44,13 @@ struct RpcWireAddress {
  */
 struct RpcConnectionHeader {
     uint32_t version; // maximum supported by caller
-    uint8_t reserver0[4];
-    RpcWireAddress sessionId;
     uint8_t options;
-    uint8_t reserved1[7];
+    uint8_t reservered[9];
+    // Follows is sessionIdSize bytes.
+    // if size is 0, this is requesting a new session.
+    uint16_t sessionIdSize;
 };
+static_assert(sizeof(RpcConnectionHeader) == 16);
 
 /**
  * In response to an RpcConnectionHeader which corresponds to a new session,
@@ -52,6 +60,7 @@ struct RpcNewSessionResponse {
     uint32_t version; // maximum supported by callee <= maximum supported by caller
     uint8_t reserved[4];
 };
+static_assert(sizeof(RpcNewSessionResponse) == 8);
 
 #define RPC_CONNECTION_INIT_OKAY "cci"
 
@@ -64,6 +73,7 @@ struct RpcOutgoingConnectionInit {
     char msg[4];
     uint8_t reserved[4];
 };
+static_assert(sizeof(RpcOutgoingConnectionInit) == 8);
 
 enum : uint32_t {
     /**
@@ -75,7 +85,7 @@ enum : uint32_t {
      */
     RPC_COMMAND_REPLY,
     /**
-     * follows is RpcWireAddress
+     * follows is RpcDecStrong
      *
      * note - this in the protocol directly instead of as a 'special
      * transaction' in order to keep it as lightweight as possible (we don't
@@ -105,6 +115,14 @@ struct RpcWireHeader {
 
     uint32_t reserved[2];
 };
+static_assert(sizeof(RpcWireHeader) == 16);
+
+struct RpcDecStrong {
+    RpcWireAddress address;
+    uint32_t amount;
+    uint32_t reserved;
+};
+static_assert(sizeof(RpcDecStrong) == 16);
 
 struct RpcWireTransaction {
     RpcWireAddress address;
@@ -115,13 +133,15 @@ struct RpcWireTransaction {
 
     uint32_t reserved[4];
 
-    uint8_t data[0];
+    uint8_t data[];
 };
+static_assert(sizeof(RpcWireTransaction) == 40);
 
 struct RpcWireReply {
     int32_t status; // transact return
-    uint8_t data[0];
+    uint8_t data[];
 };
+static_assert(sizeof(RpcWireReply) == 4);
 
 #pragma clang diagnostic pop
 

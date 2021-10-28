@@ -22,6 +22,7 @@
 #include <math/mat4.h>
 #include <ui/BlurRegion.h>
 #include <ui/FloatRect.h>
+#include <ui/LayerStack.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 #include <ui/Transform.h>
@@ -93,11 +94,9 @@ struct LayerFECompositionState {
     /*
      * Visibility state
      */
-    // the layer stack this layer belongs to
-    std::optional<uint32_t> layerStackId;
 
-    // If true, this layer should be only visible on the internal display
-    bool internalOnly{false};
+    // The filter that determines which outputs include this layer
+    ui::LayerFilter outputFilter;
 
     // If false, this layer should not be considered visible
     bool isVisible{true};
@@ -167,6 +166,8 @@ struct LayerFECompositionState {
 
     // The handle to use for a sideband stream for this layer
     sp<NativeHandle> sidebandStream;
+    // If true, this sideband layer has a frame update
+    bool sidebandStreamHasFrame{false};
 
     // The color for this layer
     half4 color;

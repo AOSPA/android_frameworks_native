@@ -95,7 +95,6 @@ static void drawShadowLayers(SkiaRenderEngine* renderengine, const DisplaySettin
             .alpha = 1,
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer, &caster};
     // Four combinations of settings are used (two transforms here, and drawShadowLayers is
     // called with two different destination data spaces) They're all rounded rect.
@@ -116,7 +115,7 @@ static void drawShadowLayers(SkiaRenderEngine* renderengine, const DisplaySettin
         layer.geometry.positionTransform = transform;
         caster.geometry.positionTransform = transform;
         renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                base::unique_fd(), &drawFence);
+                                 base::unique_fd());
     }
 }
 
@@ -141,7 +140,6 @@ static void drawImageLayers(SkiaRenderEngine* renderengine, const DisplaySetting
                                           }},
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
     for (auto dataspace : {kDestDataSpace, kOtherDataSpace}) {
         layer.sourceDataspace = dataspace;
@@ -155,7 +153,7 @@ static void drawImageLayers(SkiaRenderEngine* renderengine, const DisplaySetting
                 for (auto alpha : {half(.2f), half(1.0f)}) {
                     layer.alpha = alpha;
                     renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                             base::unique_fd(), &drawFence);
+                                             base::unique_fd());
                 }
             }
         }
@@ -178,14 +176,13 @@ static void drawSolidLayers(SkiaRenderEngine* renderengine, const DisplaySetting
             .alpha = 0.5,
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
     for (auto transform : {mat4(), kScaleAndTranslate}) {
         layer.geometry.positionTransform = transform;
         for (float roundedCornersRadius : {0.0f, 50.f}) {
             layer.geometry.roundedCornersRadius = roundedCornersRadius;
             renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                     base::unique_fd(), &drawFence);
+                                     base::unique_fd());
         }
     }
 }
@@ -204,13 +201,12 @@ static void drawBlurLayers(SkiaRenderEngine* renderengine, const DisplaySettings
             .skipContentDraw = true,
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
     // Different blur code is invoked for radii less and greater than 30 pixels
     for (int radius : {9, 60}) {
         layer.backgroundBlurRadius = radius;
         renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                 base::unique_fd(), &drawFence);
+                                 base::unique_fd());
     }
 }
 
@@ -246,7 +242,6 @@ static void drawClippedLayers(SkiaRenderEngine* renderengine, const DisplaySetti
                     },
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
     for (auto pixelSource : {bufferSource, bufferOpaque, colorSource}) {
         layer.source = pixelSource;
@@ -258,7 +253,7 @@ static void drawClippedLayers(SkiaRenderEngine* renderengine, const DisplaySetti
                 for (float alpha : {0.5f, 1.f}) {
                     layer.alpha = alpha,
                     renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                                             base::unique_fd(), &drawFence);
+                                             base::unique_fd());
                 }
             }
         }
@@ -294,10 +289,8 @@ static void drawPIPImageLayer(SkiaRenderEngine* renderengine, const DisplaySetti
 
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
-    renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                             base::unique_fd(), &drawFence);
+    renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache, base::unique_fd());
 }
 
 static void drawHolePunchLayer(SkiaRenderEngine* renderengine, const DisplaySettings& display,
@@ -324,10 +317,8 @@ static void drawHolePunchLayer(SkiaRenderEngine* renderengine, const DisplaySett
 
     };
 
-    base::unique_fd drawFence;
     auto layers = std::vector<const LayerSettings*>{&layer};
-    renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                            base::unique_fd(), &drawFence);
+    renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache, base::unique_fd());
 }
 
 //
@@ -398,7 +389,10 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine) {
             drawBlurLayers(renderengine, display, dstTexture);
         }
 
-        // should be the same as AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+        // The majority of skia shaders needed by RenderEngine are related to sampling images.
+        // These need to be generated with various source textures.
+        // Make a list of applicable sources.
+        // GRALLOC_USAGE_HW_TEXTURE should be the same as AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE.
         const int64_t usageExternal = GRALLOC_USAGE_HW_TEXTURE;
         sp<GraphicBuffer> externalBuffer =
                 new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_8888,
@@ -406,24 +400,24 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine) {
         const auto externalTexture =
                 std::make_shared<ExternalTexture>(externalBuffer, *renderengine,
                                                   ExternalTexture::Usage::READABLE);
+        std::vector<const std::shared_ptr<ExternalTexture>> textures =
+            {srcTexture, externalTexture};
 
-        // Another external texture with a different pixel format triggers useIsOpaqueWorkaround
+        // Another external texture with a different pixel format triggers useIsOpaqueWorkaround.
+        // It doesn't have to be f16, but it can't be the usual 8888.
         sp<GraphicBuffer> f16ExternalBuffer =
                 new GraphicBuffer(displayRect.width(), displayRect.height(), PIXEL_FORMAT_RGBA_FP16,
                                   1, usageExternal, "primeShaderCache_external_f16");
-        const auto f16ExternalTexture =
+        // The F16 texture may not be usable on all devices, so check first that it was created.
+        status_t error = f16ExternalBuffer->initCheck();
+        if (!error) {
+            const auto f16ExternalTexture =
                 std::make_shared<ExternalTexture>(f16ExternalBuffer, *renderengine,
                                                   ExternalTexture::Usage::READABLE);
+            textures.push_back(f16ExternalTexture);
+        }
 
-        // The majority of shaders are related to sampling images.
-        // These need to be generated with various source textures
-        // The F16 texture may not be usable on all devices, so check first that it was created with
-        // the requested usage bit.
-        auto textures = {srcTexture, externalTexture};
-        auto texturesWithF16 = {srcTexture, externalTexture, f16ExternalTexture};
-        bool canUsef16 = f16ExternalBuffer->getUsage() & GRALLOC_USAGE_HW_TEXTURE;
-
-        for (auto texture : canUsef16 ? texturesWithF16 : textures) {
+        for (auto texture : textures) {
             drawImageLayers(renderengine, display, dstTexture, texture);
             // Draw layers for b/185569240.
             drawClippedLayers(renderengine, display, dstTexture, texture);
@@ -436,8 +430,10 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine) {
                 .source = PixelSource{.solidColor = half3(0.f, 0.f, 0.f)},
         };
         auto layers = std::vector<const LayerSettings*>{&layer};
-        renderengine->drawLayers(display, layers, dstTexture, kUseFrameBufferCache,
-                             base::unique_fd(), nullptr); // null drawFence makes it synchronous
+        // call get() to make it synchronous
+        renderengine
+                ->drawLayers(display, layers, dstTexture, kUseFrameBufferCache, base::unique_fd())
+                .get();
 
         const nsecs_t timeAfter = systemTime();
         const float compileTimeMs = static_cast<float>(timeAfter - timeBefore) / 1.0E6;

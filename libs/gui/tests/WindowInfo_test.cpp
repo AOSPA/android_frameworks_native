@@ -46,6 +46,7 @@ TEST(WindowInfo, Parcelling) {
     sp<IBinder> touchableRegionCropHandle = new BBinder();
     WindowInfo i;
     i.token = new BBinder();
+    i.windowToken = new BBinder();
     i.id = 1;
     i.name = "Foobar";
     i.flags = WindowInfo::Flag::SLIPPERY;
@@ -59,9 +60,6 @@ TEST(WindowInfo, Parcelling) {
     i.globalScaleFactor = 0.3;
     i.alpha = 0.7;
     i.transform.set({0.4, -1, 100, 0.5, 0, 40, 0, 0, 1});
-    i.displayOrientation = ui::Transform::ROT_0;
-    i.displayWidth = 1000;
-    i.displayHeight = 2000;
     i.visible = false;
     i.focusable = false;
     i.hasWallpaper = false;
@@ -85,6 +83,7 @@ TEST(WindowInfo, Parcelling) {
     WindowInfo i2;
     i2.readFromParcel(&p);
     ASSERT_EQ(i.token, i2.token);
+    ASSERT_EQ(i.windowToken, i2.windowToken);
     ASSERT_EQ(i.id, i2.id);
     ASSERT_EQ(i.name, i2.name);
     ASSERT_EQ(i.flags, i2.flags);
@@ -98,8 +97,6 @@ TEST(WindowInfo, Parcelling) {
     ASSERT_EQ(i.globalScaleFactor, i2.globalScaleFactor);
     ASSERT_EQ(i.alpha, i2.alpha);
     ASSERT_EQ(i.transform, i2.transform);
-    ASSERT_EQ(i.displayWidth, i2.displayWidth);
-    ASSERT_EQ(i.displayHeight, i2.displayHeight);
     ASSERT_EQ(i.visible, i2.visible);
     ASSERT_EQ(i.focusable, i2.focusable);
     ASSERT_EQ(i.hasWallpaper, i2.hasWallpaper);

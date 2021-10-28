@@ -75,7 +75,7 @@ void TouchState::addOrUpdateWindow(const sp<WindowInfoHandle>& windowHandle, int
     windows.push_back(touchedWindow);
 }
 
-void TouchState::addGestureMonitors(const std::vector<TouchedMonitor>& newMonitors) {
+void TouchState::addGestureMonitors(const std::vector<Monitor>& newMonitors) {
     const size_t newSize = gestureMonitors.size() + newMonitors.size();
     gestureMonitors.reserve(newSize);
     gestureMonitors.insert(std::end(gestureMonitors), std::begin(newMonitors),
@@ -132,6 +132,16 @@ bool TouchState::isSlippery() const {
         }
     }
     return haveSlipperyForegroundWindow;
+}
+
+sp<WindowInfoHandle> TouchState::getWallpaperWindow() const {
+    for (size_t i = 0; i < windows.size(); i++) {
+        const TouchedWindow& window = windows[i];
+        if (window.windowHandle->getInfo()->type == WindowInfo::Type::WALLPAPER) {
+            return window.windowHandle;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace android::inputdispatcher

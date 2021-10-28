@@ -17,7 +17,6 @@
 #pragma once
 
 #include <binder/IBinder.h>
-#include <binder/RpcAddress.h>
 #include <utils/KeyedVector.h>
 #include <utils/Mutex.h>
 #include <utils/threads.h>
@@ -40,9 +39,6 @@ using binder_proxy_limit_callback = void(*)(int);
 class BpBinder : public IBinder
 {
 public:
-    static sp<BpBinder> create(int32_t handle);
-    static sp<BpBinder> create(const sp<RpcSession>& session, const RpcAddress& address);
-
     /**
      * Return value:
      * true - this is associated with a socket RpcSession
@@ -117,42 +113,49 @@ public:
         KeyedVector<const void*, entry_t> mObjects;
     };
 
-    class PrivateAccessorForId {
+    class PrivateAccessor {
     private:
         friend class BpBinder;
         friend class ::android::Parcel;
         friend class ::android::ProcessState;
+        friend class ::android::RpcSession;
         friend class ::android::RpcState;
-        explicit PrivateAccessorForId(const BpBinder* binder) : mBinder(binder) {}
+        explicit PrivateAccessor(const BpBinder* binder) : mBinder(binder) {}
+
+        static sp<BpBinder> create(int32_t handle) { return BpBinder::create(handle); }
+        static sp<BpBinder> create(const sp<RpcSession>& session, uint64_t address) {
+            return BpBinder::create(session, address);
+        }
 
         // valid if !isRpcBinder
         int32_t binderHandle() const { return mBinder->binderHandle(); }
 
         // valid if isRpcBinder
-        const RpcAddress& rpcAddress() const { return mBinder->rpcAddress(); }
+        uint64_t rpcAddress() const { return mBinder->rpcAddress(); }
         const sp<RpcSession>& rpcSession() const { return mBinder->rpcSession(); }
 
         const BpBinder* mBinder;
     };
-    const PrivateAccessorForId getPrivateAccessorForId() const {
-        return PrivateAccessorForId(this);
-    }
+    const PrivateAccessor getPrivateAccessor() const { return PrivateAccessor(this); }
 
 private:
-    friend PrivateAccessorForId;
+    friend PrivateAccessor;
     friend class sp<BpBinder>;
+
+    static sp<BpBinder> create(int32_t handle);
+    static sp<BpBinder> create(const sp<RpcSession>& session, uint64_t address);
 
     struct BinderHandle {
         int32_t handle;
     };
     struct RpcHandle {
         sp<RpcSession> session;
-        RpcAddress address;
+        uint64_t address;
     };
     using Handle = std::variant<BinderHandle, RpcHandle>;
 
     int32_t binderHandle() const;
-    const RpcAddress& rpcAddress() const;
+    uint64_t rpcAddress() const;
     const sp<RpcSession>& rpcSession() const;
 
     explicit BpBinder(Handle&& handle);
@@ -194,6 +197,7 @@ private:
     static uint32_t                             sBinderProxyCountHighWatermark;
     static uint32_t                             sBinderProxyCountLowWatermark;
     static bool                                 sBinderProxyThrottleCreate;
+    static std::unordered_map<int32_t,uint32_t> sLastLimitCallbackMap;
 };
 
 } // namespace android

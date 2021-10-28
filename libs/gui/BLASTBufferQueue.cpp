@@ -120,12 +120,12 @@ void BLASTBufferItemConsumer::getConnectionEvents(uint64_t frameNumber, bool* ne
 }
 
 void BLASTBufferItemConsumer::setBlastBufferQueue(BLASTBufferQueue* blastbufferqueue) {
-    Mutex::Autolock lock(mMutex);
+    std::scoped_lock lock(mBufferQueueMutex);
     mBLASTBufferQueue = blastbufferqueue;
 }
 
 void BLASTBufferItemConsumer::onSidebandStreamChanged() {
-    Mutex::Autolock lock(mMutex);
+    std::scoped_lock lock(mBufferQueueMutex);
     if (mBLASTBufferQueue != nullptr) {
         sp<NativeHandle> stream = getSidebandStream();
         mBLASTBufferQueue->setSidebandStream(stream);
@@ -477,10 +477,10 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     // Ensure BLASTBufferQueue stays alive until we receive the transaction complete callback.
     incStrong((void*)transactionCallbackThunk);
 
+    const bool sizeHasChanged = mRequestedSize != mSize;
+    mSize = mRequestedSize;
+    const bool updateDestinationFrame = sizeHasChanged || !mLastBufferInfo.hasBuffer;
     Rect crop = computeCrop(bufferItem);
-    const bool updateDestinationFrame =
-            bufferItem.mScalingMode == NATIVE_WINDOW_SCALING_MODE_FREEZE ||
-            !mLastBufferInfo.hasBuffer;
     mLastBufferInfo.update(true /* hasBuffer */, bufferItem.mGraphicBuffer->getWidth(),
                            bufferItem.mGraphicBuffer->getHeight(), bufferItem.mTransform,
                            bufferItem.mScalingMode, crop);
@@ -489,12 +489,12 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
             std::bind(releaseBufferCallbackThunk, wp<BLASTBufferQueue>(this) /* callbackContext */,
                       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3,
                       std::placeholders::_4);
-    t->setBuffer(mSurfaceControl, buffer, releaseCallbackId, releaseBufferCallback);
+    sp<Fence> fence = bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE;
+    t->setBuffer(mSurfaceControl, buffer, fence, bufferItem.mFrameNumber, releaseCallbackId,
+                 releaseBufferCallback);
     t->setDataspace(mSurfaceControl, static_cast<ui::Dataspace>(bufferItem.mDataSpace));
     t->setHdrMetadata(mSurfaceControl, bufferItem.mHdrMetadata);
     t->setSurfaceDamageRegion(mSurfaceControl, bufferItem.mSurfaceDamage);
-    t->setAcquireFence(mSurfaceControl,
-                       bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE);
     t->addTransactionCompletedCallback(transactionCallbackThunk, static_cast<void*>(this));
     mSurfaceControlsWithPendingCallback.push(mSurfaceControl);
 
@@ -507,7 +507,6 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
     if (!bufferItem.mIsAutoTimestamp) {
         t->setDesiredPresentTime(bufferItem.mTimestamp);
     }
-    t->setFrameNumber(mSurfaceControl, bufferItem.mFrameNumber);
 
     if (!mNextFrameTimelineInfoQueue.empty()) {
         t->setFrameTimelineInfo(mNextFrameTimelineInfoQueue.front());
@@ -529,21 +528,7 @@ void BLASTBufferQueue::processNextBufferLocked(bool useNextTransaction) {
         }
     }
 
-    auto mergeTransaction =
-            [&t, currentFrameNumber = bufferItem.mFrameNumber](
-                    std::tuple<uint64_t, SurfaceComposerClient::Transaction> pendingTransaction) {
-                auto& [targetFrameNumber, transaction] = pendingTransaction;
-                if (currentFrameNumber < targetFrameNumber) {
-                    return false;
-                }
-                t->merge(std::move(transaction));
-                return true;
-            };
-
-    mPendingTransactions.erase(std::remove_if(mPendingTransactions.begin(),
-                                              mPendingTransactions.end(), mergeTransaction),
-                               mPendingTransactions.end());
-
+    mergePendingTransactions(t, bufferItem.mFrameNumber);
     if (applyTransaction) {
         t->setApplyToken(mApplyToken).apply();
     }
@@ -608,7 +593,6 @@ void BLASTBufferQueue::setNextTransaction(SurfaceComposerClient::Transaction* t)
 
 bool BLASTBufferQueue::rejectBuffer(const BufferItem& item) {
     if (item.mScalingMode != NATIVE_WINDOW_SCALING_MODE_FREEZE) {
-        mSize = mRequestedSize;
         // Only reject buffers if scaling mode is freeze.
         return false;
     }
@@ -622,7 +606,6 @@ bool BLASTBufferQueue::rejectBuffer(const BufferItem& item) {
     }
     ui::Size bufferSize(bufWidth, bufHeight);
     if (mRequestedSize != mSize && mRequestedSize == bufferSize) {
-        mSize = mRequestedSize;
         return false;
     }
 
@@ -652,7 +635,10 @@ bool BLASTBufferQueue::maxBuffersAcquired(bool includeExtraAcquire) const {
 
 class BBQSurface : public Surface {
 private:
+    std::mutex mMutex;
     sp<BLASTBufferQueue> mBbq;
+    bool mDestroyed = false;
+
 public:
     BBQSurface(const sp<IGraphicBufferProducer>& igbp, bool controlledByApp,
                const sp<IBinder>& scHandle, const sp<BLASTBufferQueue>& bbq)
@@ -672,6 +658,10 @@ public:
 
     status_t setFrameRate(float frameRate, int8_t compatibility,
                           int8_t changeFrameRateStrategy) override {
+        std::unique_lock _lock{mMutex};
+        if (mDestroyed) {
+            return DEAD_OBJECT;
+        }
         if (!ValidateFrameRate(frameRate, compatibility, changeFrameRateStrategy,
                                "BBQSurface::setFrameRate")) {
             return BAD_VALUE;
@@ -680,7 +670,19 @@ public:
     }
 
     status_t setFrameTimelineInfo(const FrameTimelineInfo& frameTimelineInfo) override {
+        std::unique_lock _lock{mMutex};
+        if (mDestroyed) {
+            return DEAD_OBJECT;
+        }
         return mBbq->setFrameTimelineInfo(frameTimelineInfo);
+    }
+
+    void destroy() override {
+        Surface::destroy();
+
+        std::unique_lock _lock{mMutex};
+        mDestroyed = true;
+        mBbq = nullptr;
     }
 };
 
@@ -729,6 +731,32 @@ void BLASTBufferQueue::mergeWithNextTransaction(SurfaceComposerClient::Transacti
     }
 }
 
+void BLASTBufferQueue::applyPendingTransactions(uint64_t frameNumber) {
+    std::lock_guard _lock{mMutex};
+
+    SurfaceComposerClient::Transaction t;
+    mergePendingTransactions(&t, frameNumber);
+    t.setApplyToken(mApplyToken).apply();
+}
+
+void BLASTBufferQueue::mergePendingTransactions(SurfaceComposerClient::Transaction* t,
+                                                uint64_t frameNumber) {
+    auto mergeTransaction =
+            [&t, currentFrameNumber = frameNumber](
+                    std::tuple<uint64_t, SurfaceComposerClient::Transaction> pendingTransaction) {
+                auto& [targetFrameNumber, transaction] = pendingTransaction;
+                if (currentFrameNumber < targetFrameNumber) {
+                    return false;
+                }
+                t->merge(std::move(transaction));
+                return true;
+            };
+
+    mPendingTransactions.erase(std::remove_if(mPendingTransactions.begin(),
+                                              mPendingTransactions.end(), mergeTransaction),
+                               mPendingTransactions.end());
+}
+
 // Maintains a single worker thread per process that services a list of runnables.
 class AsyncWorker : public Singleton<AsyncWorker> {
 private:
@@ -741,11 +769,23 @@ private:
         std::unique_lock<std::mutex> lock(mMutex);
         while (!mDone) {
             while (!mRunnables.empty()) {
-                std::function<void()> runnable = mRunnables.front();
-                mRunnables.pop_front();
-                runnable();
+                std::deque<std::function<void()>> runnables = std::move(mRunnables);
+                mRunnables.clear();
+                lock.unlock();
+                // Run outside the lock since the runnable might trigger another
+                // post to the async worker.
+                execute(runnables);
+                lock.lock();
             }
             mCv.wait(lock);
+        }
+    }
+
+    void execute(std::deque<std::function<void()>>& runnables) {
+        while (!runnables.empty()) {
+            std::function<void()> runnable = runnables.front();
+            runnables.pop_front();
+            runnable();
         }
     }
 
@@ -857,6 +897,11 @@ uint32_t BLASTBufferQueue::getLastTransformHint() const {
     } else {
         return 0;
     }
+}
+
+uint64_t BLASTBufferQueue::getLastAcquiredFrameNum() {
+    std::unique_lock _lock{mMutex};
+    return mLastAcquiredFrameNumber;
 }
 
 } // namespace android

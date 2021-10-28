@@ -40,8 +40,11 @@ public:
     MOCK_METHOD1(setLayerCachingTexturePoolEnabled, void(bool));
     MOCK_METHOD3(setProjection, void(ui::Rotation, const Rect&, const Rect&));
     MOCK_METHOD1(setDisplaySize, void(const ui::Size&));
-    MOCK_METHOD2(setLayerStackFilter, void(uint32_t, bool));
     MOCK_CONST_METHOD0(getTransformHint, ui::Transform::RotationFlags());
+
+    MOCK_METHOD(void, setLayerFilter, (ui::LayerFilter));
+    MOCK_METHOD(bool, includesLayer, (ui::LayerFilter), (const));
+    MOCK_METHOD(bool, includesLayer, (const sp<compositionengine::LayerFE>&), (const));
 
     MOCK_METHOD1(setColorTransform, void(const compositionengine::CompositionRefreshArgs&));
     MOCK_METHOD1(setColorProfile, void(const ColorProfile&));
@@ -62,9 +65,7 @@ public:
     MOCK_CONST_METHOD0(getState, const OutputCompositionState&());
     MOCK_METHOD0(editState, OutputCompositionState&());
 
-    MOCK_CONST_METHOD1(getDirtyRegion, Region(bool));
-    MOCK_CONST_METHOD2(belongsInOutput, bool(std::optional<uint32_t>, bool));
-    MOCK_CONST_METHOD1(belongsInOutput, bool(const sp<compositionengine::LayerFE>&));
+    MOCK_METHOD(Region, getDirtyRegion, (), (const));
 
     MOCK_CONST_METHOD1(getOutputLayerForLayer,
                        compositionengine::OutputLayer*(const sp<compositionengine::LayerFE>&));
@@ -113,8 +114,8 @@ public:
     MOCK_METHOD1(renderCachedSets, void(const CompositionRefreshArgs&));
     MOCK_METHOD0(presentAndGetFrameFences, compositionengine::Output::FrameFences());
 
-    MOCK_METHOD2(generateClientCompositionRequests,
-                 std::vector<LayerFE::LayerSettings>(bool, ui::Dataspace));
+    MOCK_METHOD3(generateClientCompositionRequests,
+                 std::vector<LayerFE::LayerSettings>(bool, ui::Dataspace, std::vector<compositionengine::LayerFE*>&));
     MOCK_METHOD2(appendRegionFlashRequests,
                  void(const Region&, std::vector<LayerFE::LayerSettings>&));
     MOCK_METHOD1(setExpensiveRenderingExpected, void(bool));

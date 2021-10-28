@@ -117,11 +117,11 @@ void DisplayDevice::disconnect() {
 }
 
 int DisplayDevice::getWidth() const {
-    return mCompositionDisplay->getState().displaySpace.bounds.getWidth();
+    return mCompositionDisplay->getState().displaySpace.getBounds().width;
 }
 
 int DisplayDevice::getHeight() const {
-    return mCompositionDisplay->getState().displaySpace.bounds.getHeight();
+    return mCompositionDisplay->getState().displaySpace.getBounds().height;
 }
 
 void DisplayDevice::setDisplayName(const std::string& displayName) {
@@ -138,6 +138,34 @@ void DisplayDevice::setDeviceProductInfo(std::optional<DeviceProductInfo> info) 
 
 uint32_t DisplayDevice::getPageFlipCount() const {
     return mCompositionDisplay->getRenderSurface()->getPageFlipCount();
+}
+
+std::pair<gui::DisplayInfo, ui::Transform> DisplayDevice::getInputInfo() const {
+    gui::DisplayInfo info;
+    info.displayId = getLayerStack().id;
+
+    // The physical orientation is set when the orientation of the display panel is
+    // different than the default orientation of the device. Other services like
+    // InputFlinger do not know about this, so we do not need to expose the physical
+    // orientation of the panel outside of SurfaceFlinger.
+    const ui::Rotation inversePhysicalOrientation = ui::ROTATION_0 - mPhysicalOrientation;
+    auto width = getWidth();
+    auto height = getHeight();
+    if (inversePhysicalOrientation == ui::ROTATION_90 ||
+        inversePhysicalOrientation == ui::ROTATION_270) {
+        std::swap(width, height);
+    }
+    const ui::Transform undoPhysicalOrientation(ui::Transform::toRotationFlags(
+                                                        inversePhysicalOrientation),
+                                                width, height);
+    const auto& displayTransform = undoPhysicalOrientation * getTransform();
+    // Send the inverse display transform to input so it can convert display coordinates to
+    // logical display.
+    info.transform = displayTransform.inverse();
+
+    info.logicalWidth = getLayerStackSpaceRect().width();
+    info.logicalHeight = getLayerStackSpaceRect().height();
+    return {info, displayTransform};
 }
 
 // ----------------------------------------------------------------------------
@@ -241,7 +269,7 @@ ui::Dataspace DisplayDevice::getCompositionDataSpace() const {
 }
 
 void DisplayDevice::setLayerStack(ui::LayerStack stack) {
-    mCompositionDisplay->setLayerStackFilter(stack, isInternal());
+    mCompositionDisplay->setLayerFilter({stack, isInternal()});
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->setLayerStack(stack);
     }
@@ -271,13 +299,15 @@ void DisplayDevice::setProjection(ui::Rotation orientation, Rect layerStackSpace
     if (!orientedDisplaySpaceRect.isValid()) {
         // The destination frame can be invalid if it has never been set,
         // in that case we assume the whole display size.
-        orientedDisplaySpaceRect = getCompositionDisplay()->getState().displaySpace.bounds;
+        orientedDisplaySpaceRect =
+                getCompositionDisplay()->getState().displaySpace.getBoundsAsRect();
     }
 
     if (layerStackSpaceRect.isEmpty()) {
         // The layerStackSpaceRect can be invalid if it has never been set, in that case
         // we assume the whole framebuffer size.
-        layerStackSpaceRect = getCompositionDisplay()->getState().framebufferSpace.bounds;
+        layerStackSpaceRect =
+                getCompositionDisplay()->getState().framebufferSpace.getBoundsAsRect();
         if (orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270) {
             std::swap(layerStackSpaceRect.right, layerStackSpaceRect.bottom);
         }
@@ -345,8 +375,8 @@ bool DisplayDevice::isSecure() const {
     return mCompositionDisplay->isSecure();
 }
 
-const Rect& DisplayDevice::getBounds() const {
-    return mCompositionDisplay->getState().displaySpace.bounds;
+const Rect DisplayDevice::getBounds() const {
+    return mCompositionDisplay->getState().displaySpace.getBoundsAsRect();
 }
 
 const Region& DisplayDevice::getUndefinedRegion() const {
@@ -358,7 +388,7 @@ bool DisplayDevice::needsFiltering() const {
 }
 
 ui::LayerStack DisplayDevice::getLayerStack() const {
-    return mCompositionDisplay->getState().layerStackId;
+    return mCompositionDisplay->getState().layerFilter.layerStack;
 }
 
 ui::Transform::RotationFlags DisplayDevice::getTransformHint() const {
@@ -370,11 +400,11 @@ const ui::Transform& DisplayDevice::getTransform() const {
 }
 
 const Rect& DisplayDevice::getLayerStackSpaceRect() const {
-    return mCompositionDisplay->getState().layerStackSpace.content;
+    return mCompositionDisplay->getState().layerStackSpace.getContent();
 }
 
 const Rect& DisplayDevice::getOrientedDisplaySpaceRect() const {
-    return mCompositionDisplay->getState().orientedDisplaySpace.content;
+    return mCompositionDisplay->getState().orientedDisplaySpace.getContent();
 }
 
 bool DisplayDevice::hasWideColorGamut() const {

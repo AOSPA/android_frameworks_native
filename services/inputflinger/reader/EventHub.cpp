@@ -40,6 +40,7 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <cutils/properties.h>
+#include <ftl/enum.h>
 #include <input/KeyCharacterMap.h>
 #include <input/KeyLayoutMap.h>
 #include <input/VirtualKeyMap.h>
@@ -263,7 +264,7 @@ static std::vector<std::filesystem::path> allFilesInPath(const std::filesystem::
  */
 static std::vector<std::filesystem::path> findSysfsNodes(const std::filesystem::path& sysfsRoot,
                                                          SysfsClass clazz) {
-    std::string nodeStr = NamedEnum::string(clazz);
+    std::string nodeStr = ftl::enum_string(clazz);
     std::for_each(nodeStr.begin(), nodeStr.end(),
                   [](char& c) { c = std::tolower(static_cast<unsigned char>(c)); });
     std::vector<std::filesystem::path> nodes;
@@ -1205,6 +1206,15 @@ bool EventHub::hasScanCode(int32_t deviceId, int32_t scanCode) const {
     Device* device = getDeviceLocked(deviceId);
     if (device != nullptr && scanCode >= 0 && scanCode <= KEY_MAX) {
         return device->keyBitmask.test(scanCode);
+    }
+    return false;
+}
+
+bool EventHub::hasKeyCode(int32_t deviceId, int32_t keyCode) const {
+    std::scoped_lock _l(mLock);
+    Device* device = getDeviceLocked(deviceId);
+    if (device != nullptr) {
+        return device->hasKeycodeLocked(keyCode);
     }
     return false;
 }

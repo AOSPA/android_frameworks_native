@@ -18,6 +18,7 @@
 
 #include <math/vec4.h>
 #include <renderengine/RenderEngine.h>
+#include <ui/LayerStack.h>
 #include <ui/Rect.h>
 #include <ui/Size.h>
 #include <utils/StrongPointer.h>
@@ -36,12 +37,13 @@ class IBinder;
 class IGraphicBufferProducer;
 class Layer;
 class SurfaceFlinger;
+class SurfaceControl;
 
 class RefreshRateOverlay {
 public:
     RefreshRateOverlay(SurfaceFlinger&, uint32_t lowFps, uint32_t highFps, bool showSpinner);
 
-    void setLayerStack(uint32_t stack);
+    void setLayerStack(ui::LayerStack);
     void setViewport(ui::Size);
     void changeRefreshRate(const Fps&);
     void onInvalidate();
@@ -69,18 +71,16 @@ private:
     };
 
     bool createLayer();
-    const std::vector<std::shared_ptr<renderengine::ExternalTexture>>& getOrCreateBuffers(
-            uint32_t fps);
+
+    const std::vector<sp<GraphicBuffer>>& getOrCreateBuffers(uint32_t fps);
 
     SurfaceFlinger& mFlinger;
     const sp<Client> mClient;
-    sp<Layer> mLayer;
     sp<IBinder> mIBinder;
     sp<IGraphicBufferProducer> mGbp;
 
-    std::unordered_map<
-            ui::Transform::RotationFlags,
-            std::unordered_map<int, std::vector<std::shared_ptr<renderengine::ExternalTexture>>>>
+    std::unordered_map<ui::Transform::RotationFlags,
+                       std::unordered_map<int, std::vector<sp<GraphicBuffer>>>>
             mBufferCache;
     std::optional<int> mCurrentFps;
     int mFrame = 0;
@@ -93,6 +93,8 @@ private:
     // Interpolate the colors between these values.
     const uint32_t mLowFps;
     const uint32_t mHighFps;
+
+    sp<SurfaceControl> mSurfaceControl;
 };
 
 } // namespace android
