@@ -560,7 +560,7 @@ void Scheduler::resync() {
     const nsecs_t last = mLastResyncTime.exchange(now);
 
     if (now - last > kIgnoreDelay) {
-        resyncToHardwareVsync(false, mRefreshRateConfigs.getCurrentRefreshRate().getVsyncPeriod());
+        resyncToHardwareVsync(false, mSchedulerCallback.getVsyncPeriodFromHWCcb());
     }
 }
 
