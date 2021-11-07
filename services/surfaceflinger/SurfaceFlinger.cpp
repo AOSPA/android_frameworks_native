@@ -3899,7 +3899,6 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     }
 
     mDisplays.erase(displayToken);
-
     if (display && display->isVirtual()) {
         static_cast<void>(mScheduler->schedule([display = std::move(display)] {
             // Destroy the display without holding the mStateLock.
@@ -7975,6 +7974,16 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::captureScre
             return protectedLayerFound;
         });
         hasProtectedLayer = future.get();
+    }
+
+    // Surface flinger captures individual screen shot for each display
+    // This will lead consumption of high GPU secure memory in case
+    // of secure video use cases and cause out of memory.
+    {
+        Mutex::Autolock lock(mStateLock);
+        if(mDisplays.size() > 1) {
+           hasProtectedLayer = false;
+        }
     }
 
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
