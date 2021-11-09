@@ -1042,6 +1042,9 @@ void SurfaceFlinger::bootFinished() {
     }));
 
     setupDisplayExtnFeatures();
+
+    mRETid = getRenderEngine().getRETid();
+    mSFTid = gettid();
 }
 
 uint32_t SurfaceFlinger::getNewTexture() {
@@ -1216,10 +1219,6 @@ void SurfaceFlinger::init() {
 #endif
 
     startUnifiedDraw();
-
-    mRETid = getRenderEngine().getRETid();
-    mSFTid = gettid();
-
     ALOGV("Done initializing");
 }
 
