@@ -199,6 +199,7 @@ using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
 using aidl::vendor::qti::hardware::display::config::BnDisplayConfigCallback;
 using aidl::vendor::qti::hardware::display::config::Attributes;
 using aidl::vendor::qti::hardware::display::config::CameraSmoothOp;
+using aidl::vendor::qti::hardware::display::config::Concurrency;
 
 namespace hal = android::hardware::graphics::composer::hal;
 
@@ -338,6 +339,10 @@ class DisplayConfigAidlCallbackHandler: public BnDisplayConfigCallback {
         ALOGV("received notification for resolution change");
         ATRACE_CALL();
         mFlinger.NotifyResolutionSwitch(displayId, attr.xRes, attr.yRes, attr.vsyncPeriod);
+        return ndk::ScopedAStatus::ok();
+    }
+    virtual ndk::ScopedAStatus notifyFpsMitigation(int32_t displayId, const Attributes& attr,
+                                                   Concurrency concurrency) {
         return ndk::ScopedAStatus::ok();
     }
  private:
@@ -3772,7 +3777,6 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     }
 
     mDisplays.erase(displayToken);
-
     if (display && display->isVirtual()) {
         static_cast<void>(schedule([display = std::move(display)] {
             // Destroy the display without holding the mStateLock.
@@ -7754,6 +7758,16 @@ status_t SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
                                 });
                                 return protectedLayerFound;
                             }).get();
+    }
+
+    // Surface flinger captures individual screen shot for each display
+    // This will lead consumption of high GPU secure memory in case
+    // of secure video use cases and cause out of memory.
+    {
+        Mutex::Autolock lock(mStateLock);
+        if(mDisplays.size() > 1) {
+           hasProtectedLayer = false;
+        }
     }
 
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |

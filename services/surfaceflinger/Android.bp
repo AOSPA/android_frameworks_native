@@ -69,7 +69,7 @@ cc_defaults {
     ],
     shared_libs: [
        "libbinder_ndk",
-       "vendor.qti.hardware.display.config-V4-ndk_platform",
+       "vendor.qti.hardware.display.config-V5-ndk_platform",
     ],
 }
 
