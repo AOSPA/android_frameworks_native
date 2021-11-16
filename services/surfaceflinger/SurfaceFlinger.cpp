@@ -3108,7 +3108,8 @@ void SurfaceFlinger::postComposition() {
     mTransactionCallbackInvoker.addPresentFence(mPreviousPresentFences[0].fence);
     mTransactionCallbackInvoker.sendCallbacks();
 
-    if (display && display->isPrimary() && display->getPowerMode() == hal::PowerMode::ON &&
+    if (vSyncSource && vSyncSource == getCurrentVsyncSource() &&
+        vSyncSource->getPowerMode() == hal::PowerMode::ON &&
         mPreviousPresentFences[0].fenceTime->isValid()) {
         mScheduler->addPresentFence(mPreviousPresentFences[0].fenceTime);
     }
