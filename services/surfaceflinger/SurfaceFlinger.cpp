@@ -2904,13 +2904,17 @@ void SurfaceFlinger::setDisplayAnimating() {
         if (!IsDisplayExternalOrVirtual(displayDevice)) {
            continue;
         }
-        uint32_t hwcDisplayId;
-        getHwcDisplayId(displayDevice, &hwcDisplayId);
+        uint32_t hwcDisplayId = 0;
+        if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
+            ALOGW("Rot-anim failed to get HWC DisplayID for display '%s'.",
+                  displayDevice->getDebugName().c_str());
+            continue;
+        }
         if (mDisplayConfigIntf && (hasScreenshot != mHasScreenshot)) {
            mDisplayConfigIntf->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
-           mHasScreenshot = hasScreenshot;
         }
     }
+    mHasScreenshot = hasScreenshot;
 #endif
 }
 
@@ -5396,6 +5400,35 @@ status_t SurfaceFlinger::createLayer(const String8& name, const sp<Client>& clie
     ALOG_ASSERT(parentLayer == nullptr || parentHandle == nullptr,
             "Expected only one of parentLayer or parentHandle to be non-null. "
             "Programmer error?");
+
+#ifdef QTI_DISPLAY_CONFIG_ENABLED
+    // Flag rotation animation as early as possible.
+    if (Layer::isScreenshotName(std::string(name))) {
+        // Rotation animation present.
+        bool signal_refresh = true;
+        Mutex::Autolock lock(mStateLock);  // Needed for mDisplays and signalRefresh().
+        for (const auto& [token, displayDevice] : mDisplays) {
+            if (!IsDisplayExternalOrVirtual(displayDevice)) {
+                continue;
+            }
+            uint32_t hwcDisplayId = 0;
+            if (mDisplayConfigIntf && (true != mHasScreenshot)) {
+                if (!getHwcDisplayId(displayDevice, &hwcDisplayId)) {
+                    ALOGW("Rot-anim failed to get HWC DisplayID for display '%s'.",
+                          displayDevice->getDebugName().c_str());
+                    continue;
+                }
+                mDisplayConfigIntf->SetDisplayAnimating(hwcDisplayId, true);
+                if (signal_refresh) {
+                    // Request composition cycle once.
+                    signalRefresh();
+                }
+                signal_refresh = false;
+            }
+        }
+        mHasScreenshot = true;
+    }
+#endif
 
     status_t result = NO_ERROR;
 

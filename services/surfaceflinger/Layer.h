@@ -672,6 +672,7 @@ public:
     bool isSecureCamera() const;
     bool isSecureDisplay() const;
     bool isScreenshot() const;
+    static bool isScreenshotName(std::string layer_name);
 
     /*
      * isHiddenByPolicy - true if this layer has been forced invisible.
