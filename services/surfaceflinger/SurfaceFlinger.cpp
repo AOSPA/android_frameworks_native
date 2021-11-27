@@ -3519,14 +3519,18 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
                 updateInternalDisplaysPresentationMode();
             }
         }
-
+        uint32_t hwcDisplayId = static_cast<uint32_t>(event.hwcDisplayId);
+        bool isConnected = (event.connection == hal::Connection::CONNECTED);
         if (isDisplayExtnEnabled() && isInternalDisplay) {
-            uint32_t hwcDisplayId = static_cast<uint32_t>(event.hwcDisplayId);
-            bool isConnected = (event.connection == hal::Connection::CONNECTED);
             auto activeConfigId = getHwComposer().getActiveMode(displayId);
             LOG_ALWAYS_FATAL_IF(!activeConfigId, "HWC returned no active config");
             updateDisplayExtension(hwcDisplayId, *activeConfigId, isConnected);
         }
+#if defined(QTI_UNIFIED_DRAW) && defined(UNIFIED_DRAW_EXT)
+        if (mDisplayExtnIntf && !isConnected && !isInternalDisplay) {
+            mDisplayExtnIntf->EndUnifiedDraw(hwcDisplayId);
+        }
+#endif
         processDisplayChangesLocked();
     }
 
