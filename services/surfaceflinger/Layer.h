@@ -617,7 +617,8 @@ public:
     void prepareCompositionState(compositionengine::LayerFE::StateSubset subset) override;
     std::vector<compositionengine::LayerFE::LayerSettings> prepareClientCompositionList(
             compositionengine::LayerFE::ClientCompositionTargetSettings&) override;
-    void onLayerDisplayed(const sp<Fence>& releaseFence) override;
+    void onLayerDisplayed(
+            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
 
     void setWasClientComposed(const sp<Fence>& fence) override {
         mLastClientCompositionFence = fence;

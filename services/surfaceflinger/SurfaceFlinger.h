@@ -56,6 +56,7 @@
 #include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
+#include "Scheduler/MessageQueue.h"
 #include "Scheduler/RefreshRateConfigs.h"
 #include "Scheduler/RefreshRateStats.h"
 #include "Scheduler/Scheduler.h"
@@ -64,6 +65,7 @@
 #include "SurfaceTracing.h"
 #include "TracedOrdinal.h"
 #include "TransactionCallbackInvoker.h"
+#include "TransactionState.h"
 
 #include <atomic>
 #include <cstdint>
@@ -243,6 +245,7 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        public PriorityDumper,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
+                       private ICompositor,
                        private ISchedulerCallback {
 public:
     struct SkipInitializationTag {};
@@ -355,11 +358,13 @@ public:
     [[nodiscard]] std::future<T> schedule(F&&);
 
     // Schedule commit of transactions on the main thread ahead of the next VSYNC.
-    void scheduleInvalidate(FrameHint);
-    // As above, but also force refresh regardless if transactions were committed.
-    void scheduleRefresh(FrameHint) override;
+    void scheduleCommit(FrameHint);
+    // As above, but also force composite regardless if transactions were committed.
+    void scheduleComposite(FrameHint) override;
     // As above, but also force dirty geometry to repaint.
     void scheduleRepaint();
+    // Schedule sampling independently from commit or composite.
+    void scheduleSample();
 
     surfaceflinger::Factory& getFactory() { return mFactory; }
 
@@ -377,12 +382,6 @@ public:
     // TODO: this should be made accessible only to EventThread
     // main thread function to enable/disable h/w composer event
     void setVsyncEnabledInternal(bool enabled);
-
-    // called on the main thread by MessageQueue when an internal message
-    // is received
-    // TODO: this should be made accessible only to MessageQueue
-    void onMessageReceived(int32_t what, int64_t vsyncId, nsecs_t expectedVSyncTime);
-
     renderengine::RenderEngine& getRenderEngine() const;
 
     bool authenticateSurfaceTextureLocked(
@@ -390,6 +389,7 @@ public:
 
     void onLayerFirstRef(Layer*);
     void onLayerDestroyed(Layer*);
+    void onLayerUpdate();
 
     void removeHierarchyFromOffscreenLayers(Layer* layer);
     void removeFromOffscreenLayers(Layer* layer);
@@ -423,13 +423,6 @@ public:
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
     virtual ~SurfaceFlinger();
-
-    virtual uint32_t setClientStateLocked(
-            const FrameTimelineInfo& info, const ComposerState& composerState,
-            int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime,
-            uint32_t permissions,
-            std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& listenerCallbacks)
-            REQUIRES(mStateLock);
 
     virtual void processDisplayAdded(const wp<IBinder>& displayToken, const DisplayDeviceState&)
             REQUIRES(mStateLock);
@@ -566,96 +559,6 @@ private:
     struct HotplugEvent {
         hal::HWDisplayId hwcDisplayId;
         hal::Connection connection = hal::Connection::INVALID;
-    };
-
-    class CountDownLatch {
-    public:
-        enum {
-            eSyncTransaction = 1 << 0,
-            eSyncInputWindows = 1 << 1,
-        };
-        explicit CountDownLatch(uint32_t flags) : mFlags(flags) {}
-
-        // True if there is no waiting condition after count down.
-        bool countDown(uint32_t flag) {
-            std::unique_lock<std::mutex> lock(mMutex);
-            if (mFlags == 0) {
-                return true;
-            }
-            mFlags &= ~flag;
-            if (mFlags == 0) {
-                mCountDownComplete.notify_all();
-                return true;
-            }
-            return false;
-        }
-
-        // Return true if triggered.
-        bool wait_until(const std::chrono::seconds& timeout) const {
-            std::unique_lock<std::mutex> lock(mMutex);
-            const auto untilTime = std::chrono::system_clock::now() + timeout;
-            while (mFlags != 0) {
-                // Conditional variables can be woken up sporadically, so we check count
-                // to verify the wakeup was triggered by |countDown|.
-                if (std::cv_status::timeout == mCountDownComplete.wait_until(lock, untilTime)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-    private:
-        uint32_t mFlags;
-        mutable std::condition_variable mCountDownComplete;
-        mutable std::mutex mMutex;
-    };
-
-    struct TransactionState {
-        TransactionState(const FrameTimelineInfo& frameTimelineInfo,
-                         const Vector<ComposerState>& composerStates,
-                         const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
-                         const sp<IBinder>& applyToken,
-                         const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
-                         bool isAutoTimestamp, const client_cache_t& uncacheBuffer,
-                         int64_t postTime, uint32_t permissions, bool hasListenerCallbacks,
-                         std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
-                         int originUid, uint64_t transactionId)
-              : frameTimelineInfo(frameTimelineInfo),
-                states(composerStates),
-                displays(displayStates),
-                flags(transactionFlags),
-                applyToken(applyToken),
-                inputWindowCommands(inputWindowCommands),
-                desiredPresentTime(desiredPresentTime),
-                isAutoTimestamp(isAutoTimestamp),
-                buffer(uncacheBuffer),
-                postTime(postTime),
-                permissions(permissions),
-                hasListenerCallbacks(hasListenerCallbacks),
-                listenerCallbacks(listenerCallbacks),
-                originPid(originPid),
-                originUid(originUid),
-                id(transactionId) {}
-
-        void traverseStatesWithBuffers(std::function<void(const layer_state_t&)> visitor);
-
-        FrameTimelineInfo frameTimelineInfo;
-        Vector<ComposerState> states;
-        Vector<DisplayState> displays;
-        uint32_t flags;
-        sp<IBinder> applyToken;
-        InputWindowCommands inputWindowCommands;
-        const int64_t desiredPresentTime;
-        const bool isAutoTimestamp;
-        client_cache_t buffer;
-        const int64_t postTime;
-        uint32_t permissions;
-        bool hasListenerCallbacks;
-        std::vector<ListenerCallbacks> listenerCallbacks;
-        int originPid;
-        int originUid;
-        uint64_t id;
-        std::shared_ptr<CountDownLatch> transactionCommittedSignal;
     };
 
     template <typename F, std::enable_if_t<!std::is_member_function_pointer_v<F>>* = nullptr>
@@ -829,9 +732,6 @@ private:
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
 
-    // Implements RefBase.
-    void onFirstRef() override;
-
     // HWC2::ComposerCallback overrides:
     void onComposerHalVsync(hal::HWDisplayId, int64_t timestamp,
                             std::optional<hal::VsyncPeriodNanos>) override;
@@ -841,6 +741,19 @@ private:
                                                const hal::VsyncPeriodChangeTimeline&) override;
     void onComposerHalSeamlessPossible(hal::HWDisplayId) override;
     void setPowerModeOnMainThread(const sp<IBinder>& displayToken, int mode);
+
+    // ICompositor overrides:
+
+    // Commits transactions for layers and displays. Returns whether any state has been invalidated,
+    // i.e. whether a frame should be composited for each display.
+    bool commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expectedVsyncTime) override;
+
+    // Composites a frame for each display. CompositionEngine performs GPU and/or HAL composition
+    // via RenderEngine and the Composer HAL, respectively.
+    void composite(nsecs_t frameTime) override;
+
+    // Samples the composited frame via RegionSamplingThread.
+    void sample() override;
 
     /*
      * ISchedulerCallback
@@ -861,13 +774,6 @@ private:
     bool mKernelIdleTimerEnabled = false;
     // Show spinner with refresh rate overlay
     bool mRefreshRateOverlaySpinner = false;
-
-    /*
-     * Message handling
-     */
-    // Can only be called from the main thread or with mStateLock held
-    void signalLayerUpdate();
-    void signalRefresh();
 
     // Called on the main thread in response to initializeDisplays()
     void onInitializeDisplays() REQUIRES(mStateLock);
@@ -893,10 +799,6 @@ private:
             const std::optional<scheduler::RefreshRateConfigs::Policy>& policy, bool overridePolicy)
             EXCLUDES(mStateLock);
 
-    // Handle the INVALIDATE message queue event, latching new buffers and applying
-    // incoming transactions
-    void onMessageInvalidate(int64_t vsyncId, nsecs_t expectedVSyncTime);
-
     // Returns whether transactions were committed.
     bool flushAndCommitTransactions() EXCLUDES(mStateLock);
 
@@ -904,16 +806,14 @@ private:
     void commitTransactionsLocked(uint32_t transactionFlags) REQUIRES(mStateLock);
     void doCommitTransactions() REQUIRES(mStateLock);
 
-    // Handle the REFRESH message queue event, sending the current frame down to RenderEngine and
-    // the Composer HAL for presentation
-    void onMessageRefresh();
+    // Returns whether a new buffer has been latched.
+    bool latchBuffers();
 
     // Check if unified draw supported
     void startUnifiedDraw();
     void InitComposerExtn();
 
-    // Returns whether a new buffer has been latched (see handlePageFlip())
-    bool handleMessageInvalidate();
+    void updateLayerGeometry();
 
     void updateInputFlinger();
     void notifyWindowInfos();
@@ -925,11 +825,6 @@ private:
     void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
     void setVsyncConfig(const VsyncModulator::VsyncConfig&, nsecs_t vsyncPeriod);
 
-    /* handlePageFlip - latch a new buffer if available and compute the dirty
-     * region. Returns whether a new buffer has been latched, i.e., whether it
-     * is necessary to perform a refresh during this vsync.
-     */
-    bool handlePageFlip();
 
     /*
      * Transactions
@@ -947,6 +842,12 @@ private:
     void flushTransactionQueues();
     // Returns true if there is at least one transaction that needs to be flushed
     bool transactionFlushNeeded();
+
+    uint32_t setClientStateLocked(const FrameTimelineInfo&, const ComposerState&,
+                                  int64_t desiredPresentTime, bool isAutoTimestamp,
+                                  int64_t postTime, uint32_t permissions,
+                                  std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>&)
+            REQUIRES(mStateLock);
 
     uint32_t getTransactionFlags() const;
 
@@ -1025,17 +926,17 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize,
-                                 ui::PixelFormat, bool allowProtected, bool grayscale,
-                                 const sp<IScreenCaptureListener>&);
-    status_t captureScreenCommon(RenderAreaFuture, TraverseLayersFunction,
-                                 const std::shared_ptr<renderengine::ExternalTexture>&,
-                                 bool regionSampling, bool grayscale,
-                                 const sp<IScreenCaptureListener>&);
-    status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
-                                    const std::shared_ptr<renderengine::ExternalTexture>&,
-                                    bool canCaptureBlackoutContent, bool regionSampling,
-                                    bool grayscale, ScreenCaptureResults&);
+    std::shared_future<renderengine::RenderEngineResult> captureScreenCommon(
+            RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize, ui::PixelFormat,
+            bool allowProtected, bool grayscale, const sp<IScreenCaptureListener>&);
+    std::shared_future<renderengine::RenderEngineResult> captureScreenCommon(
+            RenderAreaFuture, TraverseLayersFunction,
+            const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
+            bool grayscale, const sp<IScreenCaptureListener>&);
+    std::shared_future<renderengine::RenderEngineResult> renderScreenImplLocked(
+            const RenderArea&, TraverseLayersFunction,
+            const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
+            bool regionSampling, bool grayscale, ScreenCaptureResults&);
 
 
     bool canAllocateHwcDisplayIdForVDS(uint64_t usage);
@@ -1175,6 +1076,11 @@ private:
      * VSYNC
      */
     nsecs_t getVsyncPeriodFromHWC() const REQUIRES(mStateLock);
+
+    void setHWCVsyncEnabled(PhysicalDisplayId id, hal::Vsync enabled) {
+        mLastHWCVsyncState = enabled;
+        getHwComposer().setVsyncEnabled(id, enabled);
+    }
 
     // Sets the refresh rate by switching active configs, if they are available for
     // the desired refresh rate.
@@ -1408,7 +1314,7 @@ private:
     bool mLayersRemoved = false;
     bool mLayersAdded = false;
 
-    std::atomic_bool mForceRefresh = false;
+    std::atomic_bool mMustComposite = false;
     std::atomic_bool mGeometryDirty = false;
 
     // constant members (no synchronization needed for access)
@@ -1516,10 +1422,6 @@ private:
     mutable Mutex mDestroyedLayerLock;
     Vector<Layer const *> mDestroyedLayers;
 
-    nsecs_t mRefreshStartTime = 0;
-
-    std::atomic<bool> mRefreshPending = false;
-
     // We maintain a pool of pre-generated texture names to hand out to avoid
     // layer creation needing to run on the main thread (which it would
     // otherwise need to do to access RenderEngine).
@@ -1597,6 +1499,7 @@ private:
     std::atomic<nsecs_t> mExpectedPresentTime = 0;
     nsecs_t mScheduledPresentTime = 0;
     hal::Vsync mHWCVsyncPendingState = hal::Vsync::DISABLE;
+    hal::Vsync mLastHWCVsyncState = hal::Vsync::DISABLE;
 
     // below flags are set by main thread only
     bool mSetActiveModePending = false;
@@ -1615,9 +1518,6 @@ private:
     InputWindowCommands mInputWindowCommands;
 
     Hwc2::impl::PowerAdvisor mPowerAdvisor;
-
-    // This should only be accessed on the main thread.
-    nsecs_t mFrameStartTime = 0;
 
     void enableRefreshRateOverlay(bool enable) REQUIRES(mStateLock);
 
@@ -1671,9 +1571,6 @@ private:
     sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
-
-    void scheduleRegionSamplingThread();
-    void notifyRegionSamplingThread();
 
     bool isRefreshRateOverlayEnabled() const REQUIRES(mStateLock) {
         return std::any_of(mDisplays.begin(), mDisplays.end(),
