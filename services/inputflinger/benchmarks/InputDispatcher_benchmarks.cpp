@@ -150,8 +150,11 @@ public:
                 ALOGE("Waited too long for consumer to produce an event, giving up");
                 break;
             }
+            int motionEventType;
+            int touchMoveNumber;
+            bool flag;
             result = mConsumer->consume(&mEventFactory, true /*consumeBatches*/, -1, &consumeSeq,
-                                        &event);
+                                        &event, &motionEventType, &touchMoveNumber, &flag);
         }
         if (result != OK) {
             ALOGE("Received result = %d from consume()", result);

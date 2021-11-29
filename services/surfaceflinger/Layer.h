@@ -526,12 +526,10 @@ public:
      * called after composition.
      * returns true if the layer latched a new buffer this frame.
      */
-    virtual bool onPostComposition(const DisplayDevice*,
+    virtual void onPostComposition(const DisplayDevice*,
                                    const std::shared_ptr<FenceTime>& /*glDoneFence*/,
                                    const std::shared_ptr<FenceTime>& /*presentFence*/,
-                                   const CompositorTiming&) {
-        return false;
-    }
+                                   const CompositorTiming&) {}
 
     // If a buffer was replaced this frame, release the former buffer
     virtual void releasePendingBuffer(nsecs_t /*dequeueReadyTime*/) { }
@@ -591,10 +589,6 @@ public:
         return parentBounds;
     }
     virtual FrameRate getFrameRateForLayerTree() const;
-
-    virtual std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool /*forceFlush*/) {
-        return {};
-    }
 
     virtual bool getTransformToDisplayInverse() const { return false; }
 
@@ -806,12 +800,12 @@ public:
     // Returns index if removed, or negative value otherwise
     // for symmetry with Vector::remove
     ssize_t removeChild(const sp<Layer>& layer);
-    sp<Layer> getParent() const { return mCurrentParent.promote(); }
 
     // Should be called with the surfaceflinger statelock held
     bool isAtRoot() const { return mIsAtRoot; }
     void setIsAtRoot(bool isAtRoot) { mIsAtRoot = isAtRoot; }
 
+    Layer* getParent() const { return mCurrentParent; }
     bool hasParent() const { return getParent() != nullptr; }
     Rect getScreenBounds(bool reduceTransparentRegion = true) const;
     bool setChildLayer(const sp<Layer>& childLayer, int32_t z);
@@ -1023,8 +1017,8 @@ protected:
     LayerVector mCurrentChildren{LayerVector::StateSet::Current};
     LayerVector mDrawingChildren{LayerVector::StateSet::Drawing};
 
-    wp<Layer> mCurrentParent;
-    wp<Layer> mDrawingParent;
+    Layer* mCurrentParent = nullptr;
+    Layer* mDrawingParent = nullptr;
 
     // Window types from WindowManager.LayoutParams
     const gui::WindowInfo::Type mWindowType;

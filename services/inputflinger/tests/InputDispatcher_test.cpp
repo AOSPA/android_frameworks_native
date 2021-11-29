@@ -820,6 +820,9 @@ public:
             case AINPUT_EVENT_TYPE_CAPTURE: {
                 FAIL() << "Use 'consumeCaptureEvent' for CAPTURE events";
             }
+            case AINPUT_EVENT_TYPE_TOUCH_MODE: {
+                FAIL() << "Use 'consumeTouchModeEvent' for TOUCH_MODE events";
+            }
             case AINPUT_EVENT_TYPE_DRAG: {
                 FAIL() << "Use 'consumeDragEvent' for DRAG events";
             }
@@ -877,6 +880,20 @@ public:
         EXPECT_EQ(y, dragEvent.getY());
     }
 
+    void consumeTouchModeEvent(bool inTouchMode) {
+        const InputEvent* event = consume();
+        ASSERT_NE(nullptr, event) << mName.c_str()
+                                  << ": consumer should have returned non-NULL event.";
+        ASSERT_EQ(AINPUT_EVENT_TYPE_TOUCH_MODE, event->getType())
+                << "Got " << inputEventTypeToString(event->getType())
+                << " event instead of TOUCH_MODE event";
+
+        ASSERT_EQ(ADISPLAY_ID_NONE, event->getDisplayId())
+                << mName.c_str() << ": event displayId should always be NONE.";
+        const auto& touchModeEvent = static_cast<const TouchModeEvent&>(*event);
+        EXPECT_EQ(inTouchMode, touchModeEvent.isInTouchMode());
+    }
+
     void assertNoEvents() {
         InputEvent* event = consume();
         if (event == nullptr) {
@@ -898,6 +915,10 @@ public:
             const auto& captureEvent = static_cast<CaptureEvent&>(*event);
             ADD_FAILURE() << "Received capture event, pointerCaptureEnabled = "
                           << (captureEvent.getPointerCaptureEnabled() ? "true" : "false");
+        } else if (event->getType() == AINPUT_EVENT_TYPE_TOUCH_MODE) {
+            const auto& touchModeEvent = static_cast<TouchModeEvent&>(*event);
+            ADD_FAILURE() << "Received touch mode event, inTouchMode = "
+                          << (touchModeEvent.isInTouchMode() ? "true" : "false");
         }
         FAIL() << mName.c_str()
                << ": should not have received any events, so consume() should return NULL";
@@ -979,14 +1000,18 @@ public:
 
     void setApplicationToken(sp<IBinder> token) { mInfo.applicationInfo.token = token; }
 
-    void setFrame(const Rect& frame) {
+    void setFrame(const Rect& frame, const ui::Transform& displayTransform = ui::Transform()) {
         mInfo.frameLeft = frame.left;
         mInfo.frameTop = frame.top;
         mInfo.frameRight = frame.right;
         mInfo.frameBottom = frame.bottom;
-        mInfo.transform.set(-frame.left, -frame.top);
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(frame);
+
+        const Rect logicalDisplayFrame = displayTransform.transform(frame);
+        ui::Transform translate;
+        translate.set(-logicalDisplayFrame.left, -logicalDisplayFrame.top);
+        mInfo.transform = translate * displayTransform;
     }
 
     void setType(WindowInfo::Type type) { mInfo.type = type; }
@@ -1088,6 +1113,12 @@ public:
 
     void consumeDragEvent(bool isExiting, float x, float y) {
         mInputReceiver->consumeDragEvent(isExiting, x, y);
+    }
+
+    void consumeTouchModeEvent(bool inTouchMode) {
+        ASSERT_NE(mInputReceiver, nullptr)
+                << "Cannot consume events from a window with no receiver";
+        mInputReceiver->consumeTouchModeEvent(inTouchMode);
     }
 
     std::optional<uint32_t> receiveEvent(InputEvent** outEvent = nullptr) {
@@ -1419,6 +1450,21 @@ TEST_F(InputDispatcherTest, SetInputWindow_SingleWindowTouch) {
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
               injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    // Window should receive motion event.
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+}
+
+TEST_F(InputDispatcherTest, WhenDisplayNotSpecified_InjectMotionToDefaultDisplay) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    // Inject a MotionEvent to an unknown display.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_NONE))
             << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
 
     // Window should receive motion event.
@@ -1946,6 +1992,119 @@ TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsMotionStream) {
     mDispatcher->notifyDeviceReset(&args);
     window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_CANCEL, ADISPLAY_ID_DEFAULT,
                          0 /*expectedFlags*/);
+}
+
+/**
+ * Ensure the correct coordinate spaces are used by InputDispatcher.
+ *
+ * InputDispatcher works in the display space, so its coordinate system is relative to the display
+ * panel. Windows get events in the window space, and get raw coordinates in the logical display
+ * space.
+ */
+class InputDispatcherDisplayProjectionTest : public InputDispatcherTest {
+public:
+    void SetUp() override {
+        InputDispatcherTest::SetUp();
+        mDisplayInfos.clear();
+        mWindowInfos.clear();
+    }
+
+    void addDisplayInfo(int displayId, const ui::Transform& transform) {
+        gui::DisplayInfo info;
+        info.displayId = displayId;
+        info.transform = transform;
+        mDisplayInfos.push_back(std::move(info));
+        mDispatcher->onWindowInfosChanged(mWindowInfos, mDisplayInfos);
+    }
+
+    void addWindow(const sp<WindowInfoHandle>& windowHandle) {
+        mWindowInfos.push_back(*windowHandle->getInfo());
+        mDispatcher->onWindowInfosChanged(mWindowInfos, mDisplayInfos);
+    }
+
+    // Set up a test scenario where the display has a scaled projection and there are two windows
+    // on the display.
+    std::pair<sp<FakeWindowHandle>, sp<FakeWindowHandle>> setupScaledDisplayScenario() {
+        // The display has a projection that has a scale factor of 2 and 4 in the x and y directions
+        // respectively.
+        ui::Transform displayTransform;
+        displayTransform.set(2, 0, 0, 4);
+        addDisplayInfo(ADISPLAY_ID_DEFAULT, displayTransform);
+
+        std::shared_ptr<FakeApplicationHandle> application =
+                std::make_shared<FakeApplicationHandle>();
+
+        // Add two windows to the display. Their frames are represented in the display space.
+        sp<FakeWindowHandle> firstWindow =
+                new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+        firstWindow->addFlags(WindowInfo::Flag::NOT_TOUCH_MODAL);
+        firstWindow->setFrame(Rect(0, 0, 100, 200), displayTransform);
+        addWindow(firstWindow);
+
+        sp<FakeWindowHandle> secondWindow =
+                new FakeWindowHandle(application, mDispatcher, "Second Window",
+                                     ADISPLAY_ID_DEFAULT);
+        secondWindow->addFlags(WindowInfo::Flag::NOT_TOUCH_MODAL);
+        secondWindow->setFrame(Rect(100, 200, 200, 400), displayTransform);
+        addWindow(secondWindow);
+        return {std::move(firstWindow), std::move(secondWindow)};
+    }
+
+private:
+    std::vector<gui::DisplayInfo> mDisplayInfos;
+    std::vector<gui::WindowInfo> mWindowInfos;
+};
+
+TEST_F(InputDispatcherDisplayProjectionTest, HitTestsInDisplaySpace) {
+    auto [firstWindow, secondWindow] = setupScaledDisplayScenario();
+    // Send down to the first window. The point is represented in the display space. The point is
+    // selected so that if the hit test was done with the transform applied to it, then it would
+    // end up in the incorrect window.
+    NotifyMotionArgs downMotionArgs =
+            generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                               ADISPLAY_ID_DEFAULT, {PointF{75, 55}});
+    mDispatcher->notifyMotion(&downMotionArgs);
+
+    firstWindow->consumeMotionDown();
+    secondWindow->assertNoEvents();
+}
+
+// Ensure that when a MotionEvent is injected through the InputDispatcher::injectInputEvent() API,
+// the event should be treated as being in the logical display space.
+TEST_F(InputDispatcherDisplayProjectionTest, InjectionInLogicalDisplaySpace) {
+    auto [firstWindow, secondWindow] = setupScaledDisplayScenario();
+    // Send down to the first window. The point is represented in the logical display space. The
+    // point is selected so that if the hit test was done in logical display space, then it would
+    // end up in the incorrect window.
+    injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                     PointF{75 * 2, 55 * 4});
+
+    firstWindow->consumeMotionDown();
+    secondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDisplayProjectionTest, WindowGetsEventsInCorrectCoordinateSpace) {
+    auto [firstWindow, secondWindow] = setupScaledDisplayScenario();
+
+    // Send down to the second window.
+    NotifyMotionArgs downMotionArgs =
+            generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                               ADISPLAY_ID_DEFAULT, {PointF{150, 220}});
+    mDispatcher->notifyMotion(&downMotionArgs);
+
+    firstWindow->assertNoEvents();
+    const MotionEvent* event = secondWindow->consumeMotion();
+    EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, event->getAction());
+
+    // Ensure that the events from the "getRaw" API are in logical display coordinates.
+    EXPECT_EQ(300, event->getRawX(0));
+    EXPECT_EQ(880, event->getRawY(0));
+
+    // Ensure that the x and y values are in the window's coordinate space.
+    // The left-top of the second window is at (100, 200) in display space, which is (200, 800) in
+    // the logical display space. This will be the origin of the window space.
+    EXPECT_EQ(100, event->getX(0));
+    EXPECT_EQ(80, event->getY(0));
 }
 
 using TransferFunction = std::function<bool(const std::unique_ptr<InputDispatcher>& dispatcher,
@@ -2728,7 +2887,6 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
     SCOPED_TRACE("Check default value of touch mode");
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     setFocusedWindow(window);
-
     window->consumeFocusEvent(true /*hasFocus*/, true /*inTouchMode*/);
 
     SCOPED_TRACE("Remove the window to trigger focus loss");
@@ -2738,6 +2896,7 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
 
     SCOPED_TRACE("Disable touch mode");
     mDispatcher->setInTouchMode(false);
+    window->consumeTouchModeEvent(false);
     window->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     setFocusedWindow(window);
@@ -2750,6 +2909,7 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
 
     SCOPED_TRACE("Enable touch mode again");
     mDispatcher->setInTouchMode(true);
+    window->consumeTouchModeEvent(true);
     window->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     setFocusedWindow(window);
@@ -5893,6 +6053,45 @@ TEST_F(InputDispatcherDropInputFeatureTest, UnobscuredWindowGetsInput) {
     mDispatcher->notifyMotion(&motionArgs);
     window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
     window->assertNoEvents();
+}
+
+class InputDispatcherTouchModeChangedTests : public InputDispatcherTest {
+protected:
+    std::shared_ptr<FakeApplicationHandle> mApp;
+    sp<FakeWindowHandle> mWindow;
+    sp<FakeWindowHandle> mSecondWindow;
+
+    void SetUp() override {
+        InputDispatcherTest::SetUp();
+
+        mApp = std::make_shared<FakeApplicationHandle>();
+        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow->setFocusable(true);
+        mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
+        mSecondWindow->setFocusable(true);
+
+        mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
+        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}}});
+
+        setFocusedWindow(mWindow);
+        mWindow->consumeFocusEvent(true);
+    }
+
+    void changeAndVerifyTouchMode(bool inTouchMode) {
+        mDispatcher->setInTouchMode(inTouchMode);
+        mWindow->consumeTouchModeEvent(inTouchMode);
+        mSecondWindow->consumeTouchModeEvent(inTouchMode);
+    }
+};
+
+TEST_F(InputDispatcherTouchModeChangedTests, ChangeTouchModeOnFocusedWindow) {
+    changeAndVerifyTouchMode(!InputDispatcher::kDefaultInTouchMode);
+}
+
+TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTouchMode) {
+    mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
 }
 
 } // namespace android::inputdispatcher
