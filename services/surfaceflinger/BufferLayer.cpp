@@ -117,6 +117,10 @@ bool BufferLayer::isOpaque(const Layer::State& s) const {
     return ((s.flags & layer_state_t::eLayerOpaque) != 0) || getOpacityForFormat(getPixelFormat());
 }
 
+bool BufferLayer::canReceiveInput() const {
+    return !isHiddenByPolicy() && (mBufferInfo.mBuffer == nullptr || getAlpha() > 0.0f);
+}
+
 bool BufferLayer::isVisible() const {
     return !isHiddenByPolicy() && getAlpha() > 0.0f &&
             (mBufferInfo.mBuffer != nullptr || mSidebandStream != nullptr);
@@ -491,7 +495,7 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
     // try again later
     if (!fenceHasSignaled()) {
         ATRACE_NAME("!fenceHasSignaled()");
-        mFlinger->signalLayerUpdate();
+        mFlinger->onLayerUpdate();
         return false;
     }
 
