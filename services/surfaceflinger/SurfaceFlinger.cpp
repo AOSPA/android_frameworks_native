@@ -991,6 +991,7 @@ void SurfaceFlinger::bootFinished() {
     ALOGI("Boot is finished (%ld ms)", long(ns2ms(duration)) );
 
     mFlagManager = std::make_unique<android::FlagManager>();
+    mPowerAdvisor.enablePowerHint(mFlagManager->use_adpf_cpu_hint());
     mFrameTracer->initialize();
     mFrameTimeline->onBootFinished();
 
@@ -1441,7 +1442,7 @@ status_t SurfaceFlinger::getDynamicDisplayInfo(const sp<IBinder>& displayToken,
         outMode.refreshRate = Fps::fromPeriodNsecs(period).getValue();
 
         const auto vsyncConfigSet =
-                mVsyncConfiguration->getConfigsForRefreshRate(Fps(outMode.refreshRate));
+                mVsyncConfiguration->getConfigsForRefreshRate(Fps::fromValue(outMode.refreshRate));
         outMode.appVsyncOffset = vsyncConfigSet.late.appOffset;
         outMode.sfVsyncOffset = vsyncConfigSet.late.sfOffset;
         outMode.group = mode->getGroup();
@@ -2338,7 +2339,7 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
     const auto& allRates = display->refreshRateConfigs().getAllRefreshRates();
     auto iter = allRates.cbegin();
     while (iter != allRates.cend()) {
-        if (iter->second->inPolicy(static_cast<android::Fps>(refreshRate), static_cast<android::Fps>(refreshRate))) {
+        if (iter->second->inPolicy(Fps::fromValue(refreshRate), Fps::fromValue(refreshRate))) {
             break;
         }
         ++iter;
@@ -2539,7 +2540,6 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
     // Add some slop to correct for drift. This should generally be
     // smaller than a typical frame duration, but should not be so small
     // that it reports reasonable drift as a missed frame.
-    // SBL MISSING STATS
     const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(systemTime());
     const nsecs_t frameMissedSlop = stats.vsyncPeriod / 2;
     const nsecs_t previousPresentTime = previousFramePresentTime();
@@ -2642,17 +2642,23 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
 bool SurfaceFlinger::flushAndCommitTransactions() {
     ATRACE_CALL();
 
+    bool needsTraversal = false;
     if (clearTransactionFlags(eTransactionFlushNeeded)) {
-        flushTransactionQueues();
+        needsTraversal = flushTransactionQueues();
     }
 
-    const bool shouldCommit = (getTransactionFlags() & ~eTransactionFlushNeeded) || mForceTraversal;
+    const bool shouldCommit = (getTransactionFlags() & ~eTransactionFlushNeeded) || needsTraversal;
     if (shouldCommit) {
         commitTransactions();
     }
 
-    // Invoke OnCommit callbacks.
-    mTransactionCallbackInvoker.sendCallbacks();
+    if (!needsTraversal) {
+        // Invoke empty transaction callbacks early.
+        mTransactionCallbackInvoker.sendCallbacks(false /* onCommitOnly */);
+    } else {
+        // Invoke OnCommit callbacks.
+        mTransactionCallbackInvoker.sendCallbacks(true /* onCommitOnly */);
+    }
 
     if (transactionFlushNeeded()) {
         setTransactionFlags(eTransactionFlushNeeded);
@@ -3023,7 +3029,7 @@ void SurfaceFlinger::postComposition() {
     mVisibleRegionsWereDirtyThisFrame = false;
 
     mTransactionCallbackInvoker.addPresentFence(mPreviousPresentFences[0].fence);
-    mTransactionCallbackInvoker.sendCallbacks();
+    mTransactionCallbackInvoker.sendCallbacks(false /* onCommitOnly */);
     mTransactionCallbackInvoker.clearCompletedTransactions();
 
     if (display && display->isInternal() && display->getPowerMode() == hal::PowerMode::ON &&
@@ -3877,7 +3883,6 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
         processDisplayChangesLocked();
         processDisplayHotplugEventsLocked();
     }
-    mForceTraversal = false;
     mForceTransactionDisplayChange = displayTransactionNeeded;
 
     if (mSomeChildrenChanged) {
@@ -4367,11 +4372,8 @@ uint32_t SurfaceFlinger::setTransactionFlags(uint32_t mask, TransactionSchedule 
     return old;
 }
 
-void SurfaceFlinger::setTraversalNeeded() {
-    mForceTraversal = true;
-}
-
-void SurfaceFlinger::flushTransactionQueues() {
+bool SurfaceFlinger::flushTransactionQueues() {
+    bool needsTraversal = false;
     // to prevent onHandleDestroyed from being called while the lock is held,
     // we must keep a copy of the transactions (specifically the composer
     // states) around outside the scope of the lock
@@ -4440,19 +4442,23 @@ void SurfaceFlinger::flushTransactionQueues() {
 
         // Now apply all transactions.
         for (const auto& transaction : transactions) {
-            applyTransactionState(transaction.frameTimelineInfo, transaction.states,
-                                  transaction.displays, transaction.flags,
-                                  transaction.inputWindowCommands, transaction.desiredPresentTime,
-                                  transaction.isAutoTimestamp, transaction.buffer,
-                                  transaction.postTime, transaction.permissions,
-                                  transaction.hasListenerCallbacks, transaction.listenerCallbacks,
-                                  transaction.originPid, transaction.originUid, transaction.id);
+            needsTraversal |=
+                    applyTransactionState(transaction.frameTimelineInfo, transaction.states,
+                                          transaction.displays, transaction.flags,
+                                          transaction.inputWindowCommands,
+                                          transaction.desiredPresentTime,
+                                          transaction.isAutoTimestamp, transaction.buffer,
+                                          transaction.postTime, transaction.permissions,
+                                          transaction.hasListenerCallbacks,
+                                          transaction.listenerCallbacks, transaction.originPid,
+                                          transaction.originUid, transaction.id);
             if (transaction.transactionCommittedSignal) {
                 mTransactionCommittedSignals.emplace_back(
                         std::move(transaction.transactionCommittedSignal));
             }
         }
-    }
+    } // unlock mStateLock
+    return needsTraversal;
 }
 
 bool SurfaceFlinger::transactionFlushNeeded() {
@@ -4671,7 +4677,7 @@ status_t SurfaceFlinger::setTransactionState(
     return NO_ERROR;
 }
 
-void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelineInfo,
+bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelineInfo,
                                            const Vector<ComposerState>& states,
                                            const Vector<DisplayState>& displays, uint32_t flags,
                                            const InputWindowCommands& inputWindowCommands,
@@ -4693,12 +4699,10 @@ void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
         mTransactionCallbackInvoker.addEmptyTransaction(listener);
     }
 
-    std::unordered_set<ListenerCallbacks, ListenerCallbacksHash> listenerCallbacksWithSurfaces;
     uint32_t clientStateFlags = 0;
     for (const ComposerState& state : states) {
-        clientStateFlags |=
-                setClientStateLocked(frameTimelineInfo, state, desiredPresentTime, isAutoTimestamp,
-                                     postTime, permissions, listenerCallbacksWithSurfaces);
+        clientStateFlags |= setClientStateLocked(frameTimelineInfo, state, desiredPresentTime,
+                                                 isAutoTimestamp, postTime, permissions);
         if ((flags & eAnimation) && state.state.surface) {
             if (const auto layer = fromHandle(state.state.surface).promote(); layer) {
                 mScheduler->recordLayerHistory(layer.get(),
@@ -4708,10 +4712,6 @@ void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
         }
     }
 
-    // If the state doesn't require a traversal and there are callbacks, send them now
-    if (!(clientStateFlags & eTraversalNeeded) && hasListenerCallbacks) {
-        mTransactionCallbackInvoker.sendCallbacks();
-    }
     transactionFlags |= clientStateFlags;
 
     if (permissions & Permission::ACCESS_SURFACE_FLINGER) {
@@ -4733,6 +4733,7 @@ void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
         transactionFlags = eTransactionNeeded;
     }
 
+    bool needsTraversal = false;
     if (transactionFlags) {
         if (mInterceptor->isEnabled()) {
             mInterceptor->saveTransaction(states, mCurrentState.displays, displays, flags,
@@ -4743,7 +4744,7 @@ void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
         // so we don't have to wake up again next frame to preform an unnecessary traversal.
         if (transactionFlags & eTraversalNeeded) {
             transactionFlags = transactionFlags & (~eTraversalNeeded);
-            mForceTraversal = true;
+            needsTraversal = true;
         }
         if (transactionFlags) {
             setTransactionFlags(transactionFlags);
@@ -4753,6 +4754,8 @@ void SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
             mAnimTransactionPending = true;
         }
     }
+
+    return needsTraversal;
 }
 
 void SurfaceFlinger::checkVirtualDisplayHint(const Vector<DisplayState>& displays) {
@@ -4864,10 +4867,10 @@ bool SurfaceFlinger::callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermis
     return true;
 }
 
-uint32_t SurfaceFlinger::setClientStateLocked(
-        const FrameTimelineInfo& frameTimelineInfo, const ComposerState& composerState,
-        int64_t desiredPresentTime, bool isAutoTimestamp, int64_t postTime, uint32_t permissions,
-        std::unordered_set<ListenerCallbacks, ListenerCallbacksHash>& outListenerCallbacks) {
+uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTimelineInfo,
+                                              const ComposerState& composerState,
+                                              int64_t desiredPresentTime, bool isAutoTimestamp,
+                                              int64_t postTime, uint32_t permissions) {
     const layer_state_t& s = composerState.state;
     const bool privileged = permissions & Permission::ACCESS_SURFACE_FLINGER;
 
@@ -4881,13 +4884,11 @@ uint32_t SurfaceFlinger::setClientStateLocked(
         ListenerCallbacks onCommitCallbacks = listener.filter(CallbackId::Type::ON_COMMIT);
         if (!onCommitCallbacks.callbackIds.empty()) {
             filteredListeners.push_back(onCommitCallbacks);
-            outListenerCallbacks.insert(onCommitCallbacks);
         }
 
         ListenerCallbacks onCompleteCallbacks = listener.filter(CallbackId::Type::ON_COMPLETE);
         if (!onCompleteCallbacks.callbackIds.empty()) {
             filteredListeners.push_back(onCompleteCallbacks);
-            outListenerCallbacks.insert(onCompleteCallbacks);
         }
     }
 
@@ -5116,7 +5117,8 @@ uint32_t SurfaceFlinger::setClientStateLocked(
             const auto strategy =
                     Layer::FrameRate::convertChangeFrameRateStrategy(s.changeFrameRateStrategy);
 
-            if (layer->setFrameRate(Layer::FrameRate(Fps(s.frameRate), compatibility, strategy))) {
+            if (layer->setFrameRate(
+                        Layer::FrameRate(Fps::fromValue(s.frameRate), compatibility, strategy))) {
                 flags |= eTraversalNeeded;
             }
         }
@@ -8007,8 +8009,10 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecs(
             using Policy = scheduler::RefreshRateConfigs::Policy;
             const Policy policy{DisplayModeId(defaultMode),
                                 allowGroupSwitching,
-                                {Fps(primaryRefreshRateMin), Fps(primaryRefreshRateMax)},
-                                {Fps(appRequestRefreshRateMin), Fps(appRequestRefreshRateMax)}};
+                                {Fps::fromValue(primaryRefreshRateMin),
+                                 Fps::fromValue(primaryRefreshRateMax)},
+                                {Fps::fromValue(appRequestRefreshRateMin),
+                                 Fps::fromValue(appRequestRefreshRateMax)}};
             constexpr bool kOverridePolicy = false;
 
             return setDesiredDisplayModeSpecsInternal(display, policy, kOverridePolicy);
@@ -8140,7 +8144,7 @@ status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface,
             const auto strategy =
                     Layer::FrameRate::convertChangeFrameRateStrategy(changeFrameRateStrategy);
             if (layer->setFrameRate(
-                        Layer::FrameRate(Fps{frameRate},
+                        Layer::FrameRate(Fps::fromValue(frameRate),
                                          Layer::FrameRate::convertCompatibility(compatibility),
                                          strategy))) {
                 setTransactionFlags(eTraversalNeeded);
@@ -8274,7 +8278,7 @@ int SurfaceFlinger::calculateMaxAcquiredBufferCount(Fps refreshRate,
 }
 
 status_t SurfaceFlinger::getMaxAcquiredBufferCount(int* buffers) const {
-    Fps maxRefreshRate(60.f);
+    Fps maxRefreshRate = 60_Hz;
 
     if (!getHwComposer().isHeadless()) {
         if (const auto display = getDefaultDisplayDevice()) {
@@ -8287,7 +8291,7 @@ status_t SurfaceFlinger::getMaxAcquiredBufferCount(int* buffers) const {
 }
 
 uint32_t SurfaceFlinger::getMaxAcquiredBufferCountForCurrentRefreshRate(uid_t uid) const {
-    Fps refreshRate(60.f);
+    Fps refreshRate = 60_Hz;
 
     if (const auto frameRateOverride = mScheduler->getFrameRateOverride(uid)) {
         refreshRate = *frameRateOverride;
@@ -8316,7 +8320,7 @@ void TransactionState::traverseStatesWithBuffers(
 }
 
 void SurfaceFlinger::setLayerCreatedState(const sp<IBinder>& handle, const wp<Layer>& layer,
-                                          const wp<IBinder>& parent, const wp<Layer> parentLayer,
+                                          const sp<IBinder>& parent, const wp<Layer> parentLayer,
                                           const wp<IBinder>& producer, bool addToRoot) {
     Mutex::Autolock lock(mCreatedLayersLock);
     mCreatedLayers[handle->localBinder()] =
@@ -8360,9 +8364,9 @@ sp<Layer> SurfaceFlinger::handleLayerCreatedLocked(const sp<IBinder>& handle) {
     sp<Layer> parent;
     bool allowAddRoot = state->addToRoot;
     if (state->initialParent != nullptr) {
-        parent = fromHandle(state->initialParent.promote()).promote();
+        parent = fromHandle(state->initialParent).promote();
         if (parent == nullptr) {
-            ALOGE("Invalid parent %p", state->initialParent.unsafe_get());
+            ALOGE("Invalid parent %p", state->initialParent.get());
             allowAddRoot = false;
         }
     } else if (state->initialParentLayer != nullptr) {
@@ -8766,8 +8770,8 @@ void SurfaceFlinger::setDesiredModeByThermalLevel(float newLevelFps) {
             return ret;
         }
 
-        policy.primaryRange.max = Fps(fps);
-        policy.appRequestRange.max = Fps(fps);
+        policy.primaryRange.max = Fps::fromValue(fps);
+        policy.appRequestRange.max = Fps::fromValue(fps);
         policy.defaultMode = mode->getId();
 
         mAllowThermalFpsChange = true;

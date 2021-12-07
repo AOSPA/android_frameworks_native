@@ -87,7 +87,7 @@ public:
     void                restoreAllowFds(bool lastValue);
 
     bool                hasFileDescriptors() const;
-    status_t hasFileDescriptorsInRange(size_t offset, size_t length, bool& result) const;
+    status_t hasFileDescriptorsInRange(size_t offset, size_t length, bool* result) const;
 
     // Zeros data when reallocating. Other mitigations may be added
     // in the future.
@@ -576,7 +576,6 @@ private:
 
     status_t            writeRawNullableParcelable(const Parcelable*
                                                    parcelable);
-    bool hasFileDescriptorsInRangeUnchecked(size_t offset, size_t length) const;
 
     //-----------------------------------------------------------------------------
     // Generic type read and write methods for Parcel:
@@ -1237,7 +1236,9 @@ public:
      */
     size_t getOpenAshmemSize() const;
 
-    // TODO(b/202029388): Remove 'getBlobAshmemSize' once ABI can be changed.
+private:
+    // TODO(b/202029388): Remove 'getBlobAshmemSize' once no prebuilts reference
+    // this
     size_t getBlobAshmemSize() const;
 };
 

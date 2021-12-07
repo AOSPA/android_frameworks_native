@@ -284,7 +284,6 @@ std::vector<ParcelRead<::android::Parcel>> BINDER_PARCEL_READ_FUNCTIONS {
         FUZZ_LOG() << "readObject: " << obj;
     },
     PARCEL_READ_NO_STATUS(uid_t, readCallingWorkSourceUid),
-    PARCEL_READ_NO_STATUS(size_t, getBlobAshmemSize),
     PARCEL_READ_NO_STATUS(size_t, getOpenAshmemSize),
 
     // additional parcelable objects defined in libbinder
@@ -306,7 +305,7 @@ std::vector<ParcelRead<::android::Parcel>> BINDER_PARCEL_READ_FUNCTIONS {
         size_t offset = p.readUint32();
         size_t length = p.readUint32();
         bool result;
-        status_t status = p.hasFileDescriptorsInRange(offset, length, result);
+        status_t status = p.hasFileDescriptorsInRange(offset, length, &result);
         FUZZ_LOG() << " status: " << status  << " result: " << result;
     },
 };
