@@ -724,6 +724,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     if (ret || !mDisplayConfigIntf) {
         ALOGE("DisplayConfig HIDL not present\n");
         mDisplayConfigIntf = nullptr;
+    } else {
+        ALOGV("DisplayConfig HIDL is present\n");
     }
 
     if (mDisplayConfigIntf) {
@@ -1078,7 +1080,14 @@ void SurfaceFlinger::init() {
             "Initializing graphics H/W...");
     Mutex::Autolock _l(mStateLock);
 
-    InitComposerExtn();
+#if defined(QTI_DISPLAY_CONFIG_ENABLED) && defined(AIDL_DISPLAY_CONFIG_ENABLED)
+    if (!mDisplayConfigIntf && !displayConfigIntf) {
+        ALOGW("DisplayConfig HIDL and AIDL are both unavailable - disabling composer extensions");
+    } else {
+        ALOGV("Initializing composer extension interface");
+        InitComposerExtn();
+    }
+#endif
     // Get a RenderEngine for the given display / config (can't fail)
     // TODO(b/77156734): We need to stop casting and use HAL types when possible.
     // Sending maxFrameBufferAcquiredBuffers as the cache size is tightly tuned to single-display.
