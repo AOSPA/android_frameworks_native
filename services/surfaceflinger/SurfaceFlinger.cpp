@@ -8729,7 +8729,6 @@ void SurfaceFlinger::notifyAllDisplaysUpdateImminent() {
         ATRACE_CALL();
         // Notify Display Extn for GPU and Display Early Wakeup
         mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
-        setTransactionFlags(eDisplayTransactionNeeded, TransactionSchedule::EarlyEnd);
     }
 #endif
 }
@@ -8762,7 +8761,6 @@ void SurfaceFlinger::notifyDisplayUpdateImminent() {
             // Notify Display Extn for GPU and Display Early Wakeup
             mDisplayExtnIntf->NotifyEarlyWakeUp(true, true);
         }
-        setTransactionFlags(eDisplayTransactionNeeded, TransactionSchedule::EarlyEnd);
     }
 #endif
 }
