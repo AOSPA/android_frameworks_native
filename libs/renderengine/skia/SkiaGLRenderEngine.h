@@ -64,6 +64,7 @@ public:
     void assertShadersCompiled(int numShaders) override;
     void onActiveDisplaySizeChanged(ui::Size size) override;
     int reportShadersCompiled() override;
+    int getRETid() { return gettid(); }
 
 protected:
     void dump(std::string& result) override;

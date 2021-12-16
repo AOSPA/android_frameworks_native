@@ -1227,6 +1227,10 @@ void SurfaceFlinger::init() {
 #endif
 
     startUnifiedDraw();
+
+    mRETid = getRenderEngine().getRETid();
+    mSFTid = gettid();
+
     ALOGV("Done initializing");
 }
 
@@ -2635,6 +2639,19 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
 
     updateCursorAsync();
     updateInputFlinger();
+
+#ifdef PASS_COMPOSITOR_TID
+    if (!mTidSentSuccessfully && mBootFinished && mDisplayExtnIntf) {
+        bool sfTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kSurfaceFlinger,
+                                                         mSFTid) == 0;
+        bool reTid = mDisplayExtnIntf->SendCompositorTid(composer::PerfHintType::kRenderEngine,
+                                                         mRETid) == 0;
+
+        if (sfTid && reTid) {
+            mTidSentSuccessfully = true;
+        }
+    }
+#endif
 
     return mustComposite && CC_LIKELY(mBootStage != BootStage::BOOTLOADER);
 }
