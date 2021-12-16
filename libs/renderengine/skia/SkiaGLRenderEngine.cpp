@@ -53,6 +53,8 @@
 #include "SkBlendMode.h"
 #include "SkImageInfo.h"
 #include "filters/BlurFilter.h"
+#include "filters/GaussianBlurFilter.h"
+#include "filters/KawaseBlurFilter.h"
 #include "filters/LinearEffect.h"
 #include "log/log_main.h"
 #include "skia/debug/SkiaCapture.h"
@@ -328,7 +330,7 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGL
 
     if (args.supportsBackgroundBlur) {
         ALOGD("Background Blurs Enabled");
-        mBlurFilter = new BlurFilter();
+        mBlurFilter = new KawaseBlurFilter();
     }
     mCapture = std::make_unique<SkiaCapture>();
 }
@@ -803,11 +805,11 @@ void SkiaGLRenderEngine::drawLayersInternal(
                 continue;
             }
             if (layer.backgroundBlurRadius > 0 &&
-                layer.backgroundBlurRadius < BlurFilter::kMaxCrossFadeRadius) {
+                layer.backgroundBlurRadius < mBlurFilter->getMaxCrossFadeRadius()) {
                 requiresCompositionLayer = true;
             }
             for (auto region : layer.blurRegions) {
-                if (region.blurRadius < BlurFilter::kMaxCrossFadeRadius) {
+                if (region.blurRadius < mBlurFilter->getMaxCrossFadeRadius()) {
                     requiresCompositionLayer = true;
                 }
             }
