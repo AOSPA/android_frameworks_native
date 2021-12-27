@@ -137,6 +137,7 @@ uint32_t DisplayDevice::getPageFlipCount() const {
 // ----------------------------------------------------------------------------
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
+    resetVsyncPeriod();
     getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
 }
 
@@ -156,6 +157,7 @@ void DisplayDevice::setActiveMode(DisplayModeId id) {
     const auto mode = getMode(id);
     LOG_FATAL_IF(!mode, "Cannot set active mode which is not supported.");
     mActiveMode = mode;
+    resetVsyncPeriod();
 }
 
 status_t DisplayDevice::initiateModeChange(DisplayModeId modeId,
@@ -188,15 +190,34 @@ DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
     return nullptr;
 }
 
+void DisplayDevice::resetVsyncPeriod() {
+    std::scoped_lock<std::mutex> lock(mModeLock);
+    mVsyncPeriodUpdated = true;
+    mVsyncPeriod = 0;
+}
+
 nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
+    std::scoped_lock<std::mutex> lock(mModeLock);
     const auto physicalId = getPhysicalId();
     if (!mHwComposer.isConnected(physicalId)) {
         return 0;
     }
 
+    if (!mVsyncPeriodUpdated && mVsyncPeriod) {
+        ALOGD("%s: value is cached. return %lu", __func__, (unsigned long)mVsyncPeriod);
+        return mVsyncPeriod;
+    }
+
     nsecs_t vsyncPeriod;
     const auto status = mHwComposer.getDisplayVsyncPeriod(physicalId, &vsyncPeriod);
     if (status == NO_ERROR) {
+        ALOGD("%s: Called HWC getDisplayVsyncPeriod. No error. period=%lu", __func__,
+          (unsigned long)vsyncPeriod);
+        if (mVsyncPeriod == vsyncPeriod) {
+            mVsyncPeriodUpdated = false;
+        } else {
+            mVsyncPeriod = vsyncPeriod;
+        }
         return vsyncPeriod;
     }
 

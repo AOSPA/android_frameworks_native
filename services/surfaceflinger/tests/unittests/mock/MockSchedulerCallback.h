@@ -31,6 +31,7 @@ struct SchedulerCallback final : ISchedulerCallback {
     MOCK_METHOD1(kernelTimerChanged, void(bool));
     MOCK_METHOD0(triggerOnFrameRateOverridesChanged, void());
     MOCK_METHOD2(getModeFromFps, void(float, DisplayModePtr&));
+    MOCK_METHOD0(getVsyncPeriodFromHWCcb, nsecs_t());
 };
 
 struct NoOpSchedulerCallback final : ISchedulerCallback {
@@ -41,6 +42,7 @@ struct NoOpSchedulerCallback final : ISchedulerCallback {
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() {}
     void getModeFromFps(float, DisplayModePtr&) override {}
+    nsecs_t getVsyncPeriodFromHWCcb() { return 0; }
 };
 
 } // namespace android::mock
