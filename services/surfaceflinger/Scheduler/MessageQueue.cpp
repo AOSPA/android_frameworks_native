@@ -125,8 +125,15 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
         mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
     }
 
-    if (mFlinger->mSmoMo) {
-        mFlinger->mSmoMo->OnVsync(vsyncTime);
+    SmomoIntf *smoMo = nullptr;
+    for (auto &instance: mFlinger->mSmomoInstances) {
+        if (instance.displayId == 0) {
+            smoMo = instance.smoMo;
+            break;
+        }
+    }
+    if (smoMo) {
+        smoMo->OnVsync(vsyncTime);
     }
 
     mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
