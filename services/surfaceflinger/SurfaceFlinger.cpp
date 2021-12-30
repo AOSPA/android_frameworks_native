@@ -431,48 +431,13 @@ bool callingThreadHasRotateSurfaceFlingerAccess() {
             PermissionCache::checkPermission(sRotateSurfaceFlinger, pid, uid);
 }
 
-bool SmomoWrapper::init() {
-    mSmoMoLibHandle = dlopen(SMOMO_LIBRARY_NAME, RTLD_NOW);
-    if (!mSmoMoLibHandle) {
-        ALOGE("Unable to open SmoMo lib: %s", dlerror());
-        return false;
-    }
-
-    mSmoMoCreateFunc =
-        reinterpret_cast<CreateSmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
-            CREATE_SMOMO_INTERFACE_NAME));
-    mSmoMoDestroyFunc =
-        reinterpret_cast<DestroySmoMoFuncPtr>(dlsym(mSmoMoLibHandle,
-            DESTROY_SMOMO_INTERFACE_NAME));
-
-    if (!mSmoMoCreateFunc || !mSmoMoDestroyFunc) {
-        ALOGE("Can't load SmoMo symbols: %s", dlerror());
-        dlclose(mSmoMoLibHandle);
-        return false;
-    }
-
-    if (!mSmoMoCreateFunc(SMOMO_VERSION_TAG, &mInst)) {
-        ALOGE("Unable to create SmoMo interface");
-        dlclose(mSmoMoLibHandle);
-        return false;
-    }
-
-    return true;
-}
-
-SmomoWrapper::~SmomoWrapper() {
-    if (mInst) {
-        mSmoMoDestroyFunc(mInst);
-    }
-
-    if (mSmoMoLibHandle) {
-      dlclose(mSmoMoLibHandle);
-    }
-}
-
-void SmomoWrapper::setRefreshRates(
-        std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
+void SurfaceFlinger::setRefreshRates(
+       std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
     std::vector<float> refreshRates;
+
+    if (mSmoMo == nullptr) {
+        return;
+    }
 
     auto iter = refreshRateConfigs->getAllRefreshRates().cbegin();
     while (iter != refreshRateConfigs->getAllRefreshRates().cend()) {
@@ -481,7 +446,7 @@ void SmomoWrapper::setRefreshRates(
         }
         ++iter;
     }
-    mInst->SetDisplayRefreshRates(refreshRates);
+    mSmoMo->SetDisplayRefreshRates(refreshRates);
 }
 
 bool LayerExtWrapper::init() {
@@ -1178,18 +1143,8 @@ void SurfaceFlinger::init() {
         ALOGE("Run StartPropertySetThread failed!");
     }
 
-    char smomoProp[PROPERTY_VALUE_MAX];
-    property_get("vendor.display.use_smooth_motion", smomoProp, "0");
-    if (atoi(smomoProp) && mSmoMo.init()) {
-        mSmoMo->SetChangeRefreshRateCallback(
-            [this](int32_t refreshRate) {
-                setRefreshRateTo(refreshRate);
-            });
-
-        mSmoMo.setRefreshRates(mRefreshRateConfigs);
-
-        ALOGI("SmoMo is enabled");
-    }
+    // Initialize Smomo.
+    InitSmomo();
 
     char layerExtProp[PROPERTY_VALUE_MAX];
     property_get("vendor.display.use_layer_ext", layerExtProp, "0");
@@ -1243,6 +1198,28 @@ void SurfaceFlinger::InitComposerExtn() {
        ALOGI("Unable to create display extension");
     }
     ALOGI("Init: mDisplayExtnIntf: %p", mDisplayExtnIntf);
+}
+
+void SurfaceFlinger::InitSmomo() {
+    char smomoProp[PROPERTY_VALUE_MAX];
+    property_get("vendor.display.use_smooth_motion", smomoProp, "0");
+    if (!atoi(smomoProp)) {
+        return;
+    }
+    bool ret = mComposerExtnIntf->CreateSmomoExtn(&mSmoMo);
+    if (!ret) {
+        ALOGI("Unable to create smomo extension");
+    }
+    if (mSmoMo != nullptr) {
+        mSmoMo->SetChangeRefreshRateCallback(
+            [this](int32_t refreshRate) {
+                setRefreshRateTo(refreshRate);
+            });
+
+        setRefreshRates(mRefreshRateConfigs);
+
+        ALOGI("SmoMo is enabled");
+    }
 }
 
 void SurfaceFlinger::startUnifiedDraw() {
@@ -8143,9 +8120,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                          preferredRefreshRate.getModeId().value());
     }
 
-    if (mSmoMo) {
-        mSmoMo.setRefreshRates(mRefreshRateConfigs);
-    }
+    setRefreshRates(mRefreshRateConfigs);
     return NO_ERROR;
 }
 
