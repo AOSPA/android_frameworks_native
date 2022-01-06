@@ -897,7 +897,8 @@ private:
     // Check if unified draw supported
     void startUnifiedDraw();
     void InitComposerExtn();
-    void InitSmomo();
+    void createSmomoInstance(const DisplayDeviceState& state);
+    void destroySmomoInstance(const sp<DisplayDevice>& display);
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();
@@ -1665,12 +1666,19 @@ private:
     void scheduleRegionSamplingThread();
     void notifyRegionSamplingThread();
     void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
+    void UpdateSmomoState();
 
 public:
     nsecs_t mVsyncPeriod = -1;
     DolphinWrapper mDolphinWrapper;
     LayerExtWrapper mLayerExt;
-    SmomoIntf *mSmoMo = nullptr;
+    struct SmomoInfo {
+      uint32_t displayId;
+      uint32_t layerStackId;
+      bool active = false;
+      SmomoIntf *smoMo = nullptr;
+    };
+    std::vector<SmomoInfo> mSmomoInstances;
 
 private:
     bool mEarlyWakeUpEnabled = false;
