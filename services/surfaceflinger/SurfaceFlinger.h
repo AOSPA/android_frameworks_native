@@ -1292,7 +1292,7 @@ private:
                                                std::chrono::nanoseconds presentLatency);
     int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
     void setDesiredModeByThermalLevel(float newFpsRequest);
-    bool isFpsDeferNeeded(const ActiveModeInfo& info);
+    bool isFpsDeferNeeded(const ActiveModeInfo& info) REQUIRES(mStateLock);
     void getModeFromFps(float fps,DisplayModePtr& outMode);
     void handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
 
