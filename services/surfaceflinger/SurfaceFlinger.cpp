@@ -1509,7 +1509,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* st
 }
 
 bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
-    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    const auto display = getDefaultDisplayDeviceLocked();
     if (!display || !mThermalLevelFps) {
         return false;
     }
