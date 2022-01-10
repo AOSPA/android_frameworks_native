@@ -67,7 +67,6 @@ cc_defaults {
     ],
     shared_libs: [
        "libbinder_ndk",
-       "vendor.qti.hardware.display.config-V4-ndk",
     ],
 }
 
@@ -138,6 +137,7 @@ cc_defaults {
         "libutils",
         "libSurfaceFlingerProp",
         "vendor.qti.hardware.display.composer@3.0",
+        "vendor.qti.hardware.display.config-V4-ndk",
         "server_configurable_flags",
     ],
     static_libs: [

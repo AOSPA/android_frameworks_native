@@ -148,6 +148,7 @@ cc_test {
         "libtrace_proto",
         "perfetto_trace_protos",
         "vendor.qti.hardware.display.composer@3.0",
+        "vendor.qti.hardware.display.config-V4-ndk",
     ],
     shared_libs: [
         "android.hardware.configstore-utils",
