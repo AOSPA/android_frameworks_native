@@ -47,6 +47,7 @@ libdisplayconfig_cc_defaults {
     static_libs: [
         "libmath",
         "librenderengine",
+        "libtonemap",
         "libtrace_proto",
         "libaidlcommonsupport",
     ],

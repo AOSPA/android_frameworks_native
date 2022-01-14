@@ -521,6 +521,25 @@ int Parcel::compareData(const Parcel& other) {
     return memcmp(data(), other.data(), size);
 }
 
+status_t Parcel::compareDataInRange(size_t thisOffset, const Parcel& other, size_t otherOffset,
+                                    size_t len, int* result) const {
+    if (len > INT32_MAX || thisOffset > INT32_MAX || otherOffset > INT32_MAX) {
+        // Don't accept size_t values which may have come from an inadvertent conversion from a
+        // negative int.
+        return BAD_VALUE;
+    }
+    size_t thisLimit;
+    if (__builtin_add_overflow(thisOffset, len, &thisLimit) || thisLimit > mDataSize) {
+        return BAD_VALUE;
+    }
+    size_t otherLimit;
+    if (__builtin_add_overflow(otherOffset, len, &otherLimit) || otherLimit > other.mDataSize) {
+        return BAD_VALUE;
+    }
+    *result = memcmp(data() + thisOffset, other.data() + otherOffset, len);
+    return NO_ERROR;
+}
+
 bool Parcel::allowFds() const
 {
     return mAllowFds;
@@ -2183,12 +2202,14 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
               type == BINDER_TYPE_FD)) {
             // We should never receive other types (eg BINDER_TYPE_FDA) as long as we don't support
             // them in libbinder. If we do receive them, it probably means a kernel bug; try to
-            // recover gracefully by clearing out the objects, and releasing the objects we do
-            // know about.
+            // recover gracefully by clearing out the objects.
             android_errorWriteLog(0x534e4554, "135930648");
+            android_errorWriteLog(0x534e4554, "203847542");
             ALOGE("%s: unsupported type object (%" PRIu32 ") at offset %" PRIu64 "\n",
                   __func__, type, (uint64_t)offset);
-            releaseObjects();
+
+            // WARNING: callers of ipcSetDataReference need to make sure they
+            // don't rely on mObjectsSize in their release_func.
             mObjectsSize = 0;
             break;
         }

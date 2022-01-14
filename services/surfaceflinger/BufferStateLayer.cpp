@@ -671,7 +671,7 @@ FloatRect BufferStateLayer::computeSourceBounds(const FloatRect& parentBounds) c
 // Interface implementation for BufferLayer
 // -----------------------------------------------------------------------
 bool BufferStateLayer::fenceHasSignaled() const {
-    if (SurfaceFlinger::enableLatchUnsignaled) {
+    if (SurfaceFlinger::enableLatchUnsignaledConfig != LatchUnsignaledConfig::Disabled) {
         return true;
     }
 
@@ -705,9 +705,7 @@ bool BufferStateLayer::onPreComposition(nsecs_t refreshStartTime) {
 }
 
 void BufferStateLayer::setAutoRefresh(bool autoRefresh) {
-    if (!mAutoRefresh.exchange(autoRefresh)) {
-        mFlinger->onLayerUpdate();
-    }
+    mDrawingState.autoRefresh = autoRefresh;
 }
 
 bool BufferStateLayer::latchSidebandStream(bool& recomputeVisibleRegions) {
@@ -930,7 +928,7 @@ Rect BufferStateLayer::computeBufferCrop(const State& s) {
 }
 
 sp<Layer> BufferStateLayer::createClone() {
-    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, 0, 0, LayerMetadata());
+    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
     args.textureName = mTextureName;
     sp<BufferStateLayer> layer = mFlinger->getFactory().createBufferStateLayer(args);
     layer->mHwcSlotGenerator = mHwcSlotGenerator;
