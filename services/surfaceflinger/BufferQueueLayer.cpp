@@ -131,7 +131,7 @@ bool BufferQueueLayer::isBufferDue(nsecs_t expectedPresentTime) const {
 bool BufferQueueLayer::fenceHasSignaled() const {
     Mutex::Autolock lock(mQueueItemLock);
 
-    if (SurfaceFlinger::enableLatchUnsignaled) {
+    if (SurfaceFlinger::enableLatchUnsignaledConfig != LatchUnsignaledConfig::Disabled) {
         return true;
     }
 
@@ -233,7 +233,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
     bool autoRefresh;
     status_t updateResult = mConsumer->updateTexImage(&r, expectedPresentTime, &autoRefresh,
                                                       &queuedBuffer, maxFrameNumberToAcquire);
-    mAutoRefresh = autoRefresh;
+    mDrawingState.autoRefresh = autoRefresh;
     if (updateResult == BufferQueue::PRESENT_LATER) {
         // Producer doesn't want buffer to be displayed yet.  Signal a
         // layer update so we check again at the next opportunity.
@@ -317,7 +317,7 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
 
     // Decrement the queued-frames count.  Signal another event if we
     // have more frames pending.
-    if ((queuedBuffer && more_frames_pending) || mAutoRefresh) {
+    if ((queuedBuffer && more_frames_pending) || mDrawingState.autoRefresh) {
         mFlinger->onLayerUpdate();
     }
 
@@ -550,7 +550,7 @@ void BufferQueueLayer::gatherBufferInfo() {
 }
 
 sp<Layer> BufferQueueLayer::createClone() {
-    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, 0, 0, LayerMetadata());
+    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
     args.textureName = mTextureName;
     sp<BufferQueueLayer> layer = mFlinger->getFactory().createBufferQueueLayer(args);
     layer->setInitialValuesForClone(this);

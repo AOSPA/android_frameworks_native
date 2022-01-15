@@ -56,14 +56,13 @@
 #include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
-#include "Scheduler/MessageQueue.h"
 #include "Scheduler/RefreshRateConfigs.h"
 #include "Scheduler/RefreshRateStats.h"
 #include "Scheduler/Scheduler.h"
 #include "Scheduler/VsyncModulator.h"
 #include "SurfaceFlingerFactory.h"
-#include "SurfaceTracing.h"
 #include "TracedOrdinal.h"
+#include "Tracing/LayerTracing.h"
 #include "TransactionCallbackInvoker.h"
 #include "TransactionState.h"
 
@@ -154,6 +153,8 @@ enum {
     eTransactionFlushNeeded = 0x10,
     eTransactionMask = 0x1f,
 };
+
+enum class LatchUnsignaledConfig { Always, Auto, Disabled };
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
@@ -331,18 +332,13 @@ public:
     static ui::Dataspace wideColorGamutCompositionDataspace;
     static ui::PixelFormat wideColorGamutCompositionPixelFormat;
 
-    // Whether to use frame rate API when deciding about the refresh rate of the display. This
-    // variable is caches in SF, so that we can check it with each layer creation, and a void the
-    // overhead that is caused by reading from sysprop.
-    static bool useFrameRateApi;
-
     static constexpr SkipInitializationTag SkipInitialization;
 
     // Whether or not SDR layers should be dimmed to the desired SDR white point instead of
     // being treated as native display brightness
     static bool enableSdrDimming;
 
-    static bool enableLatchUnsignaled;
+    static LatchUnsignaledConfig enableLatchUnsignaledConfig;
 
     // must be called before clients can connect
     void init() ANDROID_API;
@@ -352,10 +348,6 @@ public:
 
     SurfaceFlingerBE& getBE() { return mBE; }
     const SurfaceFlingerBE& getBE() const { return mBE; }
-
-    // Schedule an asynchronous or synchronous task on the main thread.
-    template <typename F, typename T = std::invoke_result_t<F>>
-    [[nodiscard]] std::future<T> schedule(F&&);
 
     // Schedule commit of transactions on the main thread ahead of the next VSYNC.
     void scheduleCommit(FrameHint);
@@ -415,6 +407,7 @@ public:
     // Disables expensive rendering for all displays
     // This is scheduled on the main thread
     void disableExpensiveRendering();
+    FloatRect getMaxDisplayBounds();
 
     nsecs_t mVsyncTimeStamp = -1;
     void NotifyIdleStatus();
@@ -448,7 +441,7 @@ private:
     friend class MonitoredProducer;
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
-    friend class SurfaceTracing;
+    friend class LayerTracing;
 
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -709,7 +702,6 @@ private:
                                      float lightPosY, float lightPosZ, float lightRadius) override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
-    status_t acquireFrameRateFlexibilityToken(sp<IBinder>* outToken) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
         std::chrono::steady_clock::time_point earliestPresentTime) const;
     status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
@@ -761,7 +753,7 @@ private:
 
     // Toggles hardware VSYNC by calling into HWC.
     void setVsyncEnabled(bool) override;
-    // Initiates a refresh rate change to be applied on invalidate.
+    // Initiates a refresh rate change to be applied on commit.
     void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ModeEvent) override;
     // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
     void kernelTimerChanged(bool expired) override;
@@ -798,9 +790,6 @@ private:
             const sp<DisplayDevice>& display,
             const std::optional<scheduler::RefreshRateConfigs::Policy>& policy, bool overridePolicy)
             EXCLUDES(mStateLock);
-
-    // Returns whether transactions were committed.
-    bool flushAndCommitTransactions() EXCLUDES(mStateLock);
 
     void commitTransactions() EXCLUDES(mStateLock);
     void commitTransactionsLocked(uint32_t transactionFlags) REQUIRES(mStateLock);
@@ -868,7 +857,14 @@ private:
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
             uid_t originUid, const Vector<ComposerState>& states,
             const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
-                    bufferLayersReadyToPresent) const REQUIRES(mStateLock);
+                    bufferLayersReadyToPresent,
+            bool allowLatchUnsignaled) const REQUIRES(mStateLock);
+    static LatchUnsignaledConfig getLatchUnsignaledConfig();
+    bool latchUnsignaledIsAllowed(std::vector<TransactionState>& transactions) REQUIRES(mStateLock);
+    bool allowedLatchUnsignaled() REQUIRES(mQueueLock, mStateLock);
+    bool checkTransactionCanLatchUnsignaled(const TransactionState& transaction)
+            REQUIRES(mStateLock);
+    bool applyTransactions(std::vector<TransactionState>& transactions) REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
@@ -877,29 +873,23 @@ private:
     /*
      * Layer management
      */
-    status_t createLayer(const String8& name, const sp<Client>& client, uint32_t w, uint32_t h,
-                         PixelFormat format, uint32_t flags, LayerMetadata metadata,
-                         sp<IBinder>* handle, sp<IGraphicBufferProducer>* gbp,
+    status_t createLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                          const sp<IBinder>& parentHandle, int32_t* outLayerId,
                          const sp<Layer>& parentLayer = nullptr,
                          uint32_t* outTransformHint = nullptr);
 
-    status_t createBufferQueueLayer(const sp<Client>& client, std::string name, uint32_t w,
-                                    uint32_t h, uint32_t flags, LayerMetadata metadata,
-                                    PixelFormat& format, sp<IBinder>* outHandle,
-                                    sp<IGraphicBufferProducer>* outGbp, sp<Layer>* outLayer);
+    status_t createBufferQueueLayer(LayerCreationArgs& args, PixelFormat& format,
+                                    sp<IBinder>* outHandle, sp<IGraphicBufferProducer>* outGbp,
+                                    sp<Layer>* outLayer);
 
-    status_t createBufferStateLayer(const sp<Client>& client, std::string name, uint32_t w,
-                                    uint32_t h, uint32_t flags, LayerMetadata metadata,
-                                    sp<IBinder>* outHandle, sp<Layer>* outLayer);
+    status_t createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
+                                    sp<Layer>* outLayer);
 
-    status_t createEffectLayer(const sp<Client>& client, std::string name, uint32_t w, uint32_t h,
-                               uint32_t flags, LayerMetadata metadata, sp<IBinder>* outHandle,
+    status_t createEffectLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                                sp<Layer>* outLayer);
 
-    status_t createContainerLayer(const sp<Client>& client, std::string name, uint32_t w,
-                                  uint32_t h, uint32_t flags, LayerMetadata metadata,
-                                  sp<IBinder>* outHandle, sp<Layer>* outLayer);
+    status_t createContainerLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
+                                  sp<Layer>* outLayer);
 
     status_t mirrorLayer(const sp<Client>& client, const sp<IBinder>& mirrorFromHandle,
                          sp<IBinder>* outHandle, int32_t* outLayerId);
@@ -912,8 +902,7 @@ private:
 
     // add a layer to SurfaceFlinger
     status_t addClientLayer(const sp<Client>& client, const sp<IBinder>& handle,
-                            const sp<IGraphicBufferProducer>& gbc, const sp<Layer>& lbc,
-                            const wp<Layer>& parentLayer, bool addToRoot,
+                            const sp<Layer>& lbc, const wp<Layer>& parentLayer, bool addToRoot,
                             uint32_t* outTransformHint);
 
     // Traverse through all the layers and compute and cache its bounds.
@@ -1015,8 +1004,6 @@ private:
     // region of all screens presenting this layer stack.
     void invalidateLayerStack(const sp<const Layer>& layer, const Region& dirty);
 
-    sp<DisplayDevice> getDisplayWithInputByLayer(Layer* layer) const REQUIRES(mStateLock);
-
     bool isDisplayActiveLocked(const sp<const DisplayDevice>& display) const REQUIRES(mStateLock) {
         return display->getDisplayToken() == mActiveDisplayToken;
     }
@@ -1077,10 +1064,6 @@ private:
         mLastHWCVsyncState = enabled;
         getHwComposer().setVsyncEnabled(id, enabled);
     }
-
-    // Sets the refresh rate by switching active configs, if they are available for
-    // the desired refresh rate.
-    void changeRefreshRateLocked(const RefreshRate&, Scheduler::ModeEvent) REQUIRES(mStateLock);
 
     void setRefreshRateTo(int32_t refreshRate);
 
@@ -1178,12 +1161,12 @@ private:
     void dumpWideColorInfo(std::string& result) const REQUIRES(mStateLock);
     LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(LayersProto& layersProto,
-                                  uint32_t traceFlags = SurfaceTracing::TRACE_ALL) const;
+                                  uint32_t traceFlags = LayerTracing::TRACE_ALL) const;
     void dumpDisplayProto(LayersTraceProto& layersTraceProto) const;
 
     // Dumps state from HW Composer
     void dumpHwc(std::string& result) const;
-    LayersProto dumpProtoFromMainThread(uint32_t traceFlags = SurfaceTracing::TRACE_ALL)
+    LayersProto dumpProtoFromMainThread(uint32_t traceFlags = LayerTracing::TRACE_ALL)
             EXCLUDES(mStateLock);
     void dumpOffscreenLayers(std::string& result) EXCLUDES(mStateLock);
     void dumpPlannerInfo(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
@@ -1208,8 +1191,6 @@ private:
     status_t dumpAll(int fd, const DumpArgs& args, bool asProto) override {
         return doDump(fd, args, asProto);
     }
-
-    void onFrameRateFlexibilityTokenReleased();
 
     void setContentFps(uint32_t contentFps);
 
@@ -1295,15 +1276,11 @@ private:
     float mGlobalSaturationFactor = 1.0f;
     mat4 mClientColorMatrix;
 
-    // Can't be unordered_set because wp<> isn't hashable
-    std::set<wp<IBinder>> mGraphicBufferProducerList;
     size_t mMaxGraphicBufferProducerListSize = ISurfaceComposer::MAX_LAYERS;
     // If there are more GraphicBufferProducers tracked by SurfaceFlinger than
     // this threshold, then begin logging.
     size_t mGraphicBufferProducerListSizeLogThreshold =
             static_cast<size_t>(0.95 * static_cast<double>(MAX_LAYERS));
-
-    void removeGraphicBufferProducerAsync(const wp<IBinder>&);
 
     // protected by mStateLock (but we could use another lock)
     bool mLayersRemoved = false;
@@ -1386,10 +1363,9 @@ private:
     bool mPropagateBackpressureClientComposition = false;
     sp<SurfaceInterceptor> mInterceptor;
 
-    SurfaceTracing mTracing{*this};
+    LayerTracing mLayerTracing{*this};
     std::mutex mTracingLock;
     bool mTracingEnabled = false;
-    bool mTracePostComposition = false;
     std::atomic<bool> mTracingEnabledChanged = false;
 
     const std::shared_ptr<TimeStats> mTimeStats;
@@ -1409,13 +1385,8 @@ private:
 
     TransactionCallbackInvoker mTransactionCallbackInvoker;
 
-    // these are thread safe
-    std::unique_ptr<MessageQueue> mEventQueue;
+    // Thread-safe.
     FrameTracker mAnimFrameTracker;
-
-    // protected by mDestroyedLayerLock;
-    mutable Mutex mDestroyedLayerLock;
-    Vector<Layer const *> mDestroyedLayers;
 
     // We maintain a pool of pre-generated texture names to hand out to avoid
     // layer creation needing to run on the main thread (which it would
@@ -1428,7 +1399,7 @@ private:
     Condition mTransactionQueueCV;
     std::unordered_map<sp<IBinder>, std::queue<TransactionState>, IListenerHash>
             mPendingTransactionQueues GUARDED_BY(mQueueLock);
-    std::queue<TransactionState> mTransactionQueue GUARDED_BY(mQueueLock);
+    std::deque<TransactionState> mTransactionQueue GUARDED_BY(mQueueLock);
     /*
      * Feature prototyping
      */
@@ -1525,29 +1496,18 @@ private:
     // be any issues with a raw pointer referencing an invalid object.
     std::unordered_set<Layer*> mOffscreenLayers;
 
-    int mFrameRateFlexibilityTokenCount = 0;
-
-    sp<IBinder> mDebugFrameRateFlexibilityToken;
-
     BufferCountTracker mBufferCountTracker;
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
             GUARDED_BY(mStateLock);
     mutable Mutex mCreatedLayersLock;
     struct LayerCreatedState {
-        LayerCreatedState(const wp<Layer>& layer, const wp<Layer> parent,
-                          const wp<IBinder>& producer, bool addToRoot)
-              : layer(layer),
-                initialParent(parent),
-                initialProducer(producer),
-                addToRoot(addToRoot) {}
+        LayerCreatedState(const wp<Layer>& layer, const wp<Layer> parent, bool addToRoot)
+              : layer(layer), initialParent(parent), addToRoot(addToRoot) {}
         wp<Layer> layer;
         // Indicates the initial parent of the created layer, only used for creating layer in
         // SurfaceFlinger. If nullptr, it may add the created layer into the current root layers.
         wp<Layer> initialParent;
-        // Indicates the initial graphic buffer producer of the created layer, only used for
-        // creating layer in SurfaceFlinger.
-        wp<IBinder> initialProducer;
         // Indicates whether the layer getting created should be added at root if there's no parent
         // and has permission ACCESS_SURFACE_FLINGER. If set to false and no parent, the layer will
         // be added offscreen.
@@ -1558,7 +1518,7 @@ private:
     // thread.
     std::unordered_map<BBinder*, std::unique_ptr<LayerCreatedState>> mCreatedLayers;
     void setLayerCreatedState(const sp<IBinder>& handle, const wp<Layer>& layer,
-                              const wp<Layer> parent, const wp<IBinder>& producer, bool addToRoot);
+                              const wp<Layer> parent, bool addToRoot);
     auto getLayerCreatedState(const sp<IBinder>& handle);
     sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
 

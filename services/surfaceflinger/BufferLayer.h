@@ -174,7 +174,7 @@ protected:
     // the mStateLock.
     ui::Transform::RotationFlags mTransformHint = ui::Transform::ROT_0;
 
-    bool getAutoRefresh() const { return mAutoRefresh; }
+    bool getAutoRefresh() const { return mDrawingState.autoRefresh; }
     bool getSidebandStreamChanged() const { return mSidebandStreamChanged; }
 
     // Returns true if the next buffer should be presented at the expected present time
@@ -185,7 +185,6 @@ protected:
     // specific logic
     virtual bool isBufferDue(nsecs_t /*expectedPresentTime*/) const = 0;
 
-    std::atomic<bool> mAutoRefresh{false};
     std::atomic<bool> mSidebandStreamChanged{false};
 
 private:

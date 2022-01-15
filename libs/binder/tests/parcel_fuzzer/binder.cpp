@@ -192,6 +192,8 @@ std::vector<ParcelRead<::android::Parcel>> BINDER_PARCEL_READ_FUNCTIONS {
     // only reading one binder type for now
     PARCEL_READ_WITH_STATUS(android::sp<android::os::IServiceManager>, readStrongBinder),
     PARCEL_READ_WITH_STATUS(android::sp<android::os::IServiceManager>, readNullableStrongBinder),
+    PARCEL_READ_WITH_STATUS(std::vector<android::sp<android::os::IServiceManager>>, readStrongBinderVector),
+    PARCEL_READ_WITH_STATUS(std::optional<std::vector<android::sp<android::os::IServiceManager>>>, readStrongBinderVector),
 
     PARCEL_READ_WITH_STATUS(::std::unique_ptr<std::vector<android::sp<android::IBinder>>>, readStrongBinderVector),
     PARCEL_READ_WITH_STATUS(::std::optional<std::vector<android::sp<android::IBinder>>>, readStrongBinderVector),
@@ -306,6 +308,15 @@ std::vector<ParcelRead<::android::Parcel>> BINDER_PARCEL_READ_FUNCTIONS {
         size_t length = p.readUint32();
         bool result;
         status_t status = p.hasFileDescriptorsInRange(offset, length, &result);
+        FUZZ_LOG() << " status: " << status  << " result: " << result;
+    },
+    [] (const ::android::Parcel& p, uint8_t /* data */) {
+        FUZZ_LOG() << "about to call compareDataInRange() with status";
+        size_t thisOffset = p.readUint32();
+        size_t otherOffset = p.readUint32();
+        size_t length = p.readUint32();
+        int result;
+        status_t status = p.compareDataInRange(thisOffset, p, otherOffset, length, &result);
         FUZZ_LOG() << " status: " << status  << " result: " << result;
     },
 };
