@@ -47,7 +47,8 @@ public:
 
     binder::Status createAppData(const std::optional<std::string>& uuid,
             const std::string& packageName, int32_t userId, int32_t flags, int32_t appId,
-            const std::string& seInfo, int32_t targetSdkVersion, int64_t* _aidl_return);
+            int32_t previousAppId, const std::string& seInfo, int32_t targetSdkVersion,
+            int64_t* _aidl_return);
 
     binder::Status createAppData(
             const android::os::CreateAppDataArgs& args,
@@ -144,7 +145,7 @@ public:
 
     binder::Status rmPackageDir(const std::string& packageDir);
     binder::Status freeCache(const std::optional<std::string>& uuid, int64_t targetFreeBytes,
-            int64_t cacheReservedBytes, int32_t flags);
+            int32_t flags);
     binder::Status linkNativeLibraryDirectory(const std::optional<std::string>& uuid,
             const std::string& packageName, const std::string& nativeLibPath32, int32_t userId);
     binder::Status createOatDir(const std::string& oatDir, const std::string& instructionSet);

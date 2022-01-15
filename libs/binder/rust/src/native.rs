@@ -18,7 +18,7 @@ use crate::binder::{
     AsNative, Interface, InterfaceClassMethods, Remotable, Stability, TransactionCode,
 };
 use crate::error::{status_result, status_t, Result, StatusCode};
-use crate::parcel::{Parcel, Serialize};
+use crate::parcel::{BorrowedParcel, Serialize};
 use crate::proxy::SpIBinder;
 use crate::sys;
 
@@ -161,8 +161,8 @@ impl<T: Remotable> Binder<T> {
     ///        # fn on_transact(
     ///        #     service: &dyn IBar,
     ///        #     code: TransactionCode,
-    ///        #     data: &Parcel,
-    ///        #     reply: &mut Parcel,
+    ///        #     data: &BorrowedParcel,
+    ///        #     reply: &mut BorrowedParcel,
     ///        # ) -> binder::Result<()> {
     ///        #     Ok(())
     ///        # }
@@ -212,7 +212,7 @@ impl<T: Remotable> Binder<T> {
 
     /// Mark this binder object with local stability, which is vendor if we are
     /// building for the VNDK and system otherwise.
-    #[cfg(vendor_ndk)]
+    #[cfg(any(vendor_ndk, android_vndk))]
     fn mark_local_stability(&mut self) {
         unsafe {
             // Safety: Self always contains a valid `AIBinder` pointer, so
@@ -223,7 +223,7 @@ impl<T: Remotable> Binder<T> {
 
     /// Mark this binder object with local stability, which is vendor if we are
     /// building for the VNDK and system otherwise.
-    #[cfg(not(vendor_ndk))]
+    #[cfg(not(any(vendor_ndk, android_vndk)))]
     fn mark_local_stability(&mut self) {
         unsafe {
             // Safety: Self always contains a valid `AIBinder` pointer, so
@@ -277,8 +277,8 @@ impl<T: Remotable> InterfaceClassMethods for Binder<T> {
         reply: *mut sys::AParcel,
     ) -> status_t {
         let res = {
-            let mut reply = Parcel::borrowed(reply).unwrap();
-            let data = Parcel::borrowed(data as *mut sys::AParcel).unwrap();
+            let mut reply = BorrowedParcel::from_raw(reply).unwrap();
+            let data = BorrowedParcel::from_raw(data as *mut sys::AParcel).unwrap();
             let object = sys::AIBinder_getUserData(binder);
             let binder: &T = &*(object as *const T);
             binder.on_transact(code, &data, &mut reply)
@@ -384,7 +384,7 @@ impl<T: Remotable> Deref for Binder<T> {
 }
 
 impl<B: Remotable> Serialize for Binder<B> {
-    fn serialize(&self, parcel: &mut Parcel) -> Result<()> {
+    fn serialize(&self, parcel: &mut BorrowedParcel<'_>) -> Result<()> {
         parcel.write_binder(Some(&self.as_binder()))
     }
 }
@@ -503,8 +503,8 @@ impl Remotable for () {
     fn on_transact(
         &self,
         _code: TransactionCode,
-        _data: &Parcel,
-        _reply: &mut Parcel,
+        _data: &BorrowedParcel<'_>,
+        _reply: &mut BorrowedParcel<'_>,
     ) -> Result<()> {
         Ok(())
     }

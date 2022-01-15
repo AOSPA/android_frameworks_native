@@ -95,13 +95,13 @@ public:
     void onFrameDequeued(const uint64_t) override;
     void onFrameCancelled(const uint64_t) override;
 
-    virtual void transactionCommittedCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
-                                              const std::vector<SurfaceControlStats>& stats);
-    void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
-            const std::vector<SurfaceControlStats>& stats);
+    void transactionCommittedCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
+                                      const std::vector<SurfaceControlStats>& stats);
+    virtual void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
+                                     const std::vector<SurfaceControlStats>& stats);
     void releaseBufferCallback(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
                                std::optional<uint32_t> currentMaxAcquiredBufferCount);
-    void setNextTransaction(SurfaceComposerClient::Transaction *t);
+    void setSyncTransaction(SurfaceComposerClient::Transaction* t, bool acquireSingleBuffer = true);
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
     void applyPendingTransactions(uint64_t frameNumber);
 
@@ -139,6 +139,9 @@ private:
 
     void flushShadowQueue() REQUIRES(mMutex);
     void acquireAndReleaseBuffer() REQUIRES(mMutex);
+    void releaseBuffer(const ReleaseCallbackId& callbackId, const sp<Fence>& releaseFence)
+            REQUIRES(mMutex);
+    void flushAndWaitForFreeBuffer(std::unique_lock<std::mutex>& lock);
 
     std::string mName;
     // Represents the queued buffer count from buffer queue,
@@ -216,7 +219,7 @@ private:
     sp<IGraphicBufferProducer> mProducer;
     sp<BLASTBufferItemConsumer> mBufferItemConsumer;
 
-    SurfaceComposerClient::Transaction* mNextTransaction GUARDED_BY(mMutex);
+    SurfaceComposerClient::Transaction* mSyncTransaction GUARDED_BY(mMutex);
     std::vector<std::tuple<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
             mPendingTransactions GUARDED_BY(mMutex);
 
@@ -247,7 +250,11 @@ private:
     std::queue<sp<SurfaceControl>> mSurfaceControlsWithPendingCallback GUARDED_BY(mMutex);
 
     uint32_t mCurrentMaxAcquiredBufferCount;
-    bool mWaitForTransactionCallback = false;
+    bool mWaitForTransactionCallback GUARDED_BY(mMutex) = false;
+
+    // Flag to determine if syncTransaction should only acquire a single buffer and then clear or
+    // continue to acquire buffers until explicitly cleared
+    bool mAcquireSingleBuffer GUARDED_BY(mMutex) = true;
 };
 
 } // namespace android
