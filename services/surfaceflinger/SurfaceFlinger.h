@@ -209,31 +209,6 @@ private:
     void *mDolphinHandle = nullptr;
 };
 
-class SmomoWrapper {
-public:
-    SmomoWrapper() {}
-    ~SmomoWrapper();
-
-    bool init();
-
-    SmomoIntf* operator->() const { return mInst; }
-    operator bool() const { return mInst != nullptr; }
-
-    SmomoWrapper(const SmomoWrapper&) = delete;
-    SmomoWrapper& operator=(const SmomoWrapper&) = delete;
-
-    void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
-
-private:
-    SmomoIntf *mInst = nullptr;
-    void *mSmoMoLibHandle = nullptr;
-
-    using CreateSmoMoFuncPtr = std::add_pointer<bool(uint16_t, SmomoIntf**)>::type;
-    using DestroySmoMoFuncPtr = std::add_pointer<void(SmomoIntf*)>::type;
-    CreateSmoMoFuncPtr mSmoMoCreateFunc;
-    DestroySmoMoFuncPtr mSmoMoDestroyFunc;
-};
-
 class LayerExtWrapper {
 public:
     LayerExtWrapper() {}
@@ -419,8 +394,7 @@ public:
     // Returns nullptr if the handle does not point to an existing layer.
     // Otherwise, returns a weak reference so that callers off the main-thread
     // won't accidentally hold onto the last strong reference.
-    wp<Layer> fromHandle(const sp<IBinder>& handle);
-    wp<Layer> fromHandleLocked(const sp<IBinder>& handle) const REQUIRES(mStateLock);
+    wp<Layer> fromHandle(const sp<IBinder>& handle) const;
 
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
@@ -923,6 +897,7 @@ private:
     // Check if unified draw supported
     void startUnifiedDraw();
     void InitComposerExtn();
+    void InitSmomo();
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
     bool handleMessageInvalidate();
@@ -1021,7 +996,7 @@ private:
     // called when all clients have released all their references to
     // this layer meaning it is entirely safe to destroy all
     // resources associated to this layer.
-    void onHandleDestroyed(sp<Layer>& layer);
+    void onHandleDestroyed(BBinder* handle, sp<Layer>& layer);
     void markLayerPendingRemovalLocked(const sp<Layer>& layer);
 
     // add a layer to SurfaceFlinger
@@ -1476,8 +1451,6 @@ private:
         std::optional<DisplayIdGenerator<HalVirtualDisplayId>> hal;
     } mVirtualDisplayIdGenerators;
 
-    std::unordered_map<BBinder*, wp<Layer>> mLayersByLocalBinderToken GUARDED_BY(mStateLock);
-
     // don't use a lock for these, we don't care
     int mDebugRegion = 0;
     bool mVsyncSourceReliableOnDoze = false;
@@ -1691,12 +1664,13 @@ private:
 
     void scheduleRegionSamplingThread();
     void notifyRegionSamplingThread();
+    void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
 
 public:
     nsecs_t mVsyncPeriod = -1;
     DolphinWrapper mDolphinWrapper;
-    SmomoWrapper mSmoMo;
     LayerExtWrapper mLayerExt;
+    SmomoIntf *mSmoMo = nullptr;
 
 private:
     bool mEarlyWakeUpEnabled = false;
