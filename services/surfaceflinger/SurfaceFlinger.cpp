@@ -4776,7 +4776,7 @@ status_t SurfaceFlinger::setTransactionState(
         sp<Layer> layer = nullptr;
         {
             Mutex::Autolock _l(mStateLock);
-            layer = fromHandleLocked(state.surface).promote();
+            layer = fromHandle(state.surface).promote();
             if (layer != nullptr) {
                 layer->getPreviousGfxInfo();
             }
