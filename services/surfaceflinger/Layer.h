@@ -18,7 +18,6 @@
 #pragma once
 
 #include <android/gui/DropInputMode.h>
-#include <compositionengine/LayerFE.h>
 #include <gui/BufferQueue.h>
 #include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerState.h>
@@ -39,6 +38,10 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
+#include <compositionengine/LayerFE.h>
+#include <scheduler/Fps.h>
+#include <scheduler/Seamlessness.h>
+
 #include <chrono>
 #include <cstdint>
 #include <list>
@@ -49,13 +52,11 @@
 #include "ClientCache.h"
 #include "DisplayHardware/ComposerHal.h"
 #include "DisplayHardware/HWComposer.h"
-#include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
 #include "MonitoredProducer.h"
 #include "RenderArea.h"
 #include "Scheduler/LayerInfo.h"
-#include "Scheduler/Seamlessness.h"
 #include "SurfaceFlinger.h"
 #include "Tracing/LayerTracing.h"
 #include "TransactionCallbackInvoker.h"
@@ -327,7 +328,6 @@ public:
 
     static bool isLayerFocusedBasedOnPriority(int32_t priority);
     static void miniDumpHeader(std::string& result);
-    static std::string frameRateCompatibilityString(FrameRateCompatibility compatibility);
 
     // Provide unique string for each class type in the Layer hierarchy
     virtual const char* getType() const = 0;
@@ -858,12 +858,12 @@ public:
      */
     bool hasInputInfo() const;
 
-    // Sets the parent's gameMode for this layer and all its children. Parent's gameMode is applied
-    // only to layers that do not have the GAME_MODE_METADATA set by WMShell. Any layer(along with
-    // its children) that has the metadata set will use the gameMode from the metadata.
-    void setGameModeForTree(int32_t parentGameMode);
-    void setGameMode(int32_t gameMode) { mGameMode = gameMode; };
-    int32_t getGameMode() const { return mGameMode; }
+    // Sets the GameMode for the tree rooted at this layer. A layer in the tree inherits this
+    // GameMode unless it (or an ancestor) has GAME_MODE_METADATA.
+    void setGameModeForTree(GameMode);
+
+    void setGameMode(GameMode gameMode) { mGameMode = gameMode; }
+    GameMode getGameMode() const { return mGameMode; }
 
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
@@ -927,6 +927,7 @@ protected:
     bool isClone() { return mClonedFrom != nullptr; }
     bool isClonedFromAlive() { return getClonedFrom() != nullptr; }
 
+    void cloneDrawingState(const Layer* from);
     void updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
     void updateClonedChildren(const sp<Layer>& mirrorRoot,
                               std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
@@ -1119,9 +1120,8 @@ private:
     // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
     float mEffectiveShadowRadius = 0.f;
 
-    // Game mode for the layer. Set by WindowManagerShell, game mode is used in
-    // metrics(SurfaceFlingerStats).
-    int32_t mGameMode = 0;
+    // Game mode for the layer. Set by WindowManagerShell and recorded by SurfaceFlingerStats.
+    GameMode mGameMode = GameMode::Unsupported;
 
     mutable int32_t mPriority = Layer::PRIORITY_UNSET;
 

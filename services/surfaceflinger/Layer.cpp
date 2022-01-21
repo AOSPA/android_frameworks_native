@@ -36,6 +36,7 @@
 #include <cutils/compiler.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
+#include <ftl/enum.h>
 #include <gui/BufferItem.h>
 #include <gui/LayerDebugInfo.h>
 #include <gui/Surface.h>
@@ -1323,8 +1324,8 @@ bool Layer::setFrameRateForLayerTree(FrameRate frameRate) {
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
-    mFlinger->mScheduler->recordLayerHistory(this, systemTime(),
-                                             LayerHistory::LayerUpdateType::SetFrameRate);
+    using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
+    mFlinger->mScheduler->recordLayerHistory(this, systemTime(), LayerUpdateType::SetFrameRate);
 
     return true;
 }
@@ -1442,19 +1443,6 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append("\n");
 }
 
-std::string Layer::frameRateCompatibilityString(Layer::FrameRateCompatibility compatibility) {
-    switch (compatibility) {
-        case FrameRateCompatibility::Default:
-            return "Default";
-        case FrameRateCompatibility::ExactOrMultiple:
-            return "ExactOrMultiple";
-        case FrameRateCompatibility::NoVote:
-            return "NoVote";
-        case FrameRateCompatibility::Exact:
-            return "Exact";
-    }
-}
-
 void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
     if (!outputLayer) {
@@ -1494,8 +1482,8 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const auto frameRate = getFrameRateForLayerTree();
     if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
         StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
-                      frameRateCompatibilityString(frameRate.type).c_str(),
-                      toString(frameRate.seamlessness).c_str());
+                      ftl::enum_string(frameRate.type).c_str(),
+                      ftl::enum_string(frameRate.seamlessness).c_str());
     } else {
         result.append(41, ' ');
     }
@@ -1578,11 +1566,10 @@ size_t Layer::getChildrenCount() const {
     return count;
 }
 
-void Layer::setGameModeForTree(int parentGameMode) {
-    int gameMode = parentGameMode;
-    auto& currentState = getDrawingState();
+void Layer::setGameModeForTree(GameMode gameMode) {
+    const auto& currentState = getDrawingState();
     if (currentState.metadata.has(METADATA_GAME_MODE)) {
-        gameMode = currentState.metadata.getInt32(METADATA_GAME_MODE, 0);
+        gameMode = static_cast<GameMode>(currentState.metadata.getInt32(METADATA_GAME_MODE, 0));
     }
     setGameMode(gameMode);
     for (const sp<Layer>& child : mCurrentChildren) {
@@ -1608,7 +1595,7 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
     const auto removeResult = mCurrentChildren.remove(layer);
 
     updateTreeHasFrameRateVote();
-    layer->setGameModeForTree(0);
+    layer->setGameModeForTree(GameMode::Unsupported);
     layer->updateTreeHasFrameRateVote();
 
     return removeResult;
@@ -2214,6 +2201,8 @@ void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& displayTra
         info.frameRight = 0;
         info.frameBottom = 0;
         info.transform.reset();
+        info.touchableRegion = Region();
+        info.flags = WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::NOT_FOCUSABLE;
         return;
     }
 
@@ -2461,8 +2450,7 @@ Region Layer::getVisibleRegion(const DisplayDevice* display) const {
 }
 
 void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom) {
-    // copy drawing state from cloned layer
-    mDrawingState = clonedFrom->mDrawingState;
+    cloneDrawingState(clonedFrom.get());
     mClonedFrom = clonedFrom;
 }
 
@@ -2497,7 +2485,7 @@ void Layer::updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayer
     // since we may be able to pull out other children that are still alive.
     if (isClonedFromAlive()) {
         sp<Layer> clonedFrom = getClonedFrom();
-        mDrawingState = clonedFrom->mDrawingState;
+        cloneDrawingState(clonedFrom.get());
         clonedLayersMap.emplace(clonedFrom, this);
     }
 
@@ -2664,15 +2652,21 @@ bool Layer::setDropInputMode(gui::DropInputMode mode) {
     return true;
 }
 
+void Layer::cloneDrawingState(const Layer* from) {
+    mDrawingState = from->mDrawingState;
+    // Skip callback info since they are not applicable for cloned layers.
+    mDrawingState.releaseBufferListener = nullptr;
+    mDrawingState.callbackHandles = {};
+}
+
 // ---------------------------------------------------------------------------
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate) {
-    return stream << "{rate=" << rate.rate
-                  << " type=" << Layer::frameRateCompatibilityString(rate.type)
-                  << " seamlessness=" << toString(rate.seamlessness) << "}";
+    return stream << "{rate=" << rate.rate << " type=" << ftl::enum_string(rate.type)
+                  << " seamlessness=" << ftl::enum_string(rate.seamlessness) << '}';
 }
 
-}; // namespace android
+} // namespace android
 
 #if defined(__gl_h_)
 #error "don't include gl/gl.h in this file"

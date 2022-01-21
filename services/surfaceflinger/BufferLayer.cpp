@@ -407,12 +407,13 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
         const Fps refreshRate = display->refreshRateConfigs().getCurrentRefreshRate().getFps();
         const std::optional<Fps> renderRate =
                 mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
+
+        const auto vote = frameRateToSetFrameRateVotePayload(mDrawingState.frameRate);
+        const auto gameMode = getGameMode();
+
         if (presentFence->isValid()) {
             mFlinger->mTimeStats->setPresentFence(layerId, mCurrentFrameNumber, presentFence,
-                                                  refreshRate, renderRate,
-                                                  frameRateToSetFrameRateVotePayload(
-                                                          mDrawingState.frameRate),
-                                                  getGameMode());
+                                                  refreshRate, renderRate, vote, gameMode);
             mFlinger->mFrameTracer->traceFence(layerId, getCurrentBufferId(), mCurrentFrameNumber,
                                                presentFence,
                                                FrameTracer::FrameEvent::PRESENT_FENCE);
@@ -423,10 +424,7 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
             // timestamp instead.
             const nsecs_t actualPresentTime = display->getRefreshTimestamp();
             mFlinger->mTimeStats->setPresentTime(layerId, mCurrentFrameNumber, actualPresentTime,
-                                                 refreshRate, renderRate,
-                                                 frameRateToSetFrameRateVotePayload(
-                                                         mDrawingState.frameRate),
-                                                 getGameMode());
+                                                 refreshRate, renderRate, vote, gameMode);
             mFlinger->mFrameTracer->traceTimestamp(layerId, getCurrentBufferId(),
                                                    mCurrentFrameNumber, actualPresentTime,
                                                    FrameTracer::FrameEvent::PRESENT_FENCE);
@@ -819,7 +817,7 @@ void BufferLayer::updateCloneBufferInfo() {
     wp<Layer> tmpTouchableRegionCrop = mDrawingState.touchableRegionCrop;
     WindowInfo tmpInputInfo = mDrawingState.inputInfo;
 
-    mDrawingState = clonedFrom->mDrawingState;
+    cloneDrawingState(clonedFrom.get());
 
     mDrawingState.touchableRegionCrop = tmpTouchableRegionCrop;
     mDrawingState.zOrderRelativeOf = tmpZOrderRelativeOf;

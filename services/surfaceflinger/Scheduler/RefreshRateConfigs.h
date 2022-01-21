@@ -16,31 +16,32 @@
 
 #pragma once
 
-#include <android-base/stringprintf.h>
-#include <gui/DisplayEventReceiver.h>
-
 #include <algorithm>
 #include <numeric>
 #include <optional>
 #include <type_traits>
 
+#include <android-base/stringprintf.h>
+#include <gui/DisplayEventReceiver.h>
+
+#include <scheduler/Fps.h>
+#include <scheduler/Seamlessness.h>
+
 #include "DisplayHardware/DisplayMode.h"
 #include "DisplayHardware/HWComposer.h"
-#include "Fps.h"
 #include "Scheduler/OneShotTimer.h"
 #include "Scheduler/SchedulerUtils.h"
-#include "Scheduler/Seamlessness.h"
 #include "Scheduler/StrongTyping.h"
 
 namespace android::scheduler {
 
 using namespace std::chrono_literals;
 
-enum class RefreshRateConfigEvent : unsigned { None = 0b0, Changed = 0b1 };
+enum class DisplayModeEvent : unsigned { None = 0b0, Changed = 0b1 };
 
-inline RefreshRateConfigEvent operator|(RefreshRateConfigEvent lhs, RefreshRateConfigEvent rhs) {
-    using T = std::underlying_type_t<RefreshRateConfigEvent>;
-    return static_cast<RefreshRateConfigEvent>(static_cast<T>(lhs) | static_cast<T>(rhs));
+inline DisplayModeEvent operator|(DisplayModeEvent lhs, DisplayModeEvent rhs) {
+    using T = std::underlying_type_t<DisplayModeEvent>;
+    return static_cast<DisplayModeEvent>(static_cast<T>(lhs) | static_cast<T>(rhs));
 }
 
 using FrameRateOverride = DisplayEventReceiver::Event::FrameRateOverride;
@@ -205,6 +206,7 @@ public:
         ExplicitExact,           // Specific refresh rate that was provided by the app with
                                  // Exact compatibility
 
+        ftl_last = ExplicitExact
     };
 
     // Captures the layer requirements for a refresh rate. This will be used to determine the
@@ -287,9 +289,6 @@ public:
     // Stores the current modeId the device operates at
     void setCurrentModeId(DisplayModeId) EXCLUDES(mLock);
 
-    // Returns a string that represents the layer vote type
-    static std::string layerVoteTypeString(LayerVoteType vote);
-
     // Returns a known frame rate that is the closest to frameRate
     Fps findClosestKnownFrameRate(Fps frameRate) const;
 
@@ -358,10 +357,22 @@ public:
                                std::function<void()> kernelTimerExpired) {
         std::scoped_lock lock(mIdleTimerCallbacksMutex);
         mIdleTimerCallbacks.emplace();
-        mIdleTimerCallbacks->platform.onReset = platformTimerReset;
-        mIdleTimerCallbacks->platform.onExpired = platformTimerExpired;
-        mIdleTimerCallbacks->kernel.onReset = kernelTimerReset;
-        mIdleTimerCallbacks->kernel.onExpired = kernelTimerExpired;
+        mIdleTimerCallbacks->platform.onReset = std::move(platformTimerReset);
+        mIdleTimerCallbacks->platform.onExpired = std::move(platformTimerExpired);
+        mIdleTimerCallbacks->kernel.onReset = std::move(kernelTimerReset);
+        mIdleTimerCallbacks->kernel.onExpired = std::move(kernelTimerExpired);
+    }
+
+    void startIdleTimer() {
+        if (mIdleTimer) {
+            mIdleTimer->start();
+        }
+    }
+
+    void stopIdleTimer() {
+        if (mIdleTimer) {
+            mIdleTimer->stop();
+        }
     }
 
     void resetIdleTimer(bool kernelOnly) {

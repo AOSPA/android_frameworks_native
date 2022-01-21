@@ -16,15 +16,15 @@
 
 #pragma once
 
-#include "Fps.h"
-
-#include <cutils/compiler.h>
-#include <utils/StrongPointer.h>
-
 #include <cinttypes>
 #include <functional>
 #include <memory>
 #include <string>
+
+#include <cutils/compiler.h>
+#include <utils/StrongPointer.h>
+
+#include <scheduler/Fps.h>
 
 namespace android {
 
@@ -42,16 +42,12 @@ class HWComposer;
 class IGraphicBufferConsumer;
 class IGraphicBufferProducer;
 class Layer;
-class MessageQueue;
-class Scheduler;
 class StartPropertySetThread;
 class SurfaceFlinger;
 class SurfaceInterceptor;
 class TimeStats;
 
 struct DisplayDeviceCreationArgs;
-struct ICompositor;
-struct ISchedulerCallback;
 struct LayerCreationArgs;
 
 namespace compositionengine {

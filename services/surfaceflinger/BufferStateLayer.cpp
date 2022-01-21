@@ -64,7 +64,7 @@ BufferStateLayer::~BufferStateLayer() {
     // one of the layers, in this case the original layer, needs to handle the deletion. The
     // original layer and the clone should be removed at the same time so there shouldn't be any
     // issue with the clone layer trying to use the texture.
-    if (mBufferInfo.mBuffer != nullptr && !isClone()) {
+    if (mBufferInfo.mBuffer != nullptr) {
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                   mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFrameNumber,
                                   mBufferInfo.mFence,
@@ -506,8 +506,9 @@ bool BufferStateLayer::setBuffer(const BufferData& bufferData, nsecs_t postTime,
 
         return static_cast<nsecs_t>(0);
     }();
-    mFlinger->mScheduler->recordLayerHistory(this, presentTime,
-                                             LayerHistory::LayerUpdateType::Buffer);
+
+    using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
+    mFlinger->mScheduler->recordLayerHistory(this, presentTime, LayerUpdateType::Buffer);
 
     addFrameEvent(mDrawingState.acquireFence, postTime, isAutoTimestamp ? 0 : desiredPresentTime);
 

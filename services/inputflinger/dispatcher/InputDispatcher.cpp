@@ -506,10 +506,6 @@ bool isConnectionResponsive(const Connection& connection) {
     return true;
 }
 
-bool isFromSource(uint32_t source, uint32_t test) {
-    return (source & test) == test;
-}
-
 vec2 transformWithoutTranslation(const ui::Transform& transform, float x, float y) {
     const vec2 transformedXy = transform.transform(x, y);
     const vec2 transformedOrigin = transform.transform(0, 0);
@@ -1753,7 +1749,7 @@ void InputDispatcher::cancelEventsForAnrLocked(const sp<Connection>& connection)
     // pile up.
     ALOGW("Canceling events for %s because it is unresponsive",
           connection->inputChannel->getName().c_str());
-    if (connection->status == Connection::STATUS_NORMAL) {
+    if (connection->status == Connection::Status::NORMAL) {
         CancelationOptions options(CancelationOptions::CANCEL_ALL_EVENTS,
                                    "application not responding");
         synthesizeCancelationEventsForConnectionLocked(connection, options);
@@ -2107,7 +2103,7 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
         const std::vector<Monitor> newGestureMonitors = isDown
                 ? selectResponsiveMonitorsLocked(
                           getValueByKey(mGestureMonitorsByDisplay, displayId))
-                : std::vector<Monitor>{};
+                : tempTouchState.gestureMonitors;
 
         if (newTouchedWindowHandle == nullptr && newGestureMonitors.empty()) {
             ALOGI("Dropping event because there is no touchable window or gesture monitor at "
@@ -2143,9 +2139,14 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
                 pointerIds.markBit(pointerId);
             }
             tempTouchState.addOrUpdateWindow(newTouchedWindowHandle, targetFlags, pointerIds);
+        } else if (tempTouchState.windows.empty()) {
+            // If no window is touched, set split to true. This will allow the next pointer down to
+            // be delivered to a new window which supports split touch.
+            tempTouchState.split = true;
         }
-
-        tempTouchState.addGestureMonitors(newGestureMonitors);
+        if (isDown) {
+            tempTouchState.addGestureMonitors(newGestureMonitors);
+        }
     } else {
         /* Case 2: Pointer move, up, cancel or non-splittable pointer down. */
 
@@ -2829,10 +2830,11 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
 
     // Skip this event if the connection status is not normal.
     // We don't want to enqueue additional outbound events if the connection is broken.
-    if (connection->status != Connection::STATUS_NORMAL) {
+    if (connection->status != Connection::Status::NORMAL) {
         if (DEBUG_DISPATCH_CYCLE) {
             ALOGD("channel '%s' ~ Dropping event because the channel status is %s",
-                  connection->getInputChannelName().c_str(), connection->getStatusLabel());
+                  connection->getInputChannelName().c_str(),
+                  ftl::enum_string(connection->status).c_str());
         }
         return;
     }
@@ -3146,7 +3148,7 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
         ALOGD("channel '%s' ~ startDispatchCycle", connection->getInputChannelName().c_str());
     }
 
-    while (connection->status == Connection::STATUS_NORMAL && !connection->outboundQueue.empty()) {
+    while (connection->status == Connection::Status::NORMAL && !connection->outboundQueue.empty()) {
         DispatchEntry* dispatchEntry = connection->outboundQueue.front();
         dispatchEntry->deliveryTime = currentTime;
         const std::chrono::nanoseconds timeout =
@@ -3234,8 +3236,7 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                 const FocusEntry& focusEntry = static_cast<const FocusEntry&>(eventEntry);
                 status = connection->inputPublisher.publishFocusEvent(dispatchEntry->seq,
                                                                       focusEntry.id,
-                                                                      focusEntry.hasFocus,
-                                                                      mInTouchMode);
+                                                                      focusEntry.hasFocus);
                 break;
             }
 
@@ -3368,8 +3369,8 @@ void InputDispatcher::finishDispatchCycleLocked(nsecs_t currentTime,
               connection->getInputChannelName().c_str(), seq, toString(handled));
     }
 
-    if (connection->status == Connection::STATUS_BROKEN ||
-        connection->status == Connection::STATUS_ZOMBIE) {
+    if (connection->status == Connection::Status::BROKEN ||
+        connection->status == Connection::Status::ZOMBIE) {
         return;
     }
 
@@ -3396,8 +3397,8 @@ void InputDispatcher::abortBrokenDispatchCycleLocked(nsecs_t currentTime,
 
     // The connection appears to be unrecoverably broken.
     // Ignore already broken or zombie connections.
-    if (connection->status == Connection::STATUS_NORMAL) {
-        connection->status = Connection::STATUS_BROKEN;
+    if (connection->status == Connection::Status::NORMAL) {
+        connection->status = Connection::Status::BROKEN;
 
         if (notify) {
             // Notify other system components.
@@ -3405,7 +3406,6 @@ void InputDispatcher::abortBrokenDispatchCycleLocked(nsecs_t currentTime,
                   connection->getInputChannelName().c_str());
 
             auto command = [this, connection]() REQUIRES(mLock) {
-                if (connection->status == Connection::STATUS_ZOMBIE) return;
                 scoped_unlock unlock(mLock);
                 mPolicy->notifyInputChannelBroken(connection->inputChannel->getConnectionToken());
             };
@@ -3541,7 +3541,7 @@ void InputDispatcher::synthesizeCancelationEventsForInputChannelLocked(
 
 void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
         const sp<Connection>& connection, const CancelationOptions& options) {
-    if (connection->status == Connection::STATUS_BROKEN) {
+    if (connection->status == Connection::Status::BROKEN) {
         return;
     }
 
@@ -3614,7 +3614,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
 
 void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
         const sp<Connection>& connection) {
-    if (connection->status == Connection::STATUS_BROKEN) {
+    if (connection->status == Connection::Status::BROKEN) {
         return;
     }
 
@@ -4694,8 +4694,10 @@ void InputDispatcher::setInputWindowsLocked(
                         if (wallpaper != nullptr) {
                             sp<Connection> wallpaperConnection =
                                     getConnectionLocked(wallpaper->getToken());
-                            synthesizeCancelationEventsForConnectionLocked(wallpaperConnection,
-                                                                           options);
+                            if (wallpaperConnection != nullptr) {
+                                synthesizeCancelationEventsForConnectionLocked(wallpaperConnection,
+                                                                               options);
+                            }
                         }
                     }
                 }
@@ -5291,7 +5293,8 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
                                          "status=%s, monitor=%s, responsive=%s\n",
                                  connection->inputChannel->getFd().get(),
                                  connection->getInputChannelName().c_str(),
-                                 connection->getWindowName().c_str(), connection->getStatusLabel(),
+                                 connection->getWindowName().c_str(),
+                                 ftl::enum_string(connection->status).c_str(),
                                  toString(connection->monitor), toString(connection->responsive));
 
             if (!connection->outboundQueue.empty()) {
@@ -5464,7 +5467,7 @@ status_t InputDispatcher::removeInputChannelLocked(const sp<IBinder>& connection
     nsecs_t currentTime = now();
     abortBrokenDispatchCycleLocked(currentTime, connection, notify);
 
-    connection->status = Connection::STATUS_ZOMBIE;
+    connection->status = Connection::Status::ZOMBIE;
     return OK;
 }
 
@@ -5548,6 +5551,7 @@ status_t InputDispatcher::pilferPointers(const sp<IBinder>& token) {
               canceledWindows.c_str());
 
         // Then clear the current touch state so we stop dispatching to them as well.
+        state.split = false;
         state.filterNonMonitors();
     }
     return OK;
@@ -5683,7 +5687,7 @@ void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
             }
         }
         traceWaitQueueLength(*connection);
-        if (restartEvent && connection->status == Connection::STATUS_NORMAL) {
+        if (restartEvent && connection->status == Connection::Status::NORMAL) {
             connection->outboundQueue.push_front(dispatchEntry);
             traceOutboundQueueLength(*connection);
         } else {
@@ -5981,7 +5985,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
 
         mLock.lock();
 
-        if (connection->status != Connection::STATUS_NORMAL) {
+        if (connection->status != Connection::Status::NORMAL) {
             connection->inputState.removeFallbackKey(originalKeyCode);
             return false;
         }

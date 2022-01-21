@@ -298,10 +298,9 @@ void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
     constexpr uint32_t seq = 15;
     int32_t eventId = InputEvent::nextId();
     constexpr bool hasFocus = true;
-    constexpr bool inTouchMode = true;
     const nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
 
-    status = mPublisher->publishFocusEvent(seq, eventId, hasFocus, inTouchMode);
+    status = mPublisher->publishFocusEvent(seq, eventId, hasFocus);
     ASSERT_EQ(OK, status) << "publisher publishFocusEvent should return OK";
 
     uint32_t consumeSeq;
@@ -321,7 +320,6 @@ void InputPublisherAndConsumerTest::PublishAndConsumeFocusEvent() {
     EXPECT_EQ(seq, consumeSeq);
     EXPECT_EQ(eventId, focusEvent->getId());
     EXPECT_EQ(hasFocus, focusEvent->getHasFocus());
-    EXPECT_EQ(inTouchMode, focusEvent->getInTouchMode());
 
     status = mConsumer->sendFinishedSignal(seq, true);
     ASSERT_EQ(OK, status) << "consumer sendFinishedSignal should return OK";

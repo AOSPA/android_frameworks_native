@@ -52,6 +52,7 @@
 #include <server_configurable_flags/get_flags.h>
 #include <system/thread_defs.h>
 #include <utils/Mutex.h>
+#include <ziparchive/zip_archive.h>
 
 #include "dexopt.h"
 #include "dexopt_return_codes.h"
@@ -459,8 +460,8 @@ static UniqueFile open_reference_profile_as_unique_file(uid_t uid, const std::st
     });
 }
 
-static unique_fd open_spnashot_profile(uid_t uid, const std::string& package_name,
-        const std::string& location) {
+static unique_fd open_snapshot_profile(uid_t uid, const std::string& package_name,
+                                       const std::string& location) {
     std::string profile = create_snapshot_profile_path(package_name, location);
     return open_profile(uid, profile, O_CREAT | O_RDWR | O_TRUNC,  S_IRUSR | S_IWUSR);
 }
@@ -2562,7 +2563,7 @@ static bool create_app_profile_snapshot(int32_t app_id,
                                         const std::string& classpath) {
     int app_shared_gid = multiuser_get_shared_gid(/*user_id*/ 0, app_id);
 
-    unique_fd snapshot_fd = open_spnashot_profile(AID_SYSTEM, package_name, profile_name);
+    unique_fd snapshot_fd = open_snapshot_profile(AID_SYSTEM, package_name, profile_name);
     if (snapshot_fd < 0) {
         return false;
     }
@@ -2636,7 +2637,7 @@ static bool create_boot_image_profile_snapshot(const std::string& package_name,
     }
 
     // Open and create the snapshot profile.
-    unique_fd snapshot_fd = open_spnashot_profile(AID_SYSTEM, package_name, profile_name);
+    unique_fd snapshot_fd = open_snapshot_profile(AID_SYSTEM, package_name, profile_name);
 
     // Collect all non empty profiles.
     // The collection will traverse all applications profiles and find the non empty files.
@@ -2738,6 +2739,20 @@ bool create_profile_snapshot(int32_t app_id, const std::string& package_name,
     }
 }
 
+static bool check_profile_exists_in_dexmetadata(const std::string& dex_metadata) {
+    ZipArchiveHandle zip = nullptr;
+    if (OpenArchive(dex_metadata.c_str(), &zip) != 0) {
+        PLOG(ERROR) << "Failed to open dm '" << dex_metadata << "'";
+        return false;
+    }
+
+    ZipEntry64 entry;
+    int result = FindEntry(zip, "primary.prof", &entry);
+    CloseArchive(zip);
+
+    return result != 0 ? false : true;
+}
+
 bool prepare_app_profile(const std::string& package_name,
                          userid_t user_id,
                          appid_t app_id,
@@ -2754,7 +2769,7 @@ bool prepare_app_profile(const std::string& package_name,
     }
 
     // Check if we need to install the profile from the dex metadata.
-    if (!dex_metadata) {
+    if (!dex_metadata || !check_profile_exists_in_dexmetadata(dex_metadata->c_str())) {
         return true;
     }
 

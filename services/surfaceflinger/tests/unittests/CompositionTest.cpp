@@ -138,7 +138,7 @@ public:
                 .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD));
         EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
 
-        constexpr ISchedulerCallback* kCallback = nullptr;
+        constexpr scheduler::ISchedulerCallback* kCallback = nullptr;
         constexpr bool kHasMultipleConfigs = true;
         mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
                                 std::move(eventThread), std::move(sfEventThread), kCallback,
@@ -370,7 +370,7 @@ struct BaseDisplayVariant {
         EXPECT_CALL(*test->mComposer, presentOrValidateDisplay(HWC_DISPLAY, _, _, _, _)).Times(1);
 
         EXPECT_CALL(*test->mDisplaySurface,
-                    prepareFrame(compositionengine::DisplaySurface::COMPOSITION_HWC))
+                    prepareFrame(compositionengine::DisplaySurface::CompositionType::Hwc))
                 .Times(1);
     }
 
@@ -384,7 +384,7 @@ struct BaseDisplayVariant {
 
     static void setupRECompositionCallExpectations(CompositionTest* test) {
         EXPECT_CALL(*test->mDisplaySurface,
-                    prepareFrame(compositionengine::DisplaySurface::COMPOSITION_GPU))
+                    prepareFrame(compositionengine::DisplaySurface::CompositionType::Gpu))
                 .Times(1);
         EXPECT_CALL(*test->mDisplaySurface, getClientTargetAcquireFence())
                 .WillRepeatedly(ReturnRef(test->mClientTargetAcquireFence));
