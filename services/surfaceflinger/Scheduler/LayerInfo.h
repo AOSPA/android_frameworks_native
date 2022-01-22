@@ -16,15 +16,19 @@
 
 #pragma once
 
+#include <chrono>
+#include <deque>
+#include <optional>
+#include <string>
+#include <unordered_map>
+
 #include <ui/Transform.h>
 #include <utils/Timers.h>
 
-#include <chrono>
-#include <deque>
+#include <scheduler/Seamlessness.h>
 
 #include "LayerHistory.h"
 #include "RefreshRateConfigs.h"
-#include "Scheduler/Seamlessness.h"
 #include "SchedulerUtils.h"
 
 namespace android {
@@ -78,6 +82,8 @@ public:
 
         NoVote, // Layer doesn't have any requirements for the refresh rate and
                 // should not be considered when the display refresh rate is determined.
+
+        ftl_last = NoVote
     };
 
     // Encapsulates the frame rate and compatibility of the layer. This information will be used

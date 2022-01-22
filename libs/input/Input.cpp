@@ -24,6 +24,7 @@
 
 #include <android-base/stringprintf.h>
 #include <gui/constants.h>
+#include <input/DisplayViewport.h>
 #include <input/Input.h>
 #include <input/InputDevice.h>
 #include <input/InputEventLabels.h>
@@ -58,16 +59,6 @@ float transformAngle(const ui::Transform& transform, float angleRadians) {
     // Derive the transformed vector's clockwise angle from vertical.
     // The return value of atan2f is in range [-pi, pi] which conforms to the orientation API.
     return atan2f(transformedPoint.x, -transformedPoint.y);
-}
-
-vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy) {
-    const vec2 transformedXy = transform.transform(xy);
-    const vec2 transformedOrigin = transform.transform(0, 0);
-    return transformedXy - transformedOrigin;
-}
-
-bool isFromSource(uint32_t source, uint32_t test) {
-    return (source & test) == test;
 }
 
 bool shouldDisregardTransformation(uint32_t source) {
@@ -124,6 +115,12 @@ int32_t IdGenerator::nextId() const {
 
 // --- InputEvent ---
 
+vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy) {
+    const vec2 transformedXy = transform.transform(xy);
+    const vec2 transformedOrigin = transform.transform(0, 0);
+    return transformedXy - transformedOrigin;
+}
+
 const char* inputEventTypeToString(int32_t type) {
     switch (type) {
         case AINPUT_EVENT_TYPE_KEY: {
@@ -146,6 +143,49 @@ const char* inputEventTypeToString(int32_t type) {
         }
     }
     return "UNKNOWN";
+}
+
+std::string inputEventSourceToString(int32_t source) {
+    if (source == AINPUT_SOURCE_UNKNOWN) {
+        return "UNKNOWN";
+    }
+    if (source == static_cast<int32_t>(AINPUT_SOURCE_ANY)) {
+        return "ANY";
+    }
+    static const std::map<int32_t, const char*> SOURCES{
+            {AINPUT_SOURCE_KEYBOARD, "KEYBOARD"},
+            {AINPUT_SOURCE_DPAD, "DPAD"},
+            {AINPUT_SOURCE_GAMEPAD, "GAMEPAD"},
+            {AINPUT_SOURCE_TOUCHSCREEN, "TOUCHSCREEN"},
+            {AINPUT_SOURCE_MOUSE, "MOUSE"},
+            {AINPUT_SOURCE_STYLUS, "STYLUS"},
+            {AINPUT_SOURCE_BLUETOOTH_STYLUS, "BLUETOOTH_STYLUS"},
+            {AINPUT_SOURCE_TRACKBALL, "TRACKBALL"},
+            {AINPUT_SOURCE_MOUSE_RELATIVE, "MOUSE_RELATIVE"},
+            {AINPUT_SOURCE_TOUCHPAD, "TOUCHPAD"},
+            {AINPUT_SOURCE_TOUCH_NAVIGATION, "TOUCH_NAVIGATION"},
+            {AINPUT_SOURCE_JOYSTICK, "JOYSTICK"},
+            {AINPUT_SOURCE_HDMI, "HDMI"},
+            {AINPUT_SOURCE_SENSOR, "SENSOR"},
+            {AINPUT_SOURCE_ROTARY_ENCODER, "ROTARY_ENCODER"},
+    };
+    std::string result;
+    for (const auto& [source_entry, str] : SOURCES) {
+        if ((source & source_entry) == source_entry) {
+            if (!result.empty()) {
+                result += " | ";
+            }
+            result += str;
+        }
+    }
+    if (result.empty()) {
+        result = StringPrintf("0x%08x", source);
+    }
+    return result;
+}
+
+bool isFromSource(uint32_t source, uint32_t test) {
+    return (source & test) == test;
 }
 
 VerifiedKeyEvent verifiedKeyEventFromKeyEvent(const KeyEvent& event) {
@@ -465,6 +505,24 @@ void MotionEvent::addSample(
         const PointerCoords* pointerCoords) {
     mSampleEventTimes.push_back(eventTime);
     mSamplePointerCoords.appendArray(pointerCoords, getPointerCount());
+}
+
+int MotionEvent::getSurfaceRotation() const {
+    // The surface rotation is the rotation from the window's coordinate space to that of the
+    // display. Since the event's transform takes display space coordinates to window space, the
+    // returned surface rotation is the inverse of the rotation for the surface.
+    switch (mTransform.getOrientation()) {
+        case ui::Transform::ROT_0:
+            return DISPLAY_ORIENTATION_0;
+        case ui::Transform::ROT_90:
+            return DISPLAY_ORIENTATION_270;
+        case ui::Transform::ROT_180:
+            return DISPLAY_ORIENTATION_180;
+        case ui::Transform::ROT_270:
+            return DISPLAY_ORIENTATION_90;
+        default:
+            return -1;
+    }
 }
 
 float MotionEvent::getXCursorPosition() const {
@@ -820,17 +878,15 @@ float MotionEvent::calculateTransformedAxisValue(int32_t axis, uint32_t source,
 
 // --- FocusEvent ---
 
-void FocusEvent::initialize(int32_t id, bool hasFocus, bool inTouchMode) {
+void FocusEvent::initialize(int32_t id, bool hasFocus) {
     InputEvent::initialize(id, ReservedInputDeviceId::VIRTUAL_KEYBOARD_ID, AINPUT_SOURCE_UNKNOWN,
                            ADISPLAY_ID_NONE, INVALID_HMAC);
     mHasFocus = hasFocus;
-    mInTouchMode = inTouchMode;
 }
 
 void FocusEvent::initialize(const FocusEvent& from) {
     InputEvent::initialize(from);
     mHasFocus = from.mHasFocus;
-    mInTouchMode = from.mInTouchMode;
 }
 
 // --- CaptureEvent ---

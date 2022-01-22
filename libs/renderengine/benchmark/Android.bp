@@ -35,6 +35,7 @@ cc_benchmark {
     ],
     static_libs: [
         "librenderengine",
+        "libshaders",
         "libtonemap",
     ],
     cflags: [

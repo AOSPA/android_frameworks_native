@@ -23,7 +23,6 @@
  */
 
 #include <android-base/thread_annotations.h>
-#include <compositionengine/OutputColorSetting.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
 #include <gui/BufferQueue.h>
@@ -47,13 +46,15 @@
 #include <utils/Trace.h>
 #include <utils/threads.h>
 
+#include <compositionengine/OutputColorSetting.h>
+#include <scheduler/Fps.h>
+
 #include "ClientCache.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
 #include "DisplayHardware/PowerAdvisor.h"
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
-#include "Fps.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
 #include "Scheduler/RefreshRateConfigs.h"
@@ -63,6 +64,7 @@
 #include "SurfaceFlingerFactory.h"
 #include "TracedOrdinal.h"
 #include "Tracing/LayerTracing.h"
+#include "Tracing/TransactionTracing.h"
 #include "TransactionCallbackInvoker.h"
 #include "TransactionState.h"
 
@@ -124,6 +126,7 @@ class TimeStats;
 class FrameTracer;
 class WindowInfosListenerInvoker;
 
+using gui::IRegionSamplingListener;
 using gui::ScreenCaptureResults;
 
 namespace frametimeline {
@@ -247,7 +250,7 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
                        private ICompositor,
-                       private ISchedulerCallback {
+                       private scheduler::ISchedulerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -448,7 +451,6 @@ private:
     friend class TransactionApplicationTest;
     friend class TunnelModeEnabledReporterTest;
 
-    using RefreshRate = scheduler::RefreshRateConfigs::RefreshRate;
     using VsyncModulator = scheduler::VsyncModulator;
     using TransactionSchedule = scheduler::TransactionSchedule;
     using TraverseLayersFunction = std::function<void(const LayerVector::Visitor&)>;
@@ -754,7 +756,7 @@ private:
     // Toggles hardware VSYNC by calling into HWC.
     void setVsyncEnabled(bool) override;
     // Initiates a refresh rate change to be applied on commit.
-    void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ModeEvent) override;
+    void changeRefreshRate(const RefreshRate&, DisplayModeEvent) override;
     // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
     void kernelTimerChanged(bool expired) override;
     // Called when the frame rate override list changed to trigger an event.
@@ -771,13 +773,12 @@ private:
     void onInitializeDisplays() REQUIRES(mStateLock);
     // Sets the desired active mode bit. It obtains the lock, and sets mDesiredActiveMode.
     void setDesiredActiveMode(const ActiveModeInfo& info) REQUIRES(mStateLock);
-    status_t setActiveMode(const sp<IBinder>& displayToken, int id);
-    // Once HWC has returned the present fence, this sets the active mode and a new refresh
-    // rate in SF.
-    void setActiveModeInternal() REQUIRES(mStateLock);
+    status_t setActiveModeFromBackdoor(const sp<IBinder>& displayToken, int id);
+    // Sets the active mode and a new refresh rate in SF.
+    void updateInternalStateWithChangedMode() REQUIRES(mStateLock);
     // Calls to setActiveMode on the main thread if there is a pending mode change
     // that needs to be applied.
-    void performSetActiveMode() REQUIRES(mStateLock);
+    void setActiveModeInHwcIfNeeded() REQUIRES(mStateLock);
     void clearDesiredActiveModeState(const sp<DisplayDevice>&) REQUIRES(mStateLock);
     // Called when active mode is no longer is progress
     void desiredActiveModeChangeDone(const sp<DisplayDevice>&) REQUIRES(mStateLock);
@@ -828,7 +829,7 @@ private:
                                int originPid, int originUid, uint64_t transactionId)
             REQUIRES(mStateLock);
     // flush pending transaction that was presented after desiredPresentTime.
-    bool flushTransactionQueues();
+    bool flushTransactionQueues(int64_t vsyncId);
     // Returns true if there is at least one transaction that needs to be flushed
     bool transactionFlushNeeded();
 
@@ -864,7 +865,8 @@ private:
     bool allowedLatchUnsignaled() REQUIRES(mQueueLock, mStateLock);
     bool checkTransactionCanLatchUnsignaled(const TransactionState& transaction)
             REQUIRES(mStateLock);
-    bool applyTransactions(std::vector<TransactionState>& transactions) REQUIRES(mStateLock);
+    bool applyTransactions(std::vector<TransactionState>& transactions, int64_t vsyncId)
+            REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
@@ -1259,7 +1261,7 @@ private:
 
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
-
+    pid_t mPid;
     std::future<void> mRenderEnginePrimeCacheFuture;
 
     // access must be protected by mStateLock
@@ -1269,6 +1271,7 @@ private:
     std::atomic<int32_t> mTransactionFlags = 0;
     std::vector<std::shared_ptr<CountDownLatch>> mTransactionCommittedSignals;
     bool mAnimTransactionPending = false;
+    std::atomic<uint32_t> mUniqueTransactionId = 1;
     SortedVector<sp<Layer>> mLayersPendingRemoval;
 
     // global color transform states
@@ -1364,8 +1367,10 @@ private:
     sp<SurfaceInterceptor> mInterceptor;
 
     LayerTracing mLayerTracing{*this};
-    std::mutex mTracingLock;
-    bool mTracingEnabled = false;
+    bool mLayerTracingEnabled = false;
+
+    TransactionTracing mTransactionTracing;
+    bool mTransactionTracingEnabled = false;
     std::atomic<bool> mTracingEnabledChanged = false;
 
     const std::shared_ptr<TimeStats> mTimeStats;
@@ -1450,7 +1455,7 @@ private:
     /*
      * Scheduler
      */
-    std::unique_ptr<Scheduler> mScheduler;
+    std::unique_ptr<scheduler::Scheduler> mScheduler;
     scheduler::ConnectionHandle mAppConnectionHandle;
     scheduler::ConnectionHandle mSfConnectionHandle;
 

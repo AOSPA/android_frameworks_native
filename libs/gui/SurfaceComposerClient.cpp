@@ -53,6 +53,7 @@
 namespace android {
 
 using gui::FocusRequest;
+using gui::IRegionSamplingListener;
 using gui::WindowInfo;
 using gui::WindowInfoHandle;
 using gui::WindowInfosListener;
@@ -352,6 +353,10 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
             // through all until the SC is found.
             int32_t layerId = -1;
             for (auto callbackId : transactionStats.callbackIds) {
+                if (callbackId.type != CallbackId::Type::ON_COMPLETE) {
+                    // We only want to run the stats callback for ON_COMPLETE
+                    continue;
+                }
                 sp<SurfaceControl> sc =
                         callbacksMap[callbackId].surfaceControls[surfaceStats.surfaceControl];
                 if (sc != nullptr) {
@@ -360,7 +365,7 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                 }
             }
 
-            {
+            if (layerId != -1) {
                 // Acquire surface stats listener lock such that we guarantee that after calling
                 // unregister, there won't be any further callback.
                 std::scoped_lock<std::recursive_mutex> lock(mSurfaceStatsListenerMutex);
