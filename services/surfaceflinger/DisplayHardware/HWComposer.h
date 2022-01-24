@@ -42,6 +42,9 @@
 #include "DisplayMode.h"
 #include "HWC2.h"
 #include "Hal.h"
+
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #endif
@@ -74,7 +77,9 @@ struct KnownHWCGenericLayerMetadata {
 class HWComposer {
 public:
     struct DeviceRequestedChanges {
-        using ChangedTypes = std::unordered_map<HWC2::Layer*, hal::Composition>;
+        using ChangedTypes =
+                std::unordered_map<HWC2::Layer*,
+                                   aidl::android::hardware::graphics::composer3::Composition>;
         using ClientTargetProperty = hal::ClientTargetProperty;
         using DisplayRequests = hal::DisplayRequest;
         using LayerRequests = std::unordered_map<HWC2::Layer*, hal::LayerRequest>;
@@ -83,6 +88,7 @@ public:
         DisplayRequests displayRequests;
         LayerRequests layerRequests;
         ClientTargetProperty clientTargetProperty;
+        float clientTargetWhitePointNits;
     };
 
     struct HWCDisplayMode {

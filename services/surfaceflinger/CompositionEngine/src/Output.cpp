@@ -1117,7 +1117,7 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     clientCompositionDisplay.maxLuminance = outputState.displayBrightnessNits > 0.f
             ? outputState.displayBrightnessNits
             : mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
-    clientCompositionDisplay.sdrWhitePointNits = outputState.sdrWhitePointNits;
+    clientCompositionDisplay.targetLuminanceNits = outputState.clientTargetWhitePointNits;
 
     // Compute the global color transform matrix.
     if (!outputState.usesDeviceComposition && !getSkipColorTransform()) {
@@ -1277,7 +1277,8 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                        .dataspace = outputDataspace,
                                        .realContentIsVisible = realContentIsVisible,
                                        .clearContent = !clientComposition,
-                                       .blurSetting = blurSetting};
+                                       .blurSetting = blurSetting,
+                                       .whitePointNits = layerState.whitePointNits};
                 results = layerFE.prepareClientCompositionList(targetSettings);
                 if (realContentIsVisible && !results.empty()) {
                     layer->editState().clientCompositionTimestamp = systemTime();
