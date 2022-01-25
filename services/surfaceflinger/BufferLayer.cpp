@@ -298,14 +298,15 @@ void BufferLayer::preparePerFrameCompositionState() {
     // Sideband layers
     auto* compositionState = editCompositionState();
     if (compositionState->sidebandStream.get() && !compositionState->sidebandStreamHasFrame) {
-        compositionState->compositionType = Hwc2::IComposerClient::Composition::SIDEBAND;
+        compositionState->compositionType =
+                aidl::android::hardware::graphics::composer3::Composition::SIDEBAND;
         return;
     } else {
         // Normal buffer layers
         compositionState->hdrMetadata = mBufferInfo.mHdrMetadata;
         compositionState->compositionType = mPotentialCursor
-                ? Hwc2::IComposerClient::Composition::CURSOR
-                : Hwc2::IComposerClient::Composition::DEVICE;
+                ? aidl::android::hardware::graphics::composer3::Composition::CURSOR
+                : aidl::android::hardware::graphics::composer3::Composition::DEVICE;
     }
 
     compositionState->buffer = mBufferInfo.mBuffer->getBuffer();
@@ -585,15 +586,16 @@ bool BufferLayer::latchUnsignaledBuffers() {
 // hardware.h, instead of using hard-coded values here.
 #define HARDWARE_IS_DEVICE_FORMAT(f) ((f) >= 0x100 && (f) <= 0x1FF)
 
-bool BufferLayer::getOpacityForFormat(uint32_t format) {
+bool BufferLayer::getOpacityForFormat(PixelFormat format) {
     if (HARDWARE_IS_DEVICE_FORMAT(format)) {
         return true;
     }
     switch (format) {
-        case HAL_PIXEL_FORMAT_RGBA_8888:
-        case HAL_PIXEL_FORMAT_BGRA_8888:
-        case HAL_PIXEL_FORMAT_RGBA_FP16:
-        case HAL_PIXEL_FORMAT_RGBA_1010102:
+        case PIXEL_FORMAT_RGBA_8888:
+        case PIXEL_FORMAT_BGRA_8888:
+        case PIXEL_FORMAT_RGBA_FP16:
+        case PIXEL_FORMAT_RGBA_1010102:
+        case PIXEL_FORMAT_R_8:
             return false;
     }
     // in all other case, we have no blending (also for unknown formats)

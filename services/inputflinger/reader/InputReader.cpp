@@ -113,9 +113,9 @@ void InputReader::loopOnce() {
         if (mNextTimeout != LLONG_MAX) {
             nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
             if (now >= mNextTimeout) {
-#if DEBUG_RAW_EVENTS
-                ALOGD("Timeout expired, latency=%0.3fms", (now - mNextTimeout) * 0.000001f);
-#endif
+                if (DEBUG_RAW_EVENTS) {
+                    ALOGD("Timeout expired, latency=%0.3fms", (now - mNextTimeout) * 0.000001f);
+                }
                 mNextTimeout = LLONG_MAX;
                 timeoutExpiredLocked(now);
             }
@@ -155,9 +155,9 @@ void InputReader::processEventsLocked(const RawEvent* rawEvents, size_t count) {
                 }
                 batchSize += 1;
             }
-#if DEBUG_RAW_EVENTS
-            ALOGD("BatchSize: %zu Count: %zu", batchSize, count);
-#endif
+            if (DEBUG_RAW_EVENTS) {
+                ALOGD("BatchSize: %zu Count: %zu", batchSize, count);
+            }
             processEventsForDeviceLocked(deviceId, rawEvent, batchSize);
         } else {
             switch (rawEvent->type) {
@@ -782,12 +782,8 @@ bool InputReader::canDispatchToDisplay(int32_t deviceId, int32_t displayId) {
 
     std::optional<int32_t> associatedDisplayId = device->getAssociatedDisplayId();
     // No associated display. By default, can dispatch to all displays.
-    if (!associatedDisplayId) {
-        return true;
-    }
-
-    if (*associatedDisplayId == ADISPLAY_ID_NONE) {
-        ALOGW("Device %s is associated with display ADISPLAY_ID_NONE.", device->getName().c_str());
+    if (!associatedDisplayId ||
+            *associatedDisplayId == ADISPLAY_ID_NONE) {
         return true;
     }
 

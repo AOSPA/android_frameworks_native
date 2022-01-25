@@ -806,7 +806,8 @@ private:
     void updateLayerGeometry();
 
     void updateInputFlinger();
-    void notifyWindowInfos();
+    void buildWindowInfos(std::vector<gui::WindowInfo>& outWindowInfos,
+                          std::vector<gui::DisplayInfo>& outDisplayInfos);
     void commitInputWindowCommands() REQUIRES(mStateLock);
     void updateCursorAsync();
     void updateFrameScheduler();
@@ -887,13 +888,13 @@ private:
     status_t createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                                     sp<Layer>* outLayer);
 
-    status_t createEffectLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
+    status_t createEffectLayer(const LayerCreationArgs& args, sp<IBinder>* outHandle,
                                sp<Layer>* outLayer);
 
-    status_t createContainerLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
+    status_t createContainerLayer(const LayerCreationArgs& args, sp<IBinder>* outHandle,
                                   sp<Layer>* outLayer);
 
-    status_t mirrorLayer(const sp<Client>& client, const sp<IBinder>& mirrorFromHandle,
+    status_t mirrorLayer(const LayerCreationArgs& args, const sp<IBinder>& mirrorFromHandle,
                          sp<IBinder>* outHandle, int32_t* outLayerId);
 
     // called when all clients have released all their references to
@@ -1484,8 +1485,8 @@ private:
     const float mInternalDisplayDensity;
     const float mEmulatedDisplayDensity;
 
-    sp<os::IInputFlinger> mInputFlinger;
     // Should only be accessed by the main thread.
+    sp<os::IInputFlinger> mInputFlinger;
     InputWindowCommands mInputWindowCommands;
 
     Hwc2::impl::PowerAdvisor mPowerAdvisor;
@@ -1570,6 +1571,11 @@ private:
     bool mTidSentSuccessfully = false;
     bool mSendEarlyWakeUp = false;
     std::mutex mEarlyWakeUpMutex;
+
+    // returns the framerate of the layer with the given sequence ID
+    float getLayerFramerate(nsecs_t now, int32_t id) const {
+        return mScheduler->getLayerFramerate(now, id);
+    }
 };
 
 } // namespace android

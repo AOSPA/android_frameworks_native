@@ -63,7 +63,8 @@ public:
     MOCK_METHOD2(destroyLayer, Error(Display, Layer));
     MOCK_METHOD2(getActiveConfig, Error(Display, Config*));
     MOCK_METHOD3(getChangedCompositionTypes,
-                 Error(Display, std::vector<Layer>*, std::vector<IComposerClient::Composition>*));
+                 Error(Display, std::vector<Layer>*,
+                       std::vector<aidl::android::hardware::graphics::composer3::Composition>*));
     MOCK_METHOD2(getColorModes, Error(Display, std::vector<ColorMode>*));
     MOCK_METHOD4(getDisplayAttribute,
                  Error(Display, Config config, IComposerClient::Attribute, int32_t*));
@@ -97,7 +98,8 @@ public:
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerBlendMode, Error(Display, Layer, IComposerClient::BlendMode));
     MOCK_METHOD3(setLayerColor, Error(Display, Layer, const IComposerClient::Color&));
-    MOCK_METHOD3(setLayerCompositionType, Error(Display, Layer, IComposerClient::Composition));
+    MOCK_METHOD3(setLayerCompositionType,
+                 Error(Display, Layer, aidl::android::hardware::graphics::composer3::Composition));
     MOCK_METHOD3(setLayerDataspace, Error(Display, Layer, Dataspace));
     MOCK_METHOD3(setLayerPerFrameMetadata,
                  Error(Display, Layer, const std::vector<IComposerClient::PerFrameMetadata>&));
@@ -139,7 +141,9 @@ public:
                              const std::vector<uint8_t>&));
     MOCK_METHOD1(getLayerGenericMetadataKeys,
                  V2_4::Error(std::vector<IComposerClient::LayerGenericMetadataKey>*));
-    MOCK_METHOD2(getClientTargetProperty, Error(Display, IComposerClient::ClientTargetProperty*));
+    MOCK_METHOD3(getClientTargetProperty,
+                 Error(Display, IComposerClient::ClientTargetProperty*, float*));
+    MOCK_METHOD3(setLayerWhitePointNits, Error(Display, Layer, float));
     MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));

@@ -16,28 +16,14 @@
 
 #pragma once
 
-#include <android-base/thread_annotations.h>
-#include <utils/Singleton.h>
-#include <condition_variable>
-#include <mutex>
-#include <queue>
-#include <thread>
+#include <ui/GraphicTypes.h>
 
 namespace android {
 
-// Executes tasks off the main thread.
-class BackgroundExecutor : public Singleton<BackgroundExecutor> {
-public:
-    BackgroundExecutor();
-    ~BackgroundExecutor();
-    void execute(std::function<void()>);
+inline bool isHdrDataspace(ui::Dataspace dataspace) {
+    const auto transfer = dataspace & HAL_DATASPACE_TRANSFER_MASK;
 
-private:
-    std::mutex mMutex;
-    std::condition_variable mWorkAvailableCv GUARDED_BY(mMutex);
-    bool mDone GUARDED_BY(mMutex) = false;
-    std::vector<std::function<void()>> mTasks GUARDED_BY(mMutex);
-    std::thread mThread;
-};
+    return transfer == HAL_DATASPACE_TRANSFER_ST2084 || transfer == HAL_DATASPACE_TRANSFER_HLG;
+}
 
 } // namespace android

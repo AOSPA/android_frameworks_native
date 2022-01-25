@@ -1047,7 +1047,8 @@ private:
     // Returns true if the layer can draw shadows on its border.
     virtual bool canDrawShadows() const { return true; }
 
-    Hwc2::IComposerClient::Composition getCompositionType(const DisplayDevice&) const;
+    aidl::android::hardware::graphics::composer3::Composition getCompositionType(
+            const DisplayDevice&) const;
 
     /**
      * Returns an unsorted vector of all layers that are part of this tree.

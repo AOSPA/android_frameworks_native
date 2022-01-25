@@ -46,6 +46,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <ui/DataspaceUtils.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/PixelFormat.h>
@@ -420,6 +421,8 @@ void Layer::prepareBasicGeometryCompositionState() {
 
     compositionState->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     compositionState->alpha = alpha;
+    compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+    compositionState->blurRegions = drawingState.blurRegions;
     compositionState->stretchEffect = getStretchEffect();
 }
 
@@ -489,6 +492,11 @@ void Layer::preparePerFrameCompositionState() {
     // If there are no visible region changes, we still need to update blur parameters.
     compositionState->blurRegions = drawingState.blurRegions;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+
+    // Layer framerate is used in caching decisions.
+    // Retrieve it from the scheduler which maintains an instance of LayerHistory, and store it in
+    // LayerFECompositionState where it would be visible to Flattener.
+    compositionState->fps = mFlinger->getLayerFramerate(systemTime(), getSequence());
 }
 
 void Layer::prepareCursorCompositionState() {
@@ -585,6 +593,8 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
+
+    layerSettings.whitePointNits = targetSettings.whitePointNits;
     switch (targetSettings.blurSetting) {
         case LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled:
             layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
@@ -647,15 +657,16 @@ std::vector<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCompo
     return {*layerSettings};
 }
 
-Hwc2::IComposerClient::Composition Layer::getCompositionType(const DisplayDevice& display) const {
+aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionType(
+        const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
     if (outputLayer == nullptr) {
-        return Hwc2::IComposerClient::Composition::INVALID;
+        return aidl::android::hardware::graphics::composer3::Composition::INVALID;
     }
     if (outputLayer->getState().hwc) {
         return (*outputLayer->getState().hwc).hwcCompositionType;
     } else {
-        return Hwc2::IComposerClient::Composition::CLIENT;
+        return aidl::android::hardware::graphics::composer3::Composition::CLIENT;
     }
 }
 
@@ -956,7 +967,6 @@ bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
-
 bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix,
         bool allowNonRectPreservingTransforms) {
     ui::Transform t;
@@ -2027,7 +2037,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
         // Only populate for the primary display.
         if (display) {
-            const Hwc2::IComposerClient::Composition compositionType = getCompositionType(*display);
+            const auto compositionType = getCompositionType(*display);
             layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
         }
     }

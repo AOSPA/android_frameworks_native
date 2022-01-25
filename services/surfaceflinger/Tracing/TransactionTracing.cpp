@@ -177,9 +177,9 @@ void TransactionTracing::addEntry(const std::vector<CommittedTransactions>& comm
                                   const std::vector<int32_t>& removedLayers) {
     ATRACE_CALL();
     std::scoped_lock lock(mTraceLock);
-    std::vector<proto::TransactionTraceEntry> removedEntries;
+    std::vector<std::string> removedEntries;
+    proto::TransactionTraceEntry entryProto;
     for (const CommittedTransactions& entry : committedTransactions) {
-        proto::TransactionTraceEntry entryProto;
         entryProto.set_elapsed_realtime_nanos(entry.timestamp);
         entryProto.set_vsync_id(entry.vsyncId);
         entryProto.mutable_added_layers()->Reserve(static_cast<int32_t>(mCreatedLayers.size()));
@@ -199,16 +199,24 @@ void TransactionTracing::addEntry(const std::vector<CommittedTransactions>& comm
                 entryProto.mutable_transactions()->Add(std::move(it->second));
                 mQueuedTransactions.erase(it);
             } else {
-                ALOGE("Could not find transaction id %" PRIu64, id);
+                ALOGW("Could not find transaction id %" PRIu64, id);
             }
         }
-        std::vector<proto::TransactionTraceEntry> entries = mBuffer->emplace(std::move(entryProto));
+
+        std::string serializedProto;
+        entryProto.SerializeToString(&serializedProto);
+        entryProto.Clear();
+        std::vector<std::string> entries = mBuffer->emplace(std::move(serializedProto));
+        removedEntries.reserve(removedEntries.size() + entries.size());
         removedEntries.insert(removedEntries.end(), std::make_move_iterator(entries.begin()),
                               std::make_move_iterator(entries.end()));
     }
 
-    for (const proto::TransactionTraceEntry& removedEntry : removedEntries) {
-        updateStartingStateLocked(removedEntry);
+    proto::TransactionTraceEntry removedEntryProto;
+    for (const std::string& removedEntry : removedEntries) {
+        removedEntryProto.ParseFromString(removedEntry);
+        updateStartingStateLocked(removedEntryProto);
+        removedEntryProto.Clear();
     }
     mTransactionsAddedToBufferCv.notify_one();
 }
@@ -220,14 +228,34 @@ void TransactionTracing::flush(int64_t vsyncId) {
     std::unique_lock<std::mutex> lock(mTraceLock);
     base::ScopedLockAssertion assumeLocked(mTraceLock);
     mTransactionsAddedToBufferCv.wait(lock, [&]() REQUIRES(mTraceLock) {
-        return mBuffer->used() > 0 && mBuffer->back().vsync_id() >= vsyncId;
+        proto::TransactionTraceEntry entry;
+        if (mBuffer->used() > 0) {
+            entry.ParseFromString(mBuffer->back());
+        }
+        return mBuffer->used() > 0 && entry.vsync_id() >= vsyncId;
     });
 }
 
 void TransactionTracing::onLayerAdded(BBinder* layerHandle, int layerId, const std::string& name,
                                       uint32_t flags, int parentId) {
     std::scoped_lock lock(mTraceLock);
-    TracingLayerCreationArgs args{layerId, name, flags, parentId};
+    TracingLayerCreationArgs args{layerId, name, flags, parentId, -1 /* mirrorFromId */};
+    if (mLayerHandles.find(layerHandle) != mLayerHandles.end()) {
+        ALOGW("Duplicate handles found. %p", layerHandle);
+    }
+    mLayerHandles[layerHandle] = layerId;
+    proto::LayerCreationArgs protoArgs = TransactionProtoParser::toProto(args);
+    proto::LayerCreationArgs protoArgsCopy = protoArgs;
+    mCreatedLayers.push_back(protoArgs);
+}
+
+void TransactionTracing::onMirrorLayerAdded(BBinder* layerHandle, int layerId,
+                                            const std::string& name, int mirrorFromId) {
+    std::scoped_lock lock(mTraceLock);
+    TracingLayerCreationArgs args{layerId, name, 0 /* flags */, -1 /* parentId */, mirrorFromId};
+    if (mLayerHandles.find(layerHandle) != mLayerHandles.end()) {
+        ALOGW("Duplicate handles found. %p", layerHandle);
+    }
     mLayerHandles[layerHandle] = layerId;
     mCreatedLayers.emplace_back(TransactionProtoParser::toProto(args));
 }
@@ -235,6 +263,11 @@ void TransactionTracing::onLayerAdded(BBinder* layerHandle, int layerId, const s
 void TransactionTracing::onLayerRemoved(int32_t layerId) {
     mPendingRemovedLayers.emplace_back(layerId);
     tryPushToTracingThread();
+}
+
+void TransactionTracing::onHandleRemoved(BBinder* layerHandle) {
+    std::scoped_lock lock(mTraceLock);
+    mLayerHandles.erase(layerHandle);
 }
 
 void TransactionTracing::tryPushToTracingThread() {
@@ -260,7 +293,11 @@ int32_t TransactionTracing::getLayerIdLocked(const sp<IBinder>& layerHandle) {
         return -1;
     }
     auto it = mLayerHandles.find(layerHandle->localBinder());
-    return it == mLayerHandles.end() ? -1 : it->second;
+    if (it == mLayerHandles.end()) {
+        ALOGW("Could not find layer handle %p", layerHandle->localBinder());
+        return -1;
+    }
+    return it->second;
 }
 
 void TransactionTracing::updateStartingStateLocked(
@@ -270,9 +307,7 @@ void TransactionTracing::updateStartingStateLocked(
     for (const proto::LayerCreationArgs& addedLayer : removedEntry.added_layers()) {
         TracingLayerState& startingState = mStartingStates[addedLayer.layer_id()];
         startingState.layerId = addedLayer.layer_id();
-        startingState.name = addedLayer.name();
-        startingState.layerCreationFlags = addedLayer.flags();
-        startingState.parentId = addedLayer.parent_id();
+        TransactionProtoParser::fromProto(addedLayer, startingState.args);
     }
 
     // Merge layer states to starting transaction state.
@@ -280,7 +315,7 @@ void TransactionTracing::updateStartingStateLocked(
         for (const proto::LayerState& layerState : transaction.layer_changes()) {
             auto it = mStartingStates.find(layerState.layer_id());
             if (it == mStartingStates.end()) {
-                ALOGE("Could not find layer id %d", layerState.layer_id());
+                ALOGW("Could not find layer id %d", layerState.layer_id());
                 continue;
             }
             TransactionProtoParser::fromProto(layerState, nullptr, it->second);
@@ -290,13 +325,6 @@ void TransactionTracing::updateStartingStateLocked(
     // Clean up stale starting states since the layer has been removed and the buffer does not
     // contain any references to the layer.
     for (const int32_t removedLayerId : removedEntry.removed_layers()) {
-        auto it = std::find_if(mLayerHandles.begin(), mLayerHandles.end(),
-                               [removedLayerId](auto& layer) {
-                                   return layer.second == removedLayerId;
-                               });
-        if (it != mLayerHandles.end()) {
-            mLayerHandles.erase(it);
-        }
         mStartingStates.erase(removedLayerId);
     }
 }
@@ -305,11 +333,13 @@ void TransactionTracing::addStartingStateToProtoLocked(proto::TransactionTraceFi
     proto::TransactionTraceEntry* entryProto = proto.add_entry();
     entryProto->set_elapsed_realtime_nanos(mStartingTimestamp);
     entryProto->set_vsync_id(0);
+    if (mStartingStates.size() == 0) {
+        return;
+    }
+
     entryProto->mutable_added_layers()->Reserve(static_cast<int32_t>(mStartingStates.size()));
     for (auto& [layerId, state] : mStartingStates) {
-        TracingLayerCreationArgs args{layerId, state.name, state.layerCreationFlags,
-                                      state.parentId};
-        entryProto->mutable_added_layers()->Add(TransactionProtoParser::toProto(args));
+        entryProto->mutable_added_layers()->Add(TransactionProtoParser::toProto(state.args));
     }
 
     proto::TransactionState transactionProto = TransactionProtoParser::toProto(mStartingStates);

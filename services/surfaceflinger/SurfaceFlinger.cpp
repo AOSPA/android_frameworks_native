@@ -74,6 +74,7 @@
 #include <sys/stat.h>
 #include <fstream>
 #include <ui/ColorSpace.h>
+#include <ui/DataspaceUtils.h>
 #include <ui/DebugUtils.h>
 #include <ui/DisplayId.h>
 #include <ui/DisplayMode.h>
@@ -100,6 +101,7 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include "BackgroundExecutor.h"
 #include "BufferLayer.h"
 #include "BufferQueueLayer.h"
 #include "BufferStateLayer.h"
@@ -767,7 +769,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
-    mTransactionTracingEnabled = property_get_bool("debug.sf.enable_transaction_tracing", false);
+    mTransactionTracingEnabled =
+            !mIsUserBuild && property_get_bool("debug.sf.enable_transaction_tracing", true);
     if (mTransactionTracingEnabled) {
         mTransactionTracing.enable();
     }
@@ -3030,12 +3033,7 @@ void SurfaceFlinger::postComposition() {
             mDrawingState.traverse([&, compositionDisplay = compositionDisplay](Layer* layer) {
                 const auto layerFe = layer->getCompositionEngineLayerFE();
                 if (layer->isVisible() && compositionDisplay->includesLayer(layerFe)) {
-                    const Dataspace transfer =
-                        static_cast<Dataspace>(layer->getDataSpace() & Dataspace::TRANSFER_MASK);
-                    const bool isHdr = (transfer == Dataspace::TRANSFER_ST2084 ||
-                                        transfer == Dataspace::TRANSFER_HLG);
-
-                    if (isHdr) {
+                    if (isHdrDataspace(layer->getDataSpace())) {
                         const auto* outputLayer =
                             compositionDisplay->getOutputLayerForLayer(layerFe);
                         if (outputLayer) {
@@ -4010,28 +4008,45 @@ void SurfaceFlinger::updateInputFlinger() {
         return;
     }
 
+    std::vector<WindowInfo> windowInfos;
+    std::vector<DisplayInfo> displayInfos;
+    bool updateWindowInfo = false;
     if (mVisibleRegionsDirty || mInputInfoChanged) {
         mInputInfoChanged = false;
-        notifyWindowInfos();
-    } else if (mInputWindowCommands.syncInputWindows) {
-        // If the caller requested to sync input windows, but there are no
-        // changes to input windows, notify immediately.
-        windowInfosReported();
+        updateWindowInfo = true;
+        buildWindowInfos(windowInfos, displayInfos);
     }
+    if (!updateWindowInfo && mInputWindowCommands.empty()) {
+        return;
+    }
+    BackgroundExecutor::getInstance().execute([updateWindowInfo,
+                                               windowInfos = std::move(windowInfos),
+                                               displayInfos = std::move(displayInfos),
+                                               inputWindowCommands =
+                                                       std::move(mInputWindowCommands),
+                                               inputFlinger = mInputFlinger, this]() {
+        ATRACE_NAME("BackgroundExecutor::updateInputFlinger");
+        if (updateWindowInfo) {
+            mWindowInfosListenerInvoker->windowInfosChanged(windowInfos, displayInfos,
+                                                            inputWindowCommands.syncInputWindows);
+        } else if (inputWindowCommands.syncInputWindows) {
+            // If the caller requested to sync input windows, but there are no
+            // changes to input windows, notify immediately.
+            windowInfosReported();
+        }
+        for (const auto& focusRequest : inputWindowCommands.focusRequests) {
+            inputFlinger->setFocusedWindow(focusRequest);
+        }
+    });
 
-    for (const auto& focusRequest : mInputWindowCommands.focusRequests) {
-        mInputFlinger->setFocusedWindow(focusRequest);
-    }
     mInputWindowCommands.clear();
 }
 
-void SurfaceFlinger::notifyWindowInfos() {
-    std::vector<WindowInfo> windowInfos;
-    std::vector<DisplayInfo> displayInfos;
+void SurfaceFlinger::buildWindowInfos(std::vector<WindowInfo>& outWindowInfos,
+                                      std::vector<DisplayInfo>& outDisplayInfos) {
     std::unordered_map<uint32_t /*layerStackId*/,
                        std::pair<bool /* isSecure */, const ui::Transform>>
             inputDisplayDetails;
-
     for (const auto& [_, display] : ON_MAIN_THREAD(mDisplays)) {
         if (!display->receivesInput()) {
             continue;
@@ -4045,7 +4060,7 @@ void SurfaceFlinger::notifyWindowInfos() {
                   layerStackId);
             continue;
         }
-        displayInfos.emplace_back(info);
+        outDisplayInfos.emplace_back(info);
     }
 
     mDrawingState.traverseInReverseZOrder([&](Layer* layer) {
@@ -4060,15 +4075,10 @@ void SurfaceFlinger::notifyWindowInfos() {
             const auto& [secure, transform] = it->second;
             isSecure = secure;
             displayTransform = transform;
-        } else {
-            ALOGE("No input-enabled display found for layer `%s` on layer stack id: %d",
-                  layer->getDebugName(), layerStackId);
         }
 
-        windowInfos.push_back(layer->fillInputInfo(displayTransform, isSecure));
+        outWindowInfos.push_back(layer->fillInputInfo(displayTransform, isSecure));
     });
-    mWindowInfosListenerInvoker->windowInfosChanged(windowInfos, displayInfos,
-                                                    mInputWindowCommands.syncInputWindows);
 }
 
 void SurfaceFlinger::updateCursorAsync() {
@@ -5361,8 +5371,9 @@ uint32_t SurfaceFlinger::addInputWindowCommands(const InputWindowCommands& input
     return hasChanges ? eTraversalNeeded : 0;
 }
 
-status_t SurfaceFlinger::mirrorLayer(const sp<Client>& client, const sp<IBinder>& mirrorFromHandle,
-                                     sp<IBinder>* outHandle, int32_t* outLayerId) {
+status_t SurfaceFlinger::mirrorLayer(const LayerCreationArgs& args,
+                                     const sp<IBinder>& mirrorFromHandle, sp<IBinder>* outHandle,
+                                     int32_t* outLayerId) {
     if (!mirrorFromHandle) {
         return NAME_NOT_FOUND;
     }
@@ -5375,7 +5386,6 @@ status_t SurfaceFlinger::mirrorLayer(const sp<Client>& client, const sp<IBinder>
         if (!mirrorFrom) {
             return NAME_NOT_FOUND;
         }
-        LayerCreationArgs args(this, client, "MirrorRoot", 0, LayerMetadata());
         status_t result = createContainerLayer(args, outHandle, &mirrorLayer);
         if (result != NO_ERROR) {
             return result;
@@ -5385,7 +5395,11 @@ status_t SurfaceFlinger::mirrorLayer(const sp<Client>& client, const sp<IBinder>
     }
 
     *outLayerId = mirrorLayer->sequence;
-    return addClientLayer(client, *outHandle, mirrorLayer /* layer */, nullptr /* parent */,
+    if (mTransactionTracingEnabled) {
+        mTransactionTracing.onMirrorLayerAdded((*outHandle)->localBinder(), mirrorLayer->sequence,
+                                               args.name, mirrorFrom->sequence);
+    }
+    return addClientLayer(args.client, *outHandle, mirrorLayer /* layer */, nullptr /* parent */,
                           false /* addAsRoot */, nullptr /* outTransformHint */);
 }
 
@@ -5435,10 +5449,6 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, sp<IBinder>* outHa
     if (parentLayer != nullptr) {
         addToRoot = false;
     }
-    result = addClientLayer(args.client, *outHandle, layer, parent, addToRoot, outTransformHint);
-    if (result != NO_ERROR) {
-        return result;
-    }
 
     int parentId = -1;
     // We can safely promote the layer in binder thread because we have a strong reference
@@ -5447,8 +5457,15 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, sp<IBinder>* outHa
     if (parentSp != nullptr) {
         parentId = parentSp->getSequence();
     }
-    mTransactionTracing.onLayerAdded((*outHandle)->localBinder(), layer->sequence, args.name,
-                                     args.flags, parentId);
+    if (mTransactionTracingEnabled) {
+        mTransactionTracing.onLayerAdded((*outHandle)->localBinder(), layer->sequence, args.name,
+                                         args.flags, parentId);
+    }
+
+    result = addClientLayer(args.client, *outHandle, layer, parent, addToRoot, outTransformHint);
+    if (result != NO_ERROR) {
+        return result;
+    }
 
     setTransactionFlags(eTransactionNeeded);
     *outLayerId = layer->sequence;
@@ -5499,14 +5516,14 @@ status_t SurfaceFlinger::createBufferStateLayer(LayerCreationArgs& args, sp<IBin
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::createEffectLayer(LayerCreationArgs& args, sp<IBinder>* handle,
+status_t SurfaceFlinger::createEffectLayer(const LayerCreationArgs& args, sp<IBinder>* handle,
                                            sp<Layer>* outLayer) {
     *outLayer = getFactory().createEffectLayer(args);
     *handle = (*outLayer)->getHandle();
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::createContainerLayer(LayerCreationArgs& args, sp<IBinder>* handle,
+status_t SurfaceFlinger::createContainerLayer(const LayerCreationArgs& args, sp<IBinder>* handle,
                                               sp<Layer>* outLayer) {
     *outLayer = getFactory().createContainerLayer(args);
     *handle = (*outLayer)->getHandle();
@@ -5532,6 +5549,9 @@ void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer) {
     markLayerPendingRemovalLocked(layer);
     mBufferCountTracker.remove(handle);
     layer.clear();
+    if (mTransactionTracingEnabled) {
+        mTransactionTracing.onHandleRemoved(handle);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7922,6 +7942,8 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::renderScree
                                        BlurSetting::Disabled
                              : compositionengine::LayerFE::ClientCompositionTargetSettings::
                                        BlurSetting::Enabled,
+                DisplayDevice::sDefaultMaxLumiance,
+
         };
         std::vector<compositionengine::LayerFE::LayerSettings> results =
                 layer->prepareClientCompositionList(targetSettings);
@@ -8194,7 +8216,9 @@ void SurfaceFlinger::onLayerDestroyed(Layer* layer) {
     if (!layer->isRemovedFromCurrentState()) {
         mScheduler->deregisterLayer(layer);
     }
-    mTransactionTracing.onLayerRemoved(layer->getSequence());
+    if (mTransactionTracingEnabled) {
+        mTransactionTracing.onLayerRemoved(layer->getSequence());
+    }
 }
 
 void SurfaceFlinger::onLayerUpdate() {

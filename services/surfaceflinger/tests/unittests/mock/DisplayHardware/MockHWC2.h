@@ -38,7 +38,9 @@ public:
     MOCK_METHOD((base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>), createLayer, (),
                 (override));
     MOCK_METHOD(hal::Error, getChangedCompositionTypes,
-                ((std::unordered_map<Layer *, hal::Composition> *)), (override));
+                ((std::unordered_map<Layer *,
+                                     aidl::android::hardware::graphics::composer3::Composition> *)),
+                (override));
     MOCK_METHOD(hal::Error, getColorModes, (std::vector<hal::ColorMode> *), (const, override));
     MOCK_METHOD(int32_t, getSupportedPerFrameMetadata, (), (const, override));
     MOCK_METHOD(hal::Error, getRenderIntents, (hal::ColorMode, std::vector<hal::RenderIntent> *),
@@ -85,7 +87,8 @@ public:
     MOCK_METHOD(hal::Error, getSupportedContentTypes, (std::vector<hal::ContentType> *),
                 (const, override));
     MOCK_METHOD(hal::Error, setContentType, (hal::ContentType), (override));
-    MOCK_METHOD(hal::Error, getClientTargetProperty, (hal::ClientTargetProperty *), (override));
+    MOCK_METHOD(hal::Error, getClientTargetProperty, (hal::ClientTargetProperty *, float *),
+                (override));
     MOCK_METHOD(hal::Error, setDisplayElapseTime, (uint64_t), (override));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD(hal::Error, setClientTarget_3_1, (int32_t, const android::sp<android::Fence>&,
@@ -108,7 +111,8 @@ public:
     MOCK_METHOD(hal::Error, setSurfaceDamage, (const android::Region &), (override));
     MOCK_METHOD(hal::Error, setBlendMode, (hal::BlendMode), (override));
     MOCK_METHOD(hal::Error, setColor, (hal::Color), (override));
-    MOCK_METHOD(hal::Error, setCompositionType, (hal::Composition), (override));
+    MOCK_METHOD(hal::Error, setCompositionType,
+                (aidl::android::hardware::graphics::composer3::Composition), (override));
     MOCK_METHOD(hal::Error, setDataspace, (android::ui::Dataspace), (override));
     MOCK_METHOD(hal::Error, setPerFrameMetadata, (const int32_t, const android::HdrMetadata &),
                 (override));
@@ -122,6 +126,7 @@ public:
     MOCK_METHOD(hal::Error, setColorTransform, (const android::mat4 &), (override));
     MOCK_METHOD(hal::Error, setLayerGenericMetadata,
                 (const std::string &, bool, const std::vector<uint8_t> &), (override));
+    MOCK_METHOD(hal::Error, setWhitePointNits, (float whitePointNits), (override));
 };
 
 } // namespace android::HWC2::mock

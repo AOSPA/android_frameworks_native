@@ -30,9 +30,13 @@
 #include <ui/DisplayedFrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
+
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #endif
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -103,7 +107,7 @@ public:
     virtual Error getActiveConfig(Display display, Config* outConfig) = 0;
     virtual Error getChangedCompositionTypes(
             Display display, std::vector<Layer>* outLayers,
-            std::vector<IComposerClient::Composition>* outTypes) = 0;
+            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes) = 0;
     virtual Error getColorModes(Display display, std::vector<ColorMode>* outModes) = 0;
     virtual Error getDisplayAttribute(Display display, Config config,
                                       IComposerClient::Attribute attribute, int32_t* outValue) = 0;
@@ -160,8 +164,9 @@ public:
                                     IComposerClient::BlendMode mode) = 0;
     virtual Error setLayerColor(Display display, Layer layer,
                                 const IComposerClient::Color& color) = 0;
-    virtual Error setLayerCompositionType(Display display, Layer layer,
-                                          IComposerClient::Composition type) = 0;
+    virtual Error setLayerCompositionType(
+            Display display, Layer layer,
+            aidl::android::hardware::graphics::composer3::Composition type) = 0;
     virtual Error setLayerDataspace(Display display, Layer layer, Dataspace dataspace) = 0;
     virtual Error setLayerDisplayFrame(Display display, Layer layer,
                                        const IComposerClient::Rect& frame) = 0;
@@ -227,7 +232,9 @@ public:
     virtual V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) = 0;
     virtual Error getClientTargetProperty(
-            Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty) = 0;
+            Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
+            float* outWhitePointNits) = 0;
+
     virtual Error setDisplayElapseTime(Display display, uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
     virtual Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) = 0;
@@ -236,6 +243,8 @@ public:
     virtual Error setClientTarget_3_1(Display display, int32_t slot,
                                       int acquireFence, Dataspace dataspace) = 0;
 #endif
+    // AIDL Composer
+    virtual Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) = 0;
 };
 
 } // namespace android::Hwc2

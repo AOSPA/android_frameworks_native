@@ -64,7 +64,10 @@ public:
     void setBufferSize(size_t bufferSizeInBytes);
     void onLayerAdded(BBinder* layerHandle, int layerId, const std::string& name, uint32_t flags,
                       int parentId);
+    void onMirrorLayerAdded(BBinder* layerHandle, int layerId, const std::string& name,
+                            int mirrorFromId);
     void onLayerRemoved(int layerId);
+    void onHandleRemoved(BBinder* layerHandle);
     void dump(std::string&) const;
     static constexpr auto CONTINUOUS_TRACING_BUFFER_SIZE = 512 * 1024;
     static constexpr auto ACTIVE_TRACING_BUFFER_SIZE = 100 * 1024 * 1024;
@@ -85,8 +88,7 @@ private:
     std::vector<proto::LayerCreationArgs> mCreatedLayers GUARDED_BY(mTraceLock);
     std::unordered_map<BBinder* /* layerHandle */, int32_t /* layerId */> mLayerHandles
             GUARDED_BY(mTraceLock);
-    std::unordered_map<int32_t /* layerId */, TracingLayerState> mStartingStates
-            GUARDED_BY(mTraceLock);
+    std::map<int32_t /* layerId */, TracingLayerState> mStartingStates GUARDED_BY(mTraceLock);
 
     // We do not want main thread to block so main thread will try to acquire mMainThreadLock,
     // otherwise will push data to temporary container.
