@@ -146,7 +146,16 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
     const auto physicalId = PhysicalDisplayId::tryCast(mId);
     LOG_FATAL_IF(!physicalId);
 
-    mIsColorModeChanged = true;
+    if (colorProfile.mode != mColorProfile.mode ||
+        colorProfile.dataspace != mColorProfile.dataspace ||
+        colorProfile.renderIntent != mColorProfile.renderIntent) {
+        mIsColorModeChanged = true;
+    }
+
+    mColorProfile.mode = colorProfile.mode;
+    mColorProfile.dataspace = colorProfile.dataspace;
+    mColorProfile.renderIntent = colorProfile.renderIntent;
+    mColorProfile.colorSpaceAgnosticDataspace = colorProfile.colorSpaceAgnosticDataspace;
 
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,
                                                               colorProfile.renderIntent);

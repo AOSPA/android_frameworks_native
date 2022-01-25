@@ -93,6 +93,8 @@ private:
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     void beginDraw();
     void endDraw();
+    ColorProfile mColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
+                                  ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
 };
 
 // This template factory function standardizes the implementation details of the
