@@ -57,7 +57,7 @@
 #include "Scheduler/LayerInfo.h"
 #include "Scheduler/Seamlessness.h"
 #include "SurfaceFlinger.h"
-#include "SurfaceTracing.h"
+#include "Tracing/LayerTracing.h"
 #include "TransactionCallbackInvoker.h"
 
 using namespace android::surfaceflinger;
@@ -85,20 +85,18 @@ class SurfaceFrame;
 } // namespace frametimeline
 
 struct LayerCreationArgs {
-    LayerCreationArgs(SurfaceFlinger*, sp<Client>, std::string name, uint32_t w, uint32_t h,
-                      uint32_t flags, LayerMetadata);
+    LayerCreationArgs(SurfaceFlinger*, sp<Client>, std::string name, uint32_t flags, LayerMetadata);
 
     SurfaceFlinger* flinger;
     const sp<Client> client;
     std::string name;
-    uint32_t w;
-    uint32_t h;
     uint32_t flags;
     LayerMetadata metadata;
 
     pid_t callingPid;
     uid_t callingUid;
     uint32_t textureName;
+    std::optional<uint32_t> sequence = std::nullopt;
 };
 
 class Layer : public virtual RefBase, compositionengine::LayerFE {
@@ -280,6 +278,8 @@ public:
         sp<IBinder> releaseBufferEndpoint;
 
         gui::DropInputMode dropInputMode;
+
+        bool autoRefresh = false;
     };
 
     /*
@@ -526,12 +526,10 @@ public:
      * called after composition.
      * returns true if the layer latched a new buffer this frame.
      */
-    virtual bool onPostComposition(const DisplayDevice*,
+    virtual void onPostComposition(const DisplayDevice*,
                                    const std::shared_ptr<FenceTime>& /*glDoneFence*/,
                                    const std::shared_ptr<FenceTime>& /*presentFence*/,
-                                   const CompositorTiming&) {
-        return false;
-    }
+                                   const CompositorTiming&) {}
 
     // If a buffer was replaced this frame, release the former buffer
     virtual void releasePendingBuffer(nsecs_t /*dequeueReadyTime*/) { }
@@ -592,10 +590,6 @@ public:
     }
     virtual FrameRate getFrameRateForLayerTree() const;
 
-    virtual std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool /*forceFlush*/) {
-        return {};
-    }
-
     virtual bool getTransformToDisplayInverse() const { return false; }
 
     // Returns how rounded corners should be drawn for this layer.
@@ -623,7 +617,8 @@ public:
     void prepareCompositionState(compositionengine::LayerFE::StateSubset subset) override;
     std::vector<compositionengine::LayerFE::LayerSettings> prepareClientCompositionList(
             compositionengine::LayerFE::ClientCompositionTargetSettings&) override;
-    void onLayerDisplayed(const sp<Fence>& releaseFence) override;
+    void onLayerDisplayed(
+            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
 
     void setWasClientComposed(const sp<Fence>& fence) override {
         mLastClientCompositionFence = fence;
@@ -703,7 +698,7 @@ public:
     // external mStateLock. If writing drawing state, this function should be called on the
     // main or tracing thread.
     void writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet,
-                                 uint32_t traceFlags = SurfaceTracing::TRACE_ALL);
+                                 uint32_t traceFlags = LayerTracing::TRACE_ALL);
 
     gui::WindowInfo::Type getWindowType() const { return mWindowType; }
 
@@ -889,7 +884,7 @@ public:
     // Layer serial number.  This gives layers an explicit ordering, so we
     // have a stable sort order when their layer stack and Z-order are
     // the same.
-    int32_t sequence{sSequence++};
+    const int32_t sequence;
 
     bool mPendingHWCDestroy{false};
 
@@ -1134,6 +1129,8 @@ private:
     const std::vector<BlurRegion> getBlurRegions() const;
 
     bool mIsAtRoot = false;
+
+    uint32_t mLayerCreationFlags;
 public:
     nsecs_t getPreviousGfxInfo();
 };

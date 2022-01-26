@@ -58,7 +58,7 @@ public:
     void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
 
     std::future<RenderEngineResult> drawLayers(const DisplaySettings& display,
-                                               const std::vector<const LayerSettings*>& layers,
+                                               const std::vector<LayerSettings>& layers,
                                                const std::shared_ptr<ExternalTexture>& buffer,
                                                const bool useFramebufferCache,
                                                base::unique_fd&& bufferFence) override;
@@ -67,6 +67,7 @@ public:
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
     void onActiveDisplaySizeChanged(ui::Size size) override;
+    int getRETid() override;
 
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
@@ -74,7 +75,7 @@ protected:
     bool canSkipPostRenderCleanup() const override;
     void drawLayersInternal(const std::shared_ptr<std::promise<RenderEngineResult>>&& resultPromise,
                             const DisplaySettings& display,
-                            const std::vector<const LayerSettings*>& layers,
+                            const std::vector<LayerSettings>& layers,
                             const std::shared_ptr<ExternalTexture>& buffer,
                             const bool useFramebufferCache, base::unique_fd&& bufferFence) override;
 

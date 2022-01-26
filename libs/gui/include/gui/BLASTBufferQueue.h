@@ -95,15 +95,15 @@ public:
     void onFrameDequeued(const uint64_t) override;
     void onFrameCancelled(const uint64_t) override;
 
-    void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
-            const std::vector<SurfaceControlStats>& stats);
+    void transactionCommittedCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
+                                      const std::vector<SurfaceControlStats>& stats);
+    virtual void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
+                                     const std::vector<SurfaceControlStats>& stats);
     void releaseBufferCallback(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
-                               uint32_t transformHint, uint32_t currentMaxAcquiredBufferCount);
-    void setNextTransaction(SurfaceComposerClient::Transaction *t);
+                               std::optional<uint32_t> currentMaxAcquiredBufferCount);
+    void setSyncTransaction(SurfaceComposerClient::Transaction* t, bool acquireSingleBuffer = true);
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
     void applyPendingTransactions(uint64_t frameNumber);
-    void setTransactionCompleteCallback(uint64_t frameNumber,
-                                        std::function<void(int64_t)>&& transactionCompleteCallback);
 
     void update(const sp<SurfaceControl>& surface, uint32_t width, uint32_t height, int32_t format,
                 SurfaceComposerClient::Transaction* outTransaction = nullptr);
@@ -127,7 +127,8 @@ private:
     void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
                            sp<IGraphicBufferConsumer>* outConsumer);
 
-    void processNextBufferLocked(bool useNextTransaction) REQUIRES(mMutex);
+    void acquireNextBufferLocked(
+            const std::optional<SurfaceComposerClient::Transaction*> transaction) REQUIRES(mMutex);
     Rect computeCrop(const BufferItem& item) REQUIRES(mMutex);
     // Return true if we need to reject the buffer based on the scaling mode and the buffer size.
     bool rejectBuffer(const BufferItem& item) REQUIRES(mMutex);
@@ -135,6 +136,12 @@ private:
     static PixelFormat convertBufferFormat(PixelFormat& format);
     void mergePendingTransactions(SurfaceComposerClient::Transaction* t, uint64_t frameNumber)
             REQUIRES(mMutex);
+
+    void flushShadowQueue() REQUIRES(mMutex);
+    void acquireAndReleaseBuffer() REQUIRES(mMutex);
+    void releaseBuffer(const ReleaseCallbackId& callbackId, const sp<Fence>& releaseFence)
+            REQUIRES(mMutex);
+    void flushAndWaitForFreeBuffer(std::unique_lock<std::mutex>& lock);
 
     std::string mName;
     // Represents the queued buffer count from buffer queue,
@@ -212,7 +219,7 @@ private:
     sp<IGraphicBufferProducer> mProducer;
     sp<BLASTBufferItemConsumer> mBufferItemConsumer;
 
-    SurfaceComposerClient::Transaction* mNextTransaction GUARDED_BY(mMutex);
+    SurfaceComposerClient::Transaction* mSyncTransaction GUARDED_BY(mMutex);
     std::vector<std::tuple<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
             mPendingTransactions GUARDED_BY(mMutex);
 
@@ -225,9 +232,6 @@ private:
 
     // Tracks the last acquired frame number
     uint64_t mLastAcquiredFrameNumber GUARDED_BY(mMutex) = 0;
-
-    std::function<void(int64_t)> mTransactionCompleteCallback GUARDED_BY(mMutex) = nullptr;
-    uint64_t mTransactionCompleteFrameNumber GUARDED_BY(mMutex){0};
 
     // Queues up transactions using this token in SurfaceFlinger. This prevents queued up
     // transactions from other parts of the client from blocking this transaction.
@@ -244,6 +248,13 @@ private:
     // Keep track of SurfaceControls that have submitted a transaction and BBQ is waiting on a
     // callback for them.
     std::queue<sp<SurfaceControl>> mSurfaceControlsWithPendingCallback GUARDED_BY(mMutex);
+
+    uint32_t mCurrentMaxAcquiredBufferCount;
+    bool mWaitForTransactionCallback GUARDED_BY(mMutex) = false;
+
+    // Flag to determine if syncTransaction should only acquire a single buffer and then clear or
+    // continue to acquire buffers until explicitly cleared
+    bool mAcquireSingleBuffer GUARDED_BY(mMutex) = true;
 };
 
 } // namespace android

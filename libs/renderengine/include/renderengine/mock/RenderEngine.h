@@ -51,17 +51,18 @@ public:
                  void(Rect,  Rect));
     MOCK_METHOD5(drawLayers,
                  std::future<RenderEngineResult>(const DisplaySettings&,
-                                                 const std::vector<const LayerSettings*>&,
+                                                 const std::vector<LayerSettings>&,
                                                  const std::shared_ptr<ExternalTexture>&,
                                                  const bool, base::unique_fd&&));
     MOCK_METHOD6(drawLayersInternal,
                  void(const std::shared_ptr<std::promise<RenderEngineResult>>&&,
-                      const DisplaySettings&, const std::vector<const LayerSettings*>&,
+                      const DisplaySettings&, const std::vector<LayerSettings>&,
                       const std::shared_ptr<ExternalTexture>&, const bool, base::unique_fd&&));
     MOCK_METHOD0(cleanFramebufferCache, void());
     MOCK_METHOD0(getContextPriority, int());
     MOCK_METHOD0(supportsBackgroundBlur, bool());
     MOCK_METHOD1(onActiveDisplaySizeChanged, void(ui::Size));
+    MOCK_METHOD0(getRETid, int());
 
 protected:
     // mock renderengine still needs to implement these, but callers should never need to call them.

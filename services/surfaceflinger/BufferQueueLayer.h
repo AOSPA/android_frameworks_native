@@ -42,9 +42,8 @@ public:
     // Implements Layer.
     const char* getType() const override { return "BufferQueueLayer"; }
 
-    void onLayerDisplayed(const sp<Fence>& releaseFence) override;
-
-    std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool forceFlush) override;
+    void onLayerDisplayed(
+            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
 
     // If a buffer was replaced this frame, release the former buffer
     void releasePendingBuffer(nsecs_t dequeueReadyTime) override;
@@ -62,6 +61,11 @@ public:
 
     status_t setDefaultBufferProperties(uint32_t w, uint32_t h, PixelFormat format);
     sp<IGraphicBufferProducer> getProducer() const;
+
+    void setSizeForTest(uint32_t w, uint32_t h) {
+        mDrawingState.active_legacy.w = w;
+        mDrawingState.active_legacy.h = h;
+    }
 
 protected:
     void gatherBufferInfo() override;

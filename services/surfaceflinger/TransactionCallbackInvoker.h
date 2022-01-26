@@ -18,7 +18,9 @@
 
 #include <condition_variable>
 #include <deque>
+#include <future>
 #include <mutex>
+#include <queue>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +29,7 @@
 
 #include <binder/IBinder.h>
 #include <gui/ITransactionCompletedListener.h>
+#include <renderengine/RenderEngine.h>
 #include <ui/Fence.h>
 
 namespace android {
@@ -41,7 +44,9 @@ public:
     wp<IBinder> surfaceControl;
 
     bool releasePreviousBuffer = false;
+    std::string name;
     sp<Fence> previousReleaseFence;
+    std::vector<std::shared_future<renderengine::RenderEngineResult>> previousReleaseFences;
     nsecs_t acquireTime = -1;
     nsecs_t latchTime = -1;
     uint32_t transformHint = 0;
@@ -56,8 +61,11 @@ public:
 
 class TransactionCallbackInvoker {
 public:
+    TransactionCallbackInvoker();
+    ~TransactionCallbackInvoker();
+
     status_t addCallbackHandles(const std::deque<sp<CallbackHandle>>& handles,
-                                            const std::vector<JankData>& jankData);
+                                const std::vector<JankData>& jankData);
     status_t addOnCommitCallbackHandles(const std::deque<sp<CallbackHandle>>& handles,
                                              std::deque<sp<CallbackHandle>>& outRemainingHandles);
 
@@ -68,7 +76,7 @@ public:
 
     void addPresentFence(const sp<Fence>& presentFence);
 
-    void sendCallbacks();
+    void sendCallbacks(bool onCommitOnly);
     void clearCompletedTransactions() {
         mCompletedTransactions.clear();
     }
@@ -78,16 +86,20 @@ public:
 
 
 private:
-    status_t findTransactionStats(const sp<IBinder>& listener,
-                                  const std::vector<CallbackId>& callbackIds,
-                                  TransactionStats** outTransactionStats);
-
-
+    status_t findOrCreateTransactionStats(const sp<IBinder>& listener,
+                                          const std::vector<CallbackId>& callbackIds,
+                                          TransactionStats** outTransactionStats);
 
     std::unordered_map<sp<IBinder>, std::deque<TransactionStats>, IListenerHash>
         mCompletedTransactions;
 
     sp<Fence> mPresentFence;
+
+    std::mutex mCallbackThreadMutex;
+    std::condition_variable mCallbackConditionVariable;
+    std::thread mThread;
+    bool mKeepRunning = true;
+    std::queue<std::function<void()>> mCallbackThreadWork;
 };
 
 } // namespace android

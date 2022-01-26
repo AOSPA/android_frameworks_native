@@ -98,9 +98,8 @@ enum {
     BLOB_ASHMEM_MUTABLE = 2,
 };
 
-static void acquire_object(const sp<ProcessState>& proc,
-    const flat_binder_object& obj, const void* who, size_t* outAshmemSize)
-{
+static void acquire_object(const sp<ProcessState>& proc, const flat_binder_object& obj,
+                           const void* who) {
     switch (obj.hdr.type) {
         case BINDER_TYPE_BINDER:
             if (obj.binder) {
@@ -117,13 +116,6 @@ static void acquire_object(const sp<ProcessState>& proc,
             return;
         }
         case BINDER_TYPE_FD: {
-            if ((obj.cookie != 0) && (outAshmemSize != nullptr) && ashmem_valid(obj.handle)) {
-                // If we own an ashmem fd, keep track of how much memory it refers to.
-                int size = ashmem_get_size_region(obj.handle);
-                if (size > 0) {
-                    *outAshmemSize += size;
-                }
-            }
             return;
         }
     }
@@ -131,9 +123,8 @@ static void acquire_object(const sp<ProcessState>& proc,
     ALOGD("Invalid object type 0x%08x", obj.hdr.type);
 }
 
-static void release_object(const sp<ProcessState>& proc,
-    const flat_binder_object& obj, const void* who, size_t* outAshmemSize)
-{
+static void release_object(const sp<ProcessState>& proc, const flat_binder_object& obj,
+                           const void* who) {
     switch (obj.hdr.type) {
         case BINDER_TYPE_BINDER:
             if (obj.binder) {
@@ -151,16 +142,6 @@ static void release_object(const sp<ProcessState>& proc,
         }
         case BINDER_TYPE_FD: {
             if (obj.cookie != 0) { // owned
-                if ((outAshmemSize != nullptr) && ashmem_valid(obj.handle)) {
-                    int size = ashmem_get_size_region(obj.handle);
-                    if (size > 0) {
-                        // ashmem size might have changed since last time it was accounted for, e.g.
-                        // in acquire_object(). Value of *outAshmemSize is not critical since we are
-                        // releasing the object anyway. Check for integer overflow condition.
-                        *outAshmemSize -= std::min(*outAshmemSize, static_cast<size_t>(size));
-                    }
-                }
-
                 close(obj.handle);
             }
             return;
@@ -430,8 +411,9 @@ status_t Parcel::setData(const uint8_t* buffer, size_t len)
 
 status_t Parcel::appendFrom(const Parcel *parcel, size_t offset, size_t len)
 {
-    if (parcel->isForRpc() != isForRpc()) {
-        ALOGE("Cannot append Parcel of one format to another.");
+    if (mSession != parcel->mSession) {
+        ALOGE("Cannot append Parcel from one context to another. They may be different formats, "
+              "and objects are specific to a context.");
         return BAD_TYPE;
     }
 
@@ -512,7 +494,7 @@ status_t Parcel::appendFrom(const Parcel *parcel, size_t offset, size_t len)
 
             flat_binder_object* flat
                 = reinterpret_cast<flat_binder_object*>(mData + off);
-            acquire_object(proc, *flat, this, &mOpenAshmemSize);
+            acquire_object(proc, *flat, this);
 
             if (flat->hdr.type == BINDER_TYPE_FD) {
                 // If this is a file descriptor, we need to dup it so the
@@ -537,6 +519,25 @@ int Parcel::compareData(const Parcel& other) {
         return size < other.dataSize() ? -1 : 1;
     }
     return memcmp(data(), other.data(), size);
+}
+
+status_t Parcel::compareDataInRange(size_t thisOffset, const Parcel& other, size_t otherOffset,
+                                    size_t len, int* result) const {
+    if (len > INT32_MAX || thisOffset > INT32_MAX || otherOffset > INT32_MAX) {
+        // Don't accept size_t values which may have come from an inadvertent conversion from a
+        // negative int.
+        return BAD_VALUE;
+    }
+    size_t thisLimit;
+    if (__builtin_add_overflow(thisOffset, len, &thisLimit) || thisLimit > mDataSize) {
+        return BAD_VALUE;
+    }
+    size_t otherLimit;
+    if (__builtin_add_overflow(otherOffset, len, &otherLimit) || otherLimit > other.mDataSize) {
+        return BAD_VALUE;
+    }
+    *result = memcmp(data() + thisOffset, other.data() + otherOffset, len);
+    return NO_ERROR;
 }
 
 bool Parcel::allowFds() const
@@ -564,6 +565,33 @@ bool Parcel::hasFileDescriptors() const
         scanForFds();
     }
     return mHasFds;
+}
+
+status_t Parcel::hasFileDescriptorsInRange(size_t offset, size_t len, bool* result) const {
+    if (len > INT32_MAX || offset > INT32_MAX) {
+        // Don't accept size_t values which may have come from an inadvertent conversion from a
+        // negative int.
+        return BAD_VALUE;
+    }
+    size_t limit;
+    if (__builtin_add_overflow(offset, len, &limit) || limit > mDataSize) {
+        return BAD_VALUE;
+    }
+    *result = false;
+    for (size_t i = 0; i < mObjectsSize; i++) {
+        size_t pos = mObjects[i];
+        if (pos < offset) continue;
+        if (pos + sizeof(flat_binder_object) > offset + len) {
+          if (mObjectsSorted) break;
+          else continue;
+        }
+        const flat_binder_object* flat = reinterpret_cast<const flat_binder_object*>(mData + pos);
+        if (flat->hdr.type == BINDER_TYPE_FD) {
+            *result = true;
+            break;
+        }
+    }
+    return NO_ERROR;
 }
 
 void Parcel::markSensitive() const
@@ -602,6 +630,8 @@ void Parcel::updateWorkSourceRequestHeaderPosition() const {
 
 #if defined(__ANDROID_VNDK__)
 constexpr int32_t kHeader = B_PACK_CHARS('V', 'N', 'D', 'R');
+#elif defined(__ANDROID_RECOVERY__)
+constexpr int32_t kHeader = B_PACK_CHARS('R', 'E', 'C', 'O');
 #else
 constexpr int32_t kHeader = B_PACK_CHARS('S', 'Y', 'S', 'T');
 #endif
@@ -1335,7 +1365,7 @@ restart_write:
         // Need to write meta-data?
         if (nullMetaData || val.binder != 0) {
             mObjects[mObjectsSize] = mDataPos;
-            acquire_object(ProcessState::self(), val, this, &mOpenAshmemSize);
+            acquire_object(ProcessState::self(), val, this);
             mObjectsSize++;
         }
 
@@ -2172,12 +2202,14 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize,
               type == BINDER_TYPE_FD)) {
             // We should never receive other types (eg BINDER_TYPE_FDA) as long as we don't support
             // them in libbinder. If we do receive them, it probably means a kernel bug; try to
-            // recover gracefully by clearing out the objects, and releasing the objects we do
-            // know about.
+            // recover gracefully by clearing out the objects.
             android_errorWriteLog(0x534e4554, "135930648");
+            android_errorWriteLog(0x534e4554, "203847542");
             ALOGE("%s: unsupported type object (%" PRIu32 ") at offset %" PRIu64 "\n",
                   __func__, type, (uint64_t)offset);
-            releaseObjects();
+
+            // WARNING: callers of ipcSetDataReference need to make sure they
+            // don't rely on mObjectsSize in their release_func.
             mObjectsSize = 0;
             break;
         }
@@ -2225,7 +2257,7 @@ void Parcel::releaseObjects()
         i--;
         const flat_binder_object* flat
             = reinterpret_cast<flat_binder_object*>(data+objects[i]);
-        release_object(proc, *flat, this, &mOpenAshmemSize);
+        release_object(proc, *flat, this);
     }
 }
 
@@ -2242,7 +2274,7 @@ void Parcel::acquireObjects()
         i--;
         const flat_binder_object* flat
             = reinterpret_cast<flat_binder_object*>(data+objects[i]);
-        acquire_object(proc, *flat, this, &mOpenAshmemSize);
+        acquire_object(proc, *flat, this);
     }
 }
 
@@ -2447,7 +2479,7 @@ status_t Parcel::continueWrite(size_t desired)
                     // will need to rescan because we may have lopped off the only FDs
                     mFdsKnown = false;
                 }
-                release_object(proc, *flat, this, &mOpenAshmemSize);
+                release_object(proc, *flat, this);
             }
 
             if (objectsSize == 0) {
@@ -2540,7 +2572,6 @@ void Parcel::initState()
     mAllowFds = true;
     mDeallocZero = false;
     mOwner = nullptr;
-    mOpenAshmemSize = 0;
     mWorkSourceRequestHeaderPosition = 0;
     mRequestHeaderPresent = false;
 
@@ -2557,18 +2588,9 @@ void Parcel::initState()
     }
 }
 
-void Parcel::scanForFds() const
-{
-    bool hasFds = false;
-    for (size_t i=0; i<mObjectsSize; i++) {
-        const flat_binder_object* flat
-            = reinterpret_cast<const flat_binder_object*>(mData + mObjects[i]);
-        if (flat->hdr.type == BINDER_TYPE_FD) {
-            hasFds = true;
-            break;
-        }
-    }
-    mHasFds = hasFds;
+void Parcel::scanForFds() const {
+    status_t status = hasFileDescriptorsInRange(0, dataSize(), &mHasFds);
+    ALOGE_IF(status != NO_ERROR, "Error %d calling hasFileDescriptorsInRange()", status);
     mFdsKnown = true;
 }
 
@@ -2576,13 +2598,28 @@ size_t Parcel::getBlobAshmemSize() const
 {
     // This used to return the size of all blobs that were written to ashmem, now we're returning
     // the ashmem currently referenced by this Parcel, which should be equivalent.
-    // TODO: Remove method once ABI can be changed.
-    return mOpenAshmemSize;
+    // TODO(b/202029388): Remove method once ABI can be changed.
+    return getOpenAshmemSize();
 }
 
 size_t Parcel::getOpenAshmemSize() const
 {
-    return mOpenAshmemSize;
+    size_t openAshmemSize = 0;
+    for (size_t i = 0; i < mObjectsSize; i++) {
+        const flat_binder_object* flat =
+                reinterpret_cast<const flat_binder_object*>(mData + mObjects[i]);
+
+        // cookie is compared against zero for historical reasons
+        // > obj.cookie = takeOwnership ? 1 : 0;
+        if (flat->hdr.type == BINDER_TYPE_FD && flat->cookie != 0 && ashmem_valid(flat->handle)) {
+            int size = ashmem_get_size_region(flat->handle);
+            if (__builtin_add_overflow(openAshmemSize, size, &openAshmemSize)) {
+                ALOGE("Overflow when computing ashmem size.");
+                return SIZE_MAX;
+            }
+        }
+    }
+    return openAshmemSize;
 }
 
 // --- Parcel::Blob ---

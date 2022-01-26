@@ -573,7 +573,7 @@ TEST_F(InputSurfacesTest, input_ignores_buffer_layer_buffer) {
     bufferSurface->expectTap(1, 1);
 }
 
-TEST_F(InputSurfacesTest, input_ignores_buffer_layer_alpha) {
+TEST_F(InputSurfacesTest, input_respects_buffer_layer_alpha) {
     std::unique_ptr<InputSurface> bgSurface = makeSurface(100, 100);
     std::unique_ptr<BlastInputSurface> bufferSurface =
             BlastInputSurface::makeBlastInputSurface(mComposerClient, 100, 100);
@@ -588,7 +588,7 @@ TEST_F(InputSurfacesTest, input_ignores_buffer_layer_alpha) {
     bufferSurface->doTransaction([](auto &t, auto &sc) { t.setAlpha(sc, 0.0); });
 
     injectTap(11, 11);
-    bufferSurface->expectTap(1, 1);
+    bgSurface->expectTap(1, 1);
 }
 
 TEST_F(InputSurfacesTest, input_ignores_color_layer_alpha) {

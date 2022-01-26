@@ -17,6 +17,29 @@ rust_library {
     rustlibs: [
         "liblibc",
         "libbinder_ndk_sys",
+        "libdowncast_rs",
+    ],
+    host_supported: true,
+    vendor_available: true,
+    target: {
+        darwin: {
+            enabled: false,
+        }
+    },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.virt",
+    ],
+}
+
+rust_library {
+    name: "libbinder_tokio_rs",
+    crate_name: "binder_tokio",
+    srcs: ["binder_tokio/lib.rs"],
+    rustlibs: [
+        "libbinder_rs",
+        "libtokio",
     ],
     host_supported: true,
     target: {
@@ -42,6 +65,7 @@ rust_library {
         "libbinder_ndk",
     ],
     host_supported: true,
+    vendor_available: true,
     target: {
         darwin: {
             enabled: false,
@@ -83,6 +107,7 @@ rust_bindgen {
         "libbinder_ndk",
     ],
     host_supported: true,
+    vendor_available: true,
 
     // Currently necessary for host builds
     // TODO(b/31559095): bionic on host should define this
@@ -133,6 +158,7 @@ rust_test {
     rustlibs: [
         "liblibc",
         "libbinder_ndk_sys",
+        "libdowncast_rs",
     ],
 }
 

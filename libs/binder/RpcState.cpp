@@ -855,7 +855,7 @@ processTransactInternalTailCall:
 
             switch (transaction->code) {
                 case RPC_SPECIAL_TRANSACT_GET_MAX_THREADS: {
-                    replyStatus = reply.writeInt32(session->getMaxThreads());
+                    replyStatus = reply.writeInt32(session->getMaxIncomingThreads());
                     break;
                 }
                 case RPC_SPECIAL_TRANSACT_GET_SESSION_ID: {
@@ -870,7 +870,9 @@ processTransactInternalTailCall:
                     if (server) {
                         switch (transaction->code) {
                             case RPC_SPECIAL_TRANSACT_GET_ROOT: {
-                                replyStatus = reply.writeStrongBinder(server->getRootObject());
+                                sp<IBinder> root = session->mSessionSpecificRootObject
+                                        ?: server->getRootObject();
+                                replyStatus = reply.writeStrongBinder(root);
                                 break;
                             }
                             default: {

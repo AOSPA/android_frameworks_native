@@ -56,13 +56,8 @@ float transformAngle(const ui::Transform& transform, float angleRadians) {
     transformedPoint.y -= origin.y;
 
     // Derive the transformed vector's clockwise angle from vertical.
-    float result = atan2f(transformedPoint.x, -transformedPoint.y);
-    if (result < -M_PI_2) {
-        result += M_PI;
-    } else if (result > M_PI_2) {
-        result -= M_PI;
-    }
-    return result;
+    // The return value of atan2f is in range [-pi, pi] which conforms to the orientation API.
+    return atan2f(transformedPoint.x, -transformedPoint.y);
 }
 
 vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy) {
@@ -71,11 +66,21 @@ vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy)
     return transformedXy - transformedOrigin;
 }
 
-bool shouldDisregardTranslation(uint32_t source) {
+bool isFromSource(uint32_t source, uint32_t test) {
+    return (source & test) == test;
+}
+
+bool shouldDisregardTransformation(uint32_t source) {
+    // Do not apply any transformations to axes from joysticks or touchpads.
+    return isFromSource(source, AINPUT_SOURCE_CLASS_JOYSTICK) ||
+            isFromSource(source, AINPUT_SOURCE_CLASS_POSITION);
+}
+
+bool shouldDisregardOffset(uint32_t source) {
     // Pointer events are the only type of events that refer to absolute coordinates on the display,
     // so we should apply the entire window transform. For other types of events, we should make
     // sure to not apply the window translation/offset.
-    return (source & AINPUT_SOURCE_CLASS_POINTER) == 0;
+    return !isFromSource(source, AINPUT_SOURCE_CLASS_POINTER);
 }
 
 } // namespace
@@ -498,44 +503,14 @@ const PointerCoords* MotionEvent::getHistoricalRawPointerCoords(
 
 float MotionEvent::getHistoricalRawAxisValue(int32_t axis, size_t pointerIndex,
                                              size_t historicalIndex) const {
-    const PointerCoords* coords = getHistoricalRawPointerCoords(pointerIndex, historicalIndex);
-
-    if (axis == AMOTION_EVENT_AXIS_X || axis == AMOTION_EVENT_AXIS_Y) {
-        const vec2 xy = calculateTransformedXY(mSource, mRawTransform, coords->getXYValue());
-        static_assert(AMOTION_EVENT_AXIS_X == 0 && AMOTION_EVENT_AXIS_Y == 1);
-        return xy[axis];
-    }
-
-    if (axis == AMOTION_EVENT_AXIS_RELATIVE_X || axis == AMOTION_EVENT_AXIS_RELATIVE_Y) {
-        const vec2 relativeXy =
-                transformWithoutTranslation(mRawTransform,
-                                            {coords->getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X),
-                                             coords->getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y)});
-        return axis == AMOTION_EVENT_AXIS_RELATIVE_X ? relativeXy.x : relativeXy.y;
-    }
-
-    return coords->getAxisValue(axis);
+    const PointerCoords& coords = *getHistoricalRawPointerCoords(pointerIndex, historicalIndex);
+    return calculateTransformedAxisValue(axis, mSource, mRawTransform, coords);
 }
 
 float MotionEvent::getHistoricalAxisValue(int32_t axis, size_t pointerIndex,
                                           size_t historicalIndex) const {
-    const PointerCoords* coords = getHistoricalRawPointerCoords(pointerIndex, historicalIndex);
-
-    if (axis == AMOTION_EVENT_AXIS_X || axis == AMOTION_EVENT_AXIS_Y) {
-        const vec2 xy = calculateTransformedXY(mSource, mTransform, coords->getXYValue());
-        static_assert(AMOTION_EVENT_AXIS_X == 0 && AMOTION_EVENT_AXIS_Y == 1);
-        return xy[axis];
-    }
-
-    if (axis == AMOTION_EVENT_AXIS_RELATIVE_X || axis == AMOTION_EVENT_AXIS_RELATIVE_Y) {
-        const vec2 relativeXy =
-                transformWithoutTranslation(mTransform,
-                                            {coords->getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X),
-                                             coords->getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y)});
-        return axis == AMOTION_EVENT_AXIS_RELATIVE_X ? relativeXy.x : relativeXy.y;
-    }
-
-    return coords->getAxisValue(axis);
+    const PointerCoords& coords = *getHistoricalRawPointerCoords(pointerIndex, historicalIndex);
+    return calculateTransformedAxisValue(axis, mSource, mTransform, coords);
 }
 
 ssize_t MotionEvent::findPointerIndex(int32_t pointerId) const {
@@ -574,15 +549,6 @@ void MotionEvent::transform(const std::array<float, 9>& matrix) {
     ui::Transform newTransform;
     newTransform.set(matrix);
     mTransform = newTransform * mTransform;
-
-    // We need to update the AXIS_ORIENTATION value here to maintain the old behavior where the
-    // orientation angle is not affected by the initial transformation set in the MotionEvent.
-    std::for_each(mSamplePointerCoords.begin(), mSamplePointerCoords.end(),
-                  [&newTransform](PointerCoords& c) {
-                      float orientation = c.getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION);
-                      c.setAxisValue(AMOTION_EVENT_AXIS_ORIENTATION,
-                                     transformAngle(newTransform, orientation));
-                  });
 }
 
 void MotionEvent::applyTransform(const std::array<float, 9>& matrix) {
@@ -751,7 +717,7 @@ status_t MotionEvent::writeToParcel(Parcel* parcel) const {
 #endif
 
 bool MotionEvent::isTouchEvent(uint32_t source, int32_t action) {
-    if (source & AINPUT_SOURCE_CLASS_POINTER) {
+    if (isFromSource(source, AINPUT_SOURCE_CLASS_POINTER)) {
         // Specifically excludes HOVER_MOVE and SCROLL.
         switch (action & AMOTION_EVENT_ACTION_MASK) {
         case AMOTION_EVENT_ACTION_DOWN:
@@ -808,10 +774,48 @@ std::string MotionEvent::actionToString(int32_t action) {
     return android::base::StringPrintf("%" PRId32, action);
 }
 
+// Apply the given transformation to the point without checking whether the entire transform
+// should be disregarded altogether for the provided source.
+static inline vec2 calculateTransformedXYUnchecked(uint32_t source, const ui::Transform& transform,
+                                                   const vec2& xy) {
+    return shouldDisregardOffset(source) ? transformWithoutTranslation(transform, xy)
+                                         : transform.transform(xy);
+}
+
 vec2 MotionEvent::calculateTransformedXY(uint32_t source, const ui::Transform& transform,
                                          const vec2& xy) {
-    return shouldDisregardTranslation(source) ? transformWithoutTranslation(transform, xy)
-                                              : transform.transform(xy);
+    if (shouldDisregardTransformation(source)) {
+        return xy;
+    }
+    return calculateTransformedXYUnchecked(source, transform, xy);
+}
+
+float MotionEvent::calculateTransformedAxisValue(int32_t axis, uint32_t source,
+                                                 const ui::Transform& transform,
+                                                 const PointerCoords& coords) {
+    if (shouldDisregardTransformation(source)) {
+        return coords.getAxisValue(axis);
+    }
+
+    if (axis == AMOTION_EVENT_AXIS_X || axis == AMOTION_EVENT_AXIS_Y) {
+        const vec2 xy = calculateTransformedXYUnchecked(source, transform, coords.getXYValue());
+        static_assert(AMOTION_EVENT_AXIS_X == 0 && AMOTION_EVENT_AXIS_Y == 1);
+        return xy[axis];
+    }
+
+    if (axis == AMOTION_EVENT_AXIS_RELATIVE_X || axis == AMOTION_EVENT_AXIS_RELATIVE_Y) {
+        const vec2 relativeXy =
+                transformWithoutTranslation(transform,
+                                            {coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X),
+                                             coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y)});
+        return axis == AMOTION_EVENT_AXIS_RELATIVE_X ? relativeXy.x : relativeXy.y;
+    }
+
+    if (axis == AMOTION_EVENT_AXIS_ORIENTATION) {
+        return transformAngle(transform, coords.getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION));
+    }
+
+    return coords.getAxisValue(axis);
 }
 
 // --- FocusEvent ---

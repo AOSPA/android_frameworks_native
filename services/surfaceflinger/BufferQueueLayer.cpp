@@ -50,7 +50,9 @@ BufferQueueLayer::~BufferQueueLayer() {
 // Interface implementation for Layer
 // -----------------------------------------------------------------------
 
-void BufferQueueLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
+void BufferQueueLayer::onLayerDisplayed(
+        std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) {
+    sp<Fence> releaseFence = new Fence(dup(futureRenderEngineResult.get().drawFence));
     mConsumer->setReleaseFence(releaseFence);
 
     // Prevent tracing the same release multiple times.
@@ -65,16 +67,6 @@ void BufferQueueLayer::onLayerDisplayed(const sp<Fence>& releaseFence) {
 void BufferQueueLayer::setTransformHint(ui::Transform::RotationFlags displayTransformHint) {
     BufferLayer::setTransformHint(displayTransformHint);
     mConsumer->setTransformHint(mTransformHint);
-}
-
-std::vector<OccupancyTracker::Segment> BufferQueueLayer::getOccupancyHistory(bool forceFlush) {
-    std::vector<OccupancyTracker::Segment> history;
-    status_t result = mConsumer->getOccupancyHistory(forceFlush, &history);
-    if (result != NO_ERROR) {
-        ALOGW("[%s] Failed to obtain occupancy history (%d)", getDebugName(), result);
-        return {};
-    }
-    return history;
 }
 
 void BufferQueueLayer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
@@ -139,7 +131,7 @@ bool BufferQueueLayer::isBufferDue(nsecs_t expectedPresentTime) const {
 bool BufferQueueLayer::fenceHasSignaled() const {
     Mutex::Autolock lock(mQueueItemLock);
 
-    if (SurfaceFlinger::enableLatchUnsignaled) {
+    if (SurfaceFlinger::enableLatchUnsignaledConfig != LatchUnsignaledConfig::Disabled) {
         return true;
     }
 
@@ -241,11 +233,11 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
     bool autoRefresh;
     status_t updateResult = mConsumer->updateTexImage(&r, expectedPresentTime, &autoRefresh,
                                                       &queuedBuffer, maxFrameNumberToAcquire);
-    mAutoRefresh = autoRefresh;
+    mDrawingState.autoRefresh = autoRefresh;
     if (updateResult == BufferQueue::PRESENT_LATER) {
         // Producer doesn't want buffer to be displayed yet.  Signal a
         // layer update so we check again at the next opportunity.
-        mFlinger->signalLayerUpdate();
+        mFlinger->onLayerUpdate();
         return BAD_VALUE;
     } else if (updateResult == BufferLayerConsumer::BUFFER_REJECTED) {
         // If the buffer has been rejected, remove it from the shadow queue
@@ -325,8 +317,8 @@ status_t BufferQueueLayer::updateTexImage(bool& recomputeVisibleRegions, nsecs_t
 
     // Decrement the queued-frames count.  Signal another event if we
     // have more frames pending.
-    if ((queuedBuffer && more_frames_pending) || mAutoRefresh) {
-        mFlinger->signalLayerUpdate();
+    if ((queuedBuffer && more_frames_pending) || mDrawingState.autoRefresh) {
+        mFlinger->onLayerUpdate();
     }
 
     return NO_ERROR;
@@ -439,7 +431,7 @@ void BufferQueueLayer::onFrameAvailable(const BufferItem& item) {
         mFlinger->mSmoMo->CollectLayerStats(bufferStats);
     }
 
-    mFlinger->signalLayerUpdate();
+    mFlinger->onLayerUpdate();
     mConsumer->onBufferAvailable(item);
 }
 
@@ -485,7 +477,7 @@ void BufferQueueLayer::onSidebandStreamChanged() {
     bool sidebandStreamChanged = false;
     if (mSidebandStreamChanged.compare_exchange_strong(sidebandStreamChanged, true)) {
         // mSidebandStreamChanged was changed to true
-        mFlinger->signalLayerUpdate();
+        mFlinger->onLayerUpdate();
     }
 }
 
@@ -558,7 +550,7 @@ void BufferQueueLayer::gatherBufferInfo() {
 }
 
 sp<Layer> BufferQueueLayer::createClone() {
-    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, 0, 0, LayerMetadata());
+    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
     args.textureName = mTextureName;
     sp<BufferQueueLayer> layer = mFlinger->getFactory().createBufferQueueLayer(args);
     layer->setInitialValuesForClone(this);

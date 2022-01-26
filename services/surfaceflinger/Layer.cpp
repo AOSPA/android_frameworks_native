@@ -89,11 +89,12 @@ using gui::WindowInfo;
 std::atomic<int32_t> Layer::sSequence{1};
 
 Layer::Layer(const LayerCreationArgs& args)
-      : mFlinger(args.flinger),
-        mName(args.name),
+      : sequence(args.sequence.value_or(sSequence++)),
+        mFlinger(args.flinger),
+        mName(base::StringPrintf("%s#%d", args.name.c_str(), sequence)),
         mClientRef(args.client),
-        mWindowType(
-                static_cast<WindowInfo::Type>(args.metadata.getInt32(METADATA_WINDOW_TYPE, 0))) {
+        mWindowType(static_cast<WindowInfo::Type>(args.metadata.getInt32(METADATA_WINDOW_TYPE, 0))),
+        mLayerCreationFlags(args.flags) {
     uint32_t layerFlags = 0;
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
@@ -101,8 +102,6 @@ Layer::Layer(const LayerCreationArgs& args)
     if (args.flags & ISurfaceComposerClient::eSkipScreenshot)
         layerFlags |= layer_state_t::eLayerSkipScreenshot;
 
-    mDrawingState.active_legacy.w = args.w;
-    mDrawingState.active_legacy.h = args.h;
     mDrawingState.flags = layerFlags;
     mDrawingState.active_legacy.transform.set(0, 0);
     mDrawingState.crop.makeInvalid();
@@ -187,12 +186,10 @@ Layer::~Layer() {
 }
 
 LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client, std::string name,
-                                     uint32_t w, uint32_t h, uint32_t flags, LayerMetadata metadata)
+                                     uint32_t flags, LayerMetadata metadata)
       : flinger(flinger),
         client(std::move(client)),
         name(std::move(name)),
-        w(w),
-        h(h),
         flags(flags),
         metadata(std::move(metadata)) {
     IPCThreadState* ipc = IPCThreadState::self();
@@ -209,7 +206,8 @@ LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client,
  * Layer.  So, the implementation is done in BufferLayer.  When called on a
  * EffectLayer object, it's essentially a NOP.
  */
-void Layer::onLayerDisplayed(const sp<Fence>& /*releaseFence*/) {}
+void Layer::onLayerDisplayed(
+        std::shared_future<renderengine::RenderEngineResult> /*futureRenderEngineResult*/) {}
 
 void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
     if (mDrawingState.zOrderRelativeOf == nullptr) {
@@ -421,27 +419,11 @@ void Layer::prepareBasicGeometryCompositionState() {
 
     compositionState->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     compositionState->alpha = alpha;
-    compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
-    compositionState->blurRegions = drawingState.blurRegions;
     compositionState->stretchEffect = getStretchEffect();
 }
 
 void Layer::prepareGeometryCompositionState() {
     const auto& drawingState{getDrawingState()};
-
-    int type = drawingState.metadata.getInt32(METADATA_WINDOW_TYPE, 0);
-    int appId = drawingState.metadata.getInt32(METADATA_OWNER_UID, 0);
-    sp<Layer> parent = mDrawingParent.promote();
-    if (parent.get()) {
-        auto& parentState = parent->getDrawingState();
-        const int parentType = parentState.metadata.getInt32(METADATA_WINDOW_TYPE, 0);
-        const int parentAppId = parentState.metadata.getInt32(METADATA_OWNER_UID, 0);
-        if (parentType > 0 && parentAppId > 0) {
-            type = parentType;
-            appId = parentAppId;
-        }
-    }
-
     auto* compositionState = editCompositionState();
 
     compositionState->geomBufferSize = getBufferSize(drawingState);
@@ -503,6 +485,9 @@ void Layer::preparePerFrameCompositionState() {
         compositionState->stretchEffect.hasEffect()) {
         compositionState->forceClientComposition = true;
     }
+    // If there are no visible region changes, we still need to update blur parameters.
+    compositionState->blurRegions = drawingState.blurRegions;
+    compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
 }
 
 void Layer::prepareCursorCompositionState() {
@@ -923,7 +908,7 @@ bool Layer::setBackgroundColor(const half3& color, float alpha, ui::Dataspace da
         uint32_t flags = ISurfaceComposerClient::eFXSurfaceEffect;
         std::string name = mName + "BackgroundColorLayer";
         mDrawingState.bgColorLayer = mFlinger->getFactory().createEffectLayer(
-                LayerCreationArgs(mFlinger.get(), nullptr, std::move(name), 0, 0, flags,
+                LayerCreationArgs(mFlinger.get(), nullptr, std::move(name), flags,
                                   LayerMetadata()));
 
         // add to child list
@@ -960,8 +945,11 @@ bool Layer::setCornerRadius(float cornerRadius) {
 
 bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
     if (mDrawingState.backgroundBlurRadius == backgroundBlurRadius) return false;
-
-    mDrawingState.sequence++;
+    // If we start or stop drawing blur then the layer's visibility state may change so increment
+    // the magic sequence number.
+    if (mDrawingState.backgroundBlurRadius == 0 || backgroundBlurRadius == 0) {
+        mDrawingState.sequence++;
+    }
     mDrawingState.backgroundBlurRadius = backgroundBlurRadius;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -994,6 +982,11 @@ bool Layer::setTransparentRegionHint(const Region& transparent) {
 }
 
 bool Layer::setBlurRegions(const std::vector<BlurRegion>& blurRegions) {
+    // If we start or stop drawing blur then the layer's visibility state may change so increment
+    // the magic sequence number.
+    if (mDrawingState.blurRegions.size() == 0 || blurRegions.size() == 0) {
+        mDrawingState.sequence++;
+    }
     mDrawingState.blurRegions = blurRegions;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
@@ -1166,7 +1159,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
     if (!frameRate.rate.isValid() && frameRate.type != FrameRateCompatibility::NoVote &&
         childrenHaveFrameRate) {
         *transactionNeeded |=
-                setFrameRateForLayerTree(FrameRate(Fps(0.0f), FrameRateCompatibility::NoVote));
+                setFrameRateForLayerTree(FrameRate(Fps(), FrameRateCompatibility::NoVote));
     }
 
     // We return whether this layer ot its children has a vote. We ignore ExactOrMultiple votes for
@@ -1200,9 +1193,6 @@ void Layer::updateTreeHasFrameRateVote() {
 }
 
 bool Layer::setFrameRate(FrameRate frameRate) {
-    if (!mFlinger->useFrameRateApi) {
-        return false;
-    }
     if (mDrawingState.frameRate == frameRate) {
         return false;
     }
@@ -1968,8 +1958,9 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
     Rect layerCropRect = getCroppedBufferSize(getDrawingState());
     const float radius = getDrawingState().cornerRadius;
     RoundedCornerState layerSettings(layerCropRect.toFloatRect(), radius);
+    const bool layerSettingsValid = layerSettings.radius > 0 && layerCropRect.isValid();
 
-    if (layerSettings.radius > 0 && parentSettings.radius > 0) {
+    if (layerSettingsValid && parentSettings.radius > 0) {
         // If the parent and the layer have rounded corner settings, use the parent settings if the
         // parent crop is entirely inside the layer crop.
         // This has limitations and cause rendering artifacts. See b/200300845 for correct fix.
@@ -1981,7 +1972,7 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
         } else {
             return layerSettings;
         }
-    } else if (layerSettings.radius > 0) {
+    } else if (layerSettingsValid) {
         return layerSettings;
     } else if (parentSettings.radius > 0) {
         return parentSettings;
@@ -2046,7 +2037,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
     writeToProtoDrawingState(layerProto, traceFlags, display);
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
-    if (traceFlags & SurfaceTracing::TRACE_COMPOSITION) {
+    if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
         // Only populate for the primary display.
         if (display) {
             const Hwc2::IComposerClient::Composition compositionType = getCompositionType(*display);
@@ -2064,43 +2055,38 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
                                      const DisplayDevice* display) {
     const ui::Transform transform = getTransform();
+    auto buffer = getBuffer();
+    if (buffer != nullptr) {
+        LayerProtoHelper::writeToProto(buffer,
+                                       [&]() { return layerInfo->mutable_active_buffer(); });
+        LayerProtoHelper::writeToProtoDeprecated(ui::Transform(getBufferTransform()),
+                                                 layerInfo->mutable_buffer_transform());
+    }
+    layerInfo->set_invalidate(contentDirty);
+    layerInfo->set_is_protected(isProtected());
+    layerInfo->set_dataspace(dataspaceDetails(static_cast<android_dataspace>(getDataSpace())));
+    layerInfo->set_queued_frames(getQueuedFrameCount());
+    layerInfo->set_refresh_pending(isBufferLatched());
+    layerInfo->set_curr_frame(mCurrentFrameNumber);
+    layerInfo->set_effective_scaling_mode(getEffectiveScalingMode());
 
-    if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
+    layerInfo->set_requested_corner_radius(getDrawingState().cornerRadius);
+    layerInfo->set_corner_radius(getRoundedCornerState().radius);
+    layerInfo->set_background_blur_radius(getBackgroundBlurRadius());
+    layerInfo->set_is_trusted_overlay(isTrustedOverlay());
+    LayerProtoHelper::writeToProtoDeprecated(transform, layerInfo->mutable_transform());
+    LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
+                                           [&]() { return layerInfo->mutable_position(); });
+    LayerProtoHelper::writeToProto(mBounds, [&]() { return layerInfo->mutable_bounds(); });
+    if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
+        LayerProtoHelper::writeToProto(getVisibleRegion(display),
+                                       [&]() { return layerInfo->mutable_visible_region(); });
+    }
+    LayerProtoHelper::writeToProto(surfaceDamageRegion,
+                                   [&]() { return layerInfo->mutable_damage_region(); });
 
-        auto buffer = getBuffer();
-        if (buffer != nullptr) {
-            LayerProtoHelper::writeToProto(buffer,
-                                           [&]() { return layerInfo->mutable_active_buffer(); });
-            LayerProtoHelper::writeToProtoDeprecated(ui::Transform(getBufferTransform()),
-                                                     layerInfo->mutable_buffer_transform());
-        }
-        layerInfo->set_invalidate(contentDirty);
-        layerInfo->set_is_protected(isProtected());
-        layerInfo->set_dataspace(dataspaceDetails(static_cast<android_dataspace>(getDataSpace())));
-        layerInfo->set_queued_frames(getQueuedFrameCount());
-        layerInfo->set_refresh_pending(isBufferLatched());
-        layerInfo->set_curr_frame(mCurrentFrameNumber);
-        layerInfo->set_effective_scaling_mode(getEffectiveScalingMode());
-
-        layerInfo->set_requested_corner_radius(getDrawingState().cornerRadius);
-        layerInfo->set_corner_radius(getRoundedCornerState().radius);
-        layerInfo->set_background_blur_radius(getBackgroundBlurRadius());
-        layerInfo->set_is_trusted_overlay(isTrustedOverlay());
-        LayerProtoHelper::writeToProtoDeprecated(transform, layerInfo->mutable_transform());
-        LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
-                                               [&]() { return layerInfo->mutable_position(); });
-        LayerProtoHelper::writeToProto(mBounds, [&]() { return layerInfo->mutable_bounds(); });
-        if (traceFlags & SurfaceTracing::TRACE_COMPOSITION) {
-            LayerProtoHelper::writeToProto(getVisibleRegion(display),
-                                           [&]() { return layerInfo->mutable_visible_region(); });
-        }
-        LayerProtoHelper::writeToProto(surfaceDamageRegion,
-                                       [&]() { return layerInfo->mutable_damage_region(); });
-
-        if (hasColorTransform()) {
-            LayerProtoHelper::writeToProto(getColorTransform(),
-                                           layerInfo->mutable_color_transform());
-        }
+    if (hasColorTransform()) {
+        LayerProtoHelper::writeToProto(getColorTransform(), layerInfo->mutable_color_transform());
     }
 
     LayerProtoHelper::writeToProto(mSourceBounds,
@@ -2120,70 +2106,66 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
 
     ui::Transform requestedTransform = state.transform;
 
-    if (traceFlags & SurfaceTracing::TRACE_CRITICAL) {
-        layerInfo->set_id(sequence);
-        layerInfo->set_name(getName().c_str());
-        layerInfo->set_type(getType());
+    layerInfo->set_id(sequence);
+    layerInfo->set_name(getName().c_str());
+    layerInfo->set_type(getType());
 
-        for (const auto& child : children) {
-            layerInfo->add_children(child->sequence);
-        }
-
-        for (const wp<Layer>& weakRelative : state.zOrderRelatives) {
-            sp<Layer> strongRelative = weakRelative.promote();
-            if (strongRelative != nullptr) {
-                layerInfo->add_relatives(strongRelative->sequence);
-            }
-        }
-
-        LayerProtoHelper::writeToProto(state.activeTransparentRegion_legacy,
-                                       [&]() { return layerInfo->mutable_transparent_region(); });
-
-        layerInfo->set_layer_stack(getLayerStack().id);
-        layerInfo->set_z(state.z);
-
-        LayerProtoHelper::writePositionToProto(requestedTransform.tx(), requestedTransform.ty(),
-                                               [&]() {
-                                                   return layerInfo->mutable_requested_position();
-                                               });
-
-        LayerProtoHelper::writeSizeToProto(state.width, state.height,
-                                           [&]() { return layerInfo->mutable_size(); });
-
-        LayerProtoHelper::writeToProto(state.crop, [&]() { return layerInfo->mutable_crop(); });
-
-        layerInfo->set_is_opaque(isOpaque(state));
-
-
-        layerInfo->set_pixel_format(decodePixelFormat(getPixelFormat()));
-        LayerProtoHelper::writeToProto(getColor(), [&]() { return layerInfo->mutable_color(); });
-        LayerProtoHelper::writeToProto(state.color,
-                                       [&]() { return layerInfo->mutable_requested_color(); });
-        layerInfo->set_flags(state.flags);
-
-        LayerProtoHelper::writeToProtoDeprecated(requestedTransform,
-                                                 layerInfo->mutable_requested_transform());
-
-        auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
-        if (parent != nullptr) {
-            layerInfo->set_parent(parent->sequence);
-        } else {
-            layerInfo->set_parent(-1);
-        }
-
-        auto zOrderRelativeOf = state.zOrderRelativeOf.promote();
-        if (zOrderRelativeOf != nullptr) {
-            layerInfo->set_z_order_relative_of(zOrderRelativeOf->sequence);
-        } else {
-            layerInfo->set_z_order_relative_of(-1);
-        }
-
-        layerInfo->set_is_relative_of(state.isRelativeOf);
-
-        layerInfo->set_owner_uid(mOwnerUid);
+    for (const auto& child : children) {
+        layerInfo->add_children(child->sequence);
     }
 
-    if (traceFlags & SurfaceTracing::TRACE_INPUT) {
+    for (const wp<Layer>& weakRelative : state.zOrderRelatives) {
+        sp<Layer> strongRelative = weakRelative.promote();
+        if (strongRelative != nullptr) {
+            layerInfo->add_relatives(strongRelative->sequence);
+        }
+    }
+
+    LayerProtoHelper::writeToProto(state.activeTransparentRegion_legacy,
+                                   [&]() { return layerInfo->mutable_transparent_region(); });
+
+    layerInfo->set_layer_stack(getLayerStack().id);
+    layerInfo->set_z(state.z);
+
+    LayerProtoHelper::writePositionToProto(requestedTransform.tx(), requestedTransform.ty(), [&]() {
+        return layerInfo->mutable_requested_position();
+    });
+
+    LayerProtoHelper::writeSizeToProto(state.width, state.height,
+                                       [&]() { return layerInfo->mutable_size(); });
+
+    LayerProtoHelper::writeToProto(state.crop, [&]() { return layerInfo->mutable_crop(); });
+
+    layerInfo->set_is_opaque(isOpaque(state));
+
+    layerInfo->set_pixel_format(decodePixelFormat(getPixelFormat()));
+    LayerProtoHelper::writeToProto(getColor(), [&]() { return layerInfo->mutable_color(); });
+    LayerProtoHelper::writeToProto(state.color,
+                                   [&]() { return layerInfo->mutable_requested_color(); });
+    layerInfo->set_flags(state.flags);
+
+    LayerProtoHelper::writeToProtoDeprecated(requestedTransform,
+                                             layerInfo->mutable_requested_transform());
+
+    auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
+    if (parent != nullptr) {
+        layerInfo->set_parent(parent->sequence);
+    } else {
+        layerInfo->set_parent(-1);
+    }
+
+    auto zOrderRelativeOf = state.zOrderRelativeOf.promote();
+    if (zOrderRelativeOf != nullptr) {
+        layerInfo->set_z_order_relative_of(zOrderRelativeOf->sequence);
+    } else {
+        layerInfo->set_z_order_relative_of(-1);
+    }
+
+    layerInfo->set_is_relative_of(state.isRelativeOf);
+
+    layerInfo->set_owner_uid(mOwnerUid);
+
+    if (traceFlags & LayerTracing::TRACE_INPUT) {
         WindowInfo info;
         if (useDrawing) {
             info = fillInputInfo(ui::Transform(), /* displayIsSecure */ true);
@@ -2195,7 +2177,7 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
                                        [&]() { return layerInfo->mutable_input_window_info(); });
     }
 
-    if (traceFlags & SurfaceTracing::TRACE_EXTRA) {
+    if (traceFlags & LayerTracing::TRACE_EXTRA) {
         auto protoMap = layerInfo->mutable_metadata();
         for (const auto& entry : state.metadata.mMap) {
             (*protoMap)[entry.first] = std::string(entry.second.cbegin(), entry.second.cend());

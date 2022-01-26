@@ -49,6 +49,31 @@ static bool containsOnCommitCallbacks(const std::vector<CallbackId>& callbacks) 
     return !callbacks.empty() && callbacks.front().type == CallbackId::Type::ON_COMMIT;
 }
 
+TransactionCallbackInvoker::TransactionCallbackInvoker() {
+    mThread = std::thread([&]() {
+          std::unique_lock lock(mCallbackThreadMutex);
+
+        while (mKeepRunning) {
+          while (mCallbackThreadWork.size() > 0) {
+              mCallbackThreadWork.front()();
+              mCallbackThreadWork.pop();
+          }
+          mCallbackConditionVariable.wait(lock);
+        }
+    });
+}
+
+TransactionCallbackInvoker::~TransactionCallbackInvoker() {
+    {
+          std::unique_lock lock(mCallbackThreadMutex);
+          mKeepRunning = false;
+          mCallbackConditionVariable.notify_all();
+    }
+    if (mThread.joinable()) {
+        mThread.join();
+    }
+}
+
 void TransactionCallbackInvoker::addEmptyTransaction(const ListenerCallbacks& listenerCallbacks) {
     auto& [listener, callbackIds] = listenerCallbacks;
     auto& transactionStatsDeque = mCompletedTransactions[listener];
@@ -96,7 +121,7 @@ status_t TransactionCallbackInvoker::registerUnpresentedCallbackHandle(
     return addCallbackHandle(handle, std::vector<JankData>());
 }
 
-status_t TransactionCallbackInvoker::findTransactionStats(
+status_t TransactionCallbackInvoker::findOrCreateTransactionStats(
         const sp<IBinder>& listener, const std::vector<CallbackId>& callbackIds,
         TransactionStats** outTransactionStats) {
     auto& transactionStatsDeque = mCompletedTransactions[listener];
@@ -118,7 +143,8 @@ status_t TransactionCallbackInvoker::addCallbackHandle(const sp<CallbackHandle>&
     // If we can't find the transaction stats something has gone wrong. The client should call
     // startRegistration before trying to add a callback handle.
     TransactionStats* transactionStats;
-    status_t err = findTransactionStats(handle->listener, handle->callbackIds, &transactionStats);
+    status_t err =
+            findOrCreateTransactionStats(handle->listener, handle->callbackIds, &transactionStats);
     if (err != NO_ERROR) {
         return err;
     }
@@ -129,6 +155,38 @@ status_t TransactionCallbackInvoker::addCallbackHandle(const sp<CallbackHandle>&
     // destroyed the client side is dead and there won't be anyone to send the callback to.
     sp<IBinder> surfaceControl = handle->surfaceControl.promote();
     if (surfaceControl) {
+        sp<Fence> prevFence = nullptr;
+
+        for (const auto& futureStruct : handle->previousReleaseFences) {
+            sp<Fence> currentFence = sp<Fence>::make(dup(futureStruct.get().drawFence));
+            if (prevFence == nullptr && currentFence->getStatus() != Fence::Status::Invalid) {
+                prevFence = currentFence;
+                handle->previousReleaseFence = prevFence;
+            } else if (prevFence != nullptr) {
+                // If both fences are signaled or both are unsignaled, we need to merge
+                // them to get an accurate timestamp.
+                if (prevFence->getStatus() != Fence::Status::Invalid &&
+                    prevFence->getStatus() == currentFence->getStatus()) {
+                    char fenceName[32] = {};
+                    snprintf(fenceName, 32, "%.28s", handle->name.c_str());
+                    sp<Fence> mergedFence = Fence::merge(fenceName, prevFence, currentFence);
+                    if (mergedFence->isValid()) {
+                        handle->previousReleaseFence = mergedFence;
+                        prevFence = handle->previousReleaseFence;
+                    }
+                } else if (currentFence->getStatus() == Fence::Status::Unsignaled) {
+                    // If one fence has signaled and the other hasn't, the unsignaled
+                    // fence will approximately correspond with the correct timestamp.
+                    // There's a small race if both fences signal at about the same time
+                    // and their statuses are retrieved with unfortunate timing. However,
+                    // by this point, they will have both signaled and only the timestamp
+                    // will be slightly off; any dependencies after this point will
+                    // already have been met.
+                    handle->previousReleaseFence = currentFence;
+                }
+            }
+        }
+        handle->previousReleaseFences = {};
         FrameEventHistoryStats eventStats(handle->frameNumber,
                                           handle->gpuCompositionDoneFence->getSnapshot().fence,
                                           handle->compositorTiming, handle->refreshStartTime,
@@ -147,7 +205,7 @@ void TransactionCallbackInvoker::addPresentFence(const sp<Fence>& presentFence) 
     mPresentFence = presentFence;
 }
 
-void TransactionCallbackInvoker::sendCallbacks() {
+void TransactionCallbackInvoker::sendCallbacks(bool onCommitOnly) {
     // For each listener
     auto completedTransactionsItr = mCompletedTransactions.begin();
     while (completedTransactionsItr != mCompletedTransactions.end()) {
@@ -159,6 +217,10 @@ void TransactionCallbackInvoker::sendCallbacks() {
         auto transactionStatsItr = transactionStatsDeque.begin();
         while (transactionStatsItr != transactionStatsDeque.end()) {
             auto& transactionStats = *transactionStatsItr;
+            if (onCommitOnly && !containsOnCommitCallbacks(transactionStats.callbackIds)) {
+                transactionStatsItr++;
+                continue;
+            }
 
             // If the transaction has been latched
             if (transactionStats.latchTime >= 0 &&
@@ -180,8 +242,15 @@ void TransactionCallbackInvoker::sendCallbacks() {
                 // keep it as an IBinder due to consistency reasons: if we
                 // interface_cast at the IPC boundary when reading a Parcel,
                 // we get pointers that compare unequal in the SF process.
-                interface_cast<ITransactionCompletedListener>(listenerStats.listener)
-                        ->onTransactionCompleted(listenerStats);
+                {
+                    std::unique_lock lock(mCallbackThreadMutex);
+                    mCallbackThreadWork.push(
+                        [stats = std::move(listenerStats)]() {
+                          interface_cast<ITransactionCompletedListener>(stats.listener)
+                              ->onTransactionCompleted(stats);
+                    });
+                    mCallbackConditionVariable.notify_all();
+                }
             }
         }
         completedTransactionsItr++;

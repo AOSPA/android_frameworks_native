@@ -19,7 +19,6 @@
 
 #define LOG_NDEBUG 1
 
-#include <InputFlingerProperties.sysprop.h>
 #include <android-base/chrono_utils.h>
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
@@ -88,6 +87,9 @@ constexpr bool DEBUG_INJECTION = false;
 // Log debug messages about input focus tracking.
 constexpr bool DEBUG_FOCUS = false;
 
+// Log debug messages about touch mode event
+constexpr bool DEBUG_TOUCH_MODE = false;
+
 // Log debug messages about touch occlusion
 // STOPSHIP(b/169067926): Set to false
 constexpr bool DEBUG_TOUCH_OCCLUSION = true;
@@ -108,15 +110,6 @@ public:
 private:
     std::mutex& mMutex;
 };
-
-// When per-window-input-rotation is enabled, InputFlinger works in the un-rotated display
-// coordinates and SurfaceFlinger includes the display rotation in the input window transforms.
-bool isPerWindowInputRotationEnabled() {
-    static const bool PER_WINDOW_INPUT_ROTATION =
-            sysprop::InputFlingerProperties::per_window_input_rotation().value_or(false);
-
-    return PER_WINDOW_INPUT_ROTATION;
-}
 
 // Default input dispatching timeout if there is no focused application or paused window
 // from which to determine an appropriate dispatching timeout.
@@ -150,6 +143,7 @@ constexpr size_t RECENT_QUEUE_MAX_SIZE = 10;
 // Event log tags. See EventLogTags.logtags for reference
 constexpr int LOGTAG_INPUT_INTERACTION = 62000;
 constexpr int LOGTAG_INPUT_FOCUS = 62001;
+constexpr int LOGTAG_INPUT_CANCEL = 62003;
 
 inline nsecs_t now() {
     return systemTime(SYSTEM_TIME_MONOTONIC);
@@ -338,18 +332,6 @@ bool isStaleEvent(nsecs_t currentTime, const EventEntry& entry) {
 std::unique_ptr<DispatchEntry> createDispatchEntry(const InputTarget& inputTarget,
                                                    std::shared_ptr<EventEntry> eventEntry,
                                                    int32_t inputTargetFlags) {
-    if (eventEntry->type == EventEntry::Type::MOTION) {
-        const MotionEntry& motionEntry = static_cast<const MotionEntry&>(*eventEntry);
-        if ((motionEntry.source & AINPUT_SOURCE_CLASS_JOYSTICK) ||
-            (motionEntry.source & AINPUT_SOURCE_CLASS_POSITION)) {
-            const ui::Transform identityTransform;
-            // Use identity transform for joystick and position-based (touchpad) events because they
-            // don't depend on the window transform.
-            return std::make_unique<DispatchEntry>(eventEntry, inputTargetFlags, identityTransform,
-                                                   identityTransform, 1.0f /*globalScaleFactor*/);
-        }
-    }
-
     if (inputTarget.useDefaultPointerTransform()) {
         const ui::Transform& transform = inputTarget.getDefaultPointerTransform();
         return std::make_unique<DispatchEntry>(eventEntry, inputTargetFlags, transform,
@@ -534,6 +516,23 @@ vec2 transformWithoutTranslation(const ui::Transform& transform, float x, float 
     return transformedXy - transformedOrigin;
 }
 
+// Returns true if the event type passed as argument represents a user activity.
+bool isUserActivityEvent(const EventEntry& eventEntry) {
+    switch (eventEntry.type) {
+        case EventEntry::Type::FOCUS:
+        case EventEntry::Type::POINTER_CAPTURE_CHANGED:
+        case EventEntry::Type::DRAG:
+        case EventEntry::Type::TOUCH_MODE_CHANGED:
+        case EventEntry::Type::SENSOR:
+        case EventEntry::Type::CONFIGURATION_CHANGED:
+            return false;
+        case EventEntry::Type::DEVICE_RESET:
+        case EventEntry::Type::KEY:
+        case EventEntry::Type::MOTION:
+            return true;
+    }
+}
+
 } // namespace
 
 // --- InputDispatcher ---
@@ -552,7 +551,7 @@ InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& polic
         // mInTouchMode will be initialized by the WindowManager to the default device config.
         // To avoid leaking stack in case that call never comes, and for tests,
         // initialize it here anyways.
-        mInTouchMode(true),
+        mInTouchMode(kDefaultInTouchMode),
         mMaximumObscuringOpacityForTouch(1.0f),
         mFocusedDisplayId(ADISPLAY_ID_DEFAULT),
         mWindowTokenWithPointerCapture(nullptr),
@@ -1789,9 +1788,9 @@ int32_t InputDispatcher::getTargetDisplayId(const EventEntry& entry) {
             displayId = motionEntry.displayId;
             break;
         }
+        case EventEntry::Type::TOUCH_MODE_CHANGED:
         case EventEntry::Type::POINTER_CAPTURE_CHANGED:
         case EventEntry::Type::FOCUS:
-        case EventEntry::Type::TOUCH_MODE_CHANGED:
         case EventEntry::Type::CONFIGURATION_CHANGED:
         case EventEntry::Type::DEVICE_RESET:
         case EventEntry::Type::SENSOR:
@@ -2057,6 +2056,8 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
 
         // Handle the case where we did not find a window.
         if (newTouchedWindowHandle == nullptr) {
+            ALOGD("No new touched window at (%" PRId32 ", %" PRId32 ") in display %" PRId32, x, y,
+                  displayId);
             // Try to assign the pointer to the first foreground window we find, if there is one.
             newTouchedWindowHandle = tempTouchState.getFirstForegroundWindowHandle();
         }
@@ -2508,8 +2509,7 @@ void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHa
         if (displayInfoIt != mDisplayInfos.end()) {
             inputTarget.displayTransform = displayInfoIt->second.transform;
         } else {
-            ALOGI_IF(isPerWindowInputRotationEnabled(),
-                     "DisplayInfo not found for window on display: %d", windowInfo->displayId);
+            ALOGE("DisplayInfo not found for window on display: %d", windowInfo->displayId);
         }
         inputTargets.push_back(inputTarget);
         it = inputTargets.end() - 1;
@@ -2541,24 +2541,9 @@ void InputDispatcher::addMonitoringTargetLocked(const Monitor& monitor, int32_t 
     target.flags = InputTarget::FLAG_DISPATCH_AS_IS;
     ui::Transform t;
     if (const auto& it = mDisplayInfos.find(displayId); it != mDisplayInfos.end()) {
-        // Input monitors always get un-rotated display coordinates. We undo the display
-        // rotation that is present in the display transform so that display rotation is not
-        // applied to these input targets.
-        const auto& displayInfo = it->second;
-        int32_t width = displayInfo.logicalWidth;
-        int32_t height = displayInfo.logicalHeight;
-        const auto orientation = displayInfo.transform.getOrientation();
-        uint32_t inverseOrientation = orientation;
-        if (orientation == ui::Transform::ROT_90) {
-            inverseOrientation = ui::Transform::ROT_270;
-            std::swap(width, height);
-        } else if (orientation == ui::Transform::ROT_270) {
-            inverseOrientation = ui::Transform::ROT_90;
-            std::swap(width, height);
-        }
-        target.displayTransform =
-                ui::Transform(inverseOrientation, width, height) * displayInfo.transform;
-        t = t * target.displayTransform;
+        const auto& displayTransform = it->second.transform;
+        target.displayTransform = displayTransform;
+        t = displayTransform;
     }
     target.setDefaultPointerTransform(t);
     inputTargets.push_back(target);
@@ -2772,11 +2757,8 @@ std::string InputDispatcher::getApplicationWindowLabel(
 }
 
 void InputDispatcher::pokeUserActivityLocked(const EventEntry& eventEntry) {
-    if (eventEntry.type == EventEntry::Type::FOCUS ||
-        eventEntry.type == EventEntry::Type::POINTER_CAPTURE_CHANGED ||
-        eventEntry.type == EventEntry::Type::DRAG) {
-        // Focus or pointer capture changed events are passed to apps, but do not represent user
-        // activity.
+    if (!isUserActivityEvent(eventEntry)) {
+        // Not poking user activity if the event type does not represent a user activity
         return;
     }
     int32_t displayId = getTargetDisplayId(eventEntry);
@@ -2812,16 +2794,7 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry& eventEntry) {
             eventType = USER_ACTIVITY_EVENT_BUTTON;
             break;
         }
-        case EventEntry::Type::TOUCH_MODE_CHANGED: {
-            break;
-        }
-
-        case EventEntry::Type::FOCUS:
-        case EventEntry::Type::CONFIGURATION_CHANGED:
-        case EventEntry::Type::DEVICE_RESET:
-        case EventEntry::Type::SENSOR:
-        case EventEntry::Type::POINTER_CAPTURE_CHANGED:
-        case EventEntry::Type::DRAG: {
+        default: {
             LOG_ALWAYS_FATAL("%s events are not user activity",
                              ftl::enum_string(eventEntry.type).c_str());
             break;
@@ -2876,6 +2849,11 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
                     splitMotionEvent(originalMotionEntry, inputTarget.pointerIds);
             if (!splitMotionEntry) {
                 return; // split event was dropped
+            }
+            if (splitMotionEntry->action == AMOTION_EVENT_ACTION_CANCEL) {
+                std::string reason = std::string("reason=pointer cancel on split window");
+                android_log_event_list(LOGTAG_INPUT_CANCEL)
+                        << connection->getInputChannelName().c_str() << reason << LOG_ID_EVENTS;
             }
             if (DEBUG_FOCUS) {
                 ALOGD("channel '%s' ~ Split motion event.",
@@ -3582,6 +3560,10 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
               options.mode);
     }
 
+    std::string reason = std::string("reason=").append(options.reason);
+    android_log_event_list(LOGTAG_INPUT_CANCEL)
+            << connection->getInputChannelName().c_str() << reason << LOG_ID_EVENTS;
+
     InputTarget target;
     sp<WindowInfoHandle> windowHandle =
             getWindowHandleLocked(connection->inputChannel->getConnectionToken());
@@ -3796,7 +3778,7 @@ void InputDispatcher::notifyConfigurationChanged(const NotifyConfigurationChange
         ALOGD("notifyConfigurationChanged - eventTime=%" PRId64, args->eventTime);
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         std::scoped_lock _l(mLock);
 
@@ -3891,7 +3873,7 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs* args) {
               std::to_string(t.duration().count()).c_str());
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         mLock.lock();
 
@@ -3968,7 +3950,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs* args) {
               std::to_string(t.duration().count()).c_str());
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         mLock.lock();
 
@@ -4033,7 +4015,7 @@ void InputDispatcher::notifySensor(const NotifySensorArgs* args) {
               ftl::enum_string(args->sensorType).c_str());
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         mLock.lock();
 
@@ -4083,7 +4065,7 @@ void InputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs* args) {
               args->deviceId);
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         std::scoped_lock _l(mLock);
 
@@ -4103,7 +4085,7 @@ void InputDispatcher::notifyPointerCaptureChanged(const NotifyPointerCaptureChan
               args->request.enable ? "true" : "false");
     }
 
-    bool needWake;
+    bool needWake = false;
     { // acquire lock
         std::scoped_lock _l(mLock);
         auto entry = std::make_unique<PointerCaptureChangedEntry>(args->id, args->eventTime,
@@ -4732,21 +4714,19 @@ void InputDispatcher::setInputWindowsLocked(
         }
     }
 
-    if (isPerWindowInputRotationEnabled()) {
-        // Determine if the orientation of any of the input windows have changed, and cancel all
-        // pointer events if necessary.
-        for (const sp<WindowInfoHandle>& oldWindowHandle : oldWindowHandles) {
-            const sp<WindowInfoHandle> newWindowHandle = getWindowHandleLocked(oldWindowHandle);
-            if (newWindowHandle != nullptr &&
-                newWindowHandle->getInfo()->transform.getOrientation() !=
-                        oldWindowOrientations[oldWindowHandle->getId()]) {
-                std::shared_ptr<InputChannel> inputChannel =
-                        getInputChannelLocked(newWindowHandle->getToken());
-                if (inputChannel != nullptr) {
-                    CancelationOptions options(CancelationOptions::CANCEL_POINTER_EVENTS,
-                                               "touched window's orientation changed");
-                    synthesizeCancelationEventsForInputChannelLocked(inputChannel, options);
-                }
+    // Determine if the orientation of any of the input windows have changed, and cancel all
+    // pointer events if necessary.
+    for (const sp<WindowInfoHandle>& oldWindowHandle : oldWindowHandles) {
+        const sp<WindowInfoHandle> newWindowHandle = getWindowHandleLocked(oldWindowHandle);
+        if (newWindowHandle != nullptr &&
+            newWindowHandle->getInfo()->transform.getOrientation() !=
+                    oldWindowOrientations[oldWindowHandle->getId()]) {
+            std::shared_ptr<InputChannel> inputChannel =
+                    getInputChannelLocked(newWindowHandle->getToken());
+            if (inputChannel != nullptr) {
+                CancelationOptions options(CancelationOptions::CANCEL_POINTER_EVENTS,
+                                           "touched window's orientation changed");
+                synthesizeCancelationEventsForInputChannelLocked(inputChannel, options);
             }
         }
     }
@@ -4924,9 +4904,29 @@ void InputDispatcher::setInputFilterEnabled(bool enabled) {
 }
 
 void InputDispatcher::setInTouchMode(bool inTouchMode) {
-    std::scoped_lock lock(mLock);
-    mInTouchMode = inTouchMode;
-    // TODO(b/193718270): Fire TouchModeEvent here.
+    bool needWake = false;
+    {
+        std::scoped_lock lock(mLock);
+        if (mInTouchMode == inTouchMode) {
+            return;
+        }
+        if (DEBUG_TOUCH_MODE) {
+            ALOGD("Request to change touch mode from %s to %s", toString(mInTouchMode),
+                  toString(inTouchMode));
+            // TODO(b/198487159): Also print the current last interacted apps.
+        }
+
+        // TODO(b/198499018): Store touch mode per display.
+        mInTouchMode = inTouchMode;
+
+        // TODO(b/198487159): Enforce that only last interacted apps can change touch mode.
+        auto entry = std::make_unique<TouchModeEntry>(mIdGenerator.nextId(), now(), inTouchMode);
+        needWake = enqueueInboundEventLocked(std::move(entry));
+    } // release lock
+
+    if (needWake) {
+        mLooper->wake();
+    }
 }
 
 void InputDispatcher::setMaximumObscuringOpacityForTouch(float opacity) {

@@ -18,14 +18,15 @@
 
 #include <gui/DisplayEventReceiver.h>
 
+#include <gui/test/CallbackUtils.h>
 #include "LayerTransactionTest.h"
-#include "utils/CallbackUtils.h"
 
 using namespace std::chrono_literals;
 
 namespace android {
 
 using android::hardware::graphics::common::V1_1::BufferUsage;
+using SCHash = SurfaceComposerClient::SCHash;
 
 ::testing::Environment* const binderEnv =
         ::testing::AddGlobalTestEnvironment(new BinderEnvironment());
@@ -99,6 +100,24 @@ public:
         }
         if (finalState) {
             ASSERT_NO_FATAL_FAILURE(helper.verifyFinalState());
+        }
+    }
+
+    static void waitForCommitCallback(
+            CallbackHelper& helper,
+            const std::unordered_set<sp<SurfaceControl>, SCHash>& committedSc) {
+        CallbackData callbackData;
+        ASSERT_NO_FATAL_FAILURE(helper.getCallbackData(&callbackData));
+
+        const auto& surfaceControlStats = callbackData.surfaceControlStats;
+
+        ASSERT_EQ(surfaceControlStats.size(), committedSc.size()) << "wrong number of surfaces";
+
+        for (const auto& stats : surfaceControlStats) {
+            ASSERT_NE(stats.surfaceControl, nullptr) << "returned null surface control";
+
+            const auto& expectedSc = committedSc.find(stats.surfaceControl);
+            ASSERT_NE(expectedSc, committedSc.end()) << "unexpected surface control";
         }
     }
 
@@ -1029,4 +1048,85 @@ TEST_F(LayerCallbackTest, ExpectedPresentTime) {
     EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
 }
 
+// b202394221
+TEST_F(LayerCallbackTest, EmptyBufferStateChanges) {
+    sp<SurfaceControl> bufferLayer, emptyBufferLayer;
+    ASSERT_NO_FATAL_FAILURE(bufferLayer = createBufferStateLayer());
+    ASSERT_NO_FATAL_FAILURE(emptyBufferLayer = createBufferStateLayer());
+
+    Transaction transaction;
+    CallbackHelper callback;
+    for (size_t i = 0; i < 10; i++) {
+        int err = fillTransaction(transaction, &callback, bufferLayer);
+        if (err) {
+            GTEST_SUCCEED() << "test not supported";
+            return;
+        }
+
+        ui::Size bufferSize = getBufferSize();
+
+        TransactionUtils::setFrame(transaction, bufferLayer,
+                                   Rect(0, 0, bufferSize.width, bufferSize.height),
+                                   Rect(0, 0, 32, 32));
+        transaction.setPosition(emptyBufferLayer, 1 + i, 2 + i);
+        transaction.apply();
+
+        ExpectedResult expected;
+        expected.addSurface(ExpectedResult::Transaction::PRESENTED, bufferLayer,
+                            ExpectedResult::Buffer::ACQUIRED,
+                            (i == 0) ? ExpectedResult::PreviousBuffer::NOT_RELEASED
+                                     : ExpectedResult::PreviousBuffer::RELEASED);
+        expected.addSurface(ExpectedResult::Transaction::PRESENTED, emptyBufferLayer,
+                            ExpectedResult::Buffer::NOT_ACQUIRED,
+                            ExpectedResult::PreviousBuffer::NOT_RELEASED);
+
+        EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected));
+    }
+    ASSERT_NO_FATAL_FAILURE(callback.verifyFinalState());
+}
+
+// b202394221
+TEST_F(LayerCallbackTest, DISABLED_NonBufferLayerStateChanges) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(layer = createColorLayer("ColorLayer", Color::RED));
+
+    Transaction transaction;
+    CallbackHelper callback;
+    int err = fillTransaction(transaction, &callback);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+    transaction.setPosition(layer, 1, 2);
+    transaction.apply();
+
+    ExpectedResult expected;
+    EXPECT_NO_FATAL_FAILURE(waitForCallback(callback, expected, true));
+}
+
+TEST_F(LayerCallbackTest, CommitCallbackOffscreenLayer) {
+    sp<SurfaceControl> layer;
+    ASSERT_NO_FATAL_FAILURE(layer = createBufferStateLayer());
+    sp<SurfaceControl> offscreenLayer =
+            createSurface(mClient, "Offscreen Layer", 0, 0, PIXEL_FORMAT_RGBA_8888,
+                          ISurfaceComposerClient::eFXSurfaceBufferState, layer.get());
+
+    Transaction transaction;
+    CallbackHelper callback;
+    int err = fillTransaction(transaction, &callback, layer, true);
+    err |= fillTransaction(transaction, &callback, offscreenLayer, true);
+    if (err) {
+        GTEST_SUCCEED() << "test not supported";
+        return;
+    }
+
+    transaction.reparent(offscreenLayer, nullptr)
+            .addTransactionCommittedCallback(callback.function, callback.getContext());
+    transaction.apply();
+
+    std::unordered_set<sp<SurfaceControl>, SCHash> committedSc;
+    committedSc.insert(layer);
+    committedSc.insert(offscreenLayer);
+    EXPECT_NO_FATAL_FAILURE(waitForCommitCallback(callback, committedSc));
+}
 } // namespace android

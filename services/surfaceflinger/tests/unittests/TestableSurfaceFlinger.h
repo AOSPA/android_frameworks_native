@@ -73,18 +73,9 @@ public:
         return nullptr;
     }
 
-    std::unique_ptr<MessageQueue> createMessageQueue() override {
-        return std::make_unique<android::impl::MessageQueue>();
-    }
-
     std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
             Fps /*currentRefreshRate*/) override {
         return std::make_unique<scheduler::FakePhaseOffsets>();
-    }
-
-    std::unique_ptr<Scheduler> createScheduler(
-            const std::shared_ptr<scheduler::RefreshRateConfigs>&, ISchedulerCallback&) override {
-        return nullptr;
     }
 
     sp<SurfaceInterceptor> createSurfaceInterceptor() override {
@@ -296,6 +287,16 @@ public:
      * Forwarding for functions being tested
      */
 
+    nsecs_t commit() {
+        constexpr int64_t kVsyncId = 123;
+        const nsecs_t now = systemTime();
+        const nsecs_t expectedVsyncTime = now + 10'000'000;
+        mFlinger->commit(now, kVsyncId, expectedVsyncTime);
+        return now;
+    }
+
+    void commitAndComposite() { mFlinger->composite(commit()); }
+
     auto createDisplay(const String8& displayName, bool secure) {
         return mFlinger->createDisplay(displayName, secure);
     }
@@ -343,10 +344,6 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto onMessageReceived(int32_t what) {
-        return mFlinger->onMessageReceived(what, /*vsyncId=*/0, systemTime());
-    }
-
     auto renderScreenImplLocked(const RenderArea& renderArea,
                                 SurfaceFlinger::TraverseLayersFunction traverseLayers,
                                 const std::shared_ptr<renderengine::ExternalTexture>& buffer,
@@ -369,6 +366,7 @@ public:
 
     auto& getTransactionQueue() { return mFlinger->mTransactionQueue; }
     auto& getPendingTransactionQueue() { return mFlinger->mPendingTransactionQueues; }
+    auto& getTransactionCommittedSignals() { return mFlinger->mTransactionCommittedSignals; }
 
     auto setTransactionState(
             const FrameTimelineInfo& frameTimelineInfo, const Vector<ComposerState>& states,
@@ -424,7 +422,6 @@ public:
     auto& mutableDisplayColorSetting() { return mFlinger->mDisplayColorSetting; }
     auto& mutableDisplays() { return mFlinger->mDisplays; }
     auto& mutableDrawingState() { return mFlinger->mDrawingState; }
-    auto& mutableEventQueue() { return mFlinger->mEventQueue; }
     auto& mutableGeometryDirty() { return mFlinger->mGeometryDirty; }
     auto& mutableInterceptor() { return mFlinger->mInterceptor; }
     auto& mutableMainThreadId() { return mFlinger->mMainThreadId; }
@@ -439,7 +436,7 @@ public:
     auto& mutableHwcDisplayData() { return getHwComposer().mDisplayData; }
     auto& mutableHwcPhysicalDisplayIdMap() { return getHwComposer().mPhysicalDisplayIdMap; }
     auto& mutablePrimaryHwcDisplayId() { return getHwComposer().mPrimaryHwcDisplayId; }
-    auto& mutableUseFrameRateApi() { return mFlinger->useFrameRateApi; }
+    auto& mutableActiveDisplayToken() { return mFlinger->mActiveDisplayToken; }
 
     auto fromHandle(const sp<IBinder>& handle) {
         return mFlinger->fromHandle(handle);
@@ -453,7 +450,6 @@ public:
         mutableDisplays().clear();
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
-        mutableEventQueue().reset();
         mutableInterceptor().clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
@@ -761,7 +757,7 @@ public:
     };
 
 private:
-    void scheduleRefresh(FrameHint) override {}
+    void scheduleComposite(FrameHint) override {}
     void setVsyncEnabled(bool) override {}
     void changeRefreshRate(const Scheduler::RefreshRate&, Scheduler::ModeEvent) override {}
     void kernelTimerChanged(bool) override {}

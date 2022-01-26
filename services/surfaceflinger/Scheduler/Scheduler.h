@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -32,6 +33,7 @@
 
 #include "EventThread.h"
 #include "LayerHistory.h"
+#include "MessageQueue.h"
 #include "OneShotTimer.h"
 #include "RefreshRateConfigs.h"
 #include "SchedulerUtils.h"
@@ -59,7 +61,7 @@ struct ISchedulerCallback {
     // Indicates frame activity, i.e. whether commit and/or composite is taking place.
     enum class FrameHint { kNone, kActive };
 
-    virtual void scheduleRefresh(FrameHint) = 0;
+    virtual void scheduleComposite(FrameHint) = 0;
     virtual void setVsyncEnabled(bool) = 0;
     virtual void changeRefreshRate(const scheduler::RefreshRateConfigs::RefreshRate&,
                                    scheduler::RefreshRateConfigEvent) = 0;
@@ -70,13 +72,40 @@ protected:
     ~ISchedulerCallback() = default;
 };
 
-class Scheduler {
+class Scheduler : impl::MessageQueue {
+    using Impl = impl::MessageQueue;
+
 public:
     using RefreshRate = scheduler::RefreshRateConfigs::RefreshRate;
     using ModeEvent = scheduler::RefreshRateConfigEvent;
 
-    Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>&, ISchedulerCallback&);
+    struct Options {
+        // Whether to use content detection at all.
+        bool useContentDetection;
+    };
+
+    Scheduler(ICompositor&, ISchedulerCallback&, Options);
     ~Scheduler();
+
+    void createVsyncSchedule(bool supportKernelIdleTimer);
+    void startTimers();
+    void run();
+
+    using Impl::initVsync;
+    using Impl::setInjector;
+
+    using Impl::getScheduledFrameTime;
+    using Impl::setDuration;
+
+    using Impl::scheduleFrame;
+
+    // Schedule an asynchronous or synchronous task on the main thread.
+    template <typename F, typename T = std::invoke_result_t<F>>
+    [[nodiscard]] std::future<T> schedule(F&& f) {
+        auto [task, future] = makeTask(std::move(f));
+        postMessage(std::move(task));
+        return std::move(future);
+    }
 
     using ConnectionHandle = scheduler::ConnectionHandle;
     ConnectionHandle createConnection(const char* connectionName, frametimeline::TokenManager*,
@@ -164,8 +193,8 @@ public:
     // Notifies the scheduler about a refresh rate timeline change.
     void onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline);
 
-    // Notifies the scheduler when the display was refreshed
-    void onDisplayRefreshed(nsecs_t timestamp);
+    // Notifies the scheduler post composition.
+    void onPostComposition(nsecs_t presentTime);
 
     // Notifies the scheduler when the display size has changed. Called from SF's main thread
     void onActiveDisplayAreaChanged(uint32_t displayArea);
@@ -217,26 +246,11 @@ private:
     enum class TimerState { Reset, Expired };
     enum class TouchState { Inactive, Active };
 
-    struct Options {
-        // Whether to use content detection at all.
-        bool useContentDetection;
-    };
-
     struct VsyncSchedule {
         std::unique_ptr<scheduler::VsyncController> controller;
         std::unique_ptr<scheduler::VSyncTracker> tracker;
         std::unique_ptr<scheduler::VSyncDispatch> dispatch;
     };
-
-    // Unlike the testing constructor, this creates the VsyncSchedule, LayerHistory, and timers.
-    Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>&, ISchedulerCallback&, Options);
-
-    // Used by tests to inject mocks.
-    Scheduler(VsyncSchedule, const std::shared_ptr<scheduler::RefreshRateConfigs>&,
-              ISchedulerCallback&, std::unique_ptr<LayerHistory>, Options);
-
-    static VsyncSchedule createVsyncSchedule(bool supportKernelIdleTimer);
-    static std::unique_ptr<LayerHistory> createLayerHistory();
 
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);
@@ -291,7 +305,7 @@ private:
     InjectVSyncSource* mVSyncInjector = nullptr;
     ConnectionHandle mInjectorConnectionHandle;
 
-    std::mutex mHWVsyncLock;
+    mutable std::mutex mHWVsyncLock;
     bool mPrimaryHWVsyncEnabled GUARDED_BY(mHWVsyncLock) = false;
     bool mHWVsyncAvailable GUARDED_BY(mHWVsyncLock) = false;
 
@@ -301,7 +315,7 @@ private:
     VsyncSchedule mVsyncSchedule;
 
     // Used to choose refresh rate if content detection is enabled.
-    std::unique_ptr<LayerHistory> mLayerHistory;
+    LayerHistory mLayerHistory;
 
     // Timer used to monitor touch events.
     std::optional<scheduler::OneShotTimer> mTouchTimer;
@@ -342,7 +356,7 @@ private:
             GUARDED_BY(mVsyncTimelineLock);
     static constexpr std::chrono::nanoseconds MAX_VSYNC_APPLIED_TIME = 200ms;
 
-    const std::unique_ptr<PredictedVsyncTracer> mPredictedVsyncTracer;
+    std::unique_ptr<PredictedVsyncTracer> mPredictedVsyncTracer;
 
     // The frame rate override lists need their own mutex as they are being read
     // by SurfaceFlinger, Scheduler and EventThread (as a callback) to prevent deadlocks
@@ -354,6 +368,10 @@ private:
             GUARDED_BY(mFrameRateOverridesLock);
     scheduler::RefreshRateConfigs::UidToFrameRateOverride mFrameRateOverridesFromBackdoor
             GUARDED_BY(mFrameRateOverridesLock);
+
+    // Keeps track of whether the screen is acquired for debug
+    std::atomic<bool> mScreenAcquired = false;
+
     // This flag indicates display in idle. Refresh as and when vsync is requested.
     bool mDisplayIdle;
 

@@ -99,7 +99,7 @@ public:
         SKIA_GL_THREADED = 4,
     };
 
-    static std::unique_ptr<RenderEngine> create(const RenderEngineCreationArgs& args);
+    static std::unique_ptr<RenderEngine> create(RenderEngineCreationArgs args);
 
     virtual ~RenderEngine() = 0;
 
@@ -162,7 +162,7 @@ public:
     // @return A future object of RenderEngineResult struct indicating whether
     // drawing was successful in async mode.
     virtual std::future<RenderEngineResult> drawLayers(
-            const DisplaySettings& display, const std::vector<const LayerSettings*>& layers,
+            const DisplaySettings& display, const std::vector<LayerSettings>& layers,
             const std::shared_ptr<ExternalTexture>& buffer, const bool useFramebufferCache,
             base::unique_fd&& bufferFence);
 
@@ -190,6 +190,7 @@ public:
 
     static void validateInputBufferUsage(const sp<GraphicBuffer>&);
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
+    virtual int getRETid() = 0;
 
 protected:
     RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
@@ -233,7 +234,7 @@ protected:
 
     virtual void drawLayersInternal(
             const std::shared_ptr<std::promise<RenderEngineResult>>&& resultPromise,
-            const DisplaySettings& display, const std::vector<const LayerSettings*>& layers,
+            const DisplaySettings& display, const std::vector<LayerSettings>& layers,
             const std::shared_ptr<ExternalTexture>& buffer, const bool useFramebufferCache,
             base::unique_fd&& bufferFence) = 0;
 };

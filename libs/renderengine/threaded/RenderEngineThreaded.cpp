@@ -321,7 +321,7 @@ void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCr
 
 void RenderEngineThreaded::drawLayersInternal(
         const std::shared_ptr<std::promise<RenderEngineResult>>&& resultPromise,
-        const DisplaySettings& display, const std::vector<const LayerSettings*>& layers,
+        const DisplaySettings& display, const std::vector<LayerSettings>& layers,
         const std::shared_ptr<ExternalTexture>& buffer, const bool useFramebufferCache,
         base::unique_fd&& bufferFence) {
     resultPromise->set_value({NO_ERROR, base::unique_fd()});
@@ -329,19 +329,20 @@ void RenderEngineThreaded::drawLayersInternal(
 }
 
 std::future<RenderEngineResult> RenderEngineThreaded::drawLayers(
-        const DisplaySettings& display, const std::vector<const LayerSettings*>& layers,
+        const DisplaySettings& display, const std::vector<LayerSettings>& layers,
         const std::shared_ptr<ExternalTexture>& buffer, const bool useFramebufferCache,
         base::unique_fd&& bufferFence) {
     ATRACE_CALL();
     const auto resultPromise = std::make_shared<std::promise<RenderEngineResult>>();
     std::future<RenderEngineResult> resultFuture = resultPromise->get_future();
+    int fd = bufferFence.release();
     {
         std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([resultPromise, &display, &layers, &buffer, useFramebufferCache,
-                             &bufferFence](renderengine::RenderEngine& instance) {
+        mFunctionCalls.push([resultPromise, display, layers, buffer, useFramebufferCache,
+                             fd](renderengine::RenderEngine& instance) {
             ATRACE_NAME("REThreaded::drawLayers");
             instance.drawLayersInternal(std::move(resultPromise), display, layers, buffer,
-                                        useFramebufferCache, std::move(bufferFence));
+                                        useFramebufferCache, base::unique_fd(fd));
         });
     }
     mCondition.notify_one();
@@ -393,6 +394,21 @@ void RenderEngineThreaded::onActiveDisplaySizeChanged(ui::Size size) {
         });
     }
     mCondition.notify_one();
+}
+
+int RenderEngineThreaded::getRETid() {
+    std::promise<int> resultPromise;
+    std::future<int> resultFuture = resultPromise.get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::getRETid");
+            int tid = instance.getRETid();
+            resultPromise.set_value(tid);
+        });
+    }
+    mCondition.notify_one();
+    return resultFuture.get();
 }
 
 } // namespace threaded

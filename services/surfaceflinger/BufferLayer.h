@@ -62,6 +62,7 @@ public:
     void useEmptyDamage() override;
 
     bool isOpaque(const Layer::State& s) const override;
+    bool canReceiveInput() const override;
 
     // isVisible - true if this layer is visible, false otherwise
     bool isVisible() const override;
@@ -77,7 +78,7 @@ public:
 
     bool isHdrY410() const override;
 
-    bool onPostComposition(const DisplayDevice*, const std::shared_ptr<FenceTime>& glDoneFence,
+    void onPostComposition(const DisplayDevice*, const std::shared_ptr<FenceTime>& glDoneFence,
                            const std::shared_ptr<FenceTime>& presentFence,
                            const CompositorTiming&) override;
 
@@ -173,7 +174,7 @@ protected:
     // the mStateLock.
     ui::Transform::RotationFlags mTransformHint = ui::Transform::ROT_0;
 
-    bool getAutoRefresh() const { return mAutoRefresh; }
+    bool getAutoRefresh() const { return mDrawingState.autoRefresh; }
     bool getSidebandStreamChanged() const { return mSidebandStreamChanged; }
 
     // Returns true if the next buffer should be presented at the expected present time
@@ -184,7 +185,6 @@ protected:
     // specific logic
     virtual bool isBufferDue(nsecs_t /*expectedPresentTime*/) const = 0;
 
-    std::atomic<bool> mAutoRefresh{false};
     std::atomic<bool> mSidebandStreamChanged{false};
 
 private:

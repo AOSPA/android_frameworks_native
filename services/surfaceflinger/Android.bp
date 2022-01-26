@@ -67,7 +67,6 @@ cc_defaults {
     ],
     shared_libs: [
        "libbinder_ndk",
-       "vendor.qti.hardware.display.config-V4-ndk_platform",
     ],
 }
 
@@ -106,15 +105,19 @@ cc_defaults {
         "android.hardware.graphics.allocator@2.0",
         "android.hardware.graphics.allocator@3.0",
         "android.hardware.graphics.common@1.2",
+        "android.hardware.common-V2-ndk",
+        "android.hardware.common.fmq-V1-ndk",
         "android.hardware.graphics.composer@2.1",
         "android.hardware.graphics.composer@2.2",
         "android.hardware.graphics.composer@2.3",
         "android.hardware.graphics.composer@2.4",
+        "android.hardware.graphics.composer3-V1-ndk",
         "android.hardware.power@1.0",
         "android.hardware.power@1.3",
-        "android.hardware.power-V1-cpp",
+        "android.hardware.power-V2-cpp",
         "libbase",
         "libbinder",
+        "libbinder_ndk",
         "libcutils",
         "libEGL",
         "libfmq",
@@ -134,21 +137,26 @@ cc_defaults {
         "libutils",
         "libSurfaceFlingerProp",
         "vendor.qti.hardware.display.composer@3.0",
+        "vendor.qti.hardware.display.config-V4-ndk",
         "server_configurable_flags",
     ],
     static_libs: [
+        "libaidlcommonsupport",
         "libcompositionengine",
         "libframetimeline",
         "libperfetto_client_experimental",
         "librenderengine",
         "libserviceutils",
+        "libtonemap",
         "libtrace_proto",
+        "libaidlcommonsupport",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
         "android.hardware.graphics.composer@2.2-command-buffer",
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
+        "android.hardware.graphics.composer3-command-buffer",
         "display_intf_headers",
     ],
     export_static_lib_headers: [
@@ -164,6 +172,7 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2",
         "android.hardware.graphics.composer@2.3",
         "android.hardware.graphics.composer@2.4",
+        "android.hardware.graphics.composer3-V1-ndk",
         "android.hardware.power@1.3",
         "libhidlbase",
         "libtimestats",
@@ -171,7 +180,7 @@ cc_defaults {
     // TODO (marissaw): this library is not used by surfaceflinger. This is here so
     // the library compiled in a way that is accessible to system partition when running
     // IMapper's VTS.
-    required: ["libgralloctypes"]
+    required: ["libgralloctypes"],
 }
 
 cc_defaults {
@@ -213,6 +222,8 @@ filegroup {
         "EffectLayer.cpp",
         "ContainerLayer.cpp",
         "DisplayDevice.cpp",
+        "DisplayHardware/AidlComposerHal.cpp",
+        "DisplayHardware/HidlComposerHal.cpp",
         "DisplayHardware/ComposerHal.cpp",
         "DisplayHardware/DisplayIdentification.cpp",
         "DisplayHardware/FramebufferSurface.cpp",
@@ -259,7 +270,8 @@ filegroup {
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
         "SurfaceInterceptor.cpp",
-        "SurfaceTracing.cpp",
+        "Tracing/LayerTracing.cpp",
+        "Tracing/TransactionProtoParser.cpp",
         "TransactionCallbackInvoker.cpp",
         "TunnelModeEnabledReporter.cpp",
     ],
@@ -318,7 +330,7 @@ cc_binary {
         "libSurfaceFlingerProp",
     ],
 
-     logtags: ["EventLog/EventLogTags.logtags"],
+    logtags: ["EventLog/EventLogTags.logtags"],
 }
 
 subdirs = [

@@ -117,16 +117,10 @@ private:
     }
 };
 
-Scheduler::Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>& configs,
-                     ISchedulerCallback& callback)
-      : Scheduler(configs, callback,
-                  {.useContentDetection = sysprop::use_content_detection_for_refresh_rate(false)}) {
-}
+Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, Options options)
+      : impl::MessageQueue(compositor), mOptions(options), mSchedulerCallback(callback) {}
 
-Scheduler::Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>& configs,
-                     ISchedulerCallback& callback, Options options)
-      : Scheduler(createVsyncSchedule(configs->supportsKernelIdleTimer()), configs, callback,
-                  createLayerHistory(), options) {
+void Scheduler::startTimers() {
     using namespace sysprop;
 
     if (const int64_t millis = set_touch_timer_ms(0); millis > 0) {
@@ -147,22 +141,6 @@ Scheduler::Scheduler(const std::shared_ptr<scheduler::RefreshRateConfigs>& confi
     }
 }
 
-Scheduler::Scheduler(VsyncSchedule schedule,
-                     const std::shared_ptr<scheduler::RefreshRateConfigs>& configs,
-                     ISchedulerCallback& schedulerCallback,
-                     std::unique_ptr<LayerHistory> layerHistory, Options options)
-      : mOptions(options),
-        mVsyncSchedule(std::move(schedule)),
-        mLayerHistory(std::move(layerHistory)),
-        mSchedulerCallback(schedulerCallback),
-        mPredictedVsyncTracer(
-                base::GetBoolProperty("debug.sf.show_predicted_vsync", false)
-                        ? std::make_unique<PredictedVsyncTracer>(*mVsyncSchedule.dispatch)
-                        : nullptr) {
-    setRefreshRateConfigs(configs);
-    mSchedulerCallback.setVsyncEnabled(false);
-}
-
 Scheduler::~Scheduler() {
     // Ensure the OneShotTimer threads are joined before we start destroying state.
     mDisplayPowerTimer.reset();
@@ -170,7 +148,13 @@ Scheduler::~Scheduler() {
     mRefreshRateConfigs.reset();
 }
 
-Scheduler::VsyncSchedule Scheduler::createVsyncSchedule(bool supportKernelTimer) {
+void Scheduler::run() {
+    while (true) {
+        waitMessage();
+    }
+}
+
+void Scheduler::createVsyncSchedule(bool supportKernelTimer) {
     auto clock = std::make_unique<scheduler::SystemClock>();
     auto tracker = createVSyncTracker();
     auto dispatch = createVSyncDispatch(*tracker);
@@ -180,11 +164,11 @@ Scheduler::VsyncSchedule Scheduler::createVsyncSchedule(bool supportKernelTimer)
     auto controller =
             std::make_unique<scheduler::VSyncReactor>(std::move(clock), *tracker, pendingFenceLimit,
                                                       supportKernelTimer);
-    return {std::move(controller), std::move(tracker), std::move(dispatch)};
-}
+    mVsyncSchedule = {std::move(controller), std::move(tracker), std::move(dispatch)};
 
-std::unique_ptr<LayerHistory> Scheduler::createLayerHistory() {
-    return std::make_unique<scheduler::LayerHistory>();
+    if (base::GetBoolProperty("debug.sf.show_predicted_vsync", false)) {
+        mPredictedVsyncTracer = std::make_unique<PredictedVsyncTracer>(*mVsyncSchedule.dispatch);
+    }
 }
 
 std::unique_ptr<VSyncSource> Scheduler::makePrimaryDispSyncSource(
@@ -206,14 +190,14 @@ std::optional<Fps> Scheduler::getFrameRateOverride(uid_t uid) const {
     {
         const auto iter = mFrameRateOverridesFromBackdoor.find(uid);
         if (iter != mFrameRateOverridesFromBackdoor.end()) {
-            return std::make_optional<Fps>(iter->second);
+            return iter->second;
         }
     }
 
     {
         const auto iter = mFrameRateOverridesByContent.find(uid);
         if (iter != mFrameRateOverridesByContent.end()) {
-            return std::make_optional<Fps>(iter->second);
+            return iter->second;
         }
     }
 
@@ -333,6 +317,7 @@ void Scheduler::onScreenAcquired(ConnectionHandle handle) {
         thread = mConnections[handle].thread.get();
     }
     thread->onScreenAcquired();
+    mScreenAcquired = true;
 }
 
 void Scheduler::onScreenReleased(ConnectionHandle handle) {
@@ -343,6 +328,7 @@ void Scheduler::onScreenReleased(ConnectionHandle handle) {
         thread = mConnections[handle].thread.get();
     }
     thread->onScreenReleased();
+    mScreenAcquired = false;
 }
 
 void Scheduler::onFrameRateOverridesChanged(ConnectionHandle handle, PhysicalDisplayId displayId) {
@@ -542,7 +528,7 @@ void Scheduler::resyncAndRefresh() {
         std::scoped_lock lock(mRefreshRateConfigsLock);
         return mRefreshRateConfigs->getCurrentRefreshRate();
     }();
-    mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
+    mSchedulerCallback.scheduleComposite(FrameHint::kNone);
     resyncToHardwareVsync(true /* makeAvailable */, refreshRate.getVsyncPeriod(), true);
     mDisplayIdle = false;
 }
@@ -619,11 +605,11 @@ void Scheduler::registerLayer(Layer* layer) {
     // If the content detection feature is off, we still keep the layer history,
     // since we use it for other features (like Frame Rate API), so layers
     // still need to be registered.
-    mLayerHistory->registerLayer(layer, voteType);
+    mLayerHistory.registerLayer(layer, voteType);
 }
 
 void Scheduler::deregisterLayer(Layer* layer) {
-    mLayerHistory->deregisterLayer(layer);
+    mLayerHistory.deregisterLayer(layer);
 }
 
 void Scheduler::recordLayerHistory(Layer* layer, nsecs_t presentTime,
@@ -633,11 +619,11 @@ void Scheduler::recordLayerHistory(Layer* layer, nsecs_t presentTime,
         if (!mRefreshRateConfigs->canSwitch()) return;
     }
 
-    mLayerHistory->record(layer, presentTime, systemTime(), updateType);
+    mLayerHistory.record(layer, presentTime, systemTime(), updateType);
 }
 
 void Scheduler::setModeChangePending(bool pending) {
-    mLayerHistory->setModeChangePending(pending);
+    mLayerHistory.setModeChangePending(pending);
 }
 
 void Scheduler::chooseRefreshRateForContent() {
@@ -650,7 +636,7 @@ void Scheduler::chooseRefreshRateForContent() {
 
     const auto refreshRateConfigs = holdRefreshRateConfigs();
     scheduler::LayerHistory::Summary summary =
-            mLayerHistory->summarize(*refreshRateConfigs, systemTime());
+            mLayerHistory.summarize(*refreshRateConfigs, systemTime());
     scheduler::RefreshRateConfigs::GlobalSignals consideredSignals;
     DisplayModePtr newMode;
     bool frameRateChanged;
@@ -711,7 +697,7 @@ void Scheduler::setDisplayPowerState(bool normal) {
 
     // Display Power event will boost the refresh rate to performance.
     // Clear Layer History to get fresh FPS detection
-    mLayerHistory->clear();
+    mLayerHistory.clear();
 }
 
 void Scheduler::kernelIdleTimerCallback(TimerState state) {
@@ -724,15 +710,16 @@ void Scheduler::kernelIdleTimerCallback(TimerState state) {
         return mRefreshRateConfigs->getCurrentRefreshRate();
     }();
 
-    constexpr Fps FPS_THRESHOLD_FOR_KERNEL_TIMER{65.0f};
-    if (state == TimerState::Reset &&
-        refreshRate.getFps().greaterThanWithMargin(FPS_THRESHOLD_FOR_KERNEL_TIMER)) {
+    constexpr Fps FPS_THRESHOLD_FOR_KERNEL_TIMER = 65_Hz;
+    using namespace fps_approx_ops;
+
+    if (state == TimerState::Reset && refreshRate.getFps() > FPS_THRESHOLD_FOR_KERNEL_TIMER) {
         // If we're not in performance mode then the kernel timer shouldn't do
         // anything, as the refresh rate during DPU power collapse will be the
         // same.
         resyncToHardwareVsync(true /* makeAvailable */, refreshRate.getVsyncPeriod());
     } else if (state == TimerState::Expired &&
-               refreshRate.getFps().lessThanOrEqualWithMargin(FPS_THRESHOLD_FOR_KERNEL_TIMER)) {
+               refreshRate.getFps() <= FPS_THRESHOLD_FOR_KERNEL_TIMER) {
         // Disable HW VSYNC if the timer expired, as we don't need it enabled if
         // we're not pushing frames, and if we're in PERFORMANCE mode then we'll
         // need to update the VsyncController model anyway.
@@ -756,7 +743,7 @@ void Scheduler::touchTimerCallback(TimerState state) {
     // NOTE: Instead of checking all the layers, we should be checking the layer
     // that is currently on top. b/142507166 will give us this capability.
     if (handleTimerStateChanged(&mFeatures.touch, touch)) {
-        mLayerHistory->clear();
+        mLayerHistory.clear();
     }
     ATRACE_INT("TouchState", static_cast<int>(touch));
 }
@@ -773,7 +760,7 @@ void Scheduler::dump(std::string& result) const {
                   mTouchTimer ? mTouchTimer->dump().c_str() : "off");
     StringAppendF(&result, "+  Content detection: %s %s\n\n",
                   toContentDetectionString(mOptions.useContentDetection),
-                  mLayerHistory ? mLayerHistory->dump().c_str() : "(no layer history)");
+                  mLayerHistory.dump().c_str());
 
     {
         std::lock_guard lock(mFrameRateOverridesLock);
@@ -788,6 +775,13 @@ void Scheduler::dump(std::string& result) const {
             StringAppendF(&result, "[uid: %d frameRate: %s], ", uid, to_string(frameRate).c_str());
         }
         StringAppendF(&result, "}\n");
+    }
+
+    {
+        std::lock_guard lock(mHWVsyncLock);
+        StringAppendF(&result,
+                      "mScreenAcquired=%d mPrimaryHWVsyncEnabled=%d mHWVsyncAvailable=%d\n",
+                      mScreenAcquired.load(), mPrimaryHWVsyncEnabled, mHWVsyncAvailable);
     }
 }
 
@@ -810,13 +804,12 @@ bool Scheduler::updateFrameRateOverrides(
     if (!consideredSignals.idle) {
         const auto frameRateOverrides =
                 refreshRateConfigs->getFrameRateOverrides(mFeatures.contentRequirements,
-                                                          displayRefreshRate,
-                                                          consideredSignals.touch);
+                                                          displayRefreshRate, consideredSignals);
         std::lock_guard lock(mFrameRateOverridesLock);
         if (!std::equal(mFrameRateOverridesByContent.begin(), mFrameRateOverridesByContent.end(),
                         frameRateOverrides.begin(), frameRateOverrides.end(),
-                        [](const std::pair<uid_t, Fps>& a, const std::pair<uid_t, Fps>& b) {
-                            return a.first == b.first && a.second.equalsWithMargin(b.second);
+                        [](const auto& lhs, const auto& rhs) {
+                            return lhs.first == rhs.first && isApproxEqual(lhs.second, rhs.second);
                         })) {
             mFrameRateOverridesByContent = frameRateOverrides;
             return true;
@@ -899,7 +892,7 @@ DisplayModePtr Scheduler::getPreferredDisplayMode() {
 
 void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline) {
     if (timeline.refreshRequired) {
-        mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
+        mSchedulerCallback.scheduleComposite(FrameHint::kNone);
     }
 
     std::lock_guard<std::mutex> lock(mVsyncTimelineLock);
@@ -911,12 +904,12 @@ void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimel
     }
 }
 
-void Scheduler::onDisplayRefreshed(nsecs_t timestamp) {
-    const bool refresh = [=] {
+void Scheduler::onPostComposition(nsecs_t presentTime) {
+    const bool recomposite = [=] {
         std::lock_guard<std::mutex> lock(mVsyncTimelineLock);
         if (mLastVsyncPeriodChangeTimeline && mLastVsyncPeriodChangeTimeline->refreshRequired) {
-            if (timestamp < mLastVsyncPeriodChangeTimeline->refreshTimeNanos) {
-                // We need to schedule another refresh as refreshTimeNanos is still in the future.
+            if (presentTime < mLastVsyncPeriodChangeTimeline->refreshTimeNanos) {
+                // We need to composite again as refreshTimeNanos is still in the future.
                 return true;
             }
 
@@ -925,13 +918,13 @@ void Scheduler::onDisplayRefreshed(nsecs_t timestamp) {
         return false;
     }();
 
-    if (refresh) {
-        mSchedulerCallback.scheduleRefresh(FrameHint::kNone);
+    if (recomposite) {
+        mSchedulerCallback.scheduleComposite(FrameHint::kNone);
     }
 }
 
 void Scheduler::onActiveDisplayAreaChanged(uint32_t displayArea) {
-    mLayerHistory->setDisplayArea(displayArea);
+    mLayerHistory.setDisplayArea(displayArea);
 }
 
 void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverride) {
@@ -941,7 +934,8 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
 
     std::lock_guard lock(mFrameRateOverridesLock);
     if (frameRateOverride.frameRateHz != 0.f) {
-        mFrameRateOverridesFromBackdoor[frameRateOverride.uid] = Fps(frameRateOverride.frameRateHz);
+        mFrameRateOverridesFromBackdoor[frameRateOverride.uid] =
+                Fps::fromValue(frameRateOverride.frameRateHz);
     } else {
         mFrameRateOverridesFromBackdoor.erase(frameRateOverride.uid);
     }

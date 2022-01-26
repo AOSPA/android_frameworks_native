@@ -117,6 +117,10 @@ bool BufferLayer::isOpaque(const Layer::State& s) const {
     return ((s.flags & layer_state_t::eLayerOpaque) != 0) || getOpacityForFormat(getPixelFormat());
 }
 
+bool BufferLayer::canReceiveInput() const {
+    return !isHiddenByPolicy() && (mBufferInfo.mBuffer == nullptr || getAlpha() > 0.0f);
+}
+
 bool BufferLayer::isVisible() const {
     return !isHiddenByPolicy() && getAlpha() > 0.0f &&
             (mBufferInfo.mBuffer != nullptr || mSidebandStream != nullptr);
@@ -352,13 +356,13 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
 }
 } // namespace
 
-bool BufferLayer::onPostComposition(const DisplayDevice* display,
+void BufferLayer::onPostComposition(const DisplayDevice* display,
                                     const std::shared_ptr<FenceTime>& glDoneFence,
                                     const std::shared_ptr<FenceTime>& presentFence,
                                     const CompositorTiming& compositorTiming) {
     // mFrameLatencyNeeded is true when a new frame was latched for the
     // composition.
-    if (!mBufferInfo.mFrameLatencyNeeded) return false;
+    if (!mBufferInfo.mFrameLatencyNeeded) return;
 
     // Update mFrameEventHistory.
     {
@@ -432,7 +436,6 @@ bool BufferLayer::onPostComposition(const DisplayDevice* display,
 
     mFrameTracker.advanceFrame();
     mBufferInfo.mFrameLatencyNeeded = false;
-    return true;
 }
 
 void BufferLayer::gatherBufferInfo() {
@@ -492,7 +495,7 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
     // try again later
     if (!fenceHasSignaled()) {
         ATRACE_NAME("!fenceHasSignaled()");
-        mFlinger->signalLayerUpdate();
+        mFlinger->onLayerUpdate();
         return false;
     }
 

@@ -81,12 +81,15 @@ public:
                                    size_t start, size_t len);
 
     int                 compareData(const Parcel& other);
+    status_t compareDataInRange(size_t thisOffset, const Parcel& other, size_t otherOffset,
+                                size_t length, int* result) const;
 
     bool                allowFds() const;
     bool                pushAllowFds(bool allowFds);
     void                restoreAllowFds(bool lastValue);
 
     bool                hasFileDescriptors() const;
+    status_t hasFileDescriptorsInRange(size_t offset, size_t length, bool* result) const;
 
     // Zeros data when reallocating. Other mitigations may be added
     // in the future.
@@ -203,6 +206,23 @@ public:
     status_t            writeStrongBinderVector(const std::optional<std::vector<sp<IBinder>>>& val);
     status_t            writeStrongBinderVector(const std::unique_ptr<std::vector<sp<IBinder>>>& val) __attribute__((deprecated("use std::optional version instead")));
     status_t            writeStrongBinderVector(const std::vector<sp<IBinder>>& val);
+
+    // Write an IInterface or a vector of IInterface's
+    template <typename T,
+              std::enable_if_t<std::is_base_of_v<::android::IInterface, T>, bool> = true>
+    status_t writeStrongBinder(const sp<T>& val) {
+        return writeStrongBinder(T::asBinder(val));
+    }
+    template <typename T,
+              std::enable_if_t<std::is_base_of_v<::android::IInterface, T>, bool> = true>
+    status_t writeStrongBinderVector(const std::vector<sp<T>>& val) {
+        return writeData(val);
+    }
+    template <typename T,
+              std::enable_if_t<std::is_base_of_v<::android::IInterface, T>, bool> = true>
+    status_t writeStrongBinderVector(const std::optional<std::vector<sp<T>>>& val) {
+        return writeData(val);
+    }
 
     // Write an Enum vector with underlying type int8_t.
     // Does not use padding; each byte is contiguous.
@@ -418,6 +438,16 @@ public:
     status_t            readStrongBinderVector(std::optional<std::vector<sp<IBinder>>>* val) const;
     status_t            readStrongBinderVector(std::unique_ptr<std::vector<sp<IBinder>>>* val) const __attribute__((deprecated("use std::optional version instead")));
     status_t            readStrongBinderVector(std::vector<sp<IBinder>>* val) const;
+    template <typename T,
+              std::enable_if_t<std::is_base_of_v<::android::IInterface, T>, bool> = true>
+    status_t readStrongBinderVector(std::vector<sp<T>>* val) const {
+        return readData(val);
+    }
+    template <typename T,
+              std::enable_if_t<std::is_base_of_v<::android::IInterface, T>, bool> = true>
+    status_t readStrongBinderVector(std::optional<std::vector<sp<T>>>* val) const {
+        return readData(val);
+    }
 
     status_t            readByteVector(std::optional<std::vector<int8_t>>* val) const;
     status_t            readByteVector(std::unique_ptr<std::vector<int8_t>>* val) const __attribute__((deprecated("use std::optional version instead")));
@@ -1141,6 +1171,7 @@ private:
     release_func        mOwner;
 
     sp<RpcSession> mSession;
+    size_t mReserved;
 
     class Blob {
     public:
@@ -1225,13 +1256,19 @@ public:
         inline void* data() { return mData; }
     };
 
-private:
-    size_t mOpenAshmemSize;
-
-public:
-    // TODO: Remove once ABI can be changed.
-    size_t getBlobAshmemSize() const;
+    /**
+     * Returns the total amount of ashmem memory owned by this object.
+     *
+     * Note: for historical reasons, this does not include ashmem memory which
+     * is referenced by this Parcel, but which this parcel doesn't own (e.g.
+     * writeFileDescriptor is called without 'takeOwnership' true).
+     */
     size_t getOpenAshmemSize() const;
+
+private:
+    // TODO(b/202029388): Remove 'getBlobAshmemSize' once no prebuilts reference
+    // this
+    size_t getBlobAshmemSize() const;
 };
 
 // ---------------------------------------------------------------------------
