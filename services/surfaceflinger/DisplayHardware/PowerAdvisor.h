@@ -17,12 +17,15 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <unordered_set>
 
 #include <utils/Mutex.h>
 
 #include "../Scheduler/OneShotTimer.h"
 #include "DisplayIdentification.h"
+
+using namespace std::chrono_literals;
 
 namespace android {
 
@@ -44,9 +47,9 @@ public:
     virtual bool supportsPowerHintSession() = 0;
     virtual bool isPowerHintSessionRunning() = 0;
     virtual void setTargetWorkDuration(int64_t targetDurationNanos) = 0;
-    virtual void setPowerHintSessionThreadIds(const std::vector<int32_t>& threadIds) = 0;
     virtual void sendActualWorkDuration(int64_t actualDurationNanos, nsecs_t timestamp) = 0;
     virtual void enablePowerHint(bool enabled) = 0;
+    virtual bool startPowerHintSession(const std::vector<int32_t>& threadIds) = 0;
     virtual bool canNotifyDisplayUpdateImminent() = 0;
 };
 
@@ -87,9 +90,9 @@ public:
     bool supportsPowerHintSession() override;
     bool isPowerHintSessionRunning() override;
     void setTargetWorkDuration(int64_t targetDurationNanos) override;
-    void setPowerHintSessionThreadIds(const std::vector<int32_t>& threadIds) override;
     void sendActualWorkDuration(int64_t actualDurationNanos, nsecs_t timestamp) override;
     void enablePowerHint(bool enabled) override;
+    bool startPowerHintSession(const std::vector<int32_t>& threadIds) override;
     bool canNotifyDisplayUpdateImminent() override;
 
 private:
@@ -101,6 +104,12 @@ private:
     std::optional<bool> mPowerHintEnabled;
     std::optional<bool> mSupportsPowerHint;
     bool mPowerHintSessionRunning = false;
+
+    // An adjustable safety margin which moves the "target" earlier to allow flinger to
+    // go a bit over without dropping a frame, especially since we can't measure
+    // the exact time HWC finishes composition so "actual" durations are measured
+    // from the end of present() instead, which is a bit later.
+    static constexpr const std::chrono::nanoseconds kTargetSafetyMargin = 2ms;
 
     std::unordered_set<DisplayId> mExpensiveDisplays;
     bool mNotifiedExpensiveRendering = false;

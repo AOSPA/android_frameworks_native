@@ -47,7 +47,9 @@ public:
     MOCK_CONST_METHOD3(getDisplayIdentificationData,
                        bool(hal::HWDisplayId, uint8_t*, DisplayIdentificationData*));
     MOCK_CONST_METHOD1(hasCapability, bool(hal::Capability));
-    MOCK_CONST_METHOD2(hasDisplayCapability, bool(HalDisplayId, hal::DisplayCapability));
+    MOCK_CONST_METHOD2(hasDisplayCapability,
+                       bool(HalDisplayId,
+                            aidl::android::hardware::graphics::composer3::DisplayCapability));
 
     MOCK_CONST_METHOD0(getMaxVirtualDisplayCount, size_t());
     MOCK_CONST_METHOD0(getMaxVirtualDisplayDimension, size_t());
@@ -55,9 +57,9 @@ public:
     MOCK_METHOD2(allocatePhysicalDisplay, void(hal::HWDisplayId, PhysicalDisplayId));
 
     MOCK_METHOD1(createLayer, std::shared_ptr<HWC2::Layer>(HalDisplayId));
-    MOCK_METHOD5(getDeviceCompositionChanges,
+    MOCK_METHOD6(getDeviceCompositionChanges,
                  status_t(HalDisplayId, bool, std::chrono::steady_clock::time_point,
-                          const std::shared_ptr<FenceTime>&,
+                          const std::shared_ptr<FenceTime>&, nsecs_t,
                           std::optional<android::HWComposer::DeviceRequestedChanges>*));
     MOCK_METHOD5(setClientTarget,
                  status_t(HalDisplayId, uint32_t, const sp<Fence>&, const sp<GraphicBuffer>&,

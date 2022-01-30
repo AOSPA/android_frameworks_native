@@ -105,8 +105,9 @@ void TouchState::filterNonAsIsTouchWindows() {
     }
 }
 
-void TouchState::filterNonMonitors() {
-    windows.clear();
+void TouchState::filterWindowsExcept(const sp<IBinder>& token) {
+    std::erase_if(windows,
+                  [&token](const TouchedWindow& w) { return w.windowHandle->getToken() != token; });
 }
 
 sp<WindowInfoHandle> TouchState::getFirstForegroundWindowHandle() const {
@@ -139,6 +140,16 @@ sp<WindowInfoHandle> TouchState::getWallpaperWindow() const {
         const TouchedWindow& window = windows[i];
         if (window.windowHandle->getInfo()->type == WindowInfo::Type::WALLPAPER) {
             return window.windowHandle;
+        }
+    }
+    return nullptr;
+}
+
+sp<WindowInfoHandle> TouchState::getWindow(const sp<IBinder>& token) const {
+    for (const TouchedWindow& touchedWindow : windows) {
+        const auto& windowHandle = touchedWindow.windowHandle;
+        if (windowHandle->getToken() == token) {
+            return windowHandle;
         }
     }
     return nullptr;

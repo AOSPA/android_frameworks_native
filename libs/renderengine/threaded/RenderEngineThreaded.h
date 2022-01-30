@@ -67,6 +67,7 @@ public:
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
     void onActiveDisplaySizeChanged(ui::Size size) override;
+    std::optional<pid_t> getRenderEngineTid() const override;
     int getRETid() override;
 
 protected:

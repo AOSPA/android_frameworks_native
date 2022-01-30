@@ -44,6 +44,8 @@
 
 #include "DisplayHardware/PowerAdvisor.h"
 
+using aidl::android::hardware::graphics::composer3::DisplayCapability;
+
 namespace android::compositionengine::impl {
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
@@ -258,7 +260,8 @@ void Display::chooseCompositionStrategy() {
     if (status_t result =
                 hwc.getDeviceCompositionChanges(*halDisplayId, anyLayersRequireClientComposition(),
                                                 getState().earliestPresentTime,
-                                                getState().previousPresentFence, &changes);
+                                                getState().previousPresentFence,
+                                                getState().expectedPresentTime, &changes);
         result != NO_ERROR) {
         ALOGE("chooseCompositionStrategy failed for %s: %d (%s)", getName().c_str(), result,
               strerror(-result));
@@ -330,7 +333,7 @@ bool Display::getSkipColorTransform() const {
     const auto& hwc = getCompositionEngine().getHwComposer();
     if (const auto halDisplayId = HalDisplayId::tryCast(mId)) {
         return hwc.hasDisplayCapability(*halDisplayId,
-                                        hal::DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
+                                        DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
     }
 
     return hwc.hasCapability(hal::Capability::SKIP_CLIENT_COLOR_TRANSFORM);

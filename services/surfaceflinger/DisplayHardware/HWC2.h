@@ -37,6 +37,7 @@
 #include "Hal.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -87,7 +88,8 @@ public:
     virtual hal::HWDisplayId getId() const = 0;
     virtual bool isConnected() const = 0;
     virtual void setConnected(bool connected) = 0; // For use by Device only
-    virtual bool hasCapability(hal::DisplayCapability) const = 0;
+    virtual bool hasCapability(
+            aidl::android::hardware::graphics::composer3::DisplayCapability) const = 0;
     virtual bool isVsyncPeriodSwitchSupported() const = 0;
     virtual void onLayerDestroyed(hal::HWLayerId layerId) = 0;
 
@@ -133,16 +135,17 @@ public:
     [[clang::warn_unused_result]] virtual hal::Error setColorMode(
             hal::ColorMode mode, hal::RenderIntent renderIntent) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setColorTransform(
-            const android::mat4& matrix, hal::ColorTransform hint) = 0;
+            const android::mat4& matrix) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setOutputBuffer(
             const android::sp<android::GraphicBuffer>& buffer,
             const android::sp<android::Fence>& releaseFence) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setPowerMode(hal::PowerMode mode) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setVsyncEnabled(hal::Vsync enabled) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error validate(uint32_t* outNumTypes,
+    [[clang::warn_unused_result]] virtual hal::Error validate(nsecs_t expectedPresentTime,
+                                                              uint32_t* outNumTypes,
                                                               uint32_t* outNumRequests) = 0;
     [[clang::warn_unused_result]] virtual hal::Error presentOrValidate(
-            uint32_t* outNumTypes, uint32_t* outNumRequests,
+            nsecs_t expectedPresentTime, uint32_t* outNumTypes, uint32_t* outNumRequests,
             android::sp<android::Fence>* outPresentFence, uint32_t* state) = 0;
     [[clang::warn_unused_result]] virtual std::future<hal::Error> setDisplayBrightness(
             float brightness) = 0;
@@ -210,13 +213,15 @@ public:
                                const android::sp<android::Fence>& acquireFence,
                                hal::Dataspace dataspace) override;
     hal::Error setColorMode(hal::ColorMode, hal::RenderIntent) override;
-    hal::Error setColorTransform(const android::mat4& matrix, hal::ColorTransform hint) override;
+    hal::Error setColorTransform(const android::mat4& matrix) override;
     hal::Error setOutputBuffer(const android::sp<android::GraphicBuffer>&,
                                const android::sp<android::Fence>& releaseFence) override;
     hal::Error setPowerMode(hal::PowerMode) override;
     hal::Error setVsyncEnabled(hal::Vsync enabled) override;
-    hal::Error validate(uint32_t* outNumTypes, uint32_t* outNumRequests) override;
-    hal::Error presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests,
+    hal::Error validate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                        uint32_t* outNumRequests) override;
+    hal::Error presentOrValidate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                                 uint32_t* outNumRequests,
                                  android::sp<android::Fence>* outPresentFence,
                                  uint32_t* state) override;
     std::future<hal::Error> setDisplayBrightness(float brightness) override;
@@ -239,7 +244,8 @@ public:
     hal::HWDisplayId getId() const override { return mId; }
     bool isConnected() const override { return mIsConnected; }
     void setConnected(bool connected) override; // For use by Device only
-    bool hasCapability(hal::DisplayCapability) const override EXCLUDES(mDisplayCapabilitiesMutex);
+    bool hasCapability(aidl::android::hardware::graphics::composer3::DisplayCapability)
+            const override EXCLUDES(mDisplayCapabilitiesMutex);
     bool isVsyncPeriodSwitchSupported() const override;
     void onLayerDestroyed(hal::HWLayerId layerId) override;
 
@@ -268,8 +274,9 @@ private:
 
     mutable std::mutex mDisplayCapabilitiesMutex;
     std::once_flag mDisplayCapabilityQueryFlag;
-    std::optional<std::unordered_set<hal::DisplayCapability>> mDisplayCapabilities
-            GUARDED_BY(mDisplayCapabilitiesMutex);
+    std::optional<
+            std::unordered_set<aidl::android::hardware::graphics::composer3::DisplayCapability>>
+            mDisplayCapabilities GUARDED_BY(mDisplayCapabilitiesMutex);
 };
 
 } // namespace impl

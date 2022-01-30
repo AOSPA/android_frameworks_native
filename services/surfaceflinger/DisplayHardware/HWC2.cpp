@@ -40,6 +40,7 @@
 #include "ComposerHal.h"
 
 using aidl::android::hardware::graphics::composer3::Composition;
+using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 namespace android {
 
@@ -144,7 +145,7 @@ void Display::onLayerDestroyed(hal::HWLayerId layerId) {
 bool Display::isVsyncPeriodSwitchSupported() const {
     ALOGV("[%" PRIu64 "] isVsyncPeriodSwitchSupported()", mId);
 
-    return mComposer.isVsyncPeriodSwitchSupported();
+    return mComposer.isSupported(android::Hwc2::Composer::OptionalFeature::RefreshRateSwitching);
 }
 
 Error Display::getChangedCompositionTypes(std::unordered_map<HWC2::Layer*, Composition>* outTypes) {
@@ -285,15 +286,15 @@ Error Display::getConnectionType(ui::DisplayConnectionType* outType) const {
     return Error::NONE;
 }
 
-bool Display::hasCapability(hal::DisplayCapability capability) const {
+bool Display::hasCapability(DisplayCapability capability) const {
     std::scoped_lock lock(mDisplayCapabilitiesMutex);
     if (mDisplayCapabilities) {
         return mDisplayCapabilities->count(capability) > 0;
     }
 
-    ALOGW("Can't query capability %d."
+    ALOGW("Can't query capability %s."
           " Display Capabilities were not queried from HWC yet",
-          static_cast<int>(capability));
+          to_string(capability).c_str());
 
     return false;
 }
@@ -435,8 +436,8 @@ Error Display::setColorMode(ColorMode mode, RenderIntent renderIntent)
     return static_cast<Error>(intError);
 }
 
-Error Display::setColorTransform(const android::mat4& matrix, ColorTransform hint) {
-    auto intError = mComposer.setColorTransform(mId, matrix.asArray(), hint);
+Error Display::setColorTransform(const android::mat4& matrix) {
+    auto intError = mComposer.setColorTransform(mId, matrix.asArray());
     return static_cast<Error>(intError);
 }
 
@@ -479,14 +480,14 @@ Error Display::setPowerMode(PowerMode mode)
 
     if (mode == PowerMode::ON) {
         std::call_once(mDisplayCapabilityQueryFlag, [this]() {
-            std::vector<Hwc2::DisplayCapability> tmpCapabilities;
+            std::vector<DisplayCapability> tmpCapabilities;
             auto error =
                     static_cast<Error>(mComposer.getDisplayCapabilities(mId, &tmpCapabilities));
             if (error == Error::NONE) {
                 std::scoped_lock lock(mDisplayCapabilitiesMutex);
                 mDisplayCapabilities.emplace();
                 for (auto capability : tmpCapabilities) {
-                    mDisplayCapabilities->emplace(static_cast<DisplayCapability>(capability));
+                    mDisplayCapabilities->emplace(capability);
                 }
             } else if (error == Error::UNSUPPORTED) {
                 std::scoped_lock lock(mDisplayCapabilitiesMutex);
@@ -513,11 +514,11 @@ Error Display::setVsyncEnabled(Vsync enabled)
     return static_cast<Error>(intError);
 }
 
-Error Display::validate(uint32_t* outNumTypes, uint32_t* outNumRequests)
-{
+Error Display::validate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                        uint32_t* outNumRequests) {
     uint32_t numTypes = 0;
     uint32_t numRequests = 0;
-    auto intError = mComposer.validateDisplay(mId, &numTypes, &numRequests);
+    auto intError = mComposer.validateDisplay(mId, expectedPresentTime, &numTypes, &numRequests);
     auto error = static_cast<Error>(intError);
     if (error != Error::NONE && !hasChangesError(error)) {
         return error;
@@ -528,14 +529,14 @@ Error Display::validate(uint32_t* outNumTypes, uint32_t* outNumRequests)
     return error;
 }
 
-Error Display::presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests,
-                                 sp<android::Fence>* outPresentFence, uint32_t* state) {
-
+Error Display::presentOrValidate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                                 uint32_t* outNumRequests, sp<android::Fence>* outPresentFence,
+                                 uint32_t* state) {
     uint32_t numTypes = 0;
     uint32_t numRequests = 0;
     int32_t presentFenceFd = -1;
-    auto intError = mComposer.presentOrValidateDisplay(
-            mId, &numTypes, &numRequests, &presentFenceFd, state);
+    auto intError = mComposer.presentOrValidateDisplay(mId, expectedPresentTime, &numTypes,
+                                                       &numRequests, &presentFenceFd, state);
     auto error = static_cast<Error>(intError);
     if (error != Error::NONE && !hasChangesError(error)) {
         return error;

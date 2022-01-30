@@ -30,6 +30,7 @@
 #include <hidl/HidlTransportUtils.h>
 #include <log/log.h>
 #include <utils/Trace.h>
+#include "Hal.h"
 
 #include <algorithm>
 #include <cinttypes>
@@ -47,6 +48,8 @@ namespace DisplayConfig {
 class ClientInterface;
 }
 #endif
+
+using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 namespace android {
 
@@ -255,6 +258,15 @@ HidlComposer::HidlComposer(const std::string& serviceName) : mWriter(kWriterInit
 #endif
 }
 
+bool HidlComposer::isSupported(OptionalFeature feature) const {
+    switch (feature) {
+        case OptionalFeature::RefreshRateSwitching:
+            return mClient_2_4 != nullptr;
+        case OptionalFeature::ExpectedPresentTime:
+            return false;
+    }
+}
+
 #ifdef QTI_UNIFIED_DRAW
 Error HidlComposer::tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod)
 {
@@ -265,6 +277,7 @@ Error HidlComposer::tryDrawMethod(Display display, IQtiComposerClient::DrawMetho
     return kDefaultError;
 }
 #endif
+
 
 std::vector<IComposer::Capability> HidlComposer::getCapabilities() {
     std::vector<IComposer::Capability> capabilities;
@@ -610,9 +623,12 @@ Error HidlComposer::setColorMode(Display display, ColorMode mode, RenderIntent r
     return unwrapRet(ret);
 }
 
-Error HidlComposer::setColorTransform(Display display, const float* matrix, ColorTransform hint) {
+Error HidlComposer::setColorTransform(Display display, const float* matrix) {
     mWriter.selectDisplay(display);
-    mWriter.setColorTransform(matrix, hint);
+    const bool isIdentity = (mat4(matrix) == mat4());
+    mWriter.setColorTransform(matrix,
+                              isIdentity ? ColorTransform::IDENTITY
+                                         : ColorTransform::ARBITRARY_MATRIX);
     return Error::NONE;
 }
 
@@ -674,8 +690,8 @@ Error HidlComposer::setClientTargetSlotCount(Display display) {
     return unwrapRet(ret);
 }
 
-Error HidlComposer::validateDisplay(Display display, uint32_t* outNumTypes,
-                                    uint32_t* outNumRequests) {
+Error HidlComposer::validateDisplay(Display display, nsecs_t /*expectedPresentTime*/,
+                                    uint32_t* outNumTypes, uint32_t* outNumRequests) {
     ATRACE_NAME("HwcValidateDisplay");
     mWriter.selectDisplay(display);
     mWriter.validateDisplay();
@@ -690,9 +706,9 @@ Error HidlComposer::validateDisplay(Display display, uint32_t* outNumTypes,
     return Error::NONE;
 }
 
-Error HidlComposer::presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
-                                             uint32_t* outNumRequests, int* outPresentFence,
-                                             uint32_t* state) {
+Error HidlComposer::presentOrValidateDisplay(Display display, nsecs_t /*expectedPresentTime*/,
+                                             uint32_t* outNumTypes, uint32_t* outNumRequests,
+                                             int* outPresentFence, uint32_t* state) {
     ATRACE_NAME("HwcPresentOrValidateDisplay");
     mWriter.selectDisplay(display);
     mWriter.presentOrvalidateDisplay();
@@ -767,6 +783,11 @@ Error HidlComposer::setLayerColor(Display display, Layer layer,
 
 static IComposerClient::Composition to_hidl_type(
         aidl::android::hardware::graphics::composer3::Composition type) {
+    LOG_ALWAYS_FATAL_IF(static_cast<int32_t>(type) >
+                                static_cast<int32_t>(IComposerClient::Composition::SIDEBAND),
+                        "Trying to use %s, which is not supported by HidlComposer!",
+                        android::to_string(type).c_str());
+
     return static_cast<IComposerClient::Composition>(type);
 }
 
@@ -1160,6 +1181,15 @@ Error HidlComposer::setDisplayBrightness(Display display, float brightness) {
 
 // Composer HAL 2.4
 
+namespace {
+template <typename T>
+void copyCapabilities(const T& tmpCaps, std::vector<DisplayCapability>* outCapabilities) {
+    outCapabilities->resize(tmpCaps.size());
+    std::transform(tmpCaps.begin(), tmpCaps.end(), outCapabilities->begin(),
+                   [](auto cap) { return static_cast<DisplayCapability>(cap); });
+}
+} // anonymous namespace
+
 Error HidlComposer::getDisplayCapabilities(Display display,
                                            std::vector<DisplayCapability>* outCapabilities) {
     if (!mClient_2_3) {
@@ -1174,7 +1204,7 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                                                     if (error != V2_4::Error::NONE) {
                                                         return;
                                                     }
-                                                    *outCapabilities = tmpCaps;
+                                                    copyCapabilities(tmpCaps, outCapabilities);
                                                 });
     } else {
         mClient_2_3
@@ -1184,9 +1214,7 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                         return;
                     }
 
-                    outCapabilities->resize(tmpCaps.size());
-                    std::transform(tmpCaps.begin(), tmpCaps.end(), outCapabilities->begin(),
-                                   [](auto cap) { return static_cast<DisplayCapability>(cap); });
+                    copyCapabilities(tmpCaps, outCapabilities);
                 });
     }
 

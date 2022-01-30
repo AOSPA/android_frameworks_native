@@ -44,6 +44,7 @@
 #include "Hal.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -115,7 +116,9 @@ public:
                                               DisplayIdentificationData* outData) const = 0;
 
     virtual bool hasCapability(hal::Capability) const = 0;
-    virtual bool hasDisplayCapability(HalDisplayId, hal::DisplayCapability) const = 0;
+    virtual bool hasDisplayCapability(
+            HalDisplayId,
+            aidl::android::hardware::graphics::composer3::DisplayCapability) const = 0;
 
     virtual size_t getMaxVirtualDisplayCount() const = 0;
     virtual size_t getMaxVirtualDisplayDimension() const = 0;
@@ -139,7 +142,7 @@ public:
     virtual status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
             std::chrono::steady_clock::time_point earliestPresentTime,
-            const std::shared_ptr<FenceTime>& previousPresentFence,
+            const std::shared_ptr<FenceTime>& previousPresentFence, nsecs_t expectedPresentTime,
             std::optional<DeviceRequestedChanges>* outChanges) = 0;
 
     virtual status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
@@ -241,9 +244,12 @@ public:
 
     virtual Hwc2::Composer* getComposer() const = 0;
 
-    // Returns the first display connected at boot. It cannot be disconnected, which implies an
-    // internal connection type. Its connection via HWComposer::onHotplug, which in practice is
-    // immediately after HWComposer construction, must occur before any call to this function.
+    // Returns the first display connected at boot. Its connection via HWComposer::onHotplug,
+    // which in practice is immediately after HWComposer construction, must occur before any
+    // call to this function.
+    // The primary display can be temporarily disconnected from the perspective
+    // of this class. Callers must not call getPrimaryHwcDisplayId() or getPrimaryDisplayId()
+    // if isHeadless().
     //
     // TODO(b/182939859): Remove special cases for primary display.
     virtual hal::HWDisplayId getPrimaryHwcDisplayId() const = 0;
@@ -277,7 +283,9 @@ public:
                                       DisplayIdentificationData* outData) const override;
 
     bool hasCapability(hal::Capability) const override;
-    bool hasDisplayCapability(HalDisplayId, hal::DisplayCapability) const override;
+    bool hasDisplayCapability(
+            HalDisplayId,
+            aidl::android::hardware::graphics::composer3::DisplayCapability) const override;
 
     size_t getMaxVirtualDisplayCount() const override;
     size_t getMaxVirtualDisplayDimension() const override;
@@ -293,7 +301,7 @@ public:
     status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
             std::chrono::steady_clock::time_point earliestPresentTime,
-            const std::shared_ptr<FenceTime>& previousPresentFence,
+            const std::shared_ptr<FenceTime>& previousPresentFence, nsecs_t expectedPresentTime,
             std::optional<DeviceRequestedChanges>* outChanges) override;
 
     status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
