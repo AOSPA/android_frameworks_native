@@ -138,6 +138,7 @@ cc_library_shared {
         "HdrCapabilities.cpp",
         "PixelFormat.cpp",
         "PublicFormat.cpp",
+        "StaticAsserts.cpp",
         "StaticDisplayInfo.cpp",
     ],
 
@@ -226,10 +227,7 @@ cc_library_shared {
     ],
     min_sdk_version: "29",
 
-    pgo: {
-        sampling: true,
-        profile_file: "libui/libui.profdata",
-    },
+    afdo: true,
 }
 
 cc_library_headers {

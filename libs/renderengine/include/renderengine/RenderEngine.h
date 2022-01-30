@@ -192,6 +192,10 @@ public:
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
     virtual int getRETid() = 0;
 
+    // Allows flinger to get the render engine thread id for power management with ADPF
+    // Returns the tid of the renderengine thread if it's threaded, and std::nullopt otherwise
+    virtual std::optional<pid_t> getRenderEngineTid() const { return std::nullopt; }
+
 protected:
     RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
 

@@ -419,10 +419,17 @@ static int restorecon_app_data_lazy(const std::string& path, const std::string& 
     int res = 0;
     char* before = nullptr;
     char* after = nullptr;
+    if (!existing) {
+        if (selinux_android_restorecon_pkgdir(path.c_str(), seInfo.c_str(), uid,
+                SELINUX_ANDROID_RESTORECON_RECURSE) < 0) {
+            PLOG(ERROR) << "Failed recursive restorecon for " << path;
+            goto fail;
+        }
+        return res;
+    }
 
     // Note that SELINUX_ANDROID_RESTORECON_DATADATA flag is set by
     // libselinux. Not needed here.
-
     if (lgetfilecon(path.c_str(), &before) < 0) {
         PLOG(ERROR) << "Failed before getfilecon for " << path;
         goto fail;
@@ -457,12 +464,6 @@ done:
     free(before);
     free(after);
     return res;
-}
-
-static int restorecon_app_data_lazy(const std::string& parent, const char* name,
-        const std::string& seInfo, uid_t uid, bool existing) {
-    return restorecon_app_data_lazy(StringPrintf("%s/%s", parent.c_str(), name), seInfo, uid,
-            existing);
 }
 
 static int prepare_app_dir(const std::string& path, mode_t target_mode, uid_t uid) {
@@ -610,8 +611,14 @@ static binder::Status createAppDataDirs(const std::string& path,
         int32_t uid, int32_t* previousUid, int32_t cacheGid,
         const std::string& seInfo, mode_t targetMode) {
     struct stat st{};
-    bool existing = (stat(path.c_str(), &st) == 0);
-    if (existing) {
+    bool parent_dir_exists = (stat(path.c_str(), &st) == 0);
+
+    auto cache_path = StringPrintf("%s/%s", path.c_str(), "cache");
+    auto code_cache_path = StringPrintf("%s/%s", path.c_str(), "code_cache");
+    bool cache_exists = (access(cache_path.c_str(), F_OK) == 0);
+    bool code_cache_exists = (access(code_cache_path.c_str(), F_OK) == 0);
+
+    if (parent_dir_exists) {
         if (*previousUid < 0) {
             // If previousAppId is -1 in CreateAppDataArgs, we will assume the current owner
             // of the directory as previousUid. This is required because it is not always possible
@@ -625,6 +632,7 @@ static binder::Status createAppDataDirs(const std::string& path,
         }
     }
 
+    // Prepare only the parent app directory
     if (prepare_app_dir(path, targetMode, uid) ||
             prepare_app_cache_dir(path, "cache", 02771, uid, cacheGid) ||
             prepare_app_cache_dir(path, "code_cache", 02771, uid, cacheGid)) {
@@ -632,12 +640,23 @@ static binder::Status createAppDataDirs(const std::string& path,
     }
 
     // Consider restorecon over contents if label changed
-    if (restorecon_app_data_lazy(path, seInfo, uid, existing) ||
-            restorecon_app_data_lazy(path, "cache", seInfo, uid, existing) ||
-            restorecon_app_data_lazy(path, "code_cache", seInfo, uid, existing)) {
+    if (restorecon_app_data_lazy(path, seInfo, uid, parent_dir_exists)) {
         return error("Failed to restorecon " + path);
     }
 
+    // If the parent dir exists, the restorecon would already have been done
+    // as a part of the recursive restorecon above
+    if (parent_dir_exists && !cache_exists
+            && restorecon_app_data_lazy(cache_path, seInfo, uid, false)) {
+        return error("Failed to restorecon " + cache_path);
+    }
+
+    // If the parent dir exists, the restorecon would already have been done
+    // as a part of the recursive restorecon above
+    if (parent_dir_exists && !code_cache_exists
+            && restorecon_app_data_lazy(code_cache_path, seInfo, uid, false)) {
+        return error("Failed to restorecon " + code_cache_path);
+    }
     return ok();
 }
 
@@ -1112,16 +1131,15 @@ binder::Status InstalldNativeService::fixupAppData(const std::optional<std::stri
 }
 
 static int32_t copy_directory_recursive(const char* from, const char* to) {
-    char *argv[] = {
-        (char*) kCpPath,
-        (char*) "-F", /* delete any existing destination file first (--remove-destination) */
-        (char*) "-p", /* preserve timestamps, ownership, and permissions */
-        (char*) "-R", /* recurse into subdirectories (DEST must be a directory) */
-        (char*) "-P", /* Do not follow symlinks [default] */
-        (char*) "-d", /* don't dereference symlinks */
-        (char*) from,
-        (char*) to
-    };
+    char* argv[] =
+            {(char*)kCpPath,
+             (char*)"-F", /* delete any existing destination file first (--remove-destination) */
+             (char*)"--preserve=mode,ownership,timestamps,xattr", /* preserve properties */
+             (char*)"-R", /* recurse into subdirectories (DEST must be a directory) */
+             (char*)"-P", /* Do not follow symlinks [default] */
+             (char*)"-d", /* don't dereference symlinks */
+             (char*)from,
+             (char*)to};
 
     LOG(DEBUG) << "Copying " << from << " to " << to;
     return logwrap_fork_execvp(ARRAY_SIZE(argv), argv, nullptr, false, LOG_ALOG, false, nullptr);
@@ -1583,6 +1601,7 @@ binder::Status InstalldNativeService::freeCache(const std::optional<std::string>
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
     auto data_path = create_data_path(uuid_);
     auto noop = (flags & FLAG_FREE_CACHE_NOOP);
+    auto defy_target = (flags & FLAG_FREE_CACHE_DEFY_TARGET_FREE_BYTES);
 
     int64_t free = data_disk_free(data_path);
     if (free < 0) {
@@ -1591,11 +1610,13 @@ binder::Status InstalldNativeService::freeCache(const std::optional<std::string>
 
     int64_t cleared = 0;
     int64_t needed = targetFreeBytes - free;
-    LOG(DEBUG) << "Device " << data_path << " has " << free << " free; requested "
-            << targetFreeBytes << "; needed " << needed;
+    if (!defy_target) {
+        LOG(DEBUG) << "Device " << data_path << " has " << free << " free; requested "
+                << targetFreeBytes << "; needed " << needed;
 
-    if (free >= targetFreeBytes) {
-        return ok();
+        if (free >= targetFreeBytes) {
+            return ok();
+        }
     }
 
     if (flags & FLAG_FREE_CACHE_V2) {
@@ -1720,15 +1741,17 @@ binder::Status InstalldNativeService::freeCache(const std::optional<std::string>
                 cleared += item->size;
             }
 
-            // Verify that we're actually done before bailing, since sneaky
-            // apps might be using hardlinks
-            if (needed <= 0) {
-                free = data_disk_free(data_path);
-                needed = targetFreeBytes - free;
+            if (!defy_target) {
+                // Verify that we're actually done before bailing, since sneaky
+                // apps might be using hardlinks
                 if (needed <= 0) {
-                    break;
-                } else {
-                    LOG(WARNING) << "Expected to be done but still need " << needed;
+                    free = data_disk_free(data_path);
+                    needed = targetFreeBytes - free;
+                    if (needed <= 0) {
+                        break;
+                    } else {
+                        LOG(WARNING) << "Expected to be done but still need " << needed;
+                    }
                 }
             }
         }
@@ -1738,12 +1761,16 @@ binder::Status InstalldNativeService::freeCache(const std::optional<std::string>
         return error("Legacy cache logic no longer supported");
     }
 
-    free = data_disk_free(data_path);
-    if (free >= targetFreeBytes) {
-        return ok();
+    if (!defy_target) {
+        free = data_disk_free(data_path);
+        if (free >= targetFreeBytes) {
+            return ok();
+        } else {
+            return error(StringPrintf("Failed to free up %" PRId64 " on %s; final free space %" PRId64,
+                    targetFreeBytes, data_path.c_str(), free));
+        }
     } else {
-        return error(StringPrintf("Failed to free up %" PRId64 " on %s; final free space %" PRId64,
-                targetFreeBytes, data_path.c_str(), free));
+        return ok();
     }
 }
 
@@ -2863,7 +2890,6 @@ binder::Status InstalldNativeService::createOatDir(const std::string& packageNam
 binder::Status InstalldNativeService::rmPackageDir(const std::string& packageName,
                                                    const std::string& packageDir) {
     ENFORCE_UID(AID_SYSTEM);
-    CHECK_ARGUMENT_PACKAGE_NAME(packageName);
     CHECK_ARGUMENT_PATH(packageDir);
     LOCK_PACKAGE();
 

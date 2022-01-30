@@ -32,6 +32,7 @@
 #include <utils/StrongPointer.h>
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -71,7 +72,6 @@ using V2_4::IComposerCallback;
 using V2_4::IComposerClient;
 using V2_4::VsyncPeriodChangeTimeline;
 using V2_4::VsyncPeriodNanos;
-using DisplayCapability = IComposerClient::DisplayCapability;
 using PerFrameMetadata = IComposerClient::PerFrameMetadata;
 using PerFrameMetadataKey = IComposerClient::PerFrameMetadataKey;
 using PerFrameMetadataBlob = IComposerClient::PerFrameMetadataBlob;
@@ -81,6 +81,13 @@ public:
     static std::unique_ptr<Composer> create(const std::string& serviceName);
 
     virtual ~Composer() = 0;
+
+    enum class OptionalFeature {
+        RefreshRateSwitching,
+        ExpectedPresentTime,
+    };
+
+    virtual bool isSupported(OptionalFeature) const = 0;
 
     virtual std::vector<IComposer::Capability> getCapabilities() = 0;
     virtual std::string dumpDebugInfo() = 0;
@@ -139,7 +146,7 @@ public:
                                   int acquireFence, Dataspace dataspace,
                                   const std::vector<IComposerClient::Rect>& damage) = 0;
     virtual Error setColorMode(Display display, ColorMode mode, RenderIntent renderIntent) = 0;
-    virtual Error setColorTransform(Display display, const float* matrix, ColorTransform hint) = 0;
+    virtual Error setColorTransform(Display display, const float* matrix) = 0;
     virtual Error setOutputBuffer(Display display, const native_handle_t* buffer,
                                   int releaseFence) = 0;
     virtual Error setPowerMode(Display display, IComposerClient::PowerMode mode) = 0;
@@ -147,12 +154,12 @@ public:
 
     virtual Error setClientTargetSlotCount(Display display) = 0;
 
-    virtual Error validateDisplay(Display display, uint32_t* outNumTypes,
-                                  uint32_t* outNumRequests) = 0;
+    virtual Error validateDisplay(Display display, nsecs_t expectedPresentTime,
+                                  uint32_t* outNumTypes, uint32_t* outNumRequests) = 0;
 
-    virtual Error presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
-                                           uint32_t* outNumRequests, int* outPresentFence,
-                                           uint32_t* state) = 0;
+    virtual Error presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
+                                           uint32_t* outNumTypes, uint32_t* outNumRequests,
+                                           int* outPresentFence, uint32_t* state) = 0;
 
     virtual Error setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) = 0;
     /* see setClientTarget for the purpose of slot */
@@ -208,9 +215,10 @@ public:
     virtual Error setDisplayBrightness(Display display, float brightness) = 0;
 
     // Composer HAL 2.4
-    virtual bool isVsyncPeriodSwitchSupported() = 0;
-    virtual Error getDisplayCapabilities(Display display,
-                                         std::vector<DisplayCapability>* outCapabilities) = 0;
+    virtual Error getDisplayCapabilities(
+            Display display,
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*
+                    outCapabilities) = 0;
     virtual V2_4::Error getDisplayConnectionType(
             Display display, IComposerClient::DisplayConnectionType* outType) = 0;
     virtual V2_4::Error getDisplayVsyncPeriod(Display display,

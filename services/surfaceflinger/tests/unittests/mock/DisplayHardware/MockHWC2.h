@@ -30,7 +30,9 @@ public:
     MOCK_METHOD(hal::HWDisplayId, getId, (), (const, override));
     MOCK_METHOD(bool, isConnected, (), (const, override));
     MOCK_METHOD(void, setConnected, (bool), (override));
-    MOCK_METHOD(bool, hasCapability, (hal::DisplayCapability), (const, override));
+    MOCK_METHOD(bool, hasCapability,
+                (aidl::android::hardware::graphics::composer3::DisplayCapability),
+                (const, override));
     MOCK_METHOD(bool, isVsyncPeriodSwitchSupported, (), (const, override));
     MOCK_METHOD(void, onLayerDestroyed, (hal::HWLayerId), (override));
 
@@ -68,16 +70,16 @@ public:
                  const android::sp<android::Fence> &, hal::Dataspace),
                 (override));
     MOCK_METHOD(hal::Error, setColorMode, (hal::ColorMode, hal::RenderIntent), (override));
-    MOCK_METHOD(hal::Error, setColorTransform, (const android::mat4 &, hal::ColorTransform),
-                (override));
+    MOCK_METHOD(hal::Error, setColorTransform, (const android::mat4 &), (override));
     MOCK_METHOD(hal::Error, setOutputBuffer,
                 (const android::sp<android::GraphicBuffer> &, const android::sp<android::Fence> &),
                 (override));
     MOCK_METHOD(hal::Error, setPowerMode, (hal::PowerMode), (override));
     MOCK_METHOD(hal::Error, setVsyncEnabled, (hal::Vsync), (override));
-    MOCK_METHOD(hal::Error, validate, (uint32_t *, uint32_t *), (override));
+    MOCK_METHOD(hal::Error, validate, (nsecs_t, uint32_t *, uint32_t *), (override));
     MOCK_METHOD(hal::Error, presentOrValidate,
-                (uint32_t *, uint32_t *, android::sp<android::Fence> *, uint32_t *), (override));
+                (nsecs_t, uint32_t *, uint32_t *, android::sp<android::Fence> *, uint32_t *),
+                (override));
     MOCK_METHOD(std::future<hal::Error>, setDisplayBrightness, (float), (override));
     MOCK_METHOD(hal::Error, setActiveConfigWithConstraints,
                 (hal::HWConfigId, const hal::VsyncPeriodChangeConstraints &,
