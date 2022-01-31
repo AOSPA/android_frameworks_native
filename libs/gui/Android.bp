@@ -66,6 +66,7 @@ cc_library_static {
     host_supported: true,
     srcs: [
         ":guiconstants_aidl",
+        ":inputconstants_aidl",
         "android/gui/DisplayInfo.aidl",
         "android/gui/FocusRequest.aidl",
         "android/gui/InputApplicationInfo.aidl",
@@ -244,10 +245,7 @@ cc_defaults {
         "libpdx_headers",
     ],
 
-    pgo: {
-        sampling: true,
-        profile_file: "libgui/libgui.profdata",
-    },
+    afdo: true,
 
     lto: {
         thin: true,
