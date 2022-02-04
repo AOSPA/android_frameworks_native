@@ -248,7 +248,8 @@ public:
     Error setLayerSurfaceDamage(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& damage) override;
     Error setLayerBlendMode(Display display, Layer layer, IComposerClient::BlendMode mode) override;
-    Error setLayerColor(Display display, Layer layer, const IComposerClient::Color& color) override;
+    Error setLayerColor(Display display, Layer layer,
+                        const aidl::android::hardware::graphics::composer3::Color& color) override;
     Error setLayerCompositionType(
             Display display, Layer layer,
             aidl::android::hardware::graphics::composer3::Composition type) override;
@@ -290,7 +291,8 @@ public:
     Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer,
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
-    Error setDisplayBrightness(Display display, float brightness) override;
+    Error setDisplayBrightness(Display display, float brightness,
+                               const DisplayBrightnessOptions& options) override;
     Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
@@ -318,7 +320,14 @@ public:
     Error getClientTargetProperty(Display display,
                                   IComposerClient::ClientTargetProperty* outClientTargetProperty,
                                   float* outWhitePointNits) override;
+
+    // AIDL Composer HAL
     Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) override;
+    Error setLayerBlockingRegion(Display display, Layer layer,
+                                 const std::vector<IComposerClient::Rect>& blocking) override;
+    Error setBootDisplayConfig(Display displayId, Config) override;
+    Error clearBootDisplayConfig(Display displayId) override;
+    Error getPreferredBootDisplayConfig(Display displayId, Config*) override;
 #ifdef QTI_UNIFIED_DRAW
     Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
     Error setLayerFlag(Display display, Layer layer,

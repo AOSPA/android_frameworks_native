@@ -34,8 +34,10 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ComposerHal.h"
 #include "Hal.h"
 
+#include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
@@ -148,10 +150,15 @@ public:
             nsecs_t expectedPresentTime, uint32_t* outNumTypes, uint32_t* outNumRequests,
             android::sp<android::Fence>* outPresentFence, uint32_t* state) = 0;
     [[clang::warn_unused_result]] virtual std::future<hal::Error> setDisplayBrightness(
-            float brightness) = 0;
+            float brightness, const Hwc2::Composer::DisplayBrightnessOptions& options) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setActiveConfigWithConstraints(
             hal::HWConfigId configId, const hal::VsyncPeriodChangeConstraints& constraints,
             hal::VsyncPeriodChangeTimeline* outTimeline) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setBootDisplayConfig(
+            hal::HWConfigId configId) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error clearBootDisplayConfig() = 0;
+    [[clang::warn_unused_result]] virtual hal::Error getPreferredBootDisplayConfig(
+            hal::HWConfigId* configId) const = 0;
     [[clang::warn_unused_result]] virtual hal::Error setAutoLowLatencyMode(bool on) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getSupportedContentTypes(
             std::vector<hal::ContentType>*) const = 0;
@@ -224,10 +231,14 @@ public:
                                  uint32_t* outNumRequests,
                                  android::sp<android::Fence>* outPresentFence,
                                  uint32_t* state) override;
-    std::future<hal::Error> setDisplayBrightness(float brightness) override;
+    std::future<hal::Error> setDisplayBrightness(
+            float brightness, const Hwc2::Composer::DisplayBrightnessOptions& options) override;
     hal::Error setActiveConfigWithConstraints(hal::HWConfigId configId,
                                               const hal::VsyncPeriodChangeConstraints& constraints,
                                               hal::VsyncPeriodChangeTimeline* outTimeline) override;
+    hal::Error setBootDisplayConfig(hal::HWConfigId configId) override;
+    hal::Error clearBootDisplayConfig() override;
+    hal::Error getPreferredBootDisplayConfig(hal::HWConfigId* configId) const override;
     hal::Error setAutoLowLatencyMode(bool on) override;
     hal::Error getSupportedContentTypes(
             std::vector<hal::ContentType>* outSupportedContentTypes) const override;
@@ -295,7 +306,8 @@ public:
             const android::Region& damage) = 0;
 
     [[clang::warn_unused_result]] virtual hal::Error setBlendMode(hal::BlendMode mode) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error setColor(hal::Color color) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setColor(
+            aidl::android::hardware::graphics::composer3::Color color) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setCompositionType(
             aidl::android::hardware::graphics::composer3::Composition type) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setDataspace(hal::Dataspace dataspace) = 0;
@@ -324,6 +336,8 @@ public:
 
     // AIDL HAL
     [[clang::warn_unused_result]] virtual hal::Error setWhitePointNits(float whitePointNits) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setBlockingRegion(
+            const android::Region& region) = 0;
 #ifdef QTI_UNIFIED_DRAW
     [[clang::warn_unused_result]] virtual hal::Error setLayerFlag(
             IQtiComposerClient::LayerFlag layerFlag) = 0;
@@ -351,7 +365,7 @@ public:
     hal::Error setSurfaceDamage(const android::Region& damage) override;
 
     hal::Error setBlendMode(hal::BlendMode mode) override;
-    hal::Error setColor(hal::Color color) override;
+    hal::Error setColor(aidl::android::hardware::graphics::composer3::Color color) override;
     hal::Error setCompositionType(
             aidl::android::hardware::graphics::composer3::Composition type) override;
     hal::Error setDataspace(hal::Dataspace dataspace) override;
@@ -375,6 +389,7 @@ public:
 
     // AIDL HAL
     hal::Error setWhitePointNits(float whitePointNits) override;
+    hal::Error setBlockingRegion(const android::Region& region) override;
 #ifdef QTI_UNIFIED_DRAW
     hal::Error setLayerFlag(IQtiComposerClient::LayerFlag layerFlag) override;
 #endif
@@ -393,6 +408,7 @@ private:
     // multiple times.
     android::Region mVisibleRegion = android::Region::INVALID_REGION;
     android::Region mDamageRegion = android::Region::INVALID_REGION;
+    android::Region mBlockingRegion = android::Region::INVALID_REGION;
     hal::Dataspace mDataSpace = hal::Dataspace::UNKNOWN;
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;

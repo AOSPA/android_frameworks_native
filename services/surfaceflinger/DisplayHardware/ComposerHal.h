@@ -31,6 +31,7 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
 
+#include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
@@ -85,6 +86,9 @@ public:
     enum class OptionalFeature {
         RefreshRateSwitching,
         ExpectedPresentTime,
+        // Whether setDisplayBrightness is able to be applied as part of a display command.
+        DisplayBrightnessCommand,
+        BootDisplayConfig,
     };
 
     virtual bool isSupported(OptionalFeature) const = 0;
@@ -169,8 +173,9 @@ public:
                                         const std::vector<IComposerClient::Rect>& damage) = 0;
     virtual Error setLayerBlendMode(Display display, Layer layer,
                                     IComposerClient::BlendMode mode) = 0;
-    virtual Error setLayerColor(Display display, Layer layer,
-                                const IComposerClient::Color& color) = 0;
+    virtual Error setLayerColor(
+            Display display, Layer layer,
+            const aidl::android::hardware::graphics::composer3::Color& color) = 0;
     virtual Error setLayerCompositionType(
             Display display, Layer layer,
             aidl::android::hardware::graphics::composer3::Composition type) = 0;
@@ -212,7 +217,20 @@ public:
                                             DisplayedFrameStats* outStats) = 0;
     virtual Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer, const std::vector<PerFrameMetadataBlob>& metadata) = 0;
-    virtual Error setDisplayBrightness(Display display, float brightness) = 0;
+    // Options for setting the display brightness
+    struct DisplayBrightnessOptions {
+        // If true, then immediately submits a brightness change request to composer. Otherwise,
+        // submission of the brightness change may be deferred until presenting the next frame.
+        // applyImmediately should only be false if OptionalFeature::DisplayBrightnessCommand is
+        // supported.
+        bool applyImmediately = true;
+
+        bool operator==(const DisplayBrightnessOptions& other) const {
+            return applyImmediately == other.applyImmediately;
+        }
+    };
+    virtual Error setDisplayBrightness(Display display, float brightness,
+                                       const DisplayBrightnessOptions& options) = 0;
 
     // Composer HAL 2.4
     virtual Error getDisplayCapabilities(
@@ -239,6 +257,7 @@ public:
                                                 const std::vector<uint8_t>& value) = 0;
     virtual V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) = 0;
+
     virtual Error getClientTargetProperty(
             Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
             float* outWhitePointNits) = 0;
@@ -253,6 +272,11 @@ public:
 #endif
     // AIDL Composer
     virtual Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) = 0;
+    virtual Error setLayerBlockingRegion(Display display, Layer layer,
+                                         const std::vector<IComposerClient::Rect>& blocking) = 0;
+    virtual Error setBootDisplayConfig(Display displayId, Config) = 0;
+    virtual Error clearBootDisplayConfig(Display displayId) = 0;
+    virtual Error getPreferredBootDisplayConfig(Display displayId, Config*) = 0;
 };
 
 } // namespace android::Hwc2

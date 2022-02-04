@@ -337,10 +337,6 @@ public:
 
     static constexpr SkipInitializationTag SkipInitialization;
 
-    // Whether or not SDR layers should be dimmed to the desired SDR white point instead of
-    // being treated as native display brightness
-    static bool enableSdrDimming;
-
     static LatchUnsignaledConfig enableLatchUnsignaledConfig;
 
     // must be called before clients can connect
@@ -422,6 +418,9 @@ protected:
 
     virtual void processDisplayAdded(const wp<IBinder>& displayToken, const DisplayDeviceState&)
             REQUIRES(mStateLock);
+
+    virtual std::shared_ptr<renderengine::ExternalTexture> getExternalTextureFromBufferData(
+            const BufferData& bufferData, const char* layerName) const;
 
     // Returns true if any display matches a `bool(const DisplayDevice&)` predicate.
     template <typename Predicate>
@@ -641,6 +640,11 @@ private:
     status_t getDisplayNativePrimaries(const sp<IBinder>& displayToken,
                                        ui::DisplayPrimaries&) override;
     status_t setActiveColorMode(const sp<IBinder>& displayToken, ui::ColorMode colorMode) override;
+    status_t getBootDisplayModeSupport(bool* outSupport) const override;
+    status_t setBootDisplayMode(const sp<IBinder>& displayToken, ui::DisplayModeId id) override;
+    status_t clearBootDisplayMode(const sp<IBinder>& displayToken) override;
+    status_t getPreferredBootDisplayMode(const sp<IBinder>& displayToken,
+                                         ui::DisplayModeId* id) override;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on) override;
     void setGameContentType(const sp<IBinder>& displayToken, bool on) override;
     void setPowerMode(const sp<IBinder>& displayToken, int mode) override;
@@ -702,6 +706,8 @@ private:
     status_t notifyPowerBoost(int32_t boostId) override;
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
+    status_t getDisplayDecorationSupport(const sp<IBinder>& displayToken,
+                                         bool* outSupport) const override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
@@ -786,6 +792,9 @@ private:
     void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock);
 
+    // Returns true if the display has a visible HDR layer in its layer stack.
+    bool hasVisibleHdrLayer(const sp<DisplayDevice>& display) REQUIRES(mStateLock);
+
     // Sets the desired display mode specs.
     status_t setDesiredDisplayModeSpecsInternal(
             const sp<DisplayDevice>& display,
@@ -806,6 +815,7 @@ private:
     void updateLayerGeometry();
 
     void updateInputFlinger();
+    void persistDisplayBrightness(bool needsComposite) REQUIRES(SF_MAIN_THREAD);
     void buildWindowInfos(std::vector<gui::WindowInfo>& outWindowInfos,
                           std::vector<gui::DisplayInfo>& outDisplayInfos);
     void commitInputWindowCommands() REQUIRES(mStateLock);
@@ -1370,8 +1380,7 @@ private:
     LayerTracing mLayerTracing{*this};
     bool mLayerTracingEnabled = false;
 
-    TransactionTracing mTransactionTracing;
-    bool mTransactionTracingEnabled = false;
+    std::optional<TransactionTracing> mTransactionTracing;
     std::atomic<bool> mTracingEnabledChanged = false;
 
     const std::shared_ptr<TimeStats> mTimeStats;

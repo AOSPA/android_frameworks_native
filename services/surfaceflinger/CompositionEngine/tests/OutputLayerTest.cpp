@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 #include <log/log.h>
 
+#include <renderengine/impl/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
 #include <ui/PixelFormat.h>
 #include "MockHWC2.h"
@@ -815,10 +816,11 @@ struct OutputLayerWriteStateToHWCTest : public OutputLayerTest {
         auto& overrideInfo = mOutputLayer.editState().overrideInfo;
 
         overrideInfo.buffer = std::make_shared<
-                renderengine::ExternalTexture>(kOverrideBuffer, mRenderEngine,
-                                               renderengine::ExternalTexture::Usage::READABLE |
-                                                       renderengine::ExternalTexture::Usage::
-                                                               WRITEABLE);
+                renderengine::impl::ExternalTexture>(kOverrideBuffer, mRenderEngine,
+                                                     renderengine::impl::ExternalTexture::Usage::
+                                                                     READABLE |
+                                                             renderengine::impl::ExternalTexture::
+                                                                     Usage::WRITEABLE);
         overrideInfo.acquireFence = kOverrideFence;
         overrideInfo.displayFrame = kOverrideDisplayFrame;
         overrideInfo.dataspace = kOverrideDataspace;
@@ -864,9 +866,8 @@ struct OutputLayerWriteStateToHWCTest : public OutputLayerTest {
     }
 
     void expectSetColorCall() {
-        const hal::Color color = {static_cast<uint8_t>(std::round(kColor.r * 255)),
-                                  static_cast<uint8_t>(std::round(kColor.g * 255)),
-                                  static_cast<uint8_t>(std::round(kColor.b * 255)), 255};
+        const aidl::android::hardware::graphics::composer3::Color color = {kColor.r, kColor.g,
+                                                                           kColor.b, 1.0f};
 
         EXPECT_CALL(*mHwcLayer, setColor(ColorEq(color))).WillOnce(Return(kError));
     }

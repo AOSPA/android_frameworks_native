@@ -416,8 +416,10 @@ public:
     // Used only to set BufferStateLayer state
     virtual bool setTransform(uint32_t /*transform*/) { return false; };
     virtual bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/) { return false; };
-    virtual bool setBuffer(const BufferData&, nsecs_t /*postTime*/, nsecs_t /*desiredPresentTime*/,
-                           bool /*isAutoTimestamp*/, std::optional<nsecs_t> /* dequeueTime */,
+    virtual bool setBuffer(std::shared_ptr<renderengine::ExternalTexture>& /* buffer */,
+                           const BufferData& /* bufferData */, nsecs_t /* postTime */,
+                           nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
+                           std::optional<nsecs_t> /* dequeueTime */,
                            const FrameTimelineInfo& /*info*/) {
         return false;
     };
@@ -564,6 +566,9 @@ public:
     virtual uint32_t getBufferTransform() const { return 0; }
 
     virtual sp<GraphicBuffer> getBuffer() const { return nullptr; }
+    virtual const std::shared_ptr<renderengine::ExternalTexture>& getExternalTexture() const {
+        return mDrawingState.buffer;
+    };
 
     virtual ui::Transform::RotationFlags getTransformHint() const { return ui::Transform::ROT_0; }
 

@@ -130,16 +130,6 @@ AidlFRect translate(IComposerClient::FRect x) {
 }
 
 template <>
-Color translate(IComposerClient::Color x) {
-    return Color{
-            .r = static_cast<int8_t>(x.r),
-            .g = static_cast<int8_t>(x.g),
-            .b = static_cast<int8_t>(x.b),
-            .a = static_cast<int8_t>(x.a),
-    };
-}
-
-template <>
 AidlPerFrameMetadataBlob translate(IComposerClient::PerFrameMetadataBlob x) {
     AidlPerFrameMetadataBlob blob;
     blob.key = translate<AidlPerFrameMetadataKey>(x.key),
@@ -316,6 +306,8 @@ bool AidlComposer::isSupported(OptionalFeature feature) const {
     switch (feature) {
         case OptionalFeature::RefreshRateSwitching:
         case OptionalFeature::ExpectedPresentTime:
+        case OptionalFeature::DisplayBrightnessCommand:
+        case OptionalFeature::BootDisplayConfig:
             return true;
     }
 }
@@ -739,10 +731,8 @@ Error AidlComposer::setLayerBlendMode(Display display, Layer layer,
     return Error::NONE;
 }
 
-Error AidlComposer::setLayerColor(Display display, Layer layer,
-                                  const IComposerClient::Color& color) {
-    mWriter.setLayerColor(translate<int64_t>(display), translate<int64_t>(layer),
-                          translate<Color>(color));
+Error AidlComposer::setLayerColor(Display display, Layer layer, const Color& color) {
+    mWriter.setLayerColor(translate<int64_t>(display), translate<int64_t>(layer), color);
     return Error::NONE;
 }
 
@@ -1019,13 +1009,14 @@ Error AidlComposer::setLayerPerFrameMetadataBlobs(
     return Error::NONE;
 }
 
-Error AidlComposer::setDisplayBrightness(Display display, float brightness) {
-    const auto status =
-            mAidlComposerClient->setDisplayBrightness(translate<int64_t>(display), brightness);
-    if (!status.isOk()) {
-        ALOGE("setDisplayBrightness failed %s", status.getDescription().c_str());
-        return static_cast<Error>(status.getServiceSpecificError());
+Error AidlComposer::setDisplayBrightness(Display display, float brightness,
+                                         const DisplayBrightnessOptions& options) {
+    mWriter.setDisplayBrightness(translate<int64_t>(display), brightness);
+
+    if (options.applyImmediately) {
+        return execute();
     }
+
     return Error::NONE;
 }
 
@@ -1132,6 +1123,38 @@ V2_4::Error AidlComposer::getLayerGenericMetadataKeys(
     return V2_4::Error::UNSUPPORTED;
 }
 
+Error AidlComposer::setBootDisplayConfig(Display display, Config config) {
+    const auto status = mAidlComposerClient->setBootDisplayConfig(translate<int64_t>(display),
+                                                                  translate<int32_t>(config));
+    if (!status.isOk()) {
+        ALOGE("setBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    return Error::NONE;
+}
+
+Error AidlComposer::clearBootDisplayConfig(Display display) {
+    const auto status = mAidlComposerClient->clearBootDisplayConfig(translate<int64_t>(display));
+    if (!status.isOk()) {
+        ALOGE("clearBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    return Error::NONE;
+}
+
+Error AidlComposer::getPreferredBootDisplayConfig(Display display, Config* config) {
+    int32_t displayConfig;
+    const auto status =
+            mAidlComposerClient->getPreferredBootDisplayConfig(translate<int64_t>(display),
+                                                               &displayConfig);
+    if (!status.isOk()) {
+        ALOGE("getPreferredBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    *config = translate<uint32_t>(displayConfig);
+    return Error::NONE;
+}
+
 Error AidlComposer::getClientTargetProperty(
         Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
         float* whitePointNits) {
@@ -1148,5 +1171,11 @@ Error AidlComposer::setLayerWhitePointNits(Display display, Layer layer, float w
     return Error::NONE;
 }
 
+Error AidlComposer::setLayerBlockingRegion(Display display, Layer layer,
+                                           const std::vector<IComposerClient::Rect>& blocking) {
+    mWriter.setLayerBlockingRegion(translate<int64_t>(display), translate<int64_t>(layer),
+                                   translate<AidlRect>(blocking));
+    return Error::NONE;
+}
 } // namespace Hwc2
 } // namespace android
