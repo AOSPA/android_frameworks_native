@@ -51,7 +51,6 @@ using V2_4::VsyncPeriodNanos;
 
 using Attribute = IComposerClient::Attribute;
 using BlendMode = IComposerClient::BlendMode;
-using Color = IComposerClient::Color;
 using Connection = IComposerCallback::Connection;
 using ContentType = IComposerClient::ContentType;
 using Capability = IComposer::Capability;
@@ -136,6 +135,8 @@ inline std::string to_string(
             return "AutoLowLatencyMode";
         case aidl::android::hardware::graphics::composer3::DisplayCapability::SUSPEND:
             return "Suspend";
+        case aidl::android::hardware::graphics::composer3::DisplayCapability::DISPLAY_DECORATION:
+            return "DisplayDecoration";
         default:
             return "Unknown";
     }

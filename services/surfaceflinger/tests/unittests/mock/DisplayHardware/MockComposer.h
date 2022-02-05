@@ -99,7 +99,8 @@ public:
     MOCK_METHOD3(setLayerSurfaceDamage,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerBlendMode, Error(Display, Layer, IComposerClient::BlendMode));
-    MOCK_METHOD3(setLayerColor, Error(Display, Layer, const IComposerClient::Color&));
+    MOCK_METHOD3(setLayerColor,
+                 Error(Display, Layer, const aidl::android::hardware::graphics::composer3::Color&));
     MOCK_METHOD3(setLayerCompositionType,
                  Error(Display, Layer, aidl::android::hardware::graphics::composer3::Composition));
     MOCK_METHOD3(setLayerDataspace, Error(Display, Layer, Dataspace));
@@ -123,7 +124,7 @@ public:
                  Error(Display, uint64_t, uint64_t, DisplayedFrameStats*));
     MOCK_METHOD3(setLayerPerFrameMetadataBlobs,
                  Error(Display, Layer, const std::vector<IComposerClient::PerFrameMetadataBlob>&));
-    MOCK_METHOD2(setDisplayBrightness, Error(Display, float));
+    MOCK_METHOD3(setDisplayBrightness, Error(Display, float, const DisplayBrightnessOptions&));
     MOCK_METHOD2(
             getDisplayCapabilities,
             Error(Display,
@@ -137,6 +138,10 @@ public:
                  V2_4::Error(Display, Config, const IComposerClient::VsyncPeriodChangeConstraints&,
                              VsyncPeriodChangeTimeline*));
     MOCK_METHOD2(setAutoLowLatencyMode, V2_4::Error(Display, bool));
+    MOCK_METHOD2(getBootDisplayConfigSupport, Error(Display, bool*));
+    MOCK_METHOD2(setBootDisplayConfig, Error(Display, Config));
+    MOCK_METHOD1(clearBootDisplayConfig, Error(Display));
+    MOCK_METHOD2(getPreferredBootDisplayConfig, Error(Display, Config*));
     MOCK_METHOD2(getSupportedContentTypes,
                  V2_4::Error(Display, std::vector<IComposerClient::ContentType>*));
     MOCK_METHOD2(setContentType, V2_4::Error(Display, IComposerClient::ContentType));
@@ -148,6 +153,8 @@ public:
     MOCK_METHOD3(getClientTargetProperty,
                  Error(Display, IComposerClient::ClientTargetProperty*, float*));
     MOCK_METHOD3(setLayerWhitePointNits, Error(Display, Layer, float));
+    MOCK_METHOD3(setLayerBlockingRegion,
+                 Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));

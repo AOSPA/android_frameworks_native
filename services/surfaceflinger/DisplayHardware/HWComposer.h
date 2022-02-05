@@ -197,7 +197,9 @@ public:
                                                DisplayedFrameStats* outStats) = 0;
 
     // Sets the brightness of a display.
-    virtual std::future<status_t> setDisplayBrightness(PhysicalDisplayId, float brightness) = 0;
+    virtual std::future<status_t> setDisplayBrightness(
+            PhysicalDisplayId, float brightness,
+            const Hwc2::Composer::DisplayBrightnessOptions&) = 0;
 
     // Events handling ---------------------------------------------------------
 
@@ -258,6 +260,13 @@ public:
 
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
+
+    // Composer 3.0
+    virtual bool getBootDisplayModeSupport() = 0;
+    virtual status_t setBootDisplayMode(PhysicalDisplayId, hal::HWConfigId) = 0;
+    virtual status_t clearBootDisplayMode(PhysicalDisplayId) = 0;
+    virtual hal::HWConfigId getPreferredBootDisplayMode(PhysicalDisplayId) = 0;
+
     virtual std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const = 0;
     virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
@@ -353,7 +362,9 @@ public:
                                               uint64_t maxFrames) override;
     status_t getDisplayedContentSample(HalDisplayId, uint64_t maxFrames, uint64_t timestamp,
                                        DisplayedFrameStats* outStats) override;
-    std::future<status_t> setDisplayBrightness(PhysicalDisplayId, float brightness) override;
+    std::future<status_t> setDisplayBrightness(
+            PhysicalDisplayId, float brightness,
+            const Hwc2::Composer::DisplayBrightnessOptions&) override;
 
     // Events handling ---------------------------------------------------------
 
@@ -390,6 +401,12 @@ public:
     status_t setContentType(PhysicalDisplayId, hal::ContentType) override;
 
     const std::unordered_map<std::string, bool>& getSupportedLayerGenericMetadata() const override;
+
+    // Composer 3.0
+    bool getBootDisplayModeSupport() override;
+    status_t setBootDisplayMode(PhysicalDisplayId, hal::HWConfigId) override;
+    status_t clearBootDisplayMode(PhysicalDisplayId) override;
+    hal::HWConfigId getPreferredBootDisplayMode(PhysicalDisplayId) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;

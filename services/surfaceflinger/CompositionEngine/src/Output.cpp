@@ -201,6 +201,10 @@ void Output::setProjection(ui::Rotation orientation, const Rect& layerStackSpace
     dirtyEntireOutput();
 }
 
+void Output::setNextBrightness(float brightness) {
+    editState().displayBrightness = brightness;
+}
+
 void Output::setDisplaySize(const ui::Size& size) {
     mRenderSurface->setDisplaySize(size);
 

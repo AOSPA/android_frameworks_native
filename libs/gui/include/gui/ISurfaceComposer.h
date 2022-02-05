@@ -224,6 +224,35 @@ public:
             ui::ColorMode colorMode) = 0;
 
     /**
+     * Sets the user-preferred display mode that a device should boot in.
+     */
+    virtual status_t setBootDisplayMode(const sp<IBinder>& display, ui::DisplayModeId) = 0;
+
+    /**
+     * Clears the user-preferred display mode. The device should now boot in system preferred
+     * display mode.
+     */
+    virtual status_t clearBootDisplayMode(const sp<IBinder>& display) = 0;
+
+    /**
+     * Gets the display mode in which the device boots if there is no user-preferred display mode.
+     */
+    virtual status_t getPreferredBootDisplayMode(const sp<IBinder>& display,
+                                                 ui::DisplayModeId*) = 0;
+
+    /**
+     * Gets whether boot time display mode operations are supported on the device.
+     *
+     * outSupport
+     *      An output parameter for whether boot time display mode operations are supported.
+     *
+     * Returns NO_ERROR upon success. Otherwise,
+     *      NAME_NOT_FOUND if the display is invalid, or
+     *      BAD_VALUE      if the output parameter is invalid.
+     */
+    virtual status_t getBootDisplayModeSupport(bool* outSupport) const = 0;
+
+    /**
      * Switches Auto Low Latency Mode on/off on the connected display, if it is
      * available. This should only be called if the display supports Auto Low
      * Latency Mode as reported in #getDynamicDisplayInfo.
@@ -514,6 +543,22 @@ public:
                                              float lightRadius) = 0;
 
     /*
+     * Gets whether a display supports DISPLAY_DECORATION layers.
+     *
+     * displayToken
+     *      The token of the display.
+     * outSupport
+     *      An output parameter for whether the display supports
+     *      DISPLAY_DECORATION layers.
+     *
+     * Returns NO_ERROR upon success. Otherwise,
+     *      NAME_NOT_FOUND if the display is invalid, or
+     *      BAD_VALUE      if the output parameter is invalid.
+     */
+    virtual status_t getDisplayDecorationSupport(const sp<IBinder>& displayToken,
+                                                 bool* outSupport) const = 0;
+
+    /*
      * Sets the intended frame rate for a surface. See ANativeWindow_setFrameRate() for more info.
      */
     virtual status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
@@ -635,6 +680,11 @@ public:
         ADD_WINDOW_INFOS_LISTENER,
         REMOVE_WINDOW_INFOS_LISTENER,
         GET_PRIMARY_PHYSICAL_DISPLAY_ID,
+        GET_DISPLAY_DECORATION_SUPPORT,
+        GET_BOOT_DISPLAY_MODE_SUPPORT,
+        SET_BOOT_DISPLAY_MODE,
+        CLEAR_BOOT_DISPLAY_MODE,
+        GET_PREFERRED_BOOT_DISPLAY_MODE,
         // Always append new enum to the end.
     };
 
