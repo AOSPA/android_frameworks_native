@@ -206,7 +206,7 @@ float RefreshRateConfigs::calculateLayerScoreLocked(const LayerRequirement& laye
 
     if (layer.vote == LayerVoteType::ExplicitExact) {
         const int divider = getFrameRateDivider(refreshRate.getFps(), layer.desiredRefreshRate);
-        if (mSupportsFrameRateOverride) {
+        if (mSupportsFrameRateOverrideByContent) {
             // Since we support frame rate override, allow refresh rates which are
             // multiples of the layer's request, as those apps would be throttled
             // down to run at the desired refresh rate.
@@ -225,7 +225,7 @@ float RefreshRateConfigs::calculateLayerScoreLocked(const LayerRequirement& laye
     // The layer frame rate is not a divider of the refresh rate,
     // there is a small penalty attached to the score to favor the frame rates
     // the exactly matches the display refresh rate or a multiple.
-    constexpr float kNonExactMatchingPenalty = 0.99f;
+    constexpr float kNonExactMatchingPenalty = 0.95f;
     return calculateNonExactMatchingLayerScoreLocked(layer, refreshRate) * seamlessness *
             kNonExactMatchingPenalty;
 }
@@ -479,7 +479,7 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
     const RefreshRate& touchRefreshRate = getMaxRefreshRateByPolicyLocked(anchorGroup);
 
     const bool touchBoostForExplicitExact = [&] {
-        if (mSupportsFrameRateOverride) {
+        if (mSupportsFrameRateOverrideByContent) {
             // Enable touch boost if there are other layers besides exact
             return explicitExact + noVoteLayers != layers.size();
         } else {
@@ -547,7 +547,6 @@ RefreshRateConfigs::UidToFrameRateOverride RefreshRateConfigs::getFrameRateOverr
         const std::vector<LayerRequirement>& layers, Fps displayFrameRate,
         GlobalSignals globalSignals) const {
     ATRACE_CALL();
-    if (!mSupportsFrameRateOverride) return {};
 
     ALOGV("getFrameRateOverrides %zu layers", layers.size());
     std::lock_guard lock(mLock);
@@ -766,12 +765,12 @@ void RefreshRateConfigs::updateDisplayModes(const DisplayModes& modes,
     mMinSupportedRefreshRate = sortedModes.front();
     mMaxSupportedRefreshRate = sortedModes.back();
 
-    mSupportsFrameRateOverride = false;
+    mSupportsFrameRateOverrideByContent = false;
     if (mConfig.enableFrameRateOverride) {
         for (const auto& mode1 : sortedModes) {
             for (const auto& mode2 : sortedModes) {
                 if (getFrameRateDivider(mode1->getFps(), mode2->getFps()) >= 2) {
-                    mSupportsFrameRateOverride = true;
+                    mSupportsFrameRateOverrideByContent = true;
                     break;
                 }
             }
@@ -1010,8 +1009,8 @@ void RefreshRateConfigs::dump(std::string& result) const {
         base::StringAppendF(&result, "\t%s\n", refreshRate->toString().c_str());
     }
 
-    base::StringAppendF(&result, "Supports Frame Rate Override: %s\n",
-                        mSupportsFrameRateOverride ? "yes" : "no");
+    base::StringAppendF(&result, "Supports Frame Rate Override By Content: %s\n",
+                        mSupportsFrameRateOverrideByContent ? "yes" : "no");
     base::StringAppendF(&result, "Idle timer: (%s) %s\n",
                         mConfig.supportKernelIdleTimer ? "kernel" : "platform",
                         mIdleTimer ? mIdleTimer->dump().c_str() : "off");
