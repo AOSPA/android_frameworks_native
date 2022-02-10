@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include <ftl/small_map.h>
 #include <utils/Timers.h>
@@ -46,6 +47,7 @@ public:
 
     virtual void setRefreshRateFps(Fps fps) = 0;
     virtual void dump(std::string& result) const = 0;
+    virtual void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) = 0;
 };
 
 namespace impl {
@@ -83,6 +85,9 @@ public:
 
     // Returns current offsets in human friendly format.
     void dump(std::string& result) const override;
+
+    // Update the Advanced Sf Offsets for the given refresh rates in mOffsets map
+    void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) override;
 
 protected:
     virtual VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const = 0;
@@ -146,6 +151,9 @@ private:
 class WorkDuration : public VsyncConfiguration {
 public:
     explicit WorkDuration(Fps currentRefrshRate);
+
+    // Update the Advanced Sf Offsets for the given refresh rates in mOffsets map.
+    void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) override;
 
 protected:
     // Used for unit tests
