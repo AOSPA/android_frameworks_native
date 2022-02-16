@@ -4005,6 +4005,15 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
     const Fps refreshRate = activeDisplay->refreshRateConfigs().getCurrentRefreshRate().getFps();
     updatePhaseConfiguration(refreshRate);
     mRefreshRateStats->setRefreshRate(refreshRate);
+    if (mUseAdvanceSfOffset && mComposerExtnIntf) {
+        const auto& supportedModes = getDefaultDisplayDeviceLocked()->getSupportedModes();
+        for (auto mode : supportedModes) {
+            mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
+        }
+
+        // Update the Advanced SF Offsets/Durations
+        mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+    }
 }
 
 void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
@@ -8884,11 +8893,16 @@ void SurfaceFlinger::createPhaseOffsetExtn() {
             ALOGI("Created PhaseOffset extension");
         }
 
-        // Get the Advanced SF Offsets from Phase Offset Extn
-        std::unordered_map<float, int64_t> advancedSfOffsets;
-        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
-        // Update the Advanced SF Offsets
-        mVsyncConfiguration->UpdateSfOffsets(&advancedSfOffsets);
+        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&mAdvancedSfOffsets);
+
+        // Populate the fps supported on device in mOffsetCache
+        const auto& supportedModes = getDefaultDisplayDeviceLocked()->getSupportedModes();
+        for (auto mode : supportedModes) {
+            mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
+        }
+
+        // Update the Advanced SF Offsets/Durations
+        mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
         const auto vsyncConfig =
             mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
         ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);

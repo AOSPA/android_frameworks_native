@@ -152,7 +152,7 @@ class WorkDuration : public VsyncConfiguration {
 public:
     explicit WorkDuration(Fps currentRefrshRate);
 
-    // Update the Advanced Sf Offsets for the given refresh rates in mOffsets map.
+    // Update the Advanced Sf Offsets/Work Durations for the given refresh rates in mOffsets map.
     void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) override;
 
 protected:
