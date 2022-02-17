@@ -23,8 +23,8 @@
 #include <ftl/small_map.h>
 #include <utils/Timers.h>
 
-#include "Fps.h"
-#include "Scheduler/SchedulerUtils.h"
+#include <scheduler/Fps.h>
+
 #include "TimeStats/TimeStats.h"
 
 namespace android::scheduler {

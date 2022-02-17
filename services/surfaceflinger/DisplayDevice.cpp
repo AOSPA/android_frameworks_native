@@ -320,6 +320,22 @@ void DisplayDevice::setProjection(ui::Rotation orientation, Rect layerStackSpace
                                            orientedDisplaySpaceRect);
 }
 
+void DisplayDevice::stageBrightness(float brightness) {
+    mStagedBrightness = brightness;
+}
+
+void DisplayDevice::persistBrightness(bool needsComposite) {
+    if (needsComposite && mStagedBrightness && mBrightness != *mStagedBrightness) {
+        getCompositionDisplay()->setNextBrightness(*mStagedBrightness);
+        mBrightness = *mStagedBrightness;
+    }
+    mStagedBrightness = std::nullopt;
+}
+
+std::optional<float> DisplayDevice::getStagedBrightness() const {
+    return mStagedBrightness;
+}
+
 ui::Transform::RotationFlags DisplayDevice::getPrimaryDisplayRotationFlags() {
     return sPrimaryDisplayRotationFlags;
 }
@@ -492,7 +508,7 @@ bool DisplayDevice::setDesiredActiveMode(const ActiveModeInfo& info) {
     std::scoped_lock lock(mActiveModeLock);
     if (mDesiredActiveModeChanged) {
         // If a mode change is pending, just cache the latest request in mDesiredActiveMode
-        const Scheduler::ModeEvent prevConfig = mDesiredActiveMode.event;
+        const auto prevConfig = mDesiredActiveMode.event;
         mDesiredActiveMode = info;
         mDesiredActiveMode.event = mDesiredActiveMode.event | prevConfig;
         return false;
@@ -517,7 +533,7 @@ std::optional<DisplayDevice::ActiveModeInfo> DisplayDevice::getDesiredActiveMode
 
 void DisplayDevice::clearDesiredActiveModeState() {
     std::scoped_lock lock(mActiveModeLock);
-    mDesiredActiveMode.event = Scheduler::ModeEvent::None;
+    mDesiredActiveMode.event = scheduler::DisplayModeEvent::None;
     mDesiredActiveModeChanged = false;
 }
 

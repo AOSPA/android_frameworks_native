@@ -36,6 +36,7 @@
 #include <cutils/compiler.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
+#include <ftl/enum.h>
 #include <gui/BufferItem.h>
 #include <gui/LayerDebugInfo.h>
 #include <gui/Surface.h>
@@ -45,6 +46,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <ui/DataspaceUtils.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/PixelFormat.h>
@@ -101,7 +103,9 @@ Layer::Layer(const LayerCreationArgs& args)
     if (args.flags & ISurfaceComposerClient::eSecure) layerFlags |= layer_state_t::eLayerSecure;
     if (args.flags & ISurfaceComposerClient::eSkipScreenshot)
         layerFlags |= layer_state_t::eLayerSkipScreenshot;
-
+    if (args.sequence) {
+        sSequence = *args.sequence + 1;
+    }
     mDrawingState.flags = layerFlags;
     mDrawingState.active_legacy.transform.set(0, 0);
     mDrawingState.crop.makeInvalid();
@@ -419,6 +423,8 @@ void Layer::prepareBasicGeometryCompositionState() {
 
     compositionState->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     compositionState->alpha = alpha;
+    compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+    compositionState->blurRegions = drawingState.blurRegions;
     compositionState->stretchEffect = getStretchEffect();
 }
 
@@ -488,6 +494,11 @@ void Layer::preparePerFrameCompositionState() {
     // If there are no visible region changes, we still need to update blur parameters.
     compositionState->blurRegions = drawingState.blurRegions;
     compositionState->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+
+    // Layer framerate is used in caching decisions.
+    // Retrieve it from the scheduler which maintains an instance of LayerHistory, and store it in
+    // LayerFECompositionState where it would be visible to Flattener.
+    compositionState->fps = mFlinger->getLayerFramerate(systemTime(), getSequence());
 }
 
 void Layer::prepareCursorCompositionState() {
@@ -584,6 +595,8 @@ std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCom
 
     layerSettings.alpha = alpha;
     layerSettings.sourceDataspace = getDataSpace();
+
+    layerSettings.whitePointNits = targetSettings.whitePointNits;
     switch (targetSettings.blurSetting) {
         case LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled:
             layerSettings.backgroundBlurRadius = getBackgroundBlurRadius();
@@ -646,15 +659,16 @@ std::vector<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCompo
     return {*layerSettings};
 }
 
-Hwc2::IComposerClient::Composition Layer::getCompositionType(const DisplayDevice& display) const {
+aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionType(
+        const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
     if (outputLayer == nullptr) {
-        return Hwc2::IComposerClient::Composition::INVALID;
+        return aidl::android::hardware::graphics::composer3::Composition::INVALID;
     }
     if (outputLayer->getState().hwc) {
         return (*outputLayer->getState().hwc).hwcCompositionType;
     } else {
-        return Hwc2::IComposerClient::Composition::CLIENT;
+        return aidl::android::hardware::graphics::composer3::Composition::CLIENT;
     }
 }
 
@@ -955,7 +969,6 @@ bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
-
 bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix,
         bool allowNonRectPreservingTransforms) {
     ui::Transform t;
@@ -1282,6 +1295,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
                                                                  getSequence(), mName,
                                                                  mTransactionName,
                                                                  /*isBuffer*/ false, getGameMode());
+    surfaceFrame->setActualStartTime(info.startTimeNanos);
     // For Transactions, the post time is considered to be both queue and acquire fence time.
     surfaceFrame->setActualQueueTime(postTime);
     surfaceFrame->setAcquireFenceTime(postTime);
@@ -1299,6 +1313,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName, debugName,
                                                                  /*isBuffer*/ true, getGameMode());
+    surfaceFrame->setActualStartTime(info.startTimeNanos);
     // For buffers, acquire fence time will set during latch.
     surfaceFrame->setActualQueueTime(queueTime);
     const auto fps = mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
@@ -1323,8 +1338,8 @@ bool Layer::setFrameRateForLayerTree(FrameRate frameRate) {
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
-    mFlinger->mScheduler->recordLayerHistory(this, systemTime(),
-                                             LayerHistory::LayerUpdateType::SetFrameRate);
+    using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
+    mFlinger->mScheduler->recordLayerHistory(this, systemTime(), LayerUpdateType::SetFrameRate);
 
     return true;
 }
@@ -1442,19 +1457,6 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append("\n");
 }
 
-std::string Layer::frameRateCompatibilityString(Layer::FrameRateCompatibility compatibility) {
-    switch (compatibility) {
-        case FrameRateCompatibility::Default:
-            return "Default";
-        case FrameRateCompatibility::ExactOrMultiple:
-            return "ExactOrMultiple";
-        case FrameRateCompatibility::NoVote:
-            return "NoVote";
-        case FrameRateCompatibility::Exact:
-            return "Exact";
-    }
-}
-
 void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
     if (!outputLayer) {
@@ -1494,8 +1496,8 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     const auto frameRate = getFrameRateForLayerTree();
     if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
         StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
-                      frameRateCompatibilityString(frameRate.type).c_str(),
-                      toString(frameRate.seamlessness).c_str());
+                      ftl::enum_string(frameRate.type).c_str(),
+                      ftl::enum_string(frameRate.seamlessness).c_str());
     } else {
         result.append(41, ' ');
     }
@@ -1578,11 +1580,10 @@ size_t Layer::getChildrenCount() const {
     return count;
 }
 
-void Layer::setGameModeForTree(int parentGameMode) {
-    int gameMode = parentGameMode;
-    auto& currentState = getDrawingState();
+void Layer::setGameModeForTree(GameMode gameMode) {
+    const auto& currentState = getDrawingState();
     if (currentState.metadata.has(METADATA_GAME_MODE)) {
-        gameMode = currentState.metadata.getInt32(METADATA_GAME_MODE, 0);
+        gameMode = static_cast<GameMode>(currentState.metadata.getInt32(METADATA_GAME_MODE, 0));
     }
     setGameMode(gameMode);
     for (const sp<Layer>& child : mCurrentChildren) {
@@ -1608,7 +1609,7 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
     const auto removeResult = mCurrentChildren.remove(layer);
 
     updateTreeHasFrameRateVote();
-    layer->setGameModeForTree(0);
+    layer->setGameModeForTree(GameMode::Unsupported);
     layer->updateTreeHasFrameRateVote();
 
     return removeResult;
@@ -2040,7 +2041,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
         // Only populate for the primary display.
         if (display) {
-            const Hwc2::IComposerClient::Composition compositionType = getCompositionType(*display);
+            const auto compositionType = getCompositionType(*display);
             layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
         }
     }
@@ -2055,9 +2056,9 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
                                      const DisplayDevice* display) {
     const ui::Transform transform = getTransform();
-    auto buffer = getBuffer();
+    auto buffer = getExternalTexture();
     if (buffer != nullptr) {
-        LayerProtoHelper::writeToProto(buffer,
+        LayerProtoHelper::writeToProto(*buffer,
                                        [&]() { return layerInfo->mutable_active_buffer(); });
         LayerProtoHelper::writeToProtoDeprecated(ui::Transform(getBufferTransform()),
                                                  layerInfo->mutable_buffer_transform());
@@ -2214,6 +2215,8 @@ void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& displayTra
         info.frameRight = 0;
         info.frameBottom = 0;
         info.transform.reset();
+        info.touchableRegion = Region();
+        info.flags = WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::NOT_FOCUSABLE;
         return;
     }
 
@@ -2461,8 +2464,7 @@ Region Layer::getVisibleRegion(const DisplayDevice* display) const {
 }
 
 void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom) {
-    // copy drawing state from cloned layer
-    mDrawingState = clonedFrom->mDrawingState;
+    cloneDrawingState(clonedFrom.get());
     mClonedFrom = clonedFrom;
 }
 
@@ -2497,7 +2499,7 @@ void Layer::updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayer
     // since we may be able to pull out other children that are still alive.
     if (isClonedFromAlive()) {
         sp<Layer> clonedFrom = getClonedFrom();
-        mDrawingState = clonedFrom->mDrawingState;
+        cloneDrawingState(clonedFrom.get());
         clonedLayersMap.emplace(clonedFrom, this);
     }
 
@@ -2664,15 +2666,21 @@ bool Layer::setDropInputMode(gui::DropInputMode mode) {
     return true;
 }
 
+void Layer::cloneDrawingState(const Layer* from) {
+    mDrawingState = from->mDrawingState;
+    // Skip callback info since they are not applicable for cloned layers.
+    mDrawingState.releaseBufferListener = nullptr;
+    mDrawingState.callbackHandles = {};
+}
+
 // ---------------------------------------------------------------------------
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate) {
-    return stream << "{rate=" << rate.rate
-                  << " type=" << Layer::frameRateCompatibilityString(rate.type)
-                  << " seamlessness=" << toString(rate.seamlessness) << "}";
+    return stream << "{rate=" << rate.rate << " type=" << ftl::enum_string(rate.type)
+                  << " seamlessness=" << ftl::enum_string(rate.seamlessness) << '}';
 }
 
-}; // namespace android
+} // namespace android
 
 #if defined(__gl_h_)
 #error "don't include gl/gl.h in this file"

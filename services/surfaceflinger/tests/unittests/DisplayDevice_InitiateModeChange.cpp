@@ -29,7 +29,7 @@ using FakeDisplayDeviceInjector = TestableSurfaceFlinger::FakeDisplayDeviceInjec
 
 class InitiateModeChangeTest : public DisplayTransactionTest {
 public:
-    using Event = scheduler::RefreshRateConfigEvent;
+    using Event = scheduler::DisplayModeEvent;
 
     void SetUp() override {
         injectFakeBufferQueueFactory();
@@ -44,8 +44,8 @@ public:
         mFlinger.onComposerHalHotplug(PrimaryDisplayVariant::HWC_DISPLAY_ID, Connection::CONNECTED);
 
         mDisplay = PrimaryDisplayVariant::makeFakeExistingDisplayInjector(this)
-                           .setSupportedModes({kDisplayMode60, kDisplayMode90, kDisplayMode120})
-                           .setActiveMode(kDisplayModeId60)
+                           .setDisplayModes({kDisplayMode60, kDisplayMode90, kDisplayMode120},
+                                            kDisplayModeId60)
                            .inject();
     }
 

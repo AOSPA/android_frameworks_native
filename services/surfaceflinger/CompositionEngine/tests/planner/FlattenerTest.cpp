@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include <renderengine/ExternalTexture.h>
 #include <renderengine/LayerSettings.h>
+#include <renderengine/impl/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
 #include <chrono>
 
@@ -222,6 +223,22 @@ TEST_F(FlattenerTest, flattenLayers_ActiveLayersAreNotFlattened) {
     EXPECT_EQ(getNonBufferHash(layers),
               mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
     mFlattener->renderCachedSets(mOutputState, std::nullopt);
+}
+
+TEST_F(FlattenerTest, flattenLayers_ActiveLayersWithLowFpsAreFlattened) {
+    mTestLayers[0]->layerFECompositionState.fps = Flattener::kFpsActiveThreshold / 2;
+    mTestLayers[1]->layerFECompositionState.fps = Flattener::kFpsActiveThreshold;
+
+    auto& layerState1 = mTestLayers[0]->layerState;
+    auto& layerState2 = mTestLayers[1]->layerState;
+
+    const std::vector<const LayerState*> layers = {
+            layerState1.get(),
+            layerState2.get(),
+    };
+
+    initializeFlattener(layers);
+    expectAllLayersFlattened(layers);
 }
 
 TEST_F(FlattenerTest, flattenLayers_basicFlatten) {
@@ -623,9 +640,10 @@ TEST_F(FlattenerTest, flattenLayers_pip) {
             LayerFE::LayerSettings{},
     };
     clientCompositionList[0].source.buffer.buffer = std::make_shared<
-            renderengine::ExternalTexture>(mTestLayers[2]->layerFECompositionState.buffer,
-                                           mRenderEngine,
-                                           renderengine::ExternalTexture::Usage::READABLE);
+            renderengine::impl::ExternalTexture>(mTestLayers[2]->layerFECompositionState.buffer,
+                                                 mRenderEngine,
+                                                 renderengine::impl::ExternalTexture::Usage::
+                                                         READABLE);
     EXPECT_CALL(*mTestLayers[2]->layerFE, prepareClientCompositionList(_))
             .WillOnce(Return(clientCompositionList));
 
@@ -695,9 +713,10 @@ TEST_F(FlattenerTest, flattenLayers_holePunchSingleLayer) {
             LayerFE::LayerSettings{},
     };
     clientCompositionList[0].source.buffer.buffer = std::make_shared<
-            renderengine::ExternalTexture>(mTestLayers[1]->layerFECompositionState.buffer,
-                                           mRenderEngine,
-                                           renderengine::ExternalTexture::Usage::READABLE);
+            renderengine::impl::ExternalTexture>(mTestLayers[1]->layerFECompositionState.buffer,
+                                                 mRenderEngine,
+                                                 renderengine::impl::ExternalTexture::Usage::
+                                                         READABLE);
     EXPECT_CALL(*mTestLayers[1]->layerFE, prepareClientCompositionList(_))
             .WillOnce(Return(clientCompositionList));
 

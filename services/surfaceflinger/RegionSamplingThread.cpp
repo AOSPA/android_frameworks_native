@@ -30,8 +30,8 @@
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <cutils/properties.h>
 #include <ftl/future.h>
-#include <gui/IRegionSamplingListener.h>
 #include <gui/SyncScreenCaptureListener.h>
+#include <renderengine/impl/ExternalTexture.h>
 #include <ui/DisplayStatInfo.h>
 #include <utils/Trace.h>
 
@@ -352,8 +352,9 @@ void RegionSamplingThread::captureSample() {
         LOG_ALWAYS_FATAL_IF(bufferStatus != OK, "captureSample: Buffer failed to allocate: %d",
                             bufferStatus);
         buffer = std::make_shared<
-                renderengine::ExternalTexture>(graphicBuffer, mFlinger.getRenderEngine(),
-                                               renderengine::ExternalTexture::Usage::WRITEABLE);
+                renderengine::impl::ExternalTexture>(graphicBuffer, mFlinger.getRenderEngine(),
+                                                     renderengine::impl::ExternalTexture::Usage::
+                                                             WRITEABLE);
     }
 
     auto captureScreenResultFuture =

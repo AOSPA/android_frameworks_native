@@ -26,7 +26,7 @@
 #include <log/log.h>
 #include <ui/MockFence.h>
 #include <utils/String8.h>
-#include "TestableScheduler.h"
+
 #include "TestableSurfaceFlinger.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockVsyncController.h"
@@ -85,10 +85,7 @@ public:
                                 std::move(eventThread), std::move(sfEventThread));
     }
 
-    TestableScheduler* mScheduler;
     TestableSurfaceFlinger mFlinger;
-
-    std::unique_ptr<mock::EventThread> mEventThread = std::make_unique<mock::EventThread>();
 
     mock::VsyncController* mVsyncController = new mock::VsyncController();
     mock::VSyncTracker* mVSyncTracker = new mock::VSyncTracker();
@@ -437,9 +434,10 @@ public:
     static ComposerState createComposerState(int layerId, sp<Fence> fence,
                                              uint32_t stateFlags = layer_state_t::eBufferChanged) {
         ComposerState composer_state;
-        composer_state.state.bufferData.acquireFence = std::move(fence);
+        composer_state.state.bufferData = std::make_shared<BufferData>();
+        composer_state.state.bufferData->acquireFence = std::move(fence);
         composer_state.state.layerId = layerId;
-        composer_state.state.bufferData.flags = BufferData::BufferDataChange::fenceChanged;
+        composer_state.state.bufferData->flags = BufferData::BufferDataChange::fenceChanged;
         composer_state.state.flags = stateFlags;
         return composer_state;
     }

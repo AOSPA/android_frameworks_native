@@ -66,6 +66,7 @@ cc_library_static {
     host_supported: true,
     srcs: [
         ":guiconstants_aidl",
+        ":inputconstants_aidl",
         "android/gui/DisplayInfo.aidl",
         "android/gui/FocusRequest.aidl",
         "android/gui/InputApplicationInfo.aidl",
@@ -176,11 +177,9 @@ cc_defaults {
         "FrameTimelineInfo.cpp",
         "GLConsumer.cpp",
         "IConsumerListener.cpp",
-        "IDisplayEventConnection.cpp",
         "IGraphicBufferConsumer.cpp",
         "IGraphicBufferProducer.cpp",
         "IProducerListener.cpp",
-        "IRegionSamplingListener.cpp",
         "ISurfaceComposer.cpp",
         "ISurfaceComposerClient.cpp",
         "ITransactionCompletedListener.cpp",
@@ -246,10 +245,7 @@ cc_defaults {
         "libpdx_headers",
     ],
 
-    pgo: {
-        sampling: true,
-        profile_file: "libgui/libgui.profdata",
-    },
+    afdo: true,
 
     lto: {
         thin: true,

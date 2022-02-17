@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 The Android Open Source Project
+ * Copyright 2021 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,26 +14,9 @@
  * limitations under the License.
  */
 
-#include "SchedulerUtils.h"
+package android.gui;
 
-#include <cinttypes>
-#include <numeric>
-#include <unordered_map>
-#include <vector>
-
-namespace android {
-namespace scheduler {
-
-int64_t calculate_median(std::vector<int64_t>* v) {
-    if (!v || v->empty()) {
-        return 0;
-    }
-
-    size_t n = v->size() / 2;
-    nth_element(v->begin(), v->begin() + static_cast<long>(n), v->end());
-    return v->at(n);
+/** @hide */
+oneway interface IRegionSamplingListener {
+    void onSampleCollected(float medianLuma);
 }
-
-} // namespace scheduler
-} // namespace android
-

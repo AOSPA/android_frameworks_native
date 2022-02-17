@@ -23,6 +23,8 @@
 #include <sync/sync.h>
 #include <system/window.h>
 #include <ui/BufferQueueDefs.h>
+#include <ui/DebugUtils.h>
+#include <ui/PixelFormat.h>
 #include <utils/StrongPointer.h>
 #include <utils/Timers.h>
 #include <utils/Trace.h>
@@ -462,21 +464,24 @@ void copy_ready_timings(Swapchain& swapchain,
     *count = num_copied;
 }
 
-android_pixel_format GetNativePixelFormat(VkFormat format) {
-    android_pixel_format native_format = HAL_PIXEL_FORMAT_RGBA_8888;
+android::PixelFormat GetNativePixelFormat(VkFormat format) {
+    android::PixelFormat native_format = android::PIXEL_FORMAT_RGBA_8888;
     switch (format) {
         case VK_FORMAT_R8G8B8A8_UNORM:
         case VK_FORMAT_R8G8B8A8_SRGB:
-            native_format = HAL_PIXEL_FORMAT_RGBA_8888;
+            native_format = android::PIXEL_FORMAT_RGBA_8888;
             break;
         case VK_FORMAT_R5G6B5_UNORM_PACK16:
-            native_format = HAL_PIXEL_FORMAT_RGB_565;
+            native_format = android::PIXEL_FORMAT_RGB_565;
             break;
         case VK_FORMAT_R16G16B16A16_SFLOAT:
-            native_format = HAL_PIXEL_FORMAT_RGBA_FP16;
+            native_format = android::PIXEL_FORMAT_RGBA_FP16;
             break;
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-            native_format = HAL_PIXEL_FORMAT_RGBA_1010102;
+            native_format = android::PIXEL_FORMAT_RGBA_1010102;
+            break;
+        case VK_FORMAT_R8_UNORM:
+            native_format = android::PIXEL_FORMAT_R_8;
             break;
         default:
             ALOGV("unsupported swapchain format %d", format);
@@ -535,30 +540,6 @@ android_dataspace GetNativeDataspace(VkColorSpaceKHR colorspace) {
             // it's unsupported
             return HAL_DATASPACE_UNKNOWN;
     }
-}
-
-int get_min_buffer_count(ANativeWindow* window,
-                         uint32_t* out_min_buffer_count) {
-    constexpr int kExtraBuffers = 2;
-
-    int err;
-    int min_undequeued_buffers;
-    err = window->query(window, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
-                        &min_undequeued_buffers);
-    if (err != android::OK || min_undequeued_buffers < 0) {
-        ALOGE(
-            "NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS query failed: %s (%d) "
-            "value=%d",
-            strerror(-err), err, min_undequeued_buffers);
-        if (err == android::OK) {
-            err = android::UNKNOWN_ERROR;
-        }
-        return err;
-    }
-
-    *out_min_buffer_count =
-        static_cast<uint32_t>(min_undequeued_buffers + kExtraBuffers);
-    return android::OK;
 }
 
 }  // anonymous namespace
@@ -675,7 +656,7 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
               strerror(-err), err);
         return VK_ERROR_SURFACE_LOST_KHR;
     }
-    capabilities->minImageCount = max_buffer_count == 1 ? 1 : 2;
+    capabilities->minImageCount = std::min(max_buffer_count, 3);
     capabilities->maxImageCount = static_cast<uint32_t>(max_buffer_count);
 
     capabilities->currentExtent =
@@ -720,10 +701,10 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     if (err) {
         return VK_ERROR_SURFACE_LOST_KHR;
     }
-    ALOGV("wide_color_support is: %d", wide_color_support);
-    wide_color_support =
-        wide_color_support &&
+    bool swapchain_ext =
         instance_data.hook_extensions.test(ProcHook::EXT_swapchain_colorspace);
+    ALOGV("wide_color_support is: %d", wide_color_support);
+    wide_color_support = wide_color_support && swapchain_ext;
 
     AHardwareBuffer_Desc desc = {};
     desc.width = 1;
@@ -736,8 +717,12 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     // We must support R8G8B8A8
     std::vector<VkSurfaceFormatKHR> all_formats = {
         {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-        {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_BT709_LINEAR_EXT}};
+        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+
+    if (swapchain_ext) {
+        all_formats.emplace_back(VkSurfaceFormatKHR{
+            VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_BT709_LINEAR_EXT});
+    }
 
     if (wide_color_support) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
@@ -776,6 +761,13 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
                 VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
                                    VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT});
         }
+    }
+
+    desc.format = AHARDWAREBUFFER_FORMAT_R8_UNORM;
+    if (AHardwareBuffer_isSupported(&desc)) {
+        all_formats.emplace_back(
+            VkSurfaceFormatKHR{VK_FORMAT_R8_UNORM,
+                               VK_COLOR_SPACE_PASS_THROUGH_EXT});
     }
 
     VkResult result = VK_SUCCESS;
@@ -873,13 +865,18 @@ VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice pdev,
 
     int err;
     int query_value;
-    uint32_t min_buffer_count;
     ANativeWindow* window = SurfaceFromHandle(surface)->window.get();
 
-    err = get_min_buffer_count(window, &min_buffer_count);
-    if (err != android::OK) {
+    err = window->query(window, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
+                        &query_value);
+    if (err != android::OK || query_value < 0) {
+        ALOGE(
+            "NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS query failed: %s (%d) "
+            "value=%d",
+            strerror(-err), err, query_value);
         return VK_ERROR_SURFACE_LOST_KHR;
     }
+    uint32_t min_undequeued_buffers = static_cast<uint32_t>(query_value);
 
     err = window->query(window, NATIVE_WINDOW_MAX_BUFFER_COUNT, &query_value);
     if (err != android::OK || query_value < 0) {
@@ -890,7 +887,7 @@ VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice pdev,
     uint32_t max_buffer_count = static_cast<uint32_t>(query_value);
 
     std::vector<VkPresentModeKHR> present_modes;
-    if (min_buffer_count < max_buffer_count)
+    if (min_undequeued_buffers + 1 < max_buffer_count)
         present_modes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
     present_modes.push_back(VK_PRESENT_MODE_FIFO_KHR);
 
@@ -1049,7 +1046,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
     if (!allocator)
         allocator = &GetData(device).allocator;
 
-    android_pixel_format native_pixel_format =
+    android::PixelFormat native_pixel_format =
         GetNativePixelFormat(create_info->imageFormat);
     android_dataspace native_dataspace =
         GetNativeDataspace(create_info->imageColorSpace);
@@ -1146,8 +1143,8 @@ VkResult CreateSwapchainKHR(VkDevice device,
 
     err = native_window_set_buffers_format(window, native_pixel_format);
     if (err != android::OK) {
-        ALOGE("native_window_set_buffers_format(%d) failed: %s (%d)",
-              native_pixel_format, strerror(-err), err);
+        ALOGE("native_window_set_buffers_format(%s) failed: %s (%d)",
+              decodePixelFormat(native_pixel_format).c_str(), strerror(-err), err);
         return VK_ERROR_SURFACE_LOST_KHR;
     }
     err = native_window_set_buffers_data_space(window, native_dataspace);
@@ -1211,21 +1208,28 @@ VkResult CreateSwapchainKHR(VkDevice device,
         }
     }
 
-    uint32_t min_buffer_count;
-    err = get_min_buffer_count(window, &min_buffer_count);
-    if (err != android::OK) {
+    int query_value;
+    err = window->query(window, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
+                        &query_value);
+    if (err != android::OK || query_value < 0) {
+        ALOGE("window->query failed: %s (%d) value=%d", strerror(-err), err,
+              query_value);
         return VK_ERROR_SURFACE_LOST_KHR;
     }
+    uint32_t min_undequeued_buffers = static_cast<uint32_t>(query_value);
+    const auto mailbox_num_images = std::max(3u, create_info->minImageCount);
+    const auto requested_images =
+        swap_interval ? create_info->minImageCount : mailbox_num_images;
+    uint32_t num_images = requested_images - 1 + min_undequeued_buffers;
 
-    uint32_t num_images =
-        std::max(min_buffer_count, create_info->minImageCount);
-
-    // Lower layer insists that we have at least two buffers. This is wasteful
-    // and we'd like to relax it in the shared case, but not all the pieces are
-    // in place for that to work yet. Note we only lie to the lower layer-- we
-    // don't want to give the app back a swapchain with extra images (which they
-    // can't actually use!).
-    err = native_window_set_buffer_count(window, std::max(2u, num_images));
+    // Lower layer insists that we have at least min_undequeued_buffers + 1
+    // buffers.  This is wasteful and we'd like to relax it in the shared case,
+    // but not all the pieces are in place for that to work yet.  Note we only
+    // lie to the lower layer--we don't want to give the app back a swapchain
+    // with extra images (which they can't actually use!).
+    uint32_t min_buffer_count = min_undequeued_buffers + 1;
+    err = native_window_set_buffer_count(
+        window, std::max(min_buffer_count, num_images));
     if (err != android::OK) {
         ALOGE("native_window_set_buffer_count(%d) failed: %s (%d)", num_images,
               strerror(-err), err);

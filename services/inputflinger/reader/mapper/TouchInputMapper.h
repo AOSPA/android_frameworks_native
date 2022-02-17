@@ -243,6 +243,7 @@ protected:
             DIAMETER,
             BOX,
             AREA,
+            ftl_last = AREA
         };
 
         SizeCalibration sizeCalibration;
@@ -732,6 +733,10 @@ private:
     void resetExternalStylus();
     void clearStylusDataPendingFlags();
 
+    int32_t clampResolution(const char* axisName, int32_t resolution) const;
+    void initializeOrientedRanges();
+    void initializeSizeRanges();
+
     void sync(nsecs_t when, nsecs_t readTime);
 
     bool consumeRawTouches(nsecs_t when, nsecs_t readTime, uint32_t policyFlags);
@@ -803,14 +808,6 @@ private:
 
     const char* modeToString(DeviceMode deviceMode);
     void rotateAndScale(float& x, float& y) const;
-
-    // Wrapper methods for interfacing with PointerController. These are used to convert points
-    // between the coordinate spaces used by InputReader and PointerController, if they differ.
-    void moveMouseCursor(float dx, float dy) const;
-    std::pair<float, float> getMouseCursorPosition() const;
-    void setMouseCursorPosition(float x, float y) const;
-    void setTouchSpots(const PointerCoords* spotCoords, const uint32_t* spotIdToIndex,
-                       BitSet32 spotIdBits, int32_t displayId);
 };
 
 } // namespace android

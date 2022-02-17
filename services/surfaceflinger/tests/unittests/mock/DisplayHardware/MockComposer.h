@@ -50,6 +50,7 @@ public:
     Composer();
     ~Composer() override;
 
+    MOCK_METHOD(bool, isSupported, (OptionalFeature), (const, override));
     MOCK_METHOD0(getCapabilities, std::vector<IComposer::Capability>());
     MOCK_METHOD0(dumpDebugInfo, std::string());
     MOCK_METHOD1(registerCallback, void(const sp<IComposerCallback>&));
@@ -63,7 +64,8 @@ public:
     MOCK_METHOD2(destroyLayer, Error(Display, Layer));
     MOCK_METHOD2(getActiveConfig, Error(Display, Config*));
     MOCK_METHOD3(getChangedCompositionTypes,
-                 Error(Display, std::vector<Layer>*, std::vector<IComposerClient::Composition>*));
+                 Error(Display, std::vector<Layer>*,
+                       std::vector<aidl::android::hardware::graphics::composer3::Composition>*));
     MOCK_METHOD2(getColorModes, Error(Display, std::vector<ColorMode>*));
     MOCK_METHOD4(getDisplayAttribute,
                  Error(Display, Config config, IComposerClient::Attribute, int32_t*));
@@ -84,20 +86,23 @@ public:
                  Error(Display, uint32_t, const sp<GraphicBuffer>&, int, Dataspace,
                        const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setColorMode, Error(Display, ColorMode, RenderIntent));
-    MOCK_METHOD3(setColorTransform, Error(Display, const float*, ColorTransform));
+    MOCK_METHOD2(setColorTransform, Error(Display, const float*));
     MOCK_METHOD3(setOutputBuffer, Error(Display, const native_handle_t*, int));
     MOCK_METHOD2(setPowerMode, Error(Display, IComposerClient::PowerMode));
     MOCK_METHOD2(setVsyncEnabled, Error(Display, IComposerClient::Vsync));
     MOCK_METHOD1(setClientTargetSlotCount, Error(Display));
-    MOCK_METHOD3(validateDisplay, Error(Display, uint32_t*, uint32_t*));
-    MOCK_METHOD5(presentOrValidateDisplay, Error(Display, uint32_t*, uint32_t*, int*, uint32_t*));
+    MOCK_METHOD4(validateDisplay, Error(Display, nsecs_t, uint32_t*, uint32_t*));
+    MOCK_METHOD6(presentOrValidateDisplay,
+                 Error(Display, nsecs_t, uint32_t*, uint32_t*, int*, uint32_t*));
     MOCK_METHOD4(setCursorPosition, Error(Display, Layer, int32_t, int32_t));
     MOCK_METHOD5(setLayerBuffer, Error(Display, Layer, uint32_t, const sp<GraphicBuffer>&, int));
     MOCK_METHOD3(setLayerSurfaceDamage,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerBlendMode, Error(Display, Layer, IComposerClient::BlendMode));
-    MOCK_METHOD3(setLayerColor, Error(Display, Layer, const IComposerClient::Color&));
-    MOCK_METHOD3(setLayerCompositionType, Error(Display, Layer, IComposerClient::Composition));
+    MOCK_METHOD3(setLayerColor,
+                 Error(Display, Layer, const aidl::android::hardware::graphics::composer3::Color&));
+    MOCK_METHOD3(setLayerCompositionType,
+                 Error(Display, Layer, aidl::android::hardware::graphics::composer3::Composition));
     MOCK_METHOD3(setLayerDataspace, Error(Display, Layer, Dataspace));
     MOCK_METHOD3(setLayerPerFrameMetadata,
                  Error(Display, Layer, const std::vector<IComposerClient::PerFrameMetadata>&));
@@ -119,9 +124,11 @@ public:
                  Error(Display, uint64_t, uint64_t, DisplayedFrameStats*));
     MOCK_METHOD3(setLayerPerFrameMetadataBlobs,
                  Error(Display, Layer, const std::vector<IComposerClient::PerFrameMetadataBlob>&));
-    MOCK_METHOD2(setDisplayBrightness, Error(Display, float));
-    MOCK_METHOD0(isVsyncPeriodSwitchSupported, bool());
-    MOCK_METHOD2(getDisplayCapabilities, Error(Display, std::vector<DisplayCapability>*));
+    MOCK_METHOD3(setDisplayBrightness, Error(Display, float, const DisplayBrightnessOptions&));
+    MOCK_METHOD2(
+            getDisplayCapabilities,
+            Error(Display,
+                  std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*));
     MOCK_METHOD2(getDisplayConnectionType,
                  V2_4::Error(Display, IComposerClient::DisplayConnectionType*));
     MOCK_METHOD3(getSupportedDisplayVsyncPeriods,
@@ -131,6 +138,10 @@ public:
                  V2_4::Error(Display, Config, const IComposerClient::VsyncPeriodChangeConstraints&,
                              VsyncPeriodChangeTimeline*));
     MOCK_METHOD2(setAutoLowLatencyMode, V2_4::Error(Display, bool));
+    MOCK_METHOD2(getBootDisplayConfigSupport, Error(Display, bool*));
+    MOCK_METHOD2(setBootDisplayConfig, Error(Display, Config));
+    MOCK_METHOD1(clearBootDisplayConfig, Error(Display));
+    MOCK_METHOD2(getPreferredBootDisplayConfig, Error(Display, Config*));
     MOCK_METHOD2(getSupportedContentTypes,
                  V2_4::Error(Display, std::vector<IComposerClient::ContentType>*));
     MOCK_METHOD2(setContentType, V2_4::Error(Display, IComposerClient::ContentType));
@@ -139,7 +150,11 @@ public:
                              const std::vector<uint8_t>&));
     MOCK_METHOD1(getLayerGenericMetadataKeys,
                  V2_4::Error(std::vector<IComposerClient::LayerGenericMetadataKey>*));
-    MOCK_METHOD2(getClientTargetProperty, Error(Display, IComposerClient::ClientTargetProperty*));
+    MOCK_METHOD3(getClientTargetProperty,
+                 Error(Display, IComposerClient::ClientTargetProperty*, float*));
+    MOCK_METHOD3(setLayerWhitePointNits, Error(Display, Layer, float));
+    MOCK_METHOD3(setLayerBlockingRegion,
+                 Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));

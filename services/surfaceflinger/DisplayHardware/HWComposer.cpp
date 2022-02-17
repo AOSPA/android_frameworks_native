@@ -159,8 +159,10 @@ void HWComposer::setCallback(HWC2::ComposerCallback* callback) {
     }
     mRegisteredCallback = true;
 
+    const bool vsyncSwitchingSupported =
+            mComposer->isSupported(Hwc2::Composer::OptionalFeature::RefreshRateSwitching);
     mComposer->registerCallback(
-            sp<ComposerCallbackBridge>::make(callback, mComposer->isVsyncPeriodSwitchSupported()));
+            sp<ComposerCallbackBridge>::make(callback, vsyncSwitchingSupported));
 }
 
 bool HWComposer::getDisplayIdentificationData(hal::HWDisplayId hwcDisplayId, uint8_t* outPort,
@@ -180,8 +182,9 @@ bool HWComposer::hasCapability(hal::Capability capability) const {
     return mCapabilities.count(capability) > 0;
 }
 
-bool HWComposer::hasDisplayCapability(HalDisplayId displayId,
-                                      hal::DisplayCapability capability) const {
+bool HWComposer::hasDisplayCapability(
+        HalDisplayId displayId,
+        aidl::android::hardware::graphics::composer3::DisplayCapability capability) const {
     RETURN_IF_INVALID_DISPLAY(displayId, false);
     return mDisplayData.at(displayId).hwcDisplay->hasCapability(capability);
 }
@@ -463,6 +466,7 @@ status_t HWComposer::getDeviceCompositionChanges(
         HalDisplayId displayId, bool /*frameUsesClientComposition */,
         std::chrono::steady_clock::time_point earliestPresentTime __attribute__((unused)),
         const std::shared_ptr<FenceTime>& previousPresentFence __attribute__((unused)),
+        nsecs_t expectedPresentTime,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
 
@@ -490,7 +494,8 @@ status_t HWComposer::getDeviceCompositionChanges(
     if (canSkipValidate) {
         sp<Fence> outPresentFence;
         uint32_t state = UINT32_MAX;
-        error = hwcDisplay->presentOrValidate(&numTypes, &numRequests, &outPresentFence , &state);
+        error = hwcDisplay->presentOrValidate(expectedPresentTime, &numTypes, &numRequests,
+                                              &outPresentFence, &state);
         if (!hasChangesError(error)) {
             RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
         }
@@ -515,7 +520,7 @@ status_t HWComposer::getDeviceCompositionChanges(
 
         acceptChanges = (state != 2);
     } else {
-        error = hwcDisplay->validate(&numTypes, &numRequests);
+        error = hwcDisplay->validate(expectedPresentTime, &numTypes, &numRequests);
     }
 
     ALOGV("SkipValidate failed, Falling back to SLOW validate/present");
@@ -535,11 +540,13 @@ status_t HWComposer::getDeviceCompositionChanges(
     RETURN_IF_HWC_ERROR_FOR("getRequests", error, displayId, BAD_INDEX);
 
     DeviceRequestedChanges::ClientTargetProperty clientTargetProperty;
-    error = hwcDisplay->getClientTargetProperty(&clientTargetProperty);
+    float clientTargetWhitePointNits;
+    error = hwcDisplay->getClientTargetProperty(&clientTargetProperty, &clientTargetWhitePointNits);
 
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
-                                               std::move(clientTargetProperty)});
+                                               std::move(clientTargetProperty),
+                                               clientTargetWhitePointNits});
 
     if (acceptChanges) {
         error = hwcDisplay->acceptChanges();
@@ -584,9 +591,11 @@ status_t HWComposer::presentAndGetReleaseFences(
     }
 
     displayData.lastPresentFence = Fence::NO_FENCE;
-    const bool previousFramePending =
-            previousPresentFence->getSignalTime() == Fence::SIGNAL_TIME_PENDING;
-    if (!previousFramePending) {
+    const bool waitForEarliestPresent =
+            !mComposer->isSupported(Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
+            previousPresentFence->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
+
+    if (waitForEarliestPresent) {
         ATRACE_NAME("wait for earliest present time");
         std::this_thread::sleep_until(earliestPresentTime);
     }
@@ -666,11 +675,7 @@ status_t HWComposer::setColorTransform(HalDisplayId displayId, const mat4& trans
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
     auto& displayData = mDisplayData[displayId];
-    bool isIdentity = transform == mat4();
-    auto error = displayData.hwcDisplay
-                         ->setColorTransform(transform,
-                                             isIdentity ? hal::ColorTransform::IDENTITY
-                                                        : hal::ColorTransform::ARBITRARY_MATRIX);
+    auto error = displayData.hwcDisplay->setColorTransform(transform);
     RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
     return NO_ERROR;
 }
@@ -682,6 +687,13 @@ void HWComposer::disconnectDisplay(HalDisplayId displayId) {
 
     mPhysicalDisplayIdMap.erase(hwcDisplayId);
     mDisplayData.erase(displayId);
+
+    // Reset the primary display ID if we're disconnecting it.
+    // This way isHeadless() will return false, which is necessary
+    // because getPrimaryDisplayId() will crash.
+    if (mPrimaryHwcDisplayId == hwcDisplayId) {
+        mPrimaryHwcDisplayId.reset();
+    }
 }
 
 status_t HWComposer::setOutputBuffer(HalVirtualDisplayId displayId, const sp<Fence>& acquireFence,
@@ -771,12 +783,13 @@ status_t HWComposer::getDisplayedContentSample(HalDisplayId displayId, uint64_t 
     return NO_ERROR;
 }
 
-std::future<status_t> HWComposer::setDisplayBrightness(PhysicalDisplayId displayId,
-                                                       float brightness) {
+std::future<status_t> HWComposer::setDisplayBrightness(
+        PhysicalDisplayId displayId, float brightness,
+        const Hwc2::Composer::DisplayBrightnessOptions& options) {
     RETURN_IF_INVALID_DISPLAY(displayId, ftl::yield<status_t>(BAD_INDEX));
     auto& display = mDisplayData[displayId].hwcDisplay;
 
-    return ftl::chain(display->setDisplayBrightness(brightness))
+    return ftl::chain(display->setDisplayBrightness(brightness, options))
             .then([displayId](hal::Error error) -> status_t {
                 if (error == hal::Error::UNSUPPORTED) {
                     RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
@@ -787,6 +800,52 @@ std::future<status_t> HWComposer::setDisplayBrightness(PhysicalDisplayId display
                 RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
                 return NO_ERROR;
             });
+}
+
+bool HWComposer::getBootDisplayModeSupport() {
+    return mComposer->isSupported(Hwc2::Composer::OptionalFeature::BootDisplayConfig);
+}
+
+status_t HWComposer::setBootDisplayMode(PhysicalDisplayId displayId,
+                                        hal::HWConfigId displayModeId) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->setBootDisplayConfig(displayModeId);
+    if (error == hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == hal::Error::BAD_PARAMETER) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
+status_t HWComposer::clearBootDisplayMode(PhysicalDisplayId displayId) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->clearBootDisplayConfig();
+    if (error == hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == hal::Error::BAD_PARAMETER) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
+hal::HWConfigId HWComposer::getPreferredBootDisplayMode(PhysicalDisplayId displayId) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    hal::HWConfigId displayModeId = -1;
+    const auto error =
+            mDisplayData[displayId].hwcDisplay->getPreferredBootDisplayConfig(&displayModeId);
+    if (error == hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == hal::Error::BAD_PARAMETER) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return displayModeId;
 }
 
 status_t HWComposer::setAutoLowLatencyMode(PhysicalDisplayId displayId, bool on) {

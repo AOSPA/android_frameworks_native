@@ -27,7 +27,9 @@ soong_config_module_type {
           displayconfig_enabled : {
               cflags: [
               "-Wno-unused-parameter",
+              "-DQTI_DISPLAY_CONFIG_ENABLED"
               ],
+              shared_libs : ["libdisplayconfig.system.qti"]
           }
       }
   }
@@ -146,10 +148,11 @@ cc_defaults {
         "libframetimeline",
         "libperfetto_client_experimental",
         "librenderengine",
+        "libscheduler",
         "libserviceutils",
+        "libshaders",
         "libtonemap",
         "libtrace_proto",
-        "libaidlcommonsupport",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -193,10 +196,7 @@ cc_defaults {
         thin: true,
     },
     whole_program_vtables: true, // Requires ThinLTO
-    pgo: {
-        sampling: true,
-        profile_file: "surfaceflinger/surfaceflinger.profdata",
-    },
+    afdo: true,
     // TODO(b/131771163): Fix broken fuzzer support with LTO.
     sanitize: {
         fuzzer: false,
@@ -213,6 +213,7 @@ cc_library_headers {
 filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
+        "BackgroundExecutor.cpp",
         "BufferLayer.cpp",
         "BufferLayerConsumer.cpp",
         "BufferQueueLayer.cpp",
@@ -259,18 +260,19 @@ filegroup {
         "Scheduler/MessageQueue.cpp",
         "Scheduler/RefreshRateConfigs.cpp",
         "Scheduler/Scheduler.cpp",
-        "Scheduler/SchedulerUtils.cpp",
         "Scheduler/Timer.cpp",
         "Scheduler/VSyncDispatchTimerQueue.cpp",
         "Scheduler/VSyncPredictor.cpp",
-        "Scheduler/VsyncModulator.cpp",
         "Scheduler/VSyncReactor.cpp",
         "Scheduler/VsyncConfiguration.cpp",
+        "Scheduler/VsyncModulator.cpp",
+        "Scheduler/VsyncSchedule.cpp",
         "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
         "SurfaceInterceptor.cpp",
         "Tracing/LayerTracing.cpp",
+        "Tracing/TransactionTracing.cpp",
         "Tracing/TransactionProtoParser.cpp",
         "TransactionCallbackInvoker.cpp",
         "TunnelModeEnabledReporter.cpp",
@@ -296,7 +298,6 @@ cc_defaults {
         "libcutils",
         "libdisplayservicehidl",
         "libhidlbase",
-        "liblayers_proto",
         "liblog",
         "libprocessgroup",
         "libsync",

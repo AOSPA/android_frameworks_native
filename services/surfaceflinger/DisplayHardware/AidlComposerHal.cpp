@@ -61,6 +61,8 @@ using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::PowerMode;
 using aidl::android::hardware::graphics::composer3::VirtualDisplay;
 
+using aidl::android::hardware::graphics::composer3::CommandResultPayload;
+
 using AidlColorMode = aidl::android::hardware::graphics::composer3::ColorMode;
 using AidlContentType = aidl::android::hardware::graphics::composer3::ContentType;
 using AidlDisplayIdentification =
@@ -68,8 +70,6 @@ using AidlDisplayIdentification =
 using AidlDisplayContentSample = aidl::android::hardware::graphics::composer3::DisplayContentSample;
 using AidlDisplayAttribute = aidl::android::hardware::graphics::composer3::DisplayAttribute;
 using AidlDisplayCapability = aidl::android::hardware::graphics::composer3::DisplayCapability;
-using AidlExecuteCommandsStatus =
-        aidl::android::hardware::graphics::composer3::ExecuteCommandsStatus;
 using AidlHdrCapabilities = aidl::android::hardware::graphics::composer3::HdrCapabilities;
 using AidlPerFrameMetadata = aidl::android::hardware::graphics::composer3::PerFrameMetadata;
 using AidlPerFrameMetadataKey = aidl::android::hardware::graphics::composer3::PerFrameMetadataKey;
@@ -79,14 +79,11 @@ using AidlVsyncPeriodChangeConstraints =
         aidl::android::hardware::graphics::composer3::VsyncPeriodChangeConstraints;
 using AidlVsyncPeriodChangeTimeline =
         aidl::android::hardware::graphics::composer3::VsyncPeriodChangeTimeline;
-using AidlLayerGenericMetadataKey =
-        aidl::android::hardware::graphics::composer3::LayerGenericMetadataKey;
 using AidlDisplayContentSamplingAttributes =
         aidl::android::hardware::graphics::composer3::DisplayContentSamplingAttributes;
 using AidlFormatColorComponent = aidl::android::hardware::graphics::composer3::FormatColorComponent;
 using AidlDisplayConnectionType =
         aidl::android::hardware::graphics::composer3::DisplayConnectionType;
-using AidlIComposerClient = aidl::android::hardware::graphics::composer3::IComposerClient;
 
 using AidlColorTransform = aidl::android::hardware::graphics::common::ColorTransform;
 using AidlDataspace = aidl::android::hardware::graphics::common::Dataspace;
@@ -129,16 +126,6 @@ AidlFRect translate(IComposerClient::FRect x) {
             .top = x.top,
             .right = x.right,
             .bottom = x.bottom,
-    };
-}
-
-template <>
-Color translate(IComposerClient::Color x) {
-    return Color{
-            .r = static_cast<int8_t>(x.r),
-            .g = static_cast<int8_t>(x.g),
-            .b = static_cast<int8_t>(x.b),
-            .a = static_cast<int8_t>(x.a),
     };
 }
 
@@ -187,10 +174,10 @@ VsyncPeriodChangeTimeline translate(AidlVsyncPeriodChangeTimeline x) {
 }
 
 template <>
-IComposerClient::LayerGenericMetadataKey translate(AidlLayerGenericMetadataKey x) {
-    return IComposerClient::LayerGenericMetadataKey{
-            .name = x.name,
-            .mandatory = x.mandatory,
+IComposerClient::ClientTargetProperty translate(ClientTargetProperty x) {
+    return IComposerClient::ClientTargetProperty{
+            .pixelFormat = translate<PixelFormat>(x.pixelFormat),
+            .dataspace = translate<Dataspace>(x.dataspace),
     };
 }
 
@@ -249,21 +236,23 @@ bool AidlComposer::isDeclared(const std::string& serviceName) {
 void AidlComposer::AidlCommandWriter::setLayerType(uint32_t type)
 {
     constexpr uint16_t kSetLayerTypeLength = 1;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                         IQtiComposerClient::Command::SET_LAYER_TYPE),
-                 kSetLayerTypeLength);
-    write(type);
-    endCommand();
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    //beginCommand(static_cast<V2_1::IComposerClient::Command>(
+    //                     IQtiComposerClient::Command::SET_LAYER_TYPE),
+    //             kSetLayerTypeLength);
+    //write(type);
+    //endCommand();
 }
 
 void AidlComposer::AidlCommandWriter::setDisplayElapseTime(uint64_t time)
 {
     constexpr uint16_t kSetDisplayElapseTimeLength = 2;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    /* beginCommand(static_cast<V2_1::IComposerClient::Command>(
                          IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
                  kSetDisplayElapseTimeLength);
     write64(time);
-    endCommand();
+    endCommand(); */
 }
 
 #ifdef QTI_UNIFIED_DRAW
@@ -271,28 +260,30 @@ void AidlComposer::AidlCommandWriter::setClientTarget_3_1(
         int32_t slot, int acquireFence, Dataspace dataspace)
 {
     constexpr uint16_t  KSetClientTargetLength = 3;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    /*   beginCommand(static_cast<V2_1::IComposerClient::Command>(
                  IQtiComposerClient::Command::SET_CLIENT_TARGET_3_1),
                  KSetClientTargetLength);
     write((unsigned int)slot);
     writeFence(acquireFence);
     writeSigned(static_cast<int32_t>(dataspace));
-    endCommand();
+    endCommand(); */
 
 }
 
 void AidlComposer::AidlCommandWriter::setLayerFlag(uint32_t type)
 {
     constexpr uint16_t kSetLayerFlagLength = 1;
-    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    /*   beginCommand(static_cast<V2_1::IComposerClient::Command>(
                  IQtiComposerClient::Command::SET_LAYER_FLAG_3_1),
                  kSetLayerFlagLength);
     write(type);
-    endCommand();
+    endCommand(); */
 }
 #endif
 
-AidlComposer::AidlComposer(const std::string& serviceName) : mWriter(kWriterInitialSize) {
+AidlComposer::AidlComposer(const std::string& serviceName) : mWriter() {
     // This only waits if the service is actually declared
     mAidlComposer = AidlIComposer::fromBinder(
             ndk::SpAIBinder(AServiceManager_waitForService(instance(serviceName).c_str())));
@@ -310,6 +301,16 @@ AidlComposer::AidlComposer(const std::string& serviceName) : mWriter(kWriterInit
 }
 
 AidlComposer::~AidlComposer() = default;
+
+bool AidlComposer::isSupported(OptionalFeature feature) const {
+    switch (feature) {
+        case OptionalFeature::RefreshRateSwitching:
+        case OptionalFeature::ExpectedPresentTime:
+        case OptionalFeature::DisplayBrightnessCommand:
+        case OptionalFeature::BootDisplayConfig:
+            return true;
+    }
+}
 
 std::vector<IComposer::Capability> AidlComposer::getCapabilities() {
     std::vector<Capability> capabilities;
@@ -393,8 +394,7 @@ Error AidlComposer::destroyVirtualDisplay(Display display) {
 }
 
 Error AidlComposer::acceptDisplayChanges(Display display) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.acceptDisplayChanges();
+    mWriter.acceptDisplayChanges(translate<int64_t>(display));
     return Error::NONE;
 }
 
@@ -434,8 +434,15 @@ Error AidlComposer::getActiveConfig(Display display, Config* outConfig) {
 
 Error AidlComposer::getChangedCompositionTypes(
         Display display, std::vector<Layer>* outLayers,
-        std::vector<IComposerClient::Composition>* outTypes) {
-    mReader.takeChangedCompositionTypes(display, outLayers, outTypes);
+        std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes) {
+    const auto changedLayers = mReader.takeChangedCompositionTypes(translate<int64_t>(display));
+    outLayers->reserve(changedLayers.size());
+    outTypes->reserve(changedLayers.size());
+
+    for (const auto& layer : changedLayers) {
+        outLayers->emplace_back(translate<Layer>(layer.layer));
+        outTypes->emplace_back(layer.composition);
+    }
     return Error::NONE;
 }
 
@@ -488,17 +495,28 @@ Error AidlComposer::getDisplayName(Display display, std::string* outName) {
 Error AidlComposer::getDisplayRequests(Display display, uint32_t* outDisplayRequestMask,
                                        std::vector<Layer>* outLayers,
                                        std::vector<uint32_t>* outLayerRequestMasks) {
-    mReader.takeDisplayRequests(display, outDisplayRequestMask, outLayers, outLayerRequestMasks);
+    const auto displayRequests = mReader.takeDisplayRequests(translate<int64_t>(display));
+    *outDisplayRequestMask = translate<uint32_t>(displayRequests.mask);
+    outLayers->reserve(displayRequests.layerRequests.size());
+    outLayerRequestMasks->reserve(displayRequests.layerRequests.size());
+
+    for (const auto& layer : displayRequests.layerRequests) {
+        outLayers->emplace_back(translate<Layer>(layer.layer));
+        outLayerRequestMasks->emplace_back(translate<uint32_t>(layer.mask));
+    }
     return Error::NONE;
 }
 
 Error AidlComposer::getDozeSupport(Display display, bool* outSupport) {
+    std::vector<AidlDisplayCapability> capabilities;
     const auto status =
-            mAidlComposerClient->getDozeSupport(translate<int64_t>(display), outSupport);
+            mAidlComposerClient->getDisplayCapabilities(translate<int64_t>(display), &capabilities);
     if (!status.isOk()) {
-        ALOGE("getDozeSupport failed %s", status.getDescription().c_str());
+        ALOGE("getDisplayCapabilities failed %s", status.getDescription().c_str());
         return static_cast<Error>(status.getServiceSpecificError());
     }
+    *outSupport = std::find(capabilities.begin(), capabilities.end(),
+                            AidlDisplayCapability::DOZE) != capabilities.end();
     return Error::NONE;
 }
 
@@ -522,22 +540,33 @@ Error AidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outTyp
 
 Error AidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLayers,
                                      std::vector<int>* outReleaseFences) {
-    mReader.takeReleaseFences(display, outLayers, outReleaseFences);
+    auto fences = mReader.takeReleaseFences(translate<int64_t>(display));
+    outLayers->reserve(fences.size());
+    outReleaseFences->reserve(fences.size());
+
+    for (auto& fence : fences) {
+        outLayers->emplace_back(translate<Layer>(fence.layer));
+        // take ownership
+        const int fenceOwner = fence.fence.get();
+        *fence.fence.getR() = -1;
+        outReleaseFences->emplace_back(fenceOwner);
+    }
     return Error::NONE;
 }
 
 Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
     ATRACE_NAME("HwcPresentDisplay");
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.presentDisplay();
+    mWriter.presentDisplay(translate<int64_t>(display));
 
     Error error = execute();
     if (error != Error::NONE) {
         return error;
     }
 
-    mReader.takePresentFence(display, outPresentFence);
-
+    auto fence = mReader.takePresentFence(translate<int64_t>(display));
+    // take ownership
+    *outPresentFence = fence.get();
+    *fence.getR() = -1;
     return Error::NONE;
 }
 
@@ -554,14 +583,12 @@ Error AidlComposer::setActiveConfig(Display display, Config config) {
 Error AidlComposer::setClientTarget(Display display, uint32_t slot, const sp<GraphicBuffer>& target,
                                     int acquireFence, Dataspace dataspace,
                                     const std::vector<IComposerClient::Rect>& damage) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-
     const native_handle_t* handle = nullptr;
     if (target.get()) {
         handle = target->getNativeBuffer()->handle;
     }
 
-    mWriter.setClientTarget(slot, handle, acquireFence,
+    mWriter.setClientTarget(translate<int64_t>(display), slot, handle, acquireFence,
                             translate<aidl::android::hardware::graphics::common::Dataspace>(
                                     dataspace),
                             translate<AidlRect>(damage));
@@ -580,16 +607,14 @@ Error AidlComposer::setColorMode(Display display, ColorMode mode, RenderIntent r
     return Error::NONE;
 }
 
-Error AidlComposer::setColorTransform(Display display, const float* matrix, ColorTransform hint) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.setColorTransform(matrix, translate<AidlColorTransform>(hint));
+Error AidlComposer::setColorTransform(Display display, const float* matrix) {
+    mWriter.setColorTransform(translate<int64_t>(display), matrix);
     return Error::NONE;
 }
 
 Error AidlComposer::setOutputBuffer(Display display, const native_handle_t* buffer,
                                     int releaseFence) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.setOutputBuffer(0, buffer, dup(releaseFence));
+    mWriter.setOutputBuffer(translate<int64_t>(display), 0, buffer, dup(releaseFence));
     return Error::NONE;
 }
 
@@ -625,157 +650,145 @@ Error AidlComposer::setClientTargetSlotCount(Display display) {
     return Error::NONE;
 }
 
-Error AidlComposer::validateDisplay(Display display, uint32_t* outNumTypes,
-                                    uint32_t* outNumRequests) {
+Error AidlComposer::validateDisplay(Display display, nsecs_t expectedPresentTime,
+                                    uint32_t* outNumTypes, uint32_t* outNumRequests) {
     ATRACE_NAME("HwcValidateDisplay");
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.validateDisplay();
+    mWriter.validateDisplay(translate<int64_t>(display),
+                            ClockMonotonicTimestamp{expectedPresentTime});
 
     Error error = execute();
     if (error != Error::NONE) {
         return error;
     }
 
-    mReader.hasChanges(display, outNumTypes, outNumRequests);
+    mReader.hasChanges(translate<int64_t>(display), outNumTypes, outNumRequests);
 
     return Error::NONE;
 }
 
-Error AidlComposer::presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
-                                             uint32_t* outNumRequests, int* outPresentFence,
-                                             uint32_t* state) {
+Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
+                                             uint32_t* outNumTypes, uint32_t* outNumRequests,
+                                             int* outPresentFence, uint32_t* state) {
     ATRACE_NAME("HwcPresentOrValidateDisplay");
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.presentOrvalidateDisplay();
+    mWriter.presentOrvalidateDisplay(translate<int64_t>(display),
+                                     ClockMonotonicTimestamp{expectedPresentTime});
 
     Error error = execute();
     if (error != Error::NONE) {
         return error;
     }
 
-    mReader.takePresentOrValidateStage(display, state);
-
-    if (*state == 1) { // Present succeeded
-        mReader.takePresentFence(display, outPresentFence);
+    const auto result = mReader.takePresentOrValidateStage(translate<int64_t>(display));
+    if (!result.has_value()) {
+        *state = translate<uint32_t>(-1);
+        return Error::NO_RESOURCES;
     }
 
-    if (*state == 0) { // Validate succeeded.
-        mReader.hasChanges(display, outNumTypes, outNumRequests);
+    *state = translate<uint32_t>(*result);
+
+    if (*result == PresentOrValidate::Result::Presented) {
+        auto fence = mReader.takePresentFence(translate<int64_t>(display));
+        // take ownership
+        *outPresentFence = fence.get();
+        *fence.getR() = -1;
+    }
+
+    if (*result == PresentOrValidate::Result::Validated) {
+        mReader.hasChanges(translate<int64_t>(display), outNumTypes, outNumRequests);
     }
 
     return Error::NONE;
 }
 
 Error AidlComposer::setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerCursorPosition(x, y);
+    mWriter.setLayerCursorPosition(translate<int64_t>(display), translate<int64_t>(layer), x, y);
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerBuffer(Display display, Layer layer, uint32_t slot,
                                    const sp<GraphicBuffer>& buffer, int acquireFence) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-
     const native_handle_t* handle = nullptr;
     if (buffer.get()) {
         handle = buffer->getNativeBuffer()->handle;
     }
 
-    mWriter.setLayerBuffer(slot, handle, acquireFence);
+    mWriter.setLayerBuffer(translate<int64_t>(display), translate<int64_t>(layer), slot, handle,
+                           acquireFence);
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerSurfaceDamage(Display display, Layer layer,
                                           const std::vector<IComposerClient::Rect>& damage) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerSurfaceDamage(translate<AidlRect>(damage));
+    mWriter.setLayerSurfaceDamage(translate<int64_t>(display), translate<int64_t>(layer),
+                                  translate<AidlRect>(damage));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerBlendMode(Display display, Layer layer,
                                       IComposerClient::BlendMode mode) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerBlendMode(translate<BlendMode>(mode));
+    mWriter.setLayerBlendMode(translate<int64_t>(display), translate<int64_t>(layer),
+                              translate<BlendMode>(mode));
     return Error::NONE;
 }
 
-Error AidlComposer::setLayerColor(Display display, Layer layer,
-                                  const IComposerClient::Color& color) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerColor(translate<Color>(color));
+Error AidlComposer::setLayerColor(Display display, Layer layer, const Color& color) {
+    mWriter.setLayerColor(translate<int64_t>(display), translate<int64_t>(layer), color);
     return Error::NONE;
 }
 
-Error AidlComposer::setLayerCompositionType(Display display, Layer layer,
-                                            IComposerClient::Composition type) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerCompositionType(translate<Composition>(type));
+Error AidlComposer::setLayerCompositionType(
+        Display display, Layer layer,
+        aidl::android::hardware::graphics::composer3::Composition type) {
+    mWriter.setLayerCompositionType(translate<int64_t>(display), translate<int64_t>(layer), type);
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerDataspace(Display display, Layer layer, Dataspace dataspace) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerDataspace(translate<AidlDataspace>(dataspace));
+    mWriter.setLayerDataspace(translate<int64_t>(display), translate<int64_t>(layer),
+                              translate<AidlDataspace>(dataspace));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerDisplayFrame(Display display, Layer layer,
                                          const IComposerClient::Rect& frame) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerDisplayFrame(translate<AidlRect>(frame));
+    mWriter.setLayerDisplayFrame(translate<int64_t>(display), translate<int64_t>(layer),
+                                 translate<AidlRect>(frame));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerPlaneAlpha(Display display, Layer layer, float alpha) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerPlaneAlpha(alpha);
+    mWriter.setLayerPlaneAlpha(translate<int64_t>(display), translate<int64_t>(layer), alpha);
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerSidebandStream(Display display, Layer layer,
                                            const native_handle_t* stream) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerSidebandStream(stream);
+    mWriter.setLayerSidebandStream(translate<int64_t>(display), translate<int64_t>(layer), stream);
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerSourceCrop(Display display, Layer layer,
                                        const IComposerClient::FRect& crop) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerSourceCrop(translate<AidlFRect>(crop));
+    mWriter.setLayerSourceCrop(translate<int64_t>(display), translate<int64_t>(layer),
+                               translate<AidlFRect>(crop));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerTransform(Display display, Layer layer, Transform transform) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerTransform(translate<AidlTransform>(transform));
+    mWriter.setLayerTransform(translate<int64_t>(display), translate<int64_t>(layer),
+                              translate<AidlTransform>(transform));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerVisibleRegion(Display display, Layer layer,
                                           const std::vector<IComposerClient::Rect>& visible) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerVisibleRegion(translate<AidlRect>(visible));
+    mWriter.setLayerVisibleRegion(translate<int64_t>(display), translate<int64_t>(layer),
+                                  translate<AidlRect>(visible));
     return Error::NONE;
 }
 
 Error AidlComposer::setLayerZOrder(Display display, Layer layer, uint32_t z) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerZOrder(z);
+    mWriter.setLayerZOrder(translate<int64_t>(display), translate<int64_t>(layer), z);
     return Error::NONE;
 }
 
@@ -784,7 +797,11 @@ Error AidlComposer::setLayerType(Display display, Layer layer, uint32_t type) {
 }
 
 Error AidlComposer::setDisplayElapseTime(Display display, uint64_t timeStamp) {
-    mWriter.selectDisplay(translate<int64_t>(display));
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    //selectDisplay is not available any more, replaced by setLayerPerFrameMetadata
+    //For example: mWriter.setLayerPerFrameMetadata(translate<int64_t>(display),
+    //translate<int64_t>(layer),translate<AidlPerFrameMetadata>(perFrameMetadatas));
+    //mWriter.selectDisplay(translate<int64_t>(display));
     mWriter.setDisplayElapseTime(timeStamp);
     return Error::NONE;
 }
@@ -806,7 +823,11 @@ Error AidlComposer::setLayerFlag(Display display, Layer layer,
 Error AidlComposer::setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
         Dataspace dataspace)
 {
-    mWriter.selectDisplay(translate<int64_t>(display));
+    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
+    //selectDisplay is not available any more, replaced by setLayerPerFrameMetadata
+    //For example: mWriter.setLayerPerFrameMetadata(translate<int64_t>(display),
+    //translate<int64_t>(layer),translate<AidlPerFrameMetadata>(perFrameMetadatas));
+    //mWriter.selectDisplay(translate<int64_t>(display));
     mWriter.setClientTarget_3_1(slot, acquireFence, dataspace);
     return Error::NONE;
 }
@@ -815,73 +836,37 @@ Error AidlComposer::setClientTarget_3_1(Display display, int32_t slot, int acqui
 
 
 Error AidlComposer::execute() {
-    // prepare input command queue
-    bool queueChanged = false;
-    int32_t commandLength = 0;
-    std::vector<aidl::android::hardware::common::NativeHandle> commandHandles;
-    if (!mWriter.writeQueue(&queueChanged, &commandLength, &commandHandles)) {
-        mWriter.reset();
-        return Error::NO_RESOURCES;
-    }
-
-    // set up new input command queue if necessary
-    if (queueChanged) {
-        const auto status = mAidlComposerClient->setInputCommandQueue(mWriter.getMQDescriptor());
-        if (!status.isOk()) {
-            ALOGE("setInputCommandQueue failed %s", status.getDescription().c_str());
-            mWriter.reset();
-            return static_cast<Error>(status.getServiceSpecificError());
-        }
-    }
-
-    if (commandLength == 0) {
+    const auto& commands = mWriter.getPendingCommands();
+    if (commands.empty()) {
         mWriter.reset();
         return Error::NONE;
     }
 
-    AidlExecuteCommandsStatus commandStatus;
-    auto status =
-            mAidlComposerClient->executeCommands(commandLength, commandHandles, &commandStatus);
-    // executeCommands can fail because of out-of-fd and we do not want to
-    // abort() in that case
-    if (!status.isOk()) {
-        ALOGE("executeCommands failed %s", status.getDescription().c_str());
-        return static_cast<Error>(status.getServiceSpecificError());
-    }
-
-    // set up new output command queue if necessary
-    if (commandStatus.queueChanged) {
-        ::aidl::android::hardware::common::fmq::MQDescriptor<
-                int32_t, ::aidl::android::hardware::common::fmq::SynchronizedReadWrite>
-                outputCommandQueue;
-        status = mAidlComposerClient->getOutputCommandQueue(&outputCommandQueue);
+    { // scope for results
+        std::vector<CommandResultPayload> results;
+        auto status = mAidlComposerClient->executeCommands(commands, &results);
         if (!status.isOk()) {
-            ALOGE("getOutputCommandQueue failed %s", status.getDescription().c_str());
+            ALOGE("executeCommands failed %s", status.getDescription().c_str());
             return static_cast<Error>(status.getServiceSpecificError());
         }
 
-        mReader.setMQDescriptor(outputCommandQueue);
+        mReader.parse(std::move(results));
     }
+    const auto commandErrors = mReader.takeErrors();
+    Error error = Error::NONE;
+    for (const auto& cmdErr : commandErrors) {
+        const auto index = static_cast<size_t>(cmdErr.commandIndex);
+        if (index < 0 || index >= commands.size()) {
+            ALOGE("invalid command index %zu", index);
+            return Error::BAD_PARAMETER;
+        }
 
-    Error error;
-    if (mReader.readQueue(commandStatus.length, std::move(commandStatus.handles))) {
-        error = static_cast<Error>(mReader.parse());
-        mReader.reset();
-    } else {
-        error = Error::NO_RESOURCES;
-    }
-
-    if (error == Error::NONE) {
-        std::vector<AidlCommandReader::CommandError> commandErrors = mReader.takeErrors();
-
-        for (const auto& cmdErr : commandErrors) {
-            auto command = mWriter.getCommand(cmdErr.location);
-            if (command == Command::VALIDATE_DISPLAY || command == Command::PRESENT_DISPLAY ||
-                command == Command::PRESENT_OR_VALIDATE_DISPLAY) {
-                error = cmdErr.error;
-            } else {
-                ALOGW("command 0x%x generated error %d", command, cmdErr.error);
-            }
+        const auto& command = commands[index];
+        if (command.validateDisplay || command.presentDisplay || command.presentOrValidateDisplay) {
+            error = translate<Error>(cmdErr.errorCode);
+        } else {
+            ALOGW("command '%s' generated error %" PRId32, command.toString().c_str(),
+                  cmdErr.errorCode);
         }
     }
 
@@ -893,9 +878,8 @@ Error AidlComposer::execute() {
 Error AidlComposer::setLayerPerFrameMetadata(
         Display display, Layer layer,
         const std::vector<IComposerClient::PerFrameMetadata>& perFrameMetadatas) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerPerFrameMetadata(translate<AidlPerFrameMetadata>(perFrameMetadatas));
+    mWriter.setLayerPerFrameMetadata(translate<int64_t>(display), translate<int64_t>(layer),
+                                     translate<AidlPerFrameMetadata>(perFrameMetadatas));
     return Error::NONE;
 }
 
@@ -956,9 +940,7 @@ Error AidlComposer::getDisplayIdentificationData(Display display, uint8_t* outPo
 }
 
 Error AidlComposer::setLayerColorTransform(Display display, Layer layer, const float* matrix) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerColorTransform(matrix);
+    mWriter.setLayerColorTransform(translate<int64_t>(display), translate<int64_t>(layer), matrix);
     return Error::NONE;
 }
 
@@ -1022,32 +1004,31 @@ Error AidlComposer::getDisplayedContentSample(Display display, uint64_t maxFrame
 Error AidlComposer::setLayerPerFrameMetadataBlobs(
         Display display, Layer layer,
         const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerPerFrameMetadataBlobs(translate<AidlPerFrameMetadataBlob>(metadata));
+    mWriter.setLayerPerFrameMetadataBlobs(translate<int64_t>(display), translate<int64_t>(layer),
+                                          translate<AidlPerFrameMetadataBlob>(metadata));
     return Error::NONE;
 }
 
-Error AidlComposer::setDisplayBrightness(Display display, float brightness) {
-    const auto status =
-            mAidlComposerClient->setDisplayBrightness(translate<int64_t>(display), brightness);
-    if (!status.isOk()) {
-        ALOGE("setDisplayBrightness failed %s", status.getDescription().c_str());
-        return static_cast<Error>(status.getServiceSpecificError());
+Error AidlComposer::setDisplayBrightness(Display display, float brightness,
+                                         const DisplayBrightnessOptions& options) {
+    mWriter.setDisplayBrightness(translate<int64_t>(display), brightness);
+
+    if (options.applyImmediately) {
+        return execute();
     }
+
     return Error::NONE;
 }
 
 Error AidlComposer::getDisplayCapabilities(Display display,
-                                           std::vector<DisplayCapability>* outCapabilities) {
-    std::vector<AidlDisplayCapability> capabilities;
-    const auto status =
-            mAidlComposerClient->getDisplayCapabilities(translate<int64_t>(display), &capabilities);
+                                           std::vector<AidlDisplayCapability>* outCapabilities) {
+    const auto status = mAidlComposerClient->getDisplayCapabilities(translate<int64_t>(display),
+                                                                    outCapabilities);
     if (!status.isOk()) {
         ALOGE("getDisplayCapabilities failed %s", status.getDescription().c_str());
+        outCapabilities->clear();
         return static_cast<Error>(status.getServiceSpecificError());
     }
-    *outCapabilities = translate<DisplayCapability>(capabilities);
     return Error::NONE;
 }
 
@@ -1130,343 +1111,71 @@ V2_4::Error AidlComposer::setContentType(Display display,
     return V2_4::Error::NONE;
 }
 
-V2_4::Error AidlComposer::setLayerGenericMetadata(Display display, Layer layer,
-                                                  const std::string& key, bool mandatory,
-                                                  const std::vector<uint8_t>& value) {
-    mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.selectLayer(translate<int64_t>(layer));
-    mWriter.setLayerGenericMetadata(key, mandatory, value);
-    return V2_4::Error::NONE;
+V2_4::Error AidlComposer::setLayerGenericMetadata(Display, Layer, const std::string&, bool,
+                                                  const std::vector<uint8_t>&) {
+    // There are no users for this API. See b/209691612.
+    return V2_4::Error::UNSUPPORTED;
 }
 
 V2_4::Error AidlComposer::getLayerGenericMetadataKeys(
-        std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) {
-    std::vector<AidlLayerGenericMetadataKey> keys;
-    const auto status = mAidlComposerClient->getLayerGenericMetadataKeys(&keys);
-    if (!status.isOk()) {
-        ALOGE("getLayerGenericMetadataKeys failed %s", status.getDescription().c_str());
-        return static_cast<V2_4::Error>(status.getServiceSpecificError());
-    }
-    *outKeys = translate<IComposerClient::LayerGenericMetadataKey>(keys);
-    return V2_4::Error::NONE;
+        std::vector<IComposerClient::LayerGenericMetadataKey>*) {
+    // There are no users for this API. See b/209691612.
+    return V2_4::Error::UNSUPPORTED;
 }
 
-Error AidlComposer::getClientTargetProperty(
-        Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty) {
-    mReader.takeClientTargetProperty(display, outClientTargetProperty);
+Error AidlComposer::setBootDisplayConfig(Display display, Config config) {
+    const auto status = mAidlComposerClient->setBootDisplayConfig(translate<int64_t>(display),
+                                                                  translate<int32_t>(config));
+    if (!status.isOk()) {
+        ALOGE("setBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
     return Error::NONE;
 }
 
-AidlCommandReader::~AidlCommandReader() {
-    resetData();
+Error AidlComposer::clearBootDisplayConfig(Display display) {
+    const auto status = mAidlComposerClient->clearBootDisplayConfig(translate<int64_t>(display));
+    if (!status.isOk()) {
+        ALOGE("clearBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    return Error::NONE;
 }
 
-int AidlCommandReader::parse() {
-    resetData();
-
-    Command command;
-    uint16_t length = 0;
-
-    while (!isEmpty()) {
-        if (!beginCommand(&command, &length)) {
-            break;
-        }
-
-        bool parsed = false;
-        switch (command) {
-            case Command::SELECT_DISPLAY:
-                parsed = parseSelectDisplay(length);
-                break;
-            case Command::SET_ERROR:
-                parsed = parseSetError(length);
-                break;
-            case Command::SET_CHANGED_COMPOSITION_TYPES:
-                parsed = parseSetChangedCompositionTypes(length);
-                break;
-            case Command::SET_DISPLAY_REQUESTS:
-                parsed = parseSetDisplayRequests(length);
-                break;
-            case Command::SET_PRESENT_FENCE:
-                parsed = parseSetPresentFence(length);
-                break;
-            case Command::SET_RELEASE_FENCES:
-                parsed = parseSetReleaseFences(length);
-                break;
-            case Command ::SET_PRESENT_OR_VALIDATE_DISPLAY_RESULT:
-                parsed = parseSetPresentOrValidateDisplayResult(length);
-                break;
-            case Command::SET_CLIENT_TARGET_PROPERTY:
-                parsed = parseSetClientTargetProperty(length);
-                break;
-            default:
-                parsed = false;
-                break;
-        }
-
-        endCommand();
-
-        if (!parsed) {
-            ALOGE("failed to parse command 0x%x length %" PRIu16, command, length);
-            break;
-        }
+Error AidlComposer::getPreferredBootDisplayConfig(Display display, Config* config) {
+    int32_t displayConfig;
+    const auto status =
+            mAidlComposerClient->getPreferredBootDisplayConfig(translate<int64_t>(display),
+                                                               &displayConfig);
+    if (!status.isOk()) {
+        ALOGE("getPreferredBootDisplayConfig failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
     }
-
-    return isEmpty() ? 0 : AidlIComposerClient::EX_NO_RESOURCES;
+    *config = translate<uint32_t>(displayConfig);
+    return Error::NONE;
 }
 
-bool AidlCommandReader::parseSelectDisplay(uint16_t length) {
-    if (length != CommandWriterBase::kSelectDisplayLength) {
-        return false;
-    }
-
-    mCurrentReturnData = &mReturnData[read64()];
-
-    return true;
+Error AidlComposer::getClientTargetProperty(
+        Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
+        float* whitePointNits) {
+    const auto property = mReader.takeClientTargetProperty(translate<int64_t>(display));
+    *outClientTargetProperty =
+            translate<IComposerClient::ClientTargetProperty>(property.clientTargetProperty);
+    *whitePointNits = property.whitePointNits;
+    return Error::NONE;
 }
 
-bool AidlCommandReader::parseSetError(uint16_t length) {
-    if (length != CommandWriterBase::kSetErrorLength) {
-        return false;
-    }
-
-    auto location = read();
-    auto error = static_cast<Error>(readSigned());
-
-    mErrors.emplace_back(CommandError{location, error});
-
-    return true;
+Error AidlComposer::setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) {
+    mWriter.setLayerWhitePointNits(translate<int64_t>(display), translate<int64_t>(layer),
+                                   whitePointNits);
+    return Error::NONE;
 }
 
-bool AidlCommandReader::parseSetChangedCompositionTypes(uint16_t length) {
-    // (layer id [64bit], composition type [32bit]) pairs
-    static constexpr int kCommandWords = 3;
-
-    if (length % kCommandWords != 0 || !mCurrentReturnData) {
-        return false;
-    }
-
-    uint32_t count = length / kCommandWords;
-    mCurrentReturnData->changedLayers.reserve(count);
-    mCurrentReturnData->compositionTypes.reserve(count);
-    while (count > 0) {
-        auto layer = read64();
-        auto type = static_cast<IComposerClient::Composition>(readSigned());
-
-        mCurrentReturnData->changedLayers.push_back(layer);
-        mCurrentReturnData->compositionTypes.push_back(type);
-
-        count--;
-    }
-
-    return true;
+Error AidlComposer::setLayerBlockingRegion(Display display, Layer layer,
+                                           const std::vector<IComposerClient::Rect>& blocking) {
+    mWriter.setLayerBlockingRegion(translate<int64_t>(display), translate<int64_t>(layer),
+                                   translate<AidlRect>(blocking));
+    return Error::NONE;
 }
-
-bool AidlCommandReader::parseSetDisplayRequests(uint16_t length) {
-    // display requests [32 bit] followed by
-    // (layer id [64bit], layer requests [32bit]) pairs
-    static constexpr int kDisplayRequestsWords = 1;
-    static constexpr int kCommandWords = 3;
-    if (length % kCommandWords != kDisplayRequestsWords || !mCurrentReturnData) {
-        return false;
-    }
-
-    mCurrentReturnData->displayRequests = read();
-
-    uint32_t count = (length - kDisplayRequestsWords) / kCommandWords;
-    mCurrentReturnData->requestedLayers.reserve(count);
-    mCurrentReturnData->requestMasks.reserve(count);
-    while (count > 0) {
-        auto layer = read64();
-        auto layerRequestMask = read();
-
-        mCurrentReturnData->requestedLayers.push_back(layer);
-        mCurrentReturnData->requestMasks.push_back(layerRequestMask);
-
-        count--;
-    }
-
-    return true;
-}
-
-bool AidlCommandReader::parseSetPresentFence(uint16_t length) {
-    if (length != CommandWriterBase::kSetPresentFenceLength || !mCurrentReturnData) {
-        return false;
-    }
-
-    if (mCurrentReturnData->presentFence >= 0) {
-        close(mCurrentReturnData->presentFence);
-    }
-    mCurrentReturnData->presentFence = readFence();
-
-    return true;
-}
-
-bool AidlCommandReader::parseSetReleaseFences(uint16_t length) {
-    // (layer id [64bit], release fence index [32bit]) pairs
-    static constexpr int kCommandWords = 3;
-
-    if (length % kCommandWords != 0 || !mCurrentReturnData) {
-        return false;
-    }
-
-    uint32_t count = length / kCommandWords;
-    mCurrentReturnData->releasedLayers.reserve(count);
-    mCurrentReturnData->releaseFences.reserve(count);
-    while (count > 0) {
-        auto layer = read64();
-        auto fence = readFence();
-
-        mCurrentReturnData->releasedLayers.push_back(layer);
-        mCurrentReturnData->releaseFences.push_back(fence);
-
-        count--;
-    }
-
-    return true;
-}
-
-bool AidlCommandReader::parseSetPresentOrValidateDisplayResult(uint16_t length) {
-    if (length != CommandWriterBase::kPresentOrValidateDisplayResultLength || !mCurrentReturnData) {
-        return false;
-    }
-    mCurrentReturnData->presentOrValidateState = read();
-    return true;
-}
-
-bool AidlCommandReader::parseSetClientTargetProperty(uint16_t length) {
-    if (length != CommandWriterBase::kSetClientTargetPropertyLength || !mCurrentReturnData) {
-        return false;
-    }
-    mCurrentReturnData->clientTargetProperty.pixelFormat = static_cast<PixelFormat>(readSigned());
-    mCurrentReturnData->clientTargetProperty.dataspace = static_cast<Dataspace>(readSigned());
-    return true;
-}
-
-void AidlCommandReader::resetData() {
-    mErrors.clear();
-
-    for (auto& data : mReturnData) {
-        if (data.second.presentFence >= 0) {
-            close(data.second.presentFence);
-        }
-        for (auto fence : data.second.releaseFences) {
-            if (fence >= 0) {
-                close(fence);
-            }
-        }
-    }
-
-    mReturnData.clear();
-    mCurrentReturnData = nullptr;
-}
-
-std::vector<AidlCommandReader::CommandError> AidlCommandReader::takeErrors() {
-    return std::move(mErrors);
-}
-
-bool AidlCommandReader::hasChanges(Display display, uint32_t* outNumChangedCompositionTypes,
-                                   uint32_t* outNumLayerRequestMasks) const {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        *outNumChangedCompositionTypes = 0;
-        *outNumLayerRequestMasks = 0;
-        return false;
-    }
-
-    const ReturnData& data = found->second;
-
-    *outNumChangedCompositionTypes = static_cast<uint32_t>(data.compositionTypes.size());
-    *outNumLayerRequestMasks = static_cast<uint32_t>(data.requestMasks.size());
-
-    return !(data.compositionTypes.empty() && data.requestMasks.empty());
-}
-
-void AidlCommandReader::takeChangedCompositionTypes(
-        Display display, std::vector<Layer>* outLayers,
-        std::vector<IComposerClient::Composition>* outTypes) {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        outLayers->clear();
-        outTypes->clear();
-        return;
-    }
-
-    ReturnData& data = found->second;
-
-    *outLayers = std::move(data.changedLayers);
-    *outTypes = std::move(data.compositionTypes);
-}
-
-void AidlCommandReader::takeDisplayRequests(Display display, uint32_t* outDisplayRequestMask,
-                                            std::vector<Layer>* outLayers,
-                                            std::vector<uint32_t>* outLayerRequestMasks) {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        *outDisplayRequestMask = 0;
-        outLayers->clear();
-        outLayerRequestMasks->clear();
-        return;
-    }
-
-    ReturnData& data = found->second;
-
-    *outDisplayRequestMask = data.displayRequests;
-    *outLayers = std::move(data.requestedLayers);
-    *outLayerRequestMasks = std::move(data.requestMasks);
-}
-
-void AidlCommandReader::takeReleaseFences(Display display, std::vector<Layer>* outLayers,
-                                          std::vector<int>* outReleaseFences) {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        outLayers->clear();
-        outReleaseFences->clear();
-        return;
-    }
-
-    ReturnData& data = found->second;
-
-    *outLayers = std::move(data.releasedLayers);
-    *outReleaseFences = std::move(data.releaseFences);
-}
-
-void AidlCommandReader::takePresentFence(Display display, int* outPresentFence) {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        *outPresentFence = -1;
-        return;
-    }
-
-    ReturnData& data = found->second;
-
-    *outPresentFence = data.presentFence;
-    data.presentFence = -1;
-}
-
-void AidlCommandReader::takePresentOrValidateStage(Display display, uint32_t* state) {
-    auto found = mReturnData.find(display);
-    if (found == mReturnData.end()) {
-        *state = static_cast<uint32_t>(-1);
-        return;
-    }
-    ReturnData& data = found->second;
-    *state = data.presentOrValidateState;
-}
-
-void AidlCommandReader::takeClientTargetProperty(
-        Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty) {
-    auto found = mReturnData.find(display);
-
-    // If not found, return the default values.
-    if (found == mReturnData.end()) {
-        outClientTargetProperty->pixelFormat = PixelFormat::RGBA_8888;
-        outClientTargetProperty->dataspace = Dataspace::UNKNOWN;
-        return;
-    }
-
-    ReturnData& data = found->second;
-    *outClientTargetProperty = data.clientTargetProperty;
-}
-
 } // namespace Hwc2
 } // namespace android

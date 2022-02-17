@@ -16,11 +16,11 @@
 
 #pragma once
 
-#include <cstring>
 #include <ostream>
 
-namespace android {
-namespace scheduler {
+#include <ftl/enum.h>
+
+namespace android::scheduler {
 
 // The seamlessness requirement of a Layer.
 enum class Seamlessness {
@@ -31,24 +31,14 @@ enum class Seamlessness {
     // Indicates no preference for seamlessness. For such layers the system will
     // prefer seamless switches, but also non-seamless switches to the group of the
     // default config are allowed.
-    Default
+    Default,
+
+    ftl_last = Default
 };
 
-inline std::string toString(Seamlessness seamlessness) {
-    switch (seamlessness) {
-        case Seamlessness::OnlySeamless:
-            return "OnlySeamless";
-        case Seamlessness::SeamedAndSeamless:
-            return "SeamedAndSeamless";
-        case Seamlessness::Default:
-            return "Default";
-    }
-}
-
 // Used by gtest
-inline std::ostream& operator<<(std::ostream& os, Seamlessness val) {
-    return os << toString(val);
+inline std::ostream& operator<<(std::ostream& os, Seamlessness s) {
+    return os << ftl::enum_string(s);
 }
 
-} // namespace scheduler
-} // namespace android
+} // namespace android::scheduler

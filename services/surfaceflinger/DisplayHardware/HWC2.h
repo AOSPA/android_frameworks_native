@@ -34,7 +34,13 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ComposerHal.h"
 #include "Hal.h"
+
+#include <aidl/android/hardware/graphics/composer3/Color.h>
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
+
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #endif
@@ -84,7 +90,8 @@ public:
     virtual hal::HWDisplayId getId() const = 0;
     virtual bool isConnected() const = 0;
     virtual void setConnected(bool connected) = 0; // For use by Device only
-    virtual bool hasCapability(hal::DisplayCapability) const = 0;
+    virtual bool hasCapability(
+            aidl::android::hardware::graphics::composer3::DisplayCapability) const = 0;
     virtual bool isVsyncPeriodSwitchSupported() const = 0;
     virtual void onLayerDestroyed(hal::HWLayerId layerId) = 0;
 
@@ -92,7 +99,8 @@ public:
     [[clang::warn_unused_result]] virtual base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>
     createLayer() = 0;
     [[clang::warn_unused_result]] virtual hal::Error getChangedCompositionTypes(
-            std::unordered_map<Layer*, hal::Composition>* outTypes) = 0;
+            std::unordered_map<Layer*, aidl::android::hardware::graphics::composer3::Composition>*
+                    outTypes) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getColorModes(
             std::vector<hal::ColorMode>* outModes) const = 0;
     // Returns a bitmask which contains HdrMetadata::Type::*.
@@ -129,28 +137,34 @@ public:
     [[clang::warn_unused_result]] virtual hal::Error setColorMode(
             hal::ColorMode mode, hal::RenderIntent renderIntent) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setColorTransform(
-            const android::mat4& matrix, hal::ColorTransform hint) = 0;
+            const android::mat4& matrix) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setOutputBuffer(
             const android::sp<android::GraphicBuffer>& buffer,
             const android::sp<android::Fence>& releaseFence) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setPowerMode(hal::PowerMode mode) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setVsyncEnabled(hal::Vsync enabled) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error validate(uint32_t* outNumTypes,
+    [[clang::warn_unused_result]] virtual hal::Error validate(nsecs_t expectedPresentTime,
+                                                              uint32_t* outNumTypes,
                                                               uint32_t* outNumRequests) = 0;
     [[clang::warn_unused_result]] virtual hal::Error presentOrValidate(
-            uint32_t* outNumTypes, uint32_t* outNumRequests,
+            nsecs_t expectedPresentTime, uint32_t* outNumTypes, uint32_t* outNumRequests,
             android::sp<android::Fence>* outPresentFence, uint32_t* state) = 0;
     [[clang::warn_unused_result]] virtual std::future<hal::Error> setDisplayBrightness(
-            float brightness) = 0;
+            float brightness, const Hwc2::Composer::DisplayBrightnessOptions& options) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setActiveConfigWithConstraints(
             hal::HWConfigId configId, const hal::VsyncPeriodChangeConstraints& constraints,
             hal::VsyncPeriodChangeTimeline* outTimeline) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setBootDisplayConfig(
+            hal::HWConfigId configId) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error clearBootDisplayConfig() = 0;
+    [[clang::warn_unused_result]] virtual hal::Error getPreferredBootDisplayConfig(
+            hal::HWConfigId* configId) const = 0;
     [[clang::warn_unused_result]] virtual hal::Error setAutoLowLatencyMode(bool on) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getSupportedContentTypes(
             std::vector<hal::ContentType>*) const = 0;
     [[clang::warn_unused_result]] virtual hal::Error setContentType(hal::ContentType) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getClientTargetProperty(
-            hal::ClientTargetProperty* outClientTargetProperty) = 0;
+            hal::ClientTargetProperty* outClientTargetProperty, float* outWhitePointNits) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setDisplayElapseTime(uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
     [[clang::warn_unused_result]] virtual hal::Error setClientTarget_3_1(
@@ -175,7 +189,9 @@ public:
     hal::Error acceptChanges() override;
     base::expected<std::shared_ptr<HWC2::Layer>, hal::Error> createLayer() override;
     hal::Error getChangedCompositionTypes(
-            std::unordered_map<HWC2::Layer*, hal::Composition>* outTypes) override;
+            std::unordered_map<HWC2::Layer*,
+                               aidl::android::hardware::graphics::composer3::Composition>* outTypes)
+            override;
     hal::Error getColorModes(std::vector<hal::ColorMode>* outModes) const override;
     // Returns a bitmask which contains HdrMetadata::Type::*.
     int32_t getSupportedPerFrameMetadata() const override;
@@ -204,24 +220,31 @@ public:
                                const android::sp<android::Fence>& acquireFence,
                                hal::Dataspace dataspace) override;
     hal::Error setColorMode(hal::ColorMode, hal::RenderIntent) override;
-    hal::Error setColorTransform(const android::mat4& matrix, hal::ColorTransform hint) override;
+    hal::Error setColorTransform(const android::mat4& matrix) override;
     hal::Error setOutputBuffer(const android::sp<android::GraphicBuffer>&,
                                const android::sp<android::Fence>& releaseFence) override;
     hal::Error setPowerMode(hal::PowerMode) override;
     hal::Error setVsyncEnabled(hal::Vsync enabled) override;
-    hal::Error validate(uint32_t* outNumTypes, uint32_t* outNumRequests) override;
-    hal::Error presentOrValidate(uint32_t* outNumTypes, uint32_t* outNumRequests,
+    hal::Error validate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                        uint32_t* outNumRequests) override;
+    hal::Error presentOrValidate(nsecs_t expectedPresentTime, uint32_t* outNumTypes,
+                                 uint32_t* outNumRequests,
                                  android::sp<android::Fence>* outPresentFence,
                                  uint32_t* state) override;
-    std::future<hal::Error> setDisplayBrightness(float brightness) override;
+    std::future<hal::Error> setDisplayBrightness(
+            float brightness, const Hwc2::Composer::DisplayBrightnessOptions& options) override;
     hal::Error setActiveConfigWithConstraints(hal::HWConfigId configId,
                                               const hal::VsyncPeriodChangeConstraints& constraints,
                                               hal::VsyncPeriodChangeTimeline* outTimeline) override;
+    hal::Error setBootDisplayConfig(hal::HWConfigId configId) override;
+    hal::Error clearBootDisplayConfig() override;
+    hal::Error getPreferredBootDisplayConfig(hal::HWConfigId* configId) const override;
     hal::Error setAutoLowLatencyMode(bool on) override;
     hal::Error getSupportedContentTypes(
             std::vector<hal::ContentType>* outSupportedContentTypes) const override;
     hal::Error setContentType(hal::ContentType) override;
-    hal::Error getClientTargetProperty(hal::ClientTargetProperty* outClientTargetProperty) override;
+    hal::Error getClientTargetProperty(hal::ClientTargetProperty* outClientTargetProperty,
+                                       float* outWhitePointNits) override;
     hal::Error setDisplayElapseTime(uint64_t timeStamp) override;
 #ifdef QTI_UNIFIED_DRAW
     hal::Error setClientTarget_3_1(int32_t slot, const android::sp<android::Fence>& acquireFence,
@@ -232,7 +255,8 @@ public:
     hal::HWDisplayId getId() const override { return mId; }
     bool isConnected() const override { return mIsConnected; }
     void setConnected(bool connected) override; // For use by Device only
-    bool hasCapability(hal::DisplayCapability) const override EXCLUDES(mDisplayCapabilitiesMutex);
+    bool hasCapability(aidl::android::hardware::graphics::composer3::DisplayCapability)
+            const override EXCLUDES(mDisplayCapabilitiesMutex);
     bool isVsyncPeriodSwitchSupported() const override;
     void onLayerDestroyed(hal::HWLayerId layerId) override;
 
@@ -261,8 +285,9 @@ private:
 
     mutable std::mutex mDisplayCapabilitiesMutex;
     std::once_flag mDisplayCapabilityQueryFlag;
-    std::optional<std::unordered_set<hal::DisplayCapability>> mDisplayCapabilities
-            GUARDED_BY(mDisplayCapabilitiesMutex);
+    std::optional<
+            std::unordered_set<aidl::android::hardware::graphics::composer3::DisplayCapability>>
+            mDisplayCapabilities GUARDED_BY(mDisplayCapabilitiesMutex);
 };
 
 } // namespace impl
@@ -281,8 +306,10 @@ public:
             const android::Region& damage) = 0;
 
     [[clang::warn_unused_result]] virtual hal::Error setBlendMode(hal::BlendMode mode) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error setColor(hal::Color color) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error setCompositionType(hal::Composition type) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setColor(
+            aidl::android::hardware::graphics::composer3::Color color) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setCompositionType(
+            aidl::android::hardware::graphics::composer3::Composition type) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setDataspace(hal::Dataspace dataspace) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setPerFrameMetadata(
             const int32_t supportedPerFrameMetadata, const android::HdrMetadata& metadata) = 0;
@@ -306,6 +333,11 @@ public:
     // Composer HAL 2.4
     [[clang::warn_unused_result]] virtual hal::Error setLayerGenericMetadata(
             const std::string& name, bool mandatory, const std::vector<uint8_t>& value) = 0;
+
+    // AIDL HAL
+    [[clang::warn_unused_result]] virtual hal::Error setWhitePointNits(float whitePointNits) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setBlockingRegion(
+            const android::Region& region) = 0;
 #ifdef QTI_UNIFIED_DRAW
     [[clang::warn_unused_result]] virtual hal::Error setLayerFlag(
             IQtiComposerClient::LayerFlag layerFlag) = 0;
@@ -333,8 +365,9 @@ public:
     hal::Error setSurfaceDamage(const android::Region& damage) override;
 
     hal::Error setBlendMode(hal::BlendMode mode) override;
-    hal::Error setColor(hal::Color color) override;
-    hal::Error setCompositionType(hal::Composition type) override;
+    hal::Error setColor(aidl::android::hardware::graphics::composer3::Color color) override;
+    hal::Error setCompositionType(
+            aidl::android::hardware::graphics::composer3::Composition type) override;
     hal::Error setDataspace(hal::Dataspace dataspace) override;
     hal::Error setPerFrameMetadata(const int32_t supportedPerFrameMetadata,
                                    const android::HdrMetadata& metadata) override;
@@ -353,9 +386,14 @@ public:
     // Composer HAL 2.4
     hal::Error setLayerGenericMetadata(const std::string& name, bool mandatory,
                                        const std::vector<uint8_t>& value) override;
+
+    // AIDL HAL
+    hal::Error setWhitePointNits(float whitePointNits) override;
+    hal::Error setBlockingRegion(const android::Region& region) override;
 #ifdef QTI_UNIFIED_DRAW
     hal::Error setLayerFlag(IQtiComposerClient::LayerFlag layerFlag) override;
 #endif
+
 private:
     // These are references to data owned by HWC2::Device, which will outlive
     // this HWC2::Layer, so these references are guaranteed to be valid for
@@ -370,6 +408,7 @@ private:
     // multiple times.
     android::Region mVisibleRegion = android::Region::INVALID_REGION;
     android::Region mDamageRegion = android::Region::INVALID_REGION;
+    android::Region mBlockingRegion = android::Region::INVALID_REGION;
     hal::Dataspace mDataSpace = hal::Dataspace::UNKNOWN;
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;

@@ -31,10 +31,8 @@
 #include <stdint.h>
 #include <ui/Transform.h>
 #include <utils/BitSet.h>
-#include <utils/KeyedVector.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
-#include <utils/Vector.h>
 #include <array>
 #include <limits>
 #include <queue>
@@ -88,7 +86,7 @@ enum {
      */
     AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE = 0x40,
 
-#ifdef __linux__
+#if defined(__linux__)
     /**
      * This event was generated or modified by accessibility service.
      */
@@ -201,7 +199,16 @@ namespace android {
 class Parcel;
 #endif
 
+/*
+ * Apply the given transform to the point without applying any translation/offset.
+ */
+vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy);
+
 const char* inputEventTypeToString(int32_t type);
+
+std::string inputEventSourceToString(int32_t source);
+
+bool isFromSource(uint32_t source, uint32_t test);
 
 /*
  * Flags that flow alongside events in the input dispatch system to help with certain
@@ -373,7 +380,6 @@ struct PointerCoords {
     // window scale. The global scale will be applied to TOUCH/TOOL_MAJOR/MINOR
     // axes, however the window scaling will not.
     void scale(float globalScale, float windowXScale, float windowYScale);
-    void applyOffset(float xOffset, float yOffset);
 
     void transform(const ui::Transform& transform);
 
@@ -563,7 +569,9 @@ public:
 
     inline float getYOffset() const { return mTransform.ty(); }
 
-    inline ui::Transform getTransform() const { return mTransform; }
+    inline const ui::Transform& getTransform() const { return mTransform; }
+
+    int getSurfaceRotation() const;
 
     inline float getXPrecision() const { return mXPrecision; }
 
@@ -579,7 +587,7 @@ public:
 
     void setCursorPosition(float x, float y);
 
-    ui::Transform getRawTransform() const { return mRawTransform; }
+    inline const ui::Transform& getRawTransform() const { return mRawTransform; }
 
     static inline bool isValidCursorPosition(float x, float y) { return !isnan(x) && !isnan(y); }
 
@@ -789,11 +797,11 @@ public:
 
     // Low-level accessors.
     inline const PointerProperties* getPointerProperties() const {
-        return mPointerProperties.array();
+        return mPointerProperties.data();
     }
     inline const nsecs_t* getSampleEventTimes() const { return mSampleEventTimes.data(); }
     inline const PointerCoords* getSamplePointerCoords() const {
-            return mSamplePointerCoords.array();
+        return mSamplePointerCoords.data();
     }
 
     static const char* getLabel(int32_t axis);
@@ -824,9 +832,9 @@ protected:
     float mRawYCursorPosition;
     ui::Transform mRawTransform;
     nsecs_t mDownTime;
-    Vector<PointerProperties> mPointerProperties;
+    std::vector<PointerProperties> mPointerProperties;
     std::vector<nsecs_t> mSampleEventTimes;
-    Vector<PointerCoords> mSamplePointerCoords;
+    std::vector<PointerCoords> mSamplePointerCoords;
 };
 
 /*
@@ -840,15 +848,12 @@ public:
 
     inline bool getHasFocus() const { return mHasFocus; }
 
-    inline bool getInTouchMode() const { return mInTouchMode; }
-
-    void initialize(int32_t id, bool hasFocus, bool inTouchMode);
+    void initialize(int32_t id, bool hasFocus);
 
     void initialize(const FocusEvent& from);
 
 protected:
     bool mHasFocus;
-    bool mInTouchMode;
 };
 
 /*
@@ -937,8 +942,8 @@ struct __attribute__((__packed__)) VerifiedInputEvent {
  */
 struct __attribute__((__packed__)) VerifiedKeyEvent : public VerifiedInputEvent {
     int32_t action;
-    nsecs_t downTimeNanos;
     int32_t flags;
+    nsecs_t downTimeNanos;
     int32_t keyCode;
     int32_t scanCode;
     int32_t metaState;
@@ -953,8 +958,8 @@ struct __attribute__((__packed__)) VerifiedMotionEvent : public VerifiedInputEve
     float rawX;
     float rawY;
     int32_t actionMasked;
-    nsecs_t downTimeNanos;
     int32_t flags;
+    nsecs_t downTimeNanos;
     int32_t metaState;
     int32_t buttonState;
 };

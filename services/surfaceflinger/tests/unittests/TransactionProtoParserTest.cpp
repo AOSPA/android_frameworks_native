@@ -39,6 +39,7 @@ TEST(TransactionProtoParserTest, parse) {
     layer_state_t layer;
     layer.layerId = 6;
     layer.what = std::numeric_limits<uint64_t>::max();
+    layer.what &= ~static_cast<uint64_t>(layer_state_t::eBufferChanged);
     layer.x = 7;
     layer.matrix.dsdx = 15;
 
@@ -69,16 +70,16 @@ TEST(TransactionProtoParserTest, parse) {
         t1.displays.add(display);
     }
 
-    std::function<int32_t(const sp<IBinder>&)> getLayerIdFn = [&](const sp<IBinder>& handle) {
+    TransactionProtoParser::LayerHandleToIdFn getLayerIdFn = [&](const sp<IBinder>& handle) {
         return (handle == layerHandle) ? 42 : -1;
     };
-    std::function<int32_t(const sp<IBinder>&)> getDisplayIdFn = [&](const sp<IBinder>& handle) {
+    TransactionProtoParser::DisplayHandleToIdFn getDisplayIdFn = [&](const sp<IBinder>& handle) {
         return (handle == displayHandle) ? 43 : -1;
     };
-    std::function<sp<IBinder>(int32_t)> getLayerHandleFn = [&](int32_t id) {
+    TransactionProtoParser::LayerIdToHandleFn getLayerHandleFn = [&](int32_t id) {
         return (id == 42) ? layerHandle : nullptr;
     };
-    std::function<sp<IBinder>(int32_t)> getDisplayHandleFn = [&](int32_t id) {
+    TransactionProtoParser::DisplayIdToHandleFn getDisplayHandleFn = [&](int32_t id) {
         return (id == 43) ? displayHandle : nullptr;
     };
 

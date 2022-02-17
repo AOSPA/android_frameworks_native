@@ -37,6 +37,8 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
 
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -68,7 +70,6 @@ using V2_4::IComposerCallback;
 using V2_4::IComposerClient;
 using V2_4::VsyncPeriodChangeTimeline;
 using V2_4::VsyncPeriodNanos;
-using DisplayCapability = IComposerClient::DisplayCapability;
 using PerFrameMetadata = IComposerClient::PerFrameMetadata;
 using PerFrameMetadataKey = IComposerClient::PerFrameMetadataKey;
 using PerFrameMetadataBlob = IComposerClient::PerFrameMetadataBlob;
@@ -92,8 +93,9 @@ public:
                     uint32_t* outNumLayerRequestMasks) const;
 
     // Get and clear saved changed composition types.
-    void takeChangedCompositionTypes(Display display, std::vector<Layer>* outLayers,
-                                     std::vector<IComposerClient::Composition>* outTypes);
+    void takeChangedCompositionTypes(
+            Display display, std::vector<Layer>* outLayers,
+            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes);
 
     // Get and clear saved display requests.
     void takeDisplayRequests(Display display, uint32_t* outDisplayRequestMask,
@@ -130,7 +132,7 @@ private:
         uint32_t displayRequests = 0;
 
         std::vector<Layer> changedLayers;
-        std::vector<IComposerClient::Composition> compositionTypes;
+        std::vector<aidl::android::hardware::graphics::composer3::Composition> compositionTypes;
 
         std::vector<Layer> requestedLayers;
         std::vector<uint32_t> requestMasks;
@@ -165,6 +167,8 @@ public:
     explicit HidlComposer(const std::string& serviceName);
     ~HidlComposer() override;
 
+    bool isSupported(OptionalFeature) const;
+
     std::vector<IComposer::Capability> getCapabilities() override;
     std::string dumpDebugInfo() override;
 
@@ -188,8 +192,10 @@ public:
     Error destroyLayer(Display display, Layer layer) override;
 
     Error getActiveConfig(Display display, Config* outConfig) override;
-    Error getChangedCompositionTypes(Display display, std::vector<Layer>* outLayers,
-                                     std::vector<IComposerClient::Composition>* outTypes) override;
+    Error getChangedCompositionTypes(
+            Display display, std::vector<Layer>* outLayers,
+            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes)
+            override;
     Error getColorModes(Display display, std::vector<ColorMode>* outModes) override;
     Error getDisplayAttribute(Display display, Config config, IComposerClient::Attribute attribute,
                               int32_t* outValue) override;
@@ -220,7 +226,7 @@ public:
                           int acquireFence, Dataspace dataspace,
                           const std::vector<IComposerClient::Rect>& damage) override;
     Error setColorMode(Display display, ColorMode mode, RenderIntent renderIntent) override;
-    Error setColorTransform(Display display, const float* matrix, ColorTransform hint) override;
+    Error setColorTransform(Display display, const float* matrix) override;
     Error setOutputBuffer(Display display, const native_handle_t* buffer,
                           int releaseFence) override;
     Error setPowerMode(Display display, IComposerClient::PowerMode mode) override;
@@ -228,10 +234,11 @@ public:
 
     Error setClientTargetSlotCount(Display display) override;
 
-    Error validateDisplay(Display display, uint32_t* outNumTypes,
+    Error validateDisplay(Display display, nsecs_t expectedPresentTime, uint32_t* outNumTypes,
                           uint32_t* outNumRequests) override;
 
-    Error presentOrValidateDisplay(Display display, uint32_t* outNumTypes, uint32_t* outNumRequests,
+    Error presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
+                                   uint32_t* outNumTypes, uint32_t* outNumRequests,
                                    int* outPresentFence, uint32_t* state) override;
 
     Error setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) override;
@@ -241,9 +248,11 @@ public:
     Error setLayerSurfaceDamage(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& damage) override;
     Error setLayerBlendMode(Display display, Layer layer, IComposerClient::BlendMode mode) override;
-    Error setLayerColor(Display display, Layer layer, const IComposerClient::Color& color) override;
-    Error setLayerCompositionType(Display display, Layer layer,
-                                  IComposerClient::Composition type) override;
+    Error setLayerColor(Display display, Layer layer,
+                        const aidl::android::hardware::graphics::composer3::Color& color) override;
+    Error setLayerCompositionType(
+            Display display, Layer layer,
+            aidl::android::hardware::graphics::composer3::Composition type) override;
     Error setLayerDataspace(Display display, Layer layer, Dataspace dataspace) override;
     Error setLayerDisplayFrame(Display display, Layer layer,
                                const IComposerClient::Rect& frame) override;
@@ -282,13 +291,15 @@ public:
     Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer,
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
-    Error setDisplayBrightness(Display display, float brightness) override;
+    Error setDisplayBrightness(Display display, float brightness,
+                               const DisplayBrightnessOptions& options) override;
     Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
-    bool isVsyncPeriodSwitchSupported() override { return mClient_2_4 != nullptr; }
-    Error getDisplayCapabilities(Display display,
-                                 std::vector<DisplayCapability>* outCapabilities) override;
+    Error getDisplayCapabilities(
+            Display display,
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*
+                    outCapabilities) override;
     V2_4::Error getDisplayConnectionType(Display display,
                                          IComposerClient::DisplayConnectionType* outType) override;
     V2_4::Error getDisplayVsyncPeriod(Display display, VsyncPeriodNanos* outVsyncPeriod) override;
@@ -306,9 +317,17 @@ public:
                                         bool mandatory, const std::vector<uint8_t>& value) override;
     V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) override;
-    Error getClientTargetProperty(
-            Display display,
-            IComposerClient::ClientTargetProperty* outClientTargetProperty) override;
+    Error getClientTargetProperty(Display display,
+                                  IComposerClient::ClientTargetProperty* outClientTargetProperty,
+                                  float* outWhitePointNits) override;
+
+    // AIDL Composer HAL
+    Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) override;
+    Error setLayerBlockingRegion(Display display, Layer layer,
+                                 const std::vector<IComposerClient::Rect>& blocking) override;
+    Error setBootDisplayConfig(Display displayId, Config) override;
+    Error clearBootDisplayConfig(Display displayId) override;
+    Error getPreferredBootDisplayConfig(Display displayId, Config*) override;
 #ifdef QTI_UNIFIED_DRAW
     Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
     Error setLayerFlag(Display display, Layer layer,

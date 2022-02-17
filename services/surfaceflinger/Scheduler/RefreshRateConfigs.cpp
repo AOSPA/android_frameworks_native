@@ -21,23 +21,27 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wextra"
 
-#include "RefreshRateConfigs.h"
-#include <android-base/properties.h>
-#include <android-base/stringprintf.h>
-#include <utils/Trace.h>
 #include <chrono>
 #include <cmath>
+
+#include <android-base/properties.h>
+#include <android-base/stringprintf.h>
+#include <ftl/enum.h>
+#include <utils/Trace.h>
+
 #include "../SurfaceFlingerProperties.h"
+#include "RefreshRateConfigs.h"
 
 #undef LOG_TAG
 #define LOG_TAG "RefreshRateConfigs"
 
 namespace android::scheduler {
 namespace {
+
 std::string formatLayerInfo(const RefreshRateConfigs::LayerRequirement& layer, float weight) {
     return base::StringPrintf("%s (type=%s, weight=%.2f seamlessness=%s) %s", layer.name.c_str(),
-                              RefreshRateConfigs::layerVoteTypeString(layer.vote).c_str(), weight,
-                              toString(layer.seamlessness).c_str(),
+                              ftl::enum_string(layer.vote).c_str(), weight,
+                              ftl::enum_string(layer.seamlessness).c_str(),
                               to_string(layer.desiredRefreshRate).c_str());
 }
 
@@ -72,25 +76,6 @@ std::string RefreshRate::toString() const {
     return base::StringPrintf("{id=%d, hwcId=%d, fps=%.2f, width=%d, height=%d group=%d}",
                               getModeId().value(), mode->getHwcId(), getFps().getValue(),
                               mode->getWidth(), mode->getHeight(), getModeGroup());
-}
-
-std::string RefreshRateConfigs::layerVoteTypeString(LayerVoteType vote) {
-    switch (vote) {
-        case LayerVoteType::NoVote:
-            return "NoVote";
-        case LayerVoteType::Min:
-            return "Min";
-        case LayerVoteType::Max:
-            return "Max";
-        case LayerVoteType::Heuristic:
-            return "Heuristic";
-        case LayerVoteType::ExplicitDefault:
-            return "ExplicitDefault";
-        case LayerVoteType::ExplicitExactOrMultiple:
-            return "ExplicitExactOrMultiple";
-        case LayerVoteType::ExplicitExact:
-            return "ExplicitExact";
-    }
 }
 
 std::string RefreshRateConfigs::Policy::toString() const {
@@ -405,7 +390,7 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
 
     for (const auto& layer : layers) {
         ALOGV("Calculating score for %s (%s, weight %.2f, desired %.2f) ", layer.name.c_str(),
-              layerVoteTypeString(layer.vote).c_str(), layer.weight,
+              ftl::enum_string(layer.vote).c_str(), layer.weight,
               layer.desiredRefreshRate.getValue());
         if (layer.vote == LayerVoteType::NoVote || layer.vote == LayerVoteType::Min) {
             continue;
@@ -633,7 +618,7 @@ const RefreshRate* RefreshRateConfigs::getBestRefreshRate(Iter begin, Iter end) 
         const auto [refreshRate, score] = *i;
         ALOGV("%s scores %.2f", refreshRate->getName().c_str(), score);
 
-        ATRACE_INT(refreshRate->getName().c_str(), round<int>(score * 100));
+        ATRACE_INT(refreshRate->getName().c_str(), static_cast<int>(std::round(score * 100)));
 
         if (score > max * (1 + kEpsilon)) {
             max = score;
@@ -733,22 +718,20 @@ RefreshRateConfigs::RefreshRateConfigs(const DisplayModes& modes, DisplayModeId 
 
 void RefreshRateConfigs::initializeIdleTimer() {
     if (mConfig.idleTimerTimeoutMs > 0) {
-        const auto getCallback = [this]() -> std::optional<IdleTimerCallbacks::Callbacks> {
-            std::scoped_lock lock(mIdleTimerCallbacksMutex);
-            if (!mIdleTimerCallbacks.has_value()) return {};
-            return mConfig.supportKernelIdleTimer ? mIdleTimerCallbacks->kernel
-                                                  : mIdleTimerCallbacks->platform;
-        };
-
         mIdleTimer.emplace(
                 "IdleTimer", std::chrono::milliseconds(mConfig.idleTimerTimeoutMs),
-                [getCallback] {
-                    if (const auto callback = getCallback()) callback->onReset();
+                [this] {
+                    std::scoped_lock lock(mIdleTimerCallbacksMutex);
+                    if (const auto callbacks = getIdleTimerCallbacks()) {
+                        callbacks->onReset();
+                    }
                 },
-                [getCallback] {
-                    if (const auto callback = getCallback()) callback->onExpired();
+                [this] {
+                    std::scoped_lock lock(mIdleTimerCallbacksMutex);
+                    if (const auto callbacks = getIdleTimerCallbacks()) {
+                        callbacks->onExpired();
+                    }
                 });
-        mIdleTimer->start();
     }
 }
 

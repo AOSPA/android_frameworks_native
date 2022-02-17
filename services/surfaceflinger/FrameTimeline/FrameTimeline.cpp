@@ -304,7 +304,7 @@ SurfaceFrame::SurfaceFrame(const FrameTimelineInfo& frameTimelineInfo, pid_t own
                            frametimeline::TimelineItem&& predictions,
                            std::shared_ptr<TimeStats> timeStats,
                            JankClassificationThresholds thresholds,
-                           TraceCookieCounter* traceCookieCounter, bool isBuffer, int32_t gameMode)
+                           TraceCookieCounter* traceCookieCounter, bool isBuffer, GameMode gameMode)
       : mToken(frameTimelineInfo.vsyncId),
         mInputEventId(frameTimelineInfo.inputEventId),
         mOwnerPid(ownerPid),
@@ -667,7 +667,8 @@ void SurfaceFrame::traceActuals(int64_t displayFrameToken) const {
             packet->set_timestamp(
                     static_cast<uint64_t>(endTime - kPredictionExpiredStartTimeDelta));
         } else {
-            packet->set_timestamp(static_cast<uint64_t>(mPredictions.startTime));
+            packet->set_timestamp(static_cast<uint64_t>(
+                    mActuals.startTime == 0 ? mPredictions.startTime : mActuals.startTime));
         }
 
         auto* event = packet->set_frame_timeline_event();
@@ -778,7 +779,7 @@ void FrameTimeline::registerDataSource() {
 
 std::shared_ptr<SurfaceFrame> FrameTimeline::createSurfaceFrameForToken(
         const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid, int32_t layerId,
-        std::string layerName, std::string debugName, bool isBuffer, int32_t gameMode) {
+        std::string layerName, std::string debugName, bool isBuffer, GameMode gameMode) {
     ATRACE_CALL();
     if (frameTimelineInfo.vsyncId == FrameTimelineInfo::INVALID_VSYNC_ID) {
         return std::make_shared<SurfaceFrame>(frameTimelineInfo, ownerPid, ownerUid, layerId,

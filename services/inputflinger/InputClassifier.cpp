@@ -29,8 +29,6 @@
 #endif
 #include <unordered_set>
 
-#include <android/hardware/input/classifier/1.0/IInputClassifier.h>
-
 #define INDENT1 "  "
 #define INDENT2 "    "
 #define INDENT3 "      "
@@ -68,7 +66,8 @@ static MotionClassification getMotionClassification(common::V1_0::Classification
 }
 
 static bool isTouchEvent(const NotifyMotionArgs& args) {
-    return args.source == AINPUT_SOURCE_TOUCHPAD || args.source == AINPUT_SOURCE_TOUCHSCREEN;
+    return isFromSource(args.source, AINPUT_SOURCE_TOUCHPAD) ||
+            isFromSource(args.source, AINPUT_SOURCE_TOUCHSCREEN);
 }
 
 // --- ClassifierEvent ---

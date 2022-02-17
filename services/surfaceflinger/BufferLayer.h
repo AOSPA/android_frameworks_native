@@ -111,6 +111,7 @@ public:
     ui::Dataspace getDataSpace() const override;
 
     sp<GraphicBuffer> getBuffer() const override;
+    const std::shared_ptr<renderengine::ExternalTexture>& getExternalTexture() const override;
 
     ui::Transform::RotationFlags getTransformHint() const override { return mTransformHint; }
 
@@ -156,7 +157,7 @@ protected:
     bool onPreComposition(nsecs_t) override;
     void preparePerFrameCompositionState() override;
 
-    static bool getOpacityForFormat(uint32_t format);
+    static bool getOpacityForFormat(PixelFormat format);
 
     // from graphics API
     const uint32_t mTextureName;

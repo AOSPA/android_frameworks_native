@@ -21,8 +21,9 @@
 
 #include <log/log.h>
 #include <utils/Errors.h>
-#include <utils/SystemClock.h>
+#include <utils/Timers.h>
 #include <utils/Trace.h>
+#include <chrono>
 #include <queue>
 
 namespace android {
@@ -36,29 +37,28 @@ public:
     size_t used() const { return mUsedInBytes; }
     size_t frameCount() const { return mStorage.size(); }
     void setSize(size_t newSize) { mSizeInBytes = newSize; }
-    EntryProto& front() { return mStorage.front(); }
-    const EntryProto& front() const { return mStorage.front(); }
+    const std::string& front() const { return mStorage.front(); }
+    const std::string& back() const { return mStorage.back(); }
 
-    void reset(size_t newSize) {
+    void reset() {
         // use the swap trick to make sure memory is released
-        std::queue<EntryProto>().swap(mStorage);
-        mSizeInBytes = newSize;
+        std::deque<std::string>().swap(mStorage);
         mUsedInBytes = 0U;
     }
-    void flush(FileProto& fileProto) {
-        fileProto.mutable_entry()->Reserve(static_cast<int>(mStorage.size()));
-        while (!mStorage.empty()) {
-            auto entry = fileProto.add_entry();
-            entry->Swap(&mStorage.front());
-            mStorage.pop();
+
+    void writeToProto(FileProto& fileProto) {
+        fileProto.mutable_entry()->Reserve(static_cast<int>(mStorage.size()) +
+                                           fileProto.entry().size());
+        for (const std::string& entry : mStorage) {
+            EntryProto* entryProto = fileProto.add_entry();
+            entryProto->ParseFromString(entry);
         }
     }
 
     status_t writeToFile(FileProto& fileProto, std::string filename) {
         ATRACE_CALL();
+        writeToProto(fileProto);
         std::string output;
-        flush(fileProto);
-        reset(mSizeInBytes);
         if (!fileProto.SerializeToString(&output)) {
             ALOGE("Could not serialize proto.");
             return UNKNOWN_ERROR;
@@ -73,40 +73,47 @@ public:
         return NO_ERROR;
     }
 
-    std::vector<EntryProto> emplace(EntryProto&& proto) {
-        std::vector<EntryProto> replacedEntries;
-        size_t protoSize = static_cast<size_t>(proto.ByteSize());
+    std::vector<std::string> emplace(std::string&& serializedProto) {
+        std::vector<std::string> replacedEntries;
+        size_t protoSize = static_cast<size_t>(serializedProto.size());
         while (mUsedInBytes + protoSize > mSizeInBytes) {
             if (mStorage.empty()) {
                 return {};
             }
-            mUsedInBytes -= static_cast<size_t>(mStorage.front().ByteSize());
+            mUsedInBytes -= static_cast<size_t>(mStorage.front().size());
             replacedEntries.emplace_back(mStorage.front());
-            mStorage.pop();
+            mStorage.pop_front();
         }
         mUsedInBytes += protoSize;
-        mStorage.emplace();
-        mStorage.back().Swap(&proto);
+        mStorage.emplace_back(serializedProto);
         return replacedEntries;
+    }
+
+    std::vector<std::string> emplace(EntryProto&& proto) {
+        std::string serializedProto;
+        proto.SerializeToString(&serializedProto);
+        return emplace(std::move(serializedProto));
     }
 
     void dump(std::string& result) const {
         std::chrono::milliseconds duration(0);
         if (frameCount() > 0) {
+            EntryProto entry;
+            entry.ParseFromString(mStorage.front());
             duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::nanoseconds(systemTime() - front().elapsed_realtime_nanos()));
+                    std::chrono::nanoseconds(systemTime() - entry.elapsed_realtime_nanos()));
         }
         const int64_t durationCount = duration.count();
         base::StringAppendF(&result,
                             "  number of entries: %zu (%.2fMB / %.2fMB) duration: %" PRIi64 "ms\n",
-                            frameCount(), float(used()) / 1024.f * 1024.f,
-                            float(size()) / 1024.f * 1024.f, durationCount);
+                            frameCount(), float(used()) / (1024.f * 1024.f),
+                            float(size()) / (1024.f * 1024.f), durationCount);
     }
 
 private:
     size_t mUsedInBytes = 0U;
     size_t mSizeInBytes = 0U;
-    std::queue<EntryProto> mStorage;
+    std::deque<std::string> mStorage;
 };
 
 } // namespace android

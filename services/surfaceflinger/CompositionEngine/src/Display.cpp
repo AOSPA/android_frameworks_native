@@ -44,6 +44,8 @@
 
 #include "DisplayHardware/PowerAdvisor.h"
 
+using aidl::android::hardware::graphics::composer3::DisplayCapability;
+
 namespace android::compositionengine::impl {
 
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
@@ -255,10 +257,22 @@ void Display::chooseCompositionStrategy() {
     auto& hwc = getCompositionEngine().getHwComposer();
 
     beginDraw();
+    if (const auto physicalDisplayId = PhysicalDisplayId::tryCast(*halDisplayId);
+        physicalDisplayId && getState().displayBrightness) {
+        const status_t result =
+                hwc.setDisplayBrightness(*physicalDisplayId, *getState().displayBrightness,
+                                         Hwc2::Composer::DisplayBrightnessOptions{
+                                                 .applyImmediately = false})
+                        .get();
+        ALOGE_IF(result != NO_ERROR, "setDisplayBrightness failed for %s: %d, (%s)",
+                 getName().c_str(), result, strerror(-result));
+    }
+
     if (status_t result =
                 hwc.getDeviceCompositionChanges(*halDisplayId, anyLayersRequireClientComposition(),
                                                 getState().earliestPresentTime,
-                                                getState().previousPresentFence, &changes);
+                                                getState().previousPresentFence,
+                                                getState().expectedPresentTime, &changes);
         result != NO_ERROR) {
         ALOGE("chooseCompositionStrategy failed for %s: %d (%s)", getName().c_str(), result,
               strerror(-result));
@@ -268,13 +282,16 @@ void Display::chooseCompositionStrategy() {
         applyChangedTypesToLayers(changes->changedTypes);
         applyDisplayRequests(changes->displayRequests);
         applyLayerRequestsToLayers(changes->layerRequests);
-        applyClientTargetRequests(changes->clientTargetProperty);
+        applyClientTargetRequests(changes->clientTargetProperty,
+                                  changes->clientTargetWhitePointNits);
     }
 
     // Determine what type of composition we are doing from the final state
     auto& state = editState();
     state.usesClientComposition = anyLayersRequireClientComposition();
     state.usesDeviceComposition = !allLayersRequireClientComposition();
+    // Clear out the display brightness now that it's been communicated to composer.
+    state.displayBrightness.reset();
 }
 
 void Display::beginDraw() {
@@ -329,7 +346,7 @@ bool Display::getSkipColorTransform() const {
     const auto& hwc = getCompositionEngine().getHwComposer();
     if (const auto halDisplayId = HalDisplayId::tryCast(mId)) {
         return hwc.hasDisplayCapability(*halDisplayId,
-                                        hal::DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
+                                        DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
     }
 
     return hwc.hasCapability(hal::Capability::SKIP_CLIENT_COLOR_TRANSFORM);
@@ -360,7 +377,8 @@ void Display::applyChangedTypesToLayers(const ChangedTypes& changedTypes) {
 
         if (auto it = changedTypes.find(hwcLayer); it != changedTypes.end()) {
             layer->applyDeviceCompositionTypeChange(
-                    static_cast<Hwc2::IComposerClient::Composition>(it->second));
+                    static_cast<aidl::android::hardware::graphics::composer3::Composition>(
+                            it->second));
         }
     }
 }
@@ -388,12 +406,14 @@ void Display::applyLayerRequestsToLayers(const LayerRequests& layerRequests) {
     }
 }
 
-void Display::applyClientTargetRequests(const ClientTargetProperty& clientTargetProperty) {
+void Display::applyClientTargetRequests(const ClientTargetProperty& clientTargetProperty,
+                                        float whitePointNits) {
     if (clientTargetProperty.dataspace == ui::Dataspace::UNKNOWN) {
         return;
     }
 
     editState().dataspace = clientTargetProperty.dataspace;
+    editState().clientTargetWhitePointNits = whitePointNits;
     getRenderSurface()->setBufferDataspace(clientTargetProperty.dataspace);
     getRenderSurface()->setBufferPixelFormat(clientTargetProperty.pixelFormat);
 }

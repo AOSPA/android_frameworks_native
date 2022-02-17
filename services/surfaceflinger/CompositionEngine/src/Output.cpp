@@ -201,6 +201,10 @@ void Output::setProjection(ui::Rotation orientation, const Rect& layerStackSpace
     dirtyEntireOutput();
 }
 
+void Output::setNextBrightness(float brightness) {
+    editState().displayBrightness = brightness;
+}
+
 void Output::setDisplaySize(const ui::Size& size) {
     mRenderSurface->setDisplaySize(size);
 
@@ -746,6 +750,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
     editState().earliestPresentTime = refreshArgs.earliestPresentTime;
     editState().previousPresentFence = refreshArgs.previousPresentFence;
+    editState().expectedPresentTime = refreshArgs.expectedPresentTime;
 
     compositionengine::OutputLayer* peekThroughLayer = nullptr;
     bool hasSecureCamera = false;
@@ -1117,7 +1122,7 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     clientCompositionDisplay.maxLuminance = outputState.displayBrightnessNits > 0.f
             ? outputState.displayBrightnessNits
             : mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
-    clientCompositionDisplay.sdrWhitePointNits = outputState.sdrWhitePointNits;
+    clientCompositionDisplay.targetLuminanceNits = outputState.clientTargetWhitePointNits;
 
     // Compute the global color transform matrix.
     if (!outputState.usesDeviceComposition && !getSkipColorTransform()) {
@@ -1277,7 +1282,8 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                        .dataspace = outputDataspace,
                                        .realContentIsVisible = realContentIsVisible,
                                        .clearContent = !clientComposition,
-                                       .blurSetting = blurSetting};
+                                       .blurSetting = blurSetting,
+                                       .whitePointNits = layerState.whitePointNits};
                 results = layerFE.prepareClientCompositionList(targetSettings);
                 if (realContentIsVisible && !results.empty()) {
                     layer->editState().clientCompositionTimestamp = systemTime();

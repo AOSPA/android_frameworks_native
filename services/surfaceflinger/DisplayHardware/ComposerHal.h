@@ -30,9 +30,15 @@
 #include <ui/DisplayedFrameStats.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
+
+#include <aidl/android/hardware/graphics/composer3/Color.h>
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
+
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 #endif
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -67,7 +73,6 @@ using V2_4::IComposerCallback;
 using V2_4::IComposerClient;
 using V2_4::VsyncPeriodChangeTimeline;
 using V2_4::VsyncPeriodNanos;
-using DisplayCapability = IComposerClient::DisplayCapability;
 using PerFrameMetadata = IComposerClient::PerFrameMetadata;
 using PerFrameMetadataKey = IComposerClient::PerFrameMetadataKey;
 using PerFrameMetadataBlob = IComposerClient::PerFrameMetadataBlob;
@@ -77,6 +82,16 @@ public:
     static std::unique_ptr<Composer> create(const std::string& serviceName);
 
     virtual ~Composer() = 0;
+
+    enum class OptionalFeature {
+        RefreshRateSwitching,
+        ExpectedPresentTime,
+        // Whether setDisplayBrightness is able to be applied as part of a display command.
+        DisplayBrightnessCommand,
+        BootDisplayConfig,
+    };
+
+    virtual bool isSupported(OptionalFeature) const = 0;
 
     virtual std::vector<IComposer::Capability> getCapabilities() = 0;
     virtual std::string dumpDebugInfo() = 0;
@@ -103,7 +118,7 @@ public:
     virtual Error getActiveConfig(Display display, Config* outConfig) = 0;
     virtual Error getChangedCompositionTypes(
             Display display, std::vector<Layer>* outLayers,
-            std::vector<IComposerClient::Composition>* outTypes) = 0;
+            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes) = 0;
     virtual Error getColorModes(Display display, std::vector<ColorMode>* outModes) = 0;
     virtual Error getDisplayAttribute(Display display, Config config,
                                       IComposerClient::Attribute attribute, int32_t* outValue) = 0;
@@ -135,7 +150,7 @@ public:
                                   int acquireFence, Dataspace dataspace,
                                   const std::vector<IComposerClient::Rect>& damage) = 0;
     virtual Error setColorMode(Display display, ColorMode mode, RenderIntent renderIntent) = 0;
-    virtual Error setColorTransform(Display display, const float* matrix, ColorTransform hint) = 0;
+    virtual Error setColorTransform(Display display, const float* matrix) = 0;
     virtual Error setOutputBuffer(Display display, const native_handle_t* buffer,
                                   int releaseFence) = 0;
     virtual Error setPowerMode(Display display, IComposerClient::PowerMode mode) = 0;
@@ -143,12 +158,12 @@ public:
 
     virtual Error setClientTargetSlotCount(Display display) = 0;
 
-    virtual Error validateDisplay(Display display, uint32_t* outNumTypes,
-                                  uint32_t* outNumRequests) = 0;
+    virtual Error validateDisplay(Display display, nsecs_t expectedPresentTime,
+                                  uint32_t* outNumTypes, uint32_t* outNumRequests) = 0;
 
-    virtual Error presentOrValidateDisplay(Display display, uint32_t* outNumTypes,
-                                           uint32_t* outNumRequests, int* outPresentFence,
-                                           uint32_t* state) = 0;
+    virtual Error presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
+                                           uint32_t* outNumTypes, uint32_t* outNumRequests,
+                                           int* outPresentFence, uint32_t* state) = 0;
 
     virtual Error setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) = 0;
     /* see setClientTarget for the purpose of slot */
@@ -158,10 +173,12 @@ public:
                                         const std::vector<IComposerClient::Rect>& damage) = 0;
     virtual Error setLayerBlendMode(Display display, Layer layer,
                                     IComposerClient::BlendMode mode) = 0;
-    virtual Error setLayerColor(Display display, Layer layer,
-                                const IComposerClient::Color& color) = 0;
-    virtual Error setLayerCompositionType(Display display, Layer layer,
-                                          IComposerClient::Composition type) = 0;
+    virtual Error setLayerColor(
+            Display display, Layer layer,
+            const aidl::android::hardware::graphics::composer3::Color& color) = 0;
+    virtual Error setLayerCompositionType(
+            Display display, Layer layer,
+            aidl::android::hardware::graphics::composer3::Composition type) = 0;
     virtual Error setLayerDataspace(Display display, Layer layer, Dataspace dataspace) = 0;
     virtual Error setLayerDisplayFrame(Display display, Layer layer,
                                        const IComposerClient::Rect& frame) = 0;
@@ -200,12 +217,26 @@ public:
                                             DisplayedFrameStats* outStats) = 0;
     virtual Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer, const std::vector<PerFrameMetadataBlob>& metadata) = 0;
-    virtual Error setDisplayBrightness(Display display, float brightness) = 0;
+    // Options for setting the display brightness
+    struct DisplayBrightnessOptions {
+        // If true, then immediately submits a brightness change request to composer. Otherwise,
+        // submission of the brightness change may be deferred until presenting the next frame.
+        // applyImmediately should only be false if OptionalFeature::DisplayBrightnessCommand is
+        // supported.
+        bool applyImmediately = true;
+
+        bool operator==(const DisplayBrightnessOptions& other) const {
+            return applyImmediately == other.applyImmediately;
+        }
+    };
+    virtual Error setDisplayBrightness(Display display, float brightness,
+                                       const DisplayBrightnessOptions& options) = 0;
 
     // Composer HAL 2.4
-    virtual bool isVsyncPeriodSwitchSupported() = 0;
-    virtual Error getDisplayCapabilities(Display display,
-                                         std::vector<DisplayCapability>* outCapabilities) = 0;
+    virtual Error getDisplayCapabilities(
+            Display display,
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*
+                    outCapabilities) = 0;
     virtual V2_4::Error getDisplayConnectionType(
             Display display, IComposerClient::DisplayConnectionType* outType) = 0;
     virtual V2_4::Error getDisplayVsyncPeriod(Display display,
@@ -226,8 +257,11 @@ public:
                                                 const std::vector<uint8_t>& value) = 0;
     virtual V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) = 0;
+
     virtual Error getClientTargetProperty(
-            Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty) = 0;
+            Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
+            float* outWhitePointNits) = 0;
+
     virtual Error setDisplayElapseTime(Display display, uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
     virtual Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) = 0;
@@ -236,6 +270,13 @@ public:
     virtual Error setClientTarget_3_1(Display display, int32_t slot,
                                       int acquireFence, Dataspace dataspace) = 0;
 #endif
+    // AIDL Composer
+    virtual Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) = 0;
+    virtual Error setLayerBlockingRegion(Display display, Layer layer,
+                                         const std::vector<IComposerClient::Rect>& blocking) = 0;
+    virtual Error setBootDisplayConfig(Display displayId, Config) = 0;
+    virtual Error clearBootDisplayConfig(Display displayId) = 0;
+    virtual Error getPreferredBootDisplayConfig(Display displayId, Config*) = 0;
 };
 
 } // namespace android::Hwc2

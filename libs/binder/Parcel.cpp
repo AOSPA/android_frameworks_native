@@ -739,6 +739,17 @@ bool Parcel::enforceInterface(const char16_t* interface,
     }
 }
 
+binder::Status Parcel::enforceNoDataAvail() const {
+    const auto n = dataAvail();
+    if (n == 0) {
+        return binder::Status::ok();
+    }
+    return binder::Status::
+            fromExceptionCode(binder::Status::Exception::EX_BAD_PARCELABLE,
+                              String8::format("Parcel data not fully consumed, unread size: %zu",
+                                              n));
+}
+
 size_t Parcel::objectsCount() const
 {
     return mObjectsSize;
@@ -824,7 +835,7 @@ void* Parcel::writeInplace(size_t len)
 
     const size_t padded = pad_size(len);
 
-    // sanity check for integer overflow
+    // check for integer overflow
     if (mDataPos+padded < mDataPos) {
         return nullptr;
     }

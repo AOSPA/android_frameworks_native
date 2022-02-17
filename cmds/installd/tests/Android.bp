@@ -13,7 +13,10 @@ cc_test {
     test_suites: ["device-tests"],
     clang: true,
     srcs: ["installd_utils_test.cpp"],
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
     shared_libs: [
         "libbase",
         "libutils",
@@ -33,7 +36,10 @@ cc_test {
     test_suites: ["device-tests"],
     clang: true,
     srcs: ["installd_cache_test.cpp"],
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
     shared_libs: [
         "libbase",
         "libbinder",
@@ -48,6 +54,7 @@ cc_test {
         "libasync_safe",
         "libdiskusage",
         "libinstalld",
+        "libziparchive",
         "liblog",
         "liblogwrap",
     ],
@@ -74,7 +81,10 @@ cc_test {
     test_suites: ["device-tests"],
     clang: true,
     srcs: ["installd_service_test.cpp"],
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
     shared_libs: [
         "libbase",
         "libbinder",
@@ -83,12 +93,14 @@ cc_test {
         "libprocessgroup",
         "libselinux",
         "libutils",
+        "packagemanager_aidl-cpp",
         "server_configurable_flags",
     ],
     static_libs: [
         "libasync_safe",
         "libdiskusage",
         "libinstalld",
+        "libziparchive",
         "liblog",
         "liblogwrap",
     ],
@@ -115,7 +127,10 @@ cc_test {
     test_suites: ["device-tests"],
     clang: true,
     srcs: ["installd_dexopt_test.cpp"],
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
     shared_libs: [
         "libbase",
         "libbinder",
@@ -158,7 +173,10 @@ cc_test {
     test_suites: ["device-tests"],
     clang: true,
     srcs: ["installd_otapreopt_test.cpp"],
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
     shared_libs: [
         "libbase",
         "libcutils",
@@ -167,6 +185,26 @@ cc_test {
     ],
     static_libs: [
         "liblog",
-        "libotapreoptparameters"
+        "libotapreoptparameters",
+    ],
+}
+
+cc_test {
+    name: "installd_file_test",
+    test_suites: ["device-tests"],
+    clang: true,
+    srcs: ["installd_file_test.cpp"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    shared_libs: [
+        "libbase",
+        "libcutils",
+        "libutils",
+    ],
+    static_libs: [
+        "libinstalld",
+        "liblog",
     ],
 }

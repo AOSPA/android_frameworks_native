@@ -17,20 +17,22 @@
 #undef LOG_TAG
 #define LOG_TAG "SchedulerTimer"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
-#include <android-base/stringprintf.h>
-#include <log/log.h>
-#include <sys/epoll.h>
-#include <sys/timerfd.h>
-#include <sys/unistd.h>
-#include <utils/Trace.h>
+
 #include <chrono>
 #include <cstdint>
 
-#include "SchedulerUtils.h"
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
+#include <sys/unistd.h>
+
+#include <ftl/concat.h>
+#include <ftl/enum.h>
+#include <log/log.h>
+#include <utils/Trace.h>
+
 #include "Timer.h"
 
 namespace android::scheduler {
-using base::StringAppendF;
 
 static constexpr size_t kReadPipe = 0;
 static constexpr size_t kWritePipe = 1;
@@ -47,13 +49,25 @@ Timer::~Timer() {
 }
 
 void Timer::reset() {
-    cleanup();
-    mTimerFd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    mEpollFd = epoll_create1(EPOLL_CLOEXEC);
-    if (pipe2(mPipes.data(), O_CLOEXEC | O_NONBLOCK)) {
-        ALOGE("could not create TimerDispatch mPipes");
-        return;
-    };
+    std::function<void()> cb;
+    {
+        std::lock_guard lock(mMutex);
+        if (mExpectingCallback && mCallback) {
+            cb = mCallback;
+        }
+
+        cleanup();
+        mTimerFd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+        mEpollFd = epoll_create1(EPOLL_CLOEXEC);
+        if (pipe2(mPipes.data(), O_CLOEXEC | O_NONBLOCK)) {
+            ALOGE("could not create TimerDispatch mPipes");
+        }
+    }
+    if (cb) {
+        setDebugState(DebugState::InCallback);
+        cb();
+        setDebugState(DebugState::Running);
+    }
     setDebugState(DebugState::Reset);
 }
 
@@ -77,6 +91,8 @@ void Timer::cleanup() {
         close(mPipes[kWritePipe]);
         mPipes[kWritePipe] = -1;
     }
+    mExpectingCallback = false;
+    mCallback = {};
 }
 
 void Timer::endDispatch() {
@@ -95,6 +111,7 @@ void Timer::alarmAt(std::function<void()> const& cb, nsecs_t time) {
             std::chrono::duration_cast<std::chrono::nanoseconds>(1s).count();
 
     mCallback = cb;
+    mExpectingCallback = true;
 
     struct itimerspec old_timer;
     struct itimerspec new_timer {
@@ -161,9 +178,6 @@ bool Timer::dispatch() {
     }
 
     uint64_t iteration = 0;
-    char const traceNamePrefix[] = "TimerIteration #";
-    static constexpr size_t maxlen = arrayLen(traceNamePrefix) + max64print;
-    std::array<char, maxlen> str_buffer;
 
     while (true) {
         setDebugState(DebugState::Waiting);
@@ -172,9 +186,8 @@ bool Timer::dispatch() {
 
         setDebugState(DebugState::Running);
         if (ATRACE_ENABLED()) {
-            snprintf(str_buffer.data(), str_buffer.size(), "%s%" PRIu64, traceNamePrefix,
-                     iteration++);
-            ATRACE_NAME(str_buffer.data());
+            ftl::Concat trace("TimerIteration #", iteration++);
+            ATRACE_NAME(trace.c_str());
         }
 
         if (nfds == -1) {
@@ -194,6 +207,7 @@ bool Timer::dispatch() {
                 {
                     std::lock_guard lock(mMutex);
                     cb = mCallback;
+                    mExpectingCallback = false;
                 }
                 if (cb) {
                     setDebugState(DebugState::InCallback);
@@ -215,26 +229,11 @@ void Timer::setDebugState(DebugState state) {
     mDebugState = state;
 }
 
-const char* Timer::strDebugState(DebugState state) const {
-    switch (state) {
-        case DebugState::Reset:
-            return "Reset";
-        case DebugState::Running:
-            return "Running";
-        case DebugState::Waiting:
-            return "Waiting";
-        case DebugState::Reading:
-            return "Reading";
-        case DebugState::InCallback:
-            return "InCallback";
-        case DebugState::Terminated:
-            return "Terminated";
-    }
-}
-
 void Timer::dump(std::string& result) const {
     std::lock_guard lock(mMutex);
-    StringAppendF(&result, "\t\tDebugState: %s\n", strDebugState(mDebugState));
+    result.append("\t\tDebugState: ");
+    result.append(ftl::enum_string(mDebugState));
+    result.push_back('\n');
 }
 
 } // namespace android::scheduler

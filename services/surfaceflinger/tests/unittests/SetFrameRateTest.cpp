@@ -48,6 +48,8 @@ using android::Hwc2::IComposerClient;
 
 using FakeHwcDisplayInjector = TestableSurfaceFlinger::FakeHwcDisplayInjector;
 
+using scheduler::LayerHistory;
+
 using FrameRate = Layer::FrameRate;
 using FrameRateCompatibility = Layer::FrameRateCompatibility;
 
@@ -162,8 +164,9 @@ void SetFrameRateTest::setupScheduler() {
             .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD));
     EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
     mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
-                            std::move(eventThread), std::move(sfEventThread), /*callback*/ nullptr,
-                            /*hasMultipleModes*/ true);
+                            std::move(eventThread), std::move(sfEventThread),
+                            TestableSurfaceFlinger::SchedulerCallbackImpl::kNoOp,
+                            TestableSurfaceFlinger::kTwoDisplayModes);
 }
 
 namespace {

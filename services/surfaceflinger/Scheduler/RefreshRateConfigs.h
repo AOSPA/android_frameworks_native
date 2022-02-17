@@ -16,31 +16,31 @@
 
 #pragma once
 
-#include <android-base/stringprintf.h>
-#include <gui/DisplayEventReceiver.h>
-
 #include <algorithm>
 #include <numeric>
 #include <optional>
 #include <type_traits>
 
+#include <android-base/stringprintf.h>
+#include <gui/DisplayEventReceiver.h>
+
+#include <scheduler/Fps.h>
+#include <scheduler/Seamlessness.h>
+
 #include "DisplayHardware/DisplayMode.h"
 #include "DisplayHardware/HWComposer.h"
-#include "Fps.h"
 #include "Scheduler/OneShotTimer.h"
-#include "Scheduler/SchedulerUtils.h"
-#include "Scheduler/Seamlessness.h"
 #include "Scheduler/StrongTyping.h"
 
 namespace android::scheduler {
 
 using namespace std::chrono_literals;
 
-enum class RefreshRateConfigEvent : unsigned { None = 0b0, Changed = 0b1 };
+enum class DisplayModeEvent : unsigned { None = 0b0, Changed = 0b1 };
 
-inline RefreshRateConfigEvent operator|(RefreshRateConfigEvent lhs, RefreshRateConfigEvent rhs) {
-    using T = std::underlying_type_t<RefreshRateConfigEvent>;
-    return static_cast<RefreshRateConfigEvent>(static_cast<T>(lhs) | static_cast<T>(rhs));
+inline DisplayModeEvent operator|(DisplayModeEvent lhs, DisplayModeEvent rhs) {
+    using T = std::underlying_type_t<DisplayModeEvent>;
+    return static_cast<DisplayModeEvent>(static_cast<T>(lhs) | static_cast<T>(rhs));
 }
 
 using FrameRateOverride = DisplayEventReceiver::Event::FrameRateOverride;
@@ -205,6 +205,7 @@ public:
         ExplicitExact,           // Specific refresh rate that was provided by the app with
                                  // Exact compatibility
 
+        ftl_last = ExplicitExact
     };
 
     // Captures the layer requirements for a refresh rate. This will be used to determine the
@@ -287,9 +288,6 @@ public:
     // Stores the current modeId the device operates at
     void setCurrentModeId(DisplayModeId) EXCLUDES(mLock);
 
-    // Returns a string that represents the layer vote type
-    static std::string layerVoteTypeString(LayerVoteType vote);
-
     // Returns a known frame rate that is the closest to frameRate
     Fps findClosestKnownFrameRate(Fps frameRate) const;
 
@@ -352,16 +350,36 @@ public:
 
     bool supportsKernelIdleTimer() const { return mConfig.supportKernelIdleTimer; }
 
-    void setIdleTimerCallbacks(std::function<void()> platformTimerReset,
-                               std::function<void()> platformTimerExpired,
-                               std::function<void()> kernelTimerReset,
-                               std::function<void()> kernelTimerExpired) {
+    struct IdleTimerCallbacks {
+        struct Callbacks {
+            std::function<void()> onReset;
+            std::function<void()> onExpired;
+        };
+
+        Callbacks platform;
+        Callbacks kernel;
+    };
+
+    void setIdleTimerCallbacks(IdleTimerCallbacks callbacks) EXCLUDES(mIdleTimerCallbacksMutex) {
         std::scoped_lock lock(mIdleTimerCallbacksMutex);
-        mIdleTimerCallbacks.emplace();
-        mIdleTimerCallbacks->platform.onReset = platformTimerReset;
-        mIdleTimerCallbacks->platform.onExpired = platformTimerExpired;
-        mIdleTimerCallbacks->kernel.onReset = kernelTimerReset;
-        mIdleTimerCallbacks->kernel.onExpired = kernelTimerExpired;
+        mIdleTimerCallbacks = std::move(callbacks);
+    }
+
+    void clearIdleTimerCallbacks() EXCLUDES(mIdleTimerCallbacksMutex) {
+        std::scoped_lock lock(mIdleTimerCallbacksMutex);
+        mIdleTimerCallbacks.reset();
+    }
+
+    void startIdleTimer() {
+        if (mIdleTimer) {
+            mIdleTimer->start();
+        }
+    }
+
+    void stopIdleTimer() {
+        if (mIdleTimer) {
+            mIdleTimer->stop();
+        }
     }
 
     void resetIdleTimer(bool kernelOnly) {
@@ -372,7 +390,7 @@ public:
             return;
         }
         mIdleTimer->reset();
-    };
+    }
 
     void dump(std::string& result) const EXCLUDES(mLock);
 
@@ -440,6 +458,13 @@ private:
 
     void initializeIdleTimer();
 
+    std::optional<IdleTimerCallbacks::Callbacks> getIdleTimerCallbacks() const
+            REQUIRES(mIdleTimerCallbacksMutex) {
+        if (!mIdleTimerCallbacks) return {};
+        return mConfig.supportKernelIdleTimer ? mIdleTimerCallbacks->kernel
+                                              : mIdleTimerCallbacks->platform;
+    }
+
     // The list of refresh rates, indexed by display modes ID. This may change after this
     // object is initialized.
     AllRefreshRatesMapType mRefreshRates GUARDED_BY(mLock);
@@ -484,21 +509,11 @@ private:
     mutable std::optional<GetBestRefreshRateInvocation> lastBestRefreshRateInvocation
             GUARDED_BY(mLock);
 
-    // Timer that records time between requests for next vsync.
-    std::optional<scheduler::OneShotTimer> mIdleTimer;
-
-    struct IdleTimerCallbacks {
-        struct Callbacks {
-            std::function<void()> onReset;
-            std::function<void()> onExpired;
-        };
-
-        Callbacks platform;
-        Callbacks kernel;
-    };
-
+    // Declare mIdleTimer last to ensure its thread joins before the mutex/callbacks are destroyed.
     std::mutex mIdleTimerCallbacksMutex;
     std::optional<IdleTimerCallbacks> mIdleTimerCallbacks GUARDED_BY(mIdleTimerCallbacksMutex);
+    // Used to detect (lack of) frame activity.
+    std::optional<scheduler::OneShotTimer> mIdleTimer;
 };
 
 } // namespace android::scheduler

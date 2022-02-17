@@ -76,6 +76,7 @@ class RenderEngineThreaded;
 
 namespace impl {
 class RenderEngine;
+class ExternalTexture;
 }
 
 enum class Protection {
@@ -99,7 +100,7 @@ public:
         SKIA_GL_THREADED = 4,
     };
 
-    static std::unique_ptr<RenderEngine> create(RenderEngineCreationArgs args);
+    static std::unique_ptr<RenderEngine> create(const RenderEngineCreationArgs& args);
 
     virtual ~RenderEngine() = 0;
 
@@ -192,6 +193,10 @@ public:
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
     virtual int getRETid() = 0;
 
+    // Allows flinger to get the render engine thread id for power management with ADPF
+    // Returns the tid of the renderengine thread if it's threaded, and std::nullopt otherwise
+    virtual std::optional<pid_t> getRenderEngineTid() const { return std::nullopt; }
+
 protected:
     RenderEngine() : RenderEngine(RenderEngineType::GLES) {}
 
@@ -227,7 +232,7 @@ protected:
     // avoid any thread synchronization that may be required by directly calling postRenderCleanup.
     virtual bool canSkipPostRenderCleanup() const = 0;
 
-    friend class ExternalTexture;
+    friend class impl::ExternalTexture;
     friend class threaded::RenderEngineThreaded;
     friend class RenderEngineTest_cleanupPostRender_cleansUpOnce_Test;
     const RenderEngineType mRenderEngineType;

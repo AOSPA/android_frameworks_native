@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include <input/Input.h>
 #include <linux/input.h>
+#include <sys/epoll.h>
 
 #include <cinttypes>
 #include <thread>
@@ -219,21 +220,21 @@ public:
     template <class T>
     T getAnrTokenLockedInterruptible(std::chrono::nanoseconds timeout, std::queue<T>& storage,
                                      std::unique_lock<std::mutex>& lock) REQUIRES(mLock) {
-        const std::chrono::time_point start = std::chrono::steady_clock::now();
-        std::chrono::duration timeToWait = timeout + 100ms; // provide some slack
-
         // If there is an ANR, Dispatcher won't be idle because there are still events
         // in the waitQueue that we need to check on. So we can't wait for dispatcher to be idle
         // before checking if ANR was called.
         // Since dispatcher is not guaranteed to call notifyNoFocusedWindowAnr right away, we need
         // to provide it some time to act. 100ms seems reasonable.
-        mNotifyAnr.wait_for(lock, timeToWait,
-                            [&storage]() REQUIRES(mLock) { return !storage.empty(); });
-        const std::chrono::duration waited = std::chrono::steady_clock::now() - start;
-        if (storage.empty()) {
+        std::chrono::duration timeToWait = timeout + 100ms; // provide some slack
+        const std::chrono::time_point start = std::chrono::steady_clock::now();
+        std::optional<T> token =
+                getItemFromStorageLockedInterruptible(timeToWait, storage, lock, mNotifyAnr);
+        if (!token.has_value()) {
             ADD_FAILURE() << "Did not receive the ANR callback";
             return {};
         }
+
+        const std::chrono::duration waited = std::chrono::steady_clock::now() - start;
         // Ensure that the ANR didn't get raised too early. We can't be too strict here because
         // the dispatcher started counting before this function was called
         if (std::chrono::abs(timeout - waited) > 100ms) {
@@ -243,9 +244,24 @@ public:
                           << std::chrono::duration_cast<std::chrono::milliseconds>(waited).count()
                           << "ms instead";
         }
-        T token = storage.front();
+        return *token;
+    }
+
+    template <class T>
+    std::optional<T> getItemFromStorageLockedInterruptible(std::chrono::nanoseconds timeout,
+                                                           std::queue<T>& storage,
+                                                           std::unique_lock<std::mutex>& lock,
+                                                           std::condition_variable& condition)
+            REQUIRES(mLock) {
+        condition.wait_for(lock, timeout,
+                           [&storage]() REQUIRES(mLock) { return !storage.empty(); });
+        if (storage.empty()) {
+            ADD_FAILURE() << "Did not receive the expected callback";
+            return std::nullopt;
+        }
+        T item = storage.front();
         storage.pop();
-        return token;
+        return std::make_optional(item);
     }
 
     void assertNotifyAnrWasNotCalled() {
@@ -303,6 +319,16 @@ public:
         mNotifyDropWindowWasCalled = false;
     }
 
+    void assertNotifyInputChannelBrokenWasCalled(const sp<IBinder>& token) {
+        std::unique_lock lock(mLock);
+        base::ScopedLockAssertion assumeLocked(mLock);
+        std::optional<sp<IBinder>> receivedToken =
+                getItemFromStorageLockedInterruptible(100ms, mBrokenInputChannels, lock,
+                                                      mNotifyInputChannelBroken);
+        ASSERT_TRUE(receivedToken.has_value());
+        ASSERT_EQ(token, *receivedToken);
+    }
+
 private:
     std::mutex mLock;
     std::unique_ptr<InputEvent> mFilteredEvent GUARDED_BY(mLock);
@@ -321,6 +347,8 @@ private:
     std::queue<int32_t> mAnrMonitorPids GUARDED_BY(mLock);
     std::queue<int32_t> mResponsiveMonitorPids GUARDED_BY(mLock);
     std::condition_variable mNotifyAnr;
+    std::queue<sp<IBinder>> mBrokenInputChannels GUARDED_BY(mLock);
+    std::condition_variable mNotifyInputChannelBroken;
 
     sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
     bool mNotifyDropWindowWasCalled GUARDED_BY(mLock) = false;
@@ -361,7 +389,11 @@ private:
         mNotifyAnr.notify_all();
     }
 
-    void notifyInputChannelBroken(const sp<IBinder>&) override {}
+    void notifyInputChannelBroken(const sp<IBinder>& connectionToken) override {
+        std::scoped_lock lock(mLock);
+        mBrokenInputChannels.push(connectionToken);
+        mNotifyInputChannelBroken.notify_all();
+    }
 
     void notifyFocusChanged(const sp<IBinder>&, const sp<IBinder>&) override {}
 
@@ -845,7 +877,6 @@ public:
 
         FocusEvent* focusEvent = static_cast<FocusEvent*>(event);
         EXPECT_EQ(hasFocus, focusEvent->getHasFocus());
-        EXPECT_EQ(inTouchMode, focusEvent->getInTouchMode());
     }
 
     void consumeCaptureEvent(bool hasCapture) {
@@ -926,6 +957,8 @@ public:
 
     sp<IBinder> getToken() { return mConsumer->getChannel()->getConnectionToken(); }
 
+    int getChannelFd() { return mConsumer->getChannel()->getFd().get(); }
+
 protected:
     std::unique_ptr<InputConsumer> mConsumer;
     PreallocatedInputEventFactory mEventFactory;
@@ -973,6 +1006,7 @@ public:
         mInfo.ownerPid = INJECTOR_PID;
         mInfo.ownerUid = INJECTOR_UID;
         mInfo.displayId = displayId;
+        mInfo.trustedOverlay = false;
     }
 
     sp<FakeWindowHandle> clone(
@@ -1014,6 +1048,8 @@ public:
         mInfo.transform = translate * displayTransform;
     }
 
+    void setTouchableRegion(const Region& region) { mInfo.touchableRegion = region; }
+
     void setType(WindowInfo::Type type) { mInfo.type = type; }
 
     void setHasWallpaper(bool hasWallpaper) { mInfo.hasWallpaper = hasWallpaper; }
@@ -1022,7 +1058,9 @@ public:
 
     void setFlags(Flags<WindowInfo::Flag> flags) { mInfo.flags = flags; }
 
-    void setInputFeatures(WindowInfo::Feature features) { mInfo.inputFeatures = features; }
+    void setInputFeatures(Flags<WindowInfo::Feature> features) { mInfo.inputFeatures = features; }
+
+    void setTrustedOverlay(bool trustedOverlay) { mInfo.trustedOverlay = trustedOverlay; }
 
     void setWindowTransform(float dsdx, float dtdx, float dtdy, float dsdy) {
         mInfo.transform.set(dsdx, dtdx, dtdy, dsdy);
@@ -1178,6 +1216,10 @@ public:
         mInfo.ownerPid = ownerPid;
         mInfo.ownerUid = ownerUid;
     }
+
+    void destroyReceiver() { mInputReceiver = nullptr; }
+
+    int getChannelFd() { return mInputReceiver->getChannelFd(); }
 
 private:
     const std::string mName;
@@ -1358,7 +1400,7 @@ static InputEventInjectionResult injectMotionEvent(
 
 static InputEventInjectionResult injectMotionEvent(
         const std::unique_ptr<InputDispatcher>& dispatcher, int32_t action, int32_t source,
-        int32_t displayId, const PointF& position,
+        int32_t displayId, const PointF& position = {100, 200},
         const PointF& cursorPosition = {AMOTION_EVENT_INVALID_CURSOR_POSITION,
                                         AMOTION_EVENT_INVALID_CURSOR_POSITION},
         std::chrono::milliseconds injectionTimeout = INJECT_EVENT_TIMEOUT,
@@ -1440,6 +1482,23 @@ static NotifyMotionArgs generateMotionArgs(int32_t action, int32_t source, int32
 static NotifyPointerCaptureChangedArgs generatePointerCaptureChangedArgs(
         const PointerCaptureRequest& request) {
     return NotifyPointerCaptureChangedArgs(/* id */ 0, systemTime(SYSTEM_TIME_MONOTONIC), request);
+}
+
+/**
+ * When a window unexpectedly disposes of its input channel, policy should be notified about the
+ * broken channel.
+ */
+TEST_F(InputDispatcherTest, WhenInputChannelBreaks_PolicyIsNotified) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Window that breaks its input channel",
+                                 ADISPLAY_ID_DEFAULT);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // Window closes its channel, but the window remains.
+    window->destroyReceiver();
+    mFakePolicy->assertNotifyInputChannelBrokenWasCalled(window->getInfo()->token);
 }
 
 TEST_F(InputDispatcherTest, SetInputWindow_SingleWindowTouch) {
@@ -1579,6 +1638,53 @@ TEST_F(InputDispatcherTest, WhenForegroundWindowDisappears_WallpaperTouchIsCance
     foregroundWindow->consumeMotionCancel();
     // Since the "parent" window of the wallpaper is gone, wallpaper should receive cancel, too.
     wallpaperWindow->consumeMotionCancel(ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+}
+
+/**
+ * Same test as WhenForegroundWindowDisappears_WallpaperTouchIsCanceled above,
+ * with the following differences:
+ * After ACTION_DOWN, Wallpaper window hangs up its channel, which forces the dispatcher to
+ * clean up the connection.
+ * This later may crash dispatcher during ACTION_CANCEL synthesis, if the dispatcher is not careful.
+ * Ensure that there's no crash in the dispatcher.
+ */
+TEST_F(InputDispatcherTest, WhenWallpaperDisappears_NoCrash) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> foregroundWindow =
+            new FakeWindowHandle(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
+    foregroundWindow->setHasWallpaper(true);
+    sp<FakeWindowHandle> wallpaperWindow =
+            new FakeWindowHandle(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+    wallpaperWindow->setType(WindowInfo::Type::WALLPAPER);
+    constexpr int expectedWallpaperFlags =
+            AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED | AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {foregroundWindow, wallpaperWindow}}});
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {100, 200}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    // Both foreground window and its wallpaper should receive the touch down
+    foregroundWindow->consumeMotionDown();
+    wallpaperWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {110, 200}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    foregroundWindow->consumeMotionMove();
+    wallpaperWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+
+    // Wallpaper closes its channel, but the window remains.
+    wallpaperWindow->destroyReceiver();
+    mFakePolicy->assertNotifyInputChannelBrokenWasCalled(wallpaperWindow->getInfo()->token);
+
+    // Now the foreground window goes away, but the wallpaper stays, even though its channel
+    // is no longer valid.
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {wallpaperWindow}}});
+    foregroundWindow->consumeMotionCancel();
 }
 
 /**
@@ -2078,6 +2184,33 @@ TEST_F(InputDispatcherDisplayProjectionTest, InjectionInLogicalDisplaySpace) {
     // end up in the incorrect window.
     injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
                      PointF{75 * 2, 55 * 4});
+
+    firstWindow->consumeMotionDown();
+    secondWindow->assertNoEvents();
+}
+
+// Ensure that when a MotionEvent that has a custom transform is injected, the post-transformed
+// event should be treated as being in the logical display space.
+TEST_F(InputDispatcherDisplayProjectionTest, InjectionWithTransformInLogicalDisplaySpace) {
+    auto [firstWindow, secondWindow] = setupScaledDisplayScenario();
+
+    const std::array<float, 9> matrix = {1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 0.0, 0.0, 1.0};
+    ui::Transform injectedEventTransform;
+    injectedEventTransform.set(matrix);
+    const vec2 expectedPoint{75, 55}; // The injected point in the logical display space.
+    const vec2 untransformedPoint = injectedEventTransform.inverse().transform(expectedPoint);
+
+    MotionEvent event = MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                .displayId(ADISPLAY_ID_DEFAULT)
+                                .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                                .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                                 .x(untransformedPoint.x)
+                                                 .y(untransformedPoint.y))
+                                .build();
+    event.transform(matrix);
+
+    injectMotionEvent(mDispatcher, event, INJECT_EVENT_TIMEOUT,
+                      InputEventInjectionSync::WAIT_FOR_RESULT);
 
     firstWindow->consumeMotionDown();
     secondWindow->assertNoEvents();
@@ -2673,6 +2806,13 @@ public:
                                      expectedDisplayId, expectedFlags);
     }
 
+    void consumeMotionPointerDown(int32_t pointerIdx) {
+        int32_t action = AMOTION_EVENT_ACTION_POINTER_DOWN |
+                (pointerIdx << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+        mInputReceiver->consumeEvent(AINPUT_EVENT_TYPE_MOTION, action, ADISPLAY_ID_DEFAULT,
+                                     0 /*expectedFlags*/);
+    }
+
     MotionEvent* consumeMotion() {
         InputEvent* event = mInputReceiver->consume();
         if (!event) {
@@ -2881,6 +3021,91 @@ TEST_F(InputDispatcherTest, TestMoveEvent) {
                          0 /*expectedFlags*/);
 }
 
+TEST_F(InputDispatcherTest, GestureMonitor_SplitIfNoWindowTouched) {
+    FakeMonitorReceiver monitor = FakeMonitorReceiver(mDispatcher, "GM_1", ADISPLAY_ID_DEFAULT,
+                                                      true /*isGestureMonitor*/);
+
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    // Create a non touch modal window that supports split touch
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 100, 100));
+    window->setFlags(WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::SPLIT_TOUCH);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // First finger down, no window touched.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {100, 200}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    monitor.consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    window->assertNoEvents();
+
+    // Second finger down on window, the window should receive touch down.
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                       (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                               AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(100)
+                                     .y(200))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    monitor.consumeMotionPointerDown(1 /* pointerIndex */);
+}
+
+TEST_F(InputDispatcherTest, GestureMonitor_NoSplitAfterPilfer) {
+    FakeMonitorReceiver monitor = FakeMonitorReceiver(mDispatcher, "GM_1", ADISPLAY_ID_DEFAULT,
+                                                      true /*isGestureMonitor*/);
+
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    // Create a non touch modal window that supports split touch
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 100, 100));
+    window->setFlags(WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::SPLIT_TOUCH);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // First finger down, no window touched.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {100, 200}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    monitor.consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    window->assertNoEvents();
+
+    // Gesture monitor pilfer the pointers.
+    mDispatcher->pilferPointers(monitor.getToken());
+
+    // Second finger down on window, the window should not receive touch down.
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                       (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                               AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(100)
+                                     .y(200))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    window->assertNoEvents();
+    monitor.consumeMotionPointerDown(1 /* pointerIndex */);
+}
+
 /**
  * Dispatcher has touch mode enabled by default. Typically, the policy overrides that value to
  * the device default right away. In the test scenario, we check both the default value,
@@ -2960,8 +3185,8 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_KeyEvent) {
     const VerifiedKeyEvent& verifiedKey = static_cast<const VerifiedKeyEvent&>(*verified);
 
     ASSERT_EQ(keyArgs.action, verifiedKey.action);
-    ASSERT_EQ(keyArgs.downTime, verifiedKey.downTimeNanos);
     ASSERT_EQ(keyArgs.flags & VERIFIED_KEY_EVENT_FLAGS, verifiedKey.flags);
+    ASSERT_EQ(keyArgs.downTime, verifiedKey.downTimeNanos);
     ASSERT_EQ(keyArgs.keyCode, verifiedKey.keyCode);
     ASSERT_EQ(keyArgs.scanCode, verifiedKey.scanCode);
     ASSERT_EQ(keyArgs.metaState, verifiedKey.metaState);
@@ -3009,8 +3234,8 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_MotionEvent) {
     EXPECT_EQ(rawXY.x, verifiedMotion.rawX);
     EXPECT_EQ(rawXY.y, verifiedMotion.rawY);
     EXPECT_EQ(motionArgs.action & AMOTION_EVENT_ACTION_MASK, verifiedMotion.actionMasked);
-    EXPECT_EQ(motionArgs.downTime, verifiedMotion.downTimeNanos);
     EXPECT_EQ(motionArgs.flags & VERIFIED_MOTION_EVENT_FLAGS, verifiedMotion.flags);
+    EXPECT_EQ(motionArgs.downTime, verifiedMotion.downTimeNanos);
     EXPECT_EQ(motionArgs.metaState, verifiedMotion.metaState);
     EXPECT_EQ(motionArgs.buttonState, verifiedMotion.buttonState);
 }
@@ -3611,6 +3836,49 @@ TEST_F(InputDispatcherFocusOnTwoDisplaysTest, CanFocusWindowOnUnfocusedDisplay) 
     secondWindowInPrimary->consumeKeyDown(ADISPLAY_ID_DEFAULT);
 }
 
+TEST_F(InputDispatcherFocusOnTwoDisplaysTest, CancelTouch_MultiDisplay) {
+    FakeMonitorReceiver monitorInPrimary =
+            FakeMonitorReceiver(mDispatcher, "M_1", ADISPLAY_ID_DEFAULT);
+    FakeMonitorReceiver monitorInSecondary =
+            FakeMonitorReceiver(mDispatcher, "M_2", SECOND_DISPLAY_ID);
+
+    // Test touch down on primary display.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    windowInPrimary->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    monitorInPrimary.consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    // Test touch down on second display.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, SECOND_DISPLAY_ID))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    windowInSecondary->consumeMotionDown(SECOND_DISPLAY_ID);
+    monitorInSecondary.consumeMotionDown(SECOND_DISPLAY_ID);
+
+    // Trigger cancel touch.
+    mDispatcher->cancelCurrentTouch();
+    windowInPrimary->consumeMotionCancel(ADISPLAY_ID_DEFAULT);
+    monitorInPrimary.consumeMotionCancel(ADISPLAY_ID_DEFAULT);
+    windowInSecondary->consumeMotionCancel(SECOND_DISPLAY_ID);
+    monitorInSecondary.consumeMotionCancel(SECOND_DISPLAY_ID);
+
+    // Test inject a move motion event, no window/monitor should receive the event.
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {110, 200}))
+            << "Inject motion event should return InputEventInjectionResult::FAILED";
+    windowInPrimary->assertNoEvents();
+    monitorInPrimary.assertNoEvents();
+
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                SECOND_DISPLAY_ID, {110, 200}))
+            << "Inject motion event should return InputEventInjectionResult::FAILED";
+    windowInSecondary->assertNoEvents();
+    monitorInSecondary.assertNoEvents();
+}
+
 class InputFilterTest : public InputDispatcherTest {
 protected:
     void testNotifyMotion(int32_t displayId, bool expectToBeFiltered,
@@ -3994,7 +4262,7 @@ protected:
         }
     }
 
-    void touchAndAssertPositions(int32_t action, std::vector<PointF> touchedPoints,
+    void touchAndAssertPositions(int32_t action, const std::vector<PointF>& touchedPoints,
                                  std::vector<PointF> expectedPoints) {
         NotifyMotionArgs motionArgs = generateMotionArgs(action, AINPUT_SOURCE_TOUCHSCREEN,
                                                          ADISPLAY_ID_DEFAULT, touchedPoints);
@@ -6050,6 +6318,401 @@ TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTou
     mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode);
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
+}
+
+class InputDispatcherSpyWindowTest : public InputDispatcherTest {
+public:
+    sp<FakeWindowHandle> createSpy(const Flags<WindowInfo::Flag> flags) {
+        std::shared_ptr<FakeApplicationHandle> application =
+                std::make_shared<FakeApplicationHandle>();
+        std::string name = "Fake Spy ";
+        name += std::to_string(mSpyCount++);
+        sp<FakeWindowHandle> spy =
+                new FakeWindowHandle(application, mDispatcher, name.c_str(), ADISPLAY_ID_DEFAULT);
+        spy->setInputFeatures(WindowInfo::Feature::SPY);
+        spy->setTrustedOverlay(true);
+        spy->addFlags(flags);
+        return spy;
+    }
+
+    sp<FakeWindowHandle> createForeground() {
+        std::shared_ptr<FakeApplicationHandle> application =
+                std::make_shared<FakeApplicationHandle>();
+        sp<FakeWindowHandle> window =
+                new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+        window->addFlags(WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::SPLIT_TOUCH);
+        return window;
+    }
+
+private:
+    int mSpyCount{0};
+};
+
+/**
+ * Adding a spy window that is not a trusted overlay causes Dispatcher to abort.
+ */
+TEST_F(InputDispatcherSpyWindowTest, UntrustedSpy_AbortsDispatcher) {
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    spy->setTrustedOverlay(false);
+    ASSERT_DEATH(mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy}}}),
+                 ".* not a trusted overlay");
+}
+
+/**
+ * Input injection into a display with a spy window but no foreground windows should succeed.
+ */
+TEST_F(InputDispatcherSpyWindowTest, NoForegroundWindow) {
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+}
+
+/**
+ * Verify the order in which different input windows receive events. The touched foreground window
+ * (if there is one) should always receive the event first. When there are multiple spy windows, the
+ * spy windows will receive the event according to their Z-order, where the top-most spy window will
+ * receive events before ones belows it.
+ *
+ * Here, we set up a scenario with four windows in the following Z order from the top:
+ *    spy1, spy2, window, spy3.
+ * We then inject an event and verify that the foreground "window" receives it first, followed by
+ * "spy1" and "spy2". The "spy3" does not receive the event because it is underneath the foreground
+ * window.
+ */
+TEST_F(InputDispatcherSpyWindowTest, ReceivesInputInOrder) {
+    auto window = createForeground();
+    auto spy1 = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    auto spy2 = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    auto spy3 = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy1, spy2, window, spy3}}});
+    const std::vector<sp<FakeWindowHandle>> channels{spy1, spy2, window, spy3};
+    const size_t numChannels = channels.size();
+
+    base::unique_fd epollFd(epoll_create1(0 /*flags*/));
+    if (!epollFd.ok()) {
+        FAIL() << "Failed to create epoll fd";
+    }
+
+    for (size_t i = 0; i < numChannels; i++) {
+        struct epoll_event event = {.events = EPOLLIN, .data.u64 = i};
+        if (epoll_ctl(epollFd.get(), EPOLL_CTL_ADD, channels[i]->getChannelFd(), &event) < 0) {
+            FAIL() << "Failed to add fd to epoll";
+        }
+    }
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    std::vector<size_t> eventOrder;
+    std::vector<struct epoll_event> events(numChannels);
+    for (;;) {
+        const int nFds = epoll_wait(epollFd.get(), events.data(), static_cast<int>(numChannels),
+                                    (100ms).count());
+        if (nFds < 0) {
+            FAIL() << "Failed to call epoll_wait";
+        }
+        if (nFds == 0) {
+            break; // epoll_wait timed out
+        }
+        for (int i = 0; i < nFds; i++) {
+            ASSERT_EQ(EPOLLIN, events[i].events);
+            eventOrder.push_back(events[i].data.u64);
+            channels[i]->consumeMotionDown();
+        }
+    }
+
+    // Verify the order in which the events were received.
+    EXPECT_EQ(3u, eventOrder.size());
+    EXPECT_EQ(2u, eventOrder[0]); // index 2: window
+    EXPECT_EQ(0u, eventOrder[1]); // index 0: spy1
+    EXPECT_EQ(1u, eventOrder[2]); // index 1: spy2
+}
+
+/**
+ * A spy window using the NOT_TOUCHABLE flag does not receive events.
+ */
+TEST_F(InputDispatcherSpyWindowTest, NotTouchable) {
+    auto window = createForeground();
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCHABLE);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    spy->assertNoEvents();
+}
+
+/**
+ * A spy window will only receive gestures that originate within its touchable region. Gestures that
+ * have their ACTION_DOWN outside of the touchable region of the spy window will not be dispatched
+ * to the window.
+ */
+TEST_F(InputDispatcherSpyWindowTest, TouchableRegion) {
+    auto window = createForeground();
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    spy->setTouchableRegion(Region{{0, 0, 20, 20}});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // Inject an event outside the spy window's touchable region.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->assertNoEvents();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionUp();
+    spy->assertNoEvents();
+
+    // Inject an event inside the spy window's touchable region.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {5, 10}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->consumeMotionDown();
+}
+
+/**
+ * A spy window that is a modal window will receive gestures outside of its frame and touchable
+ * region.
+ */
+TEST_F(InputDispatcherSpyWindowTest, ModalWindow) {
+    auto window = createForeground();
+    auto spy = createSpy(static_cast<WindowInfo::Flag>(0));
+    // This spy window does not have the NOT_TOUCH_MODAL flag set.
+    spy->setFrame(Rect{0, 0, 20, 20});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // Inject an event outside the spy window's frame and touchable region.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->consumeMotionDown();
+}
+
+/**
+ * A spy window can listen for touches outside its touchable region using the WATCH_OUTSIDE_TOUCHES
+ * flag.
+ */
+TEST_F(InputDispatcherSpyWindowTest, WatchOutsideTouches) {
+    auto window = createForeground();
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::WATCH_OUTSIDE_TOUCH);
+    spy->setFrame(Rect{0, 0, 20, 20});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // Inject an event outside the spy window's frame and touchable region.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->consumeMotionOutside();
+}
+
+/**
+ * A spy window can pilfer pointers. When this happens, touch gestures that are currently sent to
+ * any other windows - including other spy windows - will also be cancelled.
+ */
+TEST_F(InputDispatcherSpyWindowTest, PilferPointers) {
+    auto window = createForeground();
+    auto spy1 = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    auto spy2 = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy1, spy2, window}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy1->consumeMotionDown();
+    spy2->consumeMotionDown();
+
+    // Pilfer pointers from the second spy window.
+    mDispatcher->pilferPointers(spy2->getToken());
+    spy2->assertNoEvents();
+    spy1->consumeMotionCancel();
+    window->consumeMotionCancel();
+
+    // The rest of the gesture should only be sent to the second spy window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy2->consumeMotionMove();
+    spy1->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * Even when a spy window spans over multiple foreground windows, the spy should receive all
+ * pointers that are down within its bounds.
+ */
+TEST_F(InputDispatcherSpyWindowTest, ReceivesMultiplePointers) {
+    auto windowLeft = createForeground();
+    windowLeft->setFrame({0, 0, 100, 200});
+    auto windowRight = createForeground();
+    windowRight->setFrame({100, 0, 200, 200});
+    auto spy = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    spy->setFrame({0, 0, 200, 200});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, windowLeft, windowRight}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    windowLeft->consumeMotionDown();
+    spy->consumeMotionDown();
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                       (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                               AINPUT_SOURCE_TOUCHSCREEN)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(
+                            PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(150).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    windowRight->consumeMotionDown();
+    spy->consumeMotionPointerDown(1 /*pointerIndex*/);
+}
+
+/**
+ * When the first pointer lands outside the spy window and the second pointer lands inside it, the
+ * the spy should receive the second pointer with ACTION_DOWN.
+ */
+TEST_F(InputDispatcherSpyWindowTest, ReceivesSecondPointerAsDown) {
+    auto window = createForeground();
+    window->setFrame({0, 0, 200, 200});
+    auto spyRight = createSpy(WindowInfo::Flag::NOT_TOUCH_MODAL);
+    spyRight->setFrame({100, 0, 200, 200});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spyRight, window}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spyRight->assertNoEvents();
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                       (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                               AINPUT_SOURCE_TOUCHSCREEN)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(
+                            PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(150).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionPointerDown(1 /*pointerIndex*/);
+    spyRight->consumeMotionDown();
+}
+
+class InputDispatcherStylusInterceptorTest : public InputDispatcherTest {
+public:
+    std::pair<sp<FakeWindowHandle>, sp<FakeWindowHandle>> setupStylusOverlayScenario() {
+        std::shared_ptr<FakeApplicationHandle> overlayApplication =
+                std::make_shared<FakeApplicationHandle>();
+        sp<FakeWindowHandle> overlay =
+                new FakeWindowHandle(overlayApplication, mDispatcher, "Stylus interceptor window",
+                                     ADISPLAY_ID_DEFAULT);
+        overlay->setFocusable(false);
+        overlay->setOwnerInfo(111, 111);
+        overlay->setFlags(WindowInfo::Flag::NOT_TOUCHABLE | WindowInfo::Flag::SPLIT_TOUCH);
+        overlay->setInputFeatures(WindowInfo::Feature::INTERCEPTS_STYLUS);
+        overlay->setTrustedOverlay(true);
+
+        std::shared_ptr<FakeApplicationHandle> application =
+                std::make_shared<FakeApplicationHandle>();
+        sp<FakeWindowHandle> window =
+                new FakeWindowHandle(application, mDispatcher, "Application window",
+                                     ADISPLAY_ID_DEFAULT);
+        window->setFocusable(true);
+        window->setOwnerInfo(222, 222);
+        window->setFlags(WindowInfo::Flag::SPLIT_TOUCH);
+
+        mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
+        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}});
+        setFocusedWindow(window);
+        window->consumeFocusEvent(true /*hasFocus*/, true /*inTouchMode*/);
+        return {std::move(overlay), std::move(window)};
+    }
+
+    void sendFingerEvent(int32_t action) {
+        NotifyMotionArgs motionArgs =
+                generateMotionArgs(action, AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS,
+                                   ADISPLAY_ID_DEFAULT, {PointF{20, 20}});
+        mDispatcher->notifyMotion(&motionArgs);
+    }
+
+    void sendStylusEvent(int32_t action) {
+        NotifyMotionArgs motionArgs =
+                generateMotionArgs(action, AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS,
+                                   ADISPLAY_ID_DEFAULT, {PointF{30, 40}});
+        motionArgs.pointerProperties[0].toolType = AMOTION_EVENT_TOOL_TYPE_STYLUS;
+        mDispatcher->notifyMotion(&motionArgs);
+    }
+};
+
+TEST_F(InputDispatcherStylusInterceptorTest, UntrustedOverlay_AbortsDispatcher) {
+    auto [overlay, window] = setupStylusOverlayScenario();
+    overlay->setTrustedOverlay(false);
+    // Configuring an untrusted overlay as a stylus interceptor should cause Dispatcher to abort.
+    ASSERT_DEATH(mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}}),
+                 ".* not a trusted overlay");
+}
+
+TEST_F(InputDispatcherStylusInterceptorTest, ConsmesOnlyStylusEvents) {
+    auto [overlay, window] = setupStylusOverlayScenario();
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}});
+
+    sendStylusEvent(AMOTION_EVENT_ACTION_DOWN);
+    overlay->consumeMotionDown();
+    sendStylusEvent(AMOTION_EVENT_ACTION_UP);
+    overlay->consumeMotionUp();
+
+    sendFingerEvent(AMOTION_EVENT_ACTION_DOWN);
+    window->consumeMotionDown();
+    sendFingerEvent(AMOTION_EVENT_ACTION_UP);
+    window->consumeMotionUp();
+
+    overlay->assertNoEvents();
+    window->assertNoEvents();
+}
+
+TEST_F(InputDispatcherStylusInterceptorTest, SpyWindowStylusInterceptor) {
+    auto [overlay, window] = setupStylusOverlayScenario();
+    overlay->setInputFeatures(overlay->getInfo()->inputFeatures | WindowInfo::Feature::SPY);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}});
+
+    sendStylusEvent(AMOTION_EVENT_ACTION_DOWN);
+    overlay->consumeMotionDown();
+    window->consumeMotionDown();
+    sendStylusEvent(AMOTION_EVENT_ACTION_UP);
+    overlay->consumeMotionUp();
+    window->consumeMotionUp();
+
+    sendFingerEvent(AMOTION_EVENT_ACTION_DOWN);
+    window->consumeMotionDown();
+    sendFingerEvent(AMOTION_EVENT_ACTION_UP);
+    window->consumeMotionUp();
+
+    overlay->assertNoEvents();
+    window->assertNoEvents();
 }
 
 } // namespace android::inputdispatcher

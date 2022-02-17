@@ -34,103 +34,21 @@
 
 #include <aidl/android/hardware/graphics/composer3/IComposer.h>
 #include <aidl/android/hardware/graphics/composer3/IComposerClient.h>
-#include <android/hardware/graphics/composer3/command-buffer.h>
+#include <android/hardware/graphics/composer3/ComposerClientReader.h>
+#include <android/hardware/graphics/composer3/ComposerClientWriter.h>
+
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
 namespace android::Hwc2 {
 
-using AidlCommandWriterBase = aidl::android::hardware::graphics::composer3::CommandWriterBase;
-using AidlCommandReaderBase = aidl::android::hardware::graphics::composer3::CommandReaderBase;
+using aidl::android::hardware::graphics::composer3::ComposerClientReader;
+using aidl::android::hardware::graphics::composer3::ComposerClientWriter;
 
 class AidlIComposerCallbackWrapper;
-
-class AidlCommandReader : public AidlCommandReaderBase {
-public:
-    ~AidlCommandReader();
-
-    // Parse and execute commands from the command queue.  The commands are
-    // actually return values from the server and will be saved in ReturnData.
-    int parse();
-
-    // Get and clear saved errors.
-    struct CommandError {
-        uint32_t location;
-        Error error;
-    };
-    std::vector<CommandError> takeErrors();
-
-    bool hasChanges(Display display, uint32_t* outNumChangedCompositionTypes,
-                    uint32_t* outNumLayerRequestMasks) const;
-
-    // Get and clear saved changed composition types.
-    void takeChangedCompositionTypes(Display display, std::vector<Layer>* outLayers,
-                                     std::vector<IComposerClient::Composition>* outTypes);
-
-    // Get and clear saved display requests.
-    void takeDisplayRequests(Display display, uint32_t* outDisplayRequestMask,
-                             std::vector<Layer>* outLayers,
-                             std::vector<uint32_t>* outLayerRequestMasks);
-
-    // Get and clear saved release fences.
-    void takeReleaseFences(Display display, std::vector<Layer>* outLayers,
-                           std::vector<int>* outReleaseFences);
-
-    // Get and clear saved present fence.
-    void takePresentFence(Display display, int* outPresentFence);
-
-    // Get what stage succeeded during PresentOrValidate: Present or Validate
-    void takePresentOrValidateStage(Display display, uint32_t* state);
-
-    // Get the client target properties requested by hardware composer.
-    void takeClientTargetProperty(Display display,
-                                  IComposerClient::ClientTargetProperty* outClientTargetProperty);
-
-private:
-    void resetData();
-
-    bool parseSelectDisplay(uint16_t length);
-    bool parseSetError(uint16_t length);
-    bool parseSetChangedCompositionTypes(uint16_t length);
-    bool parseSetDisplayRequests(uint16_t length);
-    bool parseSetPresentFence(uint16_t length);
-    bool parseSetReleaseFences(uint16_t length);
-    bool parseSetPresentOrValidateDisplayResult(uint16_t length);
-    bool parseSetClientTargetProperty(uint16_t length);
-
-    struct ReturnData {
-        uint32_t displayRequests = 0;
-
-        std::vector<Layer> changedLayers;
-        std::vector<IComposerClient::Composition> compositionTypes;
-
-        std::vector<Layer> requestedLayers;
-        std::vector<uint32_t> requestMasks;
-
-        int presentFence = -1;
-
-        std::vector<Layer> releasedLayers;
-        std::vector<int> releaseFences;
-
-        uint32_t presentOrValidateState;
-
-        // Composer 2.4 implementation can return a client target property
-        // structure to indicate the client target properties that hardware
-        // composer requests. The composer client must change the client target
-        // properties to match this request.
-        IComposerClient::ClientTargetProperty clientTargetProperty{PixelFormat::RGBA_8888,
-                                                                   Dataspace::UNKNOWN};
-    };
-
-    std::vector<CommandError> mErrors;
-    std::unordered_map<Display, ReturnData> mReturnData;
-
-    // When SELECT_DISPLAY is parsed, this is updated to point to the
-    // display's return data in mReturnData.  We use it to avoid repeated
-    // map lookups.
-    ReturnData* mCurrentReturnData;
-};
 
 // Composer is a wrapper to IComposer, a proxy to server-side composer.
 class AidlComposer final : public Hwc2::Composer {
@@ -139,6 +57,8 @@ public:
 
     explicit AidlComposer(const std::string& serviceName);
     ~AidlComposer() override;
+
+    bool isSupported(OptionalFeature) const;
 
     std::vector<IComposer::Capability> getCapabilities() override;
     std::string dumpDebugInfo() override;
@@ -163,8 +83,10 @@ public:
     Error destroyLayer(Display display, Layer layer) override;
 
     Error getActiveConfig(Display display, Config* outConfig) override;
-    Error getChangedCompositionTypes(Display display, std::vector<Layer>* outLayers,
-                                     std::vector<IComposerClient::Composition>* outTypes) override;
+    Error getChangedCompositionTypes(
+            Display display, std::vector<Layer>* outLayers,
+            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes)
+            override;
     Error getColorModes(Display display, std::vector<ColorMode>* outModes) override;
     Error getDisplayAttribute(Display display, Config config, IComposerClient::Attribute attribute,
                               int32_t* outValue) override;
@@ -195,7 +117,7 @@ public:
                           int acquireFence, Dataspace dataspace,
                           const std::vector<IComposerClient::Rect>& damage) override;
     Error setColorMode(Display display, ColorMode mode, RenderIntent renderIntent) override;
-    Error setColorTransform(Display display, const float* matrix, ColorTransform hint) override;
+    Error setColorTransform(Display display, const float* matrix) override;
     Error setOutputBuffer(Display display, const native_handle_t* buffer,
                           int releaseFence) override;
     Error setPowerMode(Display display, IComposerClient::PowerMode mode) override;
@@ -203,10 +125,11 @@ public:
 
     Error setClientTargetSlotCount(Display display) override;
 
-    Error validateDisplay(Display display, uint32_t* outNumTypes,
+    Error validateDisplay(Display display, nsecs_t expectedPresentTime, uint32_t* outNumTypes,
                           uint32_t* outNumRequests) override;
 
-    Error presentOrValidateDisplay(Display display, uint32_t* outNumTypes, uint32_t* outNumRequests,
+    Error presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
+                                   uint32_t* outNumTypes, uint32_t* outNumRequests,
                                    int* outPresentFence, uint32_t* state) override;
 
     Error setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) override;
@@ -216,9 +139,10 @@ public:
     Error setLayerSurfaceDamage(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& damage) override;
     Error setLayerBlendMode(Display display, Layer layer, IComposerClient::BlendMode mode) override;
-    Error setLayerColor(Display display, Layer layer, const IComposerClient::Color& color) override;
-    Error setLayerCompositionType(Display display, Layer layer,
-                                  IComposerClient::Composition type) override;
+    Error setLayerColor(Display display, Layer layer, const Color& color) override;
+    Error setLayerCompositionType(
+            Display display, Layer layer,
+            aidl::android::hardware::graphics::composer3::Composition type) override;
     Error setLayerDataspace(Display display, Layer layer, Dataspace dataspace) override;
     Error setLayerDisplayFrame(Display display, Layer layer,
                                const IComposerClient::Rect& frame) override;
@@ -257,13 +181,15 @@ public:
     Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer,
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
-    Error setDisplayBrightness(Display display, float brightness) override;
+    Error setDisplayBrightness(Display display, float brightness,
+                               const DisplayBrightnessOptions& options) override;
     Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
-    bool isVsyncPeriodSwitchSupported() override { return true; }
-    Error getDisplayCapabilities(Display display,
-                                 std::vector<DisplayCapability>* outCapabilities) override;
+    Error getDisplayCapabilities(
+            Display display,
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*
+                    outCapabilities) override;
     V2_4::Error getDisplayConnectionType(Display display,
                                          IComposerClient::DisplayConnectionType* outType) override;
     V2_4::Error getDisplayVsyncPeriod(Display display, VsyncPeriodNanos* outVsyncPeriod) override;
@@ -281,9 +207,17 @@ public:
                                         bool mandatory, const std::vector<uint8_t>& value) override;
     V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) override;
-    Error getClientTargetProperty(
-            Display display,
-            IComposerClient::ClientTargetProperty* outClientTargetProperty) override;
+    Error getClientTargetProperty(Display display,
+                                  IComposerClient::ClientTargetProperty* outClientTargetProperty,
+                                  float* outClientTargetWhitePointNits) override;
+
+    // AIDL Composer HAL
+    Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) override;
+    Error setLayerBlockingRegion(Display display, Layer layer,
+                                 const std::vector<IComposerClient::Rect>& blocking) override;
+    Error setBootDisplayConfig(Display displayId, Config) override;
+    Error clearBootDisplayConfig(Display displayId) override;
+    Error getPreferredBootDisplayConfig(Display displayId, Config*) override;
 #ifdef QTI_UNIFIED_DRAW
     Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
     Error setLayerFlag(Display display, Layer layer,
@@ -293,10 +227,10 @@ public:
 #endif
 
 private:
-    class AidlCommandWriter : public AidlCommandWriterBase {
+    class AidlCommandWriter : public ComposerClientWriter {
     public:
-        explicit AidlCommandWriter(uint32_t initialMaxSize)
-              : AidlCommandWriterBase(initialMaxSize) {}
+        explicit AidlCommandWriter()
+              : ComposerClientWriter() {}
         ~AidlCommandWriter() override {}
 
         void setDisplayElapseTime(uint64_t time);
@@ -323,7 +257,7 @@ private:
     // 2. Adding an additional slot for the layer caching feature in SurfaceFlinger (see: Planner.h)
     static const constexpr uint32_t kMaxLayerBufferCount = BufferQueue::NUM_BUFFER_SLOTS + 1;
     AidlCommandWriter mWriter;
-    AidlCommandReader mReader;
+    ComposerClientReader mReader;
 
     // Aidl interface
     using AidlIComposer = aidl::android::hardware::graphics::composer3::IComposer;

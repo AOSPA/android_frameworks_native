@@ -16,16 +16,19 @@
 
 #pragma once
 
+#include <chrono>
+#include <deque>
+#include <optional>
+#include <string>
+#include <unordered_map>
+
 #include <ui/Transform.h>
 #include <utils/Timers.h>
 
-#include <chrono>
-#include <deque>
+#include <scheduler/Seamlessness.h>
 
 #include "LayerHistory.h"
 #include "RefreshRateConfigs.h"
-#include "Scheduler/Seamlessness.h"
-#include "SchedulerUtils.h"
 
 namespace android {
 
@@ -78,6 +81,8 @@ public:
 
         NoVote, // Layer doesn't have any requirements for the refresh rate and
                 // should not be considered when the display refresh rate is determined.
+
+        ftl_last = NoVote
     };
 
     // Encapsulates the frame rate and compatibility of the layer. This information will be used
@@ -171,6 +176,9 @@ public:
 
     // Returns a C string for tracing a vote
     const char* getTraceTag(LayerHistory::LayerVoteType type) const;
+
+    // Return the framerate of this layer.
+    Fps getFps(nsecs_t now) const;
 
     void onLayerInactive(nsecs_t now) {
         // Mark mFrameTimeValidSince to now to ignore all previous frame times.
