@@ -1144,7 +1144,8 @@ private:
                                const DisplayDeviceState& drawingState) REQUIRES(mStateLock);
     void processDisplayHotplugEventsLocked() REQUIRES(mStateLock);
     void setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
-                                      const DisplayDeviceState& state);
+                                      DisplayDeviceState& currentState,
+                                      const DisplayDeviceState& drawingState);
 
     void dispatchDisplayHotplugEvent(PhysicalDisplayId displayId, bool connected);
 
