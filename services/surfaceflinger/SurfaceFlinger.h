@@ -717,6 +717,8 @@ private:
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
                                   const FrameTimelineInfo& frameTimelineInfo) override;
 
+    status_t setOverrideFrameRate(uid_t uid, float frameRate) override;
+
     status_t addTransactionTraceListener(
             const sp<gui::ITransactionTraceListener>& listener) override;
 
@@ -1223,6 +1225,8 @@ private:
 
     void updateInternalDisplaysPresentationMode();
 
+    void createPhaseOffsetExtn();
+
     void setupDisplayExtnFeatures();
 
     void setupIdleTimeoutHandling(uint32_t displayId);
@@ -1515,7 +1519,7 @@ private:
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
             GUARDED_BY(mStateLock);
-    mutable Mutex mCreatedLayersLock;
+    mutable std::mutex mCreatedLayersLock;
     struct LayerCreatedState {
         LayerCreatedState(const wp<Layer>& layer, const wp<Layer> parent, bool addToRoot)
               : layer(layer), initialParent(parent), addToRoot(addToRoot) {}
@@ -1531,11 +1535,9 @@ private:
 
     // A temporay pool that store the created layers and will be added to current state in main
     // thread.
-    std::unordered_map<BBinder*, std::unique_ptr<LayerCreatedState>> mCreatedLayers;
-    void setLayerCreatedState(const sp<IBinder>& handle, const wp<Layer>& layer,
-                              const wp<Layer> parent, bool addToRoot);
-    auto getLayerCreatedState(const sp<IBinder>& handle);
-    sp<Layer> handleLayerCreatedLocked(const sp<IBinder>& handle) REQUIRES(mStateLock);
+    std::vector<LayerCreatedState> mCreatedLayers GUARDED_BY(mCreatedLayersLock);
+    bool commitCreatedLayers();
+    void handleLayerCreatedLocked(const LayerCreatedState& state) REQUIRES(mStateLock);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
@@ -1573,6 +1575,7 @@ private:
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
+    std::unordered_map<float, int64_t> mAdvancedSfOffsets;
 
     std::unique_ptr<FlagManager> mFlagManager;
     int mRETid = 0;

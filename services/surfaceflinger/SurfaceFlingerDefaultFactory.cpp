@@ -53,8 +53,10 @@ std::unique_ptr<HWComposer> DefaultFactory::createHWComposer(const std::string& 
 std::unique_ptr<scheduler::VsyncConfiguration> DefaultFactory::createVsyncConfiguration(
         Fps currentRefreshRate) {
     if (property_get_bool("debug.sf.use_phase_offsets_as_durations", false)) {
+        ALOGI("%s: create WorkDuration", __func__);
         return std::make_unique<scheduler::impl::WorkDuration>(currentRefreshRate);
     } else {
+        ALOGI("%s: create PhaseOffsets", __func__);
         return std::make_unique<scheduler::impl::PhaseOffsets>(currentRefreshRate);
     }
 }

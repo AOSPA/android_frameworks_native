@@ -36,6 +36,11 @@ std::optional<nsecs_t> getProperty(const char* name) {
     return std::nullopt;
 }
 
+bool fpsEqualsWithMargin(float fpsA, float fpsB) {
+    static constexpr float MARGIN = 0.01f;
+    return std::abs(fpsA - fpsB) <= MARGIN;
+}
+
 } // namespace
 
 namespace android::scheduler::impl {
@@ -242,6 +247,37 @@ PhaseOffsets::VsyncConfigSet PhaseOffsets::getHighFpsOffsets(nsecs_t vsyncDurati
     };
 }
 
+void VsyncConfiguration::UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) {
+    std::lock_guard lock(mLock);
+    for (auto& item: *advancedSfOffsets) {
+        float fps = item.first;
+        auto iter = mOffsetsCache.begin();
+        for (iter = mOffsetsCache.begin(); iter != mOffsetsCache.end(); iter++) {
+            float candidateFps = iter->first.getValue();
+            if (fpsEqualsWithMargin(fps,candidateFps)) {
+                break;
+            }
+        }
+
+        if (iter != mOffsetsCache.end()) {
+            auto vsyncDuration = iter->first.getPeriodNsecs();
+            auto& [early, earlyGpu, late, hwcMinWorkDuration] = iter->second;
+            late.sfOffset = item.second;
+            late.sfWorkDuration = sfOffsetToDuration(late.sfOffset, vsyncDuration);
+            late.appWorkDuration = appOffsetToDuration(late.appOffset,
+                                                       late.sfOffset, vsyncDuration);
+            early.sfOffset = item.second;
+            early.sfWorkDuration = sfOffsetToDuration(early.sfOffset, vsyncDuration),
+            early.appWorkDuration = appOffsetToDuration(early.appOffset,
+                                                        early.sfOffset, vsyncDuration);
+            earlyGpu.sfOffset = item.second;
+            earlyGpu.sfWorkDuration = sfOffsetToDuration(earlyGpu.sfOffset, vsyncDuration);
+            earlyGpu.appWorkDuration = appOffsetToDuration(earlyGpu.appOffset,
+                                                           earlyGpu.sfOffset, vsyncDuration);
+        }
+    }
+}
+
 static void validateSysprops() {
     const auto validatePropertyBool = [](const char* prop) {
         LOG_ALWAYS_FATAL_IF(!property_get_bool(prop, false), "%s is false", prop);
@@ -277,7 +313,7 @@ static void validateSysprops() {
 
 namespace {
 nsecs_t sfDurationToOffset(std::chrono::nanoseconds sfDuration, nsecs_t vsyncDuration) {
-    return vsyncDuration - sfDuration.count() % vsyncDuration;
+    return vsyncDuration - sfDuration.count();
 }
 
 nsecs_t appDurationToOffset(std::chrono::nanoseconds appDuration,
@@ -360,6 +396,42 @@ WorkDuration::WorkDuration(Fps currentRefreshRate)
                      getProperty("debug.sf.earlyGl.app.duration").value_or(mAppDuration),
                      getProperty("debug.sf.hwc.min.duration").value_or(0)) {
     validateSysprops();
+}
+
+void WorkDuration::UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) {
+    std::lock_guard lock(mLock);
+    for (auto& item: *advancedSfOffsets) {
+        float fps = item.first;
+        auto iter = mOffsetsCache.begin();
+        for (iter = mOffsetsCache.begin(); iter != mOffsetsCache.end(); iter++) {
+            float candidateFps = iter->first.getValue();
+            if (fpsEqualsWithMargin(fps,candidateFps)) {
+                break;
+            }
+        }
+
+        if (iter != mOffsetsCache.end()) {
+            auto vsyncDuration = iter->first.getPeriodNsecs();
+            auto& [early, earlyGpu, late, hwcMinWorkDuration] = iter->second;
+
+            late.sfWorkDuration = std::chrono::nanoseconds(item.second);
+            late.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
+            late.appWorkDuration = (mAppDuration == -1) ? std::chrono::nanoseconds(vsyncDuration)
+                                                        : std::chrono::nanoseconds(mAppDuration);
+            late.appOffset = appDurationToOffset(late.appWorkDuration, late.sfWorkDuration,
+                                                vsyncDuration);
+
+            early.sfWorkDuration = late.sfWorkDuration;
+            early.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
+            early.appWorkDuration = late.appWorkDuration;
+            early.appOffset = late.appOffset;
+
+            earlyGpu.sfWorkDuration = late.sfWorkDuration;
+            earlyGpu.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
+            earlyGpu.appWorkDuration = late.appWorkDuration;
+            earlyGpu.appOffset = late.appOffset;
+        }
+    }
 }
 
 WorkDuration::WorkDuration(Fps currentRefreshRate, nsecs_t sfDuration, nsecs_t appDuration,
