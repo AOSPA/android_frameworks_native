@@ -312,7 +312,7 @@ void BufferLayer::preparePerFrameCompositionState() {
                 : aidl::android::hardware::graphics::composer3::Composition::DEVICE;
     }
 
-    compositionState->buffer = mBufferInfo.mBuffer->getBuffer();
+    compositionState->buffer = getBuffer();
     compositionState->bufferSlot = (mBufferInfo.mBufferSlot == BufferQueue::INVALID_BUFFER_SLOT)
             ? 0
             : mBufferInfo.mBufferSlot;
@@ -325,7 +325,6 @@ bool BufferLayer::onPreComposition(nsecs_t refreshStartTime) {
         Mutex::Autolock lock(mFrameEventHistoryMutex);
         mFrameEventHistory.addPreComposition(mCurrentFrameNumber, refreshStartTime);
     }
-    mRefreshPending = false;
     return hasReadyFrame();
 }
 namespace {
@@ -480,19 +479,6 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
         return refreshRequired;
     }
 
-    if (!hasReadyFrame()) {
-        return false;
-    }
-
-    // if we've already called updateTexImage() without going through
-    // a composition step, we have to skip this layer at this point
-    // because we cannot call updateTeximage() without a corresponding
-    // compositionComplete() call.
-    // we'll trigger an update in onPreComposition().
-    if (mRefreshPending) {
-        return false;
-    }
-
     // If the head buffer's acquire fence hasn't signaled yet, return and
     // try again later
     if (!fenceHasSignaled()) {
@@ -524,7 +510,6 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
 
     gatherBufferInfo();
 
-    mRefreshPending = true;
     if (oldBufferInfo.mBuffer == nullptr) {
         // the first time we receive a buffer, we need to trigger a
         // geometry invalidation.
@@ -710,7 +695,6 @@ FloatRect BufferLayer::computeSourceBounds(const FloatRect& parentBounds) const 
 }
 
 void BufferLayer::latchAndReleaseBuffer() {
-    mRefreshPending = false;
     if (hasReadyFrame()) {
         bool ignored = false;
         latchBuffer(ignored, systemTime(), 0 /* expectedPresentTime */);

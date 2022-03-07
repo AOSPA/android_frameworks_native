@@ -643,8 +643,6 @@ private:
     status_t getBootDisplayModeSupport(bool* outSupport) const override;
     status_t setBootDisplayMode(const sp<IBinder>& displayToken, ui::DisplayModeId id) override;
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken) override;
-    status_t getPreferredBootDisplayMode(const sp<IBinder>& displayToken,
-                                         ui::DisplayModeId* id) override;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on) override;
     void setGameContentType(const sp<IBinder>& displayToken, bool on) override;
     void setPowerMode(const sp<IBinder>& displayToken, int mode) override;
@@ -742,6 +740,7 @@ private:
     void onComposerHalVsyncPeriodTimingChanged(hal::HWDisplayId,
                                                const hal::VsyncPeriodChangeTimeline&) override;
     void onComposerHalSeamlessPossible(hal::HWDisplayId) override;
+    void onComposerHalVsyncIdle(hal::HWDisplayId) override;
     void setPowerModeOnMainThread(const sp<IBinder>& displayToken, int mode);
 
     // ICompositor overrides:
@@ -846,7 +845,7 @@ private:
     // Returns true if there is at least one transaction that needs to be flushed
     bool transactionFlushNeeded();
 
-    uint32_t setClientStateLocked(const FrameTimelineInfo&, const ComposerState&,
+    uint32_t setClientStateLocked(const FrameTimelineInfo&, ComposerState&,
                                   int64_t desiredPresentTime, bool isAutoTimestamp,
                                   int64_t postTime, uint32_t permissions) REQUIRES(mStateLock);
 
@@ -870,8 +869,7 @@ private:
     bool transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
             uid_t originUid, const Vector<ComposerState>& states,
-            const std::unordered_set<sp<IBinder>, ISurfaceComposer::SpHash<IBinder>>&
-                    bufferLayersReadyToPresent,
+            const std::unordered_set<sp<IBinder>, SpHash<IBinder>>& bufferLayersReadyToPresent,
             bool allowLatchUnsignaled) const REQUIRES(mStateLock);
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
     bool latchUnsignaledIsAllowed(std::vector<TransactionState>& transactions) REQUIRES(mStateLock);
@@ -1336,7 +1334,7 @@ private:
 
     // Tracks layers that have pending frames which are candidates for being
     // latched.
-    std::unordered_set<sp<Layer>, ISurfaceComposer::SpHash<Layer>> mLayersWithQueuedFrames;
+    std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithQueuedFrames;
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
     std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
@@ -1595,6 +1593,8 @@ private:
         nsecs_t compositeStart;
         nsecs_t presentEnd;
     } mPowerHintSessionData GUARDED_BY(SF_MAIN_THREAD);
+
+    nsecs_t mAnimationTransactionTimeout = s2ns(5);
 };
 
 } // namespace android
