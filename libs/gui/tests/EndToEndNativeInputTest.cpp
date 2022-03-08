@@ -550,7 +550,10 @@ TEST_F(InputSurfacesTest, input_respects_scaled_surface_insets) {
 }
 
 TEST_F(InputSurfacesTest, input_respects_scaled_surface_insets_overflow) {
+    std::unique_ptr<InputSurface> bgSurface = makeSurface(100, 100);
     std::unique_ptr<InputSurface> fgSurface = makeSurface(100, 100);
+    bgSurface->showAt(100, 100);
+
     // In case we pass the very big inset without any checking.
     fgSurface->mInputInfo.surfaceInset = INT32_MAX;
     fgSurface->showAt(100, 100);
@@ -558,8 +561,8 @@ TEST_F(InputSurfacesTest, input_respects_scaled_surface_insets_overflow) {
     fgSurface->doTransaction([&](auto &t, auto &sc) { t.setMatrix(sc, 2.0, 0, 0, 2.0); });
 
     // expect no crash for overflow, and inset size to be clamped to surface size
-    injectTap(202, 202);
-    fgSurface->expectTap(1, 1);
+    injectTap(112, 124);
+    bgSurface->expectTap(12, 24);
 }
 
 // Ensure we ignore transparent region when getting screen bounds when positioning input frame.
@@ -989,6 +992,107 @@ TEST_F(InputSurfacesTest, drop_input_policy) {
     surface->assertFocusChange(true);
     injectKey(AKEYCODE_V);
     EXPECT_EQ(surface->consumeEvent(100), nullptr);
+}
+
+TEST_F(InputSurfacesTest, layer_with_empty_crop_cannot_be_focused) {
+    std::unique_ptr<InputSurface> bufferSurface =
+            InputSurface::makeBufferInputSurface(mComposerClient, 100, 100);
+
+    bufferSurface->showAt(50, 50, Rect::EMPTY_RECT);
+
+    bufferSurface->requestFocus();
+    EXPECT_EQ(bufferSurface->consumeEvent(100), nullptr);
+
+    bufferSurface->showAt(50, 50, Rect::INVALID_RECT);
+
+    bufferSurface->requestFocus();
+    EXPECT_EQ(bufferSurface->consumeEvent(100), nullptr);
+}
+
+TEST_F(InputSurfacesTest, layer_with_valid_crop_can_be_focused) {
+    std::unique_ptr<InputSurface> bufferSurface =
+            InputSurface::makeBufferInputSurface(mComposerClient, 100, 100);
+
+    bufferSurface->showAt(50, 50, Rect{0, 0, 100, 100});
+
+    bufferSurface->requestFocus();
+    bufferSurface->assertFocusChange(true);
+}
+
+/**
+ * If a cropped layer's touchable region is replaced with a null crop, it should receive input in
+ * its own crop.
+ */
+TEST_F(InputSurfacesTest, cropped_container_replaces_touchable_region_with_null_crop) {
+    std::unique_ptr<InputSurface> parentContainer =
+            InputSurface::makeContainerInputSurface(mComposerClient, 0, 0);
+    std::unique_ptr<InputSurface> containerSurface =
+            InputSurface::makeContainerInputSurface(mComposerClient, 100, 100);
+    containerSurface->doTransaction(
+            [&](auto &t, auto &sc) { t.reparent(sc, parentContainer->mSurfaceControl); });
+    containerSurface->mInputInfo.replaceTouchableRegionWithCrop = true;
+    containerSurface->mInputInfo.touchableRegionCropHandle = nullptr;
+    parentContainer->showAt(10, 10, Rect(0, 0, 20, 20));
+    containerSurface->showAt(10, 10, Rect(0, 0, 5, 5));
+
+    // Receives events inside its own crop
+    injectTap(21, 21);
+    containerSurface->expectTap(1, 1); // Event is in layer space
+
+    // Does not receive events outside its crop
+    injectTap(26, 26);
+    EXPECT_EQ(containerSurface->consumeEvent(100), nullptr);
+}
+
+/**
+ * If an un-cropped layer's touchable region is replaced with a null crop, it should receive input
+ * in its parent's touchable region. The input events should be in the layer's coordinate space.
+ */
+TEST_F(InputSurfacesTest, uncropped_container_replaces_touchable_region_with_null_crop) {
+    std::unique_ptr<InputSurface> parentContainer =
+            InputSurface::makeContainerInputSurface(mComposerClient, 0, 0);
+    std::unique_ptr<InputSurface> containerSurface =
+            InputSurface::makeContainerInputSurface(mComposerClient, 100, 100);
+    containerSurface->doTransaction(
+            [&](auto &t, auto &sc) { t.reparent(sc, parentContainer->mSurfaceControl); });
+    containerSurface->mInputInfo.replaceTouchableRegionWithCrop = true;
+    containerSurface->mInputInfo.touchableRegionCropHandle = nullptr;
+    parentContainer->showAt(10, 10, Rect(0, 0, 20, 20));
+    containerSurface->showAt(10, 10, Rect::INVALID_RECT);
+
+    // Receives events inside parent bounds
+    injectTap(21, 21);
+    containerSurface->expectTap(1, 1); // Event is in layer space
+
+    // Does not receive events outside parent bounds
+    injectTap(31, 31);
+    EXPECT_EQ(containerSurface->consumeEvent(100), nullptr);
+}
+
+/**
+ * If a layer's touchable region is replaced with a layer crop, it should receive input in the crop
+ * layer's bounds. The input events should be in the layer's coordinate space.
+ */
+TEST_F(InputSurfacesTest, replace_touchable_region_with_crop) {
+    std::unique_ptr<InputSurface> cropLayer =
+            InputSurface::makeContainerInputSurface(mComposerClient, 0, 0);
+    cropLayer->showAt(50, 50, Rect(0, 0, 20, 20));
+
+    std::unique_ptr<InputSurface> containerSurface =
+            InputSurface::makeContainerInputSurface(mComposerClient, 100, 100);
+    containerSurface->mInputInfo.replaceTouchableRegionWithCrop = true;
+    containerSurface->mInputInfo.touchableRegionCropHandle =
+            cropLayer->mSurfaceControl->getHandle();
+    containerSurface->showAt(10, 10, Rect::INVALID_RECT);
+
+    // Receives events inside crop layer bounds
+    injectTap(51, 51);
+    containerSurface->expectTap(41, 41); // Event is in layer space
+
+    // Does not receive events outside crop layer bounds
+    injectTap(21, 21);
+    injectTap(71, 71);
+    EXPECT_EQ(containerSurface->consumeEvent(100), nullptr);
 }
 
 class MultiDisplayTests : public InputSurfacesTest {
