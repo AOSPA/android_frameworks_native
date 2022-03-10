@@ -108,14 +108,6 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
         mVsync.scheduledFrameTime.reset();
     }
 
-    // TODO(b/207525987) mFlinger removed upstream, re-add functionality as
-    // necessary.
-    /*  
-    if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
-        mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
-    }
-    */
-
     const auto vsyncId = mVsync.tokenManager->generateTokenForPredictions(
             {targetWakeupTime, readyTime, vsyncTime});
 

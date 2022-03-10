@@ -192,8 +192,8 @@ public:
     void (*dolphinSetVsyncPeriod)(nsecs_t vsyncPeriod) = nullptr;
     void (*dolphinTrackBufferIncrement)(const char* name, int counter) = nullptr;
     void (*dolphinTrackBufferDecrement)(const char* name, int counter) = nullptr;
-    void (*dolphinTrackVsyncSignal)(nsecs_t vsyncTime, nsecs_t targetWakeupTime,
-                                 nsecs_t readyTime) = nullptr;
+    void (*dolphinTrackVsyncSignal)(nsecs_t frameTime, int64_t vsyncId,
+                                    nsecs_t expectedVsyncTime) = nullptr;
 
 private:
     void *mDolphinHandle = nullptr;

@@ -554,7 +554,7 @@ bool DolphinWrapper::init() {
                 "dolphinTrackBufferIncrement");
         dolphinTrackBufferDecrement = (void (*) (const char*, int))dlsym(mDolphinHandle,
                 "dolphinTrackBufferDecrement");
-        dolphinTrackVsyncSignal = (void (*) (nsecs_t, nsecs_t, nsecs_t))dlsym(mDolphinHandle,
+        dolphinTrackVsyncSignal = (void (*) (nsecs_t, int64_t, nsecs_t))dlsym(mDolphinHandle,
                 "dolphinTrackVsyncSignal");
         bool isFunctionsFound = dolphinInit && dolphinSetVsyncPeriod &&
                                 dolphinTrackBufferIncrement && dolphinTrackBufferDecrement &&
@@ -2645,6 +2645,11 @@ void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
 
 bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expectedVsyncTime) {
     MainThreadScopedGuard mainThreadGuard(SF_MAIN_THREAD);
+
+    if (mDolphinWrapper.dolphinTrackVsyncSignal) {
+        mDolphinWrapper.dolphinTrackVsyncSignal(frameTime, vsyncId, expectedVsyncTime);
+    }
+
     // we set this once at the beginning of commit to ensure consistency throughout the whole frame
     mPowerHintSessionData.sessionEnabled = mPowerAdvisor.usePowerHintSession();
     if (mPowerHintSessionData.sessionEnabled) {
