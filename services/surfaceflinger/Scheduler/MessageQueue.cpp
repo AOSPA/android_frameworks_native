@@ -127,13 +127,10 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
 
     SmomoIntf *smoMo = nullptr;
     for (auto &instance: mFlinger->mSmomoInstances) {
-        if (instance.displayId == 0) {
-            smoMo = instance.smoMo;
-            break;
+        smoMo = instance.smoMo;
+        if (smoMo) {
+            smoMo->OnVsync(vsyncTime);
         }
-    }
-    if (smoMo) {
-        smoMo->OnVsync(vsyncTime);
     }
 
     mHandler->dispatchInvalidate(mVsync.tokenManager->generateTokenForPredictions(
