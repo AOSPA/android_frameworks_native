@@ -436,10 +436,6 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
         }
     }
 
-    if (mFlinger->mSmoMo) {
-        mFlinger->mSmoMo->SetPresentTime(layerId, mBufferInfo.mDesiredPresentTime);
-    }
-
     mFrameTracker.advanceFrame();
     mBufferInfo.mFrameLatencyNeeded = false;
 }
@@ -539,6 +535,10 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
 
     if (oldOpacity != isOpaque(s)) {
         recomputeVisibleRegions = true;
+    }
+
+    if (mFlinger->mSmoMo) {
+        mFlinger->mSmoMo->SetPresentTime(getSequence(), mBufferInfo.mDesiredPresentTime);
     }
 
     return true;
