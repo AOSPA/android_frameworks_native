@@ -1136,12 +1136,13 @@ std::optional<base::unique_fd> Output::composeSurfaces(
             : mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
     clientCompositionDisplay.maxLuminance =
             mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
-    clientCompositionDisplay.targetLuminanceNits = outputState.clientTargetWhitePointNits;
+    clientCompositionDisplay.targetLuminanceNits =
+            outputState.clientTargetBrightness * outputState.displayBrightnessNits;
 
     // Compute the global color transform matrix.
-    if (!outputState.usesDeviceComposition && !getSkipColorTransform()) {
-        clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
-    }
+    clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
+    clientCompositionDisplay.deviceHandlesColorTransform =
+            outputState.usesDeviceComposition || getSkipColorTransform();
 
     // Generate the client composition requests for the layers on this output.
     std::vector<LayerFE*> clientCompositionLayersFE;

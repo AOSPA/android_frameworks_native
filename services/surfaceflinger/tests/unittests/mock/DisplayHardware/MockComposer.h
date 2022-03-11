@@ -42,6 +42,9 @@ using android::hardware::graphics::composer::V2_1::IComposer;
 using android::hardware::graphics::composer::V2_1::Layer;
 using android::hardware::graphics::composer::V2_4::IComposerCallback;
 using android::hardware::graphics::composer::V2_4::IComposerClient;
+
+using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
+
 #ifdef QTI_UNIFIED_DRAW
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 #endif
@@ -52,7 +55,8 @@ public:
     ~Composer() override;
 
     MOCK_METHOD(bool, isSupported, (OptionalFeature), (const, override));
-    MOCK_METHOD0(getCapabilities, std::vector<IComposer::Capability>());
+    MOCK_METHOD0(getCapabilities,
+                 std::vector<aidl::android::hardware::graphics::composer3::Capability>());
     MOCK_METHOD0(dumpDebugInfo, std::string());
     MOCK_METHOD1(registerCallback, void(HWC2::ComposerCallback&));
     MOCK_METHOD0(resetCommands, void());
@@ -152,9 +156,11 @@ public:
                  V2_4::Error(std::vector<IComposerClient::LayerGenericMetadataKey>*));
     MOCK_METHOD3(getClientTargetProperty,
                  Error(Display, IComposerClient::ClientTargetProperty*, float*));
-    MOCK_METHOD3(setLayerWhitePointNits, Error(Display, Layer, float));
+    MOCK_METHOD3(setLayerBrightness, Error(Display, Layer, float));
     MOCK_METHOD3(setLayerBlockingRegion,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
+    MOCK_METHOD2(getDisplayDecorationSupport,
+                 Error(Display, std::optional<DisplayDecorationSupport>*));
     MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));

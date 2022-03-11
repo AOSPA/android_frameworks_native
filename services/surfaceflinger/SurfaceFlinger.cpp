@@ -55,6 +55,7 @@
 #include <cutils/compiler.h>
 #include <cutils/properties.h>
 #include <ftl/future.h>
+#include <ftl/small_map.h>
 #include <gui/BufferQueue.h>
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/IProducerListener.h>
@@ -161,26 +162,21 @@ class ClientInterface;
 }
 #endif
 
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
 #define MAIN_THREAD ACQUIRE(mStateLock) RELEASE(mStateLock)
 
+// Note: The parentheses around `expr` are needed to deduce an lvalue or rvalue reference.
 #define ON_MAIN_THREAD(expr)                                       \
-    [&] {                                                          \
+    [&]() -> decltype(auto) {                                      \
         LOG_FATAL_IF(std::this_thread::get_id() != mMainThreadId); \
         UnnecessaryLock lock(mStateLock);                          \
         return (expr);                                             \
     }()
 
 #define MAIN_THREAD_GUARD(expr)                                    \
-    [&] {                                                          \
-        LOG_FATAL_IF(std::this_thread::get_id() != mMainThreadId); \
-        MainThreadScopedGuard lock(SF_MAIN_THREAD);                \
-        return (expr);                                             \
-    }()
-
-#define MAIN_THREAD_GUARD(expr)                                    \
-    [&] {                                                          \
+    [&]() -> decltype(auto) {                                      \
         LOG_FATAL_IF(std::this_thread::get_id() != mMainThreadId); \
         MainThreadScopedGuard lock(SF_MAIN_THREAD);                \
         return (expr);                                             \
@@ -193,6 +189,8 @@ class ClientInterface;
 
 composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 
+using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
+using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 #ifdef PHASE_OFFSET_EXTN
@@ -286,11 +284,6 @@ struct SCOPED_CAPABILITY TimedLock {
 
     Mutex& mutex;
     const status_t status;
-};
-
-struct SCOPED_CAPABILITY UnnecessaryLock {
-    explicit UnnecessaryLock(Mutex& mutex) ACQUIRE(mutex) {}
-    ~UnnecessaryLock() RELEASE() {}
 };
 
 // TODO(b/141333600): Consolidate with DisplayMode::Builder::getDefaultDensity.
@@ -781,8 +774,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     }
 #endif
 
-    enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
-
     if (!mIsUserBuild && base::GetBoolProperty("debug.sf.enable_transaction_tracing"s, true)) {
         mTransactionTracing.emplace();
     }
@@ -791,11 +782,13 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
     if (base::GetBoolProperty("debug.sf.latch_unsignaled"s, false)) {
         return LatchUnsignaledConfig::Always;
-    } else if (base::GetBoolProperty("debug.sf.auto_latch_unsignaled"s, false)) {
-        return LatchUnsignaledConfig::Auto;
-    } else {
-        return LatchUnsignaledConfig::Disabled;
     }
+
+    if (base::GetBoolProperty("debug.sf.auto_latch_unsignaled"s, false)) {
+        return LatchUnsignaledConfig::AutoSingleLayer;
+    }
+
+    return LatchUnsignaledConfig::Disabled;
 }
 
 SurfaceFlinger::~SurfaceFlinger() {
@@ -1004,6 +997,7 @@ void SurfaceFlinger::bootFinished() {
     mFlagManager = std::make_unique<android::FlagManager>();
     mFrameTracer->initialize();
     mFrameTimeline->onBootFinished();
+    getRenderEngine().setEnableTracing(mFlagManager->use_skia_tracing());
 
     // wait patiently for the window manager death
     const String16 name("window");
@@ -1168,6 +1162,8 @@ void SurfaceFlinger::init() {
     mCompositionEngine->getHwComposer().setCallback(*this);
     ClientCache::getInstance().setRenderEngine(&getRenderEngine());
 
+    enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
+
     if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
         enableHalVirtualDisplays(true);
     }
@@ -1216,7 +1212,7 @@ void SurfaceFlinger::init() {
     // Inform native graphics APIs whether the present timestamp is supported:
 
     const bool presentFenceReliable =
-            !getHwComposer().hasCapability(hal::Capability::PRESENT_FENCE_IS_NOT_RELIABLE);
+            !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE);
     mStartPropertySetThread = getFactory().createStartPropertySetThread(presentFenceReliable);
 
     if (mStartPropertySetThread->Start() != NO_ERROR) {
@@ -1382,7 +1378,7 @@ status_t SurfaceFlinger::getSupportedFrameTimestamps(
     };
     ConditionalLock _l(mStateLock,
             std::this_thread::get_id() != mMainThreadId);
-    if (!getHwComposer().hasCapability(hal::Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
+    if (!getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
         outSupported->push_back(FrameEvent::DISPLAY_PRESENT);
     }
     return NO_ERROR;
@@ -1802,9 +1798,8 @@ void SurfaceFlinger::disableExpensiveRendering() {
     auto future = mScheduler->schedule([=]() MAIN_THREAD {
         ATRACE_CALL();
         if (mPowerAdvisor.isUsingExpensiveRendering()) {
-            const auto& displays = ON_MAIN_THREAD(mDisplays);
-            for (const auto& [_, display] : displays) {
-                const static constexpr auto kDisable = false;
+            for (const auto& [_, display] : mDisplays) {
+                constexpr bool kDisable = false;
                 mPowerAdvisor.setExpensiveRenderingExpected(display->getId(), kDisable);
             }
         }
@@ -2279,11 +2274,15 @@ status_t SurfaceFlinger::setDisplayBrightness(const sp<IBinder>& displayToken,
                    // If we support applying display brightness as a command, then we also support
                    // dimming SDR layers.
                    if (supportsDisplayBrightnessCommand) {
-                       display->getCompositionDisplay()
-                               ->setDisplayBrightness(brightness.sdrWhitePointNits,
-                                                      brightness.displayBrightnessNits);
+                       auto compositionDisplay = display->getCompositionDisplay();
+                       float currentDimmingRatio =
+                               compositionDisplay->editState().sdrWhitePointNits /
+                               compositionDisplay->editState().displayBrightnessNits;
+                       compositionDisplay->setDisplayBrightness(brightness.sdrWhitePointNits,
+                                                                brightness.displayBrightnessNits);
                        MAIN_THREAD_GUARD(display->stageBrightness(brightness.displayBrightness));
-                       if (hasVisibleHdrLayer(display)) {
+                       if (brightness.sdrWhitePointNits / brightness.displayBrightnessNits !=
+                           currentDimmingRatio) {
                            scheduleComposite(FrameHint::kNone);
                        } else {
                            scheduleCommit(FrameHint::kNone);
@@ -2360,8 +2359,9 @@ status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::getDisplayDecorationSupport(const sp<IBinder>& displayToken,
-                                                     bool* outSupport) const {
+status_t SurfaceFlinger::getDisplayDecorationSupport(
+        const sp<IBinder>& displayToken,
+        std::optional<DisplayDecorationSupport>* outSupport) const {
     if (!displayToken || !outSupport) {
         return BAD_VALUE;
     }
@@ -2372,8 +2372,7 @@ status_t SurfaceFlinger::getDisplayDecorationSupport(const sp<IBinder>& displayT
     if (!displayId) {
         return NAME_NOT_FOUND;
     }
-    *outSupport =
-            getHwComposer().hasDisplayCapability(*displayId, DisplayCapability::DISPLAY_DECORATION);
+    getHwComposer().getDisplayDecorationSupport(*displayId, outSupport);
     return NO_ERROR;
 }
 
@@ -2474,13 +2473,14 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
         ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
         return getDefaultDisplayDeviceLocked();
     }();
-    
     auto currentRefreshRate = display->refreshRateConfigs().getCurrentRefreshRate();
 
+    auto policy = display->refreshRateConfigs().getCurrentPolicy();
     const auto& allRates = display->refreshRateConfigs().getAllRefreshRates();
     auto iter = allRates.cbegin();
     while (iter != allRates.cend()) {
-        if (iter->second->inPolicy(Fps::fromValue(refreshRate), Fps::fromValue(refreshRate))) {
+        const RefreshRate& refreshRate = *iter->second;
+        if(policy.primaryRange.includes(refreshRate.getFps())) {
             break;
         }
         ++iter;
@@ -3063,16 +3063,19 @@ void SurfaceFlinger::updateCompositorTiming(const DisplayStatInfo& stats, nsecs_
 
 void SurfaceFlinger::setCompositorTimingSnapped(const DisplayStatInfo& stats,
                                                 nsecs_t compositeToPresentLatency) {
+    // Avoid division by 0 by defaulting to 60Hz
+    const auto vsyncPeriod = stats.vsyncPeriod ?: (60_Hz).getPeriodNsecs();
+
     // Integer division and modulo round toward 0 not -inf, so we need to
     // treat negative and positive offsets differently.
     nsecs_t idealLatency = (mVsyncConfiguration->getCurrentConfigs().late.sfOffset > 0)
-            ? (stats.vsyncPeriod -
-               (mVsyncConfiguration->getCurrentConfigs().late.sfOffset % stats.vsyncPeriod))
-            : ((-mVsyncConfiguration->getCurrentConfigs().late.sfOffset) % stats.vsyncPeriod);
+            ? (vsyncPeriod -
+               (mVsyncConfiguration->getCurrentConfigs().late.sfOffset % vsyncPeriod))
+            : ((-mVsyncConfiguration->getCurrentConfigs().late.sfOffset) % vsyncPeriod);
 
     // Just in case mVsyncConfiguration->getCurrentConfigs().late.sf == -vsyncInterval.
     if (idealLatency <= 0) {
-        idealLatency = stats.vsyncPeriod;
+        idealLatency = vsyncPeriod;
     }
 
     // Snap the latency to a value that removes scheduling jitter from the
@@ -3081,14 +3084,14 @@ void SurfaceFlinger::setCompositorTimingSnapped(const DisplayStatInfo& stats,
     // something (such as user input) to an accurate diasplay time.
     // Snapping also allows an app to precisely calculate
     // mVsyncConfiguration->getCurrentConfigs().late.sf with (presentLatency % interval).
-    nsecs_t bias = stats.vsyncPeriod / 2;
-    int64_t extraVsyncs = (compositeToPresentLatency - idealLatency + bias) / stats.vsyncPeriod;
-    nsecs_t snappedCompositeToPresentLatency =
-            (extraVsyncs > 0) ? idealLatency + (extraVsyncs * stats.vsyncPeriod) : idealLatency;
+    const nsecs_t bias = vsyncPeriod / 2;
+    const int64_t extraVsyncs = ((compositeToPresentLatency - idealLatency + bias) / vsyncPeriod);
+    const nsecs_t snappedCompositeToPresentLatency =
+            (extraVsyncs > 0) ? idealLatency + (extraVsyncs * vsyncPeriod) : idealLatency;
 
     std::lock_guard<std::mutex> lock(getBE().mCompositorTimingLock);
     getBE().mCompositorTiming.deadline = stats.vsyncTime - idealLatency;
-    getBE().mCompositorTiming.interval = stats.vsyncPeriod;
+    getBE().mCompositorTiming.interval = vsyncPeriod;
     getBE().mCompositorTiming.presentLatency = snappedCompositeToPresentLatency;
 }
 
@@ -4208,9 +4211,7 @@ void SurfaceFlinger::persistDisplayBrightness(bool needsComposite) {
         return;
     }
 
-    const auto& displays = ON_MAIN_THREAD(mDisplays);
-
-    for (const auto& [_, display] : displays) {
+    for (const auto& [_, display] : ON_MAIN_THREAD(mDisplays)) {
         if (const auto brightness = display->getStagedBrightness(); brightness) {
             if (!needsComposite) {
                 const status_t error =
@@ -4231,60 +4232,48 @@ void SurfaceFlinger::persistDisplayBrightness(bool needsComposite) {
 
 void SurfaceFlinger::buildWindowInfos(std::vector<WindowInfo>& outWindowInfos,
                                       std::vector<DisplayInfo>& outDisplayInfos) {
-    struct Details {
-        Details(bool receivesInput, bool isSecure, const ui::Transform& transform,
-                const DisplayInfo& info)
-              : receivesInput(receivesInput),
-                isSecure(isSecure),
-                transform(std::move(transform)),
-                info(std::move(info)) {}
-        bool receivesInput;
-        bool isSecure;
-        ui::Transform transform;
-        DisplayInfo info;
-    };
-    std::unordered_map<uint32_t /*layerStackId*/, Details> inputDisplayDetails;
+    ftl::SmallMap<ui::LayerStack, DisplayDevice::InputInfo, 4> displayInputInfos;
+
     for (const auto& [_, display] : ON_MAIN_THREAD(mDisplays)) {
-        const uint32_t layerStackId = display->getLayerStack().id;
-        const auto& [info, transform] = display->getInputInfo();
-        const auto& [it, emplaced] =
-                inputDisplayDetails.try_emplace(layerStackId, display->receivesInput(),
-                                                display->isSecure(), transform, info);
+        const auto layerStack = display->getLayerStack();
+        const auto info = display->getInputInfo();
+
+        const auto [it, emplaced] = displayInputInfos.try_emplace(layerStack, info);
         if (emplaced) {
             continue;
         }
 
-        // There is more than one display for the layerStack. In this case, the display that is
-        // configured to receive input takes precedence.
-        auto& details = it->second;
-        if (!display->receivesInput()) {
-            continue;
+        // If the layer stack is mirrored on multiple displays, the first display that is configured
+        // to receive input takes precedence.
+        auto& otherInfo = it->second;
+        if (otherInfo.receivesInput) {
+            ALOGW_IF(display->receivesInput(),
+                     "Multiple displays claim to accept input for the same layer stack: %u",
+                     layerStack.id);
+        } else {
+            otherInfo = info;
         }
-        ALOGE_IF(details.receivesInput,
-                 "Multiple displays claim to accept input for the same layer stack: %u",
-                 layerStackId);
-        details.receivesInput = display->receivesInput();
-        details.isSecure = display->isSecure();
-        details.transform = std::move(transform);
-        details.info = std::move(info);
     }
+
+    static size_t sNumWindowInfos = 0;
+    outWindowInfos.reserve(sNumWindowInfos);
+    sNumWindowInfos = 0;
 
     mDrawingState.traverseInReverseZOrder([&](Layer* layer) {
         if (!layer->needsInputInfo()) return;
 
-        const uint32_t layerStackId = layer->getLayerStack().id;
-        const auto it = inputDisplayDetails.find(layerStackId);
-        if (it == inputDisplayDetails.end()) {
-            // Do not create WindowInfos for windows on displays that cannot receive input.
-            return;
+        // Do not create WindowInfos for windows on displays that cannot receive input.
+        if (const auto opt = displayInputInfos.get(layer->getLayerStack())) {
+            const auto& info = opt->get();
+            outWindowInfos.push_back(layer->fillInputInfo(info.transform, info.isSecure));
         }
-
-        const auto& details = it->second;
-        outWindowInfos.push_back(layer->fillInputInfo(details.transform, details.isSecure));
     });
 
-    for (const auto& [_, details] : inputDisplayDetails) {
-        outDisplayInfos.push_back(std::move(details.info));
+    sNumWindowInfos = outWindowInfos.size();
+
+    outDisplayInfos.reserve(displayInputInfos.size());
+    for (const auto& [_, info] : displayInputInfos) {
+        outDisplayInfos.push_back(info.info);
     }
 }
 
@@ -4362,7 +4351,7 @@ void SurfaceFlinger::initScheduler(const sp<DisplayDevice>& display) {
         features |= Feature::kTracePredictedVsync;
     }
     if (!base::GetBoolProperty("debug.sf.vsync_reactor_ignore_present_fences"s, false) &&
-        !getHwComposer().hasCapability(hal::Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
+        !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
         features |= Feature::kPresentFences;
     }
 
@@ -4640,6 +4629,19 @@ uint32_t SurfaceFlinger::setTransactionFlags(uint32_t mask, TransactionSchedule 
     return old;
 }
 
+bool SurfaceFlinger::stopTransactionProcessing(
+        const std::unordered_set<sp<IBinder>, SpHash<IBinder>>&
+                applyTokensWithUnsignaledTransactions) const {
+    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::AutoSingleLayer) {
+        // if we are in LatchUnsignaledConfig::AutoSingleLayer
+        // then we should have only one applyToken for processing.
+        // so we can stop further transactions on this applyToken.
+        return !applyTokensWithUnsignaledTransactions.empty();
+    }
+
+    return false;
+}
+
 bool SurfaceFlinger::flushTransactionQueues(int64_t vsyncId) {
     // to prevent onHandleDestroyed from being called while the lock is held,
     // we must keep a copy of the transactions (specifically the composer
@@ -4647,44 +4649,44 @@ bool SurfaceFlinger::flushTransactionQueues(int64_t vsyncId) {
     std::vector<TransactionState> transactions;
     // Layer handles that have transactions with buffers that are ready to be applied.
     std::unordered_set<sp<IBinder>, SpHash<IBinder>> bufferLayersReadyToPresent;
+    std::unordered_set<sp<IBinder>, SpHash<IBinder>> applyTokensWithUnsignaledTransactions;
     {
         Mutex::Autolock _l(mStateLock);
         {
             Mutex::Autolock _l(mQueueLock);
-            // allowLatchUnsignaled acts as a filter condition when latch unsignaled is either auto
-            // or always. auto: in this case we let buffer latch unsignaled if we have only one
-            // applyToken and if only first transaction is latch unsignaled. If more than one
-            // applyToken we don't latch unsignaled.
-            bool allowLatchUnsignaled = allowedLatchUnsignaled();
-            bool isFirstUnsignaledTransactionApplied = false;
             // Collect transactions from pending transaction queue.
             auto it = mPendingTransactionQueues.begin();
             while (it != mPendingTransactionQueues.end()) {
                 auto& [applyToken, transactionQueue] = *it;
                 while (!transactionQueue.empty()) {
+                    if (stopTransactionProcessing(applyTokensWithUnsignaledTransactions)) {
+                        ATRACE_NAME("stopTransactionProcessing");
+                        break;
+                    }
+
                     auto& transaction = transactionQueue.front();
-                    if (!transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
-                                                       transaction.isAutoTimestamp,
-                                                       transaction.desiredPresentTime,
-                                                       transaction.originUid, transaction.states,
-                                                       bufferLayersReadyToPresent,
-                                                       allowLatchUnsignaled)) {
+                    const auto ready =
+                            transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
+                                                          transaction.isAutoTimestamp,
+                                                          transaction.desiredPresentTime,
+                                                          transaction.originUid, transaction.states,
+                                                          bufferLayersReadyToPresent,
+                                                          transactions.size());
+                    ATRACE_INT("TransactionReadiness", static_cast<int>(ready));
+                    if (ready == TransactionReadiness::NotReady) {
                         setTransactionFlags(eTransactionFlushNeeded);
                         break;
                     }
                     transaction.traverseStatesWithBuffers([&](const layer_state_t& state) {
                         bufferLayersReadyToPresent.insert(state.surface);
                     });
+                    const bool appliedUnsignaled = (ready == TransactionReadiness::ReadyUnsignaled);
+                    if (appliedUnsignaled) {
+                        applyTokensWithUnsignaledTransactions.insert(transaction.applyToken);
+                    }
+
                     transactions.emplace_back(std::move(transaction));
                     transactionQueue.pop();
-                    if (allowLatchUnsignaled &&
-                        enableLatchUnsignaledConfig == LatchUnsignaledConfig::Auto) {
-                        // if allowLatchUnsignaled && we are in LatchUnsignaledConfig::Auto
-                        // then we should have only one applyToken for processing.
-                        // so we can stop further transactions on this applyToken.
-                        isFirstUnsignaledTransactionApplied = true;
-                        break;
-                    }
                 }
 
                 if (transactionQueue.empty()) {
@@ -4702,25 +4704,35 @@ bool SurfaceFlinger::flushTransactionQueues(int64_t vsyncId) {
             // Case 3: others are the transactions that are ready to apply.
             while (!mTransactionQueue.empty()) {
                 auto& transaction = mTransactionQueue.front();
-                bool pendingTransactions = mPendingTransactionQueues.find(transaction.applyToken) !=
+                const bool pendingTransactions =
+                        mPendingTransactionQueues.find(transaction.applyToken) !=
                         mPendingTransactionQueues.end();
-                if (isFirstUnsignaledTransactionApplied || pendingTransactions ||
-                    !transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
-                                                   transaction.isAutoTimestamp,
-                                                   transaction.desiredPresentTime,
-                                                   transaction.originUid, transaction.states,
-                                                   bufferLayersReadyToPresent,
-                                                   allowLatchUnsignaled)) {
+                const auto ready = [&]() REQUIRES(mStateLock) {
+                    if (pendingTransactions ||
+                        stopTransactionProcessing(applyTokensWithUnsignaledTransactions)) {
+                        ATRACE_NAME("pendingTransactions || stopTransactionProcessing");
+                        return TransactionReadiness::NotReady;
+                    }
+
+                    return transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
+                                                         transaction.isAutoTimestamp,
+                                                         transaction.desiredPresentTime,
+                                                         transaction.originUid, transaction.states,
+                                                         bufferLayersReadyToPresent,
+                                                         transactions.size());
+                }();
+                ATRACE_INT("TransactionReadiness", static_cast<int>(ready));
+                if (ready == TransactionReadiness::NotReady) {
                     mPendingTransactionQueues[transaction.applyToken].push(std::move(transaction));
                 } else {
                     transaction.traverseStatesWithBuffers([&](const layer_state_t& state) {
                         bufferLayersReadyToPresent.insert(state.surface);
                     });
-                    transactions.emplace_back(std::move(transaction));
-                    if (allowLatchUnsignaled &&
-                        enableLatchUnsignaledConfig == LatchUnsignaledConfig::Auto) {
-                        isFirstUnsignaledTransactionApplied = true;
+                    const bool appliedUnsignaled = (ready == TransactionReadiness::ReadyUnsignaled);
+                    if (appliedUnsignaled) {
+                        applyTokensWithUnsignaledTransactions.insert(transaction.applyToken);
                     }
+                    transactions.emplace_back(std::move(transaction));
                 }
                 mTransactionQueue.pop_front();
                 ATRACE_INT("TransactionQueue", mTransactionQueue.size());
@@ -4735,7 +4747,7 @@ bool SurfaceFlinger::applyTransactions(std::vector<TransactionState>& transactio
                                        int64_t vsyncId) {
     bool needsTraversal = false;
     // Now apply all transactions.
-    for (const auto& transaction : transactions) {
+    for (auto& transaction : transactions) {
         needsTraversal |=
                 applyTransactionState(transaction.frameTimelineInfo, transaction.states,
                                       transaction.displays, transaction.flags,
@@ -4755,62 +4767,6 @@ bool SurfaceFlinger::applyTransactions(std::vector<TransactionState>& transactio
         mTransactionTracing->addCommittedTransactions(transactions, vsyncId);
     }
     return needsTraversal;
-}
-
-bool SurfaceFlinger::allowedLatchUnsignaled() {
-    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::Disabled) {
-        return false;
-    }
-    // Always mode matches the current latch unsignaled behavior.
-    // This behavior is currently used by the partners and we would like
-    // to keep it until we are completely migrated to Auto mode successfully
-    // and we we have our fallback based implementation in place.
-    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::Always) {
-        return true;
-    }
-
-    //  if enableLatchUnsignaledConfig == LatchUnsignaledConfig::Auto
-    //  we don't latch unsignaled if more than one applyToken, as it can backpressure
-    //  the other transactions.
-    if (mPendingTransactionQueues.size() > 1) {
-        return false;
-    }
-    std::optional<sp<IBinder>> applyToken = std::nullopt;
-    bool isPendingTransactionQueuesItem = false;
-    if (!mPendingTransactionQueues.empty()) {
-        applyToken = mPendingTransactionQueues.begin()->first;
-        isPendingTransactionQueuesItem = true;
-    }
-
-    for (const auto& item : mTransactionQueue) {
-        if (!applyToken.has_value()) {
-            applyToken = item.applyToken;
-        } else if (applyToken.has_value() && applyToken != item.applyToken) {
-            return false;
-        }
-    }
-
-    if (isPendingTransactionQueuesItem) {
-        return checkTransactionCanLatchUnsignaled(
-                mPendingTransactionQueues.begin()->second.front());
-    } else if (applyToken.has_value()) {
-        return checkTransactionCanLatchUnsignaled((mTransactionQueue.front()));
-    }
-    return false;
-}
-
-bool SurfaceFlinger::checkTransactionCanLatchUnsignaled(const TransactionState& transaction) {
-    if (transaction.states.size() == 1) {
-        const auto& state = transaction.states.begin()->state;
-        if ((state.flags & ~layer_state_t::eBufferChanged) == 0 &&
-            state.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
-            state.bufferData->acquireFence &&
-            state.bufferData->acquireFence->getStatus() == Fence::Status::Unsignaled) {
-            ATRACE_NAME("transactionCanLatchUnsignaled");
-            return true;
-        }
-    }
-    return false;
 }
 
 bool SurfaceFlinger::transactionFlushNeeded() {
@@ -4839,12 +4795,57 @@ bool SurfaceFlinger::frameIsEarly(nsecs_t expectedPresentTime, int64_t vsyncId) 
     return prediction->presentTime >= expectedPresentTime &&
             prediction->presentTime - expectedPresentTime >= earlyLatchVsyncThreshold;
 }
+bool SurfaceFlinger::shouldLatchUnsignaled(const sp<Layer>& layer, const layer_state_t& state,
+                                           size_t numStates, size_t totalTXapplied) const {
+    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::Disabled) {
+        ALOGV("%s: false (LatchUnsignaledConfig::Disabled)", __func__);
+        return false;
+    }
 
-bool SurfaceFlinger::transactionIsReadyToBeApplied(
+    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::Always) {
+        ALOGV("%s: true (LatchUnsignaledConfig::Always)", __func__);
+        return true;
+    }
+
+    // We only want to latch unsignaled when a single layer is updated in this
+    // transaction (i.e. not a blast sync transaction).
+    if (numStates != 1) {
+        ALOGV("%s: false (numStates=%zu)", __func__, numStates);
+        return false;
+    }
+
+    if (enableLatchUnsignaledConfig == LatchUnsignaledConfig::AutoSingleLayer) {
+        if (totalTXapplied > 0) {
+            ALOGV("%s: false (LatchUnsignaledConfig::AutoSingleLayer; totalTXapplied=%zu)",
+                  __func__, totalTXapplied);
+            return false;
+        }
+
+        // We don't want to latch unsignaled if are in early / client composition
+        // as it leads to jank due to RenderEngine waiting for unsignaled buffer
+        // or window animations being slow.
+        const auto isDefaultVsyncConfig = mVsyncModulator->isVsyncConfigDefault();
+        if (!isDefaultVsyncConfig) {
+            ALOGV("%s: false (LatchUnsignaledConfig::AutoSingleLayer; !isDefaultVsyncConfig)",
+                  __func__);
+            return false;
+        }
+    }
+
+    if (!layer->simpleBufferUpdate(state)) {
+        ALOGV("%s: false (!simpleBufferUpdate)", __func__);
+        return false;
+    }
+
+    ALOGV("%s: true", __func__);
+    return true;
+}
+
+auto SurfaceFlinger::transactionIsReadyToBeApplied(
         const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
         uid_t originUid, const Vector<ComposerState>& states,
         const std::unordered_set<sp<IBinder>, SpHash<IBinder>>& bufferLayersReadyToPresent,
-        bool allowLatchUnsignaled) const {
+        size_t totalTXapplied) const -> TransactionReadiness {
     ATRACE_FORMAT("transactionIsReadyToBeApplied vsyncId: %" PRId64, info.vsyncId);
     const nsecs_t expectedPresentTime = mExpectedPresentTime.load();
     // Do not present if the desiredPresentTime has not passed unless it is more than one second
@@ -4852,32 +4853,24 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
     if (!isAutoTimestamp && desiredPresentTime >= expectedPresentTime &&
         desiredPresentTime < expectedPresentTime + s2ns(1)) {
         ATRACE_NAME("not current");
-        return false;
+        return TransactionReadiness::NotReady;
     }
 
     if (!mScheduler->isVsyncValid(expectedPresentTime, originUid)) {
         ATRACE_NAME("!isVsyncValid");
-        return false;
+        return TransactionReadiness::NotReady;
     }
 
     // If the client didn't specify desiredPresentTime, use the vsyncId to determine the expected
     // present time of this transaction.
     if (isAutoTimestamp && frameIsEarly(expectedPresentTime, info.vsyncId)) {
         ATRACE_NAME("frameIsEarly");
-        return false;
+        return TransactionReadiness::NotReady;
     }
 
+    bool fenceUnsignaled = false;
     for (const ComposerState& state : states) {
         const layer_state_t& s = state.state;
-        const bool acquireFenceChanged = s.bufferData &&
-                s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged);
-        if (BufferLayer::latchUnsignaledBuffers() && acquireFenceChanged &&
-            s.bufferData->acquireFence && !allowLatchUnsignaled &&
-            s.bufferData->acquireFence->getStatus() == Fence::Status::Unsignaled) {
-            ATRACE_NAME("fence unsignaled");
-            return false;
-        }
-
         sp<Layer> layer = nullptr;
         if (s.surface) {
             layer = fromHandle(s.surface).promote();
@@ -4889,7 +4882,22 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
             continue;
         }
 
-        ATRACE_NAME(layer->getName().c_str());
+        const bool allowLatchUnsignaled =
+                shouldLatchUnsignaled(layer, s, states.size(), totalTXapplied);
+        ATRACE_FORMAT("%s allowLatchUnsignaled=%s", layer->getName().c_str(),
+                      allowLatchUnsignaled ? "true" : "false");
+
+        const bool acquireFenceChanged = s.bufferData &&
+                s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
+                s.bufferData->acquireFence;
+        fenceUnsignaled = fenceUnsignaled ||
+                (acquireFenceChanged &&
+                 s.bufferData->acquireFence->getStatus() == Fence::Status::Unsignaled);
+
+        if (fenceUnsignaled && !allowLatchUnsignaled) {
+            ATRACE_NAME("fence unsignaled");
+            return TransactionReadiness::NotReady;
+        }
 
         if (s.hasBufferChanges()) {
             // If backpressure is enabled and we already have a buffer to commit, keep the
@@ -4898,11 +4906,11 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
                     bufferLayersReadyToPresent.find(s.surface) != bufferLayersReadyToPresent.end();
             if (layer->backpressureEnabled() && hasPendingBuffer && isAutoTimestamp) {
                 ATRACE_NAME("hasPendingBuffer");
-                return false;
+                return TransactionReadiness::NotReady;
             }
         }
     }
-    return true;
+    return fenceUnsignaled ? TransactionReadiness::ReadyUnsignaled : TransactionReadiness::Ready;
 }
 
 void SurfaceFlinger::queueTransaction(TransactionState& state) {
@@ -5041,7 +5049,7 @@ status_t SurfaceFlinger::setTransactionState(
 }
 
 bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelineInfo,
-                                           const Vector<ComposerState>& states,
+                                           Vector<ComposerState>& states,
                                            const Vector<DisplayState>& displays, uint32_t flags,
                                            const InputWindowCommands& inputWindowCommands,
                                            const int64_t desiredPresentTime, bool isAutoTimestamp,
@@ -5063,9 +5071,9 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
     }
 
     uint32_t clientStateFlags = 0;
-    for (const ComposerState& state : states) {
-        ComposerState stateCopy = state;
-        clientStateFlags |= setClientStateLocked(frameTimelineInfo, stateCopy, desiredPresentTime,
+    for (int i = 0; i < states.size(); i++) {
+        ComposerState& state = states.editItemAt(i);
+        clientStateFlags |= setClientStateLocked(frameTimelineInfo, state, desiredPresentTime,
                                                  isAutoTimestamp, postTime, permissions);
         if ((flags & eAnimation) && state.state.surface) {
             if (const auto layer = fromHandle(state.state.surface).promote()) {
@@ -6397,11 +6405,9 @@ void SurfaceFlinger::dumpWideColorInfo(std::string& result) const {
 }
 
 LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
-    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
-
     LayersProto layersProto;
     for (const sp<Layer>& layer : mDrawingState.layersSortedByZ) {
-        layer->writeToProto(layersProto, traceFlags, display.get());
+        layer->writeToProto(layersProto, traceFlags);
     }
 
     return layersProto;
@@ -6442,8 +6448,7 @@ void SurfaceFlinger::dumpOffscreenLayersProto(LayersProto& layersProto, uint32_t
         rootProto->add_children(offscreenLayer->sequence);
 
         // Add layer
-        LayerProto* layerProto =
-                offscreenLayer->writeToProto(layersProto, traceFlags, nullptr /*device*/);
+        LayerProto* layerProto = offscreenLayer->writeToProto(layersProto, traceFlags);
         layerProto->set_parent(offscreenRootLayerId);
     }
 }
@@ -6676,7 +6681,7 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, std::string& result) co
     colorizer.reset(result);
     const bool hwcDisabled = mDebugDisableHWC || mDebugFlashDelay;
     StringAppendF(&result, "  h/w composer %s\n", hwcDisabled ? "disabled" : "enabled");
-    getHwComposer().dump(result);
+    dumpHwc(result);
 
     /*
      * Dump gralloc state
@@ -6856,7 +6861,13 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
             }
             return PERMISSION_DENIED;
         }
-        case SET_OVERRIDE_FRAME_RATE:
+        case SET_OVERRIDE_FRAME_RATE: {
+            const int uid = IPCThreadState::self()->getCallingUid();
+            if (uid == AID_ROOT || uid == AID_SYSTEM) {
+                return OK;
+            }
+            return PERMISSION_DENIED;
+        }
         case ON_PULL_ATOM: {
             const int uid = IPCThreadState::self()->getCallingUid();
             if (uid == AID_SYSTEM) {
@@ -7071,9 +7082,9 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             }
             case 1025: { // Set layer tracing
                 n = data.readInt32();
-                int64_t fixedStartingTime = data.readInt64();
                 bool tracingEnabledChanged;
-                if (n) {
+                if (n == 1) {
+                    int64_t fixedStartingTime = data.readInt64();
                     ALOGD("LayerTracing enabled");
                     tracingEnabledChanged = mLayerTracing.enable();
                     if (tracingEnabledChanged) {
@@ -7085,6 +7096,10 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                                 })
                                 .wait();
                     }
+                } else if (n == 2) {
+                    std::string filename = std::string(data.readCString());
+                    ALOGD("LayerTracing disabled. Trace wrote to %s", filename.c_str());
+                    tracingEnabledChanged = mLayerTracing.disable(filename.c_str());
                 } else {
                     ALOGD("LayerTracing disabled");
                     tracingEnabledChanged = mLayerTracing.disable();
@@ -7354,9 +7369,9 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                         mTransactionTracing->setBufferSize(
                                 TransactionTracing::ACTIVE_TRACING_BUFFER_SIZE);
                     } else {
+                        mTransactionTracing->writeToFile();
                         mTransactionTracing->setBufferSize(
                                 TransactionTracing::CONTINUOUS_TRACING_BUFFER_SIZE);
-                        mTransactionTracing->writeToFile();
                     }
                 }
                 reply->writeInt32(NO_ERROR);

@@ -44,6 +44,7 @@
 
 #include "DisplayHardware/PowerAdvisor.h"
 
+using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 namespace android::compositionengine::impl {
@@ -296,8 +297,7 @@ void Display::chooseCompositionStrategy() {
         applyChangedTypesToLayers(changes->changedTypes);
         applyDisplayRequests(changes->displayRequests);
         applyLayerRequestsToLayers(changes->layerRequests);
-        applyClientTargetRequests(changes->clientTargetProperty,
-                                  changes->clientTargetWhitePointNits);
+        applyClientTargetRequests(changes->clientTargetProperty, changes->clientTargetBrightness);
     }
 
     // Determine what type of composition we are doing from the final state
@@ -363,7 +363,7 @@ bool Display::getSkipColorTransform() const {
                                         DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
     }
 
-    return hwc.hasCapability(hal::Capability::SKIP_CLIENT_COLOR_TRANSFORM);
+    return hwc.hasCapability(Capability::SKIP_CLIENT_COLOR_TRANSFORM);
 }
 
 bool Display::anyLayersRequireClientComposition() const {
@@ -421,13 +421,13 @@ void Display::applyLayerRequestsToLayers(const LayerRequests& layerRequests) {
 }
 
 void Display::applyClientTargetRequests(const ClientTargetProperty& clientTargetProperty,
-                                        float whitePointNits) {
+                                        float brightness) {
     if (clientTargetProperty.dataspace == ui::Dataspace::UNKNOWN) {
         return;
     }
 
     editState().dataspace = clientTargetProperty.dataspace;
-    editState().clientTargetWhitePointNits = whitePointNits;
+    editState().clientTargetBrightness = brightness;
     getRenderSurface()->setBufferDataspace(clientTargetProperty.dataspace);
     getRenderSurface()->setBufferPixelFormat(clientTargetProperty.pixelFormat);
 }

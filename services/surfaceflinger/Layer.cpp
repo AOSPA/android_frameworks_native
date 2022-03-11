@@ -2025,29 +2025,31 @@ void Layer::setInputInfo(const WindowInfo& info) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
-                                const DisplayDevice* display) {
+LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     LayerProto* layerProto = layersProto.add_layers();
-    writeToProtoDrawingState(layerProto, traceFlags, display);
+    writeToProtoDrawingState(layerProto);
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
         // Only populate for the primary display.
+        UnnecessaryLock assumeLocked(mFlinger->mStateLock); // called from the main thread.
+        const auto display = mFlinger->getDefaultDisplayDeviceLocked();
         if (display) {
             const auto compositionType = getCompositionType(*display);
             layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
+            LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
+                                           [&]() { return layerProto->mutable_visible_region(); });
         }
     }
 
     for (const sp<Layer>& layer : mDrawingChildren) {
-        layer->writeToProto(layersProto, traceFlags, display);
+        layer->writeToProto(layersProto, traceFlags);
     }
 
     return layerProto;
 }
 
-void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
-                                     const DisplayDevice* display) {
+void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
     const ui::Transform transform = getTransform();
     auto buffer = getExternalTexture();
     if (buffer != nullptr) {
@@ -2071,10 +2073,6 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
     LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
                                            [&]() { return layerInfo->mutable_position(); });
     LayerProtoHelper::writeToProto(mBounds, [&]() { return layerInfo->mutable_bounds(); });
-    if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        LayerProtoHelper::writeToProto(getVisibleRegion(display),
-                                       [&]() { return layerInfo->mutable_visible_region(); });
-    }
     LayerProtoHelper::writeToProto(surfaceDamageRegion,
                                    [&]() { return layerInfo->mutable_damage_region(); });
 
@@ -2193,8 +2191,7 @@ Rect Layer::getInputBounds() const {
 void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDisplay) {
     Rect tmpBounds = getInputBounds();
     if (!tmpBounds.isValid()) {
-        info.flags = WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::NOT_FOCUSABLE;
-        info.focusable = false;
+        info.setInputConfig(WindowInfo::InputConfig::NOT_FOCUSABLE, true);
         info.touchableRegion.clear();
         // A layer could have invalid input bounds and still expect to receive touch input if it has
         // replaceTouchableRegionWithCrop. For that case, the input transform needs to be calculated
@@ -2341,7 +2338,6 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
         mDrawingState.inputInfo.ownerUid = mOwnerUid;
         mDrawingState.inputInfo.ownerPid = mOwnerPid;
         mDrawingState.inputInfo.inputFeatures = WindowInfo::Feature::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.flags = WindowInfo::Flag::NOT_TOUCH_MODAL;
         mDrawingState.inputInfo.displayId = getLayerStack().id;
     }
 
@@ -2359,7 +2355,9 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
     // We are just using these layers for occlusion detection in
     // InputDispatcher, and obviously if they aren't visible they can't occlude
     // anything.
-    info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
+    const bool visible = hasInputInfo() ? canReceiveInput() : isVisible();
+    info.setInputConfig(WindowInfo::InputConfig::NOT_VISIBLE, !visible);
+
     info.alpha = getAlpha();
     fillTouchOcclusionMode(info);
     handleDropInputMode(info);
@@ -2381,8 +2379,9 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
 
     // Inherit the trusted state from the parent hierarchy, but don't clobber the trusted state
     // if it was set by WM for a known system overlay
-    info.trustedOverlay = info.trustedOverlay || isTrustedOverlay();
-
+    if (isTrustedOverlay()) {
+        info.inputConfig |= WindowInfo::InputConfig::TRUSTED_OVERLAY;
+    }
 
     // If the layer is a clone, we need to crop the input region to cloned root to prevent
     // touches from going outside the cloned area.
@@ -2514,7 +2513,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
     }
     // Cloned layers shouldn't handle watch outside since their z order is not determined by
     // WM or the client.
-    mDrawingState.inputInfo.flags &= ~WindowInfo::Flag::WATCH_OUTSIDE_TOUCH;
+    mDrawingState.inputInfo.setInputConfig(WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH, false);
 }
 
 void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {

@@ -202,7 +202,8 @@ void MessageQueue::injectorCallback() {
                 // necessary.
                 // mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
                 auto& vsync = buffer[i].vsync;
-                mHandler->dispatchFrame(vsync.vsyncId, vsync.expectedVSyncTimestamp);
+                mHandler->dispatchFrame(vsync.vsyncData.preferredVsyncId(),
+                                        vsync.vsyncData.preferredExpectedPresentationTime());
                 break;
             }
         }

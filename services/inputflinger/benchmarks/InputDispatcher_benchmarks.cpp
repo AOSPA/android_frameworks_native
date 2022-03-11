@@ -196,7 +196,6 @@ public:
     void updateInfo() {
         mInfo.token = mClientChannel->getConnectionToken();
         mInfo.name = "FakeWindowHandle";
-        mInfo.type = WindowInfo::Type::APPLICATION;
         mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
         mInfo.frameLeft = mFrame.left;
         mInfo.frameTop = mFrame.top;
@@ -205,10 +204,6 @@ public:
         mInfo.globalScaleFactor = 1.0;
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(mFrame);
-        mInfo.visible = true;
-        mInfo.focusable = true;
-        mInfo.hasWallpaper = false;
-        mInfo.paused = false;
         mInfo.ownerPid = INJECTOR_PID;
         mInfo.ownerUid = INJECTOR_UID;
         mInfo.displayId = ADISPLAY_ID_DEFAULT;

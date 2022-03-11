@@ -25,6 +25,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "liblog",
     ],
@@ -53,6 +54,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "libziparchive",
         "liblog",
@@ -99,6 +101,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "libziparchive",
         "liblog",
@@ -144,6 +147,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "liblog",
         "liblogwrap",
@@ -204,6 +208,7 @@ cc_test {
         "libutils",
     ],
     static_libs: [
+        "libext2_uuid",
         "libinstalld",
         "liblog",
     ],

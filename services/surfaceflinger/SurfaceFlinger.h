@@ -86,6 +86,8 @@
 #include <utility>
 #include <list>
 
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+
 using namespace android::surfaceflinger;
 
 namespace smomo {
@@ -157,7 +159,20 @@ enum {
     eTransactionMask = 0x1f,
 };
 
-enum class LatchUnsignaledConfig { Always, Auto, Disabled };
+// Latch Unsignaled buffer behaviours
+enum class LatchUnsignaledConfig {
+    // All buffers are latched signaled.
+    Disabled,
+
+    // Latch unsignaled is permitted when a single layer is updated in a frame,
+    // and the update includes just a buffer update (i.e. no sync transactions
+    // or geometry changes).
+    AutoSingleLayer,
+
+    // All buffers are latched unsignaled. This behaviour is discouraged as it
+    // can break sync transactions, stall the display and cause undesired side effects.
+    Always,
+};
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
@@ -180,6 +195,11 @@ struct SurfaceFlingerBE {
     nsecs_t mFrameBuckets[NUM_BUCKETS] = {};
     nsecs_t mTotalTime = 0;
     std::atomic<nsecs_t> mLastSwapTime = 0;
+};
+
+struct SCOPED_CAPABILITY UnnecessaryLock {
+    explicit UnnecessaryLock(Mutex& mutex) ACQUIRE(mutex) {}
+    ~UnnecessaryLock() RELEASE() {}
 };
 
 class DolphinWrapper {
@@ -704,8 +724,10 @@ private:
     status_t notifyPowerBoost(int32_t boostId) override;
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
                                      float lightPosY, float lightPosZ, float lightRadius) override;
-    status_t getDisplayDecorationSupport(const sp<IBinder>& displayToken,
-                                         bool* outSupport) const override;
+    status_t getDisplayDecorationSupport(
+            const sp<IBinder>& displayToken,
+            std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                    outSupport) const override;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy) override;
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
@@ -831,7 +853,7 @@ private:
     /*
      * Transactions
      */
-    bool applyTransactionState(const FrameTimelineInfo& info, const Vector<ComposerState>& state,
+    bool applyTransactionState(const FrameTimelineInfo& info, Vector<ComposerState>& state,
                                const Vector<DisplayState>& displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime, bool isAutoTimestamp,
@@ -866,16 +888,21 @@ private:
     uint32_t setTransactionFlags(uint32_t mask, TransactionSchedule,
                                  const sp<IBinder>& applyToken = {});
     void commitOffscreenLayers();
-    bool transactionIsReadyToBeApplied(
+    enum class TransactionReadiness {
+        NotReady,
+        Ready,
+        ReadyUnsignaled,
+    };
+    TransactionReadiness transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
             uid_t originUid, const Vector<ComposerState>& states,
             const std::unordered_set<sp<IBinder>, SpHash<IBinder>>& bufferLayersReadyToPresent,
-            bool allowLatchUnsignaled) const REQUIRES(mStateLock);
+            size_t totalTXapplied) const REQUIRES(mStateLock);
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
-    bool latchUnsignaledIsAllowed(std::vector<TransactionState>& transactions) REQUIRES(mStateLock);
-    bool allowedLatchUnsignaled() REQUIRES(mQueueLock, mStateLock);
-    bool checkTransactionCanLatchUnsignaled(const TransactionState& transaction)
-            REQUIRES(mStateLock);
+    bool shouldLatchUnsignaled(const sp<Layer>& layer, const layer_state_t&, size_t numStates,
+                               size_t totalTXapplied) const;
+    bool stopTransactionProcessing(const std::unordered_set<sp<IBinder>, SpHash<IBinder>>&
+                                           applyTokensWithUnsignaledTransactions) const;
     bool applyTransactions(std::vector<TransactionState>& transactions, int64_t vsyncId)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
@@ -1453,6 +1480,7 @@ private:
     ui::Dataspace mDefaultCompositionDataspace;
     ui::Dataspace mWideColorGamutCompositionDataspace;
     ui::Dataspace mColorSpaceAgnosticDataspace;
+    float mDimmingRatio = -1.f;
 
     SurfaceFlingerBE mBE;
     std::unique_ptr<compositionengine::CompositionEngine> mCompositionEngine;

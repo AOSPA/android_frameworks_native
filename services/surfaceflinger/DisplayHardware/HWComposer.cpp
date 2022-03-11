@@ -71,6 +71,8 @@
 #define RETURN_IF_HWC_ERROR(error, displayId, ...) \
     RETURN_IF_HWC_ERROR_FOR(__FUNCTION__, error, displayId, __VA_ARGS__)
 
+using aidl::android::hardware::graphics::composer3::Capability;
+using aidl::android::hardware::graphics::composer3::DisplayCapability;
 namespace hal = android::hardware::graphics::composer::hal;
 
 namespace android {
@@ -118,13 +120,11 @@ bool HWComposer::getDisplayIdentificationData(hal::HWDisplayId hwcDisplayId, uin
     return true;
 }
 
-bool HWComposer::hasCapability(hal::Capability capability) const {
+bool HWComposer::hasCapability(Capability capability) const {
     return mCapabilities.count(capability) > 0;
 }
 
-bool HWComposer::hasDisplayCapability(
-        HalDisplayId displayId,
-        aidl::android::hardware::graphics::composer3::DisplayCapability capability) const {
+bool HWComposer::hasDisplayCapability(HalDisplayId displayId, DisplayCapability capability) const {
     RETURN_IF_INVALID_DISPLAY(displayId, false);
     return mDisplayData.at(displayId).hwcDisplay->hasCapability(capability);
 }
@@ -480,14 +480,12 @@ status_t HWComposer::getDeviceCompositionChanges(
     RETURN_IF_HWC_ERROR_FOR("getRequests", error, displayId, BAD_INDEX);
 
     DeviceRequestedChanges::ClientTargetProperty clientTargetProperty;
-    float clientTargetWhitePointNits;
-    error = hwcDisplay->getClientTargetProperty(&clientTargetProperty, &clientTargetWhitePointNits);
+    float brightness = 1.f;
+    error = hwcDisplay->getClientTargetProperty(&clientTargetProperty, &brightness);
 
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
-                                               std::move(clientTargetProperty),
-                                               clientTargetWhitePointNits});
-
+                                               std::move(clientTargetProperty), brightness});
     if (acceptChanges) {
         error = hwcDisplay->acceptChanges();
         RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
@@ -786,6 +784,22 @@ std::optional<hal::HWConfigId> HWComposer::getPreferredBootDisplayMode(
     return displayModeId;
 }
 
+status_t HWComposer::getDisplayDecorationSupport(
+        PhysicalDisplayId displayId,
+        std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                support) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->getDisplayDecorationSupport(support);
+    if (error == hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == hal::Error::BAD_PARAMETER) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
 status_t HWComposer::setAutoLowLatencyMode(PhysicalDisplayId displayId, bool on) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
     const auto error = mDisplayData[displayId].hwcDisplay->setAutoLowLatencyMode(on);
@@ -961,7 +975,7 @@ void HWComposer::loadCapabilities() {
     static_assert(sizeof(hal::Capability) == sizeof(int32_t), "Capability size has changed");
     auto capabilities = mComposer->getCapabilities();
     for (auto capability : capabilities) {
-        mCapabilities.emplace(static_cast<hal::Capability>(capability));
+        mCapabilities.emplace(capability);
     }
 }
 

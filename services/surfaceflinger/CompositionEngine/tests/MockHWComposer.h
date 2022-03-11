@@ -46,7 +46,8 @@ public:
     MOCK_METHOD1(setCallback, void(HWC2::ComposerCallback&));
     MOCK_CONST_METHOD3(getDisplayIdentificationData,
                        bool(hal::HWDisplayId, uint8_t*, DisplayIdentificationData*));
-    MOCK_CONST_METHOD1(hasCapability, bool(hal::Capability));
+    MOCK_CONST_METHOD1(hasCapability,
+                       bool(aidl::android::hardware::graphics::composer3::Capability));
     MOCK_CONST_METHOD2(hasDisplayCapability,
                        bool(HalDisplayId,
                             aidl::android::hardware::graphics::composer3::DisplayCapability));
@@ -137,6 +138,10 @@ public:
                 (const, override));
     MOCK_METHOD(std::optional<hal::HWDisplayId>, fromPhysicalDisplayId, (PhysicalDisplayId),
                 (const, override));
+    MOCK_METHOD2(getDisplayDecorationSupport,
+                 status_t(PhysicalDisplayId,
+                          std::optional<aidl::android::hardware::graphics::common::
+                                                DisplayDecorationSupport>* support));
     MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
 };
 

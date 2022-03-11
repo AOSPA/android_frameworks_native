@@ -156,14 +156,14 @@ void LayerProtoHelper::writeTransformToProto(const ui::Transform& transform,
 
 void LayerProtoHelper::writeToProto(const renderengine::ExternalTexture& buffer,
                                     std::function<ActiveBufferProto*()> getActiveBufferProto) {
-    if (buffer.getBuffer()->getWidth() != 0 || buffer.getBuffer()->getHeight() != 0 ||
-        buffer.getBuffer()->getUsage() != 0 || buffer.getBuffer()->getPixelFormat() != 0) {
+    if (buffer.getWidth() != 0 || buffer.getHeight() != 0 || buffer.getUsage() != 0 ||
+        buffer.getPixelFormat() != 0) {
         // Use a lambda do avoid writing the object header when the object is empty
         ActiveBufferProto* activeBufferProto = getActiveBufferProto();
-        activeBufferProto->set_width(buffer.getBuffer()->getWidth());
-        activeBufferProto->set_height(buffer.getBuffer()->getHeight());
-        activeBufferProto->set_format(buffer.getBuffer()->getPixelFormat());
-        activeBufferProto->set_usage(buffer.getBuffer()->getUsage());
+        activeBufferProto->set_width(buffer.getWidth());
+        activeBufferProto->set_height(buffer.getHeight());
+        activeBufferProto->set_stride(buffer.getUsage());
+        activeBufferProto->set_format(buffer.getPixelFormat());
     }
 }
 
@@ -175,12 +175,12 @@ void LayerProtoHelper::writeToProto(
     }
 
     InputWindowInfoProto* proto = getInputWindowInfoProto();
-    proto->set_layout_params_flags(inputInfo.flags.get());
+    proto->set_layout_params_flags(inputInfo.layoutParamsFlags.get());
     using U = std::underlying_type_t<WindowInfo::Type>;
     // TODO(b/129481165): This static assert can be safely removed once conversion warnings
     // are re-enabled.
     static_assert(std::is_same_v<U, int32_t>);
-    proto->set_layout_params_type(static_cast<U>(inputInfo.type));
+    proto->set_layout_params_type(static_cast<U>(inputInfo.layoutParamsType));
 
     LayerProtoHelper::writeToProto({inputInfo.frameLeft, inputInfo.frameTop, inputInfo.frameRight,
                                     inputInfo.frameBottom},
@@ -189,9 +189,10 @@ void LayerProtoHelper::writeToProto(
                                    [&]() { return proto->mutable_touchable_region(); });
 
     proto->set_surface_inset(inputInfo.surfaceInset);
-    proto->set_visible(inputInfo.visible);
-    proto->set_focusable(inputInfo.focusable);
-    proto->set_has_wallpaper(inputInfo.hasWallpaper);
+    using InputConfig = gui::WindowInfo::InputConfig;
+    proto->set_visible(!inputInfo.inputConfig.test(InputConfig::NOT_VISIBLE));
+    proto->set_focusable(!inputInfo.inputConfig.test(InputConfig::NOT_FOCUSABLE));
+    proto->set_has_wallpaper(inputInfo.inputConfig.test(InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER));
 
     proto->set_global_scale_factor(inputInfo.globalScaleFactor);
     LayerProtoHelper::writeToProtoDeprecated(inputInfo.transform, proto->mutable_transform());
