@@ -47,7 +47,7 @@ public:
     void finalizeFrameEventHistory(const std::shared_ptr<FenceTime>& glDoneFence,
                                    const CompositorTiming& compositorTiming) override;
 
-    bool isBufferDue(nsecs_t expectedPresentTime) const override;
+    bool isBufferDue(nsecs_t /*expectedPresentTime*/) const override { return true; }
 
     Region getActiveTransparentRegion(const Layer::State& s) const override {
         return s.transparentRegionHint;

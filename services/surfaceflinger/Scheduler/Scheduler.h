@@ -121,6 +121,7 @@ public:
     using Impl::setDuration;
 
     using Impl::scheduleFrame;
+    using Impl::scheduleFrameImmed;
 
     // Schedule an asynchronous or synchronous task on the main thread.
     template <typename F, typename T = std::invoke_result_t<F>>
