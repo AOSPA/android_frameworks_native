@@ -60,6 +60,13 @@ std::string create_data_user_de_package_path(const char* volume_uuid,
 std::string create_data_user_ce_package_path_as_user_link(
         const char* volume_uuid, userid_t userid, const char* package_name);
 
+std::string create_data_misc_supplemental_path(const char* volume_uuid, bool isCeData,
+                                               userid_t userid);
+std::string create_data_misc_supplemental_package_path(const char* volume_uuid, bool isCeData,
+                                                       userid_t userid, const char* package_name);
+std::string create_data_misc_supplemental_shared_path(const char* volume_uuid, bool isCeData,
+                                                      userid_t userid, const char* package_name);
+
 std::string create_data_misc_ce_rollback_base_path(const char* volume_uuid, userid_t user);
 std::string create_data_misc_de_rollback_base_path(const char* volume_uuid, userid_t user);
 std::string create_data_misc_ce_rollback_path(const char* volume_uuid, userid_t user,
@@ -119,6 +126,11 @@ int create_dir_if_needed(const std::string& pathname, mode_t mode);
 
 int delete_dir_contents(const std::string& pathname, bool ignore_if_missing = false);
 int delete_dir_contents_and_dir(const std::string& pathname, bool ignore_if_missing = false);
+
+bool is_renamed_deleted_dir(const std::string& path);
+int rename_delete_dir_contents_and_dir(const std::string& pathname, bool ignore_if_missing = true);
+
+void cleanup_invalid_package_dirs_under_path(const std::string& pathname);
 
 int delete_dir_contents(const char *pathname,
                         int also_delete_dir,

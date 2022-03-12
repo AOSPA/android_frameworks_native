@@ -22,9 +22,10 @@
 #include <stdlib.h>
 #include <sys/capability.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <sys/xattr.h>
-#include <sys/statvfs.h>
+#include <uuid/uuid.h>
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
@@ -47,6 +48,7 @@
 
 #define DEBUG_XATTRS 0
 
+using android::base::Dirname;
 using android::base::EndsWith;
 using android::base::Fdopendir;
 using android::base::StringPrintf;
@@ -54,6 +56,10 @@ using android::base::unique_fd;
 
 namespace android {
 namespace installd {
+
+using namespace std::literals;
+
+static constexpr auto deletedSuffix = "==deleted=="sv;
 
 /**
  * Check that given string is valid filename, and that it attempts no
@@ -186,6 +192,43 @@ std::string create_data_user_ce_path(const char* volume_uuid, userid_t userid) {
 std::string create_data_user_de_path(const char* volume_uuid, userid_t userid) {
     std::string data(create_data_path(volume_uuid));
     return StringPrintf("%s/user_de/%u", data.c_str(), userid);
+}
+
+/**
+ * Create the path name where supplemental data for all apps will be stored.
+ * E.g. /data/misc_ce/0/supplemental
+ */
+std::string create_data_misc_supplemental_path(const char* uuid, bool isCeData, userid_t user) {
+    std::string data(create_data_path(uuid));
+    if (isCeData) {
+        return StringPrintf("%s/misc_ce/%d/supplemental", data.c_str(), user);
+    } else {
+        return StringPrintf("%s/misc_de/%d/supplemental", data.c_str(), user);
+    }
+}
+
+/**
+ * Create the path name where code data for all codes in a particular app will be stored.
+ * E.g. /data/misc_ce/0/supplemental/<app-name>
+ */
+std::string create_data_misc_supplemental_package_path(const char* volume_uuid, bool isCeData,
+                                                       userid_t user, const char* package_name) {
+    check_package_name(package_name);
+    return StringPrintf("%s/%s",
+                        create_data_misc_supplemental_path(volume_uuid, isCeData, user).c_str(),
+                        package_name);
+}
+
+/**
+ * Create the path name where shared code data for a particular app will be stored.
+ * E.g. /data/misc_ce/0/supplemental/<app-name>/shared
+ */
+std::string create_data_misc_supplemental_shared_path(const char* volume_uuid, bool isCeData,
+                                                      userid_t user, const char* package_name) {
+    return StringPrintf("%s/shared",
+                        create_data_misc_supplemental_package_path(volume_uuid, isCeData, user,
+                                                                   package_name)
+                                .c_str());
 }
 
 std::string create_data_misc_ce_rollback_base_path(const char* volume_uuid, userid_t user) {
@@ -593,6 +636,97 @@ int delete_dir_contents(const char *pathname,
         }
     }
     return res;
+}
+
+static std::string make_unique_name(std::string_view suffix) {
+    static constexpr auto uuidStringSize = 36;
+
+    uuid_t guid;
+    uuid_generate(guid);
+
+    std::string name;
+    const auto suffixSize = suffix.size();
+    name.reserve(uuidStringSize + suffixSize);
+
+    name.resize(uuidStringSize);
+    uuid_unparse(guid, name.data());
+    name.append(suffix);
+
+    return name;
+}
+
+static int rename_delete_dir_contents(const std::string& pathname,
+                                      int (*exclusion_predicate)(const char*, const int),
+                                      bool ignore_if_missing) {
+    auto temp_dir_name = make_unique_name(deletedSuffix);
+    auto temp_dir_path =
+            base::StringPrintf("%s/%s", Dirname(pathname).c_str(), temp_dir_name.c_str());
+
+    if (::rename(pathname.c_str(), temp_dir_path.c_str())) {
+        if (ignore_if_missing && (errno == ENOENT)) {
+            return 0;
+        }
+        ALOGE("Couldn't rename %s -> %s: %s \n", pathname.c_str(), temp_dir_path.c_str(),
+              strerror(errno));
+        return -errno;
+    }
+
+    return delete_dir_contents(temp_dir_path.c_str(), 1, exclusion_predicate, ignore_if_missing);
+}
+
+bool is_renamed_deleted_dir(const std::string& path) {
+    if (path.size() < deletedSuffix.size()) {
+        return false;
+    }
+    std::string_view pathSuffix{path.c_str() + path.size() - deletedSuffix.size()};
+    return pathSuffix == deletedSuffix;
+}
+
+int rename_delete_dir_contents_and_dir(const std::string& pathname, bool ignore_if_missing) {
+    return rename_delete_dir_contents(pathname, nullptr, ignore_if_missing);
+}
+
+static auto open_dir(const char* dir) {
+    struct DirCloser {
+        void operator()(DIR* d) const noexcept { ::closedir(d); }
+    };
+    return std::unique_ptr<DIR, DirCloser>(::opendir(dir));
+}
+
+void cleanup_invalid_package_dirs_under_path(const std::string& pathname) {
+    auto dir = open_dir(pathname.c_str());
+    if (!dir) {
+        return;
+    }
+    int dfd = dirfd(dir.get());
+    if (dfd < 0) {
+        ALOGE("Couldn't dirfd %s: %s\n", pathname.c_str(), strerror(errno));
+        return;
+    }
+
+    struct dirent* de;
+    while ((de = readdir(dir.get()))) {
+        if (de->d_type != DT_DIR) {
+            continue;
+        }
+
+        std::string name{de->d_name};
+        // always skip "." and ".."
+        if (name == "." || name == "..") {
+            continue;
+        }
+
+        if (is_renamed_deleted_dir(name) || !is_valid_filename(name) ||
+            !is_valid_package_name(name)) {
+            ALOGI("Deleting renamed or invalid data directory: %s\n", name.c_str());
+            // Deleting the content.
+            delete_dir_contents_fd(dfd, name.c_str());
+            // Deleting the directory
+            if (unlinkat(dfd, name.c_str(), AT_REMOVEDIR) < 0) {
+                ALOGE("Couldn't unlinkat %s: %s\n", name.c_str(), strerror(errno));
+            }
+        }
+    }
 }
 
 int delete_dir_contents_fd(int dfd, const char *name)

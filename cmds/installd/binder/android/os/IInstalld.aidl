@@ -97,10 +97,6 @@ interface IInstalld {
             @utf8InCpp String instructionSet, @utf8InCpp String outputPath);
     long deleteOdex(@utf8InCpp String packageName, @utf8InCpp String apkPath,
             @utf8InCpp String instructionSet, @nullable @utf8InCpp String outputPath);
-    void installApkVerity(@utf8InCpp String packageName, @utf8InCpp String filePath,
-            in FileDescriptor verityInput, int contentSize);
-    void assertFsverityRootHashMatches(@utf8InCpp String packageName, @utf8InCpp String filePath,
-            in byte[] expectedHash);
 
     boolean reconcileSecondaryDexFile(@utf8InCpp String dexPath, @utf8InCpp String pkgName,
         int uid, in @utf8InCpp String[] isas, @nullable @utf8InCpp String volume_uuid,
@@ -129,6 +125,8 @@ interface IInstalld {
     void onPrivateVolumeRemoved(@nullable @utf8InCpp String volumeUuid);
 
     void migrateLegacyObbData();
+
+    void cleanupInvalidPackageDirs(@nullable @utf8InCpp String uuid, int userId, int flags);
 
     const int FLAG_STORAGE_DE = 0x1;
     const int FLAG_STORAGE_CE = 0x2;

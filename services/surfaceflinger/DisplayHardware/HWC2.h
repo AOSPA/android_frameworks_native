@@ -37,6 +37,8 @@
 #include "ComposerHal.h"
 #include "Hal.h"
 
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+#include <aidl/android/hardware/graphics/composer3/Capability.h>
 #include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
@@ -166,6 +168,9 @@ public:
     [[clang::warn_unused_result]] virtual hal::Error setContentType(hal::ContentType) = 0;
     [[clang::warn_unused_result]] virtual hal::Error getClientTargetProperty(
             hal::ClientTargetProperty* outClientTargetProperty, float* outWhitePointNits) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error getDisplayDecorationSupport(
+            std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                    support) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setDisplayElapseTime(uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
     [[clang::warn_unused_result]] virtual hal::Error setClientTarget_3_1(
@@ -182,8 +187,9 @@ class Layer;
 
 class Display : public HWC2::Display {
 public:
-    Display(android::Hwc2::Composer&, const std::unordered_set<hal::Capability>&, hal::HWDisplayId,
-            hal::DisplayType);
+    Display(android::Hwc2::Composer&,
+            const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>&,
+            hal::HWDisplayId, hal::DisplayType);
     ~Display() override;
 
     // Required by HWC2
@@ -246,6 +252,10 @@ public:
     hal::Error setContentType(hal::ContentType) override;
     hal::Error getClientTargetProperty(hal::ClientTargetProperty* outClientTargetProperty,
                                        float* outWhitePointNits) override;
+    hal::Error getDisplayDecorationSupport(
+            std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                    support) override;
+
     hal::Error setDisplayElapseTime(uint64_t timeStamp) override;
 #ifdef QTI_UNIFIED_DRAW
     hal::Error setClientTarget_3_1(int32_t slot, const android::sp<android::Fence>& acquireFence,
@@ -275,7 +285,8 @@ private:
     // this HWC2::Display, so these references are guaranteed to be valid for
     // the lifetime of this object.
     android::Hwc2::Composer& mComposer;
-    const std::unordered_set<hal::Capability>& mCapabilities;
+    const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>&
+            mCapabilities;
 
     const hal::HWDisplayId mId;
     hal::DisplayType mType;
@@ -336,7 +347,7 @@ public:
             const std::string& name, bool mandatory, const std::vector<uint8_t>& value) = 0;
 
     // AIDL HAL
-    [[clang::warn_unused_result]] virtual hal::Error setWhitePointNits(float whitePointNits) = 0;
+    [[clang::warn_unused_result]] virtual hal::Error setBrightness(float brightness) = 0;
     [[clang::warn_unused_result]] virtual hal::Error setBlockingRegion(
             const android::Region& region) = 0;
 #ifdef QTI_UNIFIED_DRAW
@@ -352,8 +363,9 @@ namespace impl {
 class Layer : public HWC2::Layer {
 public:
     Layer(android::Hwc2::Composer& composer,
-          const std::unordered_set<hal::Capability>& capabilities, HWC2::Display& display,
-          hal::HWLayerId layerId);
+          const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>&
+                  capabilities,
+          HWC2::Display& display, hal::HWLayerId layerId);
     ~Layer() override;
 
     void onOwningDisplayDestroyed();
@@ -389,7 +401,7 @@ public:
                                        const std::vector<uint8_t>& value) override;
 
     // AIDL HAL
-    hal::Error setWhitePointNits(float whitePointNits) override;
+    hal::Error setBrightness(float brightness) override;
     hal::Error setBlockingRegion(const android::Region& region) override;
 #ifdef QTI_UNIFIED_DRAW
     hal::Error setLayerFlag(IQtiComposerClient::LayerFlag layerFlag) override;
@@ -400,7 +412,8 @@ private:
     // this HWC2::Layer, so these references are guaranteed to be valid for
     // the lifetime of this object.
     android::Hwc2::Composer& mComposer;
-    const std::unordered_set<hal::Capability>& mCapabilities;
+    const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>&
+            mCapabilities;
 
     HWC2::Display* mDisplay;
     hal::HWLayerId mId;

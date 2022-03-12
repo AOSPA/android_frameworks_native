@@ -177,8 +177,10 @@ class TestableSurfaceFlinger {
 public:
     using HotplugEvent = SurfaceFlinger::HotplugEvent;
 
-    TestableSurfaceFlinger()
-          : mFlinger(sp<SurfaceFlinger>::make(mFactory, SurfaceFlinger::SkipInitialization)) {
+    TestableSurfaceFlinger(sp<SurfaceFlinger> flinger = nullptr) : mFlinger(flinger) {
+        if (!mFlinger) {
+            mFlinger = sp<SurfaceFlinger>::make(mFactory, SurfaceFlinger::SkipInitialization);
+        }
         mFlinger->mAnimationTransactionTimeout = ms2ns(10);
     }
 
@@ -219,7 +221,8 @@ public:
                         std::unique_ptr<EventThread> appEventThread,
                         std::unique_ptr<EventThread> sfEventThread,
                         SchedulerCallbackImpl callbackImpl = SchedulerCallbackImpl::kNoOp,
-                        DisplayModesVariant modesVariant = kOneDisplayMode) {
+                        DisplayModesVariant modesVariant = kOneDisplayMode,
+                        bool useNiceMock = false) {
         RefreshRateConfigsPtr configs;
         if (std::holds_alternative<RefreshRateConfigsPtr>(modesVariant)) {
             configs = std::move(std::get<RefreshRateConfigsPtr>(modesVariant));
@@ -256,9 +259,17 @@ public:
                 ? static_cast<Callback&>(mNoOpSchedulerCallback)
                 : static_cast<Callback&>(mSchedulerCallback);
 
-        mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
-                                                      std::move(vsyncTracker), std::move(configs),
-                                                      callback);
+        if (useNiceMock) {
+            mScheduler =
+                    new testing::NiceMock<scheduler::TestableScheduler>(std::move(vsyncController),
+                                                                        std::move(vsyncTracker),
+                                                                        std::move(configs),
+                                                                        callback);
+        } else {
+            mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
+                                                          std::move(vsyncTracker),
+                                                          std::move(configs), callback);
+        }
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
         mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));
@@ -269,6 +280,8 @@ public:
 
     scheduler::TestableScheduler& mutableScheduler() { return *mScheduler; }
     scheduler::mock::SchedulerCallback& mockSchedulerCallback() { return mSchedulerCallback; }
+
+    auto& mutableVsyncModulator() { return mFlinger->mVsyncModulator; }
 
     using CreateBufferQueueFunction = surfaceflinger::test::Factory::CreateBufferQueueFunction;
     void setCreateBufferQueueFunction(CreateBufferQueueFunction f) {
@@ -453,6 +466,23 @@ public:
         mFlinger->onActiveDisplayChangedLocked(activeDisplay);
     }
 
+    auto commit(nsecs_t frameTime, int64_t vsyncId) {
+        const nsecs_t expectedVsyncTime = frameTime + 10'000'000;
+        mFlinger->commit(frameTime, vsyncId, expectedVsyncTime);
+    }
+
+    auto createLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
+                     const sp<IBinder>& parentHandle, int32_t* outLayerId,
+                     const sp<Layer>& parentLayer, uint32_t* outTransformHint) {
+        return mFlinger->createLayer(args, outHandle, parentHandle, outLayerId, parentLayer,
+                                     outTransformHint);
+    }
+
+    auto mirrorLayer(const LayerCreationArgs& args, const sp<IBinder>& mirrorFromHandle,
+                     sp<IBinder>* outHandle, int32_t* outLayerId) {
+        return mFlinger->mirrorLayer(args, mirrorFromHandle, outHandle, outLayerId);
+    }
+
     /* ------------------------------------------------------------------------
      * Read-only access to private data to assert post-conditions.
      */
@@ -526,9 +556,11 @@ public:
      * preconditions and assert post-conditions.
      */
     struct HWC2Display : public HWC2::impl::Display {
-        HWC2Display(Hwc2::Composer& composer,
-                    const std::unordered_set<hal::Capability>& capabilities, hal::HWDisplayId id,
-                    hal::DisplayType type)
+        HWC2Display(
+                Hwc2::Composer& composer,
+                const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>&
+                        capabilities,
+                hal::HWDisplayId id, hal::DisplayType type)
               : HWC2::impl::Display(composer, capabilities, id, type) {}
         ~HWC2Display() {
             // Prevents a call to disable vsyncs.
@@ -589,7 +621,9 @@ public:
             return *this;
         }
 
-        auto& setCapabilities(const std::unordered_set<hal::Capability>* capabilities) {
+        auto& setCapabilities(
+                const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>*
+                        capabilities) {
             mCapabilities = capabilities;
             return *this;
         }
@@ -605,7 +639,9 @@ public:
             using ::testing::Return;
             using ::testing::SetArgPointee;
 
-            static const std::unordered_set<hal::Capability> defaultCapabilities;
+            static const std::unordered_set<
+                    aidl::android::hardware::graphics::composer3::Capability>
+                    defaultCapabilities;
             if (mCapabilities == nullptr) mCapabilities = &defaultCapabilities;
 
             // Caution - Make sure that any values passed by reference here do
@@ -682,7 +718,8 @@ public:
         int32_t mConfigGroup = DEFAULT_CONFIG_GROUP;
         hal::HWConfigId mActiveConfig = DEFAULT_ACTIVE_CONFIG;
         hal::PowerMode mPowerMode = DEFAULT_POWER_MODE;
-        const std::unordered_set<hal::Capability>* mCapabilities = nullptr;
+        const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>*
+                mCapabilities = nullptr;
     };
 
     class FakeDisplayDeviceInjector {
@@ -841,8 +878,7 @@ public:
 
 private:
     surfaceflinger::test::Factory mFactory;
-    sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);
-
+    sp<SurfaceFlinger> mFlinger;
     scheduler::mock::SchedulerCallback mSchedulerCallback;
     scheduler::mock::NoOpSchedulerCallback mNoOpSchedulerCallback;
     scheduler::TestableScheduler* mScheduler = nullptr;
