@@ -877,6 +877,8 @@ public:
     };
 
 private:
+    void getModeFromFps(float, DisplayModePtr&) {return; }
+
     surfaceflinger::test::Factory mFactory;
     sp<SurfaceFlinger> mFlinger;
     scheduler::mock::SchedulerCallback mSchedulerCallback;
