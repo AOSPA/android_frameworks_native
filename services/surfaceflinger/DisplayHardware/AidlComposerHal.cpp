@@ -20,6 +20,7 @@
 
 #include "AidlComposerHal.h"
 
+#include <android-base/file.h>
 #include <android/binder_ibinder_platform.h>
 #include <android/binder_manager.h>
 #include <log/log.h>
@@ -135,7 +136,7 @@ template <>
 AidlPerFrameMetadataBlob translate(IComposerClient::PerFrameMetadataBlob x) {
     AidlPerFrameMetadataBlob blob;
     blob.key = translate<AidlPerFrameMetadataKey>(x.key),
-    std::copy(blob.blob.begin(), blob.blob.end(), x.blob.begin());
+    std::copy(x.blob.begin(), x.blob.end(), std::inserter(blob.blob, blob.blob.end()));
     return blob;
 }
 
@@ -321,24 +322,38 @@ bool AidlComposer::isSupported(OptionalFeature feature) const {
     }
 }
 
-std::vector<IComposer::Capability> AidlComposer::getCapabilities() {
+std::vector<Capability> AidlComposer::getCapabilities() {
     std::vector<Capability> capabilities;
     const auto status = mAidlComposer->getCapabilities(&capabilities);
     if (!status.isOk()) {
         ALOGE("getCapabilities failed %s", status.getDescription().c_str());
         return {};
     }
-    return translate<IComposer::Capability>(capabilities);
+    return capabilities;
 }
 
 std::string AidlComposer::dumpDebugInfo() {
-    std::string info;
-    const auto status = mAidlComposer->dumpDebugInfo(&info);
-    if (!status.isOk()) {
-        ALOGE("dumpDebugInfo failed %s", status.getDescription().c_str());
+    int pipefds[2];
+    int result = pipe(pipefds);
+    if (result < 0) {
+        ALOGE("dumpDebugInfo: pipe failed: %s", strerror(errno));
         return {};
     }
-    return info;
+
+    std::string str;
+    const auto status = mAidlComposer->dump(pipefds[1], /*args*/ nullptr, /*numArgs*/ 0);
+    // Close the write-end of the pipe to make sure that when reading from the
+    // read-end we will get eof instead of blocking forever
+    close(pipefds[1]);
+
+    if (status == STATUS_OK) {
+        base::ReadFdToString(pipefds[0], &str);
+    } else {
+        ALOGE("dumpDebugInfo: dump failed: %d", status);
+    }
+
+    close(pipefds[0]);
+    return str;
 }
 
 void AidlComposer::registerCallback(HWC2::ComposerCallback& callback) {
@@ -1167,17 +1182,16 @@ Error AidlComposer::getPreferredBootDisplayConfig(Display display, Config* confi
 
 Error AidlComposer::getClientTargetProperty(
         Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
-        float* whitePointNits) {
+        float* outBrightness) {
     const auto property = mReader.takeClientTargetProperty(translate<int64_t>(display));
     *outClientTargetProperty =
             translate<IComposerClient::ClientTargetProperty>(property.clientTargetProperty);
-    *whitePointNits = property.whitePointNits;
+    *outBrightness = property.brightness;
     return Error::NONE;
 }
 
-Error AidlComposer::setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) {
-    mWriter.setLayerWhitePointNits(translate<int64_t>(display), translate<int64_t>(layer),
-                                   whitePointNits);
+Error AidlComposer::setLayerBrightness(Display display, Layer layer, float brightness) {
+    mWriter.setLayerBrightness(translate<int64_t>(display), translate<int64_t>(layer), brightness);
     return Error::NONE;
 }
 
@@ -1185,6 +1199,18 @@ Error AidlComposer::setLayerBlockingRegion(Display display, Layer layer,
                                            const std::vector<IComposerClient::Rect>& blocking) {
     mWriter.setLayerBlockingRegion(translate<int64_t>(display), translate<int64_t>(layer),
                                    translate<AidlRect>(blocking));
+    return Error::NONE;
+}
+
+Error AidlComposer::getDisplayDecorationSupport(Display display,
+                                                std::optional<DisplayDecorationSupport>* support) {
+    const auto status =
+            mAidlComposerClient->getDisplayDecorationSupport(translate<int64_t>(display), support);
+    if (!status.isOk()) {
+        ALOGE("getDisplayDecorationSupport failed %s", status.getDescription().c_str());
+        support->reset();
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
     return Error::NONE;
 }
 } // namespace Hwc2

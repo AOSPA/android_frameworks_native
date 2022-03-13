@@ -45,6 +45,7 @@
 
 namespace android::Hwc2 {
 
+using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
 using aidl::android::hardware::graphics::composer3::ComposerClientReader;
 using aidl::android::hardware::graphics::composer3::ComposerClientWriter;
 
@@ -60,7 +61,8 @@ public:
 
     bool isSupported(OptionalFeature) const;
 
-    std::vector<IComposer::Capability> getCapabilities() override;
+    std::vector<aidl::android::hardware::graphics::composer3::Capability> getCapabilities()
+            override;
     std::string dumpDebugInfo() override;
 
     void registerCallback(HWC2::ComposerCallback& callback) override;
@@ -209,15 +211,17 @@ public:
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) override;
     Error getClientTargetProperty(Display display,
                                   IComposerClient::ClientTargetProperty* outClientTargetProperty,
-                                  float* outClientTargetWhitePointNits) override;
+                                  float* outBrightness) override;
 
     // AIDL Composer HAL
-    Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) override;
+    Error setLayerBrightness(Display display, Layer layer, float brightness) override;
     Error setLayerBlockingRegion(Display display, Layer layer,
                                  const std::vector<IComposerClient::Rect>& blocking) override;
     Error setBootDisplayConfig(Display displayId, Config) override;
     Error clearBootDisplayConfig(Display displayId) override;
     Error getPreferredBootDisplayConfig(Display displayId, Config*) override;
+    Error getDisplayDecorationSupport(Display display,
+                                      std::optional<DisplayDecorationSupport>* support) override;
 #ifdef QTI_UNIFIED_DRAW
     Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
     Error setLayerFlag(Display display, Layer layer,

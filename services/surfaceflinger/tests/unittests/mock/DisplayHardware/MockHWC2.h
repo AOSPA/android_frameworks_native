@@ -95,6 +95,10 @@ public:
     MOCK_METHOD(hal::Error, setContentType, (hal::ContentType), (override));
     MOCK_METHOD(hal::Error, getClientTargetProperty, (hal::ClientTargetProperty *, float *),
                 (override));
+    MOCK_METHOD(
+            hal::Error, getDisplayDecorationSupport,
+            (std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport> *),
+            (override));
     MOCK_METHOD(hal::Error, setDisplayElapseTime, (uint64_t), (override));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD(hal::Error, setClientTarget_3_1, (int32_t, const android::sp<android::Fence>&,
@@ -133,7 +137,7 @@ public:
     MOCK_METHOD(hal::Error, setColorTransform, (const android::mat4 &), (override));
     MOCK_METHOD(hal::Error, setLayerGenericMetadata,
                 (const std::string &, bool, const std::vector<uint8_t> &), (override));
-    MOCK_METHOD(hal::Error, setWhitePointNits, (float whitePointNits), (override));
+    MOCK_METHOD(hal::Error, setBrightness, (float), (override));
     MOCK_METHOD(hal::Error, setBlockingRegion, (const android::Region &), (override));
 };
 

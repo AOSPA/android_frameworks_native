@@ -555,6 +555,24 @@ TEST_F(UtilsTest, MatchExtension_Invalid) {
     EXPECT_EQ(0, MatchExtension("docx"));
 }
 
+TEST_F(UtilsTest, TestIsRenamedDeletedDir) {
+    EXPECT_FALSE(is_renamed_deleted_dir(""));
+    EXPECT_FALSE(is_renamed_deleted_dir("1"));
+    EXPECT_FALSE(is_renamed_deleted_dir("="));
+    EXPECT_FALSE(is_renamed_deleted_dir("=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("d=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("ed=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("ted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("eted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("leted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("eleted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("deleted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("=deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("==deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("123==deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("5b14b6458a44==deleted=="));
+}
+
 TEST_F(UtilsTest, TestRollbackPaths) {
     EXPECT_EQ("/data/misc_ce/0/rollback/239/com.foo",
             create_data_misc_ce_rollback_package_path(nullptr, 0, 239, "com.foo"));
@@ -636,6 +654,40 @@ TEST_F(UtilsTest, TestCreateDirIfNeeded) {
 
     // Check that call fails if parent doesn't exist.
     ASSERT_NE(0, create_dir_if_needed("/data/local/tmp/user/0/bar/baz", 0700));
+}
+
+TEST_F(UtilsTest, TestSupplementalDataPaths) {
+    // Ce data paths
+    EXPECT_EQ("/data/misc_ce/0/supplemental",
+              create_data_misc_supplemental_path(nullptr, /*isCeData=*/true, 0));
+    EXPECT_EQ("/data/misc_ce/10/supplemental",
+              create_data_misc_supplemental_path(nullptr, true, 10));
+
+    EXPECT_EQ("/data/misc_ce/0/supplemental/com.foo",
+              create_data_misc_supplemental_package_path(nullptr, true, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_ce/10/supplemental/com.foo",
+              create_data_misc_supplemental_package_path(nullptr, true, 10, "com.foo"));
+
+    EXPECT_EQ("/data/misc_ce/0/supplemental/com.foo/shared",
+              create_data_misc_supplemental_shared_path(nullptr, true, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_ce/10/supplemental/com.foo/shared",
+              create_data_misc_supplemental_shared_path(nullptr, true, 10, "com.foo"));
+
+    // De data paths
+    EXPECT_EQ("/data/misc_de/0/supplemental",
+              create_data_misc_supplemental_path(nullptr, /*isCeData=*/false, 0));
+    EXPECT_EQ("/data/misc_de/10/supplemental",
+              create_data_misc_supplemental_path(nullptr, false, 10));
+
+    EXPECT_EQ("/data/misc_de/0/supplemental/com.foo",
+              create_data_misc_supplemental_package_path(nullptr, false, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_de/10/supplemental/com.foo",
+              create_data_misc_supplemental_package_path(nullptr, false, 10, "com.foo"));
+
+    EXPECT_EQ("/data/misc_de/0/supplemental/com.foo/shared",
+              create_data_misc_supplemental_shared_path(nullptr, false, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_de/10/supplemental/com.foo/shared",
+              create_data_misc_supplemental_shared_path(nullptr, false, 10, "com.foo"));
 }
 
 }  // namespace installd

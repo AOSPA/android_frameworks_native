@@ -31,10 +31,14 @@
 #include <ui/GraphicBuffer.h>
 #include <utils/StrongPointer.h>
 
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+#include <aidl/android/hardware/graphics/composer3/Capability.h>
 #include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/IComposerCallback.h>
+
+#include <optional>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -100,7 +104,8 @@ public:
 
     virtual bool isSupported(OptionalFeature) const = 0;
 
-    virtual std::vector<IComposer::Capability> getCapabilities() = 0;
+    virtual std::vector<aidl::android::hardware::graphics::composer3::Capability>
+    getCapabilities() = 0;
     virtual std::string dumpDebugInfo() = 0;
 
     virtual void registerCallback(HWC2::ComposerCallback& callback) = 0;
@@ -264,7 +269,7 @@ public:
 
     virtual Error getClientTargetProperty(
             Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
-            float* outWhitePointNits) = 0;
+            float* outBrightness) = 0;
 
     virtual Error setDisplayElapseTime(Display display, uint64_t timeStamp) = 0;
 #ifdef QTI_UNIFIED_DRAW
@@ -275,12 +280,16 @@ public:
                                       int acquireFence, Dataspace dataspace) = 0;
 #endif
     // AIDL Composer
-    virtual Error setLayerWhitePointNits(Display display, Layer layer, float whitePointNits) = 0;
+    virtual Error setLayerBrightness(Display display, Layer layer, float brightness) = 0;
     virtual Error setLayerBlockingRegion(Display display, Layer layer,
                                          const std::vector<IComposerClient::Rect>& blocking) = 0;
     virtual Error setBootDisplayConfig(Display displayId, Config) = 0;
     virtual Error clearBootDisplayConfig(Display displayId) = 0;
     virtual Error getPreferredBootDisplayConfig(Display displayId, Config*) = 0;
+    virtual Error getDisplayDecorationSupport(
+            Display display,
+            std::optional<::aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                    support) = 0;
 };
 
 } // namespace Hwc2

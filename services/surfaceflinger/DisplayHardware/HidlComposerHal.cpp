@@ -50,6 +50,7 @@ class ClientInterface;
 }
 #endif
 
+using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 namespace android {
@@ -185,6 +186,20 @@ T unwrapRet(Return<T>& ret, const U& default_val) {
 
 Error unwrapRet(Return<Error>& ret) {
     return unwrapRet(ret, kDefaultError);
+}
+
+template <typename To, typename From>
+To translate(From x) {
+    return static_cast<To>(x);
+}
+
+template <typename To, typename From>
+std::vector<To> translate(const hidl_vec<From>& in) {
+    std::vector<To> out;
+    out.reserve(in.size());
+    std::transform(in.begin(), in.end(), std::back_inserter(out),
+                   [](From x) { return translate<To>(x); });
+    return out;
 }
 
 } // anonymous namespace
@@ -339,10 +354,11 @@ Error HidlComposer::tryDrawMethod(Display display, IQtiComposerClient::DrawMetho
 #endif
 
 
-std::vector<IComposer::Capability> HidlComposer::getCapabilities() {
-    std::vector<IComposer::Capability> capabilities;
-    mComposer->getCapabilities(
-            [&](const auto& tmpCapabilities) { capabilities = tmpCapabilities; });
+std::vector<Capability> HidlComposer::getCapabilities() {
+    std::vector<Capability> capabilities;
+    mComposer->getCapabilities([&](const auto& tmpCapabilities) {
+        capabilities = translate<Capability>(tmpCapabilities);
+    });
     return capabilities;
 }
 
@@ -1260,15 +1276,6 @@ Error HidlComposer::setDisplayBrightness(Display display, float brightness,
 
 // Composer HAL 2.4
 
-namespace {
-template <typename T>
-void copyCapabilities(const T& tmpCaps, std::vector<DisplayCapability>* outCapabilities) {
-    outCapabilities->resize(tmpCaps.size());
-    std::transform(tmpCaps.begin(), tmpCaps.end(), outCapabilities->begin(),
-                   [](auto cap) { return static_cast<DisplayCapability>(cap); });
-}
-} // anonymous namespace
-
 Error HidlComposer::getDisplayCapabilities(Display display,
                                            std::vector<DisplayCapability>* outCapabilities) {
     if (!mClient_2_3) {
@@ -1283,7 +1290,8 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                                                     if (error != V2_4::Error::NONE) {
                                                         return;
                                                     }
-                                                    copyCapabilities(tmpCaps, outCapabilities);
+                                                    *outCapabilities =
+                                                            translate<DisplayCapability>(tmpCaps);
                                                 });
     } else {
         mClient_2_3
@@ -1293,7 +1301,7 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                         return;
                     }
 
-                    copyCapabilities(tmpCaps, outCapabilities);
+                    *outCapabilities = translate<DisplayCapability>(tmpCaps);
                 });
     }
 
@@ -1448,19 +1456,27 @@ Error HidlComposer::getPreferredBootDisplayConfig(Display /*displayId*/, Config*
 
 Error HidlComposer::getClientTargetProperty(
         Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
-        float* outWhitePointNits) {
+        float* outBrightness) {
     mReader.takeClientTargetProperty(display, outClientTargetProperty);
-    *outWhitePointNits = -1.f;
+    *outBrightness = 1.f;
     return Error::NONE;
 }
 
-Error HidlComposer::setLayerWhitePointNits(Display, Layer, float) {
+Error HidlComposer::setLayerBrightness(Display, Layer, float) {
     return Error::NONE;
 }
 
 Error HidlComposer::setLayerBlockingRegion(Display, Layer,
                                            const std::vector<IComposerClient::Rect>&) {
     return Error::NONE;
+}
+
+Error HidlComposer::getDisplayDecorationSupport(
+        Display,
+        std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
+                support) {
+    support->reset();
+    return Error::UNSUPPORTED;
 }
 
 void HidlComposer::registerCallback(ComposerCallback& callback) {

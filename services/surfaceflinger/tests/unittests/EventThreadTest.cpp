@@ -59,6 +59,7 @@ public:
                  void(std::chrono::nanoseconds workDuration,
                       std::chrono::nanoseconds readyDuration));
     MOCK_METHOD1(pauseVsyncCallback, void(bool));
+    MOCK_METHOD(VSyncSource::VSyncData, getLatestVSyncData, (), (const, override));
     MOCK_CONST_METHOD1(dump, void(std::string&));
 };
 
@@ -98,7 +99,7 @@ protected:
                                               nsecs_t expectedTimestamp, unsigned expectedCount);
     void expectVsyncEventReceivedByConnection(nsecs_t expectedTimestamp, unsigned expectedCount);
     void expectVsyncEventFrameTimelinesCorrect(nsecs_t expectedTimestamp,
-                                               nsecs_t preferredDeadline);
+                                               VSyncSource::VSyncData preferredVsyncData);
     void expectHotplugEventReceivedByConnection(PhysicalDisplayId expectedDisplayId,
                                                 bool expectedConnected);
     void expectConfigChangedEventReceivedByConnection(PhysicalDisplayId expectedDisplayId,
@@ -251,41 +252,42 @@ void EventThreadTest::expectVsyncEventReceivedByConnection(nsecs_t expectedTimes
                                          expectedCount);
 }
 
-void EventThreadTest::expectVsyncEventFrameTimelinesCorrect(nsecs_t expectedTimestamp,
-                                                            nsecs_t preferredDeadline) {
+void EventThreadTest::expectVsyncEventFrameTimelinesCorrect(
+        nsecs_t expectedTimestamp, VSyncSource::VSyncData preferredVsyncData) {
     auto args = mConnectionEventCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value()) << " did not receive an event for timestamp "
                                   << expectedTimestamp;
     const auto& event = std::get<0>(args.value());
-    for (int i = 0; i < DisplayEventReceiver::kFrameTimelinesLength; i++) {
-        auto prediction =
-                mTokenManager->getPredictionsForToken(event.vsync.frameTimelines[i].vsyncId);
+    for (int i = 0; i < VsyncEventData::kFrameTimelinesLength; i++) {
+        auto prediction = mTokenManager->getPredictionsForToken(
+                event.vsync.vsyncData.frameTimelines[i].vsyncId);
         EXPECT_TRUE(prediction.has_value());
-        EXPECT_EQ(prediction.value().endTime, event.vsync.frameTimelines[i].deadlineTimestamp)
+        EXPECT_EQ(prediction.value().endTime,
+                  event.vsync.vsyncData.frameTimelines[i].deadlineTimestamp)
                 << "Deadline timestamp does not match cached value";
         EXPECT_EQ(prediction.value().presentTime,
-                  event.vsync.frameTimelines[i].expectedVSyncTimestamp)
-                << "Expected vsync timestamp does not match cached value";
+                  event.vsync.vsyncData.frameTimelines[i].expectedPresentationTime)
+                << "Expected vsync.vsyncData timestamp does not match cached value";
 
         if (i > 0) {
-            EXPECT_GT(event.vsync.frameTimelines[i].deadlineTimestamp,
-                      event.vsync.frameTimelines[i - 1].deadlineTimestamp)
+            EXPECT_GT(event.vsync.vsyncData.frameTimelines[i].deadlineTimestamp,
+                      event.vsync.vsyncData.frameTimelines[i - 1].deadlineTimestamp)
                     << "Deadline timestamp out of order for frame timeline " << i;
-            EXPECT_GT(event.vsync.frameTimelines[i].expectedVSyncTimestamp,
-                      event.vsync.frameTimelines[i - 1].expectedVSyncTimestamp)
-                    << "Expected vsync timestamp out of order for frame timeline " << i;
+            EXPECT_GT(event.vsync.vsyncData.frameTimelines[i].expectedPresentationTime,
+                      event.vsync.vsyncData.frameTimelines[i - 1].expectedPresentationTime)
+                    << "Expected vsync.vsyncData timestamp out of order for frame timeline " << i;
         }
-        if (event.vsync.frameTimelines[i].deadlineTimestamp == preferredDeadline) {
-            EXPECT_EQ(i, event.vsync.preferredFrameTimelineIndex)
-                    << "Preferred frame timeline index should be " << i;
-            // For the platform-preferred frame timeline, the vsync ID is 0 because the first frame
-            // timeline is made before the rest.
-            EXPECT_EQ(0, event.vsync.frameTimelines[i].vsyncId)
-                    << "Vsync ID incorrect for frame timeline " << i;
-        } else {
-            // Vsync ID 0 is used for the preferred frame timeline.
-            EXPECT_EQ(i + 1, event.vsync.frameTimelines[i].vsyncId)
-                    << "Vsync ID incorrect for frame timeline " << i;
+
+        // Vsync ID order lines up with registration into test token manager.
+        EXPECT_EQ(i, event.vsync.vsyncData.frameTimelines[i].vsyncId)
+                << "Vsync ID incorrect for frame timeline " << i;
+        if (i == event.vsync.vsyncData.preferredFrameTimelineIndex) {
+            EXPECT_EQ(event.vsync.vsyncData.frameTimelines[i].deadlineTimestamp,
+                      preferredVsyncData.deadlineTimestamp)
+                    << "Preferred deadline timestamp incorrect" << i;
+            EXPECT_EQ(event.vsync.vsyncData.frameTimelines[i].expectedPresentationTime,
+                      preferredVsyncData.expectedPresentationTime)
+                    << "Preferred expected vsync.vsyncData timestamp incorrect" << i;
         }
     }
 }
@@ -333,6 +335,8 @@ void EventThreadTest::expectUidFrameRateMappingEventReceivedByConnection(
 
 namespace {
 
+using namespace testing;
+
 /* ------------------------------------------------------------------------
  * Test cases
  */
@@ -369,7 +373,7 @@ TEST_F(EventThreadTest, requestNextVsyncPostsASingleVSyncEventToTheConnection) {
 
     // Use the received callback to signal a first vsync event.
     // The interceptor should receive the event, as well as the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectThrottleVsyncReceived(456, mConnectionUid);
     expectVsyncEventReceivedByConnection(123, 1u);
@@ -377,7 +381,7 @@ TEST_F(EventThreadTest, requestNextVsyncPostsASingleVSyncEventToTheConnection) {
     // Use the received callback to signal a second vsync event.
     // The interceptor should receive the event, but the connection should
     // not as it was only interested in the first.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     EXPECT_FALSE(mThrottleVsyncCallRecorder.waitForUnexpectedCall().has_value());
     EXPECT_FALSE(mConnectionEventCallRecorder.waitForUnexpectedCall().has_value());
@@ -395,9 +399,56 @@ TEST_F(EventThreadTest, requestNextVsyncEventFrameTimelinesCorrect) {
 
     // Use the received callback to signal a vsync event.
     // The interceptor should receive the event, as well as the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    VSyncSource::VSyncData vsyncData = {456, 789};
+    mCallback->onVSyncEvent(123, vsyncData);
     expectInterceptCallReceived(123);
-    expectVsyncEventFrameTimelinesCorrect(123, 789);
+    expectVsyncEventFrameTimelinesCorrect(123, vsyncData);
+}
+
+TEST_F(EventThreadTest, getLatestVsyncEventData) {
+    const nsecs_t now = systemTime();
+    const nsecs_t preferredDeadline = now + 10000000;
+    const nsecs_t preferredExpectedPresentationTime = now + 20000000;
+    const VSyncSource::VSyncData preferredData = {preferredExpectedPresentationTime,
+                                                  preferredDeadline};
+    EXPECT_CALL(*mVSyncSource, getLatestVSyncData()).WillOnce(Return(preferredData));
+
+    VsyncEventData vsyncEventData = mThread->getLatestVsyncEventData(mConnection);
+    EXPECT_GT(vsyncEventData.frameTimelines[0].deadlineTimestamp, now)
+            << "Deadline timestamp should be greater than frame time";
+    for (size_t i = 0; i < VsyncEventData::kFrameTimelinesLength; i++) {
+        auto prediction =
+                mTokenManager->getPredictionsForToken(vsyncEventData.frameTimelines[i].vsyncId);
+        EXPECT_TRUE(prediction.has_value());
+        EXPECT_EQ(prediction.value().endTime, vsyncEventData.frameTimelines[i].deadlineTimestamp)
+                << "Deadline timestamp does not match cached value";
+        EXPECT_EQ(prediction.value().presentTime,
+                  vsyncEventData.frameTimelines[i].expectedPresentationTime)
+                << "Expected vsync timestamp does not match cached value";
+        EXPECT_GT(vsyncEventData.frameTimelines[i].expectedPresentationTime,
+                  vsyncEventData.frameTimelines[i].deadlineTimestamp)
+                << "Expected vsync timestamp should be greater than deadline";
+
+        if (i > 0) {
+            EXPECT_GT(vsyncEventData.frameTimelines[i].deadlineTimestamp,
+                      vsyncEventData.frameTimelines[i - 1].deadlineTimestamp)
+                    << "Deadline timestamp out of order for frame timeline " << i;
+            EXPECT_GT(vsyncEventData.frameTimelines[i].expectedPresentationTime,
+                      vsyncEventData.frameTimelines[i - 1].expectedPresentationTime)
+                    << "Expected vsync timestamp out of order for frame timeline " << i;
+        }
+
+        // Vsync ID order lines up with registration into test token manager.
+        EXPECT_EQ(i, vsyncEventData.frameTimelines[i].vsyncId)
+                << "Vsync ID incorrect for frame timeline " << i;
+        if (i == vsyncEventData.preferredFrameTimelineIndex) {
+            EXPECT_EQ(vsyncEventData.frameTimelines[i].deadlineTimestamp, preferredDeadline)
+                    << "Preferred deadline timestamp incorrect" << i;
+            EXPECT_EQ(vsyncEventData.frameTimelines[i].expectedPresentationTime,
+                      preferredExpectedPresentationTime)
+                    << "Preferred expected vsync timestamp incorrect" << i;
+        }
+    }
 }
 
 TEST_F(EventThreadTest, setVsyncRateZeroPostsNoVSyncEventsToThatConnection) {
@@ -422,7 +473,7 @@ TEST_F(EventThreadTest, setVsyncRateZeroPostsNoVSyncEventsToThatConnection) {
     // Send a vsync event. EventThread should then make a call to the
     // interceptor, and the second connection. The first connection should not
     // get the event.
-    mCallback->onVSyncEvent(123, 456, 0);
+    mCallback->onVSyncEvent(123, {456, 0});
     expectInterceptCallReceived(123);
     EXPECT_FALSE(firstConnectionEventRecorder.waitForUnexpectedCall().has_value());
     expectVsyncEventReceivedByConnection("secondConnection", secondConnectionEventRecorder, 123,
@@ -437,19 +488,19 @@ TEST_F(EventThreadTest, setVsyncRateOnePostsAllEventsToThatConnection) {
 
     // Send a vsync event. EventThread should then make a call to the
     // interceptor, and the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectThrottleVsyncReceived(456, mConnectionUid);
     expectVsyncEventReceivedByConnection(123, 1u);
 
     // A second event should go to the same places.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     expectThrottleVsyncReceived(123, mConnectionUid);
     expectVsyncEventReceivedByConnection(456, 2u);
 
     // A third event should go to the same places.
-    mCallback->onVSyncEvent(789, 777, 111);
+    mCallback->onVSyncEvent(789, {777, 111});
     expectInterceptCallReceived(789);
     expectThrottleVsyncReceived(777, mConnectionUid);
     expectVsyncEventReceivedByConnection(789, 3u);
@@ -462,25 +513,25 @@ TEST_F(EventThreadTest, setVsyncRateTwoPostsEveryOtherEventToThatConnection) {
     expectVSyncSetEnabledCallReceived(true);
 
     // The first event will be seen by the interceptor, and not the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     EXPECT_FALSE(mConnectionEventCallRecorder.waitForUnexpectedCall().has_value());
     EXPECT_FALSE(mThrottleVsyncCallRecorder.waitForUnexpectedCall().has_value());
 
     // The second event will be seen by the interceptor and the connection.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     expectVsyncEventReceivedByConnection(456, 2u);
     EXPECT_FALSE(mThrottleVsyncCallRecorder.waitForUnexpectedCall().has_value());
 
     // The third event will be seen by the interceptor, and not the connection.
-    mCallback->onVSyncEvent(789, 777, 744);
+    mCallback->onVSyncEvent(789, {777, 744});
     expectInterceptCallReceived(789);
     EXPECT_FALSE(mConnectionEventCallRecorder.waitForUnexpectedCall().has_value());
     EXPECT_FALSE(mThrottleVsyncCallRecorder.waitForUnexpectedCall().has_value());
 
     // The fourth event will be seen by the interceptor and the connection.
-    mCallback->onVSyncEvent(101112, 7847, 86);
+    mCallback->onVSyncEvent(101112, {7847, 86});
     expectInterceptCallReceived(101112);
     expectVsyncEventReceivedByConnection(101112, 4u);
 }
@@ -495,7 +546,7 @@ TEST_F(EventThreadTest, connectionsRemovedIfInstanceDestroyed) {
     mConnection = nullptr;
 
     // The first event will be seen by the interceptor, and not the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     EXPECT_FALSE(mConnectionEventCallRecorder.waitForUnexpectedCall().has_value());
 
@@ -513,13 +564,13 @@ TEST_F(EventThreadTest, connectionsRemovedIfEventDeliveryError) {
 
     // The first event will be seen by the interceptor, and by the connection,
     // which then returns an error.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectVsyncEventReceivedByConnection("errorConnection", errorConnectionEventRecorder, 123, 1u);
 
     // A subsequent event will be seen by the interceptor and not by the
     // connection.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     EXPECT_FALSE(errorConnectionEventRecorder.waitForUnexpectedCall().has_value());
 
@@ -544,7 +595,7 @@ TEST_F(EventThreadTest, tracksEventConnections) {
 
     // The first event will be seen by the interceptor, and by the connection,
     // which then returns an error.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectVsyncEventReceivedByConnection("errorConnection", errorConnectionEventRecorder, 123, 1u);
     expectVsyncEventReceivedByConnection("successConnection", secondConnectionEventRecorder, 123,
@@ -562,13 +613,13 @@ TEST_F(EventThreadTest, eventsDroppedIfNonfatalEventDeliveryError) {
 
     // The first event will be seen by the interceptor, and by the connection,
     // which then returns an non-fatal error.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectVsyncEventReceivedByConnection("errorConnection", errorConnectionEventRecorder, 123, 1u);
 
     // A subsequent event will be seen by the interceptor, and by the connection,
     // which still then returns an non-fatal error.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     expectVsyncEventReceivedByConnection("errorConnection", errorConnectionEventRecorder, 456, 2u);
 
@@ -692,7 +743,7 @@ TEST_F(EventThreadTest, requestNextVsyncWithThrottleVsyncDoesntPostVSync) {
 
     // Use the received callback to signal a first vsync event.
     // The interceptor should receive the event, but not the connection.
-    mCallback->onVSyncEvent(123, 456, 789);
+    mCallback->onVSyncEvent(123, {456, 789});
     expectInterceptCallReceived(123);
     expectThrottleVsyncReceived(456, mThrottledConnectionUid);
     mThrottledConnectionEventCallRecorder.waitForUnexpectedCall();
@@ -700,7 +751,7 @@ TEST_F(EventThreadTest, requestNextVsyncWithThrottleVsyncDoesntPostVSync) {
     // Use the received callback to signal a second vsync event.
     // The interceptor should receive the event, but the connection should
     // not as it was only interested in the first.
-    mCallback->onVSyncEvent(456, 123, 0);
+    mCallback->onVSyncEvent(456, {123, 0});
     expectInterceptCallReceived(456);
     expectThrottleVsyncReceived(123, mThrottledConnectionUid);
     EXPECT_FALSE(mConnectionEventCallRecorder.waitForUnexpectedCall().has_value());

@@ -42,6 +42,7 @@ filegroup {
 cc_test {
     name: "libsurfaceflinger_unittest",
     defaults: [
+        "libsurfaceflinger_mocks_defaults",
         "libdisplayconfig_defaults",
         "libdisplayconfigaidl_defaults",
         "unfieddraw_defaults",
@@ -83,6 +84,7 @@ cc_test {
         "FpsReporterTest.cpp",
         "FpsTest.cpp",
         "FramebufferSurfaceTest.cpp",
+        "FrameRateOverrideMappingsTest.cpp",
         "FrameTimelineTest.cpp",
         "GameModeTest.cpp",
         "HWComposerTest.cpp",
@@ -124,6 +126,10 @@ cc_test {
         "VSyncReactorTest.cpp",
         "VsyncConfigurationTest.cpp",
     ],
+}
+
+cc_defaults {
+    name: "libsurfaceflinger_mocks_defaults",
     static_libs: [
         "android.hardware.common-V2-ndk",
         "android.hardware.common.fmq-V1-ndk",
@@ -197,4 +203,9 @@ cc_test {
         "libscheduler_test_headers",
         "libsurfaceflinger_headers",
     ],
+}
+
+cc_library_headers {
+    name: "libsurfaceflinger_mocks_headers",
+    export_include_dirs: ["."],
 }
