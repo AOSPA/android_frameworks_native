@@ -3395,6 +3395,11 @@ void SurfaceFlinger::postComposition() {
         // getTotalSize returns the total number of buffers that were allocated by SurfaceFlinger
         ATRACE_INT64("Total Buffer Size", GraphicBufferAllocator::get().getTotalSize());
     }
+
+    if (!mSentInitialFps) {
+        uint32_t fps = display->refreshRateConfigs().getCurrentRefreshRate().getFps().getValue();
+        setContentFps(fps);
+    }
 }
 
 void SurfaceFlinger::UpdateSmomoState() {
@@ -8940,7 +8945,7 @@ void SurfaceFlinger::sample() {
 void SurfaceFlinger::setContentFps(uint32_t contentFps) {
     if (mBootFinished && !mSetActiveModePending) {
         if (mDisplayExtnIntf) {
-            mDisplayExtnIntf->SetContentFps(contentFps);
+            mSentInitialFps = mDisplayExtnIntf->SetContentFps(contentFps) == 0;
         }
     }
 }
