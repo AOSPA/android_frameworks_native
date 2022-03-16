@@ -1048,8 +1048,9 @@ void SurfaceFlinger::bootFinished() {
             if (index < 0) {
                 ALOGE("Invalid token %p", getInternalDisplayTokenLocked().get());
             } else {
-                const DisplayDeviceState& state = mCurrentState.displays.valueAt(index);
-                setFrameBufferSizeForScaling(getDefaultDisplayDeviceLocked(), state);
+                DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
+                DisplayDeviceState& drawState = mDrawingState.displays.editValueAt(index);
+                setFrameBufferSizeForScaling(getDefaultDisplayDeviceLocked(), curState, drawState);
             }
         }
 
@@ -1547,7 +1548,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* st
 }
 
 bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
-    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    const auto display = getDefaultDisplayDeviceLocked();
     if (!display || !mThermalLevelFps) {
         return false;
     }
@@ -3964,11 +3965,8 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
             if (mUseFbScaling && display->isPrimary()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
-                DisplayDeviceState& tmpState = mCurrentState.displays.editValueAt(index);
-                tmpState.width =  currentState.layerStackSpaceRect.width();
-                tmpState.height = currentState.layerStackSpaceRect.height();
-                tmpState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
-                setFrameBufferSizeForScaling(display, currentState);
+                DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
+                setFrameBufferSizeForScaling(display, curState, drawingState);
                 displaySizeChanged = true;
             } else {
                 display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
@@ -4008,22 +4006,43 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
 }
 
 void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
-                                                  const DisplayDeviceState& state) {
+                                                  DisplayDeviceState& currentState,
+                                                  const DisplayDeviceState& drawingState) {
     base::unique_fd fd;
     auto display = displayDevice->getCompositionDisplay();
-    int newWidth = state.layerStackSpaceRect.width();
-    int newHeight = state.layerStackSpaceRect.height();
-    if (state.orientation == ui::ROTATION_90 || state.orientation == ui::ROTATION_270){
-        std::swap(newWidth, newHeight);
+    int newWidth = currentState.layerStackSpaceRect.width();
+    int newHeight = currentState.layerStackSpaceRect.height();
+    int currentWidth = drawingState.layerStackSpaceRect.width();
+    int currentHeight = drawingState.layerStackSpaceRect.height();
+    int displayWidth = displayDevice->getWidth();
+    int displayHeight = displayDevice->getHeight();
+    bool update_needed = false;
+
+    if (newWidth != currentWidth || newHeight != currentHeight) {
+        update_needed = true;
+        if (!((newWidth > newHeight && displayWidth > displayHeight) ||
+            (newWidth < newHeight && displayWidth < displayHeight))) {
+            std::swap(newWidth, newHeight);
+        }
     }
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight) {
-        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
+
+    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
+        !update_needed) {
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
         return;
     }
 
+    if (newWidth > 0 && newHeight > 0) {
+        currentState.width =  newWidth;
+        currentState.height = newHeight;
+    }
+    currentState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
+
     if (mBootStage == BootStage::FINISHED) {
-        displayDevice->setDisplaySize(newWidth, newHeight);
-        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
+        displayDevice->setDisplaySize(currentState.width, currentState.height);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
         display->getRenderSurface()->setViewportAndProjection();
         display->getRenderSurface()->flipClientTarget(true);
         // queue a scratch buffer to flip Client Target with updated size
@@ -6043,6 +6062,8 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
             TimedLock lock(mStateLock, s2ns(1), __FUNCTION__);
             if (!lock.locked()) {
                 StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
+                              strerror(-lock.status), lock.status);
+                ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
             }
 
