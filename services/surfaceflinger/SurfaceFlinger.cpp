@@ -1048,8 +1048,9 @@ void SurfaceFlinger::bootFinished() {
             if (index < 0) {
                 ALOGE("Invalid token %p", getInternalDisplayTokenLocked().get());
             } else {
-                const DisplayDeviceState& state = mCurrentState.displays.valueAt(index);
-                setFrameBufferSizeForScaling(getDefaultDisplayDeviceLocked(), state);
+                DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
+                DisplayDeviceState& drawState = mDrawingState.displays.editValueAt(index);
+                setFrameBufferSizeForScaling(getDefaultDisplayDeviceLocked(), curState, drawState);
             }
         }
 
@@ -1547,7 +1548,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* st
 }
 
 bool SurfaceFlinger::isFpsDeferNeeded(const ActiveModeInfo& info) {
-    const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
+    const auto display = getDefaultDisplayDeviceLocked();
     if (!display || !mThermalLevelFps) {
         return false;
     }
@@ -2577,11 +2578,8 @@ void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
 }
 
 SurfaceFlinger::FenceWithFenceTime SurfaceFlinger::previousFrameFence() {
-    const auto now = systemTime();
-    const auto vsyncPeriod = mScheduler->getDisplayStatInfo(now).vsyncPeriod;
-    const bool expectedPresentTimeIsTheNextVsync = mExpectedPresentTime - now <= vsyncPeriod;
-    return expectedPresentTimeIsTheNextVsync ? mPreviousPresentFences[0]
-                                             : mPreviousPresentFences[1];
+     return mVsyncModulator->getVsyncConfig().sfOffset >= 0 ? mPreviousPresentFences[0]
+                                                           : mPreviousPresentFences[1];
 }
 
 bool SurfaceFlinger::previousFramePending(int graceTimeMs) {
@@ -3621,14 +3619,18 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
                 updateInternalDisplaysPresentationMode();
             }
         }
-
+        uint32_t hwcDisplayId = static_cast<uint32_t>(event.hwcDisplayId);
+        bool isConnected = (event.connection == hal::Connection::CONNECTED);
         if (isDisplayExtnEnabled() && isInternalDisplay) {
-            uint32_t hwcDisplayId = static_cast<uint32_t>(event.hwcDisplayId);
-            bool isConnected = (event.connection == hal::Connection::CONNECTED);
             auto activeConfigId = getHwComposer().getActiveMode(displayId);
             LOG_ALWAYS_FATAL_IF(!activeConfigId, "HWC returned no active config");
             updateDisplayExtension(hwcDisplayId, *activeConfigId, isConnected);
         }
+#if defined(QTI_UNIFIED_DRAW) && defined(UNIFIED_DRAW_EXT)
+        if (mDisplayExtnIntf && !isConnected && !isInternalDisplay) {
+            mDisplayExtnIntf->EndUnifiedDraw(hwcDisplayId);
+        }
+#endif
         processDisplayChangesLocked();
     }
 
@@ -3967,11 +3969,8 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
             if (mUseFbScaling && display->isPrimary()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
-                DisplayDeviceState& tmpState = mCurrentState.displays.editValueAt(index);
-                tmpState.width =  currentState.layerStackSpaceRect.width();
-                tmpState.height = currentState.layerStackSpaceRect.height();
-                tmpState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
-                setFrameBufferSizeForScaling(display, currentState);
+                DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
+                setFrameBufferSizeForScaling(display, curState, drawingState);
                 displaySizeChanged = true;
             } else {
                 display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
@@ -4011,22 +4010,43 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
 }
 
 void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
-                                                  const DisplayDeviceState& state) {
+                                                  DisplayDeviceState& currentState,
+                                                  const DisplayDeviceState& drawingState) {
     base::unique_fd fd;
     auto display = displayDevice->getCompositionDisplay();
-    int newWidth = state.layerStackSpaceRect.width();
-    int newHeight = state.layerStackSpaceRect.height();
-    if (state.orientation == ui::ROTATION_90 || state.orientation == ui::ROTATION_270){
-        std::swap(newWidth, newHeight);
+    int newWidth = currentState.layerStackSpaceRect.width();
+    int newHeight = currentState.layerStackSpaceRect.height();
+    int currentWidth = drawingState.layerStackSpaceRect.width();
+    int currentHeight = drawingState.layerStackSpaceRect.height();
+    int displayWidth = displayDevice->getWidth();
+    int displayHeight = displayDevice->getHeight();
+    bool update_needed = false;
+
+    if (newWidth != currentWidth || newHeight != currentHeight) {
+        update_needed = true;
+        if (!((newWidth > newHeight && displayWidth > displayHeight) ||
+            (newWidth < newHeight && displayWidth < displayHeight))) {
+            std::swap(newWidth, newHeight);
+        }
     }
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight) {
-        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
+
+    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
+        !update_needed) {
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
         return;
     }
 
+    if (newWidth > 0 && newHeight > 0) {
+        currentState.width =  newWidth;
+        currentState.height = newHeight;
+    }
+    currentState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
+
     if (mBootStage == BootStage::FINISHED) {
-        displayDevice->setDisplaySize(newWidth, newHeight);
-        displayDevice->setProjection(state.orientation, state.layerStackSpaceRect, state.layerStackSpaceRect);
+        displayDevice->setDisplaySize(currentState.width, currentState.height);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
         display->getRenderSurface()->setViewportAndProjection();
         display->getRenderSurface()->flipClientTarget(true);
         // queue a scratch buffer to flip Client Target with updated size
@@ -5966,29 +5986,14 @@ void SurfaceFlinger::setPowerMode(const sp<IBinder>& displayToken, int mode) {
     }
 
     ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
-    switch (power_mode) {
-        case hal::PowerMode::ON: hwcMode = ::DisplayConfig::PowerMode::kOn; break;
-        case hal::PowerMode::DOZE: hwcMode = ::DisplayConfig::PowerMode::kDoze; break;
-        case hal::PowerMode::DOZE_SUSPEND:
-            hwcMode = ::DisplayConfig::PowerMode::kDozeSuspend; break;
-        default: hwcMode = ::DisplayConfig::PowerMode::kOff; break;
+    if (power_mode == hal::PowerMode::ON) {
+        hwcMode = ::DisplayConfig::PowerMode::kOn;
     }
 
     bool step_up = false;
-    if (currentDisplayPowerMode == hal::PowerMode::OFF) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE_SUSPEND) {
-        if (newDisplayPowerMode == hal::PowerMode::DOZE ||
-            newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
-    } else if (currentDisplayPowerMode == hal::PowerMode::DOZE) {
-        if (newDisplayPowerMode == hal::PowerMode::ON) {
-            step_up = true;
-        }
+    if (currentDisplayPowerMode == hal::PowerMode::OFF &&
+        newDisplayPowerMode == hal::PowerMode::ON) {
+        step_up = true;
     }
     // Change hardware state first while stepping up.
     if (step_up) {
@@ -6046,6 +6051,8 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
             TimedLock lock(mStateLock, s2ns(1), __FUNCTION__);
             if (!lock.locked()) {
                 StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
+                              strerror(-lock.status), lock.status);
+                ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
             }
 
@@ -6835,7 +6842,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
             IPCThreadState* ipc = IPCThreadState::self();
             const int pid = ipc->getCallingPid();
             const int uid = ipc->getCallingUid();
-            if ((uid != AID_GRAPHICS) &&
+            if ((uid != AID_GRAPHICS) && (uid != AID_SYSTEM) &&
                 !PermissionCache::checkPermission(sControlDisplayBrightness, pid, uid)) {
                 ALOGE("Permission Denial: can't control brightness pid=%d, uid=%d", pid, uid);
                 return PERMISSION_DENIED;
@@ -7983,8 +7990,9 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::captureScre
         auto future = mScheduler->schedule([=]() {
             bool protectedLayerFound = false;
             traverseLayers([&](Layer* layer) {
-                protectedLayerFound =
-                        protectedLayerFound || (layer->isVisible() && layer->isProtected());
+                protectedLayerFound = protectedLayerFound ||
+                        (layer->isVisible() && layer->isProtected() &&
+                         !layer->isSecureCamera() && !layer->isSecureDisplay());
             });
             return protectedLayerFound;
         });

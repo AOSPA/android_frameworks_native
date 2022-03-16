@@ -87,6 +87,7 @@ public:
 private:
     DisplayId mId;
     bool mIsDisconnected = false;
+    bool mIsColorModeChanged = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
     int32_t mPreferredBootDisplayModeId = -1;
     bool mHasScreenshot = false;
@@ -94,6 +95,8 @@ private:
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     void beginDraw();
     void endDraw();
+    ColorProfile mColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
+                                  ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
 };
 
 // This template factory function standardizes the implementation details of the
