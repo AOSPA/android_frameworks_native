@@ -56,6 +56,7 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "smomo_interface.h"
 #include "layer_extn_intf.h"
 
 namespace android {
@@ -534,6 +535,10 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
 
     if (oldOpacity != isOpaque(s)) {
         recomputeVisibleRegions = true;
+    }
+
+    if (mFlinger->mSmoMo) {
+        mFlinger->mSmoMo->SetPresentTime(getSequence(), mBufferInfo.mDesiredPresentTime);
     }
 
     return true;

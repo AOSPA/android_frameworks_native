@@ -495,6 +495,20 @@ SmomoWrapper::~SmomoWrapper() {
     }
 }
 
+void SmomoWrapper::setRefreshRates(const sp<DisplayDevice>& display) {
+    std::vector<float> refreshRates;
+
+    const auto &allRates = display->refreshRateConfigs().getAllRefreshRates();
+    auto iter = allRates.cbegin();
+    while (iter != allRates.cend()) {
+        if (iter->second->getFps().getValue() > 0) {
+            refreshRates.push_back(iter->second->getFps().getValue());
+        }
+        ++iter;
+    }
+    mInst->SetDisplayRefreshRates(refreshRates);
+}
+
 bool LayerExtWrapper::init() {
     mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
     if (!mLayerExtLibHandle) {
@@ -1228,18 +1242,7 @@ void SurfaceFlinger::init() {
                 setRefreshRateTo(refreshRate);
             });
 
-        std::vector<float> refreshRates;
-
-        const auto &allRates = display->refreshRateConfigs().getAllRefreshRates();
-        auto iter = allRates.cbegin();
-        while (iter != allRates.cend()) {
-            if (iter->second->getFps().getValue() > 0) {
-                refreshRates.push_back(iter->second->getFps().getValue());
-            }
-            ++iter;
-        }
-        mSmoMo->SetDisplayRefreshRates(refreshRates);
-
+        mSmoMo.setRefreshRates(display);
         ALOGI("SmoMo is enabled");
     }
 
@@ -2402,6 +2405,13 @@ void SurfaceFlinger::scheduleComposite(FrameHint hint) {
     scheduleCommit(hint);
 }
 
+void SurfaceFlinger::scheduleCompositeImmed() {
+    mMustComposite = true;
+    mScheduler->resetIdleTimer();
+    notifyDisplayUpdateImminent();
+    mScheduler->scheduleFrameImmed();
+}
+
 void SurfaceFlinger::scheduleRepaint() {
     mGeometryDirty = true;
     scheduleComposite(FrameHint::kActive);
@@ -2474,6 +2484,7 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
         ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
         return getDefaultDisplayDeviceLocked();
     }();
+
     auto currentRefreshRate = display->refreshRateConfigs().getCurrentRefreshRate();
 
     auto policy = display->refreshRateConfigs().getCurrentPolicy();
@@ -2612,6 +2623,16 @@ nsecs_t SurfaceFlinger::calculateExpectedPresentTime(DisplayStatInfo stats) cons
                                                            : stats.vsyncTime + stats.vsyncPeriod;
 }
 
+void SurfaceFlinger::syncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
+    ATRACE_CALL();
+
+    if (mSmoMo) {
+        nsecs_t timestamp = 0;
+        bool needResync = mSmoMo->SyncToDisplay(previousFrameFence().fence, &timestamp);
+        ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
+    }
+}
+
 void SurfaceFlinger::updateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
     if (!mFrameSchedulerExtnIntf) {
         return;
@@ -2667,6 +2688,7 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
     const nsecs_t lastScheduledPresentTime = mScheduledPresentTime;
     mScheduledPresentTime = expectedVsyncTime;
     updateFrameScheduler();
+    syncToDisplayHardware();
 
     if (mPowerHintSessionData.sessionEnabled) {
         mPowerAdvisor.setTargetWorkDuration(mExpectedPresentTime -
@@ -3901,7 +3923,6 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     }
 
     mDisplays.erase(displayToken);
-
     if (display && display->isVirtual()) {
         static_cast<void>(mScheduler->schedule([display = std::move(display)] {
             // Destroy the display without holding the mStateLock.
@@ -3930,6 +3951,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         getRenderEngine().cleanFramebufferCache();
 
         if (const auto display = getDisplayDeviceLocked(displayToken)) {
+            mDisplaysList.remove(display);
             display->disconnect();
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
@@ -4408,6 +4430,9 @@ void SurfaceFlinger::initScheduler(const sp<DisplayDevice>& display) {
                                          /*readyDuration=*/configs.late.sfWorkDuration,
                                          [this](nsecs_t timestamp) {
                                              mInterceptor->saveVSyncEvent(timestamp);
+                                             if (mSmoMo) {
+                                                 mSmoMo->OnVsync(timestamp);
+                                             }
                                          });
 
     mScheduler->initVsync(mScheduler->getVsyncDispatch(), *mFrameTimeline->getTokenManager(),
@@ -4933,6 +4958,12 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
                 ATRACE_NAME("hasPendingBuffer");
                 return TransactionReadiness::NotReady;
             }
+
+            if (mSmoMo) {
+                if (mSmoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
+                    return TransactionReadiness::NotReady;
+                }
+            }
         }
     }
     return fenceUnsignaled ? TransactionReadiness::ReadyUnsignaled : TransactionReadiness::Ready;
@@ -5068,6 +5099,27 @@ status_t SurfaceFlinger::setTransactionState(
     // Check the pending state to make sure the transaction is synchronous.
     if (state.transactionCommittedSignal) {
         waitForSynchronousTransaction(*state.transactionCommittedSignal);
+    }
+
+    if (mSmoMo) {
+        state.traverseStatesWithBuffers([&](const layer_state_t& state) {
+            sp<Layer> layer = fromHandle(state.surface).promote();
+            if (layer != nullptr) {
+                smomo::SmomoBufferStats bufferStats;
+                const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+                bufferStats.id = layer->getSequence();
+                bufferStats.auto_timestamp = isAutoTimestamp;
+                bufferStats.timestamp = now;
+                bufferStats.dequeue_latency = 0;
+                bufferStats.key = desiredPresentTime;
+                mSmoMo->CollectLayerStats(bufferStats);
+
+                const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
+                if (mSmoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+                    scheduleCompositeImmed();
+                }
+            }
+        });
     }
 
     return NO_ERROR;
@@ -7999,6 +8051,16 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::captureScre
         hasProtectedLayer = future.get();
     }
 
+    // Surface flinger captures individual screen shot for each display
+    // This will lead consumption of high GPU secure memory in case
+    // of secure video use cases and cause out of memory.
+    {
+        Mutex::Autolock lock(mStateLock);
+        if(mDisplays.size() > 1) {
+           hasProtectedLayer = false;
+        }
+    }
+
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
             GRALLOC_USAGE_HW_TEXTURE |
             (hasProtectedLayer && allowProtected && supportsProtected
@@ -8324,6 +8386,9 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
                          preferredDisplayMode->getId().value());
     }
 
+    if (mSmoMo) {
+        mSmoMo.setRefreshRates(display);
+    }
     return NO_ERROR;
 }
 

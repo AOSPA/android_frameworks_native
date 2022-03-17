@@ -226,11 +226,13 @@ public:
 
     bool init();
 
-    SmomoIntf* operator->() { return mInst; }
-    operator bool() { return mInst != nullptr; }
+    SmomoIntf* operator->() const { return mInst; }
+    operator bool() const { return mInst != nullptr; }
 
     SmomoWrapper(const SmomoWrapper&) = delete;
     SmomoWrapper& operator=(const SmomoWrapper&) = delete;
+
+    void setRefreshRates(const sp<DisplayDevice>& display);
 
 private:
     SmomoIntf *mInst = nullptr;
@@ -249,7 +251,7 @@ public:
 
     bool init();
 
-    LayerExtnIntf* operator->() { return     mInst; }
+    LayerExtnIntf* operator->() { return mInst; }
     operator bool() { return mInst != nullptr; }
 
     LayerExtWrapper(const LayerExtWrapper&) = delete;
@@ -372,6 +374,7 @@ public:
     void scheduleCommit(FrameHint);
     // As above, but also force composite regardless if transactions were committed.
     void scheduleComposite(FrameHint) override;
+    void scheduleCompositeImmed();
     // As above, but also force dirty geometry to repaint.
     void scheduleRepaint();
     // Schedule sampling independently from commit or composite.
@@ -844,6 +847,7 @@ private:
     void commitInputWindowCommands() REQUIRES(mStateLock);
     void updateCursorAsync();
     void updateFrameScheduler();
+    void syncToDisplayHardware();
 
     void initScheduler(const sp<DisplayDevice>& display) REQUIRES(mStateLock);
     void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
@@ -1579,12 +1583,11 @@ private:
 
     const sp<WindowInfosListenerInvoker> mWindowInfosListenerInvoker;
 
-    SmomoWrapper mSmoMo;
-    LayerExtWrapper mLayerExt;
-
 public:
     nsecs_t mVsyncPeriod = -1;
     DolphinWrapper mDolphinWrapper;
+    SmomoWrapper mSmoMo;
+    LayerExtWrapper mLayerExt;
 
 private:
     bool mEarlyWakeUpEnabled = false;
