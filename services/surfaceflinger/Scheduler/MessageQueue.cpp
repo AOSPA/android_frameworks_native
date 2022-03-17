@@ -38,6 +38,12 @@ void MessageQueue::Handler::dispatchFrame(int64_t vsyncId, nsecs_t expectedVsync
     }
 }
 
+void MessageQueue::Handler::dispatchFrameImmed() {
+    if (!mFramePending.exchange(true)) {
+        mQueue.mLooper->sendMessage(this, Message());
+    }
+}
+
 bool MessageQueue::Handler::isFramePending() const {
     return mFramePending.load();
 }
@@ -182,6 +188,11 @@ void MessageQueue::scheduleFrame() {
             mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
                                            .readyDuration = 0,
                                            .earliestVsync = mVsync.lastCallbackTime.count()});
+}
+
+void MessageQueue::scheduleFrameImmed() {
+    ATRACE_CALL();
+    mHandler->dispatchFrameImmed();
 }
 
 void MessageQueue::injectorCallback() {
