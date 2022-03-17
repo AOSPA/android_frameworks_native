@@ -58,7 +58,7 @@ void MessageQueue::Handler::handleMessage(const Message&) {
         return;
     }
 
-    compositor.composite(frameTime);
+    compositor.composite(frameTime, mVsyncId);
     compositor.sample();
 }
 

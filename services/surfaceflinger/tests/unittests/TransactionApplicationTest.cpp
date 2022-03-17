@@ -226,7 +226,7 @@ public:
         // if this is an animation, this thread should be blocked for 5s
         // in setTransactionState waiting for transactionA to flush.  Otherwise,
         // the transaction should be placed on the pending queue
-        if (flags & (ISurfaceComposer::eAnimation | ISurfaceComposer::eSynchronous) ||
+        if (flags & (ISurfaceComposer::eSynchronous) ||
             syncInputWindows) {
             EXPECT_GE(systemTime(),
                       applicationSentTime + mFlinger.getAnimationTransactionTimeout());
@@ -288,20 +288,12 @@ TEST_F(TransactionApplicationTest, NotPlacedOnTransactionQueue_Synchronous) {
     NotPlacedOnTransactionQueue(ISurfaceComposer::eSynchronous, /*syncInputWindows*/ false);
 }
 
-TEST_F(TransactionApplicationTest, NotPlacedOnTransactionQueue_Animation) {
-    NotPlacedOnTransactionQueue(ISurfaceComposer::eAnimation, /*syncInputWindows*/ false);
-}
-
 TEST_F(TransactionApplicationTest, NotPlacedOnTransactionQueue_SyncInputWindows) {
     NotPlacedOnTransactionQueue(/*flags*/ 0, /*syncInputWindows*/ true);
 }
 
 TEST_F(TransactionApplicationTest, PlaceOnTransactionQueue_Synchronous) {
     PlaceOnTransactionQueue(ISurfaceComposer::eSynchronous, /*syncInputWindows*/ false);
-}
-
-TEST_F(TransactionApplicationTest, PlaceOnTransactionQueue_Animation) {
-    PlaceOnTransactionQueue(ISurfaceComposer::eAnimation, /*syncInputWindows*/ false);
 }
 
 TEST_F(TransactionApplicationTest, PlaceOnTransactionQueue_SyncInputWindows) {
@@ -551,13 +543,52 @@ TEST_F(LatchUnsignaledAutoSingleLayerTest, Flush_RemovesSignaledFromTheQueue) {
                          kExpectedTransactionsPending);
 }
 
-TEST_F(LatchUnsignaledAutoSingleLayerTest, Flush_RemoveSignaledWithUnsignaledIntact) {
+TEST_F(LatchUnsignaledAutoSingleLayerTest,
+       UnsignaledNotAppliedWhenThereAreSignaled_UnsignaledFirst) {
     const sp<IBinder> kApplyToken1 =
             IInterface::asBinder(TransactionCompletedListener::getIInstance());
     const sp<IBinder> kApplyToken2 = sp<BBinder>::make();
+    const sp<IBinder> kApplyToken3 = sp<BBinder>::make();
     const auto kLayerId1 = 1;
     const auto kLayerId2 = 2;
-    const auto kExpectedTransactionsApplied = 1u;
+    const auto kExpectedTransactionsApplied = 2u;
+    const auto kExpectedTransactionsPending = 1u;
+
+    const auto unsignaledTransaction =
+            createTransactionInfo(kApplyToken1,
+                                  {
+                                          createComposerState(kLayerId1,
+                                                              fence(Fence::Status::Unsignaled),
+                                                              layer_state_t::eBufferChanged),
+                                  });
+
+    const auto signaledTransaction =
+            createTransactionInfo(kApplyToken2,
+                                  {
+                                          createComposerState(kLayerId2,
+                                                              fence(Fence::Status::Signaled),
+                                                              layer_state_t::eBufferChanged),
+                                  });
+    const auto signaledTransaction2 =
+            createTransactionInfo(kApplyToken3,
+                                  {
+                                          createComposerState(kLayerId2,
+                                                              fence(Fence::Status::Signaled),
+                                                              layer_state_t::eBufferChanged),
+                                  });
+
+    setTransactionStates({unsignaledTransaction, signaledTransaction, signaledTransaction2},
+                         kExpectedTransactionsApplied, kExpectedTransactionsPending);
+}
+
+TEST_F(LatchUnsignaledAutoSingleLayerTest, UnsignaledNotAppliedWhenThereAreSignaled_SignaledFirst) {
+    const sp<IBinder> kApplyToken1 =
+            IInterface::asBinder(TransactionCompletedListener::getIInstance());
+    const sp<IBinder> kApplyToken2 = sp<BBinder>::make();
+    const sp<IBinder> kApplyToken3 = sp<BBinder>::make();
+    const auto kLayerId1 = 1;
+    const auto kLayerId2 = 2;
+    const auto kExpectedTransactionsApplied = 2u;
     const auto kExpectedTransactionsPending = 1u;
 
     const auto signaledTransaction =
@@ -567,15 +598,23 @@ TEST_F(LatchUnsignaledAutoSingleLayerTest, Flush_RemoveSignaledWithUnsignaledInt
                                                               fence(Fence::Status::Signaled),
                                                               layer_state_t::eBufferChanged),
                                   });
-    const auto unsignaledTransaction =
+    const auto signaledTransaction2 =
             createTransactionInfo(kApplyToken2,
+                                  {
+                                          createComposerState(kLayerId1,
+                                                              fence(Fence::Status::Signaled),
+                                                              layer_state_t::eBufferChanged),
+                                  });
+    const auto unsignaledTransaction =
+            createTransactionInfo(kApplyToken3,
                                   {
                                           createComposerState(kLayerId2,
                                                               fence(Fence::Status::Unsignaled),
                                                               layer_state_t::eBufferChanged),
                                   });
-    setTransactionStates({signaledTransaction, unsignaledTransaction}, kExpectedTransactionsApplied,
-                         kExpectedTransactionsPending);
+
+    setTransactionStates({signaledTransaction, signaledTransaction2, unsignaledTransaction},
+                         kExpectedTransactionsApplied, kExpectedTransactionsPending);
 }
 
 TEST_F(LatchUnsignaledAutoSingleLayerTest, Flush_KeepsTransactionInTheQueueSameApplyToken) {
