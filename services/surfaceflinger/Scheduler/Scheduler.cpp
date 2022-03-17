@@ -708,6 +708,7 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
         currentState = std::forward<T>(newState);
 
         std::tie(newMode, consideredSignals) = chooseDisplayMode();
+        const auto newRefreshRate = refreshRateConfigs->getRefreshRateFromModeId(newMode->getId());
         frameRateOverridesChanged = updateFrameRateOverrides(consideredSignals, newMode->getFps());
 
         if (mPolicy.mode == newMode) {
@@ -718,15 +719,34 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
             }
         } else {
             mPolicy.mode = newMode;
+
+            if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+                (int32_t)mThermalFps) {
+                DisplayModePtr mode;
+                mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+                mPolicy.mode = mode;
+            }
+
             refreshRateChanged = true;
         }
     }
     if (refreshRateChanged) {
         const auto newRefreshRate = refreshRateConfigs->getRefreshRateFromModeId(newMode->getId());
 
-        mSchedulerCallback.changeRefreshRate(newRefreshRate,
+        if (mThermalFps > 0 && (int32_t)newRefreshRate.getFps().getValue() >
+            (int32_t)mThermalFps) {
+            DisplayModePtr mode;
+            mSchedulerCallback.getModeFromFps(mThermalFps, mode);
+            auto newThermalRefreshRate = refreshRateConfigs->
+                                         getRefreshRateFromModeId(mode->getId());
+            mSchedulerCallback.changeRefreshRate(newRefreshRate,
+                                              consideredSignals.idle ? DisplayModeEvent::None
+                                                                     : DisplayModeEvent::Changed);
+        } else {
+            mSchedulerCallback.changeRefreshRate(newRefreshRate,
                                              consideredSignals.idle ? DisplayModeEvent::None
                                                                     : DisplayModeEvent::Changed);
+        }
     }
     if (frameRateOverridesChanged) {
         mSchedulerCallback.triggerOnFrameRateOverridesChanged();
@@ -827,6 +847,11 @@ std::chrono::steady_clock::time_point Scheduler::getPreviousVsyncFrom(
 
 void Scheduler::setIdleState() {
     mDisplayIdle = true;
+}
+
+void Scheduler::updateThermalFps(float fps) {
+    mThermalFps = fps;
+    mLayerHistory.updateThermalFps(fps);
 }
 
 } // namespace android::scheduler

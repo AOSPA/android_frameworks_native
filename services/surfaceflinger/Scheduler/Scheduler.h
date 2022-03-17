@@ -94,6 +94,7 @@ struct ISchedulerCallback {
     virtual void changeRefreshRate(const RefreshRate&, DisplayModeEvent) = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
+    virtual void getModeFromFps(float, DisplayModePtr&) = 0;
 
 protected:
     ~ISchedulerCallback() = default;
@@ -246,6 +247,7 @@ public:
     }
 
     void setIdleState();
+    void updateThermalFps(float fps);
 
 private:
     friend class TestableScheduler;
@@ -368,6 +370,9 @@ private:
 
     // This state variable indicates whether to handle the Idle Timer Callback.
     std::atomic<bool> mHandleIdleTimeout = true;
+
+    // Cache thermal Fps, and limit to the given level
+    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler
