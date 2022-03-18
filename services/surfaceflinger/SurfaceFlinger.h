@@ -1594,7 +1594,6 @@ private:
     bool mDynamicSfIdleEnabled = false;
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
-    bool mSmomoContentFpsEnabled = false;
 
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
@@ -1613,6 +1612,7 @@ private:
     bool mTidSentSuccessfully = false;
     bool mSendEarlyWakeUp = false;
     std::mutex mEarlyWakeUpMutex;
+    int mUiLayerFrameCount = 0;
 
     // returns the framerate of the layer with the given sequence ID
     float getLayerFramerate(nsecs_t now, int32_t id) const {

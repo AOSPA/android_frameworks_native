@@ -3360,14 +3360,20 @@ void SurfaceFlinger::postComposition() {
         int content_fps = mSmoMo->GetFrameRate();
 
         bool is_valid_content_fps = false;
-        if ((content_fps > 0) && (mLayersWithQueuedFrames.size() == 1)) {
-            is_valid_content_fps = mSmomoContentFpsEnabled;
-            mSmomoContentFpsEnabled = true;
+        if (content_fps > 0) {
+            if (mLayersWithQueuedFrames.size() > 1) {
+                mUiLayerFrameCount++;
+            } else {
+                mUiLayerFrameCount = 0;
+            }
+
+            is_valid_content_fps = (mUiLayerFrameCount < fps) ? true : false;
         } else {
-            mSmomoContentFpsEnabled = false;
+            mUiLayerFrameCount = 0;
         }
 
         setContentFps(is_valid_content_fps ? content_fps : fps);
+        mUiLayerFrameCount = 0;
     }
 
 
