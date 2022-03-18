@@ -146,6 +146,7 @@ cc_defaults {
         "libaidlcommonsupport",
         "libcompositionengine",
         "libframetimeline",
+        "libgui_aidl_static",
         "libperfetto_client_experimental",
         "librenderengine",
         "libscheduler",
