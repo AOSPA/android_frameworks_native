@@ -565,6 +565,13 @@ SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
     mListenerCallbacks = other.mListenerCallbacks;
 }
 
+void SurfaceComposerClient::Transaction::sanitize() {
+    for (auto & [handle, composerState] : mComposerStates) {
+        composerState.state.sanitize(0 /* permissionMask */);
+    }
+    mInputWindowCommands.clear();
+}
+
 std::unique_ptr<SurfaceComposerClient::Transaction>
 SurfaceComposerClient::Transaction::createFromParcel(const Parcel* parcel) {
     auto transaction = std::make_unique<Transaction>();
@@ -646,7 +653,6 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
         if (composerState.read(*parcel) == BAD_VALUE) {
             return BAD_VALUE;
         }
-
         composerStates[surfaceControlHandle] = composerState;
     }
 
@@ -2086,12 +2092,6 @@ status_t SurfaceComposerClient::setBootDisplayMode(const sp<IBinder>& display,
 
 status_t SurfaceComposerClient::clearBootDisplayMode(const sp<IBinder>& display) {
     return ComposerService::getComposerService()->clearBootDisplayMode(display);
-}
-
-status_t SurfaceComposerClient::getPreferredBootDisplayMode(const sp<IBinder>& display,
-                                                            ui::DisplayModeId* displayModeId) {
-    return ComposerService::getComposerService()->getPreferredBootDisplayMode(display,
-                                                                              displayModeId);
 }
 
 status_t SurfaceComposerClient::setOverrideFrameRate(uid_t uid, float frameRate) {

@@ -74,7 +74,7 @@ struct Layer {
         EXPECT_CALL(*outputLayer, getHwcLayer()).WillRepeatedly(Return(&hwc2Layer));
     }
 
-    sp<mock::LayerFE> layerFE = new StrictMock<mock::LayerFE>();
+    sp<StrictMock<mock::LayerFE>> layerFE = sp<StrictMock<mock::LayerFE>>::make();
     StrictMock<mock::OutputLayer>* outputLayer = new StrictMock<mock::OutputLayer>();
     StrictMock<HWC2::mock::Layer> hwc2Layer;
 };
@@ -85,7 +85,7 @@ struct LayerNoHWC2Layer {
         EXPECT_CALL(*outputLayer, getHwcLayer()).WillRepeatedly(Return(nullptr));
     }
 
-    sp<mock::LayerFE> layerFE = new StrictMock<mock::LayerFE>();
+    sp<StrictMock<mock::LayerFE>> layerFE = sp<StrictMock<mock::LayerFE>>::make();
     StrictMock<mock::OutputLayer>* outputLayer = new StrictMock<mock::OutputLayer>();
 };
 
@@ -164,6 +164,7 @@ struct DisplayTestCommon : public testing::Test {
         EXPECT_CALL(mCompositionEngine, getRenderEngine()).WillRepeatedly(ReturnRef(mRenderEngine));
         EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
         EXPECT_CALL(mRenderEngine, isProtected()).WillRepeatedly(Return(false));
+        EXPECT_CALL(mHwComposer, getBootDisplayModeSupport()).WillRepeatedly(Return(false));
     }
 
     DisplayCreationArgs getDisplayCreationArgsForPhysicalDisplay() {
@@ -468,7 +469,7 @@ TEST_F(DisplayCreateRenderSurfaceTest, setsRenderSurface) {
 using DisplayCreateOutputLayerTest = FullDisplayImplTestCommon;
 
 TEST_F(DisplayCreateOutputLayerTest, setsHwcLayer) {
-    sp<mock::LayerFE> layerFE = new StrictMock<mock::LayerFE>();
+    sp<StrictMock<mock::LayerFE>> layerFE = sp<StrictMock<mock::LayerFE>>::make();
     auto hwcLayer = std::make_shared<StrictMock<HWC2::mock::Layer>>();
 
     EXPECT_CALL(mHwComposer, createLayer(HalDisplayId(DEFAULT_DISPLAY_ID)))
@@ -971,7 +972,8 @@ struct DisplayFunctionalTest : public testing::Test {
 
     DisplayFunctionalTest() {
         EXPECT_CALL(mCompositionEngine, getHwComposer()).WillRepeatedly(ReturnRef(mHwComposer));
-
+        mDisplay = createDisplay();
+        mRenderSurface = createRenderSurface();
         mDisplay->setRenderSurfaceForTest(std::unique_ptr<RenderSurface>(mRenderSurface));
     }
 
@@ -980,24 +982,29 @@ struct DisplayFunctionalTest : public testing::Test {
     NiceMock<mock::CompositionEngine> mCompositionEngine;
     sp<mock::NativeWindow> mNativeWindow = new NiceMock<mock::NativeWindow>();
     sp<mock::DisplaySurface> mDisplaySurface = new NiceMock<mock::DisplaySurface>();
+    std::shared_ptr<Display> mDisplay;
+    impl::RenderSurface* mRenderSurface;
 
-    std::shared_ptr<Display> mDisplay = impl::createDisplayTemplated<
-            Display>(mCompositionEngine,
-                     DisplayCreationArgsBuilder()
-                             .setId(DEFAULT_DISPLAY_ID)
-                             .setPixels(DEFAULT_RESOLUTION)
-                             .setIsSecure(true)
-                             .setPowerAdvisor(&mPowerAdvisor)
-                             .build());
+    std::shared_ptr<Display> createDisplay() {
+        return impl::createDisplayTemplated<Display>(mCompositionEngine,
+                                                     DisplayCreationArgsBuilder()
+                                                             .setId(DEFAULT_DISPLAY_ID)
+                                                             .setPixels(DEFAULT_RESOLUTION)
+                                                             .setIsSecure(true)
+                                                             .setPowerAdvisor(&mPowerAdvisor)
+                                                             .build());
+        ;
+    }
 
-    impl::RenderSurface* mRenderSurface =
-            new impl::RenderSurface{mCompositionEngine, *mDisplay,
-                                    RenderSurfaceCreationArgsBuilder()
-                                            .setDisplayWidth(DEFAULT_RESOLUTION.width)
-                                            .setDisplayHeight(DEFAULT_RESOLUTION.height)
-                                            .setNativeWindow(mNativeWindow)
-                                            .setDisplaySurface(mDisplaySurface)
-                                            .build()};
+    impl::RenderSurface* createRenderSurface() {
+        return new impl::RenderSurface{mCompositionEngine, *mDisplay,
+                                       RenderSurfaceCreationArgsBuilder()
+                                               .setDisplayWidth(DEFAULT_RESOLUTION.width)
+                                               .setDisplayHeight(DEFAULT_RESOLUTION.height)
+                                               .setNativeWindow(mNativeWindow)
+                                               .setDisplaySurface(mDisplaySurface)
+                                               .build()};
+    }
 };
 
 TEST_F(DisplayFunctionalTest, postFramebufferCriticalCallsAreOrdered) {

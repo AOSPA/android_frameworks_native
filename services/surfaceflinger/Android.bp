@@ -189,9 +189,6 @@ cc_defaults {
 cc_defaults {
     name: "libsurfaceflinger_production_defaults",
     defaults: ["libsurfaceflinger_defaults"],
-    cflags: [
-        "-fvisibility=hidden",
-    ],
     lto: {
         thin: true,
     },

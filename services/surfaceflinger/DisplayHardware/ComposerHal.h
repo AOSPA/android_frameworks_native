@@ -34,6 +34,7 @@
 #include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
+#include <aidl/android/hardware/graphics/composer3/IComposerCallback.h>
 
 #ifdef QTI_UNIFIED_DRAW
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -42,7 +43,12 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
-namespace android::Hwc2 {
+namespace android {
+namespace HWC2 {
+struct ComposerCallback;
+} // namespace HWC2
+
+namespace Hwc2 {
 
 #ifdef QTI_UNIFIED_DRAW
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
@@ -53,6 +59,7 @@ namespace V2_1 = hardware::graphics::composer::V2_1;
 namespace V2_2 = hardware::graphics::composer::V2_2;
 namespace V2_3 = hardware::graphics::composer::V2_3;
 namespace V2_4 = hardware::graphics::composer::V2_4;
+namespace V3_0 = ::aidl::android::hardware::graphics::composer3;
 
 using types::V1_0::ColorTransform;
 using types::V1_0::Transform;
@@ -96,7 +103,7 @@ public:
     virtual std::vector<IComposer::Capability> getCapabilities() = 0;
     virtual std::string dumpDebugInfo() = 0;
 
-    virtual void registerCallback(const sp<IComposerCallback>& callback) = 0;
+    virtual void registerCallback(HWC2::ComposerCallback& callback) = 0;
 
     // Reset all pending commands in the command buffer. Useful if you want to
     // skip a frame but have already queued some commands.
@@ -116,9 +123,8 @@ public:
     virtual Error destroyLayer(Display display, Layer layer) = 0;
 
     virtual Error getActiveConfig(Display display, Config* outConfig) = 0;
-    virtual Error getChangedCompositionTypes(
-            Display display, std::vector<Layer>* outLayers,
-            std::vector<aidl::android::hardware::graphics::composer3::Composition>* outTypes) = 0;
+    virtual Error getChangedCompositionTypes(Display display, std::vector<Layer>* outLayers,
+                                             std::vector<V3_0::Composition>* outTypes) = 0;
     virtual Error getColorModes(Display display, std::vector<ColorMode>* outModes) = 0;
     virtual Error getDisplayAttribute(Display display, Config config,
                                       IComposerClient::Attribute attribute, int32_t* outValue) = 0;
@@ -233,10 +239,8 @@ public:
                                        const DisplayBrightnessOptions& options) = 0;
 
     // Composer HAL 2.4
-    virtual Error getDisplayCapabilities(
-            Display display,
-            std::vector<aidl::android::hardware::graphics::composer3::DisplayCapability>*
-                    outCapabilities) = 0;
+    virtual Error getDisplayCapabilities(Display display,
+                                         std::vector<V3_0::DisplayCapability>* outCapabilities) = 0;
     virtual V2_4::Error getDisplayConnectionType(
             Display display, IComposerClient::DisplayConnectionType* outType) = 0;
     virtual V2_4::Error getDisplayVsyncPeriod(Display display,
@@ -279,4 +283,5 @@ public:
     virtual Error getPreferredBootDisplayConfig(Display displayId, Config*) = 0;
 };
 
-} // namespace android::Hwc2
+} // namespace Hwc2
+} // namespace android

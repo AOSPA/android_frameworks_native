@@ -43,7 +43,7 @@ public:
     HWComposer();
     ~HWComposer() override;
 
-    MOCK_METHOD1(setCallback, void(HWC2::ComposerCallback*));
+    MOCK_METHOD1(setCallback, void(HWC2::ComposerCallback&));
     MOCK_CONST_METHOD3(getDisplayIdentificationData,
                        bool(hal::HWDisplayId, uint8_t*, DisplayIdentificationData*));
     MOCK_CONST_METHOD1(hasCapability, bool(hal::Capability));
@@ -118,7 +118,8 @@ public:
                           hal::VsyncPeriodChangeTimeline*));
     MOCK_METHOD2(setBootDisplayMode, status_t(PhysicalDisplayId, hal::HWConfigId));
     MOCK_METHOD1(clearBootDisplayMode, status_t(PhysicalDisplayId));
-    MOCK_METHOD1(getPreferredBootDisplayMode, hal::HWConfigId(PhysicalDisplayId));
+    MOCK_METHOD1(getPreferredBootDisplayMode, std::optional<hal::HWConfigId>(PhysicalDisplayId));
+    MOCK_METHOD0(getBootDisplayModeSupport, bool());
     MOCK_METHOD2(setAutoLowLatencyMode, status_t(PhysicalDisplayId, bool));
     MOCK_METHOD2(getSupportedContentTypes,
                  status_t(PhysicalDisplayId, std::vector<hal::ContentType>*));
@@ -136,7 +137,6 @@ public:
                 (const, override));
     MOCK_METHOD(std::optional<hal::HWDisplayId>, fromPhysicalDisplayId, (PhysicalDisplayId),
                 (const, override));
-    MOCK_METHOD(bool, getBootDisplayModeSupport, (), (override));
     MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
 };
 

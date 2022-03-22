@@ -367,8 +367,7 @@ public:
     // Set a 2x2 transformation matrix on the layer. This transform
     // will be applied after parent transforms, but before any final
     // producer specified transform.
-    virtual bool setMatrix(const layer_state_t::matrix22_t& matrix,
-                           bool allowNonRectPreservingTransforms);
+    virtual bool setMatrix(const layer_state_t::matrix22_t& matrix);
 
     // This second set of geometry attributes are controlled by
     // setGeometryAppliesWithResize, and their default mode is to be
@@ -550,8 +549,6 @@ public:
                              nsecs_t /*expectedPresentTime*/) {
         return false;
     }
-
-    virtual bool isBufferLatched() const { return false; }
 
     virtual void latchAndReleaseBuffer() {}
 
@@ -968,6 +965,19 @@ protected:
     bool usingRelativeZ(LayerVector::StateSet) const;
 
     virtual ui::Transform getInputTransform() const;
+    /**
+     * Get the bounds in layer space within which this layer can receive input.
+     *
+     * These bounds are used to:
+     * - Determine the input frame for the layer to be used for occlusion detection; and
+     * - Determine the coordinate space within which the layer will receive input. The top-left of
+     *   this rect will be the origin of the coordinate space that the input events sent to the
+     *   layer will be in (prior to accounting for surface insets).
+     *
+     * The layer can still receive touch input if these bounds are invalid if
+     * "replaceTouchableRegionWithCrop" is specified. In this case, the layer will receive input
+     * in this layer's space, regardless of the specified crop layer.
+     */
     virtual Rect getInputBounds() const;
 
     // constant
@@ -1091,7 +1101,7 @@ private:
     void fillTouchOcclusionMode(gui::WindowInfo& info);
 
     // Fills in the frame and transform info for the gui::WindowInfo.
-    void fillInputFrameInfo(gui::WindowInfo&, const ui::Transform& displayTransform);
+    void fillInputFrameInfo(gui::WindowInfo&, const ui::Transform& screenToDisplay);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

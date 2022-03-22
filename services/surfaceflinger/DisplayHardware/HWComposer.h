@@ -110,7 +110,7 @@ public:
 
     virtual ~HWComposer();
 
-    virtual void setCallback(HWC2::ComposerCallback*) = 0;
+    virtual void setCallback(HWC2::ComposerCallback&) = 0;
 
     virtual bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
                                               DisplayIdentificationData* outData) const = 0;
@@ -265,7 +265,7 @@ public:
     virtual bool getBootDisplayModeSupport() = 0;
     virtual status_t setBootDisplayMode(PhysicalDisplayId, hal::HWConfigId) = 0;
     virtual status_t clearBootDisplayMode(PhysicalDisplayId) = 0;
-    virtual hal::HWConfigId getPreferredBootDisplayMode(PhysicalDisplayId) = 0;
+    virtual std::optional<hal::HWConfigId> getPreferredBootDisplayMode(PhysicalDisplayId) = 0;
 
     virtual std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const = 0;
     virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
@@ -286,7 +286,7 @@ public:
 
     ~HWComposer() override;
 
-    void setCallback(HWC2::ComposerCallback*) override;
+    void setCallback(HWC2::ComposerCallback&) override;
 
     bool getDisplayIdentificationData(hal::HWDisplayId, uint8_t* outPort,
                                       DisplayIdentificationData* outData) const override;
@@ -406,7 +406,7 @@ public:
     bool getBootDisplayModeSupport() override;
     status_t setBootDisplayMode(PhysicalDisplayId, hal::HWConfigId) override;
     status_t clearBootDisplayMode(PhysicalDisplayId) override;
-    hal::HWConfigId getPreferredBootDisplayMode(PhysicalDisplayId) override;
+    std::optional<hal::HWConfigId> getPreferredBootDisplayMode(PhysicalDisplayId) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;

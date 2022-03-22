@@ -157,12 +157,6 @@ class Progress {
 static std::string VERSION_CURRENT = "2.0";
 
 /*
- * Temporary version that adds a anr-traces.txt entry. Once tools support it, the current version
- * will be bumped to 3.0.
- */
-static std::string VERSION_SPLIT_ANR = "3.0-dev-split-anr";
-
-/*
  * "Alias" for the current version.
  */
 static std::string VERSION_DEFAULT = "default";
@@ -213,9 +207,6 @@ class Dumpstate {
     static android::os::dumpstate::CommandOptions DEFAULT_DUMPSYS;
 
     static Dumpstate& GetInstance();
-
-    /* Checkes whether dumpstate is generating a zipped bugreport. */
-    bool IsZipping() const;
 
     /* Initialize dumpstate fields before starting bugreport generation */
     void Initialize();

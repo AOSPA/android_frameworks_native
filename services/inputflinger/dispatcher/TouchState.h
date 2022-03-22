@@ -29,22 +29,26 @@ class WindowInfoHandle;
 namespace inputdispatcher {
 
 struct TouchState {
-    bool down;
-    bool split;
-    int32_t deviceId;  // id of the device that is currently down, others are rejected
-    uint32_t source;   // source of the device that is current down, others are rejected
-    int32_t displayId; // id to the display that currently has a touch, others are rejected
+    bool down = false;
+    bool split = false;
+    bool preventNewTargets = false;
+
+    // id of the device that is currently down, others are rejected
+    int32_t deviceId = -1;
+    // source of the device that is current down, others are rejected
+    uint32_t source = 0;
+    // id to the display that currently has a touch, others are rejected
+    int32_t displayId = ADISPLAY_ID_NONE;
+
     std::vector<TouchedWindow> windows;
 
-    std::vector<Monitor> gestureMonitors;
+    TouchState() = default;
+    ~TouchState() = default;
+    TouchState& operator=(const TouchState&) = default;
 
-    TouchState();
-    ~TouchState();
     void reset();
-    void copyFrom(const TouchState& other);
     void addOrUpdateWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
                            int32_t targetFlags, BitSet32 pointerIds);
-    void addGestureMonitors(const std::vector<Monitor>& monitors);
     void removeWindowByToken(const sp<IBinder>& token);
     void filterNonAsIsTouchWindows();
     void filterWindowsExcept(const sp<IBinder>& token);

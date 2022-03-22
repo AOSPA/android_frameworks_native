@@ -30,6 +30,7 @@
 #include <ftl/Flags.h>
 #include <gui/FrameTimelineInfo.h>
 #include <gui/ITransactionCompletedListener.h>
+#include <gui/SpHash.h>
 #include <math/vec4.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -70,6 +71,7 @@ enum class FrameEvent;
 using gui::IDisplayEventConnection;
 using gui::IRegionSamplingListener;
 using gui::IScreenCaptureListener;
+using gui::SpHash;
 
 namespace ui {
 
@@ -117,11 +119,6 @@ public:
     };
 
     using EventRegistrationFlags = Flags<EventRegistration>;
-
-    template <typename T>
-    struct SpHash {
-        size_t operator()(const sp<T>& k) const { return std::hash<T*>()(k.get()); }
-    };
 
     /*
      * Create a connection with SurfaceFlinger.
@@ -233,12 +230,6 @@ public:
      * display mode.
      */
     virtual status_t clearBootDisplayMode(const sp<IBinder>& display) = 0;
-
-    /**
-     * Gets the display mode in which the device boots if there is no user-preferred display mode.
-     */
-    virtual status_t getPreferredBootDisplayMode(const sp<IBinder>& display,
-                                                 ui::DisplayModeId*) = 0;
 
     /**
      * Gets whether boot time display mode operations are supported on the device.
@@ -691,7 +682,6 @@ public:
         GET_BOOT_DISPLAY_MODE_SUPPORT,
         SET_BOOT_DISPLAY_MODE,
         CLEAR_BOOT_DISPLAY_MODE,
-        GET_PREFERRED_BOOT_DISPLAY_MODE,
         SET_OVERRIDE_FRAME_RATE,
         // Always append new enum to the end.
     };
