@@ -28,6 +28,9 @@
 
 #define EGL_EGLEXT_PROTOTYPES
 
+#include <dlfcn.h>
+#include <pthread.h>
+
 #include <binder/IPCThreadState.h>
 #include <gui/BufferItem.h>
 #include <gui/BufferQueueCore.h>
@@ -66,6 +69,39 @@ namespace android {
           mCore->mUniqueId, mCore->mConnectedApi, mCore->mConnectedPid, (mCore->mUniqueId) >> 32, \
           ##__VA_ARGS__)
 
+struct Afp_Interface {
+    void *mPenguinHandle = nullptr;
+    bool (*mPenguinInit)() = nullptr;
+    void (*mPenguinQueueBuffer)(const uint64_t objAddr, const char* name) = nullptr;
+    void (*mPenguinRemoveItemFromList)(uint64_t objAddr) = nullptr;
+    bool mAllPenguinSymbolsFound = false;
+    pthread_once_t mInitControl = PTHREAD_ONCE_INIT;
+};
+
+static Afp_Interface AFP;
+void AFPLoadAndInit() {
+    AFP.mPenguinHandle = dlopen("libpenguin.so", RTLD_NOW);
+    if (!AFP.mPenguinHandle) {
+        ALOGE("Unable to open libpenguin.so: %s.", dlerror());
+    } else {
+        AFP.mPenguinInit=
+            (bool (*) ())dlsym(AFP.mPenguinHandle, "penguinInit");
+        AFP.mPenguinQueueBuffer =
+            (void (*) (const uint64_t, const char*))dlsym(AFP.mPenguinHandle, "penguinQueueBuffer");
+        AFP.mPenguinRemoveItemFromList =
+            (void (*) (uint64_t))dlsym(AFP.mPenguinHandle, "penguinRemoveItemFromList");
+        AFP.mAllPenguinSymbolsFound = AFP.mPenguinInit && AFP.mPenguinQueueBuffer
+                                                       && AFP.mPenguinRemoveItemFromList;
+    }
+    if (AFP.mAllPenguinSymbolsFound) {
+        if (!AFP.mPenguinInit()) {
+            AFP.mAllPenguinSymbolsFound = false;
+            if (!AFP.mPenguinHandle)
+                dlclose(AFP.mPenguinHandle);
+        }
+    }
+}
+
 static constexpr uint32_t BQ_LAYER_COUNT = 1;
 ProducerListener::~ProducerListener() = default;
 
@@ -83,9 +119,15 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
     mCurrentCallbackTicket(0),
     mCallbackCondition(),
     mDequeueTimeout(-1),
-    mDequeueWaitingForAllocation(false) {}
+    mDequeueWaitingForAllocation(false) {
+    pthread_once(&(AFP.mInitControl), AFPLoadAndInit);
+}
 
-BufferQueueProducer::~BufferQueueProducer() {}
+BufferQueueProducer::~BufferQueueProducer() {
+    if (AFP.mAllPenguinSymbolsFound) {
+        AFP.mPenguinRemoveItemFromList((uint64_t)(this));
+    }
+}
 
 status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
     ATRACE_CALL();
@@ -840,6 +882,10 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         default:
             BQ_LOGE("queueBuffer: unknown scaling mode %d", scalingMode);
             return BAD_VALUE;
+    }
+
+    if (AFP.mAllPenguinSymbolsFound) {
+        AFP.mPenguinQueueBuffer((uint64_t)this, mConsumerName.string());
     }
 
     sp<IConsumerListener> frameAvailableListener;
