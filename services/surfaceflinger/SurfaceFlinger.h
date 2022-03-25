@@ -1612,6 +1612,7 @@ private:
     int mSFTid = 0;
     bool mTidSentSuccessfully = false;
     bool mSendEarlyWakeUp = false;
+    bool mSentInitialFps = false;
     std::mutex mEarlyWakeUpMutex;
     int mUiLayerFrameCount = 0;
 
