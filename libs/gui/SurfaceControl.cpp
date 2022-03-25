@@ -284,6 +284,19 @@ sp<SurfaceControl> SurfaceControl::getParentingLayer() {
     return this;
 }
 
+uint64_t SurfaceControl::resolveFrameNumber(const std::optional<uint64_t>& frameNumber) {
+    if (frameNumber.has_value()) {
+        auto ret = frameNumber.value();
+        // Set the fallback to something far enough ahead that in the unlikely event of mixed
+        // "real" frame numbers and fallback frame numbers, we still won't collide in any
+        // meaningful capacity
+        mFallbackFrameNumber = ret + 100;
+        return ret;
+    } else {
+        return mFallbackFrameNumber++;
+    }
+}
+
 typedef bool (*InitFunc_t)(sp<IGraphicBufferProducer>*, const sp<IBinder>&);
 typedef void (*DeinitFunc_t)(const sp<IBinder>&);
 SurfaceControl::VpsExtension::VpsExtension()

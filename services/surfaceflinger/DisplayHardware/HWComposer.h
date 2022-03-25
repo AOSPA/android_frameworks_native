@@ -272,6 +272,8 @@ public:
             PhysicalDisplayId,
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) = 0;
+    virtual status_t setIdleTimerEnabled(PhysicalDisplayId, std::chrono::milliseconds timeout) = 0;
+    virtual bool hasDisplayIdleTimerCapability(PhysicalDisplayId) = 0;
 
     virtual std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const = 0;
     virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
@@ -417,6 +419,8 @@ public:
             PhysicalDisplayId,
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;
+    status_t setIdleTimerEnabled(PhysicalDisplayId, std::chrono::milliseconds timeout) override;
+    bool hasDisplayIdleTimerCapability(PhysicalDisplayId) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;

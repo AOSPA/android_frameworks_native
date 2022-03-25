@@ -338,6 +338,7 @@ bool HidlComposer::isSupported(OptionalFeature feature) const {
         case OptionalFeature::ExpectedPresentTime:
         case OptionalFeature::DisplayBrightnessCommand:
         case OptionalFeature::BootDisplayConfig:
+        case OptionalFeature::KernelIdleTimer:
             return false;
     }
 }
@@ -599,6 +600,11 @@ Error HidlComposer::getDozeSupport(Display display, bool* outSupport) {
     });
 
     return error;
+}
+
+Error HidlComposer::hasDisplayIdleTimerCapability(Display, bool*) {
+    LOG_ALWAYS_FATAL("hasDisplayIdleTimerCapability should have never been called on this as "
+                     "OptionalFeature::KernelIdleTimer is not supported on HIDL");
 }
 
 Error HidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outTypes,
@@ -1477,6 +1483,11 @@ Error HidlComposer::getDisplayDecorationSupport(
                 support) {
     support->reset();
     return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::setIdleTimerEnabled(Display, std::chrono::milliseconds) {
+    LOG_ALWAYS_FATAL("setIdleTimerEnabled should have never been called on this as "
+                     "OptionalFeature::KernelIdleTimer is not supported on HIDL");
 }
 
 void HidlComposer::registerCallback(ComposerCallback& callback) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,22 @@
 
 #pragma once
 
-#include <binder/Parcel.h>
+#include <binder/IBinder.h>
 #include <fuzzer/FuzzedDataProvider.h>
-
-#include <functional>
 
 namespace android {
 /**
- * Fill parcel data, including some random binder objects and FDs
+ * Based on the random data in provider, construct an arbitrary number of
+ * Parcel objects and send them to the service in serial.
  *
- * p - the Parcel to fill
- * provider - takes ownership and completely consumes provider
- * writeHeader - optional function to write a specific header once the format of the parcel is
- *     picked (for instance, to write an interface header)
+ * Usage:
+ *
+ *   extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+ *       FuzzedDataProvider provider = FuzzedDataProvider(data, size);
+ *       // can use provider here to create a service with different options
+ *       sp<IFoo> myService = sp<IFoo>::make(...);
+ *       fuzzService(myService, std::move(provider));
+ *   }
  */
-void fillRandomParcel(
-        Parcel* p, FuzzedDataProvider&& provider,
-        std::function<void(Parcel* p, FuzzedDataProvider& provider)> writeHeader = nullptr);
+void fuzzService(const sp<IBinder>& binder, FuzzedDataProvider&& provider);
 } // namespace android

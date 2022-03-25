@@ -726,8 +726,7 @@ binder::Status InstalldNativeService::createAppDataLocked(
 
     if (flags & FLAG_STORAGE_SDK) {
         // Safe to ignore status since we can retry creating this by calling reconcileSdkData
-        auto ignore = createSdkSandboxDataPackageDirectory(uuid, packageName, userId, appId,
-                                                           previousAppId, seInfo, flags);
+        auto ignore = createSdkSandboxDataPackageDirectory(uuid, packageName, userId, appId, flags);
         if (!ignore.isOk()) {
             PLOG(WARNING) << "Failed to create sdk data package directory for " << packageName;
         }
@@ -746,7 +745,7 @@ binder::Status InstalldNativeService::createAppDataLocked(
  */
 binder::Status InstalldNativeService::createSdkSandboxDataPackageDirectory(
         const std::optional<std::string>& uuid, const std::string& packageName, int32_t userId,
-        int32_t appId, int32_t previousAppId, const std::string& seInfo, int32_t flags) {
+        int32_t appId, int32_t flags) {
     int32_t sdkSandboxUid = multiuser_get_sdk_sandbox_uid(userId, appId);
     if (sdkSandboxUid == -1) {
         // There no valid sdk sandbox process for this app. Skip creation of data directory
@@ -756,8 +755,7 @@ binder::Status InstalldNativeService::createSdkSandboxDataPackageDirectory(
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
 
     constexpr int storageFlags[2] = {FLAG_STORAGE_CE, FLAG_STORAGE_DE};
-    for (int i = 0; i < 2; i++) {
-        int currentFlag = storageFlags[i];
+    for (int currentFlag : storageFlags) {
         if ((flags & currentFlag) == 0) {
             continue;
         }
@@ -766,7 +764,7 @@ binder::Status InstalldNativeService::createSdkSandboxDataPackageDirectory(
         // /data/misc_{ce,de}/<user-id>/sdksandbox directory gets created by vold
         // during user creation
 
-        // Prepare the app directory
+        // Prepare the package directory
         auto packagePath = create_data_misc_sdk_sandbox_package_path(uuid_, isCeData, userId,
                                                                      packageName.c_str());
 #if SDK_DEBUG
@@ -776,27 +774,6 @@ binder::Status InstalldNativeService::createSdkSandboxDataPackageDirectory(
         if (prepare_app_dir(packagePath, 0751, AID_SYSTEM, AID_SYSTEM)) {
             return error("Failed to prepare " + packagePath);
         }
-
-        // Now prepare the shared directory which will be accessible by all codes
-        auto sharedPath = create_data_misc_sdk_sandbox_shared_path(uuid_, isCeData, userId,
-                                                                   packageName.c_str());
-
-        int32_t previousSdkSandboxUid = multiuser_get_sdk_sandbox_uid(userId, previousAppId);
-        int32_t cacheGid = multiuser_get_cache_gid(userId, appId);
-        if (cacheGid == -1) {
-            return exception(binder::Status::EX_ILLEGAL_STATE,
-                             StringPrintf("cacheGid cannot be -1 for sdksandbox data"));
-        }
-        auto status = createAppDataDirs(sharedPath, sdkSandboxUid, AID_NOBODY,
-                                        &previousSdkSandboxUid, cacheGid, seInfo, 0700);
-        if (!status.isOk()) {
-            return status;
-        }
-
-        // TODO(b/211763739): We also need to handle art profile creations
-
-        // TODO(b/211763739): And return the CE inode of the sdksandbox root directory and
-        // app directory under it so we can clear contents while CE storage is locked
     }
 
     return ok();
@@ -847,11 +824,10 @@ binder::Status InstalldNativeService::createAppDataBatched(
 
 binder::Status InstalldNativeService::reconcileSdkData(
         const android::os::ReconcileSdkDataArgs& args) {
-    ENFORCE_UID(AID_SYSTEM);
     // Locking is performed depeer in the callstack.
 
-    return reconcileSdkData(args.uuid, args.packageName, args.sdkPackageNames, args.randomSuffixes,
-                            args.userId, args.appId, args.previousAppId, args.seInfo, args.flags);
+    return reconcileSdkData(args.uuid, args.packageName, args.subDirNames, args.userId, args.appId,
+                            args.previousAppId, args.seInfo, args.flags);
 }
 
 /**
@@ -865,16 +841,14 @@ binder::Status InstalldNativeService::reconcileSdkData(
  *   is to avoid having same per-sdk directory with different suffix.
  * - If a sdk level directory exist which is absent from sdkPackageNames, we remove it.
  */
-binder::Status InstalldNativeService::reconcileSdkData(
-        const std::optional<std::string>& uuid, const std::string& packageName,
-        const std::vector<std::string>& sdkPackageNames,
-        const std::vector<std::string>& randomSuffixes, int userId, int appId, int previousAppId,
-        const std::string& seInfo, int flags) {
+binder::Status InstalldNativeService::reconcileSdkData(const std::optional<std::string>& uuid,
+                                                       const std::string& packageName,
+                                                       const std::vector<std::string>& subDirNames,
+                                                       int userId, int appId, int previousAppId,
+                                                       const std::string& seInfo, int flags) {
+    ENFORCE_UID(AID_SYSTEM);
     CHECK_ARGUMENT_UUID(uuid);
     CHECK_ARGUMENT_PACKAGE_NAME(packageName);
-    for (const auto& sdkPackageName : sdkPackageNames) {
-        CHECK_ARGUMENT_PACKAGE_NAME(sdkPackageName);
-    }
     LOCK_PACKAGE_USER();
 
 #if SDK_DEBUG
@@ -883,16 +857,9 @@ binder::Status InstalldNativeService::reconcileSdkData(
 
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
 
-    // Validate we have enough randomSuffixStrings
-    if (randomSuffixes.size() != sdkPackageNames.size()) {
-        return exception(binder::Status::EX_ILLEGAL_ARGUMENT,
-                         StringPrintf("Not enough random suffix. Required %d, received %d.",
-                                      (int)sdkPackageNames.size(), (int)randomSuffixes.size()));
-    }
-
     // Prepare the sdk package directory in case it's missing
-    const auto status = createSdkSandboxDataPackageDirectory(uuid, packageName, userId, appId,
-                                                             previousAppId, seInfo, flags);
+    const auto status =
+            createSdkSandboxDataPackageDirectory(uuid, packageName, userId, appId, flags);
     if (!status.isOk()) {
         return status;
     }
@@ -906,37 +873,22 @@ binder::Status InstalldNativeService::reconcileSdkData(
         }
         const bool isCeData = (currentFlag == FLAG_STORAGE_CE);
 
-        // Since random suffix provided will be random every time, we need to ensure we don't end up
-        // creating multuple directories for same sdk package with different suffixes. This
-        // is ensured by fetching all the existing sub directories and storing them so that we can
-        // check for existence later. We also remove unconsumed sdk directories in this check.
         const auto packagePath = create_data_misc_sdk_sandbox_package_path(uuid_, isCeData, userId,
                                                                            packageName.c_str());
-        const std::unordered_set<std::string> expectedSdkNames(sdkPackageNames.begin(),
-                                                               sdkPackageNames.end());
-        // Store paths of per-sdk directory for sdk that already exists
-        std::unordered_map<std::string, std::string> sdkNamesThatExist;
 
-        const auto subDirHandler = [&packagePath, &expectedSdkNames, &sdkNamesThatExist,
-                                    &res](const std::string& filename) {
-            auto filepath = packagePath + "/" + filename;
-            auto tokens = Split(filename, "@");
-            if (tokens.size() != 2) {
-                // Not a per-sdk directory with random suffix
-                return;
-            }
-            auto sdkName = tokens[0];
-
+        // Remove existing sub-directories not referred in subDirNames
+        const std::unordered_set<std::string> expectedSubDirNames(subDirNames.begin(),
+                                                                  subDirNames.end());
+        const auto subDirHandler = [&packagePath, &expectedSubDirNames,
+                                    &res](const std::string& subDirName) {
             // Remove the per-sdk directory if it is not referred in
-            // expectedSdkNames
-            if (expectedSdkNames.find(sdkName) == expectedSdkNames.end()) {
-                if (delete_dir_contents_and_dir(filepath) != 0) {
-                    res = error("Failed to delete " + filepath);
+            // expectedSubDirNames
+            if (expectedSubDirNames.find(subDirName) == expectedSubDirNames.end()) {
+                auto path = packagePath + "/" + subDirName;
+                if (delete_dir_contents_and_dir(path) != 0) {
+                    res = error("Failed to delete " + path);
                     return;
                 }
-            } else {
-                // Otherwise, store it as existing sdk level directory
-                sdkNamesThatExist[sdkName] = filepath;
             }
         };
         const int ec = foreach_subdir(packagePath, subDirHandler);
@@ -945,19 +897,11 @@ binder::Status InstalldNativeService::reconcileSdkData(
             continue;
         }
 
-        // Create sdksandbox data directory for each sdksandbox package
-        for (int i = 0, size = sdkPackageNames.size(); i < size; i++) {
-            const std::string& sdkName = sdkPackageNames[i];
-            const std::string& randomSuffix = randomSuffixes[i];
-            std::string path;
-            if (const auto& it = sdkNamesThatExist.find(sdkName); it != sdkNamesThatExist.end()) {
-                // Already exists. Use existing path instead of creating a new one
-                path = it->second;
-            } else {
-                path = create_data_misc_sdk_sandbox_sdk_path(uuid_, isCeData, userId,
-                                                             packageName.c_str(), sdkName.c_str(),
-                                                             randomSuffix.c_str());
-            }
+        // Now create the subDirNames
+        for (const auto& subDirName : subDirNames) {
+            const std::string path =
+                    create_data_misc_sdk_sandbox_sdk_path(uuid_, isCeData, userId,
+                                                          packageName.c_str(), subDirName.c_str());
 
             // Create the directory along with cache and code_cache
             const int32_t cacheGid = multiuser_get_cache_gid(userId, appId);
@@ -968,7 +912,7 @@ binder::Status InstalldNativeService::reconcileSdkData(
             const int32_t sandboxUid = multiuser_get_sdk_sandbox_uid(userId, appId);
             int32_t previousSandboxUid = multiuser_get_sdk_sandbox_uid(userId, previousAppId);
             auto status = createAppDataDirs(path, sandboxUid, AID_NOBODY, &previousSandboxUid,
-                                            cacheGid, seInfo, 0700);
+                                            cacheGid, seInfo, 0700 | S_ISGID);
             if (!status.isOk()) {
                 res = status;
                 continue;
@@ -1772,6 +1716,36 @@ binder::Status InstalldNativeService::moveCompleteApp(const std::optional<std::s
         }
     }
 
+    // Copy sdk data for all known users
+    for (auto userId : users) {
+        LOCK_USER();
+
+        constexpr int storageFlags[2] = {FLAG_STORAGE_CE, FLAG_STORAGE_DE};
+        for (int currentFlag : storageFlags) {
+            const bool isCeData = currentFlag == FLAG_STORAGE_CE;
+
+            const auto from = create_data_misc_sdk_sandbox_package_path(from_uuid, isCeData, userId,
+                                                                        package_name);
+            if (access(from.c_str(), F_OK) != 0) {
+                LOG(INFO) << "Missing source " << from;
+                continue;
+            }
+            const auto to = create_data_misc_sdk_sandbox_path(to_uuid, isCeData, userId);
+
+            const int rc = copy_directory_recursive(from.c_str(), to.c_str());
+            if (rc != 0) {
+                res = error(rc, "Failed copying " + from + " to " + to);
+                goto fail;
+            }
+        }
+
+        if (!restoreconSdkDataLocked(toUuid, packageName, userId, FLAG_STORAGE_CE | FLAG_STORAGE_DE,
+                                     appId, seInfo)
+                     .isOk()) {
+            res = error("Failed to restorecon");
+            goto fail;
+        }
+    }
     // We let the framework scan the new location and persist that before
     // deleting the data in the old location; this ordering ensures that
     // we can recover from things like battery pulls.
@@ -1794,6 +1768,18 @@ fail:
         }
         {
             auto to = create_data_user_ce_package_path(to_uuid, userId, package_name);
+            if (delete_dir_contents(to.c_str(), 1, nullptr) != 0) {
+                LOG(WARNING) << "Failed to rollback " << to;
+            }
+        }
+    }
+    for (auto userId : users) {
+        LOCK_USER();
+        constexpr int storageFlags[2] = {FLAG_STORAGE_CE, FLAG_STORAGE_DE};
+        for (int currentFlag : storageFlags) {
+            const bool isCeData = currentFlag == FLAG_STORAGE_CE;
+            const auto to = create_data_misc_sdk_sandbox_package_path(to_uuid, isCeData, userId,
+                                                                      package_name);
             if (delete_dir_contents(to.c_str(), 1, nullptr) != 0) {
                 LOG(WARNING) << "Failed to rollback " << to;
             }
@@ -1833,6 +1819,11 @@ binder::Status InstalldNativeService::destroyUserData(const std::optional<std::s
         if (delete_dir_contents_and_dir(path, true) != 0) {
             res = error("Failed to delete " + path);
         }
+        auto sdk_sandbox_de_path =
+                create_data_misc_sdk_sandbox_path(uuid_, /*isCeData=*/false, userId);
+        if (delete_dir_contents_and_dir(sdk_sandbox_de_path, true) != 0) {
+            res = error("Failed to delete " + sdk_sandbox_de_path);
+        }
         if (uuid_ == nullptr) {
             path = create_data_misc_legacy_path(userId);
             if (delete_dir_contents_and_dir(path, true) != 0) {
@@ -1848,6 +1839,11 @@ binder::Status InstalldNativeService::destroyUserData(const std::optional<std::s
         auto path = create_data_user_ce_path(uuid_, userId);
         if (delete_dir_contents_and_dir(path, true) != 0) {
             res = error("Failed to delete " + path);
+        }
+        auto sdk_sandbox_ce_path =
+                create_data_misc_sdk_sandbox_path(uuid_, /*isCeData=*/true, userId);
+        if (delete_dir_contents_and_dir(sdk_sandbox_ce_path, true) != 0) {
+            res = error("Failed to delete " + sdk_sandbox_ce_path);
         }
         path = findDataMediaPath(uuid, userId);
         if (delete_dir_contents_and_dir(path, true) != 0) {
@@ -2101,6 +2097,13 @@ static void collectQuotaStats(const std::string& uuid, int32_t userId,
             stats->dataSize += space;
         }
 
+        int sdkSandboxUid = multiuser_get_sdk_sandbox_uid(userId, appId);
+        if (sdkSandboxUid != -1) {
+            if ((space = GetOccupiedSpaceForUid(uuid, sdkSandboxUid)) != -1) {
+                stats->dataSize += space;
+            }
+        }
+
         int cacheGid = multiuser_get_cache_gid(userId, appId);
         if (cacheGid != -1) {
             if ((space = GetOccupiedSpaceForGid(uuid, cacheGid)) != -1) {
@@ -2208,8 +2211,17 @@ static void collectManualStats(const std::string& path, struct stats* stats) {
     closedir(d);
 }
 
+void collectManualStatsForSubDirectories(const std::string& path, struct stats* stats) {
+    const auto subDirHandler = [&path, &stats](const std::string& subDir) {
+        auto fullpath = path + "/" + subDir;
+        collectManualStats(fullpath, stats);
+    };
+    foreach_subdir(path, subDirHandler);
+}
+
 static void collectManualStatsForUser(const std::string& path, struct stats* stats,
-        bool exclude_apps = false) {
+                                      bool exclude_apps = false,
+                                      bool is_sdk_sandbox_storage = false) {
     DIR *d;
     int dfd;
     struct dirent *de;
@@ -2234,6 +2246,11 @@ static void collectManualStatsForUser(const std::string& path, struct stats* sta
                 continue;
             } else if (exclude_apps && (user_uid >= AID_APP_START && user_uid <= AID_APP_END)) {
                 continue;
+            } else if (is_sdk_sandbox_storage) {
+                // In case of sdk sandbox storage (e.g. /data/misc_ce/0/sdksandbox/<package-name>),
+                // collect individual stats of each subdirectory (shared, storage of each sdk etc.)
+                collectManualStatsForSubDirectories(StringPrintf("%s/%s", path.c_str(), name),
+                                                    stats);
             } else {
                 collectManualStats(StringPrintf("%s/%s", path.c_str(), name), stats);
             }
@@ -2375,6 +2392,19 @@ binder::Status InstalldNativeService::getAppSize(const std::optional<std::string
             auto dePath = create_data_user_de_package_path(uuid_, userId, pkgname);
             collectManualStats(dePath, &stats);
             ATRACE_END();
+
+            // In case of sdk sandbox storage (e.g. /data/misc_ce/0/sdksandbox/<package-name>),
+            // collect individual stats of each subdirectory (shared, storage of each sdk etc.)
+            if (appId >= AID_APP_START && appId <= AID_APP_END) {
+                ATRACE_BEGIN("sdksandbox");
+                auto sdkSandboxCePath =
+                        create_data_misc_sdk_sandbox_package_path(uuid_, true, userId, pkgname);
+                collectManualStatsForSubDirectories(sdkSandboxCePath, &stats);
+                auto sdkSandboxDePath =
+                        create_data_misc_sdk_sandbox_package_path(uuid_, false, userId, pkgname);
+                collectManualStatsForSubDirectories(sdkSandboxDePath, &stats);
+                ATRACE_END();
+            }
 
             if (!uuid) {
                 ATRACE_BEGIN("profiles");
@@ -2610,6 +2640,13 @@ binder::Status InstalldNativeService::getUserSize(const std::optional<std::strin
         collectManualStatsForUser(cePath, &stats);
         auto dePath = create_data_user_de_path(uuid_, userId);
         collectManualStatsForUser(dePath, &stats);
+        ATRACE_END();
+
+        ATRACE_BEGIN("sdksandbox");
+        auto sdkSandboxCePath = create_data_misc_sdk_sandbox_path(uuid_, true, userId);
+        collectManualStatsForUser(sdkSandboxCePath, &stats, false, true);
+        auto sdkSandboxDePath = create_data_misc_sdk_sandbox_path(uuid_, false, userId);
+        collectManualStatsForUser(sdkSandboxDePath, &stats, false, true);
         ATRACE_END();
 
         if (!uuid) {
@@ -3131,6 +3168,49 @@ binder::Status InstalldNativeService::restoreconAppDataLocked(
     return res;
 }
 
+binder::Status InstalldNativeService::restoreconSdkDataLocked(
+        const std::optional<std::string>& uuid, const std::string& packageName, int32_t userId,
+        int32_t flags, int32_t appId, const std::string& seInfo) {
+    ENFORCE_UID(AID_SYSTEM);
+    CHECK_ARGUMENT_UUID(uuid);
+    CHECK_ARGUMENT_PACKAGE_NAME(packageName);
+
+    binder::Status res = ok();
+
+    // SELINUX_ANDROID_RESTORECON_DATADATA flag is set by libselinux. Not needed here.
+    unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
+    const char* uuid_ = uuid ? uuid->c_str() : nullptr;
+    const char* pkgName = packageName.c_str();
+    const char* seinfo = seInfo.c_str();
+
+    uid_t uid = multiuser_get_sdk_sandbox_uid(userId, appId);
+    constexpr int storageFlags[2] = {FLAG_STORAGE_CE, FLAG_STORAGE_DE};
+    for (int currentFlag : storageFlags) {
+        if ((flags & currentFlag) == 0) {
+            continue;
+        }
+        const bool isCeData = (currentFlag == FLAG_STORAGE_CE);
+        const auto packagePath =
+                create_data_misc_sdk_sandbox_package_path(uuid_, isCeData, userId, pkgName);
+        if (access(packagePath.c_str(), F_OK) != 0) {
+            LOG(INFO) << "Missing source " << packagePath;
+            continue;
+        }
+        const auto subDirHandler = [&packagePath, &seinfo, &uid, &seflags,
+                                    &res](const std::string& subDir) {
+            const auto& fullpath = packagePath + "/" + subDir;
+            if (selinux_android_restorecon_pkgdir(fullpath.c_str(), seinfo, uid, seflags) < 0) {
+                res = error("restorecon failed for " + fullpath);
+            }
+        };
+        const auto ec = foreach_subdir(packagePath, subDirHandler);
+        if (ec != 0) {
+            res = error("Failed to restorecon for subdirs of " + packagePath);
+        }
+    }
+    return res;
+}
+
 binder::Status InstalldNativeService::createOatDir(const std::string& packageName,
                                                    const std::string& oatDir,
                                                    const std::string& instructionSet) {
@@ -3494,6 +3574,24 @@ binder::Status InstalldNativeService::cleanupInvalidPackageDirs(
     }
 
     return ok();
+}
+
+binder::Status InstalldNativeService::getOdexVisibility(
+        const std::string& packageName, const std::string& apkPath,
+        const std::string& instructionSet, const std::optional<std::string>& outputPath,
+        int32_t* _aidl_return) {
+    ENFORCE_UID(AID_SYSTEM);
+    CHECK_ARGUMENT_PACKAGE_NAME(packageName);
+    CHECK_ARGUMENT_PATH(apkPath);
+    CHECK_ARGUMENT_PATH(outputPath);
+    LOCK_PACKAGE();
+
+    const char* apk_path = apkPath.c_str();
+    const char* instruction_set = instructionSet.c_str();
+    const char* oat_dir = outputPath ? outputPath->c_str() : nullptr;
+
+    *_aidl_return = get_odex_visibility(apk_path, instruction_set, oat_dir);
+    return *_aidl_return == -1 ? error() : ok();
 }
 
 }  // namespace installd

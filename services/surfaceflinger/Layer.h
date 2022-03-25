@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2007 The Android Open Source Project
  *
@@ -1059,7 +1058,7 @@ protected:
     mutable bool mDrawingStateModified = false;
 
     sp<Fence> mLastClientCompositionFence;
-    bool mLastClientCompositionDisplayed = false;
+    bool mAlreadyDisplayedThisCompose = false;
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}
 
