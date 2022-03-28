@@ -275,6 +275,8 @@ public:
     // Returns a known frame rate that is the closest to frameRate
     Fps findClosestKnownFrameRate(Fps frameRate) const;
 
+    enum class KernelIdleTimerController { Sysprop, HwcApi };
+
     // Configuration flags.
     struct Config {
         bool enableFrameRateOverride = false;
@@ -285,17 +287,18 @@ public:
         int frameRateMultipleThreshold = 0;
 
         // The Idle Timer timeout. 0 timeout means no idle timer.
-        int32_t idleTimerTimeoutMs = 0;
+        std::chrono::milliseconds idleTimerTimeout = 0ms;
 
-        // Whether to use idle timer callbacks that support the kernel timer.
-        bool supportKernelIdleTimer = false;
+        // The controller representing how the kernel idle timer will be configured
+        // either on the HWC api or sysprop.
+        std::optional<KernelIdleTimerController> kernelIdleTimerController;
     };
 
     RefreshRateConfigs(const DisplayModes&, DisplayModeId,
                        Config config = {.enableFrameRateOverride = false,
                                         .frameRateMultipleThreshold = 0,
-                                        .idleTimerTimeoutMs = 0,
-                                        .supportKernelIdleTimer = false});
+                                        .idleTimerTimeout = 0ms,
+                                        .kernelIdleTimerController = {}});
 
     RefreshRateConfigs(const RefreshRateConfigs&) = delete;
     RefreshRateConfigs& operator=(const RefreshRateConfigs&) = delete;
@@ -313,6 +316,7 @@ public:
         TurnOff,  // Turn off the idle timer.
         TurnOn    // Turn on the idle timer.
     };
+
     // Checks whether kernel idle timer should be active depending the policy decisions around
     // refresh rates.
     KernelIdleTimerAction getIdleTimerAction() const;
@@ -335,7 +339,9 @@ public:
                                                  Fps displayFrameRate, GlobalSignals) const
             EXCLUDES(mLock);
 
-    bool supportsKernelIdleTimer() const { return mConfig.supportKernelIdleTimer; }
+    std::optional<KernelIdleTimerController> kernelIdleTimerController() {
+        return mConfig.kernelIdleTimerController;
+    }
 
     struct IdleTimerCallbacks {
         struct Callbacks {
@@ -373,13 +379,15 @@ public:
         if (!mIdleTimer) {
             return;
         }
-        if (kernelOnly && !mConfig.supportKernelIdleTimer) {
+        if (kernelOnly && !mConfig.kernelIdleTimerController.has_value()) {
             return;
         }
         mIdleTimer->reset();
     }
 
     void dump(std::string& result) const EXCLUDES(mLock);
+
+    std::chrono::milliseconds getIdleTimerTimeout();
 
 private:
     friend struct TestableRefreshRateConfigs;
@@ -440,8 +448,8 @@ private:
     std::optional<IdleTimerCallbacks::Callbacks> getIdleTimerCallbacks() const
             REQUIRES(mIdleTimerCallbacksMutex) {
         if (!mIdleTimerCallbacks) return {};
-        return mConfig.supportKernelIdleTimer ? mIdleTimerCallbacks->kernel
-                                              : mIdleTimerCallbacks->platform;
+        return mConfig.kernelIdleTimerController.has_value() ? mIdleTimerCallbacks->kernel
+                                                             : mIdleTimerCallbacks->platform;
     }
 
     // The list of refresh rates, indexed by display modes ID. This may change after this
