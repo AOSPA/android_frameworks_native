@@ -99,6 +99,8 @@ public:
             hal::Error, getDisplayDecorationSupport,
             (std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport> *),
             (override));
+    MOCK_METHOD(hal::Error, setIdleTimerEnabled, (std::chrono::milliseconds), (override));
+    MOCK_METHOD(bool, hasDisplayIdleTimerCapability, (), (const override));
     MOCK_METHOD(hal::Error, setDisplayElapseTime, (uint64_t), (override));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD(hal::Error, setClientTarget_3_1, (int32_t, const android::sp<android::Fence>&,
