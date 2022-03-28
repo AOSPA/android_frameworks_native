@@ -4903,13 +4903,18 @@ status_t SurfaceFlinger::setTransactionState(
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
         sp<Layer> layer = fromHandle(state.surface).promote();
         if (layer != nullptr) {
-            const uint32_t layerStackId = layer->getLayerStack();
             SmomoIntf *smoMo = nullptr;
-            for (auto &instance: mSmomoInstances) {
-                 if (instance.layerStackId == layerStackId) {
-                    smoMo = instance.smoMo;
-                    break;
+            if (mSmomoInstances.size() > 1) {
+                const uint32_t layerStackId = layer->getLayerStack();
+                for (auto &instance: mSmomoInstances) {
+                     if (instance.layerStackId == layerStackId) {
+                        smoMo = instance.smoMo;
+                        break;
+                    }
                 }
+            }
+            else if (mSmomoInstances.size() == 1) {
+                smoMo = mSmomoInstances[0].smoMo;
             }
 
             if (smoMo) {
