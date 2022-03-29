@@ -3963,7 +3963,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            if (mUseFbScaling && display->isPrimary()) {
+            if (mUseFbScaling && display->isPrimary() && display->isPoweredOn()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
                 DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
                 setFrameBufferSizeForScaling(display, curState, drawingState);
