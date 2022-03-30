@@ -206,6 +206,7 @@ struct FakePhaseOffsets : scheduler::VsyncConfiguration {
     void reset() override {}
     void setRefreshRateFps(Fps) override {}
     void dump(std::string &) const override {}
+    void UpdateSfOffsets(std::unordered_map<float, int64_t>*) override {}
 };
 namespace scheduler {
 class TestableScheduler : public Scheduler, private ICompositor {
@@ -228,7 +229,7 @@ public:
     }
 
     ConnectionHandle createConnection(std::unique_ptr<EventThread> eventThread) {
-        return Scheduler::createConnection(std::move(eventThread));
+        return Scheduler::createConnection(std::move(eventThread), false);
     }
 
     auto &mutablePrimaryHWVsyncEnabled() { return mPrimaryHWVsyncEnabled; }
