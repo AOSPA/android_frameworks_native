@@ -4003,32 +4003,28 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
     auto display = displayDevice->getCompositionDisplay();
     int newWidth = currentState.layerStackSpaceRect.width();
     int newHeight = currentState.layerStackSpaceRect.height();
-    int currentWidth = drawingState.layerStackSpaceRect.width();
-    int currentHeight = drawingState.layerStackSpaceRect.height();
     int displayWidth = displayDevice->getWidth();
     int displayHeight = displayDevice->getHeight();
-    bool update_needed = false;
 
-    if (newWidth != currentWidth || newHeight != currentHeight) {
-        update_needed = true;
+    if (newWidth != displayWidth || newHeight != displayHeight) {
         if (!((newWidth > newHeight && displayWidth > displayHeight) ||
             (newWidth < newHeight && displayWidth < displayHeight))) {
             std::swap(newWidth, newHeight);
         }
     }
 
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
-        !update_needed) {
-        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                     currentState.orientedDisplaySpaceRect);
-        return;
-    }
-
     if (newWidth > 0 && newHeight > 0) {
         currentState.width =  newWidth;
         currentState.height = newHeight;
     }
+
     currentState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
+
+    if (displayWidth == newWidth && displayHeight == newHeight) {
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
 
     if (mBootStage == BootStage::FINISHED) {
         displayDevice->setDisplaySize(currentState.width, currentState.height);
