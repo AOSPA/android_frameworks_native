@@ -1150,6 +1150,7 @@ private:
     bool mIsAtRoot = false;
 
     uint32_t mLayerCreationFlags;
+    bool findInHierarchy(const sp<Layer>&);
 public:
     nsecs_t getPreviousGfxInfo();
 };

@@ -343,6 +343,9 @@ public:
                               Dataspace dataspace) override;
 #endif
 
+    Error getPhysicalDisplayOrientation(Display displayId,
+                                        AidlTransform* outDisplayOrientation) override;
+
 private:
     class CommandWriter : public CommandWriterBase {
     public:

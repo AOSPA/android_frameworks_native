@@ -337,8 +337,8 @@ bool HidlComposer::isSupported(OptionalFeature feature) const {
             return mClient_2_4 != nullptr;
         case OptionalFeature::ExpectedPresentTime:
         case OptionalFeature::DisplayBrightnessCommand:
-        case OptionalFeature::BootDisplayConfig:
         case OptionalFeature::KernelIdleTimer:
+        case OptionalFeature::PhysicalDisplayOrientation:
             return false;
     }
 }
@@ -1488,6 +1488,11 @@ Error HidlComposer::getDisplayDecorationSupport(
 Error HidlComposer::setIdleTimerEnabled(Display, std::chrono::milliseconds) {
     LOG_ALWAYS_FATAL("setIdleTimerEnabled should have never been called on this as "
                      "OptionalFeature::KernelIdleTimer is not supported on HIDL");
+}
+
+Error HidlComposer::getPhysicalDisplayOrientation(Display, AidlTransform*) {
+    LOG_ALWAYS_FATAL("getPhysicalDisplayOrientation should have never been called on this as "
+                     "OptionalFeature::PhysicalDisplayOrientation is not supported on HIDL");
 }
 
 void HidlComposer::registerCallback(ComposerCallback& callback) {
