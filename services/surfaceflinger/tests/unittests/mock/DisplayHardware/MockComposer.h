@@ -164,6 +164,7 @@ public:
                  Error(Display, std::optional<DisplayDecorationSupport>*));
     MOCK_METHOD2(setIdleTimerEnabled, Error(Display, std::chrono::milliseconds));
     MOCK_METHOD2(hasDisplayIdleTimerCapability, Error(Display, bool*));
+    MOCK_METHOD2(getPhysicalDisplayOrientation, Error(Display, AidlTransform*));
     MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
 #ifdef QTI_UNIFIED_DRAW
     MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));

@@ -594,6 +594,10 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eColorChanged;
         color = other.color;
     }
+    if (other.what & eColorSpaceAgnosticChanged) {
+        what |= eColorSpaceAgnosticChanged;
+        colorSpaceAgnostic = other.colorSpaceAgnostic;
+    }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "
               "other.what=0x%" PRIX64 " what=0x%" PRIX64 " unmerged flags=0x%" PRIX64,
@@ -770,7 +774,13 @@ status_t LayerCaptureArgs::readFromParcel(const Parcel* input) {
 }; // namespace gui
 
 ReleaseCallbackId BufferData::generateReleaseCallbackId() const {
-    return {buffer->getId(), frameNumber};
+    uint64_t bufferId;
+    if (buffer) {
+        bufferId = buffer->getId();
+    } else {
+        bufferId = cachedBuffer.id;
+    }
+    return {bufferId, frameNumber};
 }
 
 status_t BufferData::writeToParcel(Parcel* output) const {
