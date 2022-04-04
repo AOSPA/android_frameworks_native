@@ -241,7 +241,7 @@ void SchedulerFuzzer::fuzzLayerHistory() {
     scheduler->createConnection(std::make_unique<android::mock::EventThread>());
 
     scheduler::ConnectionHandle handle;
-    scheduler->createDisplayEventConnection(handle);
+    scheduler->createDisplayEventConnection(handle, false);
     scheduler->setDuration(handle, (std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>(),
                            (std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>());
 
