@@ -72,6 +72,7 @@ public:
 
     void deregisterLayer(Layer*);
     std::string dump() const;
+    void updateThermalFps(float fps) { mThermalFps = fps; }
 
     // return the frames per second of the layer with the given sequence id.
     float getLayerFramerate(nsecs_t now, int32_t id) const;
@@ -89,7 +90,7 @@ private:
     // worst case time complexity is O(2 * inactive + active)
     void partitionLayers(nsecs_t now) REQUIRES(mLock);
 
-    enum class layerStatus {
+    enum class LayerStatus {
         NotFound,
         LayerInActiveMap,
         LayerInInactiveMap,
@@ -97,9 +98,11 @@ private:
 
     // looks up a layer by sequence id in both layerInfo maps.
     // The first element indicates if and where the item was found
-    std::pair<layerStatus, LayerHistory::LayerPair*> findLayer(int32_t id) REQUIRES(mLock);
-    std::pair<layerStatus, const LayerHistory::LayerPair*> findLayer(int32_t id) const
-            REQUIRES(mLock);
+    std::pair<LayerStatus, LayerPair*> findLayer(int32_t id) REQUIRES(mLock);
+
+    std::pair<LayerStatus, const LayerPair*> findLayer(int32_t id) const REQUIRES(mLock) {
+        return const_cast<LayerHistory*>(this)->findLayer(id);
+    }
 
     mutable std::mutex mLock;
 
@@ -121,6 +124,9 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
+
+    // If Thermal mitigation enabled, limit to thermal Fps
+    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler

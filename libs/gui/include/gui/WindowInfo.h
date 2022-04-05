@@ -17,7 +17,7 @@
 #pragma once
 
 #include <android/gui/TouchOcclusionMode.h>
-#include <android/os/IInputConstants.h>
+#include <android/os/InputConfig.h>
 #include <binder/Parcel.h>
 #include <binder/Parcelable.h>
 #include <ftl/Flags.h>
@@ -132,22 +132,45 @@ struct WindowInfo : public Parcelable {
         ftl_last = FIRST_SYSTEM_WINDOW + 15
     };
 
-    // This is a conversion of os::IInputConstants::InputFeature to an enum backed by an unsigned
+    // Flags used to determine configuration of this input window.
+    // This is a conversion of os::InputConfig to an enum backed by an unsigned
     // type. This indicates that they are flags, so it can be used with ftl/enum.h.
-    enum class Feature : uint32_t {
+    enum class InputConfig : uint32_t {
         // clang-format off
+        DEFAULT =
+                static_cast<uint32_t>(os::InputConfig::DEFAULT),
         NO_INPUT_CHANNEL =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::NO_INPUT_CHANNEL),
+                static_cast<uint32_t>(os::InputConfig::NO_INPUT_CHANNEL),
+        NOT_VISIBLE =
+                static_cast<uint32_t>(os::InputConfig::NOT_VISIBLE),
+        NOT_FOCUSABLE =
+                static_cast<uint32_t>(os::InputConfig::NOT_FOCUSABLE),
+        NOT_TOUCHABLE =
+                static_cast<uint32_t>(os::InputConfig::NOT_TOUCHABLE),
+        PREVENT_SPLITTING =
+                static_cast<uint32_t>(os::InputConfig::PREVENT_SPLITTING),
+        DUPLICATE_TOUCH_TO_WALLPAPER =
+                static_cast<uint32_t>(os::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER),
+        IS_WALLPAPER =
+                static_cast<uint32_t>(os::InputConfig::IS_WALLPAPER),
+        PAUSE_DISPATCHING =
+                static_cast<uint32_t>(os::InputConfig::PAUSE_DISPATCHING),
+        TRUSTED_OVERLAY =
+                static_cast<uint32_t>(os::InputConfig::TRUSTED_OVERLAY),
+        WATCH_OUTSIDE_TOUCH =
+                static_cast<uint32_t>(os::InputConfig::WATCH_OUTSIDE_TOUCH),
+        SLIPPERY =
+                static_cast<uint32_t>(os::InputConfig::SLIPPERY),
         DISABLE_USER_ACTIVITY =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::DISABLE_USER_ACTIVITY),
+                static_cast<uint32_t>(os::InputConfig::DISABLE_USER_ACTIVITY),
         DROP_INPUT =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::DROP_INPUT),
+                static_cast<uint32_t>(os::InputConfig::DROP_INPUT),
         DROP_INPUT_IF_OBSCURED =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::DROP_INPUT_IF_OBSCURED),
+                static_cast<uint32_t>(os::InputConfig::DROP_INPUT_IF_OBSCURED),
         SPY =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::SPY),
+                static_cast<uint32_t>(os::InputConfig::SPY),
         INTERCEPTS_STYLUS =
-                static_cast<uint32_t>(os::IInputConstants::InputFeature::INTERCEPTS_STYLUS),
+                static_cast<uint32_t>(os::InputConfig::INTERCEPTS_STYLUS),
         // clang-format on
     };
 
@@ -164,8 +187,6 @@ struct WindowInfo : public Parcelable {
     // This uniquely identifies the input window.
     int32_t id = -1;
     std::string name;
-    Flags<Flag> flags;
-    Type type = Type::UNKNOWN;
     std::chrono::nanoseconds dispatchingTimeout = std::chrono::seconds(5);
 
     /* These values are filled in by SurfaceFlinger. */
@@ -198,25 +219,22 @@ struct WindowInfo : public Parcelable {
      * to absolute coordinates by SurfaceFlinger once the frame is computed.
      */
     Region touchableRegion;
-    bool visible = false;
-    bool focusable = false;
-    bool hasWallpaper = false;
-    bool paused = false;
-    /* This flag is set when the window is of a trusted type that is allowed to silently
-     * overlay other windows for the purpose of implementing the secure views feature.
-     * Trusted overlays, such as IME windows, can partly obscure other windows without causing
-     * motion events to be delivered to them with AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED.
-     */
-    bool trustedOverlay = false;
+
     TouchOcclusionMode touchOcclusionMode = TouchOcclusionMode::BLOCK_UNTRUSTED;
     int32_t ownerPid = -1;
     int32_t ownerUid = -1;
     std::string packageName;
-    Flags<Feature> inputFeatures;
+    Flags<InputConfig> inputConfig;
     int32_t displayId = ADISPLAY_ID_NONE;
     InputApplicationInfo applicationInfo;
     bool replaceTouchableRegionWithCrop = false;
     wp<IBinder> touchableRegionCropHandle;
+
+    // The window's layout params flags and type set by WM.
+    Type layoutParamsType = Type::UNKNOWN;
+    Flags<Flag> layoutParamsFlags;
+
+    void setInputConfig(Flags<InputConfig> config, bool value);
 
     void addTouchableRegion(const Rect& region);
 

@@ -31,6 +31,7 @@
 #include <gui/SyncScreenCaptureListener.h>
 #include <inttypes.h>
 #include <private/gui/ComposerService.h>
+#include <private/gui/ComposerServiceAIDL.h>
 #include <sys/types.h>
 #include <ui/BufferQueueDefs.h>
 #include <ui/DisplayMode.h>
@@ -47,6 +48,7 @@ using namespace std::chrono_literals;
 // retrieve wide-color and hdr settings from configstore
 using namespace android::hardware::configstore;
 using namespace android::hardware::configstore::V1_0;
+using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
 using gui::IDisplayEventConnection;
 using gui::IRegionSamplingListener;
 using ui::ColorMode;
@@ -204,13 +206,13 @@ protected:
 
     static status_t captureDisplay(DisplayCaptureArgs& captureArgs,
                                    ScreenCaptureResults& captureResults) {
-        const auto sf = ComposerService::getComposerService();
+        const auto sf = ComposerServiceAIDL::getComposerService();
         SurfaceComposerClient::Transaction().apply(true);
 
         const sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
-        status_t status = sf->captureDisplay(captureArgs, captureListener);
-        if (status != NO_ERROR) {
-            return status;
+        binder::Status status = sf->captureDisplay(captureArgs, captureListener);
+        if (status.transactionError() != NO_ERROR) {
+            return status.transactionError();
         }
         captureResults = captureListener->waitForResults();
         return captureResults.result;
@@ -765,16 +767,6 @@ public:
     void setAutoLowLatencyMode(const sp<IBinder>& /*display*/, bool /*on*/) override {}
     void setGameContentType(const sp<IBinder>& /*display*/, bool /*on*/) override {}
 
-    status_t captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&) override {
-        return NO_ERROR;
-    }
-    status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&) override {
-        return NO_ERROR;
-    }
-    status_t captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&) override {
-        return NO_ERROR;
-    }
-
     status_t clearAnimationFrameStats() override { return NO_ERROR; }
     status_t getAnimationFrameStats(FrameStats* /*outStats*/) const override {
         return NO_ERROR;
@@ -890,8 +882,9 @@ public:
         return NO_ERROR;
     }
 
-    status_t getDisplayDecorationSupport(const sp<IBinder>& /*displayToken*/,
-                                         bool* /*outSupport*/) const override {
+    status_t getDisplayDecorationSupport(
+            const sp<IBinder>& /*displayToken*/,
+            std::optional<DisplayDecorationSupport>* /*outSupport*/) const override {
         return NO_ERROR;
     }
 

@@ -47,6 +47,8 @@
 #include <gui/WindowInfosListenerReporter.h>
 #include <math/vec3.h>
 
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+
 namespace android {
 
 class HdrCapabilities;
@@ -55,15 +57,18 @@ class IGraphicBufferProducer;
 class ITunnelModeEnabledListener;
 class Region;
 
+using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
+using gui::LayerCaptureArgs;
 
 struct SurfaceControlStats {
-    SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime, nsecs_t acquireTime,
+    SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime,
+                        std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence,
                         const sp<Fence>& presentFence, const sp<Fence>& prevReleaseFence,
                         uint32_t hint, FrameEventHistoryStats eventStats)
           : surfaceControl(sc),
             latchTime(latchTime),
-            acquireTime(acquireTime),
+            acquireTimeOrFence(std::move(acquireTimeOrFence)),
             presentFence(presentFence),
             previousReleaseFence(prevReleaseFence),
             transformHint(hint),
@@ -71,7 +76,7 @@ struct SurfaceControlStats {
 
     sp<SurfaceControl> surfaceControl;
     nsecs_t latchTime = -1;
-    nsecs_t acquireTime = -1;
+    std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence = -1;
     sp<Fence> presentFence;
     sp<Fence> previousReleaseFence;
     uint32_t transformHint = 0;
@@ -288,14 +293,16 @@ public:
                                             float lightPosY, float lightPosZ, float lightRadius);
 
     /*
-     * Returns whether a display supports DISPLAY_DECORATION layers.
+     * Returns whether and how a display supports DISPLAY_DECORATION layers.
      *
      * displayToken
      *      The token of the display.
      *
-     * Returns whether a display supports DISPLAY_DECORATION layers.
+     * Returns how a display supports DISPLAY_DECORATION layers, or nullopt if
+     * it does not.
      */
-    static bool getDisplayDecorationSupport(const sp<IBinder>& displayToken);
+    static std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>
+    getDisplayDecorationSupport(const sp<IBinder>& displayToken);
 
     // ------------------------------------------------------------------------
     // surface creation / destruction
@@ -457,7 +464,7 @@ public:
         // Clears the contents of the transaction without applying it.
         void clear();
 
-        status_t apply(bool synchronous = false);
+        status_t apply(bool synchronous = false, bool oneWay = false);
         // Merge another transaction in to this one, clearing other
         // as if it had been applied.
         Transaction& merge(Transaction&& other);
@@ -517,6 +524,27 @@ public:
                                const std::optional<uint64_t>& frameNumber = std::nullopt,
                                ReleaseBufferCallback callback = nullptr);
         std::shared_ptr<BufferData> getAndClearBuffer(const sp<SurfaceControl>& sc);
+
+        /**
+         * If this transaction, has a a buffer set for the given SurfaceControl
+         * mark that buffer as ordered after a given barrierFrameNumber.
+         *
+         * SurfaceFlinger will refuse to apply this transaction until after
+         * the frame in barrierFrameNumber has been applied. This transaction may
+         * be applied in the same frame as the barrier buffer or after.
+         *
+         * This is only designed to be used to handle switches between multiple
+         * apply tokens, as explained in the comment for BLASTBufferQueue::mAppliedLastTransaction.
+         *
+         * Has to be called after setBuffer.
+         *
+         * WARNING:
+         * This API is very dangerous to the caller, as if you invoke it without
+         * a frameNumber you have not yet submitted, you can dead-lock your
+         * SurfaceControl's transaction queue.
+         */
+        Transaction& setBufferHasBarrier(const sp<SurfaceControl>& sc,
+                                         uint64_t barrierFrameNumber);
         Transaction& setDataspace(const sp<SurfaceControl>& sc, ui::Dataspace dataspace);
         Transaction& setHdrMetadata(const sp<SurfaceControl>& sc, const HdrMetadata& hdrMetadata);
         Transaction& setSurfaceDamageRegion(const sp<SurfaceControl>& sc,

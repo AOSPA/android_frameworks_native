@@ -26,6 +26,7 @@
 #include <thread>
 
 #include "RingBuffer.h"
+#include "LocklessStack.h"
 #include "TransactionProtoParser.h"
 
 using namespace android::surfaceflinger;
@@ -55,7 +56,7 @@ public:
 
     void addQueuedTransaction(const TransactionState&);
     void addCommittedTransactions(std::vector<TransactionState>& transactions, int64_t vsyncId);
-    status_t writeToFile();
+    status_t writeToFile(std::string filename = FILE_NAME);
     void setBufferSize(size_t bufferSizeInBytes);
     void onLayerAdded(BBinder* layerHandle, int layerId, const std::string& name, uint32_t flags,
                       int parentId);
@@ -78,12 +79,17 @@ private:
     size_t mBufferSizeInBytes GUARDED_BY(mTraceLock) = CONTINUOUS_TRACING_BUFFER_SIZE;
     std::unordered_map<uint64_t, proto::TransactionState> mQueuedTransactions
             GUARDED_BY(mTraceLock);
+    LocklessStack<proto::TransactionState> mTransactionQueue;
     nsecs_t mStartingTimestamp GUARDED_BY(mTraceLock);
     std::vector<proto::LayerCreationArgs> mCreatedLayers GUARDED_BY(mTraceLock);
     std::unordered_map<BBinder* /* layerHandle */, int32_t /* layerId */> mLayerHandles
             GUARDED_BY(mTraceLock);
     std::vector<int32_t /* layerId */> mRemovedLayerHandles GUARDED_BY(mTraceLock);
     std::map<int32_t /* layerId */, TracingLayerState> mStartingStates GUARDED_BY(mTraceLock);
+    TransactionProtoParser mProtoParser GUARDED_BY(mTraceLock);
+    // Parses the transaction to proto without holding any tracing locks so we can generate proto
+    // in the binder thread without any contention.
+    TransactionProtoParser mLockfreeProtoParser;
 
     // We do not want main thread to block so main thread will try to acquire mMainThreadLock,
     // otherwise will push data to temporary container.

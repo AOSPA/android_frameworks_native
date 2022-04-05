@@ -42,11 +42,15 @@
 
 // ---------------------------------------------------------------------------
 
+using namespace aidl::android::hardware::graphics;
+
 namespace android {
 
+using gui::DisplayCaptureArgs;
 using gui::IDisplayEventConnection;
 using gui::IRegionSamplingListener;
 using gui::IWindowInfosListener;
+using gui::LayerCaptureArgs;
 using ui::ColorMode;
 
 class BpSurfaceComposer : public BpInterface<ISurfaceComposer>
@@ -107,43 +111,19 @@ public:
 
         SAFE_PARCEL(data.writeUint64, transactionId);
 
-        return remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE, data, &reply);
+        if (flags & ISurfaceComposer::eOneWay) {
+            return remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE,
+                    data, &reply, IBinder::FLAG_ONEWAY);
+        } else {
+            return remote()->transact(BnSurfaceComposer::SET_TRANSACTION_STATE,
+                    data, &reply);
+        }
     }
 
     void bootFinished() override {
         Parcel data, reply;
         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         remote()->transact(BnSurfaceComposer::BOOT_FINISHED, data, &reply);
-    }
-
-    status_t captureDisplay(const DisplayCaptureArgs& args,
-                            const sp<IScreenCaptureListener>& captureListener) override {
-        Parcel data, reply;
-        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        SAFE_PARCEL(args.write, data);
-        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
-
-        return remote()->transact(BnSurfaceComposer::CAPTURE_DISPLAY, data, &reply);
-    }
-
-    status_t captureDisplay(DisplayId displayId,
-                            const sp<IScreenCaptureListener>& captureListener) override {
-        Parcel data, reply;
-        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        SAFE_PARCEL(data.writeUint64, displayId.value);
-        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
-
-        return remote()->transact(BnSurfaceComposer::CAPTURE_DISPLAY_BY_ID, data, &reply);
-    }
-
-    status_t captureLayers(const LayerCaptureArgs& args,
-                           const sp<IScreenCaptureListener>& captureListener) override {
-        Parcel data, reply;
-        data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
-        SAFE_PARCEL(args.write, data);
-        SAFE_PARCEL(data.writeStrongBinder, IInterface::asBinder(captureListener));
-
-        return remote()->transact(BnSurfaceComposer::CAPTURE_LAYERS, data, &reply);
     }
 
     bool authenticateSurfaceTexture(
@@ -1220,8 +1200,9 @@ public:
         return NO_ERROR;
     }
 
-    status_t getDisplayDecorationSupport(const sp<IBinder>& displayToken,
-                                         bool* outSupport) const override {
+    status_t getDisplayDecorationSupport(
+            const sp<IBinder>& displayToken,
+            std::optional<common::DisplayDecorationSupport>* outSupport) const override {
         Parcel data, reply;
         status_t error = data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
         if (error != NO_ERROR) {
@@ -1244,7 +1225,26 @@ public:
             ALOGE("getDisplayDecorationSupport: failed to read support: %d", error);
             return error;
         }
-        *outSupport = support;
+
+        if (support) {
+            int32_t format, alphaInterpretation;
+            error = reply.readInt32(&format);
+            if (error != NO_ERROR) {
+                ALOGE("getDisplayDecorationSupport: failed to read format: %d", error);
+                return error;
+            }
+            error = reply.readInt32(&alphaInterpretation);
+            if (error != NO_ERROR) {
+                ALOGE("getDisplayDecorationSupport: failed to read alphaInterpretation: %d", error);
+                return error;
+            }
+            outSupport->emplace();
+            outSupport->value().format = static_cast<common::PixelFormat>(format);
+            outSupport->value().alphaInterpretation =
+                    static_cast<common::AlphaInterpretation>(alphaInterpretation);
+        } else {
+            outSupport->reset();
+        }
         return NO_ERROR;
     }
 
@@ -1447,36 +1447,6 @@ status_t BnSurfaceComposer::onTransact(
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             bootFinished();
             return NO_ERROR;
-        }
-        case CAPTURE_DISPLAY: {
-            CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            DisplayCaptureArgs args;
-            sp<IScreenCaptureListener> captureListener;
-            SAFE_PARCEL(args.read, data);
-            SAFE_PARCEL(data.readStrongBinder, &captureListener);
-
-            return captureDisplay(args, captureListener);
-        }
-        case CAPTURE_DISPLAY_BY_ID: {
-            CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            uint64_t value;
-            SAFE_PARCEL(data.readUint64, &value);
-            const auto id = DisplayId::fromValue(value);
-            if (!id) return BAD_VALUE;
-
-            sp<IScreenCaptureListener> captureListener;
-            SAFE_PARCEL(data.readStrongBinder, &captureListener);
-
-            return captureDisplay(*id, captureListener);
-        }
-        case CAPTURE_LAYERS: {
-            CHECK_INTERFACE(ISurfaceComposer, data, reply);
-            LayerCaptureArgs args;
-            sp<IScreenCaptureListener> captureListener;
-            SAFE_PARCEL(args.read, data);
-            SAFE_PARCEL(data.readStrongBinder, &captureListener);
-
-            return captureLayers(args, captureListener);
         }
         case AUTHENTICATE_SURFACE: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
@@ -2197,14 +2167,18 @@ status_t BnSurfaceComposer::onTransact(
         case GET_DISPLAY_DECORATION_SUPPORT: {
             CHECK_INTERFACE(ISurfaceComposer, data, reply);
             sp<IBinder> displayToken;
-            status_t error = data.readNullableStrongBinder(&displayToken);
+            SAFE_PARCEL(data.readNullableStrongBinder, &displayToken);
+            std::optional<common::DisplayDecorationSupport> support;
+            auto error = getDisplayDecorationSupport(displayToken, &support);
             if (error != NO_ERROR) {
-                ALOGE("getDisplayDecorationSupport: failed to read display token: %d", error);
+                ALOGE("getDisplayDecorationSupport failed with error %d", error);
                 return error;
             }
-            bool support = false;
-            error = getDisplayDecorationSupport(displayToken, &support);
-            reply->writeBool(support);
+            reply->writeBool(support.has_value());
+            if (support) {
+                reply->writeInt32(static_cast<int32_t>(support.value().format));
+                reply->writeInt32(static_cast<int32_t>(support.value().alphaInterpretation));
+            }
             return error;
         }
         case SET_FRAME_RATE: {

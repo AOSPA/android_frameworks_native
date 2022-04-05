@@ -25,6 +25,8 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
+        "libgmock",
         "libinstalld",
         "liblog",
     ],
@@ -53,6 +55,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "libziparchive",
         "liblog",
@@ -99,10 +102,12 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "libziparchive",
         "liblog",
         "liblogwrap",
+        "libc++fs",
     ],
     test_config: "installd_service_test.xml",
 
@@ -144,6 +149,7 @@ cc_test {
     static_libs: [
         "libasync_safe",
         "libdiskusage",
+        "libext2_uuid",
         "libinstalld",
         "liblog",
         "liblogwrap",
@@ -204,6 +210,7 @@ cc_test {
         "libutils",
     ],
     static_libs: [
+        "libext2_uuid",
         "libinstalld",
         "liblog",
     ],

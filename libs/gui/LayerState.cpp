@@ -35,7 +35,9 @@ using gui::FocusRequest;
 using gui::WindowInfoHandle;
 
 layer_state_t::layer_state_t()
-      : what(0),
+      : surface(nullptr),
+        layerId(-1),
+        what(0),
         x(0),
         y(0),
         z(0),
@@ -153,8 +155,12 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeBool, isTrustedOverlay);
 
     SAFE_PARCEL(output.writeUint32, static_cast<uint32_t>(dropInputMode));
-    SAFE_PARCEL(output.writeNullableParcelable,
-                bufferData ? std::make_optional<BufferData>(*bufferData) : std::nullopt);
+
+    const bool hasBufferData = (bufferData != nullptr);
+    SAFE_PARCEL(output.writeBool, hasBufferData);
+    if (hasBufferData) {
+        SAFE_PARCEL(output.writeParcelable, *bufferData);
+    }
     return NO_ERROR;
 }
 
@@ -264,9 +270,15 @@ status_t layer_state_t::read(const Parcel& input)
     uint32_t mode;
     SAFE_PARCEL(input.readUint32, &mode);
     dropInputMode = static_cast<gui::DropInputMode>(mode);
-    std::optional<BufferData> tmpBufferData;
-    SAFE_PARCEL(input.readParcelable, &tmpBufferData);
-    bufferData = tmpBufferData ? std::make_shared<BufferData>(*tmpBufferData) : nullptr;
+
+    bool hasBufferData;
+    SAFE_PARCEL(input.readBool, &hasBufferData);
+    if (hasBufferData) {
+        bufferData = std::make_shared<BufferData>();
+        SAFE_PARCEL(input.readParcelable, bufferData.get());
+    } else {
+        bufferData = nullptr;
+    }
     return NO_ERROR;
 }
 
@@ -674,84 +686,88 @@ bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrame
 
 // ----------------------------------------------------------------------------
 
-status_t CaptureArgs::write(Parcel& output) const {
-    SAFE_PARCEL(output.writeInt32, static_cast<int32_t>(pixelFormat));
-    SAFE_PARCEL(output.write, sourceCrop);
-    SAFE_PARCEL(output.writeFloat, frameScaleX);
-    SAFE_PARCEL(output.writeFloat, frameScaleY);
-    SAFE_PARCEL(output.writeBool, captureSecureLayers);
-    SAFE_PARCEL(output.writeInt32, uid);
-    SAFE_PARCEL(output.writeInt32, static_cast<int32_t>(dataspace));
-    SAFE_PARCEL(output.writeBool, allowProtected);
-    SAFE_PARCEL(output.writeBool, grayscale);
+namespace gui {
+
+status_t CaptureArgs::writeToParcel(Parcel* output) const {
+    SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(pixelFormat));
+    SAFE_PARCEL(output->write, sourceCrop);
+    SAFE_PARCEL(output->writeFloat, frameScaleX);
+    SAFE_PARCEL(output->writeFloat, frameScaleY);
+    SAFE_PARCEL(output->writeBool, captureSecureLayers);
+    SAFE_PARCEL(output->writeInt32, uid);
+    SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(dataspace));
+    SAFE_PARCEL(output->writeBool, allowProtected);
+    SAFE_PARCEL(output->writeBool, grayscale);
     return NO_ERROR;
 }
 
-status_t CaptureArgs::read(const Parcel& input) {
+status_t CaptureArgs::readFromParcel(const Parcel* input) {
     int32_t value = 0;
-    SAFE_PARCEL(input.readInt32, &value);
+    SAFE_PARCEL(input->readInt32, &value);
     pixelFormat = static_cast<ui::PixelFormat>(value);
-    SAFE_PARCEL(input.read, sourceCrop);
-    SAFE_PARCEL(input.readFloat, &frameScaleX);
-    SAFE_PARCEL(input.readFloat, &frameScaleY);
-    SAFE_PARCEL(input.readBool, &captureSecureLayers);
-    SAFE_PARCEL(input.readInt32, &uid);
-    SAFE_PARCEL(input.readInt32, &value);
+    SAFE_PARCEL(input->read, sourceCrop);
+    SAFE_PARCEL(input->readFloat, &frameScaleX);
+    SAFE_PARCEL(input->readFloat, &frameScaleY);
+    SAFE_PARCEL(input->readBool, &captureSecureLayers);
+    SAFE_PARCEL(input->readInt32, &uid);
+    SAFE_PARCEL(input->readInt32, &value);
     dataspace = static_cast<ui::Dataspace>(value);
-    SAFE_PARCEL(input.readBool, &allowProtected);
-    SAFE_PARCEL(input.readBool, &grayscale);
+    SAFE_PARCEL(input->readBool, &allowProtected);
+    SAFE_PARCEL(input->readBool, &grayscale);
     return NO_ERROR;
 }
 
-status_t DisplayCaptureArgs::write(Parcel& output) const {
-    SAFE_PARCEL(CaptureArgs::write, output);
+status_t DisplayCaptureArgs::writeToParcel(Parcel* output) const {
+    SAFE_PARCEL(CaptureArgs::writeToParcel, output);
 
-    SAFE_PARCEL(output.writeStrongBinder, displayToken);
-    SAFE_PARCEL(output.writeUint32, width);
-    SAFE_PARCEL(output.writeUint32, height);
-    SAFE_PARCEL(output.writeBool, useIdentityTransform);
+    SAFE_PARCEL(output->writeStrongBinder, displayToken);
+    SAFE_PARCEL(output->writeUint32, width);
+    SAFE_PARCEL(output->writeUint32, height);
+    SAFE_PARCEL(output->writeBool, useIdentityTransform);
     return NO_ERROR;
 }
 
-status_t DisplayCaptureArgs::read(const Parcel& input) {
-    SAFE_PARCEL(CaptureArgs::read, input);
+status_t DisplayCaptureArgs::readFromParcel(const Parcel* input) {
+    SAFE_PARCEL(CaptureArgs::readFromParcel, input);
 
-    SAFE_PARCEL(input.readStrongBinder, &displayToken);
-    SAFE_PARCEL(input.readUint32, &width);
-    SAFE_PARCEL(input.readUint32, &height);
-    SAFE_PARCEL(input.readBool, &useIdentityTransform);
+    SAFE_PARCEL(input->readStrongBinder, &displayToken);
+    SAFE_PARCEL(input->readUint32, &width);
+    SAFE_PARCEL(input->readUint32, &height);
+    SAFE_PARCEL(input->readBool, &useIdentityTransform);
     return NO_ERROR;
 }
 
-status_t LayerCaptureArgs::write(Parcel& output) const {
-    SAFE_PARCEL(CaptureArgs::write, output);
+status_t LayerCaptureArgs::writeToParcel(Parcel* output) const {
+    SAFE_PARCEL(CaptureArgs::writeToParcel, output);
 
-    SAFE_PARCEL(output.writeStrongBinder, layerHandle);
-    SAFE_PARCEL(output.writeInt32, excludeHandles.size());
+    SAFE_PARCEL(output->writeStrongBinder, layerHandle);
+    SAFE_PARCEL(output->writeInt32, excludeHandles.size());
     for (auto el : excludeHandles) {
-        SAFE_PARCEL(output.writeStrongBinder, el);
+        SAFE_PARCEL(output->writeStrongBinder, el);
     }
-    SAFE_PARCEL(output.writeBool, childrenOnly);
+    SAFE_PARCEL(output->writeBool, childrenOnly);
     return NO_ERROR;
 }
 
-status_t LayerCaptureArgs::read(const Parcel& input) {
-    SAFE_PARCEL(CaptureArgs::read, input);
+status_t LayerCaptureArgs::readFromParcel(const Parcel* input) {
+    SAFE_PARCEL(CaptureArgs::readFromParcel, input);
 
-    SAFE_PARCEL(input.readStrongBinder, &layerHandle);
+    SAFE_PARCEL(input->readStrongBinder, &layerHandle);
 
     int32_t numExcludeHandles = 0;
-    SAFE_PARCEL_READ_SIZE(input.readInt32, &numExcludeHandles, input.dataSize());
+    SAFE_PARCEL_READ_SIZE(input->readInt32, &numExcludeHandles, input->dataSize());
     excludeHandles.reserve(numExcludeHandles);
     for (int i = 0; i < numExcludeHandles; i++) {
         sp<IBinder> binder;
-        SAFE_PARCEL(input.readStrongBinder, &binder);
+        SAFE_PARCEL(input->readStrongBinder, &binder);
         excludeHandles.emplace(binder);
     }
 
-    SAFE_PARCEL(input.readBool, &childrenOnly);
+    SAFE_PARCEL(input->readBool, &childrenOnly);
     return NO_ERROR;
 }
+
+}; // namespace gui
 
 ReleaseCallbackId BufferData::generateReleaseCallbackId() const {
     return {buffer->getId(), frameNumber};
@@ -780,6 +796,8 @@ status_t BufferData::writeToParcel(Parcel* output) const {
 
     SAFE_PARCEL(output->writeStrongBinder, cachedBuffer.token.promote());
     SAFE_PARCEL(output->writeUint64, cachedBuffer.id);
+    SAFE_PARCEL(output->writeBool, hasBarrier);
+    SAFE_PARCEL(output->writeUint64, barrierFrameNumber);
 
     return NO_ERROR;
 }
@@ -815,6 +833,9 @@ status_t BufferData::readFromParcel(const Parcel* input) {
     SAFE_PARCEL(input->readNullableStrongBinder, &tmpBinder);
     cachedBuffer.token = tmpBinder;
     SAFE_PARCEL(input->readUint64, &cachedBuffer.id);
+
+    SAFE_PARCEL(input->readBool, &hasBarrier);
+    SAFE_PARCEL(input->readUint64, &barrierFrameNumber);
 
     return NO_ERROR;
 }

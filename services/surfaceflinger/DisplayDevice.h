@@ -174,9 +174,14 @@ public:
         return mDeviceProductInfo;
     }
 
-    // Get the DisplayInfo that will be sent to InputFlinger, and the display transform that should
-    // be applied to all the input windows on the display.
-    std::pair<gui::DisplayInfo, ui::Transform> getInputInfo() const;
+    struct InputInfo {
+        gui::DisplayInfo info;
+        ui::Transform transform;
+        bool receivesInput;
+        bool isSecure;
+    };
+
+    InputInfo getInputInfo() const;
 
     /* ------------------------------------------------------------------------
      * Display power mode management.
@@ -226,6 +231,9 @@ public:
     // supported mode may be no longer supported for some devices like TVs and
     // set-top boxes after a hotplug reconnect.
     DisplayModePtr getMode(DisplayModeId) const;
+
+    // Returns nullptr if the given mode ID is not supported.
+    DisplayModePtr getModefromHwcId(uint32_t) const;
 
     // Returns the refresh rate configs for this display.
     scheduler::RefreshRateConfigs& refreshRateConfigs() const { return *mRefreshRateConfigs; }

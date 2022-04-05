@@ -1136,12 +1136,13 @@ std::optional<base::unique_fd> Output::composeSurfaces(
             : mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
     clientCompositionDisplay.maxLuminance =
             mDisplayColorProfile->getHdrCapabilities().getDesiredMaxLuminance();
-    clientCompositionDisplay.targetLuminanceNits = outputState.clientTargetWhitePointNits;
+    clientCompositionDisplay.targetLuminanceNits =
+            outputState.clientTargetBrightness * outputState.displayBrightnessNits;
 
     // Compute the global color transform matrix.
-    if (!outputState.usesDeviceComposition && !getSkipColorTransform()) {
-        clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
-    }
+    clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
+    clientCompositionDisplay.deviceHandlesColorTransform =
+            outputState.usesDeviceComposition || getSkipColorTransform();
 
     // Generate the client composition requests for the layers on this output.
     std::vector<LayerFE*> clientCompositionLayersFE;
@@ -1171,8 +1172,12 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // because high frequency consumes extra battery.
     const bool expensiveBlurs =
             refreshArgs.blursAreExpensive && mLayerRequestingBackgroundBlur != nullptr;
-    const bool expensiveRenderingExpected =
-            clientCompositionDisplay.outputDataspace == ui::Dataspace::DISPLAY_P3 || expensiveBlurs;
+    const bool expensiveRenderingExpected = expensiveBlurs ||
+            std::any_of(clientCompositionLayers.begin(), clientCompositionLayers.end(),
+                        [outputDataspace =
+                                 clientCompositionDisplay.outputDataspace](const auto& layer) {
+                            return layer.sourceDataspace != outputDataspace;
+                        });
     if (expensiveRenderingExpected) {
         setExpensiveRenderingExpected(true);
     }

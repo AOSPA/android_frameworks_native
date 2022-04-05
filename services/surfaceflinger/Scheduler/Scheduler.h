@@ -94,6 +94,7 @@ struct ISchedulerCallback {
     virtual void changeRefreshRate(const RefreshRate&, DisplayModeEvent) = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
+    virtual void getModeFromFps(float, DisplayModePtr&) = 0;
 
 protected:
     ~ISchedulerCallback() = default;
@@ -121,6 +122,7 @@ public:
     using Impl::setDuration;
 
     using Impl::scheduleFrame;
+    using Impl::scheduleFrameImmed;
 
     // Schedule an asynchronous or synchronous task on the main thread.
     template <typename F, typename T = std::invoke_result_t<F>>
@@ -169,6 +171,7 @@ public:
     // The period is the vsync period from the current display configuration.
     void resyncToHardwareVsync(bool makeAvailable, nsecs_t period, bool force_resync = false);
     void resync() EXCLUDES(mRefreshRateConfigsLock);
+    void forceNextResync() { mLastResyncTime = 0; }
     void resyncAndRefresh();
 
     // Passes a vsync sample to VsyncController. periodFlushed will be true if
@@ -246,6 +249,7 @@ public:
     }
 
     void setIdleState();
+    void updateThermalFps(float fps);
 
 private:
     friend class TestableScheduler;
@@ -267,13 +271,16 @@ private:
     void touchTimerCallback(TimerState);
     void displayPowerTimerCallback(TimerState);
 
-    // handles various timer features to change the refresh rate.
-    template <class T>
-    bool handleTimerStateChanged(T* currentState, T newState);
-
     void setVsyncPeriod(nsecs_t period, bool force_resync = false);
 
     using GlobalSignals = RefreshRateConfigs::GlobalSignals;
+
+    struct Policy;
+
+    // Sets the S state of the policy to the T value under mPolicyLock, and chooses a display mode
+    // that fulfills the new policy if the state changed. Returns the signals that were considered.
+    template <typename S, typename T>
+    GlobalSignals applyPolicy(S Policy::*, T&&) EXCLUDES(mPolicyLock);
 
     // Returns the display mode that fulfills the policy, and the signals that were considered.
     std::pair<DisplayModePtr, GlobalSignals> chooseDisplayMode() REQUIRES(mPolicyLock);
@@ -327,7 +334,7 @@ private:
 
     mutable std::mutex mPolicyLock;
 
-    struct {
+    struct Policy {
         // Policy for choosing the display mode.
         LayerHistory::Summary contentRequirements;
         TimerState idleTimer = TimerState::Reset;
@@ -365,6 +372,9 @@ private:
 
     // This state variable indicates whether to handle the Idle Timer Callback.
     std::atomic<bool> mHandleIdleTimeout = true;
+
+    // Cache thermal Fps, and limit to the given level
+    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler

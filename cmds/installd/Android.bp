@@ -51,6 +51,7 @@ cc_defaults {
     ],
     static_libs: [
         "libasync_safe",
+        "libext2_uuid",
     ],
     export_shared_lib_headers: [
         "libbinder",
@@ -262,6 +263,7 @@ cc_binary {
         "libasync_safe",
         "libdiskusage",
         "libotapreoptparameters",
+        "libext2_uuid",
     ],
 
     shared_libs: [

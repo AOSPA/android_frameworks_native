@@ -691,12 +691,12 @@ public:
 
     bool isRemovedFromCurrentState() const;
 
-    LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags, const DisplayDevice*);
+    LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags);
 
     // Write states that are modified by the main thread. This includes drawing
     // state as well as buffer data. This should be called in the main or tracing
     // thread.
-    void writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags, const DisplayDevice*);
+    void writeToProtoDrawingState(LayerProto* layerInfo);
     // Write drawing or current state. If writing current state, the caller should hold the
     // external mStateLock. If writing drawing state, this function should be called on the
     // main or tracing thread.
@@ -757,6 +757,7 @@ public:
                                   FrameEventHistoryDelta* outDelta);
 
     ui::Transform getTransform() const;
+    bool isTransformValid() const;
 
     // Returns the Alpha of the Surface, accounting for the Alpha
     // of parent Surfaces in the hierarchy (alpha's will be multiplied
@@ -901,6 +902,8 @@ public:
     virtual std::atomic<int32_t>* getPendingBufferCounter() { return nullptr; }
     virtual std::string getPendingBufferCounterName() { return ""; }
     virtual bool updateGeometry() { return false; }
+
+    virtual bool simpleBufferUpdate(const layer_state_t&) const { return false; }
 
 protected:
     friend class impl::SurfaceInterceptor;

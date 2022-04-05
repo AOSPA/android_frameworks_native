@@ -26,6 +26,7 @@
 
 #include <binder/IInterface.h>
 #include <gui/ISurfaceComposer.h>
+#include <gui/VsyncEventData.h>
 
 // ----------------------------------------------------------------------------
 
@@ -34,6 +35,8 @@ namespace android {
 // ----------------------------------------------------------------------------
 
 using gui::IDisplayEventConnection;
+using gui::ParcelableVsyncEventData;
+using gui::VsyncEventData;
 
 namespace gui {
 class BitTube;
@@ -49,8 +52,6 @@ static inline constexpr uint32_t fourcc(char c1, char c2, char c3, char c4) {
 // ----------------------------------------------------------------------------
 class DisplayEventReceiver {
 public:
-    // Max amount of frame timelines is arbitrarily set to be reasonable.
-    static constexpr int64_t kFrameTimelinesLength = 7;
 
     enum {
         DISPLAY_EVENT_VSYNC = fourcc('v', 's', 'y', 'n'),
@@ -76,16 +77,7 @@ public:
 
         struct VSync {
             uint32_t count;
-            nsecs_t expectedVSyncTimestamp __attribute__((aligned(8)));
-            nsecs_t deadlineTimestamp __attribute__((aligned(8)));
-            nsecs_t frameInterval __attribute__((aligned(8)));
-            int64_t vsyncId;
-            size_t preferredFrameTimelineIndex __attribute__((aligned(8)));
-            struct FrameTimeline {
-                nsecs_t expectedVSyncTimestamp __attribute__((aligned(8)));
-                nsecs_t deadlineTimestamp __attribute__((aligned(8)));
-                int64_t vsyncId;
-            } frameTimelines[kFrameTimelinesLength];
+            VsyncEventData vsyncData;
         };
 
         struct Hotplug {
@@ -172,10 +164,21 @@ public:
      */
     status_t requestNextVsync();
 
+    /**
+     * getLatestVsyncEventData() gets the latest vsync event data.
+     */
+    status_t getLatestVsyncEventData(ParcelableVsyncEventData* outVsyncEventData) const;
+
 private:
     sp<IDisplayEventConnection> mEventConnection;
     std::unique_ptr<gui::BitTube> mDataChannel;
+    std::optional<status_t> mInitError;
 };
+
+inline bool operator==(DisplayEventReceiver::Event::FrameRateOverride lhs,
+                       DisplayEventReceiver::Event::FrameRateOverride rhs) {
+    return (lhs.uid == rhs.uid) && std::abs(lhs.frameRateHz - rhs.frameRateHz) < 0.001f;
+}
 
 // ----------------------------------------------------------------------------
 }; // namespace android

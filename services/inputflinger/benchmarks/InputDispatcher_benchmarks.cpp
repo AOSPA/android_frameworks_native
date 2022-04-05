@@ -61,18 +61,13 @@ private:
         ALOGE("There is no focused window for %s", applicationHandle->getName().c_str());
     }
 
-    void notifyWindowUnresponsive(const sp<IBinder>& connectionToken,
+    void notifyWindowUnresponsive(const sp<IBinder>& connectionToken, std::optional<int32_t> pid,
                                   const std::string& reason) override {
         ALOGE("Window is not responding: %s", reason.c_str());
     }
 
-    void notifyWindowResponsive(const sp<IBinder>& connectionToken) override {}
-
-    void notifyMonitorUnresponsive(int32_t pid, const std::string& reason) override {
-        ALOGE("Monitor is not responding: %s", reason.c_str());
-    }
-
-    void notifyMonitorResponsive(int32_t pid) override {}
+    void notifyWindowResponsive(const sp<IBinder>& connectionToken,
+                                std::optional<int32_t> pid) override {}
 
     void notifyInputChannelBroken(const sp<IBinder>&) override {}
 
@@ -196,7 +191,6 @@ public:
     void updateInfo() {
         mInfo.token = mClientChannel->getConnectionToken();
         mInfo.name = "FakeWindowHandle";
-        mInfo.type = WindowInfo::Type::APPLICATION;
         mInfo.dispatchingTimeout = DISPATCHING_TIMEOUT;
         mInfo.frameLeft = mFrame.left;
         mInfo.frameTop = mFrame.top;
@@ -205,10 +199,6 @@ public:
         mInfo.globalScaleFactor = 1.0;
         mInfo.touchableRegion.clear();
         mInfo.addTouchableRegion(mFrame);
-        mInfo.visible = true;
-        mInfo.focusable = true;
-        mInfo.hasWallpaper = false;
-        mInfo.paused = false;
         mInfo.ownerPid = INJECTOR_PID;
         mInfo.ownerUid = INJECTOR_UID;
         mInfo.displayId = ADISPLAY_ID_DEFAULT;

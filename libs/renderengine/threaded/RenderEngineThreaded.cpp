@@ -418,6 +418,18 @@ std::optional<pid_t> RenderEngineThreaded::getRenderEngineTid() const {
     return std::make_optional(tidFuture.get());
 }
 
+void RenderEngineThreaded::setEnableTracing(bool tracingEnabled) {
+    // This function is designed so it can run asynchronously, so we do not need to wait
+    // for the futures.
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push([tracingEnabled](renderengine::RenderEngine& instance) {
+            ATRACE_NAME("REThreaded::setEnableTracing");
+            instance.setEnableTracing(tracingEnabled);
+        });
+    }
+    mCondition.notify_one();
+}
 int RenderEngineThreaded::getRETid() {
     std::promise<int> resultPromise;
     std::future<int> resultFuture = resultPromise.get_future();

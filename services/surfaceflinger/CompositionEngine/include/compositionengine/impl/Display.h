@@ -62,7 +62,7 @@ public:
     bool isSecure() const override;
     bool isVirtual() const override;
     void disconnect() override;
-    int32_t getPreferredBootModeId() const override;
+    int32_t getPreferredBootHwcConfigId() const override;
     void createDisplayColorProfile(
             const compositionengine::DisplayColorProfileCreationArgs&) override;
     void createRenderSurface(const compositionengine::RenderSurfaceCreationArgs&) override;
@@ -78,7 +78,7 @@ public:
     virtual void applyChangedTypesToLayers(const ChangedTypes&);
     virtual void applyDisplayRequests(const DisplayRequests&);
     virtual void applyLayerRequestsToLayers(const LayerRequests&);
-    virtual void applyClientTargetRequests(const ClientTargetProperty&, float whitePointNits);
+    virtual void applyClientTargetRequests(const ClientTargetProperty&, float brightness);
 
     // Internal
     virtual void setConfiguration(const compositionengine::DisplayCreationArgs&);
@@ -87,13 +87,16 @@ public:
 private:
     DisplayId mId;
     bool mIsDisconnected = false;
+    bool mIsColorModeChanged = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
-    int32_t mPreferredBootDisplayModeId = -1;
+    int32_t mPreferredBootHwcConfigId = -1;
     bool mHasScreenshot = false;
     ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
     void beginDraw();
     void endDraw();
+    ColorProfile mColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
+                                  ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
 };
 
 // This template factory function standardizes the implementation details of the

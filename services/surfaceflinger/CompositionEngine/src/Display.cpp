@@ -44,6 +44,7 @@
 
 #include "DisplayHardware/PowerAdvisor.h"
 
+using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 namespace android::compositionengine::impl {
@@ -74,7 +75,7 @@ void Display::setConfiguration(const compositionengine::DisplayCreationArgs& arg
     std::optional<hal::HWConfigId> preferredBootModeId =
             getCompositionEngine().getHwComposer().getPreferredBootDisplayMode(*physicalId);
     if (preferredBootModeId.has_value()) {
-        mPreferredBootDisplayModeId = static_cast<int32_t>(preferredBootModeId.value());
+        mPreferredBootHwcConfigId = static_cast<int32_t>(preferredBootModeId.value());
     }
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
     int ret = ::DisplayConfig::ClientInterface::Create(args.name, nullptr, &mDisplayConfigIntf);
@@ -108,8 +109,8 @@ std::optional<DisplayId> Display::getDisplayId() const {
     return mId;
 }
 
-int32_t Display::getPreferredBootModeId() const {
-    return mPreferredBootDisplayModeId;
+int32_t Display::getPreferredBootHwcConfigId() const {
+    return mPreferredBootHwcConfigId;
 }
 
 void Display::disconnect() {
@@ -158,6 +159,18 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
 
     const auto physicalId = PhysicalDisplayId::tryCast(mId);
     LOG_FATAL_IF(!physicalId);
+
+    if (colorProfile.mode != mColorProfile.mode ||
+        colorProfile.dataspace != mColorProfile.dataspace ||
+        colorProfile.renderIntent != mColorProfile.renderIntent) {
+        mIsColorModeChanged = true;
+    }
+
+    mColorProfile.mode = colorProfile.mode;
+    mColorProfile.dataspace = colorProfile.dataspace;
+    mColorProfile.renderIntent = colorProfile.renderIntent;
+    mColorProfile.colorSpaceAgnosticDataspace = colorProfile.colorSpaceAgnosticDataspace;
+
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,
                                                               colorProfile.renderIntent);
 }
@@ -296,8 +309,7 @@ void Display::chooseCompositionStrategy() {
         applyChangedTypesToLayers(changes->changedTypes);
         applyDisplayRequests(changes->displayRequests);
         applyLayerRequestsToLayers(changes->layerRequests);
-        applyClientTargetRequests(changes->clientTargetProperty,
-                                  changes->clientTargetWhitePointNits);
+        applyClientTargetRequests(changes->clientTargetProperty, changes->clientTargetBrightness);
     }
 
     // Determine what type of composition we are doing from the final state
@@ -338,6 +350,13 @@ void Display::beginDraw() {
     auto renderSurface = getRenderSurface();
     fbtLayerInfo.secure = renderSurface->isProtected();
     fbtLayerInfo.dataspace = static_cast<int>(renderSurface->getClientTargetCurrentDataspace());
+
+    // Reset cache if there is a color mode change
+    if (mIsColorModeChanged ) {
+        fbtLayerInfo.dataspace = static_cast<int>(ui::Dataspace::UNKNOWN);
+        mIsColorModeChanged = false;
+    }
+
     current.index = renderSurface->getClientTargetCurrentSlot();
     dataspace = renderSurface->getClientTargetCurrentDataspace();
 
@@ -363,7 +382,7 @@ bool Display::getSkipColorTransform() const {
                                         DisplayCapability::SKIP_CLIENT_COLOR_TRANSFORM);
     }
 
-    return hwc.hasCapability(hal::Capability::SKIP_CLIENT_COLOR_TRANSFORM);
+    return hwc.hasCapability(Capability::SKIP_CLIENT_COLOR_TRANSFORM);
 }
 
 bool Display::anyLayersRequireClientComposition() const {
@@ -421,13 +440,13 @@ void Display::applyLayerRequestsToLayers(const LayerRequests& layerRequests) {
 }
 
 void Display::applyClientTargetRequests(const ClientTargetProperty& clientTargetProperty,
-                                        float whitePointNits) {
+                                        float brightness) {
     if (clientTargetProperty.dataspace == ui::Dataspace::UNKNOWN) {
         return;
     }
 
     editState().dataspace = clientTargetProperty.dataspace;
-    editState().clientTargetWhitePointNits = whitePointNits;
+    editState().clientTargetBrightness = brightness;
     getRenderSurface()->setBufferDataspace(clientTargetProperty.dataspace);
     getRenderSurface()->setBufferPixelFormat(clientTargetProperty.pixelFormat);
 }

@@ -275,23 +275,21 @@ enum {
 
 /**
  * Classifications of the current gesture, if available.
- *
- * The following values must be kept in sync with MotionEvent.java
  */
 enum class MotionClassification : uint8_t {
     /**
      * No classification is available.
      */
-    NONE = 0,
+    NONE = AMOTION_EVENT_CLASSIFICATION_NONE,
     /**
      * Too early to classify the current gesture. Need more events. Look for changes in the
      * upcoming motion events.
      */
-    AMBIGUOUS_GESTURE = 1,
+    AMBIGUOUS_GESTURE = AMOTION_EVENT_CLASSIFICATION_AMBIGUOUS_GESTURE,
     /**
      * The current gesture likely represents a user intentionally exerting force on the touchscreen.
      */
-    DEEP_PRESS = 2,
+    DEEP_PRESS = AMOTION_EVENT_CLASSIFICATION_DEEP_PRESS,
 };
 
 /**
@@ -816,6 +814,8 @@ public:
     static vec2 calculateTransformedXY(uint32_t source, const ui::Transform&, const vec2& xy);
     static float calculateTransformedAxisValue(int32_t axis, uint32_t source, const ui::Transform&,
                                                const PointerCoords&);
+    static PointerCoords calculateTransformedCoords(uint32_t source, const ui::Transform&,
+                                                    const PointerCoords&);
 
 protected:
     int32_t mAction;

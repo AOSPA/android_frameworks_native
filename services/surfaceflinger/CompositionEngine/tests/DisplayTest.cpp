@@ -41,6 +41,7 @@
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 
+using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::Composition;
 
 namespace android::compositionengine {
@@ -672,7 +673,7 @@ using DisplayGetSkipColorTransformTest = DisplayWithLayersTestCommon;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
 TEST_F(DisplayGetSkipColorTransformTest, checksCapabilityIfGpuDisplay) {
-    EXPECT_CALL(mHwComposer, hasCapability(hal::Capability::SKIP_CLIENT_COLOR_TRANSFORM))
+    EXPECT_CALL(mHwComposer, hasCapability(Capability::SKIP_CLIENT_COLOR_TRANSFORM))
             .WillOnce(Return(true));
     auto args = getDisplayCreationArgsForGpuVirtualDisplay();
     auto gpuDisplay{impl::createDisplay(mCompositionEngine, args)};
@@ -838,7 +839,7 @@ TEST_F(DisplayApplyLayerRequestsToLayersTest, applyClientTargetRequests) {
 
     auto& state = mDisplay->getState();
     EXPECT_EQ(clientTargetProperty.dataspace, state.dataspace);
-    EXPECT_EQ(kWhitePointNits, state.clientTargetWhitePointNits);
+    EXPECT_EQ(kWhitePointNits, state.clientTargetBrightness);
 }
 
 /*

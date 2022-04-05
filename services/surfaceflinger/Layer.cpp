@@ -340,6 +340,12 @@ void Layer::computeBounds(FloatRect parentBounds, ui::Transform parentTransform,
     // Calculate effective layer transform
     mEffectiveTransform = parentTransform * getActiveTransform(s);
 
+    if (CC_UNLIKELY(!isTransformValid())) {
+        ALOGW("Stop computing bounds for %s because it has invalid transformation.",
+              getDebugName());
+        return;
+    }
+
     // Transform parent bounds to layer space
     parentBounds = getActiveTransform(s).inverse().transform(parentBounds);
 
@@ -1356,6 +1362,10 @@ bool Layer::isHiddenByPolicy() const {
             }
         }
     }
+    if (CC_UNLIKELY(!isTransformValid())) {
+        ALOGW("Hide layer %s because it has invalid transformation.", getDebugName());
+        return true;
+    }
     return s.flags & layer_state_t::eLayerHidden;
 }
 
@@ -1890,6 +1900,11 @@ ui::Transform Layer::getTransform() const {
     return mEffectiveTransform;
 }
 
+bool Layer::isTransformValid() const {
+    float transformDet = getTransform().det();
+    return transformDet != 0 && !isinf(transformDet) && !isnan(transformDet);
+}
+
 half Layer::getAlpha() const {
     const auto& p = mDrawingParent.promote();
 
@@ -2025,29 +2040,31 @@ void Layer::setInputInfo(const WindowInfo& info) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags,
-                                const DisplayDevice* display) {
+LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     LayerProto* layerProto = layersProto.add_layers();
-    writeToProtoDrawingState(layerProto, traceFlags, display);
+    writeToProtoDrawingState(layerProto);
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
         // Only populate for the primary display.
+        UnnecessaryLock assumeLocked(mFlinger->mStateLock); // called from the main thread.
+        const auto display = mFlinger->getDefaultDisplayDeviceLocked();
         if (display) {
             const auto compositionType = getCompositionType(*display);
             layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
+            LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
+                                           [&]() { return layerProto->mutable_visible_region(); });
         }
     }
 
     for (const sp<Layer>& layer : mDrawingChildren) {
-        layer->writeToProto(layersProto, traceFlags, display);
+        layer->writeToProto(layersProto, traceFlags);
     }
 
     return layerProto;
 }
 
-void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
-                                     const DisplayDevice* display) {
+void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
     const ui::Transform transform = getTransform();
     auto buffer = getExternalTexture();
     if (buffer != nullptr) {
@@ -2071,10 +2088,6 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo, uint32_t traceFlags,
     LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
                                            [&]() { return layerInfo->mutable_position(); });
     LayerProtoHelper::writeToProto(mBounds, [&]() { return layerInfo->mutable_bounds(); });
-    if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        LayerProtoHelper::writeToProto(getVisibleRegion(display),
-                                       [&]() { return layerInfo->mutable_visible_region(); });
-    }
     LayerProtoHelper::writeToProto(surfaceDamageRegion,
                                    [&]() { return layerInfo->mutable_damage_region(); });
 
@@ -2176,6 +2189,9 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
             (*protoMap)[entry.first] = std::string(entry.second.cbegin(), entry.second.cend());
         }
     }
+
+    LayerProtoHelper::writeToProto(state.destinationFrame,
+                                   [&]() { return layerInfo->mutable_destination_frame(); });
 }
 
 bool Layer::isRemovedFromCurrentState() const  {
@@ -2193,8 +2209,7 @@ Rect Layer::getInputBounds() const {
 void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDisplay) {
     Rect tmpBounds = getInputBounds();
     if (!tmpBounds.isValid()) {
-        info.flags = WindowInfo::Flag::NOT_TOUCH_MODAL | WindowInfo::Flag::NOT_FOCUSABLE;
-        info.focusable = false;
+        info.setInputConfig(WindowInfo::InputConfig::NOT_FOCUSABLE, true);
         info.touchableRegion.clear();
         // A layer could have invalid input bounds and still expect to receive touch input if it has
         // replaceTouchableRegionWithCrop. For that case, the input transform needs to be calculated
@@ -2283,14 +2298,14 @@ gui::DropInputMode Layer::getDropInputMode() const {
 }
 
 void Layer::handleDropInputMode(gui::WindowInfo& info) const {
-    if (mDrawingState.inputInfo.inputFeatures.test(WindowInfo::Feature::NO_INPUT_CHANNEL)) {
+    if (mDrawingState.inputInfo.inputConfig.test(WindowInfo::InputConfig::NO_INPUT_CHANNEL)) {
         return;
     }
 
     // Check if we need to drop input unconditionally
     gui::DropInputMode dropInputMode = getDropInputMode();
     if (dropInputMode == gui::DropInputMode::ALL) {
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
         ALOGV("Dropping input for %s as requested by policy.", getDebugName());
         return;
     }
@@ -2303,7 +2318,7 @@ void Layer::handleDropInputMode(gui::WindowInfo& info) const {
     // Check if the parent has set an alpha on the layer
     sp<Layer> parent = mDrawingParent.promote();
     if (parent && parent->getAlpha() != 1.0_hf) {
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
         ALOGV("Dropping input for %s as requested by policy because alpha=%f", getDebugName(),
               static_cast<float>(getAlpha()));
     }
@@ -2311,7 +2326,7 @@ void Layer::handleDropInputMode(gui::WindowInfo& info) const {
     // Check if the parent has cropped the buffer
     Rect bufferSize = getCroppedBufferSize(getDrawingState());
     if (!bufferSize.isValid()) {
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT_IF_OBSCURED;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED;
         return;
     }
 
@@ -2323,7 +2338,7 @@ void Layer::handleDropInputMode(gui::WindowInfo& info) const {
     bool croppedByParent = bufferInScreenSpace != Rect{mScreenBounds};
 
     if (croppedByParent) {
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
         ALOGV("Dropping input for %s as requested by policy because buffer is cropped by parent",
               getDebugName());
     } else {
@@ -2331,7 +2346,7 @@ void Layer::handleDropInputMode(gui::WindowInfo& info) const {
         // input if the window is obscured. This check should be done in surfaceflinger but the
         // logic currently resides in inputflinger. So pass the if_obscured check to input to only
         // drop input events if the window is obscured.
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT_IF_OBSCURED;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED;
     }
 }
 
@@ -2340,8 +2355,7 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
         mDrawingState.inputInfo.name = getName();
         mDrawingState.inputInfo.ownerUid = mOwnerUid;
         mDrawingState.inputInfo.ownerPid = mOwnerPid;
-        mDrawingState.inputInfo.inputFeatures = WindowInfo::Feature::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.flags = WindowInfo::Flag::NOT_TOUCH_MODAL;
+        mDrawingState.inputInfo.inputConfig |= WindowInfo::InputConfig::NO_INPUT_CHANNEL;
         mDrawingState.inputInfo.displayId = getLayerStack().id;
     }
 
@@ -2359,7 +2373,9 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
     // We are just using these layers for occlusion detection in
     // InputDispatcher, and obviously if they aren't visible they can't occlude
     // anything.
-    info.visible = hasInputInfo() ? canReceiveInput() : isVisible();
+    const bool visible = hasInputInfo() ? canReceiveInput() : isVisible();
+    info.setInputConfig(WindowInfo::InputConfig::NOT_VISIBLE, !visible);
+
     info.alpha = getAlpha();
     fillTouchOcclusionMode(info);
     handleDropInputMode(info);
@@ -2367,7 +2383,7 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
     // If the window will be blacked out on a display because the display does not have the secure
     // flag and the layer has the secure flag set, then drop input.
     if (!displayIsSecure && isSecure()) {
-        info.inputFeatures |= WindowInfo::Feature::DROP_INPUT;
+        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
     }
 
     auto cropLayer = mDrawingState.touchableRegionCrop.promote();
@@ -2381,8 +2397,9 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
 
     // Inherit the trusted state from the parent hierarchy, but don't clobber the trusted state
     // if it was set by WM for a known system overlay
-    info.trustedOverlay = info.trustedOverlay || isTrustedOverlay();
-
+    if (isTrustedOverlay()) {
+        info.inputConfig |= WindowInfo::InputConfig::TRUSTED_OVERLAY;
+    }
 
     // If the layer is a clone, we need to crop the input region to cloned root to prevent
     // touches from going outside the cloned area.
@@ -2514,7 +2531,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
     }
     // Cloned layers shouldn't handle watch outside since their z order is not determined by
     // WM or the client.
-    mDrawingState.inputInfo.flags &= ~WindowInfo::Flag::WATCH_OUTSIDE_TOUCH;
+    mDrawingState.inputInfo.setInputConfig(WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH, false);
 }
 
 void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {

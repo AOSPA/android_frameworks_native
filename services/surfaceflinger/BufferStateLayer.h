@@ -47,7 +47,7 @@ public:
     void finalizeFrameEventHistory(const std::shared_ptr<FenceTime>& glDoneFence,
                                    const CompositorTiming& compositorTiming) override;
 
-    bool isBufferDue(nsecs_t expectedPresentTime) const override;
+    bool isBufferDue(nsecs_t /*expectedPresentTime*/) const override { return true; }
 
     Region getActiveTransparentRegion(const Layer::State& s) const override {
         return s.transparentRegionHint;
@@ -136,14 +136,18 @@ private:
 
     bool bufferNeedsFiltering() const override;
 
+    bool simpleBufferUpdate(const layer_state_t& s) const override;
+
     ReleaseCallbackId mPreviousReleaseCallbackId = ReleaseCallbackId::INVALID_ID;
     uint64_t mPreviousReleasedFrameNumber = 0;
+
+    uint64_t mPreviousBarrierFrameNumber = 0;
 
     bool mReleasePreviousBuffer = false;
 
     // Stores the last set acquire fence signal time used to populate the callback handle's acquire
     // time.
-    nsecs_t mCallbackHandleAcquireTime = -1;
+    std::variant<nsecs_t, sp<Fence>> mCallbackHandleAcquireTimeOrFence = -1;
 
     std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;
     // An upper bound on the number of SurfaceFrames in the pending classifications deque.

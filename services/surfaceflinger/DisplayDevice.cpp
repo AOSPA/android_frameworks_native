@@ -142,7 +142,7 @@ uint32_t DisplayDevice::getPageFlipCount() const {
     return mCompositionDisplay->getRenderSurface()->getPageFlipCount();
 }
 
-std::pair<gui::DisplayInfo, ui::Transform> DisplayDevice::getInputInfo() const {
+auto DisplayDevice::getInputInfo() const -> InputInfo {
     gui::DisplayInfo info;
     info.displayId = getLayerStack().id;
 
@@ -167,10 +167,13 @@ std::pair<gui::DisplayInfo, ui::Transform> DisplayDevice::getInputInfo() const {
 
     info.logicalWidth = getLayerStackSpaceRect().width();
     info.logicalHeight = getLayerStackSpaceRect().height();
-    return {info, displayTransform};
+
+    return {.info = info,
+            .transform = displayTransform,
+            .receivesInput = receivesInput(),
+            .isSecure = isSecure()};
 }
 
-// ----------------------------------------------------------------------------
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
     getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
@@ -227,6 +230,15 @@ const DisplayModes& DisplayDevice::getSupportedModes() const {
 DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
     const auto it = std::find_if(mSupportedModes.begin(), mSupportedModes.end(),
                                  [&](DisplayModePtr mode) { return mode->getId() == modeId; });
+    if (it != mSupportedModes.end()) {
+        return *it;
+    }
+    return nullptr;
+}
+
+DisplayModePtr DisplayDevice::getModefromHwcId(uint32_t hwcId) const {
+    const auto it = std::find_if(mSupportedModes.begin(), mSupportedModes.end(),
+                                 [&](DisplayModePtr mode) { return mode->getHwcId() == hwcId; });
     if (it != mSupportedModes.end()) {
         return *it;
     }
@@ -466,7 +478,13 @@ HdrCapabilities DisplayDevice::getHdrCapabilities() const {
 }
 
 ui::DisplayModeId DisplayDevice::getPreferredBootModeId() const {
-    return mCompositionDisplay->getPreferredBootModeId();
+    const auto preferredBootHwcModeId = mCompositionDisplay->getPreferredBootHwcConfigId();
+    const auto mode = getModefromHwcId(preferredBootHwcModeId);
+    if (mode == nullptr) {
+        ALOGE("%s: invalid display mode (%d)", __FUNCTION__, preferredBootHwcModeId);
+        return BAD_VALUE;
+    }
+    return mode->getId().value();
 }
 
 void DisplayDevice::enableRefreshRateOverlay(bool enable, bool showSpinnner) {

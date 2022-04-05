@@ -38,6 +38,12 @@ void MessageQueue::Handler::dispatchFrame(int64_t vsyncId, nsecs_t expectedVsync
     }
 }
 
+void MessageQueue::Handler::dispatchFrameImmed() {
+    if (!mFramePending.exchange(true)) {
+        mQueue.mLooper->sendMessage(this, Message());
+    }
+}
+
 bool MessageQueue::Handler::isFramePending() const {
     return mFramePending.load();
 }
@@ -52,7 +58,7 @@ void MessageQueue::Handler::handleMessage(const Message&) {
         return;
     }
 
-    compositor.composite(frameTime);
+    compositor.composite(frameTime, mVsyncId);
     compositor.sample();
 }
 
@@ -107,14 +113,6 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
         mVsync.lastCallbackTime = std::chrono::nanoseconds(vsyncTime);
         mVsync.scheduledFrameTime.reset();
     }
-
-    // TODO(b/207525987) mFlinger removed upstream, re-add functionality as
-    // necessary.
-    /*  
-    if (mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal) {
-        mFlinger->mDolphinWrapper.dolphinTrackVsyncSignal(vsyncTime, targetWakeupTime, readyTime);
-    }
-    */
 
     const auto vsyncId = mVsync.tokenManager->generateTokenForPredictions(
             {targetWakeupTime, readyTime, vsyncTime});
@@ -192,6 +190,11 @@ void MessageQueue::scheduleFrame() {
                                            .earliestVsync = mVsync.lastCallbackTime.count()});
 }
 
+void MessageQueue::scheduleFrameImmed() {
+    ATRACE_CALL();
+    mHandler->dispatchFrameImmed();
+}
+
 void MessageQueue::injectorCallback() {
     ssize_t n;
     DisplayEventReceiver::Event buffer[8];
@@ -202,7 +205,8 @@ void MessageQueue::injectorCallback() {
                 // necessary.
                 // mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
                 auto& vsync = buffer[i].vsync;
-                mHandler->dispatchFrame(vsync.vsyncId, vsync.expectedVSyncTimestamp);
+                mHandler->dispatchFrame(vsync.vsyncData.preferredVsyncId(),
+                                        vsync.vsyncData.preferredExpectedPresentationTime());
                 break;
             }
         }
