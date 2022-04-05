@@ -248,7 +248,7 @@ void CompositionTest::captureScreenComposition() {
                                            *mRenderEngine, true);
 
     status_t result =
-            mFlinger.renderScreenImplLocked(*renderArea, traverseLayers, mCaptureScreenBuffer,
+            mFlinger.renderScreenImpl(*renderArea, traverseLayers, mCaptureScreenBuffer,
                                             forSystem, regionSampling);
     EXPECT_EQ(NO_ERROR, result);
 
