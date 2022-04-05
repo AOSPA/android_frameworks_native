@@ -1030,9 +1030,6 @@ void SurfaceFlinger::bootFinished() {
     }));
 
     setupDisplayExtnFeatures();
-
-    mRETid = getRenderEngine().getRETid();
-    mSFTid = gettid();
 }
 
 uint32_t SurfaceFlinger::getNewTexture() {
