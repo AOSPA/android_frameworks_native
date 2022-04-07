@@ -347,12 +347,12 @@ public:
         return mFlinger->onMessageReceived(what, /*vsyncId=*/0, systemTime());
     }
 
-    auto renderScreenImplLocked(const RenderArea& renderArea,
+    auto renderScreenImpl(const RenderArea& renderArea,
                                 SurfaceFlinger::TraverseLayersFunction traverseLayers,
                                 const std::shared_ptr<renderengine::ExternalTexture>& buffer,
                                 bool forSystem, bool regionSampling) {
         ScreenCaptureResults captureResults;
-        return mFlinger->renderScreenImplLocked(renderArea, traverseLayers, buffer, forSystem,
+        return mFlinger->renderScreenImpl(renderArea, traverseLayers, buffer, forSystem,
                                                 regionSampling, false /* grayscale */,
                                                 captureResults);
     }
