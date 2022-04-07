@@ -443,6 +443,7 @@ private:
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
     friend class SurfaceTracing;
+    friend class LayerRenderArea;
 
     // For unit tests
     friend class TestableSurfaceFlinger;
