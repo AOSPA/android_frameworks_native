@@ -8305,8 +8305,16 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
     // TODO(b/140204874): Leave the event in until we do proper testing with all apps that might
     // be depending in this callback.
     const auto activeMode = display->getActiveMode();
+    auto activeModeWidth = activeMode->getWidth();
+    auto activeModeHeight = activeMode->getHeight();
+    auto defaultModeWidth = (display->getMode(currentPolicy.defaultMode))->getWidth();
+    auto defaultModeHeight = (display->getMode(currentPolicy.defaultMode))->getHeight();
     if (isDisplayActiveLocked(display)) {
-        mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, display->getMode(currentPolicy.defaultMode));
+        if ((activeModeWidth == defaultModeWidth) && (activeModeHeight == defaultModeHeight)) {
+            mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
+        } else {
+            mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, display->getMode(currentPolicy.defaultMode));
+        }
         toggleKernelIdleTimer();
     } else {
         mScheduler->onNonPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
