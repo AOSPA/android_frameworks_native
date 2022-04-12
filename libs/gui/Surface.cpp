@@ -45,6 +45,7 @@
 #include <gui/ISurfaceComposer.h>
 #include <gui/LayerState.h>
 #include <private/gui/ComposerService.h>
+#include <private/gui/ComposerServiceAIDL.h>
 
 namespace android {
 
@@ -343,7 +344,7 @@ status_t Surface::getFrameTimestamps(uint64_t frameNumber,
 status_t Surface::getWideColorSupport(bool* supported) {
     ATRACE_CALL();
 
-    const sp<IBinder> display = composerService()->getInternalDisplayToken();
+    const sp<IBinder> display = ComposerServiceAIDL::getInstance().getInternalDisplayToken();
     if (display == nullptr) {
         return NAME_NOT_FOUND;
     }
@@ -356,7 +357,7 @@ status_t Surface::getWideColorSupport(bool* supported) {
 status_t Surface::getHdrSupport(bool* supported) {
     ATRACE_CALL();
 
-    const sp<IBinder> display = composerService()->getInternalDisplayToken();
+    const sp<IBinder> display = ComposerServiceAIDL::getInstance().getInternalDisplayToken();
     if (display == nullptr) {
         return NAME_NOT_FOUND;
     }
@@ -1096,6 +1097,17 @@ void Surface::getQueueBufferInputLocked(android_native_buffer_t* buffer, int fen
     *out = input;
 }
 
+void Surface::applyGrallocMetadataLocked(
+        android_native_buffer_t* buffer,
+        const IGraphicBufferProducer::QueueBufferInput& queueBufferInput) {
+    ATRACE_CALL();
+    auto& mapper = GraphicBufferMapper::get();
+    mapper.setDataspace(buffer->handle, static_cast<ui::Dataspace>(queueBufferInput.dataSpace));
+    mapper.setSmpte2086(buffer->handle, queueBufferInput.getHdrMetadata().getSmpte2086());
+    mapper.setCta861_3(buffer->handle, queueBufferInput.getHdrMetadata().getCta8613());
+    mapper.setSmpte2094_40(buffer->handle, queueBufferInput.getHdrMetadata().getHdr10Plus());
+}
+
 void Surface::onBufferQueuedLocked(int slot, sp<Fence> fence,
         const IGraphicBufferProducer::QueueBufferOutput& output) {
     mDequeuedSlots.erase(slot);
@@ -1166,9 +1178,11 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     IGraphicBufferProducer::QueueBufferOutput output;
     IGraphicBufferProducer::QueueBufferInput input;
     getQueueBufferInputLocked(buffer, fenceFd, mTimestamp, &input);
+    applyGrallocMetadataLocked(buffer, input);
     sp<Fence> fence = input.fence;
 
     nsecs_t now = systemTime();
+
     status_t err = mGraphicBufferProducer->queueBuffer(i, input, &output);
     mLastQueueDuration = systemTime() - now;
     if (err != OK)  {
