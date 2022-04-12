@@ -1652,18 +1652,6 @@ void SurfaceFlinger::setActiveModeInternal() {
         return;
     }
 
-    if (display->getActiveMode()->getSize() != upcomingModeInfo.mode->getSize()) {
-        auto& state = mCurrentState.displays.editValueFor(display->getDisplayToken());
-        // We need to generate new sequenceId in order to recreate the display (and this
-        // way the framebuffer).
-        state.sequenceId = DisplayDeviceState{}.sequenceId;
-        state.physical->activeMode = upcomingModeInfo.mode;
-        processDisplayChangesLocked();
-
-        // processDisplayChangesLocked will update all necessary components so we're done here.
-        return;
-    }
-
     // We just created this display so we can call even if we are not on
     // the main thread
     MainThreadScopedGuard fakeMainThreadGuard(SF_MAIN_THREAD);
@@ -1762,6 +1750,16 @@ void SurfaceFlinger::performSetActiveMode() {
             continue;
         }
         mScheduler->onNewVsyncPeriodChangeTimeline(outTimeline);
+
+        const auto upcomingMode = display->getMode(desiredActiveMode->mode->getId());
+        if (display->getActiveMode()->getSize() != upcomingMode->getSize()) {
+           auto& state = mCurrentState.displays.editValueFor(display->getDisplayToken());
+           // We need to generate new sequenceId in order to recreate the display (and this
+           // way the framebuffer).
+           state.sequenceId = DisplayDeviceState{}.sequenceId;
+           state.physical->activeMode = upcomingMode;
+           processDisplayChangesLocked();
+        }
 
         // Scheduler will submit an empty frame to HWC if needed.
         mSetActiveModePending = true;
@@ -8304,7 +8302,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
     // be depending in this callback.
     const auto activeMode = display->getActiveMode();
     if (isDisplayActiveLocked(display)) {
-        mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
+        mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, display->getMode(currentPolicy.defaultMode));
         toggleKernelIdleTimer();
     } else {
         mScheduler->onNonPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
