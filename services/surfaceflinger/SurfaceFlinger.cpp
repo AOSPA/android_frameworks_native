@@ -4907,13 +4907,18 @@ status_t SurfaceFlinger::setTransactionState(
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
         sp<Layer> layer = fromHandle(state.surface).promote();
         if (layer != nullptr) {
-            const uint32_t layerStackId = layer->getLayerStack();
             SmomoIntf *smoMo = nullptr;
-            for (auto &instance: mSmomoInstances) {
-                 if (instance.layerStackId == layerStackId) {
-                    smoMo = instance.smoMo;
-                    break;
+            if (mSmomoInstances.size() > 1) {
+                const uint32_t layerStackId = layer->getLayerStack();
+                for (auto &instance: mSmomoInstances) {
+                     if (instance.layerStackId == layerStackId) {
+                        smoMo = instance.smoMo;
+                        break;
+                    }
                 }
+            }
+            else if (mSmomoInstances.size() == 1) {
+                smoMo = mSmomoInstances[0].smoMo;
             }
 
             if (smoMo) {
@@ -7937,17 +7942,6 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
         // and failed if display is not in native mode. This provide a way to force using native
         // colors when capture.
         dataspace = args.dataspace;
-        if (dataspace == ui::Dataspace::UNKNOWN) {
-            auto display = findDisplay(WithLayerStack(parent->getLayerStack()));
-            if (!display) {
-                // If the layer is not on a display, use the dataspace for the default display.
-                display = getDefaultDisplayDeviceLocked();
-            }
-
-            const ui::ColorMode colorMode = display->getCompositionDisplay()->getState().colorMode;
-            dataspace = pickDataspaceFromColorMode(colorMode);
-        }
-
     } // mStateLock
 
     // really small crop or frameScale
@@ -8084,7 +8078,7 @@ status_t SurfaceFlinger::captureScreenCommon(
 
         status_t result = NO_ERROR;
         renderArea->render([&] {
-            result = renderScreenImplLocked(*renderArea, traverseLayers, buffer,
+            result = renderScreenImpl(*renderArea, traverseLayers, buffer,
                                             canCaptureBlackoutContent, regionSampling, grayscale,
                                             captureResults);
         });
@@ -8096,7 +8090,7 @@ status_t SurfaceFlinger::captureScreenCommon(
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::renderScreenImplLocked(
+status_t SurfaceFlinger::renderScreenImpl(
         const RenderArea& renderArea, TraverseLayersFunction traverseLayers,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer,
         bool canCaptureBlackoutContent, bool regionSampling, bool grayscale,
@@ -8119,7 +8113,20 @@ status_t SurfaceFlinger::renderScreenImplLocked(
     }
 
     captureResults.buffer = buffer->getBuffer();
-    captureResults.capturedDataspace = renderArea.getReqDataSpace();
+    auto dataspace = renderArea.getReqDataSpace();
+    auto parent = renderArea.getParentLayer();
+    if ((dataspace == ui::Dataspace::UNKNOWN) && (parent != nullptr)) {
+        Mutex::Autolock lock(mStateLock);
+        auto display = findDisplay(WithLayerStack(parent->getLayerStack()));
+        if (!display) {
+            // If the layer is not on a display, use the dataspace for the default display.
+            display = getDefaultDisplayDeviceLocked();
+        }
+
+        const ui::ColorMode colorMode = display->getCompositionDisplay()->getState().colorMode;
+        dataspace = pickDataspaceFromColorMode(colorMode);
+    }
+    captureResults.capturedDataspace = dataspace;
 
     const auto reqWidth = renderArea.getReqWidth();
     const auto reqHeight = renderArea.getReqHeight();
@@ -8137,7 +8144,7 @@ status_t SurfaceFlinger::renderScreenImplLocked(
     clientCompositionDisplay.clip = sourceCrop;
     clientCompositionDisplay.orientation = rotation;
 
-    clientCompositionDisplay.outputDataspace = renderArea.getReqDataSpace();
+    clientCompositionDisplay.outputDataspace = dataspace;
     clientCompositionDisplay.maxLuminance = DisplayDevice::sDefaultMaxLumiance;
 
     const float colorSaturation = grayscale ? 0 : 1;

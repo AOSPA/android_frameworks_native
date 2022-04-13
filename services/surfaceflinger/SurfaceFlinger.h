@@ -443,6 +443,7 @@ private:
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
     friend class SurfaceTracing;
+    friend class LayerRenderArea;
 
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -1023,10 +1024,10 @@ private:
                                  const std::shared_ptr<renderengine::ExternalTexture>&,
                                  bool regionSampling, bool grayscale,
                                  const sp<IScreenCaptureListener>&);
-    status_t renderScreenImplLocked(const RenderArea&, TraverseLayersFunction,
-                                    const std::shared_ptr<renderengine::ExternalTexture>&,
-                                    bool canCaptureBlackoutContent, bool regionSampling,
-                                    bool grayscale, ScreenCaptureResults&);
+    status_t renderScreenImpl(const RenderArea&, TraverseLayersFunction,
+                              const std::shared_ptr<renderengine::ExternalTexture>&,
+                              bool canCaptureBlackoutContent, bool regionSampling,
+                              bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock);
 
 
     bool canAllocateHwcDisplayIdForVDS(uint64_t usage);
