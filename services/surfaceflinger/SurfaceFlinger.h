@@ -902,7 +902,7 @@ private:
     // Check if unified draw supported
     void startUnifiedDraw();
     void InitComposerExtn();
-    void createSmomoInstance(const DisplayDeviceState& state);
+    void createSmomoInstance(const DisplayDeviceState& state) REQUIRES(mStateLock);
     void destroySmomoInstance(const sp<DisplayDevice>& display);
 
     // Returns whether a new buffer has been latched (see handlePageFlip())
@@ -1682,7 +1682,7 @@ private:
 
     void scheduleRegionSamplingThread();
     void notifyRegionSamplingThread();
-    void setRefreshRates(std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs);
+    void setRefreshRates(const sp<DisplayDevice>& display);
     void UpdateSmomoState();
     bool isRefreshRateOverlayEnabled() const REQUIRES(mStateLock) {
         return std::any_of(mDisplays.begin(), mDisplays.end(),

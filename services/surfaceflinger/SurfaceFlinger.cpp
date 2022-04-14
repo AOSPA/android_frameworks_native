@@ -461,14 +461,13 @@ bool callingThreadHasRotateSurfaceFlingerAccess() {
             PermissionCache::checkPermission(sRotateSurfaceFlinger, pid, uid);
 }
 
-void SurfaceFlinger::setRefreshRates(
-       std::unique_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs) {
+void SurfaceFlinger::setRefreshRates(const sp<DisplayDevice>& display) {
     // Get Primary Smomo Instance.
     std::vector<float> refreshRates;
 
-    auto iter = refreshRateConfigs->getAllRefreshRates().cbegin();
-    while (iter != refreshRateConfigs->getAllRefreshRates().cend()) {
-        if (refreshRateConfigs->isModeAllowed(iter->second->getModeId())) {
+    auto iter = display->refreshRateConfigs().getAllRefreshRates().cbegin();
+    while (iter != display->refreshRateConfigs().getAllRefreshRates().cend()) {
+        if (display->refreshRateConfigs().isModeAllowed(iter->second->getModeId())) {
             refreshRates.push_back(iter->second->getFps().getValue());
         }
         ++iter;
@@ -1263,8 +1262,8 @@ void SurfaceFlinger::createSmomoInstance(const DisplayDeviceState& state) {
                 setRefreshRateTo(refreshRate);
            });
 
-    // b/223439401 Fix the following value-add
-    // setRefreshRates(mRefreshRateConfigs);
+    const auto display = getDefaultDisplayDeviceLocked();
+    setRefreshRates(display);
 
     if (mSmomoInstances.size() > 1) {
         // Disable DRC on all instances.
@@ -4768,6 +4767,7 @@ bool SurfaceFlinger::transactionIsReadyToBeApplied(
             if (smoMo) {
                 ATRACE_BEGIN("smomo_begin");
                 if (smoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
+                    ATRACE_END();
                     return false;
                 }
                 ATRACE_END();
@@ -8348,6 +8348,8 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
         LOG_ALWAYS_FATAL("Desired display mode not allowed: %d",
                          preferredDisplayMode->getId().value());
     }
+
+    setRefreshRates(display);
 
     return NO_ERROR;
 }
