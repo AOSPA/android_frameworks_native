@@ -1652,18 +1652,6 @@ void SurfaceFlinger::setActiveModeInternal() {
         return;
     }
 
-    if (display->getActiveMode()->getSize() != upcomingModeInfo.mode->getSize()) {
-        auto& state = mCurrentState.displays.editValueFor(display->getDisplayToken());
-        // We need to generate new sequenceId in order to recreate the display (and this
-        // way the framebuffer).
-        state.sequenceId = DisplayDeviceState{}.sequenceId;
-        state.physical->activeMode = upcomingModeInfo.mode;
-        processDisplayChangesLocked();
-
-        // processDisplayChangesLocked will update all necessary components so we're done here.
-        return;
-    }
-
     // We just created this display so we can call even if we are not on
     // the main thread
     MainThreadScopedGuard fakeMainThreadGuard(SF_MAIN_THREAD);
@@ -1762,6 +1750,16 @@ void SurfaceFlinger::performSetActiveMode() {
             continue;
         }
         mScheduler->onNewVsyncPeriodChangeTimeline(outTimeline);
+
+        const auto upcomingMode = display->getMode(desiredActiveMode->mode->getId());
+        if (display->getActiveMode()->getSize() != upcomingMode->getSize()) {
+           auto& state = mCurrentState.displays.editValueFor(display->getDisplayToken());
+           // We need to generate new sequenceId in order to recreate the display (and this
+           // way the framebuffer).
+           state.sequenceId = DisplayDeviceState{}.sequenceId;
+           state.physical->activeMode = upcomingMode;
+           processDisplayChangesLocked();
+        }
 
         // Scheduler will submit an empty frame to HWC if needed.
         mSetActiveModePending = true;
@@ -3969,7 +3967,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            if (mUseFbScaling && display->isPrimary()) {
+            if (mUseFbScaling && display->isPrimary() && display->isPoweredOn()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
                 DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
                 setFrameBufferSizeForScaling(display, curState, drawingState);
@@ -4009,32 +4007,28 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
     auto display = displayDevice->getCompositionDisplay();
     int newWidth = currentState.layerStackSpaceRect.width();
     int newHeight = currentState.layerStackSpaceRect.height();
-    int currentWidth = drawingState.layerStackSpaceRect.width();
-    int currentHeight = drawingState.layerStackSpaceRect.height();
     int displayWidth = displayDevice->getWidth();
     int displayHeight = displayDevice->getHeight();
-    bool update_needed = false;
 
-    if (newWidth != currentWidth || newHeight != currentHeight) {
-        update_needed = true;
+    if (newWidth != displayWidth || newHeight != displayHeight) {
         if (!((newWidth > newHeight && displayWidth > displayHeight) ||
             (newWidth < newHeight && displayWidth < displayHeight))) {
             std::swap(newWidth, newHeight);
         }
     }
 
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
-        !update_needed) {
-        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                     currentState.orientedDisplaySpaceRect);
-        return;
-    }
-
     if (newWidth > 0 && newHeight > 0) {
         currentState.width =  newWidth;
         currentState.height = newHeight;
     }
+
     currentState.orientedDisplaySpaceRect =  currentState.layerStackSpaceRect;
+
+    if (displayWidth == newWidth && displayHeight == newHeight) {
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
 
     if (mBootStage == BootStage::FINISHED) {
         displayDevice->setDisplaySize(currentState.width, currentState.height);
@@ -8311,8 +8305,16 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
     // TODO(b/140204874): Leave the event in until we do proper testing with all apps that might
     // be depending in this callback.
     const auto activeMode = display->getActiveMode();
+    auto activeModeWidth = activeMode->getWidth();
+    auto activeModeHeight = activeMode->getHeight();
+    auto defaultModeWidth = (display->getMode(currentPolicy.defaultMode))->getWidth();
+    auto defaultModeHeight = (display->getMode(currentPolicy.defaultMode))->getHeight();
     if (isDisplayActiveLocked(display)) {
-        mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
+        if ((activeModeWidth == defaultModeWidth) && (activeModeHeight == defaultModeHeight)) {
+            mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
+        } else {
+            mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, display->getMode(currentPolicy.defaultMode));
+        }
         toggleKernelIdleTimer();
     } else {
         mScheduler->onNonPrimaryDisplayModeChanged(mAppConnectionHandle, activeMode);
