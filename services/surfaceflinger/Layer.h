@@ -906,6 +906,9 @@ public:
     virtual std::string getPendingBufferCounterName() { return ""; }
     virtual bool updateGeometry() { return false; }
 
+    void setSmomoLayerStackId();
+    uint32_t getSmomoLayerStackId();
+
 protected:
     friend class impl::SurfaceInterceptor;
 
@@ -1135,6 +1138,8 @@ private:
     const std::vector<BlurRegion> getBlurRegions() const;
 
     bool mIsAtRoot = false;
+
+    uint32_t smomoLayerStackId = UINT32_MAX;
 public:
     nsecs_t getPreviousGfxInfo();
 };
