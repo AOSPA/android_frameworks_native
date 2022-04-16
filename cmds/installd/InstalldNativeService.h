@@ -63,9 +63,7 @@ public:
     binder::Status restoreconAppData(const std::optional<std::string>& uuid,
             const std::string& packageName, int32_t userId, int32_t flags, int32_t appId,
             const std::string& seInfo);
-    binder::Status restoreconAppDataLocked(const std::optional<std::string>& uuid,
-                                           const std::string& packageName, int32_t userId,
-                                           int32_t flags, int32_t appId, const std::string& seInfo);
+
     binder::Status migrateAppData(const std::optional<std::string>& uuid,
             const std::string& packageName, int32_t userId, int32_t flags);
     binder::Status clearAppData(const std::optional<std::string>& uuid,
@@ -170,6 +168,7 @@ public:
         int32_t storageFlag, std::vector<uint8_t>* _aidl_return);
 
     binder::Status invalidateMounts();
+    binder::Status setFirstBoot();
     binder::Status isQuotaSupported(const std::optional<std::string>& volumeUuid,
             bool* _aidl_return);
     binder::Status tryMountDataMirror(const std::optional<std::string>& volumeUuid);
@@ -184,6 +183,11 @@ public:
 
     binder::Status cleanupInvalidPackageDirs(const std::optional<std::string>& uuid, int32_t userId,
                                              int32_t flags);
+
+    binder::Status getOdexVisibility(const std::string& packageName, const std::string& apkPath,
+                                     const std::string& instructionSet,
+                                     const std::optional<std::string>& outputPath,
+                                     int32_t* _aidl_return);
 
 private:
     std::recursive_mutex mLock;
@@ -206,24 +210,28 @@ private:
                                        int32_t flags, int32_t appId, int32_t previousAppId,
                                        const std::string& seInfo, int32_t targetSdkVersion,
                                        int64_t* _aidl_return);
+    binder::Status restoreconAppDataLocked(const std::optional<std::string>& uuid,
+                                           const std::string& packageName, int32_t userId,
+                                           int32_t flags, int32_t appId, const std::string& seInfo);
 
-    binder::Status reconcileSdkData(const std::optional<std::string>& uuid,
-                                    const std::string& packageName,
-                                    const std::vector<std::string>& sdkPackageNames,
-                                    const std::vector<std::string>& randomSuffixes, int32_t userId,
-                                    int32_t appId, int32_t previousAppId, const std::string& seInfo,
-                                    int flags);
     binder::Status createSdkSandboxDataPackageDirectory(const std::optional<std::string>& uuid,
                                                         const std::string& packageName,
                                                         int32_t userId, int32_t appId,
-                                                        int32_t previousAppId,
-                                                        const std::string& seInfo, int32_t flags);
+                                                        int32_t flags);
     binder::Status clearSdkSandboxDataPackageDirectory(const std::optional<std::string>& uuid,
                                                        const std::string& packageName,
                                                        int32_t userId, int32_t flags);
     binder::Status destroySdkSandboxDataPackageDirectory(const std::optional<std::string>& uuid,
                                                          const std::string& packageName,
                                                          int32_t userId, int32_t flags);
+    binder::Status reconcileSdkData(const std::optional<std::string>& uuid,
+                                    const std::string& packageName,
+                                    const std::vector<std::string>& subDirNames, int32_t userId,
+                                    int32_t appId, int32_t previousAppId, const std::string& seInfo,
+                                    int flags);
+    binder::Status restoreconSdkDataLocked(const std::optional<std::string>& uuid,
+                                           const std::string& packageName, int32_t userId,
+                                           int32_t flags, int32_t appId, const std::string& seInfo);
 };
 
 }  // namespace installd

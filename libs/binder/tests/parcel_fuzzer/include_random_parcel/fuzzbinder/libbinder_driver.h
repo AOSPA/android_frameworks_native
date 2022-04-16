@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,22 @@
 
 #pragma once
 
-#include <android-base/unique_fd.h>
+#include <binder/IBinder.h>
 #include <fuzzer/FuzzedDataProvider.h>
 
 namespace android {
-
-// always valid or aborts
-// get a random FD for use in fuzzing, of a few different specific types
-base::unique_fd getRandomFd(FuzzedDataProvider* provider);
-
+/**
+ * Based on the random data in provider, construct an arbitrary number of
+ * Parcel objects and send them to the service in serial.
+ *
+ * Usage:
+ *
+ *   extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+ *       FuzzedDataProvider provider = FuzzedDataProvider(data, size);
+ *       // can use provider here to create a service with different options
+ *       sp<IFoo> myService = sp<IFoo>::make(...);
+ *       fuzzService(myService, std::move(provider));
+ *   }
+ */
+void fuzzService(const sp<IBinder>& binder, FuzzedDataProvider&& provider);
 } // namespace android

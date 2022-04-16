@@ -65,6 +65,8 @@ static const int32_t INJECTOR_UID = 1001;
 // An arbitrary pid of the gesture monitor window
 static constexpr int32_t MONITOR_PID = 2001;
 
+static constexpr std::chrono::duration STALE_EVENT_TIMEOUT = 1000ms;
+
 struct PointF {
     float x;
     float y;
@@ -287,6 +289,13 @@ public:
         ASSERT_EQ(token, *receivedToken);
     }
 
+    /**
+     * Set policy timeout. A value of zero means next key will not be intercepted.
+     */
+    void setInterceptKeyTimeout(std::chrono::milliseconds timeout) {
+        mInterceptKeyTimeout = timeout;
+    }
+
 private:
     std::mutex mLock;
     std::unique_ptr<InputEvent> mFilteredEvent GUARDED_BY(mLock);
@@ -308,6 +317,8 @@ private:
 
     sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
     bool mNotifyDropWindowWasCalled GUARDED_BY(mLock) = false;
+
+    std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
 
     // All three ANR-related callbacks behave the same way, so we use this generic function to wait
     // for a specific container to become non-empty. When the container is non-empty, return the
@@ -427,12 +438,20 @@ private:
         return true;
     }
 
-    void interceptKeyBeforeQueueing(const KeyEvent*, uint32_t&) override {}
+    void interceptKeyBeforeQueueing(const KeyEvent* inputEvent, uint32_t&) override {
+        if (inputEvent->getAction() == AKEY_EVENT_ACTION_UP) {
+            // Clear intercept state when we handled the event.
+            mInterceptKeyTimeout = 0ms;
+        }
+    }
 
     void interceptMotionBeforeQueueing(int32_t, nsecs_t, uint32_t&) override {}
 
     nsecs_t interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent*, uint32_t) override {
-        return 0;
+        nsecs_t delay = std::chrono::nanoseconds(mInterceptKeyTimeout).count();
+        // Clear intercept state so we could dispatch the event in next wake.
+        mInterceptKeyTimeout = 0ms;
+        return delay;
     }
 
     bool dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent*, uint32_t, KeyEvent*) override {
@@ -489,7 +508,7 @@ protected:
 
     void SetUp() override {
         mFakePolicy = new FakeInputDispatcherPolicy();
-        mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy);
+        mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy, STALE_EVENT_TIMEOUT);
         mDispatcher->setInputDispatchMode(/*enabled*/ true, /*frozen*/ false);
         // Start InputDispatcher thread
         ASSERT_EQ(OK, mDispatcher->start());
@@ -2181,6 +2200,50 @@ TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsMotionStream) {
     mDispatcher->notifyDeviceReset(&args);
     window->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_CANCEL, ADISPLAY_ID_DEFAULT,
                          0 /*expectedFlags*/);
+}
+
+TEST_F(InputDispatcherTest, InterceptKeyByPolicy) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    window->setFocusable(true);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    NotifyKeyArgs keyArgs = generateKeyArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT);
+    const std::chrono::milliseconds interceptKeyTimeout = 50ms;
+    const nsecs_t injectTime = keyArgs.eventTime;
+    mFakePolicy->setInterceptKeyTimeout(interceptKeyTimeout);
+    mDispatcher->notifyKey(&keyArgs);
+    // The dispatching time should be always greater than or equal to intercept key timeout.
+    window->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+    ASSERT_TRUE((systemTime(SYSTEM_TIME_MONOTONIC) - injectTime) >=
+                std::chrono::nanoseconds(interceptKeyTimeout).count());
+}
+
+TEST_F(InputDispatcherTest, InterceptKeyIfKeyUp) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    window->setFocusable(true);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    NotifyKeyArgs keyDown = generateKeyArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT);
+    NotifyKeyArgs keyUp = generateKeyArgs(AKEY_EVENT_ACTION_UP, ADISPLAY_ID_DEFAULT);
+    mFakePolicy->setInterceptKeyTimeout(150ms);
+    mDispatcher->notifyKey(&keyDown);
+    mDispatcher->notifyKey(&keyUp);
+
+    // Window should receive key event immediately when same key up.
+    window->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+    window->consumeKeyUp(ADISPLAY_ID_DEFAULT);
 }
 
 /**
@@ -4452,6 +4515,38 @@ TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_NoFocusedWindow) {
     const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
     mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
     ASSERT_TRUE(mDispatcher->waitForIdle());
+}
+
+/**
+ * Make sure the stale key is dropped before causing an ANR. So even if there's no focused window,
+ * there will not be an ANR.
+ */
+TEST_F(InputDispatcherSingleWindowAnr, StaleKeyEventDoesNotAnr) {
+    mWindow->setFocusable(false);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow}}});
+    mWindow->consumeFocusEvent(false);
+
+    KeyEvent event;
+    const nsecs_t eventTime = systemTime(SYSTEM_TIME_MONOTONIC) -
+            std::chrono::nanoseconds(STALE_EVENT_TIMEOUT).count();
+
+    // Define a valid key down event that is stale (too old).
+    event.initialize(InputEvent::nextId(), DEVICE_ID, AINPUT_SOURCE_KEYBOARD, ADISPLAY_ID_NONE,
+                     INVALID_HMAC, AKEY_EVENT_ACTION_DOWN, /* flags */ 0, AKEYCODE_A, KEY_A,
+                     AMETA_NONE, 1 /*repeatCount*/, eventTime, eventTime);
+
+    const int32_t policyFlags = POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER;
+
+    InputEventInjectionResult result =
+            mDispatcher->injectInputEvent(&event, INJECTOR_PID, INJECTOR_UID,
+                                          InputEventInjectionSync::WAIT_FOR_RESULT,
+                                          INJECT_EVENT_TIMEOUT, policyFlags);
+    ASSERT_EQ(InputEventInjectionResult::FAILED, result)
+            << "Injection should fail because the event is stale";
+
+    ASSERT_TRUE(mDispatcher->waitForIdle());
+    mFakePolicy->assertNotifyAnrWasNotCalled();
+    mWindow->assertNoEvents();
 }
 
 // We have a focused application, but no focused window
@@ -6820,6 +6915,40 @@ TEST_F(InputDispatcherStylusInterceptorTest, SpyWindowStylusInterceptor) {
     window->consumeMotionUp();
 
     overlay->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * Set up a scenario to test the behavior used by the stylus handwriting detection feature.
+ * The scenario is as follows:
+ *   - The stylus interceptor overlay is configured as a spy window.
+ *   - The stylus interceptor spy receives the start of a new stylus gesture.
+ *   - It pilfers pointers and then configures itself to no longer be a spy.
+ *   - The stylus interceptor continues to receive the rest of the gesture.
+ */
+TEST_F(InputDispatcherStylusInterceptorTest, StylusHandwritingScenario) {
+    auto [overlay, window] = setupStylusOverlayScenario();
+    overlay->setSpy(true);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}});
+
+    sendStylusEvent(AMOTION_EVENT_ACTION_DOWN);
+    overlay->consumeMotionDown();
+    window->consumeMotionDown();
+
+    // The interceptor pilfers the pointers.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(overlay->getToken()));
+    window->consumeMotionCancel();
+
+    // The interceptor configures itself so that it is no longer a spy.
+    overlay->setSpy(false);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {overlay, window}}});
+
+    // It continues to receive the rest of the stylus gesture.
+    sendStylusEvent(AMOTION_EVENT_ACTION_MOVE);
+    overlay->consumeMotionMove();
+    sendStylusEvent(AMOTION_EVENT_ACTION_UP);
+    overlay->consumeMotionUp();
+
     window->assertNoEvents();
 }
 

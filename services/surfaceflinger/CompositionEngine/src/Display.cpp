@@ -67,16 +67,6 @@ void Display::setConfiguration(const compositionengine::DisplayCreationArgs& arg
     editState().isSecure = args.isSecure;
     editState().displaySpace.setBounds(args.pixels);
     setName(args.name);
-    bool isBootModeSupported = getCompositionEngine().getHwComposer().getBootDisplayModeSupport();
-    const auto physicalId = PhysicalDisplayId::tryCast(mId);
-    if (!physicalId || !isBootModeSupported) {
-        return;
-    }
-    std::optional<hal::HWConfigId> preferredBootModeId =
-            getCompositionEngine().getHwComposer().getPreferredBootDisplayMode(*physicalId);
-    if (preferredBootModeId.has_value()) {
-        mPreferredBootHwcConfigId = static_cast<int32_t>(preferredBootModeId.value());
-    }
 #ifdef QTI_DISPLAY_CONFIG_ENABLED
     int ret = ::DisplayConfig::ClientInterface::Create(args.name, nullptr, &mDisplayConfigIntf);
     if (ret) {
@@ -107,10 +97,6 @@ bool Display::isVirtual() const {
 
 std::optional<DisplayId> Display::getDisplayId() const {
     return mId;
-}
-
-int32_t Display::getPreferredBootHwcConfigId() const {
-    return mPreferredBootHwcConfigId;
 }
 
 void Display::disconnect() {

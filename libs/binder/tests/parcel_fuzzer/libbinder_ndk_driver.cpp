@@ -13,17 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <fuzzbinder/libbinder_ndk_driver.h>
 
-package android.os;
+#include <fuzzbinder/libbinder_driver.h>
+#include <fuzzbinder/random_parcel.h>
 
-/** {@hide} */
-parcelable ReconcileSdkDataArgs {
-    @nullable @utf8InCpp String uuid;
-    @utf8InCpp String packageName;
-    @utf8InCpp List<String> subDirNames;
-    int userId;
-    int appId;
-    int previousAppId;
-    @utf8InCpp String seInfo;
-    int flags;
+// libbinder_ndk doesn't export this header which breaks down its API for NDK
+// and APEX users, but we need access to it to fuzz.
+#include "../../ndk/ibinder_internal.h"
+
+namespace android {
+
+void fuzzService(AIBinder* binder, FuzzedDataProvider&& provider) {
+    fuzzService(binder->getBinder(), std::move(provider));
 }
+
+} // namespace android

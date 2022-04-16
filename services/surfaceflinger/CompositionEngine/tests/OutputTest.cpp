@@ -1310,6 +1310,8 @@ struct OutputEnsureOutputLayerIfVisibleTest : public testing::Test {
     static const Region kLowerHalfBoundsNoRotation;
     static const Region kFullBounds90Rotation;
     static const Region kTransparentRegionHint;
+    static const Region kTransparentRegionHintTwo;
+    static const Region kTransparentRegionHintTwo90Rotation;
 
     StrictMock<OutputPartialMock> mOutput;
     LayerFESet mGeomSnapshots;
@@ -1329,6 +1331,10 @@ const Region OutputEnsureOutputLayerIfVisibleTest::kFullBounds90Rotation =
         Region(Rect(0, 0, 200, 100));
 const Region OutputEnsureOutputLayerIfVisibleTest::kTransparentRegionHint =
         Region(Rect(0, 0, 100, 100));
+const Region OutputEnsureOutputLayerIfVisibleTest::kTransparentRegionHintTwo =
+        Region(Rect(25, 20, 50, 75));
+const Region OutputEnsureOutputLayerIfVisibleTest::kTransparentRegionHintTwo90Rotation =
+        Region(Rect(125, 25, 180, 50));
 
 TEST_F(OutputEnsureOutputLayerIfVisibleTest, performsGeomLatchBeforeCheckingIfLayerIncluded) {
     EXPECT_CALL(mOutput, includesLayer(sp<LayerFE>(mLayer.layerFE))).WillOnce(Return(false));
@@ -1777,6 +1783,25 @@ TEST_F(OutputEnsureOutputLayerIfVisibleTest, normalLayersDoNotSetBlockingRegion)
     ensureOutputLayerIfVisible();
 
     EXPECT_THAT(mLayer.outputLayerState.outputSpaceBlockingRegionHint, RegionEq(Region()));
+}
+
+TEST_F(OutputEnsureOutputLayerIfVisibleTest, blockingRegionIsInOutputSpace) {
+    mLayer.layerFEState.isOpaque = false;
+    mLayer.layerFEState.contentDirty = true;
+    mLayer.layerFEState.compositionType =
+            aidl::android::hardware::graphics::composer3::Composition::DISPLAY_DECORATION;
+    mLayer.layerFEState.transparentRegionHint = kTransparentRegionHintTwo;
+
+    mOutput.mState.layerStackSpace.setContent(Rect(0, 0, 300, 200));
+    mOutput.mState.transform = ui::Transform(TR_ROT_90, 200, 300);
+
+    EXPECT_CALL(mOutput, getOutputLayerCount()).WillOnce(Return(0u));
+    EXPECT_CALL(mOutput, ensureOutputLayer(Eq(std::nullopt), Eq(mLayer.layerFE)))
+            .WillOnce(Return(&mLayer.outputLayer));
+    ensureOutputLayerIfVisible();
+
+    EXPECT_THAT(mLayer.outputLayerState.outputSpaceBlockingRegionHint,
+                RegionEq(kTransparentRegionHintTwo90Rotation));
 }
 
 /*

@@ -160,10 +160,7 @@ const std::chrono::duration DEFAULT_INPUT_DISPATCHING_TIMEOUT = std::chrono::mil
 // when an application takes too long to respond and the user has pressed an app switch key.
 constexpr nsecs_t APP_SWITCH_TIMEOUT = 500 * 1000000LL; // 0.5sec
 
-// Amount of time to allow for an event to be dispatched (measured since its eventTime)
-// before considering it stale and dropping it.
-const nsecs_t STALE_EVENT_TIMEOUT = 10000 * 1000000LL // 10sec
-        * HwTimeoutMultiplier();
+const std::chrono::duration STALE_EVENT_TIMEOUT = std::chrono::seconds(10) * HwTimeoutMultiplier();
 
 // Log a warning when an event takes longer than this to process, even if an ANR does not occur.
 constexpr nsecs_t SLOW_EVENT_PROCESSING_WARNING_TIMEOUT = 2000 * 1000000LL; // 2sec
@@ -364,10 +361,6 @@ bool haveSameApplicationToken(const WindowInfo* first, const WindowInfo* second)
             first->applicationInfo.token == second->applicationInfo.token;
 }
 
-bool isStaleEvent(nsecs_t currentTime, const EventEntry& entry) {
-    return currentTime - entry.eventTime >= STALE_EVENT_TIMEOUT;
-}
-
 std::unique_ptr<DispatchEntry> createDispatchEntry(const InputTarget& inputTarget,
                                                    std::shared_ptr<EventEntry> eventEntry,
                                                    int32_t inputTargetFlags) {
@@ -563,11 +556,26 @@ bool isPointerFromStylus(const MotionEntry& entry, int32_t pointerIndex) {
              entry.pointerProperties[pointerIndex].toolType == AMOTION_EVENT_TOOL_TYPE_ERASER);
 }
 
+// Determines if the given window can be targeted as InputTarget::FLAG_FOREGROUND.
+// Foreground events are only sent to "foreground targetable" windows, but not all gestures sent to
+// such window are necessarily targeted with the flag. For example, an event with ACTION_OUTSIDE can
+// be sent to such a window, but it is not a foreground event and doesn't use
+// InputTarget::FLAG_FOREGROUND.
+bool canReceiveForegroundTouches(const WindowInfo& info) {
+    // A non-touchable window can still receive touch events (e.g. in the case of
+    // STYLUS_INTERCEPTOR), so prevent such windows from receiving foreground events for touches.
+    return !info.inputConfig.test(gui::WindowInfo::InputConfig::NOT_TOUCHABLE) && !info.isSpy();
+}
+
 } // namespace
 
 // --- InputDispatcher ---
 
 InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& policy)
+      : InputDispatcher(policy, STALE_EVENT_TIMEOUT) {}
+
+InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& policy,
+                                 std::chrono::nanoseconds staleEventTimeout)
       : mPolicy(policy),
         mPendingEvent(nullptr),
         mLastDropReason(DropReason::NOT_DROPPED),
@@ -586,6 +594,7 @@ InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& polic
         mMaximumObscuringOpacityForTouch(1.0f),
         mFocusedDisplayId(ADISPLAY_ID_DEFAULT),
         mWindowTokenWithPointerCapture(nullptr),
+        mStaleEventTimeout(staleEventTimeout),
         mLatencyAggregator(),
         mLatencyTracker(&mLatencyAggregator) {
     mLooper = new Looper(false);
@@ -943,6 +952,10 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
     }
 }
 
+bool InputDispatcher::isStaleEvent(nsecs_t currentTime, const EventEntry& entry) {
+    return std::chrono::nanoseconds(currentTime - entry.eventTime) >= mStaleEventTimeout;
+}
+
 /**
  * Return true if the events preceding this incoming motion event should be dropped
  * Return false otherwise (the default behaviour)
@@ -1028,6 +1041,21 @@ bool InputDispatcher::enqueueInboundEventLocked(std::unique_ptr<EventEntry> newE
                         mAppSwitchSawKeyDown = false;
                         needWake = true;
                     }
+                }
+            }
+
+            // If a new up event comes in, and the pending event with same key code has been asked
+            // to try again later because of the policy. We have to reset the intercept key wake up
+            // time for it may have been handled in the policy and could be dropped.
+            if (keyEntry.action == AKEY_EVENT_ACTION_UP && mPendingEvent &&
+                mPendingEvent->type == EventEntry::Type::KEY) {
+                KeyEntry& pendingKey = static_cast<KeyEntry&>(*mPendingEvent);
+                if (pendingKey.keyCode == keyEntry.keyCode &&
+                    pendingKey.interceptKeyResult ==
+                            KeyEntry::INTERCEPT_KEY_RESULT_TRY_AGAIN_LATER) {
+                    pendingKey.interceptKeyResult = KeyEntry::INTERCEPT_KEY_RESULT_UNKNOWN;
+                    pendingKey.interceptKeyWakeupTime = 0;
+                    needWake = true;
                 }
             }
             break;
@@ -2186,8 +2214,8 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
             // Set target flags.
             int32_t targetFlags = InputTarget::FLAG_DISPATCH_AS_IS;
 
-            if (!info.isSpy()) {
-                // There should only be one new foreground (non-spy) window at this location.
+            if (canReceiveForegroundTouches(*windowHandle->getInfo())) {
+                // There should only be one touched window that can be "foreground" for the pointer.
                 targetFlags |= InputTarget::FLAG_FOREGROUND;
             }
 
@@ -2260,8 +2288,10 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
                     isSplit = !isFromMouse;
                 }
 
-                int32_t targetFlags =
-                        InputTarget::FLAG_FOREGROUND | InputTarget::FLAG_DISPATCH_AS_SLIPPERY_ENTER;
+                int32_t targetFlags = InputTarget::FLAG_DISPATCH_AS_SLIPPERY_ENTER;
+                if (canReceiveForegroundTouches(*newTouchedWindowHandle->getInfo())) {
+                    targetFlags |= InputTarget::FLAG_FOREGROUND;
+                }
                 if (isSplit) {
                     targetFlags |= InputTarget::FLAG_SPLIT;
                 }
@@ -2310,13 +2340,15 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
         }
     }
 
-    // Ensure that we have at least one foreground or spy window. It's possible that we dropped some
-    // of the touched windows we previously found if they became paused or unresponsive or were
-    // removed.
+    // Ensure that we have at least one foreground window or at least one window that cannot be a
+    // foreground target. If we only have windows that are not receiving foreground touches (e.g. we
+    // only have windows getting ACTION_OUTSIDE), then drop the event, because there is no window
+    // that is actually receiving the entire gesture.
     if (std::none_of(tempTouchState.windows.begin(), tempTouchState.windows.end(),
                      [](const TouchedWindow& touchedWindow) {
-                         return (touchedWindow.targetFlags & InputTarget::FLAG_FOREGROUND) != 0 ||
-                                 touchedWindow.windowHandle->getInfo()->isSpy();
+                         return !canReceiveForegroundTouches(
+                                        *touchedWindow.windowHandle->getInfo()) ||
+                                 (touchedWindow.targetFlags & InputTarget::FLAG_FOREGROUND) != 0;
                      })) {
         ALOGI("Dropping event because there is no touched window on display %d to receive it.",
               displayId);
@@ -5055,9 +5087,11 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         state->removeWindowByToken(fromToken);
 
         // Add new window.
-        int32_t newTargetFlags = oldTargetFlags &
-                (InputTarget::FLAG_FOREGROUND | InputTarget::FLAG_SPLIT |
-                 InputTarget::FLAG_DISPATCH_AS_IS);
+        int32_t newTargetFlags =
+                oldTargetFlags & (InputTarget::FLAG_SPLIT | InputTarget::FLAG_DISPATCH_AS_IS);
+        if (canReceiveForegroundTouches(*toWindowHandle->getInfo())) {
+            newTargetFlags |= InputTarget::FLAG_FOREGROUND;
+        }
         state->addOrUpdateWindow(toWindowHandle, newTargetFlags, pointerIds);
 
         // Store the dragging window.

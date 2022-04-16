@@ -369,6 +369,8 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
     // composition.
     if (!mBufferInfo.mFrameLatencyNeeded) return;
 
+    mAlreadyDisplayedThisCompose = false;
+
     // Update mFrameEventHistory.
     {
         Mutex::Autolock lock(mFrameEventHistoryMutex);
@@ -409,7 +411,7 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
     }
 
     if (display) {
-        const Fps refreshRate = display->refreshRateConfigs().getCurrentRefreshRate().getFps();
+        const Fps refreshRate = display->refreshRateConfigs().getActiveMode()->getFps();
         const std::optional<Fps> renderRate =
                 mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
 

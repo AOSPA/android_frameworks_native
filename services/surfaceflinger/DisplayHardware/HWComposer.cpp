@@ -741,10 +741,6 @@ std::future<status_t> HWComposer::setDisplayBrightness(
             });
 }
 
-bool HWComposer::getBootDisplayModeSupport() {
-    return mComposer->isSupported(Hwc2::Composer::OptionalFeature::BootDisplayConfig);
-}
-
 status_t HWComposer::setBootDisplayMode(PhysicalDisplayId displayId,
                                         hal::HWConfigId displayModeId) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
@@ -815,10 +811,11 @@ status_t HWComposer::setAutoLowLatencyMode(PhysicalDisplayId displayId, bool on)
 }
 
 status_t HWComposer::getSupportedContentTypes(
-        PhysicalDisplayId displayId, std::vector<hal::ContentType>* outSupportedContentTypes) {
+        PhysicalDisplayId displayId,
+        std::vector<hal::ContentType>* outSupportedContentTypes) const {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    const auto error =
-            mDisplayData[displayId].hwcDisplay->getSupportedContentTypes(outSupportedContentTypes);
+    const auto error = mDisplayData.at(displayId).hwcDisplay->getSupportedContentTypes(
+            outSupportedContentTypes);
 
     RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
 
@@ -978,6 +975,36 @@ void HWComposer::loadCapabilities() {
     for (auto capability : capabilities) {
         mCapabilities.emplace(capability);
     }
+}
+
+status_t HWComposer::setIdleTimerEnabled(PhysicalDisplayId displayId,
+                                         std::chrono::milliseconds timeout) {
+    ATRACE_CALL();
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->setIdleTimerEnabled(timeout);
+    if (error == hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    if (error == hal::Error::BAD_PARAMETER) {
+        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
+    }
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
+bool HWComposer::hasDisplayIdleTimerCapability(PhysicalDisplayId displayId) const {
+    RETURN_IF_INVALID_DISPLAY(displayId, false);
+    return mDisplayData.at(displayId).hwcDisplay->hasDisplayIdleTimerCapability();
+}
+
+Hwc2::AidlTransform HWComposer::getPhysicalDisplayOrientation(PhysicalDisplayId displayId) const {
+    ATRACE_CALL();
+    RETURN_IF_INVALID_DISPLAY(displayId, Hwc2::AidlTransform::NONE);
+    Hwc2::AidlTransform outTransform;
+    const auto& hwcDisplay = mDisplayData.at(displayId).hwcDisplay;
+    const auto error = hwcDisplay->getPhysicalDisplayOrientation(&outTransform);
+    RETURN_IF_HWC_ERROR(error, displayId, Hwc2::AidlTransform::NONE);
+    return outTransform;
 }
 
 void HWComposer::loadLayerMetadataSupport() {

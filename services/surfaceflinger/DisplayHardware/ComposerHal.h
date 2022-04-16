@@ -38,6 +38,7 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/IComposerCallback.h>
 
+#include <aidl/android/hardware/graphics/common/Transform.h>
 #include <optional>
 
 #ifdef QTI_UNIFIED_DRAW
@@ -87,6 +88,7 @@ using V2_4::VsyncPeriodNanos;
 using PerFrameMetadata = IComposerClient::PerFrameMetadata;
 using PerFrameMetadataKey = IComposerClient::PerFrameMetadataKey;
 using PerFrameMetadataBlob = IComposerClient::PerFrameMetadataBlob;
+using AidlTransform = ::aidl::android::hardware::graphics::common::Transform;
 
 class Composer {
 public:
@@ -99,7 +101,8 @@ public:
         ExpectedPresentTime,
         // Whether setDisplayBrightness is able to be applied as part of a display command.
         DisplayBrightnessCommand,
-        BootDisplayConfig,
+        KernelIdleTimer,
+        PhysicalDisplayOrientation,
     };
 
     virtual bool isSupported(OptionalFeature) const = 0;
@@ -141,6 +144,7 @@ public:
                                      std::vector<uint32_t>* outLayerRequestMasks) = 0;
 
     virtual Error getDozeSupport(Display display, bool* outSupport) = 0;
+    virtual Error hasDisplayIdleTimerCapability(Display display, bool* outSupport) = 0;
     virtual Error getHdrCapabilities(Display display, std::vector<Hdr>* outTypes,
                                      float* outMaxLuminance, float* outMaxAverageLuminance,
                                      float* outMinLuminance) = 0;
@@ -290,6 +294,9 @@ public:
             Display display,
             std::optional<::aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) = 0;
+    virtual Error setIdleTimerEnabled(Display displayId, std::chrono::milliseconds timeout) = 0;
+    virtual Error getPhysicalDisplayOrientation(Display displayId,
+                                                AidlTransform* outDisplayOrientation) = 0;
 };
 
 } // namespace Hwc2

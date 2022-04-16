@@ -62,7 +62,6 @@ public:
     bool isSecure() const override;
     bool isVirtual() const override;
     void disconnect() override;
-    int32_t getPreferredBootHwcConfigId() const override;
     void createDisplayColorProfile(
             const compositionengine::DisplayColorProfileCreationArgs&) override;
     void createRenderSurface(const compositionengine::RenderSurfaceCreationArgs&) override;
@@ -89,7 +88,6 @@ private:
     bool mIsDisconnected = false;
     bool mIsColorModeChanged = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
-    int32_t mPreferredBootHwcConfigId = -1;
     bool mHasScreenshot = false;
     ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;
     composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;

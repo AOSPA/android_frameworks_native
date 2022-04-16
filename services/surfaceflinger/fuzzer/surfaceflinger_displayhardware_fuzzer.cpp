@@ -514,7 +514,7 @@ void DisplayHardwareFuzzer::invokeVirtualDisplaySurface() {
 
     sp<VirtualDisplaySurface> surface =
             new VirtualDisplaySurface(mHwc, VirtualDisplayId, sink, bqProducer, bqConsumer,
-                                      mFdp.ConsumeRandomLengthString().c_str() /*name*/);
+                                      mFdp.ConsumeRandomLengthString().c_str() /*name*/, false);
 
     surface->beginFrame(mFdp.ConsumeBool());
     surface->prepareFrame(mFdp.PickValueInArray(kCompositionTypes));
