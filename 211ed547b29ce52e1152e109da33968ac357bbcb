@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "2e547699_71ff6341",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000092
+      },
+      "writtenOn": "2022-04-21T18:12:41Z",
+      "side": 1,
+      "message": "04-22 02:09:39.599  7358  7372 E AndroidRuntime: java.lang.UnsatisfiedLinkError: dlopen failed: cannot locate symbol \"_ZN7android11MotionEvent10initializeEiijiNSt3__15arrayIhLm32EEEiiiiiiNS_20MotionClassificationERKNS_2ui9TransformEffffiillmPKNS_17PointerPropertiesEPKNS_13PointerCoordsE\" referenced by \"/system_ext/lib64/libwfdnative.so\"...",
+      "revId": "211ed547b29ce52e1152e109da33968ac357bbcb",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
