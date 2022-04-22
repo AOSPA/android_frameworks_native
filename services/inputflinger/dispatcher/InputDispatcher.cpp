@@ -567,6 +567,17 @@ bool canReceiveForegroundTouches(const WindowInfo& info) {
     return !info.inputConfig.test(gui::WindowInfo::InputConfig::NOT_TOUCHABLE) && !info.isSpy();
 }
 
+bool isWindowOwnedBy(const sp<WindowInfoHandle>& windowHandle, int32_t pid, int32_t uid) {
+    if (windowHandle == nullptr) {
+        return false;
+    }
+    const WindowInfo* windowInfo = windowHandle->getInfo();
+    if (pid == windowInfo->ownerPid && uid == windowInfo->ownerUid) {
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 // --- InputDispatcher ---
@@ -4990,21 +5001,11 @@ bool InputDispatcher::setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid,
                   toString(mInTouchMode), toString(inTouchMode), pid, uid, toString(hasPermission));
         }
         if (!hasPermission) {
-            const sp<IBinder> focusedToken =
-                    mFocusResolver.getFocusedWindowToken(mFocusedDisplayId);
-
-            //  TODO(b/218541064): if no window is currently focused, then we need to check the last
-            //      interacted window (within 1 second timeout). We should allow touch mode change
-            //      if the last interacted window owner's pid/uid match the calling ones.
-            if (focusedToken == nullptr) {
-                return false;
-            }
-            const sp<WindowInfoHandle> windowHandle = getWindowHandleLocked(focusedToken);
-            if (windowHandle == nullptr) {
-                return false;
-            }
-            const WindowInfo* windowInfo = windowHandle->getInfo();
-            if (pid != windowInfo->ownerPid || uid != windowInfo->ownerUid) {
+            if (!focusedWindowIsOwnedByLocked(pid, uid) &&
+                !recentWindowsAreOwnedByLocked(pid, uid)) {
+                ALOGD("Touch mode switch rejected, caller (pid=%d, uid=%d) doesn't own the focused "
+                      "window nor none of the previously interacted window",
+                      pid, uid);
                 return false;
             }
         }
@@ -5020,6 +5021,24 @@ bool InputDispatcher::setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid,
         mLooper->wake();
     }
     return true;
+}
+
+bool InputDispatcher::focusedWindowIsOwnedByLocked(int32_t pid, int32_t uid) {
+    const sp<IBinder> focusedToken = mFocusResolver.getFocusedWindowToken(mFocusedDisplayId);
+    if (focusedToken == nullptr) {
+        return false;
+    }
+    sp<WindowInfoHandle> windowHandle = getWindowHandleLocked(focusedToken);
+    return isWindowOwnedBy(windowHandle, pid, uid);
+}
+
+bool InputDispatcher::recentWindowsAreOwnedByLocked(int32_t pid, int32_t uid) {
+    return std::find_if(mInteractionConnectionTokens.begin(), mInteractionConnectionTokens.end(),
+                        [&](const sp<IBinder>& connectionToken) REQUIRES(mLock) {
+                            const sp<WindowInfoHandle> windowHandle =
+                                    getWindowHandleLocked(connectionToken);
+                            return isWindowOwnedBy(windowHandle, pid, uid);
+                        }) != mInteractionConnectionTokens.end();
 }
 
 void InputDispatcher::setMaximumObscuringOpacityForTouch(float opacity) {
@@ -5121,28 +5140,54 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
     return true;
 }
 
+/**
+ * Get the touched foreground window on the given display.
+ * Return null if there are no windows touched on that display, or if more than one foreground
+ * window is being touched.
+ */
+sp<WindowInfoHandle> InputDispatcher::findTouchedForegroundWindowLocked(int32_t displayId) const {
+    auto stateIt = mTouchStatesByDisplay.find(displayId);
+    if (stateIt == mTouchStatesByDisplay.end()) {
+        ALOGI("No touch state on display %" PRId32, displayId);
+        return nullptr;
+    }
+
+    const TouchState& state = stateIt->second;
+    sp<WindowInfoHandle> touchedForegroundWindow;
+    // If multiple foreground windows are touched, return nullptr
+    for (const TouchedWindow& window : state.windows) {
+        if (window.targetFlags & InputTarget::FLAG_FOREGROUND) {
+            if (touchedForegroundWindow != nullptr) {
+                ALOGI("Two or more foreground windows: %s and %s",
+                      touchedForegroundWindow->getName().c_str(),
+                      window.windowHandle->getName().c_str());
+                return nullptr;
+            }
+            touchedForegroundWindow = window.windowHandle;
+        }
+    }
+    return touchedForegroundWindow;
+}
+
 // Binder call
-bool InputDispatcher::transferTouch(const sp<IBinder>& destChannelToken) {
+bool InputDispatcher::transferTouch(const sp<IBinder>& destChannelToken, int32_t displayId) {
     sp<IBinder> fromToken;
     { // acquire lock
         std::scoped_lock _l(mLock);
-
-        auto it = std::find_if(mTouchStatesByDisplay.begin(), mTouchStatesByDisplay.end(),
-                               [](const auto& pair) { return pair.second.windows.size() == 1; });
-        if (it == mTouchStatesByDisplay.end()) {
-            ALOGW("Cannot transfer touch state because there is no exact window being touched");
-            return false;
-        }
-        const int32_t displayId = it->first;
         sp<WindowInfoHandle> toWindowHandle = getWindowHandleLocked(destChannelToken, displayId);
         if (toWindowHandle == nullptr) {
-            ALOGW("Could not find window associated with token=%p", destChannelToken.get());
+            ALOGW("Could not find window associated with token=%p on display %" PRId32,
+                  destChannelToken.get(), displayId);
             return false;
         }
 
-        TouchState& state = it->second;
-        const TouchedWindow& touchedWindow = state.windows[0];
-        fromToken = touchedWindow.windowHandle->getToken();
+        sp<WindowInfoHandle> from = findTouchedForegroundWindowLocked(displayId);
+        if (from == nullptr) {
+            ALOGE("Could not find a source window in %s for %p", __func__, destChannelToken.get());
+            return false;
+        }
+
+        fromToken = from->getToken();
     } // release lock
 
     return transferTouchFocus(fromToken, destChannelToken);

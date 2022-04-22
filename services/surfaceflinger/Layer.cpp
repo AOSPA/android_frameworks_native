@@ -2225,7 +2225,7 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
 
     layerInfo->set_owner_uid(mOwnerUid);
 
-    if (traceFlags & LayerTracing::TRACE_INPUT) {
+    if ((traceFlags & LayerTracing::TRACE_INPUT) && needsInputInfo()) {
         WindowInfo info;
         if (useDrawing) {
             info = fillInputInfo(ui::Transform(), /* displayIsSecure */ true);
@@ -2636,6 +2636,8 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
             return FrameRateCompatibility::ExactOrMultiple;
         case ANATIVEWINDOW_FRAME_RATE_EXACT:
             return FrameRateCompatibility::Exact;
+        case ANATIVEWINDOW_FRAME_RATE_NO_VOTE:
+            return FrameRateCompatibility::NoVote;
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
             return FrameRateCompatibility::Default;

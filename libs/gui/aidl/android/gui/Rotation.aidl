@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-#include <compositionengine/DisplaySurface.h>
+package android.gui;
 
-namespace android::compositionengine {
-
-DisplaySurface::~DisplaySurface() = default;
-
-bool DisplaySurface::supportsCompositionStrategyPrediction() const {
-    return true;
+/** @hide */
+@Backing(type="int")
+enum Rotation {
+    Rotation0 = 0,
+    Rotation90 = 1,
+    Rotation180 = 2,
+    Rotation270 = 3
 }
-
-} // namespace android::compositionengine
