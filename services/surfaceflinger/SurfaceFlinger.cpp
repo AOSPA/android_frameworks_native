@@ -4198,8 +4198,18 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
             mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
         }
 
-        // Update the Advanced SF Offsets/Durations
-        mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+        if (mUseWorkDurations) {
+#ifdef DYNAMIC_APP_DURATIONS
+            // Update the Work Durations for the given refresh rates
+            mVsyncConfiguration->UpdateWorkDurations(&mWorkDurationConfigsMap);
+#else
+            // TODO: Remove this once phase offset extension change is available
+            mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+#endif
+        } else {
+            // Update the Advanced SF Offsets/Durations
+            mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+        }
     }
 }
 
@@ -9230,16 +9240,34 @@ void SurfaceFlinger::createPhaseOffsetExtn() {
             ALOGI("Created PhaseOffset extension");
         }
 
-        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&mAdvancedSfOffsets);
-
         // Populate the fps supported on device in mOffsetCache
         const auto& supportedModes = getDefaultDisplayDeviceLocked()->getSupportedModes();
         for (const auto& [id, mode] : supportedModes) {
             mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
         }
 
-        // Update the Advanced SF Offsets/Durations
-        mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+        if (property_get_bool("debug.sf.use_phase_offsets_as_durations", false)) {
+            mUseWorkDurations = true;
+        }
+
+        if (mUseWorkDurations) {
+            ALOGI("Use work durations");
+#ifdef DYNAMIC_APP_DURATIONS
+            // Update the Work Durations for the given refresh rates in mOffsets map
+            g_comp_ext_intf_.phaseOffsetExtnIntf->GetWorkDurationConfigs(&mWorkDurationConfigsMap);
+            mVsyncConfiguration->UpdateWorkDurations(&mWorkDurationConfigsMap);
+#else 
+            // TODO: Remove this once phase extension change is available
+            g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&mAdvancedSfOffsets);
+            mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+#endif
+        } else {
+            ALOGI("Use phase offsets");
+            // Update the Advanced SF Offsets for the given refresh rates in mOffsets map
+            g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&mAdvancedSfOffsets);
+            mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
+        }
+
         const auto vsyncConfig =
             mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
         ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
