@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,22 @@
  * limitations under the License.
  */
 
-#include <compositionengine/DisplaySurface.h>
+package android.gui;
 
-namespace android::compositionengine {
+// copied from libs/arect/include/android/rect.h
+// TODO(b/221473398):
+// use hardware/interfaces/graphics/common/aidl/android/hardware/graphics/common/Rect.aidl
+/** @hide */
+parcelable Rect {
+    /// Minimum X coordinate of the rectangle.
+    int left;
 
-DisplaySurface::~DisplaySurface() = default;
+    /// Minimum Y coordinate of the rectangle.
+    int top;
 
-bool DisplaySurface::supportsCompositionStrategyPrediction() const {
-    return true;
+    /// Maximum X coordinate of the rectangle.
+    int right;
+
+    /// Maximum Y coordinate of the rectangle.
+    int bottom;
 }
-
-} // namespace android::compositionengine

@@ -35,6 +35,7 @@
 #include <utils/Vector.h>
 
 #include <ui/DisplayIdentification.h>
+#include "DisplayHardware/HWComposer.h"
 
 namespace android {
 
@@ -54,6 +55,7 @@ struct LayerFECompositionState;
 
 namespace impl {
 struct OutputCompositionState;
+struct GpuCompositionResult;
 } // namespace impl
 
 /**
@@ -264,6 +266,9 @@ public:
     // Latches the front-end layer state for each output layer
     virtual void updateLayerStateFromFE(const CompositionRefreshArgs&) const = 0;
 
+    // Enables predicting composition strategy to run client composition earlier
+    virtual void setPredictCompositionStrategy(bool) = 0;
+
     // Gets Layer IDs and Names of Visible layers managed by this output.
     virtual void getVisibleLayerInfo(std::vector<std::string> *layerName,
                                      std::vector<int32_t> *layerSequence) const = 0;
@@ -284,13 +289,22 @@ protected:
     virtual void updateColorProfile(const CompositionRefreshArgs&) = 0;
     virtual void beginFrame() = 0;
     virtual void prepareFrame() = 0;
+
+    using GpuCompositionResult = compositionengine::impl::GpuCompositionResult;
+    // Runs prepare frame in another thread while running client composition using
+    // the previous frame's composition strategy.
+    virtual GpuCompositionResult prepareFrameAsync(const CompositionRefreshArgs&) = 0;
     virtual void devOptRepaintFlash(const CompositionRefreshArgs&) = 0;
-    virtual void finishFrame(const CompositionRefreshArgs&) = 0;
+    virtual void finishFrame(const CompositionRefreshArgs&, GpuCompositionResult&&) = 0;
     virtual std::optional<base::unique_fd> composeSurfaces(
-            const Region&, const compositionengine::CompositionRefreshArgs& refreshArgs) = 0;
+            const Region&, const compositionengine::CompositionRefreshArgs&,
+            std::shared_ptr<renderengine::ExternalTexture>, base::unique_fd&) = 0;
     virtual void postFramebuffer() = 0;
     virtual void renderCachedSets(const CompositionRefreshArgs&) = 0;
-    virtual void chooseCompositionStrategy() = 0;
+    virtual bool chooseCompositionStrategy(
+            std::optional<android::HWComposer::DeviceRequestedChanges>*) = 0;
+    virtual void applyCompositionStrategy(
+            const std::optional<android::HWComposer::DeviceRequestedChanges>& changes) = 0;
     virtual bool getSkipColorTransform() const = 0;
     virtual FrameFences presentAndGetFrameFences() = 0;
     virtual std::vector<LayerFE::LayerSettings> generateClientCompositionRequests(
@@ -301,6 +315,7 @@ protected:
             std::vector<LayerFE::LayerSettings>& clientCompositionLayers) = 0;
     virtual void setExpensiveRenderingExpected(bool enabled) = 0;
     virtual void cacheClientCompositionRequests(uint32_t cacheSize) = 0;
+    virtual bool canPredictCompositionStrategy(const CompositionRefreshArgs&) = 0;
 };
 
 } // namespace compositionengine

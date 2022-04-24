@@ -376,6 +376,11 @@ void HWComposer::setVsyncEnabled(PhysicalDisplayId displayId, hal::Vsync enabled
     }
 
     ATRACE_CALL();
+    if (displayData.powerMode == hal::PowerMode::DOZE && enabled == hal::Vsync::ENABLE) {
+        ALOGV("%s will not enable vsync for display %s due to power mode %s", __FUNCTION__,
+              to_string(displayId).c_str(), to_string(displayData.powerMode).c_str());
+        return;
+    }
     auto error = displayData.hwcDisplay->setVsyncEnabled(enabled);
     RETURN_IF_HWC_ERROR(error, displayId);
 
@@ -552,7 +557,7 @@ status_t HWComposer::presentAndGetReleaseFences(
 
 status_t HWComposer::setPowerMode(PhysicalDisplayId displayId, hal::PowerMode mode) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-
+    mDisplayData[displayId].powerMode = mode;
     const auto& displayData = mDisplayData[displayId];
     auto& hwcDisplay = displayData.hwcDisplay;
     switch (mode) {
@@ -722,12 +727,12 @@ status_t HWComposer::getDisplayedContentSample(HalDisplayId displayId, uint64_t 
 }
 
 std::future<status_t> HWComposer::setDisplayBrightness(
-        PhysicalDisplayId displayId, float brightness,
+        PhysicalDisplayId displayId, float brightness, float brightnessNits,
         const Hwc2::Composer::DisplayBrightnessOptions& options) {
     RETURN_IF_INVALID_DISPLAY(displayId, ftl::yield<status_t>(BAD_INDEX));
     auto& display = mDisplayData[displayId].hwcDisplay;
 
-    return ftl::chain(display->setDisplayBrightness(brightness, options))
+    return ftl::chain(display->setDisplayBrightness(brightness, brightnessNits, options))
             .then([displayId](hal::Error error) -> status_t {
                 if (error == hal::Error::UNSUPPORTED) {
                     RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);

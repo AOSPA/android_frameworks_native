@@ -49,6 +49,7 @@ public:
     MOCK_CONST_METHOD1(dump, void(std::string& result));
     MOCK_METHOD0(setViewportAndProjection, void());
     MOCK_CONST_METHOD0(getPageFlipCount, std::uint32_t());
+    MOCK_CONST_METHOD0(supportsCompositionStrategyPrediction, bool());
 };
 
 } // namespace android::compositionengine::mock
