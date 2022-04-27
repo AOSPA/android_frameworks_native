@@ -5288,13 +5288,9 @@ status_t SurfaceFlinger::setTransactionState(
 
     // Check for incoming buffer updates and increment the pending buffer count.
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        sp<Layer> layer = nullptr;
-        {
-            Mutex::Autolock _l(mStateLock);
-            layer = fromHandle(state.surface).promote();
-            if (layer != nullptr) {
-                layer->getPreviousGfxInfo();
-            }
+        sp<Layer> layer = fromHandle(state.surface).promote();
+        if (layer != nullptr) {
+            layer->getPreviousGfxInfo();
         }
         mBufferCountTracker.increment(state.surface->localBinder());
     });
