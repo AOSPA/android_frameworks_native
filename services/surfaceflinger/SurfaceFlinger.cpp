@@ -6033,6 +6033,11 @@ void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer) {
     // with the idea that the parent holds a reference and will eventually
     // be cleaned up. However no one cleans up the top-level so we do so
     // here.
+    if (!layer) {
+      ALOGW("Attempted to destroy an invalid layer");
+      return;
+    }
+
     if (layer->isAtRoot()) {
         layer->setIsAtRoot(false);
         mCurrentState.layersSortedByZ.remove(layer);
