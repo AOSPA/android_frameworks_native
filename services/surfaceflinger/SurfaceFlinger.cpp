@@ -3291,6 +3291,10 @@ void SurfaceFlinger::UpdateSmomoState() {
         return;
     }
 
+    mDrawingState.traverse([&](Layer* layer) {
+    layer->setSmomoLayerStackId();
+    });
+
     // Disable smomo if external or virtual is connected.
     bool enableSmomo = mSmomoInstances.size() == mDisplays.size();
     uint32_t fps = 0;
@@ -4895,11 +4899,15 @@ status_t SurfaceFlinger::setTransactionState(
     }
 
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        sp<Layer> layer = fromHandle(state.surface).promote();
-        if (layer != nullptr) {
-            SmomoIntf *smoMo = nullptr;
-            if (mSmomoInstances.size() > 1) {
-                const uint32_t layerStackId = layer->getLayerStack();
+        SmomoIntf *smoMo = nullptr;
+        int32_t sequence;
+        sp<Layer> layer = nullptr;
+        {
+            Mutex::Autolock _l(mStateLock);
+            layer = fromHandle(state.surface).promote();
+            if (layer != nullptr) {
+                const uint32_t layerStackId = layer->getSmomoLayerStackId();
+                sequence = layer->getSequence();
                 for (auto &instance: mSmomoInstances) {
                      if (instance.layerStackId == layerStackId) {
                         smoMo = instance.smoMo;
@@ -4907,24 +4915,21 @@ status_t SurfaceFlinger::setTransactionState(
                     }
                 }
             }
-            else if (mSmomoInstances.size() == 1) {
-                smoMo = mSmomoInstances[0].smoMo;
-            }
+        }
 
-            if (smoMo) {
-               smomo::SmomoBufferStats bufferStats;
-               const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
-               bufferStats.id = layer->getSequence();
-               bufferStats.auto_timestamp = isAutoTimestamp;
-               bufferStats.timestamp = now;
-               bufferStats.dequeue_latency = 0;
-               bufferStats.key = desiredPresentTime;
-               smoMo->CollectLayerStats(bufferStats);
+        if (smoMo) {
+           smomo::SmomoBufferStats bufferStats;
+           const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+           bufferStats.id = sequence;
+           bufferStats.auto_timestamp = isAutoTimestamp;
+           bufferStats.timestamp = now;
+           bufferStats.dequeue_latency = 0;
+           bufferStats.key = desiredPresentTime;
+           smoMo->CollectLayerStats(bufferStats);
 
-               const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
-               if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
-                  signalImmedLayerUpdate();
-                }
+           const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
+           if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+              signalImmedLayerUpdate();
             }
         }
     });
