@@ -6105,6 +6105,7 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                               strerror(-lock.status), lock.status);
                 ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
+                return NO_ERROR;
             }
 
             if (const auto it = dumpers.find(flag); it != dumpers.end()) {
@@ -6519,6 +6520,7 @@ LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
     const auto display = ON_MAIN_THREAD(getDefaultDisplayDeviceLocked());
 
     LayersProto layersProto;
+    Mutex::Autolock _l(mStateLock);
     for (const sp<Layer>& layer : mDrawingState.layersSortedByZ) {
         layer->writeToProto(layersProto, traceFlags, display.get());
     }
