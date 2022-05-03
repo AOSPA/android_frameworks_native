@@ -3503,6 +3503,44 @@ SmomoIntf* SurfaceFlinger::getSmomoInstance(const uint32_t layerStackId) const {
     return smoMo;
 }
 
+void SurfaceFlinger::updateSmomoLayerInfo(TransactionState &ts,
+        int64_t desiredPresentTime, bool isAutoTimestamp) {
+    ts.traverseStatesWithBuffers([&](const layer_state_t& state) {
+        sp<Layer> layer = nullptr;
+        SmomoIntf *smoMo = nullptr;
+        {
+            Mutex::Autolock _l(mStateLock);
+            layer = fromHandle(state.surface).promote();
+            if (layer != nullptr) {
+                smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
+            }
+        }
+
+        if (smoMo) {
+            smomo::SmomoBufferStats bufferStats;
+            bufferStats.id = layer->getSequence();
+            bufferStats.auto_timestamp = isAutoTimestamp;
+            bufferStats.timestamp = desiredPresentTime;
+            bufferStats.dequeue_latency = 0;
+            bufferStats.key = desiredPresentTime;
+#ifdef TIMED_RENDERING_METADATA_FEATURE
+            auto buffer = getExternalTextureFromBufferData(*state.bufferData,
+                    layer->getDebugName());
+            if (buffer && buffer->getBuffer()) {
+                bufferStats.buffer_hnd = buffer->getBuffer()->handle;
+            }
+#endif
+            smoMo->CollectLayerStats(bufferStats);
+
+            const DisplayStatInfo stats =
+                mScheduler->getDisplayStatInfo(systemTime(SYSTEM_TIME_MONOTONIC));
+            if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+                scheduleCompositeImmed();
+            }
+        }
+      });
+}
+
 FloatRect SurfaceFlinger::getMaxDisplayBounds() {
     const ui::Size maxSize = [this] {
         ftl::FakeGuard guard(mStateLock);
@@ -5309,33 +5347,7 @@ status_t SurfaceFlinger::setTransactionState(
         waitForSynchronousTransaction(*state.transactionCommittedSignal);
     }
 
-    state.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        sp<Layer> layer = nullptr;
-        SmomoIntf *smoMo = nullptr;
-        {
-            Mutex::Autolock _l(mStateLock);
-            layer = fromHandle(state.surface).promote();
-            if (layer != nullptr) {
-                smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
-            }
-        }
-
-        if (smoMo) {
-            smomo::SmomoBufferStats bufferStats;
-            bufferStats.id = layer->getSequence();
-            bufferStats.auto_timestamp = isAutoTimestamp;
-            bufferStats.timestamp = desiredPresentTime;
-            bufferStats.dequeue_latency = 0;
-            bufferStats.key = desiredPresentTime;
-            smoMo->CollectLayerStats(bufferStats);
-
-            const DisplayStatInfo stats =
-                mScheduler->getDisplayStatInfo(systemTime(SYSTEM_TIME_MONOTONIC));
-            if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
-                scheduleCompositeImmed();
-            }
-        }
-    });
+    updateSmomoLayerInfo(state, desiredPresentTime, isAutoTimestamp);
 
     return NO_ERROR;
 }
