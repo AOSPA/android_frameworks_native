@@ -27,6 +27,7 @@
 #include <android/gui/DisplayState.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
+#include <ftl/small_map.h>
 #include <gui/BufferQueue.h>
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
@@ -608,17 +609,11 @@ private:
     bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
             EXCLUDES(mStateLock);
 
-    // the following two methods are moved from ISurfaceComposer.h
+    // the following method are moved from ISurfaceComposer.h
     // TODO(b/74619554): Remove this stopgap once the framework is display-agnostic.
     std::optional<PhysicalDisplayId> getInternalDisplayId() const {
         const auto displayIds = getPhysicalDisplayIds();
         return displayIds.empty() ? std::nullopt : std::make_optional(displayIds.front());
-    }
-
-    // TODO(b/74619554): Remove this stopgap once the framework is display-agnostic.
-    sp<IBinder> getInternalDisplayToken() const {
-        const auto displayId = getInternalDisplayId();
-        return displayId ? getPhysicalDisplayToken(*displayId) : nullptr;
     }
 
     // Implements ISurfaceComposer
@@ -1008,8 +1003,8 @@ private:
     }
 
     sp<DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& displayToken) REQUIRES(mStateLock) {
-        const auto it = mDisplays.find(displayToken);
-        return it == mDisplays.end() ? nullptr : it->second;
+        const sp<DisplayDevice> nullDisplay;
+        return mDisplays.get(displayToken).value_or(std::cref(nullDisplay));
     }
 
     sp<const DisplayDevice> getDisplayDeviceLocked(PhysicalDisplayId id) const
@@ -1024,6 +1019,13 @@ private:
         return nullptr;
     }
 
+    sp<const DisplayDevice> getDisplayDeviceLocked(DisplayId id) const REQUIRES(mStateLock) {
+        // TODO(b/182939859): Replace tokens with IDs for display lookup.
+        return findDisplay([id](const auto& display) { return display.getId() == id; });
+    }
+
+    // Returns the primary display or (for foldables) the active display, assuming that the inner
+    // and outer displays have mutually exclusive power states.
     sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const REQUIRES(mStateLock) {
         return const_cast<SurfaceFlinger*>(this)->getDefaultDisplayDeviceLocked();
     }
@@ -1032,9 +1034,9 @@ private:
         if (const auto display = getDisplayDeviceLocked(mActiveDisplayToken)) {
             return display;
         }
-        // The active display is outdated, fall back to the internal display
+        // The active display is outdated, so fall back to the primary display.
         mActiveDisplayToken.clear();
-        if (const auto token = getInternalDisplayTokenLocked()) {
+        if (const auto token = getPrimaryDisplayTokenLocked()) {
             return getDisplayDeviceLocked(token);
         }
         return nullptr;
@@ -1052,11 +1054,6 @@ private:
                                      [&](const auto& pair) { return p(*pair.second); });
 
         return it == mDisplays.end() ? nullptr : it->second;
-    }
-
-    sp<const DisplayDevice> getDisplayDeviceLocked(DisplayId id) const REQUIRES(mStateLock) {
-        // TODO(b/182939859): Replace tokens with IDs for display lookup.
-        return findDisplay([id](const auto& display) { return display.getId() == id; });
     }
 
     std::vector<PhysicalDisplayId> getPhysicalDisplayIdsLocked() const REQUIRES(mStateLock);
@@ -1161,8 +1158,8 @@ private:
      */
     sp<IBinder> getPhysicalDisplayTokenLocked(PhysicalDisplayId displayId) const
             REQUIRES(mStateLock) {
-        const auto it = mPhysicalDisplayTokens.find(displayId);
-        return it != mPhysicalDisplayTokens.end() ? it->second : nullptr;
+        const sp<IBinder> nullToken;
+        return mPhysicalDisplayTokens.get(displayId).value_or(std::cref(nullToken));
     }
 
     std::optional<PhysicalDisplayId> getPhysicalDisplayIdLocked(
@@ -1175,18 +1172,17 @@ private:
         return {};
     }
 
-    // TODO(b/182939859): SF conflates the primary (a.k.a. default) display with the first display
-    // connected at boot, which is typically internal. (Theoretically, it must be internal because
-    // SF does not support disconnecting it, though in practice HWC may circumvent this limitation.)
+    // Returns the first display connected at boot.
     //
-    // SF inherits getInternalDisplayToken and getInternalDisplayId from ISurfaceComposer, so these
-    // locked counterparts are named consistently. Once SF supports headless mode and can designate
-    // any display as primary, the "internal" misnomer will be phased out.
-    sp<IBinder> getInternalDisplayTokenLocked() const REQUIRES(mStateLock) {
-        return getPhysicalDisplayTokenLocked(getInternalDisplayIdLocked());
+    // TODO(b/229851933): SF conflates the primary display with the first display connected at boot,
+    // which typically has DisplayConnectionType::Internal. (Theoretically, it must be an internal
+    // display because SF does not support disconnecting it, though in practice HWC may circumvent
+    // this limitation.)
+    sp<IBinder> getPrimaryDisplayTokenLocked() const REQUIRES(mStateLock) {
+        return getPhysicalDisplayTokenLocked(getPrimaryDisplayIdLocked());
     }
 
-    PhysicalDisplayId getInternalDisplayIdLocked() const REQUIRES(mStateLock) {
+    PhysicalDisplayId getPrimaryDisplayIdLocked() const REQUIRES(mStateLock) {
         return getHwComposer().getPrimaryDisplayId();
     }
 
@@ -1219,9 +1215,13 @@ private:
     void dumpStaticScreenStats(std::string& result) const;
     // Not const because each Layer needs to query Fences and cache timestamps.
     void dumpFrameEventsLocked(std::string& result);
+
+    void dumpCompositionDisplays(std::string& result) const REQUIRES(mStateLock);
+    void dumpDisplays(std::string& result) const REQUIRES(mStateLock);
     void dumpDisplayIdentificationData(std::string& result) const REQUIRES(mStateLock);
     void dumpRawDisplayIdentificationData(const DumpArgs&, std::string& result) const;
     void dumpWideColorInfo(std::string& result) const REQUIRES(mStateLock);
+
     LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(LayersProto& layersProto,
                                   uint32_t traceFlags = LayerTracing::TRACE_ALL) const;
@@ -1409,10 +1409,14 @@ private:
 
     std::vector<HotplugEvent> mPendingHotplugEvents GUARDED_BY(mStateLock);
 
-    // this may only be written from the main thread with mStateLock held
-    // it may be read from other threads with mStateLock held
-    std::map<wp<IBinder>, sp<DisplayDevice>> mDisplays GUARDED_BY(mStateLock);
-    std::unordered_map<PhysicalDisplayId, sp<IBinder>> mPhysicalDisplayTokens
+    // Displays are composited in `mDisplays` order. Internal displays are inserted at boot and
+    // never removed, so take precedence over external and virtual displays.
+    //
+    // The static capacities were chosen to exceed a typical number of physical/virtual displays.
+    //
+    // May be read from any thread, but must only be written from the main thread.
+    ftl::SmallMap<wp<IBinder>, const sp<DisplayDevice>, 5> mDisplays GUARDED_BY(mStateLock);
+    ftl::SmallMap<PhysicalDisplayId, const sp<IBinder>, 3> mPhysicalDisplayTokens
             GUARDED_BY(mStateLock);
 
     struct {
@@ -1597,10 +1601,8 @@ private:
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
     bool isRefreshRateOverlayEnabled() const REQUIRES(mStateLock) {
-        return std::any_of(mDisplays.begin(), mDisplays.end(),
-                           [](std::pair<wp<IBinder>, sp<DisplayDevice>> display) {
-                               return display.second->isRefreshRateOverlayEnabled();
-                           });
+        return hasDisplay(
+                [](const auto& display) { return display.isRefreshRateOverlayEnabled(); });
     }
 
     wp<IBinder> mActiveDisplayToken GUARDED_BY(mStateLock);
