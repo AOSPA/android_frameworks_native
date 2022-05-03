@@ -1610,6 +1610,7 @@ private:
     const sp<WindowInfosListenerInvoker> mWindowInfosListenerInvoker;
     void setRefreshRates(const sp<DisplayDevice>& display);
     void UpdateSmomoState();
+    SmomoIntf* getSmomoInstance(const uint32_t layerStackId) const;
 
 public:
     nsecs_t mVsyncPeriod = -1;

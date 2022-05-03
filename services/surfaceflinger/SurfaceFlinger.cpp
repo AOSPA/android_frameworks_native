@@ -2625,15 +2625,8 @@ nsecs_t SurfaceFlinger::calculateExpectedPresentTime(DisplayStatInfo stats) cons
 void SurfaceFlinger::syncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
     ATRACE_CALL();
 
-    SmomoIntf *smoMo = nullptr;
-    for (auto &instance: mSmomoInstances) {
-        if (instance.displayId == 0) {
-            smoMo = instance.smoMo;
-            break;
-        }
-    }
-
-    if (smoMo) {
+    const uint32_t layerStackId = getDefaultDisplayDeviceLocked()->getLayerStack().id;
+    if (SmomoIntf *smoMo = getSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
         bool needResync = smoMo->SyncToDisplay(previousFrameFence().fence, &timestamp);
         ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
@@ -2675,6 +2668,11 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
 
     if (mDolphinWrapper.dolphinTrackVsyncSignal) {
         mDolphinWrapper.dolphinTrackVsyncSignal(frameTime, vsyncId, expectedVsyncTime);
+    }
+
+    const uint32_t layerStackId = getDefaultDisplayDeviceLocked()->getLayerStack().id;
+    if (SmomoIntf *smoMo = getSmomoInstance(layerStackId)) {
+        smoMo->OnVsync(expectedVsyncTime);
     }
 
     // we set this once at the beginning of commit to ensure consistency throughout the whole frame
@@ -3491,6 +3489,18 @@ void SurfaceFlinger::UpdateSmomoState() {
     for (auto &instance : mSmomoInstances) {
         instance.smoMo->SetRefreshRateChangeStatus((numActiveDisplays == 1));
     }
+}
+
+SmomoIntf* SurfaceFlinger::getSmomoInstance(const uint32_t layerStackId) const {
+    SmomoIntf *smoMo = nullptr;
+    for (auto &instance: mSmomoInstances) {
+        if (instance.layerStackId == layerStackId) {
+            smoMo = instance.smoMo;
+            break;
+        }
+    }
+
+    return smoMo;
 }
 
 FloatRect SurfaceFlinger::getMaxDisplayBounds() {
@@ -4554,20 +4564,6 @@ void SurfaceFlinger::initScheduler(const sp<DisplayDevice>& display) {
                                          /*readyDuration=*/configs.late.sfWorkDuration,
                                          [this](nsecs_t timestamp) {
                                              mInterceptor->saveVSyncEvent(timestamp);
-
-                                             const auto display = getDefaultDisplayDeviceLocked();
-                                             const uint32_t layerStackId = display->getLayerStack().id;
-                                             SmomoIntf *smoMo = nullptr;
-                                             for (auto &instance: mSmomoInstances) {
-                                                  if (instance.layerStackId == layerStackId) {
-                                                      smoMo = instance.smoMo;
-                                                      break;
-                                                   }
-                                             }
-
-                                             if (smoMo) {
-                                                smoMo->OnVsync(timestamp);
-                                             }
                                          });
 
     mScheduler->initVsync(mScheduler->getVsyncDispatch(), *mFrameTimeline->getTokenManager(),
@@ -5191,16 +5187,7 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
                 return TransactionReadiness::NotReady;
             }
 
-            const uint32_t layerStackId = layer->getLayerStack().id;
-            SmomoIntf *smoMo = nullptr;
-            for (auto &instance: mSmomoInstances) {
-                if (instance.layerStackId == layerStackId) {
-                    smoMo = instance.smoMo;
-                    break;
-                }
-            }
-
-            if (smoMo) {
+            if (SmomoIntf *smoMo = getSmomoInstance(layer->getSmomoLayerStackId())) {
                 if (smoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
                     return TransactionReadiness::NotReady;
                 }
@@ -5323,37 +5310,29 @@ status_t SurfaceFlinger::setTransactionState(
     }
 
     state.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        SmomoIntf *smoMo = nullptr;
-        int32_t sequence;
         sp<Layer> layer = nullptr;
+        SmomoIntf *smoMo = nullptr;
         {
             Mutex::Autolock _l(mStateLock);
             layer = fromHandle(state.surface).promote();
             if (layer != nullptr) {
-                const uint32_t layerStackId = layer->getSmomoLayerStackId();
-                sequence = layer->getSequence();
-                for (auto &instance: mSmomoInstances) {
-                     if (instance.layerStackId == layerStackId) {
-                        smoMo = instance.smoMo;
-                        break;
-                    }
-                }
+                smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
             }
         }
 
         if (smoMo) {
-           smomo::SmomoBufferStats bufferStats;
-           const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
-           bufferStats.id = sequence;
-           bufferStats.auto_timestamp = isAutoTimestamp;
-           bufferStats.timestamp = now;
-           bufferStats.dequeue_latency = 0;
-           bufferStats.key = desiredPresentTime;
-           smoMo->CollectLayerStats(bufferStats);
+            smomo::SmomoBufferStats bufferStats;
+            bufferStats.id = layer->getSequence();
+            bufferStats.auto_timestamp = isAutoTimestamp;
+            bufferStats.timestamp = desiredPresentTime;
+            bufferStats.dequeue_latency = 0;
+            bufferStats.key = desiredPresentTime;
+            smoMo->CollectLayerStats(bufferStats);
 
-           const DisplayStatInfo stats = mScheduler->getDisplayStatInfo(now);
-           if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
-              scheduleCompositeImmed();
+            const DisplayStatInfo stats =
+                mScheduler->getDisplayStatInfo(systemTime(SYSTEM_TIME_MONOTONIC));
+            if (smoMo->FrameIsLate(bufferStats.id, stats.vsyncTime)) {
+                scheduleCompositeImmed();
             }
         }
     });
