@@ -572,6 +572,7 @@ PowerAdvisor::HalWrapper* PowerAdvisor::getPowerHal() {
         if (!wrapper->shouldReconnectHAL()) {
             return wrapper;
         }
+        ALOGD("Reconnecting Power HAL");
         sHalWrapper = nullptr;
     }
 
@@ -584,7 +585,9 @@ PowerAdvisor::HalWrapper* PowerAdvisor::getPowerHal() {
     // If that didn't succeed, attempt to connect to the HIDL Power HAL
     if (sHalWrapper == nullptr) {
         sHalWrapper = HidlPowerHalWrapper::connect();
-    } else { // if AIDL, pass on any existing hint session values
+    } else {
+        ALOGD("Successfully connecting AIDL Power HAL");
+        // if AIDL, pass on any existing hint session values
         // thread ids always safe to set
         sHalWrapper->setPowerHintSessionThreadIds(oldPowerHintSessionThreadIds);
         // only set duration and start if duration is defined

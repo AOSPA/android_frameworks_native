@@ -298,17 +298,15 @@ void Output::setDisplayBrightness(float sdrWhitePointNits, float displayBrightne
 }
 
 void Output::dump(std::string& out) const {
-    using android::base::StringAppendF;
-
-    StringAppendF(&out, "   Composition Output State: [\"%s\"]", mName.c_str());
-
-    out.append("\n   ");
+    base::StringAppendF(&out, "Output \"%s\"", mName.c_str());
+    out.append("\n   Composition Output State:\n");
 
     dumpBase(out);
 }
 
 void Output::dumpBase(std::string& out) const {
     dumpState(out);
+    out += '\n';
 
     if (mDisplayColorProfile) {
         mDisplayColorProfile->dump(out);
@@ -316,13 +314,15 @@ void Output::dumpBase(std::string& out) const {
         out.append("    No display color profile!\n");
     }
 
+    out += '\n';
+
     if (mRenderSurface) {
         mRenderSurface->dump(out);
     } else {
         out.append("    No render surface!\n");
     }
 
-    android::base::StringAppendF(&out, "\n   %zu Layers\n", getOutputLayerCount());
+    base::StringAppendF(&out, "\n   %zu Layers\n", getOutputLayerCount());
     for (const auto* outputLayer : getOutputLayersOrderedByZ()) {
         if (!outputLayer) {
             continue;
@@ -333,7 +333,7 @@ void Output::dumpBase(std::string& out) const {
 
 void Output::dumpPlannerInfo(const Vector<String16>& args, std::string& out) const {
     if (!mPlanner) {
-        base::StringAppendF(&out, "Planner is disabled\n");
+        out.append("Planner is disabled\n");
         return;
     }
     base::StringAppendF(&out, "Planner info for display [%s]\n", mName.c_str());
@@ -1237,6 +1237,9 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     clientCompositionDisplay.targetLuminanceNits =
             outputState.clientTargetBrightness * outputState.displayBrightnessNits;
     clientCompositionDisplay.dimmingStage = outputState.clientTargetDimmingStage;
+    clientCompositionDisplay.renderIntent =
+            static_cast<aidl::android::hardware::graphics::composer3::RenderIntent>(
+                    outputState.renderIntent);
 
     // Compute the global color transform matrix.
     clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
