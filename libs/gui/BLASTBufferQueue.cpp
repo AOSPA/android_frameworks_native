@@ -459,6 +459,7 @@ void BLASTBufferQueue::releaseBuffer(const ReleaseCallbackId& callbackId,
         return;
     }
     mNumAcquired--;
+    mNumUndequeued++;
     BBQ_TRACE("frame=%" PRIu64, callbackId.framenumber);
     BQA_LOGV("released %s", callbackId.to_string().c_str());
     mBufferItemConsumer->releaseBuffer(it->second, releaseFence);
