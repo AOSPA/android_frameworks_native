@@ -305,6 +305,10 @@ std::shared_ptr<renderengine::ExternalTexture>& RenderSurface::mutableTextureFor
     return mTexture;
 }
 
+bool RenderSurface::supportsCompositionStrategyPrediction() const {
+    return mDisplaySurface->supportsCompositionStrategyPrediction();
+}
+
 void RenderSurface::flipClientTarget(bool flip) {
     mFlipClientTarget = flip;
 }

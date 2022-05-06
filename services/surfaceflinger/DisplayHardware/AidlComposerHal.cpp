@@ -61,6 +61,7 @@ using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
 
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
+using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
 using aidl::android::hardware::graphics::composer3::PowerMode;
 using aidl::android::hardware::graphics::composer3::VirtualDisplay;
 
@@ -175,15 +176,6 @@ VsyncPeriodChangeTimeline translate(AidlVsyncPeriodChangeTimeline x) {
             .refreshTimeNanos = x.refreshTimeNanos,
     };
 }
-
-template <>
-IComposerClient::ClientTargetProperty translate(ClientTargetProperty x) {
-    return IComposerClient::ClientTargetProperty{
-            .pixelFormat = translate<PixelFormat>(x.pixelFormat),
-            .dataspace = translate<Dataspace>(x.dataspace),
-    };
-}
-
 mat4 makeMat4(std::vector<float> in) {
     return mat4(static_cast<const float*>(in.data()));
 }
@@ -1048,9 +1040,9 @@ Error AidlComposer::setLayerPerFrameMetadataBlobs(
     return Error::NONE;
 }
 
-Error AidlComposer::setDisplayBrightness(Display display, float brightness,
+Error AidlComposer::setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                          const DisplayBrightnessOptions& options) {
-    mWriter.setDisplayBrightness(translate<int64_t>(display), brightness);
+    mWriter.setDisplayBrightness(translate<int64_t>(display), brightness, brightnessNits);
 
     if (options.applyImmediately) {
         return execute();
@@ -1195,12 +1187,8 @@ Error AidlComposer::getPreferredBootDisplayConfig(Display display, Config* confi
 }
 
 Error AidlComposer::getClientTargetProperty(
-        Display display, IComposerClient::ClientTargetProperty* outClientTargetProperty,
-        float* outBrightness) {
-    const auto property = mReader.takeClientTargetProperty(translate<int64_t>(display));
-    *outClientTargetProperty =
-            translate<IComposerClient::ClientTargetProperty>(property.clientTargetProperty);
-    *outBrightness = property.brightness;
+        Display display, ClientTargetPropertyWithBrightness* outClientTargetProperty) {
+    *outClientTargetProperty = mReader.takeClientTargetProperty(translate<int64_t>(display));
     return Error::NONE;
 }
 

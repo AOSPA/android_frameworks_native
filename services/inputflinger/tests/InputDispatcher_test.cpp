@@ -39,9 +39,10 @@ using android::gui::WindowInfo;
 using android::gui::WindowInfoHandle;
 using android::os::InputEventInjectionResult;
 using android::os::InputEventInjectionSync;
-using namespace android::flag_operators;
 
 namespace android::inputdispatcher {
+
+using namespace ftl::flag_operators;
 
 // An arbitrary time value.
 static const nsecs_t ARBITRARY_TIME = 1234;
@@ -55,6 +56,8 @@ static constexpr int32_t SECOND_DISPLAY_ID = 1;
 
 static constexpr int32_t POINTER_1_DOWN =
         AMOTION_EVENT_ACTION_POINTER_DOWN | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+static constexpr int32_t POINTER_2_DOWN =
+        AMOTION_EVENT_ACTION_POINTER_DOWN | (2 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 static constexpr int32_t POINTER_1_UP =
         AMOTION_EVENT_ACTION_POINTER_UP | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 
@@ -2247,6 +2250,53 @@ TEST_F(InputDispatcherTest, InterceptKeyIfKeyUp) {
 }
 
 /**
+ * This test documents the behavior of WATCH_OUTSIDE_TOUCH. The window will get ACTION_OUTSIDE when
+ * a another pointer causes ACTION_DOWN to be sent to another window for the first time. Only one
+ * ACTION_OUTSIDE event is sent per gesture.
+ */
+TEST_F(InputDispatcherTest, ActionOutsideSentOnlyWhenAWindowIsTouched) {
+    // There are three windows that do not overlap. `window` wants to WATCH_OUTSIDE_TOUCH.
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+    window->setWatchOutsideTouch(true);
+    window->setFrame(Rect{0, 0, 100, 100});
+    sp<FakeWindowHandle> secondWindow =
+            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+    secondWindow->setFrame(Rect{100, 100, 200, 200});
+    sp<FakeWindowHandle> thirdWindow =
+            new FakeWindowHandle(application, mDispatcher, "Third Window", ADISPLAY_ID_DEFAULT);
+    thirdWindow->setFrame(Rect{200, 200, 300, 300});
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window, secondWindow, thirdWindow}}});
+
+    // First pointer lands outside all windows. `window` does not get ACTION_OUTSIDE.
+    NotifyMotionArgs motionArgs =
+            generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                               ADISPLAY_ID_DEFAULT, {PointF{-10, -10}});
+    mDispatcher->notifyMotion(&motionArgs);
+    window->assertNoEvents();
+    secondWindow->assertNoEvents();
+
+    // The second pointer lands inside `secondWindow`, which should receive a DOWN event.
+    // Now, `window` should get ACTION_OUTSIDE.
+    motionArgs = generateMotionArgs(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                    {PointF{-10, -10}, PointF{105, 105}});
+    mDispatcher->notifyMotion(&motionArgs);
+    window->consumeMotionOutside();
+    secondWindow->consumeMotionDown();
+    thirdWindow->assertNoEvents();
+
+    // The third pointer lands inside `thirdWindow`, which should receive a DOWN event. There is
+    // no ACTION_OUTSIDE sent to `window` because one has already been sent for this gesture.
+    motionArgs = generateMotionArgs(POINTER_2_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                    {PointF{-10, -10}, PointF{105, 105}, PointF{205, 205}});
+    mDispatcher->notifyMotion(&motionArgs);
+    window->assertNoEvents();
+    secondWindow->consumeMotionMove();
+    thirdWindow->consumeMotionDown();
+}
+
+/**
  * Ensure the correct coordinate spaces are used by InputDispatcher.
  *
  * InputDispatcher works in the display space, so its coordinate system is relative to the display
@@ -2429,6 +2479,63 @@ TEST_P(TransferTouchFixture, TransferTouch_OnePointer) {
     secondWindow->consumeMotionUp();
 }
 
+/**
+ * When 'transferTouch' API is invoked, dispatcher needs to find the "best" window to take touch
+ * from. When we have spy windows, there are several windows to choose from: either spy, or the
+ * 'real' (non-spy) window. Always prefer the 'real' window because that's what would be most
+ * natural to the user.
+ * In this test, we are sending a pointer to both spy window and first window. We then try to
+ * transfer touch to the second window. The dispatcher should identify the first window as the
+ * one that should lose the gesture, and therefore the action should be to move the gesture from
+ * the first window to the second.
+ * The main goal here is to test the behaviour of 'transferTouch' API, but it's still valid to test
+ * the other API, as well.
+ */
+TEST_P(TransferTouchFixture, TransferTouch_MultipleWindowsWithSpy) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    // Create a couple of windows + a spy window
+    sp<FakeWindowHandle> spyWindow =
+            new FakeWindowHandle(application, mDispatcher, "Spy", ADISPLAY_ID_DEFAULT);
+    spyWindow->setTrustedOverlay(true);
+    spyWindow->setSpy(true);
+    sp<FakeWindowHandle> firstWindow =
+            new FakeWindowHandle(application, mDispatcher, "First", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> secondWindow =
+            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+
+    // Add the windows to the dispatcher
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spyWindow, firstWindow, secondWindow}}});
+
+    // Send down to the first window
+    NotifyMotionArgs downMotionArgs =
+            generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                               ADISPLAY_ID_DEFAULT);
+    mDispatcher->notifyMotion(&downMotionArgs);
+    // Only the first window and spy should get the down event
+    spyWindow->consumeMotionDown();
+    firstWindow->consumeMotionDown();
+
+    // Transfer touch to the second window. Non-spy window should be preferred over the spy window
+    // if f === 'transferTouch'.
+    TransferFunction f = GetParam();
+    const bool success = f(mDispatcher, firstWindow->getToken(), secondWindow->getToken());
+    ASSERT_TRUE(success);
+    // The first window gets cancel and the second gets down
+    firstWindow->consumeMotionCancel();
+    secondWindow->consumeMotionDown();
+
+    // Send up event to the second window
+    NotifyMotionArgs upMotionArgs =
+            generateMotionArgs(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN,
+                               ADISPLAY_ID_DEFAULT);
+    mDispatcher->notifyMotion(&upMotionArgs);
+    // The first  window gets no events and the second+spy get up
+    firstWindow->assertNoEvents();
+    spyWindow->consumeMotionUp();
+    secondWindow->consumeMotionUp();
+}
+
 TEST_P(TransferTouchFixture, TransferTouch_TwoPointersNonSplitTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
@@ -2498,7 +2605,8 @@ INSTANTIATE_TEST_SUITE_P(TransferFunctionTests, TransferTouchFixture,
                          ::testing::Values(
                                  [&](const std::unique_ptr<InputDispatcher>& dispatcher,
                                      sp<IBinder> /*ignored*/, sp<IBinder> destChannelToken) {
-                                     return dispatcher->transferTouch(destChannelToken);
+                                     return dispatcher->transferTouch(destChannelToken,
+                                                                      ADISPLAY_ID_DEFAULT);
                                  },
                                  [&](const std::unique_ptr<InputDispatcher>& dispatcher,
                                      sp<IBinder> from, sp<IBinder> to) {
@@ -2606,7 +2714,8 @@ TEST_F(InputDispatcherTest, TransferTouch_TwoPointersSplitTouch) {
     secondWindow->consumeMotionDown();
 
     // Transfer touch focus to the second window
-    const bool transferred = mDispatcher->transferTouch(secondWindow->getToken());
+    const bool transferred =
+            mDispatcher->transferTouch(secondWindow->getToken(), ADISPLAY_ID_DEFAULT);
     // The 'transferTouch' call should not succeed, because there are 2 touched windows
     ASSERT_FALSE(transferred);
     firstWindow->assertNoEvents();
@@ -2730,7 +2839,7 @@ TEST_F(InputDispatcherTest, TransferTouch_CloneSurface) {
     firstWindowInPrimary->consumeMotionDown(SECOND_DISPLAY_ID);
 
     // Transfer touch focus
-    ASSERT_TRUE(mDispatcher->transferTouch(secondWindowInSecondary->getToken()));
+    ASSERT_TRUE(mDispatcher->transferTouch(secondWindowInSecondary->getToken(), SECOND_DISPLAY_ID));
 
     // The first window gets cancel.
     firstWindowInPrimary->consumeMotionCancel(SECOND_DISPLAY_ID);
@@ -6338,8 +6447,11 @@ protected:
         mWindow->consumeFocusEvent(true);
 
         // Set initial touch mode to InputDispatcher::kDefaultInTouchMode.
-        mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, INJECTOR_PID,
-                                    INJECTOR_UID, /* hasPermission */ true);
+        if (mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, INJECTOR_PID,
+                                        INJECTOR_UID, /* hasPermission */ true)) {
+            mWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
+            mSecondWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
+        }
     }
 
     void changeAndVerifyTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission) {
@@ -6382,6 +6494,23 @@ TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTou
                                              /* hasPermission */ true));
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherTouchModeChangedTests, CanChangeTouchModeWhenOwningLastInteractedWindow) {
+    // Interact with the window first.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED, injectKeyDown(mDispatcher, ADISPLAY_ID_DEFAULT))
+            << "Inject key event should return InputEventInjectionResult::SUCCEEDED";
+    mWindow->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+
+    // Then remove focus.
+    mWindow->setFocusable(false);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow}}});
+
+    // Assert that caller can switch touch mode by owning one of the last interacted window.
+    const WindowInfo& windowInfo = *mWindow->getInfo();
+    ASSERT_TRUE(mDispatcher->setInTouchMode(!InputDispatcher::kDefaultInTouchMode,
+                                            windowInfo.ownerPid, windowInfo.ownerUid,
+                                            /* hasPermission= */ false));
 }
 
 class InputDispatcherSpyWindowTest : public InputDispatcherTest {
@@ -6668,9 +6797,7 @@ TEST_F(InputDispatcherSpyWindowTest, ContinuesToReceiveGestureAfterPilfer) {
 
     // Third finger goes down outside all windows, so injection should fail.
     const MotionEvent thirdFingerDownEvent =
-            MotionEventBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN |
-                                       (2 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
-                               AINPUT_SOURCE_TOUCHSCREEN)
+            MotionEventBuilder(POINTER_2_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
                     .displayId(ADISPLAY_ID_DEFAULT)
                     .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
                     .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)

@@ -184,7 +184,7 @@ public:
     Error setLayerPerFrameMetadataBlobs(
             Display display, Layer layer,
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
-    Error setDisplayBrightness(Display display, float brightness,
+    Error setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                const DisplayBrightnessOptions& options) override;
     Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
@@ -210,9 +210,10 @@ public:
                                         bool mandatory, const std::vector<uint8_t>& value) override;
     V2_4::Error getLayerGenericMetadataKeys(
             std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) override;
-    Error getClientTargetProperty(Display display,
-                                  IComposerClient::ClientTargetProperty* outClientTargetProperty,
-                                  float* outBrightness) override;
+    Error getClientTargetProperty(
+            Display display,
+            aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
+                    outClientTargetProperty) override;
 
     // AIDL Composer HAL
     Error setLayerBrightness(Display display, Layer layer, float brightness) override;

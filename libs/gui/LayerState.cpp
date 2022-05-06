@@ -16,8 +16,8 @@
 
 #define LOG_TAG "LayerState"
 
-#include <apex/window.h>
-#include <inttypes.h>
+#include <cinttypes>
+#include <cmath>
 
 #include <android/native_window.h>
 #include <binder/Parcel.h>
@@ -25,9 +25,8 @@
 #include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerState.h>
 #include <private/gui/ParcelUtils.h>
+#include <system/window.h>
 #include <utils/Errors.h>
-
-#include <cmath>
 
 namespace android {
 
@@ -134,6 +133,7 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeByte, changeFrameRateStrategy);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeBool, autoRefresh);
+    SAFE_PARCEL(output.writeBool, dimmingEnabled);
 
     SAFE_PARCEL(output.writeUint32, blurRegions.size());
     for (auto region : blurRegions) {
@@ -243,6 +243,7 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readBool, &autoRefresh);
+    SAFE_PARCEL(input.readBool, &dimmingEnabled);
 
     uint32_t numRegions = 0;
     SAFE_PARCEL(input.readUint32, &numRegions);
@@ -598,6 +599,10 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eColorSpaceAgnosticChanged;
         colorSpaceAgnostic = other.colorSpaceAgnostic;
     }
+    if (other.what & eDimmingEnabledChanged) {
+        what |= eDimmingEnabledChanged;
+        dimmingEnabled = other.dimmingEnabled;
+    }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "
               "other.what=0x%" PRIX64 " what=0x%" PRIX64 " unmerged flags=0x%" PRIX64,
@@ -673,7 +678,9 @@ bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrame
 
     if (compatibility != ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT &&
         compatibility != ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE &&
-        (!privileged || compatibility != ANATIVEWINDOW_FRAME_RATE_EXACT)) {
+        (!privileged ||
+         (compatibility != ANATIVEWINDOW_FRAME_RATE_EXACT &&
+          compatibility != ANATIVEWINDOW_FRAME_RATE_NO_VOTE))) {
         ALOGE("%s failed - invalid compatibility value %d privileged: %s", functionName,
               compatibility, privileged ? "yes" : "no");
         return false;
@@ -815,7 +822,7 @@ status_t BufferData::writeToParcel(Parcel* output) const {
 status_t BufferData::readFromParcel(const Parcel* input) {
     int32_t tmpInt32;
     SAFE_PARCEL(input->readInt32, &tmpInt32);
-    flags = Flags<BufferDataChange>(tmpInt32);
+    flags = ftl::Flags<BufferDataChange>(tmpInt32);
 
     bool tmpBool = false;
     SAFE_PARCEL(input->readBool, &tmpBool);

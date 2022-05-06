@@ -45,6 +45,7 @@
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include <aidl/android/hardware/graphics/composer3/Capability.h>
+#include <aidl/android/hardware/graphics/composer3/ClientTargetPropertyWithBrightness.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
@@ -83,7 +84,8 @@ public:
         using ChangedTypes =
                 std::unordered_map<HWC2::Layer*,
                                    aidl::android::hardware::graphics::composer3::Composition>;
-        using ClientTargetProperty = hal::ClientTargetProperty;
+        using ClientTargetProperty =
+                aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
         using DisplayRequests = hal::DisplayRequest;
         using LayerRequests = std::unordered_map<HWC2::Layer*, hal::LayerRequest>;
 
@@ -91,7 +93,6 @@ public:
         DisplayRequests displayRequests;
         LayerRequests layerRequests;
         ClientTargetProperty clientTargetProperty;
-        float clientTargetBrightness;
     };
 
     struct HWCDisplayMode {
@@ -200,7 +201,7 @@ public:
 
     // Sets the brightness of a display.
     virtual std::future<status_t> setDisplayBrightness(
-            PhysicalDisplayId, float brightness,
+            PhysicalDisplayId, float brightness, float brightnessNits,
             const Hwc2::Composer::DisplayBrightnessOptions&) = 0;
 
     // Events handling ---------------------------------------------------------
@@ -293,6 +294,13 @@ public:
 #endif
 };
 
+static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
+                              const android::HWComposer::DeviceRequestedChanges& rhs) {
+    return lhs.changedTypes == rhs.changedTypes && lhs.displayRequests == rhs.displayRequests &&
+            lhs.layerRequests == rhs.layerRequests &&
+            lhs.clientTargetProperty == rhs.clientTargetProperty;
+}
+
 namespace impl {
 
 class HWComposer final : public android::HWComposer {
@@ -379,7 +387,7 @@ public:
     status_t getDisplayedContentSample(HalDisplayId, uint64_t maxFrames, uint64_t timestamp,
                                        DisplayedFrameStats* outStats) override;
     std::future<status_t> setDisplayBrightness(
-            PhysicalDisplayId, float brightness,
+            PhysicalDisplayId, float brightness, float brightnessNits,
             const Hwc2::Composer::DisplayBrightnessOptions&) override;
 
     // Events handling ---------------------------------------------------------
@@ -476,6 +484,8 @@ private:
 
         std::mutex vsyncEnabledLock;
         hal::Vsync vsyncEnabled GUARDED_BY(vsyncEnabledLock) = hal::Vsync::DISABLE;
+
+        hal::PowerMode powerMode = hal::PowerMode::ON;
 
         nsecs_t lastHwVsync = 0;
     };

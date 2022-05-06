@@ -92,6 +92,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
                 static_cast<uint32_t>(SurfaceFlinger::maxFrameBufferAcquiredBuffers));
     }
 
+    mCompositionDisplay->setPredictCompositionStrategy(mFlinger->mPredictCompositionStrategy);
     mCompositionDisplay->createDisplayColorProfile(
             compositionengine::DisplayColorProfileCreationArgsBuilder()
                     .setHasWideColorGamut(args.hasWideColorGamut)
@@ -480,9 +481,8 @@ void DisplayDevice::enableRefreshRateOverlay(bool enable, bool showSpinnner) {
         return;
     }
 
-    const auto [lowFps, highFps] = mRefreshRateConfigs->getSupportedRefreshRateRange();
-    mRefreshRateOverlay = std::make_unique<RefreshRateOverlay>(*mFlinger, lowFps.getIntValue(),
-                                                               highFps.getIntValue(), showSpinnner);
+    const auto fpsRange = mRefreshRateConfigs->getSupportedRefreshRateRange();
+    mRefreshRateOverlay = std::make_unique<RefreshRateOverlay>(fpsRange, showSpinnner);
     mRefreshRateOverlay->setLayerStack(getLayerStack());
     mRefreshRateOverlay->setViewport(getSize());
     mRefreshRateOverlay->changeRefreshRate(getActiveMode()->getFps());

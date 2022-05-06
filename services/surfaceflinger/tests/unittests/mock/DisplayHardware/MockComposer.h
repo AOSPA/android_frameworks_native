@@ -130,7 +130,8 @@ public:
                  Error(Display, uint64_t, uint64_t, DisplayedFrameStats*));
     MOCK_METHOD3(setLayerPerFrameMetadataBlobs,
                  Error(Display, Layer, const std::vector<IComposerClient::PerFrameMetadataBlob>&));
-    MOCK_METHOD3(setDisplayBrightness, Error(Display, float, const DisplayBrightnessOptions&));
+    MOCK_METHOD4(setDisplayBrightness,
+                 Error(Display, float, float, const DisplayBrightnessOptions&));
     MOCK_METHOD2(
             getDisplayCapabilities,
             Error(Display,
@@ -155,8 +156,10 @@ public:
                              const std::vector<uint8_t>&));
     MOCK_METHOD1(getLayerGenericMetadataKeys,
                  V2_4::Error(std::vector<IComposerClient::LayerGenericMetadataKey>*));
-    MOCK_METHOD3(getClientTargetProperty,
-                 Error(Display, IComposerClient::ClientTargetProperty*, float*));
+    MOCK_METHOD2(getClientTargetProperty,
+                 Error(Display,
+                       aidl::android::hardware::graphics::composer3::
+                               ClientTargetPropertyWithBrightness*));
     MOCK_METHOD3(setLayerBrightness, Error(Display, Layer, float));
     MOCK_METHOD3(setLayerBlockingRegion,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
