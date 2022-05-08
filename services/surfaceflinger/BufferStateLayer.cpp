@@ -387,6 +387,15 @@ bool BufferStateLayer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>&
     const uint64_t frameNumber =
             frameNumberChanged ? bufferData.frameNumber : mDrawingState.frameNumber + 1;
 
+    if (bufferData.invalid) {
+        callReleaseBufferCallback(bufferData.releaseBufferListener,
+                                  buffer->getBuffer(), bufferData.frameNumber,
+                                  bufferData.acquireFence,
+                                  mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
+                                          mOwnerUid));
+        return false;
+    }
+
     if (mDrawingState.buffer) {
         mReleasePreviousBuffer = true;
         if (!mBufferInfo.mBuffer ||

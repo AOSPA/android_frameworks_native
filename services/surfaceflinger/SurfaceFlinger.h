@@ -910,7 +910,7 @@ private:
     };
     TransactionReadiness transactionIsReadyToBeApplied(
             const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
-            uid_t originUid, const Vector<ComposerState>& states,
+            uid_t originUid, Vector<ComposerState>& states,
             const std::unordered_map<
                 sp<IBinder>, uint64_t, SpHash<IBinder>>& bufferLayersReadyToPresent,
             size_t totalTXapplied, bool tryApplyUnsignaled) const REQUIRES(mStateLock);
@@ -1639,6 +1639,7 @@ private:
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
     std::unordered_map<float, int64_t> mAdvancedSfOffsets;
+    bool mLatchMediaContent = true;
 
     FlagManager mFlagManager;
     int mRETid = 0;

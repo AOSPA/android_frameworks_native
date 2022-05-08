@@ -1097,6 +1097,10 @@ void SurfaceFlinger::init() {
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
+    if (base::GetBoolProperty("vendor.display.disable_latch_media_content"s, false)) {
+        mLatchMediaContent = false;
+    }
+
     if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
         enableHalVirtualDisplays(true);
     }
@@ -5113,7 +5117,7 @@ bool SurfaceFlinger::shouldLatchUnsignaled(const sp<Layer>& layer, const layer_s
 
 auto SurfaceFlinger::transactionIsReadyToBeApplied(
         const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
-        uid_t originUid, const Vector<ComposerState>& states,
+        uid_t originUid, Vector<ComposerState>& states,
         const std::unordered_map<
             sp<IBinder>, uint64_t, SpHash<IBinder>>& bufferLayersReadyToPresent,
         size_t totalTXapplied, bool tryApplyUnsignaled) const -> TransactionReadiness {
@@ -5140,8 +5144,8 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
     }
 
     bool fenceUnsignaled = false;
-    for (const ComposerState& state : states) {
-        const layer_state_t& s = state.state;
+    for (ComposerState& state : states) {
+        layer_state_t& s = state.state;
         sp<Layer> layer = nullptr;
         if (s.surface) {
             layer = fromHandle(s.surface).promote();
@@ -5176,9 +5180,21 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
                 (acquireFenceChanged &&
                  s.bufferData->acquireFence->getStatus() == Fence::Status::Unsignaled);
 
-        if (fenceUnsignaled && !allowLatchUnsignaled) {
+        uint32_t usage = layer->getBuffer() ? layer->getBuffer()->getUsage() : 0;
+        bool cameraOrVideo = ((usage & GRALLOC_USAGE_HW_CAMERA_WRITE) != 0) ||
+          ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0);
+
+        if (fenceUnsignaled && (!allowLatchUnsignaled || (mLatchMediaContent && cameraOrVideo))) {
             ATRACE_NAME("fence unsignaled");
             return TransactionReadiness::NotReady;
+        }
+
+        if (mLatchMediaContent && cameraOrVideo &&
+            s.bufferData && s.bufferData->acquireFence &&
+            (s.bufferData->acquireFence->getStatus() == Fence::Status::Signaled) &&
+            (s.bufferData->acquireFence->getSignalTime() == Fence::SIGNAL_TIME_INVALID)) {
+            ATRACE_NAME("fence signaled with error. drop");
+            s.bufferData->invalid=true;
         }
 
         if (s.hasBufferChanges()) {
