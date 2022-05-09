@@ -540,16 +540,7 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
         recomputeVisibleRegions = true;
     }
 
-    const uint32_t layerStackId = getLayerStack().id;
-    SmomoIntf *smoMo = nullptr;
-    for (auto &instance: mFlinger->mSmomoInstances) {
-        if (instance.layerStackId == layerStackId) {
-            smoMo = instance.smoMo;
-            break;
-        }
-    }
-
-    if (smoMo) {
+    if (SmomoIntf *smoMo = mFlinger->getSmomoInstance(getLayerStack().id)) {
         smoMo->SetPresentTime(getSequence(), mBufferInfo.mDesiredPresentTime);
     }
 
