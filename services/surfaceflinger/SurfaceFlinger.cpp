@@ -6403,7 +6403,7 @@ status_t SurfaceFlinger::doDumpContinuous(int fd, const DumpArgs& args) {
         GraphicBufferAllocator& alloc(GraphicBufferAllocator::get());
         alloc.dump(dumpsys);
         write(fd, dumpsys.c_str(), dumpsys.size());
-        return NO_ERROR;
+        return err;
     }
 
     Mutex::Autolock _l(mFileDump.lock);
@@ -6439,7 +6439,7 @@ status_t SurfaceFlinger::doDumpContinuous(int fd, const DumpArgs& args) {
     result += "\n";
     write(fd, result.c_str(), result.size());
 
-    return NO_ERROR;
+    return err;
 }
 
 void SurfaceFlinger::dumpDrawCycle(bool prePrepare) {
