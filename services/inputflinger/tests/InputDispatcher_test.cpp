@@ -5674,6 +5674,25 @@ TEST_F(InputDispatcherPointerCaptureTests, EnableRequestFollowsSequenceNumbers) 
     mWindow->consumeCaptureEvent(true);
 }
 
+TEST_F(InputDispatcherPointerCaptureTests, RapidToggleRequests) {
+    requestAndVerifyPointerCapture(mWindow, true);
+
+    // App toggles pointer capture off and on.
+    mDispatcher->requestPointerCapture(mWindow->getToken(), false);
+    mFakePolicy->assertSetPointerCaptureCalled(false);
+
+    mDispatcher->requestPointerCapture(mWindow->getToken(), true);
+    auto enableRequest = mFakePolicy->assertSetPointerCaptureCalled(true);
+
+    // InputReader notifies that the latest "enable" request was processed, while skipping over the
+    // preceding "disable" request.
+    notifyPointerCaptureChanged(enableRequest);
+
+    // Since pointer capture was never disabled during the rapid toggle, the window does not receive
+    // any notifications.
+    mWindow->assertNoEvents();
+}
+
 class InputDispatcherUntrustedTouchesTest : public InputDispatcherTest {
 protected:
     constexpr static const float MAXIMUM_OBSCURING_OPACITY = 0.8;
@@ -6094,8 +6113,7 @@ protected:
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}}});
     }
 
-    // Start performing drag, we will create a drag window and transfer touch to it.
-    void performDrag() {
+    void injectDown() {
         ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
                   injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
                                    {50, 50}))
@@ -6103,6 +6121,15 @@ protected:
 
         // Window should receive motion event.
         mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    }
+
+    // Start performing drag, we will create a drag window and transfer touch to it.
+    // @param sendDown : if true, send a motion down on first window before perform drag and drop.
+    // Returns true on success.
+    bool performDrag(bool sendDown = true) {
+        if (sendDown) {
+            injectDown();
+        }
 
         // The drag window covers the entire display
         mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
@@ -6110,10 +6137,14 @@ protected:
                 {{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
 
         // Transfer touch focus to the drag window
-        mDispatcher->transferTouchFocus(mWindow->getToken(), mDragWindow->getToken(),
-                                        true /* isDragDrop */);
-        mWindow->consumeMotionCancel();
-        mDragWindow->consumeMotionDown();
+        bool transferred =
+                mDispatcher->transferTouchFocus(mWindow->getToken(), mDragWindow->getToken(),
+                                                true /* isDragDrop */);
+        if (transferred) {
+            mWindow->consumeMotionCancel();
+            mDragWindow->consumeMotionDown();
+        }
+        return transferred;
     }
 
     // Start performing drag, we will create a drag window and transfer touch to it.
@@ -6260,7 +6291,7 @@ TEST_F(InputDispatcherDragTests, StylusDragAndDrop) {
     mSecondWindow->assertNoEvents();
 }
 
-TEST_F(InputDispatcherDragTests, DragAndDrop_InvalidWindow) {
+TEST_F(InputDispatcherDragTests, DragAndDropOnInvalidWindow) {
     performDrag();
 
     // Set second window invisible.
@@ -6294,6 +6325,89 @@ TEST_F(InputDispatcherDragTests, DragAndDrop_InvalidWindow) {
     mFakePolicy->assertDropTargetEquals(nullptr);
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDragTests, NoDragAndDropWhenMultiFingers) {
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(75).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mWindow->consumeMotionPointerDown(1 /* pointerIndex */);
+
+    // Should not perform drag and drop when window has multi fingers.
+    ASSERT_FALSE(performDrag(false));
+}
+
+TEST_F(InputDispatcherDragTests, DragAndDropWhenSplitTouch) {
+    // First down on second window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    mSecondWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    // Second down on first window.
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(
+                            PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(150).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    // Perform drag and drop from first window.
+    ASSERT_TRUE(performDrag(false));
+
+    // Move on window.
+    const MotionEvent secondFingerMoveEvent =
+            MotionEventBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(
+                            PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(150).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerMoveEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT));
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->consumeMotionMove();
+
+    // Release the drag pointer should perform drop.
+    const MotionEvent secondFingerUpEvent =
+            MotionEventBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(
+                            PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(150).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerUpEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT));
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mFakePolicy->assertDropTargetEquals(mWindow->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->consumeMotionMove();
 }
 
 class InputDispatcherDropInputFeatureTest : public InputDispatcherTest {};
