@@ -34,6 +34,24 @@
       "parentUuid": "573c5da6_e2890f24",
       "revId": "0e6ed39179c060f9515db43cbdcf606cffe9d545",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "1b795643_dc9fdb94",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2022-05-16T13:17:50Z",
+      "side": 1,
+      "message": "to Omkar\u0027s point, can we use qssi system blobs and wfd-legacy on 845?",
+      "parentUuid": "ba87529e_6665b071",
+      "revId": "0e6ed39179c060f9515db43cbdcf606cffe9d545",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
