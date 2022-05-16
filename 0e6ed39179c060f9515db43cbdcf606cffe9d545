@@ -16,6 +16,24 @@
       "message": "qssi 12 blobs should be compatible with all qssi supported vendor targets ",
       "revId": "0e6ed39179c060f9515db43cbdcf606cffe9d545",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "ba87529e_6665b071",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000765
+      },
+      "writtenOn": "2022-05-16T07:00:57Z",
+      "side": 1,
+      "message": "It seems that topic was set automatically, this revert is required for topic legacy-component (wfd-legacy).",
+      "parentUuid": "573c5da6_e2890f24",
+      "revId": "0e6ed39179c060f9515db43cbdcf606cffe9d545",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
