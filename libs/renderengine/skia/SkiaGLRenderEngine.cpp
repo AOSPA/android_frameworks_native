@@ -67,7 +67,7 @@
 namespace {
 // Debugging settings
 static const bool kPrintLayerSettings = false;
-static const bool kFlushAfterEveryLayer = false;
+static const bool kFlushAfterEveryLayer = kPrintLayerSettings;
 } // namespace
 
 bool checkGlError(const char* op, int lineNumber);
@@ -296,14 +296,8 @@ void SkiaGLRenderEngine::SkSLCacheMonitor::store(const SkData& key, const SkData
     ATRACE_FORMAT("SF cache: %i shaders", mTotalShadersCompiled);
 }
 
-void SkiaGLRenderEngine::assertShadersCompiled(int numShaders) {
-    const int cached = mSkSLCacheMonitor.shadersCachedSinceLastCall();
-    LOG_ALWAYS_FATAL_IF(cached != numShaders, "Attempted to cache %i shaders; cached %i",
-                        numShaders, cached);
-}
-
 int SkiaGLRenderEngine::reportShadersCompiled() {
-    return mSkSLCacheMonitor.shadersCachedSinceLastCall();
+    return mSkSLCacheMonitor.totalShadersCompiled();
 }
 
 SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGLDisplay display,
@@ -746,6 +740,23 @@ static bool equalsWithinMargin(float expected, float value, float margin = kDefa
     return std::abs(expected - value) < margin;
 }
 
+namespace {
+template <typename T>
+void logSettings(const T& t) {
+    std::stringstream stream;
+    PrintTo(t, &stream);
+    auto string = stream.str();
+    size_t pos = 0;
+    // Perfetto ignores \n, so split up manually into separate ALOGD statements.
+    const size_t size = string.size();
+    while (pos < size) {
+        const size_t end = std::min(string.find("\n", pos), size);
+        ALOGD("%s", string.substr(pos, end - pos).c_str());
+        pos = end + 1;
+    }
+}
+} // namespace
+
 void SkiaGLRenderEngine::drawLayersInternal(
         const std::shared_ptr<std::promise<RenderEngineResult>>&& resultPromise,
         const DisplaySettings& display, const std::vector<LayerSettings>& layers,
@@ -855,18 +866,14 @@ void SkiaGLRenderEngine::drawLayersInternal(
     canvas->clear(SK_ColorTRANSPARENT);
     initCanvas(canvas, display);
 
+    if (kPrintLayerSettings) {
+        logSettings(display);
+    }
     for (const auto& layer : layers) {
         ATRACE_FORMAT("DrawLayer: %s", layer.name.c_str());
 
         if (kPrintLayerSettings) {
-            std::stringstream ls;
-            PrintTo(layer, &ls);
-            auto debugs = ls.str();
-            int pos = 0;
-            while (pos < debugs.size()) {
-                ALOGD("cache_debug %s", debugs.substr(pos, 1000).c_str());
-                pos += 1000;
-            }
+            logSettings(layer);
         }
 
         sk_sp<SkImage> blurInput;
@@ -1192,11 +1199,15 @@ void SkiaGLRenderEngine::drawLayersInternal(
                 static constexpr float kInverseGamma22 = 1.f / 2.2f;
                 const auto gammaCorrectedDimmingRatio =
                         std::pow(layerDimmingRatio, kInverseGamma22);
-                const auto dimmingMatrix =
+                auto dimmingMatrix =
                         mat4::scale(vec4(gammaCorrectedDimmingRatio, gammaCorrectedDimmingRatio,
                                          gammaCorrectedDimmingRatio, 1.f));
-                paint.setColorFilter(SkColorFilters::Matrix(
-                        toSkColorMatrix(display.colorTransform * dimmingMatrix)));
+
+                const auto colorFilter =
+                        SkColorFilters::Matrix(toSkColorMatrix(std::move(dimmingMatrix)));
+                paint.setColorFilter(displayColorTransform
+                                             ? displayColorTransform->makeComposed(colorFilter)
+                                             : colorFilter);
             } else {
                 paint.setColorFilter(displayColorTransform);
             }

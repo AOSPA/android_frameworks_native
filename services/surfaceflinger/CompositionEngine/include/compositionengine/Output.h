@@ -269,6 +269,9 @@ public:
     // Enables predicting composition strategy to run client composition earlier
     virtual void setPredictCompositionStrategy(bool) = 0;
 
+    // Enables overriding the 170M trasnfer function as sRGB
+    virtual void setTreat170mAsSrgb(bool) = 0;
+
     // Gets Layer IDs and Names of Visible layers managed by this output.
     virtual void getVisibleLayerInfo(std::vector<std::string> *layerName,
                                      std::vector<int32_t> *layerSequence) const = 0;

@@ -632,6 +632,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.predict_hwc_composition_strategy", value, "1");
     mPredictCompositionStrategy = atoi(value);
 
+    property_get("debug.sf.treat_170m_as_sRGB", value, "0");
+    mTreat170mAsSrgb = atoi(value);
     char property[PROPERTY_VALUE_MAX] = {0};
     if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
         (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
@@ -4652,6 +4654,15 @@ void SurfaceFlinger::doCommitTransactions() {
                 l->latchAndReleaseBuffer();
             }
 
+            // If a layer has a parent, we allow it to out-live it's handle
+            // with the idea that the parent holds a reference and will eventually
+            // be cleaned up. However no one cleans up the top-level so we do so
+            // here.
+            if (l->isAtRoot()) {
+                l->setIsAtRoot(false);
+                mCurrentState.layersSortedByZ.remove(l);
+            }
+
             // If the layer has been removed and has no parent, then it will not be reachable
             // when traversing layers on screen. Add the layer to the offscreenLayers set to
             // ensure we can copy its current to drawing state.
@@ -4905,12 +4916,13 @@ int SurfaceFlinger::flushPendingTransactionQueues(
 
             auto& transaction = transactionQueue.front();
             const auto ready =
-                    transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
-                                                  transaction.isAutoTimestamp,
-                                                  transaction.desiredPresentTime,
-                                                  transaction.originUid, transaction.states,
-                                                  bufferLayersReadyToPresent, transactions.size(),
-                                                  tryApplyUnsignaled);
+                transactionIsReadyToBeApplied(transaction,
+                                              transaction.frameTimelineInfo,
+                                              transaction.isAutoTimestamp,
+                                              transaction.desiredPresentTime,
+                                              transaction.originUid, transaction.states,
+                                              bufferLayersReadyToPresent, transactions.size(),
+                                              tryApplyUnsignaled);
             ATRACE_INT("TransactionReadiness", static_cast<int>(ready));
             if (ready == TransactionReadiness::NotReady) {
                 setTransactionFlags(eTransactionFlushNeeded);
@@ -4987,7 +4999,7 @@ bool SurfaceFlinger::flushTransactionQueues(int64_t vsyncId) {
                         return TransactionReadiness::NotReady;
                     }
 
-                    return transactionIsReadyToBeApplied(transaction.frameTimelineInfo,
+                    return transactionIsReadyToBeApplied(transaction, transaction.frameTimelineInfo,
                                                          transaction.isAutoTimestamp,
                                                          transaction.desiredPresentTime,
                                                          transaction.originUid, transaction.states,
@@ -5149,7 +5161,7 @@ bool SurfaceFlinger::shouldLatchUnsignaled(const sp<Layer>& layer, const layer_s
     return true;
 }
 
-auto SurfaceFlinger::transactionIsReadyToBeApplied(
+auto SurfaceFlinger::transactionIsReadyToBeApplied(TransactionState& transaction,
         const FrameTimelineInfo& info, bool isAutoTimestamp, int64_t desiredPresentTime,
         uid_t originUid, Vector<ComposerState>& states,
         const std::unordered_map<
@@ -5178,8 +5190,10 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
     }
 
     bool fenceUnsignaled = false;
+    auto queueProcessTime = systemTime();
     for (ComposerState& state : states) {
         layer_state_t& s = state.state;
+
         sp<Layer> layer = nullptr;
         if (s.surface) {
             layer = fromHandle(s.surface).promote();
@@ -5219,6 +5233,15 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
           ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0);
 
         if (fenceUnsignaled && (!allowLatchUnsignaled || (mLatchMediaContent && cameraOrVideo))) {
+            if (!transaction.sentFenceTimeoutWarning &&
+                queueProcessTime - transaction.queueTime > std::chrono::nanoseconds(4s).count()) {
+                transaction.sentFenceTimeoutWarning = true;
+                auto listener = s.bufferData->releaseBufferListener;
+                if (listener) {
+                    listener->onTransactionQueueStalled();
+                }
+            }
+
             ATRACE_NAME("fence unsignaled");
             return TransactionReadiness::NotReady;
         }
@@ -5252,6 +5275,8 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
 }
 
 void SurfaceFlinger::queueTransaction(TransactionState& state) {
+    state.queueTime = systemTime();
+
     Mutex::Autolock lock(mQueueLock);
 
     // Generate a CountDownLatch pending state if this is a synchronous transaction.
@@ -6029,19 +6054,11 @@ void SurfaceFlinger::markLayerPendingRemovalLocked(const sp<Layer>& layer) {
 
 void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer) {
     Mutex::Autolock lock(mStateLock);
-    // If a layer has a parent, we allow it to out-live it's handle
-    // with the idea that the parent holds a reference and will eventually
-    // be cleaned up. However no one cleans up the top-level so we do so
-    // here.
     if (!layer) {
       ALOGW("Attempted to destroy an invalid layer");
       return;
     }
 
-    if (layer->isAtRoot()) {
-        layer->setIsAtRoot(false);
-        mCurrentState.layersSortedByZ.remove(layer);
-    }
     markLayerPendingRemovalLocked(layer);
     mBufferCountTracker.remove(handle);
     layer.clear();
@@ -8456,6 +8473,9 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::renderScree
     auto dataspace = renderArea.getReqDataSpace();
     auto parent = renderArea.getParentLayer();
     auto renderIntent = RenderIntent::TONE_MAP_COLORIMETRIC;
+    auto sdrWhitePointNits = DisplayDevice::sDefaultMaxLumiance;
+    auto displayBrightnessNits = DisplayDevice::sDefaultMaxLumiance;
+
     if ((dataspace == ui::Dataspace::UNKNOWN) && (parent != nullptr)) {
         Mutex::Autolock lock(mStateLock);
         auto display = findDisplay([layerStack = parent->getLayerStack()](const auto& display) {
@@ -8469,6 +8489,8 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::renderScree
         const ui::ColorMode colorMode = display->getCompositionDisplay()->getState().colorMode;
         dataspace = pickDataspaceFromColorMode(colorMode);
         renderIntent = display->getCompositionDisplay()->getState().renderIntent;
+        sdrWhitePointNits = display->getCompositionDisplay()->getState().sdrWhitePointNits;
+        displayBrightnessNits = display->getCompositionDisplay()->getState().displayBrightnessNits;
     }
     captureResults.capturedDataspace = dataspace;
 
@@ -8530,7 +8552,7 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::renderScree
                                        BlurSetting::Disabled
                              : compositionengine::LayerFE::ClientCompositionTargetSettings::
                                        BlurSetting::Enabled,
-                DisplayDevice::sDefaultMaxLumiance,
+                isHdrLayer(layer) ? displayBrightnessNits : sdrWhitePointNits,
 
         };
         std::vector<compositionengine::LayerFE::LayerSettings> results =
@@ -8545,6 +8567,7 @@ std::shared_future<renderengine::RenderEngineResult> SurfaceFlinger::renderScree
                 if (regionSampling) {
                     settings.backgroundBlurRadius = 0;
                 }
+                captureResults.capturedHdrLayers |= isHdrLayer(layer);
             }
 
             clientCompositionLayers.insert(clientCompositionLayers.end(),

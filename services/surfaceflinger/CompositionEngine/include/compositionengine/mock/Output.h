@@ -132,6 +132,7 @@ public:
     MOCK_METHOD1(cacheClientCompositionRequests, void(uint32_t));
     MOCK_METHOD1(canPredictCompositionStrategy, bool(const CompositionRefreshArgs&));
     MOCK_METHOD1(setPredictCompositionStrategy, void(bool));
+    MOCK_METHOD1(setTreat170mAsSrgb, void(bool));
     MOCK_CONST_METHOD2(getVisibleLayerInfo, void(std::vector<std::string>*, std::vector<int32_t>*));
 };
 
