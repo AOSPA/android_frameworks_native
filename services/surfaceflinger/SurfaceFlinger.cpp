@@ -7549,28 +7549,9 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             }
             case 1035: {
                 const int modeId = data.readInt32();
-
-                const auto display = getDefaultDisplayDevice();
-                const auto numConfigs = display->refreshRateConfigs().getAllRefreshRates().size();
-                if ((modeId >= 0) && (modeId < numConfigs)) {
-                    const auto displayId = getInternalDisplayId();
-                    if (!displayId) {
-                        ALOGE("No internal display found.");
-                        return NO_ERROR;
-                    }
-                    if(isSupportedConfigSwitch(getPhysicalDisplayToken(*displayId),
-                    modeId) != NO_ERROR) {
-                       return BAD_VALUE;
-                    }
-                    status_t result = setActiveModeFromBackdoor(getPhysicalDisplayToken(*displayId), modeId);
-                    if (result != NO_ERROR) {
-                        return result;
-                    }
-                    mDebugDisplayModeSetByBackdoor = true;
-                }
-
                 const auto displayToken = [&]() -> sp<IBinder> {
                     uint64_t value;
+                    //if no value is specified use the default display
                     if (data.readUint64(&value) != NO_ERROR) {
                         return getDefaultDisplayDevice()->getDisplayToken().promote();
                     }
@@ -7580,7 +7561,10 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     ALOGE("Invalid physical display ID");
                     return nullptr;
                 }();
-
+                //check if a valid mode was selected
+                if(isSupportedConfigSwitch(displayToken, modeId) != NO_ERROR) {
+                    return BAD_VALUE;
+                }
                 mDebugDisplayModeSetByBackdoor = false;
                 const status_t result = setActiveModeFromBackdoor(displayToken, modeId);
                 mDebugDisplayModeSetByBackdoor = result == NO_ERROR;
