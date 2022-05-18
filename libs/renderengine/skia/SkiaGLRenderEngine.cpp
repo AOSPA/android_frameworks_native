@@ -292,6 +292,8 @@ sk_sp<SkData> SkiaGLRenderEngine::SkSLCacheMonitor::load(const SkData& key) {
 void SkiaGLRenderEngine::SkSLCacheMonitor::store(const SkData& key, const SkData& data,
                                                  const SkString& description) {
     mShadersCachedSinceLastCall++;
+    mTotalShadersCompiled++;
+    ATRACE_FORMAT("SF cache: %i shaders", mTotalShadersCompiled);
 }
 
 void SkiaGLRenderEngine::assertShadersCompiled(int numShaders) {
@@ -662,7 +664,7 @@ sk_sp<SkShader> SkiaGLRenderEngine::createRuntimeEffectShader(
                                         parameters.display.maxLuminance,
                                         parameters.display.currentLuminanceNits,
                                         parameters.layer.source.buffer.maxLuminanceNits,
-                                        hardwareBuffer);
+                                        hardwareBuffer, parameters.display.renderIntent);
     }
     return parameters.shader;
 }
