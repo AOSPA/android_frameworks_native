@@ -23,9 +23,11 @@
 
 #include <cutils/properties.h>
 #include <gtest/gtest.h>
+#include <gui/AidlStatusUtil.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/SurfaceComposerClient.h>
 #include <private/gui/ComposerService.h>
+#include <private/gui/ComposerServiceAIDL.h>
 #include <ui/DisplayMode.h>
 
 #include "BufferGenerator.h"
@@ -44,8 +46,9 @@ protected:
 
         ASSERT_NO_FATAL_FAILURE(SetUpDisplay());
 
-        sp<ISurfaceComposer> sf(ComposerService::getComposerService());
-        ASSERT_NO_FATAL_FAILURE(sf->getColorManagement(&mColorManagementUsed));
+        sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
+        binder::Status status = sf->getColorManagement(&mColorManagementUsed);
+        ASSERT_NO_FATAL_FAILURE(gui::aidl_utils::statusTFromBinderStatus(status));
 
         mCaptureArgs.displayToken = mDisplay;
     }

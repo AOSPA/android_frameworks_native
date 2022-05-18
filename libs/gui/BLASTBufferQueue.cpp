@@ -35,6 +35,7 @@
 #include <utils/Trace.h>
 
 #include <private/gui/ComposerService.h>
+#include <private/gui/ComposerServiceAIDL.h>
 
 #include <chrono>
 
@@ -162,7 +163,7 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
     mBufferItemConsumer->setFrameAvailableListener(this);
     mBufferItemConsumer->setBufferFreedListener(this);
 
-    ComposerService::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
+    ComposerServiceAIDL::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
     mCurrentMaxAcquiredBufferCount = mMaxAcquiredBuffers;
 
@@ -583,7 +584,7 @@ void BLASTBufferQueue::acquireNextBufferLocked(
         if (dequeueTime != mDequeueTimestamps.end()) {
             Parcel p;
             p.writeInt64(dequeueTime->second);
-            t->setMetadata(mSurfaceControl, METADATA_DEQUEUE_TIME, p);
+            t->setMetadata(mSurfaceControl, gui::METADATA_DEQUEUE_TIME, p);
             mDequeueTimestamps.erase(dequeueTime);
         }
     }

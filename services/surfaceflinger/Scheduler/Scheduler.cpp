@@ -210,7 +210,7 @@ ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventT
 }
 
 sp<EventThreadConnection> Scheduler::createConnectionInternal(EventThread* eventThread,
-                 bool triggerRefresh, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+                 bool triggerRefresh, EventRegistrationFlags eventRegistration) {
     // Refresh need to be triggered from app thread alone.
     // Triggering it from sf connection can result in infinite loop due to requestnextvsync.
     if (triggerRefresh) {
@@ -221,7 +221,7 @@ sp<EventThreadConnection> Scheduler::createConnectionInternal(EventThread* event
 }
 
 sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(ConnectionHandle handle,
-                 bool triggerRefresh, ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+        bool triggerRefresh, EventRegistrationFlags eventRegistration) {
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     RETURN_IF_INVALID_HANDLE(handle, nullptr);
     return createConnectionInternal(mConnections[handle].thread.get(), triggerRefresh,

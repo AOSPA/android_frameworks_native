@@ -38,6 +38,9 @@
 #include <ui/GraphicTypes.h>
 #include <ui/PixelFormat.h>
 #include <ui/Rotation.h>
+#include <ui/StaticDisplayInfo.h>
+
+#include <android/gui/ISurfaceComposerClient.h>
 
 #include <gui/CpuConsumer.h>
 #include <gui/ISurfaceComposer.h>
@@ -52,14 +55,15 @@
 namespace android {
 
 class HdrCapabilities;
-class ISurfaceComposerClient;
 class IGraphicBufferProducer;
 class ITunnelModeEnabledListener;
 class Region;
 
 using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
+using gui::ISurfaceComposerClient;
 using gui::LayerCaptureArgs;
+using gui::LayerMetadata;
 
 struct SurfaceControlStats {
     SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime,
@@ -215,7 +219,7 @@ public:
     /**
      * Gets the context priority of surface flinger's render engine.
      */
-    static int getGPUContextPriority();
+    static int getGpuContextPriority();
 
     /**
      * Uncaches a buffer in ISurfaceComposer. It must be uncached via a transaction so that it is
@@ -314,7 +318,7 @@ public:
                                      uint32_t w,          // width in pixel
                                      uint32_t h,          // height in pixel
                                      PixelFormat format,  // pixel-format desired
-                                     uint32_t flags = 0,  // usage flags
+                                     int32_t flags = 0,   // usage flags
                                      const sp<IBinder>& parentHandle = nullptr, // parentHandle
                                      LayerMetadata metadata = LayerMetadata(),  // metadata
                                      uint32_t* outTransformHint = nullptr);
@@ -324,20 +328,10 @@ public:
                                   uint32_t h,          // height in pixel
                                   PixelFormat format,  // pixel-format desired
                                   sp<SurfaceControl>* outSurface,
-                                  uint32_t flags = 0,                        // usage flags
+                                  int32_t flags = 0,                         // usage flags
                                   const sp<IBinder>& parentHandle = nullptr, // parentHandle
                                   LayerMetadata metadata = LayerMetadata(),  // metadata
                                   uint32_t* outTransformHint = nullptr);
-
-    //! Create a surface
-    sp<SurfaceControl> createWithSurfaceParent(const String8& name,       // name of the surface
-                                               uint32_t w,                // width in pixel
-                                               uint32_t h,                // height in pixel
-                                               PixelFormat format,        // pixel-format desired
-                                               uint32_t flags = 0,        // usage flags
-                                               Surface* parent = nullptr, // parent
-                                               LayerMetadata metadata = LayerMetadata(), // metadata
-                                               uint32_t* outTransformHint = nullptr);
 
     // Creates a mirrored hierarchy for the mirrorFromSurface. This returns a SurfaceControl
     // which is a parent of the root of the mirrored hierarchy.
@@ -399,6 +393,8 @@ public:
     class Transaction : public Parcelable {
     private:
         void releaseBufferIfOverwriting(const layer_state_t& state);
+        static void mergeFrameTimelineInfo(FrameTimelineInfo& t, const FrameTimelineInfo& other);
+        static void clearFrameTimelineInfo(FrameTimelineInfo& t);
 
     protected:
         std::unordered_map<sp<IBinder>, ComposerState, IBinderHash> mComposerStates;
@@ -631,6 +627,9 @@ public:
         Transaction& setDestinationFrame(const sp<SurfaceControl>& sc,
                                          const Rect& destinationFrame);
         Transaction& setDropInputMode(const sp<SurfaceControl>& sc, gui::DropInputMode mode);
+
+        Transaction& enableBorder(const sp<SurfaceControl>& sc, bool shouldEnable, float width,
+                                  const half4& color);
 
         status_t setDisplaySurface(const sp<IBinder>& token,
                 const sp<IGraphicBufferProducer>& bufferProducer);

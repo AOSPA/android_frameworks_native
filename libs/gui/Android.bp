@@ -120,6 +120,12 @@ filegroup {
     path: "aidl/",
 }
 
+filegroup {
+    name: "libgui_frame_event_aidl",
+    srcs: ["aidl/android/gui/FrameEvent.aidl"],
+    path: "aidl/",
+}
+
 cc_library_static {
     name: "libgui_aidl_static",
     vendor_available: true,
@@ -136,16 +142,24 @@ cc_library_static {
         "include",
     ],
 
+    include_dirs: [
+        "frameworks/native/include",
+    ],
+
     export_shared_lib_headers: [
         "libbinder",
     ],
 
     static_libs: [
         "libui-types",
+        "libgui_window_info_static",
     ],
 
     aidl: {
         export_aidl_headers: true,
+        include_dirs: [
+            "frameworks/native/libs/gui",
+        ],
     },
 }
 
@@ -180,14 +194,12 @@ cc_defaults {
         "DebugEGLImageTracker.cpp",
         "DisplayEventDispatcher.cpp",
         "DisplayEventReceiver.cpp",
-        "FrameTimelineInfo.cpp",
         "GLConsumer.cpp",
         "IConsumerListener.cpp",
         "IGraphicBufferConsumer.cpp",
         "IGraphicBufferProducer.cpp",
         "IProducerListener.cpp",
         "ISurfaceComposer.cpp",
-        "ISurfaceComposerClient.cpp",
         "ITransactionCompletedListener.cpp",
         "LayerDebugInfo.cpp",
         "LayerMetadata.cpp",
@@ -278,10 +290,16 @@ cc_library_static {
     defaults: ["libgui_bufferqueue-defaults"],
 
     srcs: [
+        ":libgui_frame_event_aidl",
         ":inputconstants_aidl",
         ":libgui_bufferqueue_sources",
-        ":libgui_aidl",
     ],
+
+    aidl: {
+        include_dirs: [
+            "frameworks/native/libs/gui",
+        ],
+    },
 }
 
 filegroup {
@@ -401,6 +419,7 @@ cc_library_static {
     ],
 
     srcs: [
+        ":libgui_frame_event_aidl",
         "mock/GraphicBufferConsumer.cpp",
         "mock/GraphicBufferProducer.cpp",
     ],

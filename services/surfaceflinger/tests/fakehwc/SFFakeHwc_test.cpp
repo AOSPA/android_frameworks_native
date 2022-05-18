@@ -29,6 +29,7 @@
 #include "MockComposerHal.h"
 
 #include <binder/Parcel.h>
+#include <gui/AidlStatusUtil.h>
 #include <gui/DisplayEventReceiver.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/LayerDebugInfo.h>
@@ -43,6 +44,7 @@
 #include <hwbinder/ProcessState.h>
 #include <log/log.h>
 #include <private/gui/ComposerService.h>
+#include <private/gui/ComposerServiceAIDL.h>
 #include <ui/DisplayMode.h>
 #include <ui/DynamicDisplayInfo.h>
 #include <utils/Looper.h>
@@ -243,8 +245,9 @@ protected:
         mComposerClient = new SurfaceComposerClient;
         ASSERT_EQ(NO_ERROR, mComposerClient->initCheck());
 
-        mReceiver.reset(new DisplayEventReceiver(ISurfaceComposer::eVsyncSourceApp,
-                                                 ISurfaceComposer::EventRegistration::modeChanged));
+        mReceiver.reset(
+                new DisplayEventReceiver(gui::ISurfaceComposer::VsyncSource::eVsyncSourceApp,
+                                         gui::ISurfaceComposer::EventRegistration::modeChanged));
         mLooper = new Looper(false);
         mLooper->addFd(mReceiver->getFd(), 0, ALOOPER_EVENT_INPUT, processDisplayEvents, this);
     }
@@ -992,7 +995,7 @@ using DisplayTest_2_1 = DisplayTest<FakeComposerService_2_1>;
 
 // Tests that VSYNC injection can be safely toggled while invalidating.
 TEST_F(DisplayTest_2_1, VsyncInjection) {
-    const auto flinger = ComposerService::getComposerService();
+    const auto flinger = ComposerServiceAIDL::getComposerService();
     bool enable = true;
 
     for (int i = 0; i < 100; i++) {
@@ -1238,9 +1241,10 @@ protected:
         sFakeComposer->clearFrames();
         ASSERT_EQ(0, sFakeComposer->getFrameCount());
 
-        sp<ISurfaceComposer> sf(ComposerService::getComposerService());
-        std::vector<LayerDebugInfo> layers;
-        status_t result = sf->getLayerDebugInfo(&layers);
+        sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
+        std::vector<gui::LayerDebugInfo> layers;
+        binder::Status status = sf->getLayerDebugInfo(&layers);
+        status_t result = gui::aidl_utils::statusTFromBinderStatus(status);
         if (result != NO_ERROR) {
             ALOGE("Failed to get layers %s %d", strerror(-result), result);
         } else {

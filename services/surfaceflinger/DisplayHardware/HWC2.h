@@ -93,7 +93,7 @@ public:
 
     virtual hal::HWDisplayId getId() const = 0;
     virtual bool isConnected() const = 0;
-    virtual void setConnected(bool connected) = 0; // For use by Device only
+    virtual void setConnected(bool connected) = 0; // For use by HWComposer only
     virtual bool hasCapability(
             aidl::android::hardware::graphics::composer3::DisplayCapability) const = 0;
     virtual bool isVsyncPeriodSwitchSupported() const = 0;
@@ -272,7 +272,7 @@ public:
     // Other Display methods
     hal::HWDisplayId getId() const override { return mId; }
     bool isConnected() const override { return mIsConnected; }
-    void setConnected(bool connected) override; // For use by Device only
+    void setConnected(bool connected) override;
     bool hasCapability(aidl::android::hardware::graphics::composer3::DisplayCapability)
             const override EXCLUDES(mDisplayCapabilitiesMutex);
     bool isVsyncPeriodSwitchSupported() const override;
@@ -290,7 +290,7 @@ private:
 
     // Member variables
 
-    // These are references to data owned by HWC2::Device, which will outlive
+    // These are references to data owned by HWComposer, which will outlive
     // this HWC2::Display, so these references are guaranteed to be valid for
     // the lifetime of this object.
     android::Hwc2::Composer& mComposer;
@@ -411,7 +411,7 @@ public:
 #endif
 
 private:
-    // These are references to data owned by HWC2::Device, which will outlive
+    // These are references to data owned by HWComposer, which will outlive
     // this HWC2::Layer, so these references are guaranteed to be valid for
     // the lifetime of this object.
     android::Hwc2::Composer& mComposer;

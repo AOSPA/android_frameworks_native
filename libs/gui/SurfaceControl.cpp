@@ -51,24 +51,21 @@ namespace android {
 // ============================================================================
 
 SurfaceControl::SurfaceControl(const sp<SurfaceComposerClient>& client, const sp<IBinder>& handle,
-                               const sp<IGraphicBufferProducer>& gbp, int32_t layerId,
-                               uint32_t w, uint32_t h, PixelFormat format, uint32_t transform,
-                               uint32_t flags)
+                               int32_t layerId, uint32_t w, uint32_t h, PixelFormat format,
+                               uint32_t transform, uint32_t flags)
       : mClient(client),
         mHandle(handle),
-        mGraphicBufferProducer(gbp),
         mLayerId(layerId),
         mTransformHint(transform),
         mWidth(w),
         mHeight(h),
         mFormat(format),
         mCreateFlags(flags),
-        mExtension(mHandle, &mGraphicBufferProducer) {}
+        mExtension(mHandle) {}
 
 SurfaceControl::SurfaceControl(const sp<SurfaceControl>& other) {
     mClient = other->mClient;
     mHandle = other->mHandle;
-    mGraphicBufferProducer = other->mGraphicBufferProducer;
     mTransformHint = other->mTransformHint;
     mLayerId = other->mLayerId;
     mWidth = other->mWidth;
@@ -169,11 +166,11 @@ sp<Surface> SurfaceControl::createSurface()
 
 void SurfaceControl::updateDefaultBufferSize(uint32_t width, uint32_t height) {
     Mutex::Autolock _l(mLock);
-    mWidth = width; mHeight = height;
+    mWidth = width;
+    mHeight = height;
     if (mBbq) {
         mBbq->update(mBbqChild, width, height, mFormat);
     }
-
 }
 
 sp<IBinder> SurfaceControl::getLayerStateHandle() const
@@ -249,9 +246,7 @@ status_t SurfaceControl::readFromParcel(const Parcel& parcel,
     *outSurfaceControl =
             new SurfaceControl(new SurfaceComposerClient(
                                        interface_cast<ISurfaceComposerClient>(client)),
-                               handle.get(), nullptr, layerId,
-                               width, height, format,
-                               transformHint);
+                               handle.get(), layerId, width, height, format, transformHint);
 
     return NO_ERROR;
 }
@@ -298,7 +293,7 @@ uint64_t SurfaceControl::resolveFrameNumber(const std::optional<uint64_t>& frame
     }
 }
 
-typedef bool (*InitFunc_t)(sp<IGraphicBufferProducer>*, const sp<IBinder>&);
+typedef bool (*InitFunc_t)(const sp<IBinder>&);
 typedef void (*DeinitFunc_t)(const sp<IBinder>&);
 SurfaceControl::VpsExtension::VpsExtension()
    : mIsEnable(false),
@@ -307,10 +302,8 @@ SurfaceControl::VpsExtension::VpsExtension()
      mFuncDeinit(nullptr) {
 }
 
-SurfaceControl::VpsExtension::VpsExtension(const sp<IBinder> handle,
-                                           sp<IGraphicBufferProducer>* gbp)
+SurfaceControl::VpsExtension::VpsExtension(const sp<IBinder> handle)
     : mIsEnable(false),
-      mGbp(gbp),
       mHandle(handle),
       mLibHandler(nullptr),
       mFuncInit(nullptr),
@@ -325,7 +318,7 @@ SurfaceControl::VpsExtension::VpsExtension(const sp<IBinder> handle,
     mFuncInit = dlsym(mLibHandler, "Init");
     mFuncDeinit = dlsym(mLibHandler, "Deinit");
     if (mFuncInit) {
-        mIsEnable = reinterpret_cast<InitFunc_t>(mFuncInit)(mGbp, mHandle);
+        mIsEnable = reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
     }
 }
 
@@ -341,7 +334,7 @@ SurfaceControl::VpsExtension::~VpsExtension() {
 
 void SurfaceControl::VpsExtension::init() const {
     if (mIsEnable && mFuncInit) {
-        reinterpret_cast<InitFunc_t>(mFuncInit)(mGbp, mHandle);
+        reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
     }
 }
 

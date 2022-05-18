@@ -75,9 +75,6 @@ public:
                                       InputDeviceSensorAccuracy accuracy) = 0;
     virtual void notifyVibratorState(int32_t deviceId, bool isOn) = 0;
 
-    /* Notifies the system that an untrusted touch occurred. */
-    virtual void notifyUntrustedTouch(const std::string& obscuringPackage) = 0;
-
     /* Gets the input dispatcher configuration. */
     virtual void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) = 0;
 
@@ -124,15 +121,6 @@ public:
 
     /* Poke user activity for an event dispatched to a window. */
     virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType, int32_t displayId) = 0;
-
-    /* Checks whether a given application pid/uid has permission to inject input events
-     * into other applications.
-     *
-     * This method is special in that its implementation promises to be non-reentrant and
-     * is safe to call while holding other locks.  (Most other methods make no such guarantees!)
-     */
-    virtual bool checkInjectEventsPermissionNonReentrant(int32_t injectorPid,
-                                                         int32_t injectorUid) = 0;
 
     /* Notifies the policy that a pointer down event has occurred outside the current focused
      * window.

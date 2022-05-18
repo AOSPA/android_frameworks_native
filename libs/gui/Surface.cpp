@@ -39,6 +39,7 @@
 #include <ui/GraphicBuffer.h>
 #include <ui/Region.h>
 
+#include <gui/AidlStatusUtil.h>
 #include <gui/BufferItem.h>
 #include <gui/IProducerListener.h>
 
@@ -49,6 +50,7 @@
 
 namespace android {
 
+using gui::aidl_utils::statusTFromBinderStatus;
 using ui::Dataspace;
 
 namespace {
@@ -182,7 +184,7 @@ status_t Surface::getDisplayRefreshCycleDuration(nsecs_t* outRefreshDuration) {
     gui::DisplayStatInfo stats;
     binder::Status status = composerServiceAIDL()->getDisplayStats(nullptr, &stats);
     if (!status.isOk()) {
-        return status.transactionError();
+        return statusTFromBinderStatus(status);
     }
 
     *outRefreshDuration = stats.vsyncPeriod;
@@ -355,7 +357,7 @@ status_t Surface::getWideColorSupport(bool* supported) {
 
     *supported = false;
     binder::Status status = composerServiceAIDL()->isWideColorDisplay(display, supported);
-    return status.transactionError();
+    return statusTFromBinderStatus(status);
 }
 
 status_t Surface::getHdrSupport(bool* supported) {
@@ -366,12 +368,13 @@ status_t Surface::getHdrSupport(bool* supported) {
         return NAME_NOT_FOUND;
     }
 
-    ui::DynamicDisplayInfo info;
-    if (status_t err = composerService()->getDynamicDisplayInfo(display, &info); err != NO_ERROR) {
-        return err;
+    gui::DynamicDisplayInfo info;
+    if (binder::Status status = composerServiceAIDL()->getDynamicDisplayInfo(display, &info);
+        !status.isOk()) {
+        return statusTFromBinderStatus(status);
     }
 
-    *supported = !info.hdrCapabilities.getSupportedHdrTypes().empty();
+    *supported = !info.hdrCapabilities.supportedHdrTypes.empty();
     return NO_ERROR;
 }
 
@@ -1256,10 +1259,10 @@ void Surface::querySupportedTimestampsLocked() const {
     mQueriedSupportedTimestamps = true;
 
     std::vector<FrameEvent> supportedFrameTimestamps;
-    status_t err = composerService()->getSupportedFrameTimestamps(
-            &supportedFrameTimestamps);
+    binder::Status status =
+            composerServiceAIDL()->getSupportedFrameTimestamps(&supportedFrameTimestamps);
 
-    if (err != NO_ERROR) {
+    if (!status.isOk()) {
         return;
     }
 
@@ -1291,15 +1294,12 @@ int Surface::query(int what, int* value) const {
                 if (err == NO_ERROR) {
                     return NO_ERROR;
                 }
-                sp<ISurfaceComposer> surfaceComposer = composerService();
+                sp<gui::ISurfaceComposer> surfaceComposer = composerServiceAIDL();
                 if (surfaceComposer == nullptr) {
                     return -EPERM; // likely permissions error
                 }
-                if (surfaceComposer->authenticateSurfaceTexture(mGraphicBufferProducer)) {
-                    *value = 1;
-                } else {
-                    *value = 0;
-                }
+                // ISurfaceComposer no longer supports authenticateSurfaceTexture
+                *value = 0;
                 return NO_ERROR;
             }
             case NATIVE_WINDOW_CONCRETE_TYPE:
@@ -1871,7 +1871,11 @@ int Surface::dispatchSetFrameTimelineInfo(va_list args) {
     auto startTimeNanos = static_cast<int64_t>(va_arg(args, int64_t));
 
     ALOGV("Surface::%s", __func__);
-    return setFrameTimelineInfo({frameTimelineVsyncId, inputEventId, startTimeNanos});
+    FrameTimelineInfo ftlInfo;
+    ftlInfo.vsyncId = frameTimelineVsyncId;
+    ftlInfo.inputEventId = inputEventId;
+    ftlInfo.startTimeNanos = startTimeNanos;
+    return setFrameTimelineInfo(ftlInfo);
 }
 
 bool Surface::transformToDisplayInverse() const {
@@ -2627,22 +2631,18 @@ void Surface::ProducerListenerProxy::onBuffersDiscarded(const std::vector<int32_
     mSurfaceListener->onBuffersDiscarded(discardedBufs);
 }
 
-status_t Surface::setFrameRate(float frameRate, int8_t compatibility,
-                               int8_t changeFrameRateStrategy) {
-    ATRACE_CALL();
-    ALOGV("Surface::setFrameRate");
-
-    if (!ValidateFrameRate(frameRate, compatibility, changeFrameRateStrategy,
-                           "Surface::setFrameRate")) {
-        return BAD_VALUE;
-    }
-
-    return composerService()->setFrameRate(mGraphicBufferProducer, frameRate, compatibility,
-                                           changeFrameRateStrategy);
+[[deprecated]] status_t Surface::setFrameRate(float /*frameRate*/, int8_t /*compatibility*/,
+                                              int8_t /*changeFrameRateStrategy*/) {
+    ALOGI("Surface::setFrameRate is deprecated, setFrameRate hint is dropped as destination is not "
+          "SurfaceFlinger");
+    // ISurfaceComposer no longer supports setFrameRate, we will return NO_ERROR when the api is
+    // called to avoid apps crashing, as BAD_VALUE can generate fatal exception in apps.
+    return NO_ERROR;
 }
 
-status_t Surface::setFrameTimelineInfo(const FrameTimelineInfo& frameTimelineInfo) {
-    return composerService()->setFrameTimelineInfo(mGraphicBufferProducer, frameTimelineInfo);
+status_t Surface::setFrameTimelineInfo(const FrameTimelineInfo& /*frameTimelineInfo*/) {
+    // ISurfaceComposer no longer supports setFrameTimelineInfo
+    return BAD_VALUE;
 }
 
 sp<IBinder> Surface::getSurfaceControlHandle() const {

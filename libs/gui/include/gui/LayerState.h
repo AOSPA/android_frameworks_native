@@ -51,7 +51,9 @@
 namespace android {
 
 class Parcel;
-class ISurfaceComposerClient;
+
+using gui::ISurfaceComposerClient;
+using gui::LayerMetadata;
 
 struct client_cache_t {
     wp<IBinder> token = nullptr;
@@ -154,7 +156,7 @@ struct layer_state_t {
         eLayerStackChanged = 0x00000080,
         eDimmingEnabledChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
-        /* unused 0x00001000, */
+        eRenderBorderChanged = 0x00001000,
         eBufferCropChanged = 0x00002000,
         eRelativeLayerChanged = 0x00004000,
         eReparent = 0x00008000,
@@ -291,6 +293,11 @@ struct layer_state_t {
     // An inherited state that indicates that this surface control and its children
     // should be trusted for input occlusion detection purposes
     bool isTrustedOverlay;
+
+    // Flag to indicate if border needs to be enabled on the layer
+    bool borderEnabled;
+    float borderWidth;
+    half4 borderColor;
 
     // Stretch effect to be applied to this layer
     StretchEffect stretchEffect;
