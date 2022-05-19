@@ -3410,14 +3410,12 @@ void SurfaceFlinger::postComposition() {
     }
 
     if (mSplitLayerExt && mLayerExt) {
-        std::vector<std::string> layerName;
-        std::vector<int32_t> layerSequence;
-        const auto compositionDisplay = display->getCompositionDisplay();
-        compositionDisplay->getVisibleLayerInfo(&layerName, &layerSequence);
-        if (layerName.size() != 0) {
-            mLayerExt->UpdateLayerState(layerName, mNumLayers);
+        if (mVisibleLayerInfo.layerName.size() != 0) {
+            mLayerExt->UpdateLayerState(mVisibleLayerInfo.layerName, mNumLayers);
         }
     }
+    mVisibleLayerInfo.layerName.clear();
+    mVisibleLayerInfo.layerSequence.clear();
 
     // Even though ATRACE_INT64 already checks if tracing is enabled, it doesn't prevent the
     // side-effect of getTotalSize(), so we check that again here
@@ -3471,17 +3469,16 @@ void SurfaceFlinger::UpdateSmomoState() {
 
         std::vector<smomo::SmomoLayerStats> layers;
         if (enableSmomo) {
-            std::vector<std::string> layerName;
-            std::vector<int32_t> layerSequence;
             const auto compositionDisplay = device->getCompositionDisplay();
-            compositionDisplay->getVisibleLayerInfo(&layerName, &layerSequence);
-            bool visibleLayersInfo = (layerName.size() != 0);
+            compositionDisplay->getVisibleLayerInfo(&mVisibleLayerInfo.layerName,
+                    &mVisibleLayerInfo.layerSequence);
+            bool visibleLayersInfo = (mVisibleLayerInfo.layerName.size() != 0);
 
             if (visibleLayersInfo) {
-                for (int i = 0; i < layerName.size(); i++) {
+                for (int i = 0; i < mVisibleLayerInfo.layerName.size(); i++) {
                     smomo::SmomoLayerStats layerStats;
-                    layerStats.name = layerName.at(i);
-                    layerStats.id = layerSequence.at(i);
+                    layerStats.name = mVisibleLayerInfo.layerName.at(i);
+                    layerStats.id = mVisibleLayerInfo.layerSequence.at(i);
                     layers.push_back(layerStats);
                 }
             }
