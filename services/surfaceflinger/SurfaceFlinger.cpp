@@ -1102,8 +1102,8 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
-    if (base::GetBoolProperty("vendor.display.disable_latch_media_content"s, false)) {
-        mLatchMediaContent = false;
+    if (base::GetBoolProperty("vendor.display.enable_latch_media_content"s, false)) {
+        mLatchMediaContent = true;
     }
 
     if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
@@ -5083,8 +5083,8 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(
         }
 
         if (mLatchMediaContent && cameraOrVideo &&
-            s.bufferData && s.bufferData->acquireFence &&
-            (s.bufferData->acquireFence->getStatus() == Fence::Status::Signaled) &&
+            s.bufferData && s.bufferData->acquireFence && s.bufferData->acquireFence->get() != -1
+            && (s.bufferData->acquireFence->getStatus() == Fence::Status::Signaled) &&
             (s.bufferData->acquireFence->getSignalTime() == Fence::SIGNAL_TIME_INVALID)) {
             ATRACE_NAME("fence signaled with error. drop");
             s.bufferData->invalid=true;
