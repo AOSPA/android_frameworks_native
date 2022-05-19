@@ -3994,6 +3994,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
 
 void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& activeDisplay) {
     mVsyncConfiguration->reset();
+    updateSfPhaseOffsets(activeDisplay);
     const Fps refreshRate = activeDisplay->refreshRateConfigs().getCurrentRefreshRate().getFps();
     updatePhaseConfiguration(refreshRate);
     mRefreshRateStats->setRefreshRate(refreshRate);
@@ -9000,6 +9001,31 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
     }
 }
 
+void SurfaceFlinger::updateSfPhaseOffsets(const sp<DisplayDevice> &display) {
+#ifdef PHASE_OFFSET_EXTN
+    if (!g_comp_ext_intf_.phaseOffsetExtnIntf) {
+        return;
+    }
+
+    // Get the Advanced SF Offsets from Phase Offset Extn
+    std::unordered_map<float, int64_t> advancedSfOffsets;
+    g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
+
+    // Populate the fps supported on device in mOffsetCache
+    const auto& supportedModes = display->getSupportedModes();
+    for (auto mode : supportedModes) {
+        mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
+    }
+
+    // Update the Advanced SF Offsets
+    mVsyncConfiguration->UpdateSfOffsets(advancedSfOffsets);
+    const auto vsyncConfig =
+        mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
+    ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
+    ALOGI("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
+#endif
+}
+
 void SurfaceFlinger::createPhaseOffsetExtn() {
 #ifdef PHASE_OFFSET_EXTN
     if (mUseAdvanceSfOffset && mComposerExtnIntf) {
@@ -9009,16 +9035,7 @@ void SurfaceFlinger::createPhaseOffsetExtn() {
             return;
         }
 
-        // Get the Advanced SF Offsets from Phase Offset Extn
-        std::unordered_map<float, int64_t> advancedSfOffsets;
-        g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&advancedSfOffsets);
-
-        // Update the Advanced SF Offsets
-        mVsyncConfiguration->UpdateSfOffsets(advancedSfOffsets);
-        const auto vsyncConfig =
-            mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs());
-        ALOGI("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
-        ALOGI("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
+        updateSfPhaseOffsets(getDefaultDisplayDeviceLocked());
     }
 #endif
 }
