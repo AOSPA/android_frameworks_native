@@ -432,10 +432,6 @@ public:
     virtual bool setSidebandStream(const sp<NativeHandle>& /*sidebandStream*/) { return false; };
     virtual bool setTransactionCompletedListeners(
             const std::vector<sp<CallbackHandle>>& /*handles*/);
-    virtual bool addFrameEvent(const sp<Fence>& /*acquireFence*/, nsecs_t /*postedTime*/,
-                               nsecs_t /*requestedPresentTime*/) {
-        return false;
-    }
     virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace);
     virtual bool setColorSpaceAgnostic(const bool agnostic);
     virtual bool setDimmingEnabled(const bool dimmingEnabled);
@@ -621,8 +617,7 @@ public:
     void prepareCompositionState(compositionengine::LayerFE::StateSubset subset) override;
     std::vector<compositionengine::LayerFE::LayerSettings> prepareClientCompositionList(
             compositionengine::LayerFE::ClientCompositionTargetSettings&) override;
-    void onLayerDisplayed(
-            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
+    void onLayerDisplayed(ftl::SharedFuture<FenceResult>) override;
 
     void setWasClientComposed(const sp<Fence>& fence) override {
         mLastClientCompositionFence = fence;
@@ -748,14 +743,11 @@ public:
 
     void miniDump(std::string& result, const DisplayDevice&) const;
     void dumpFrameStats(std::string& result) const;
-    void dumpFrameEvents(std::string& result);
     void dumpCallingUidPid(std::string& result) const;
     void clearFrameStats();
     void logFrameStats();
     void getFrameStats(FrameStats* outStats) const;
     void onDisconnect();
-    void addAndGetFrameTimestamps(const NewFrameEventsEntry* newEntry,
-                                  FrameEventHistoryDelta* outDelta);
 
     ui::Transform getTransform() const;
     bool isTransformValid() const;
@@ -1004,13 +996,6 @@ protected:
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
-
-    // Timestamp history for the consumer to query.
-    // Accessed by both consumer and producer on main and binder threads.
-    Mutex mFrameEventHistoryMutex;
-    ConsumerFrameEventHistory mFrameEventHistory;
-    FenceTimeline mAcquireTimeline;
-    FenceTimeline mReleaseTimeline;
 
     uint32_t mLayerClass{0};
 
