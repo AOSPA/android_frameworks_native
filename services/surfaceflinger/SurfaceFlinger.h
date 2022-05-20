@@ -1648,7 +1648,7 @@ private:
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
     std::unordered_map<float, int64_t> mAdvancedSfOffsets;
-    bool mLatchMediaContent = true;
+    bool mLatchMediaContent = false;
 
     FlagManager mFlagManager;
     int mRETid = 0;
