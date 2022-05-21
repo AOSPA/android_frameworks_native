@@ -353,6 +353,10 @@ private:
         return getMaxRefreshRateByPolicyLocked(mActiveModeIt->second->getGroup());
     }
 
+    // Returns the current refresh rate according to the current policy. May change at runtime. Only
+    // uses the primary range, not the app request range.
+    const DisplayModePtr& getCurrentRefreshRateByPolicyLocked() const REQUIRES(mLock);
+
     const Policy* getCurrentPolicyLocked() const REQUIRES(mLock);
     bool isPolicyValidLocked(const Policy& policy) const REQUIRES(mLock);
 
