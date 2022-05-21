@@ -288,6 +288,8 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     float maxExplicitWeight = 0;
     int seamedFocusedLayers = 0;
 
+    static bool localIsIdle;
+
     for (const auto& layer : layers) {
         switch (layer.vote) {
             case LayerVoteType::NoVote:
@@ -339,6 +341,7 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     if (signals.touch && !hasExplicitVoteLayers) {
         const DisplayModePtr& max = getMaxRefreshRateByPolicyLocked(anchorGroup);
         ALOGV("TouchBoost - choose %s", to_string(max->getFps()).c_str());
+        localIsIdle = false;
         return {max, GlobalSignals{.touch = true}};
     }
 
@@ -351,6 +354,7 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     if (!signals.touch && signals.idle && !(primaryRangeIsSingleRate && hasExplicitVoteLayers)) {
         const DisplayModePtr& min = getMinRefreshRateByPolicyLocked();
         ALOGV("Idle - choose %s", to_string(min->getFps()).c_str());
+        localIsIdle = true;
         return {min, GlobalSignals{.idle = true}};
     }
 
@@ -517,6 +521,21 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
             ? getMaxScoreRefreshRate(scores.rbegin(), scores.rend())
             : getMaxScoreRefreshRate(scores.begin(), scores.end());
 
+    const auto selectivelyForceIdle = [&] () -> std::pair<DisplayModePtr, GlobalSignals>  {
+        ALOGV("localIsIdle: %s", localIsIdle ? "true" : "false");
+        if (localIsIdle && mIdleRefreshRateModeIt != NULL
+                && isStrictlyLess(60_Hz, bestRefreshRate->getFps())) {
+            /*
+             * We heavily rely on touch to boost higher than 60 fps.
+             * Fallback to 60 fps if an higher fps was calculated.
+             */
+            ALOGV("Forcing idle");
+            return {mIdleRefreshRateModeIt->second, kNoSignals};
+        }
+
+        return {bestRefreshRate, kNoSignals};
+    };
+
    bool noFpsScored = std::all_of(scores.begin(), scores.end(),
                                   [](RefreshRateScore score) { return score.overallScore == 0; });
    if (noFpsScored) {
@@ -533,7 +552,7 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
             ALOGV("layers not scored - choose %s", to_string(max->getFps()).c_str());
             return {max, kNoSignals};
         } else {
-            return {bestRefreshRate, kNoSignals};
+            return selectivelyForceIdle();
         }
     }
 
@@ -561,7 +580,7 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
         return {touchRefreshRate, GlobalSignals{.touch = true}};
     }
 
-    return {bestRefreshRate, kNoSignals};
+    return selectivelyForceIdle();
 }
 
 std::unordered_map<uid_t, std::vector<const RefreshRateConfigs::LayerRequirement*>>
@@ -905,6 +924,15 @@ void RefreshRateConfigs::constructAvailableRefreshRates() {
         const auto modes = sortByRefreshRate(mDisplayModes, filter);
         LOG_ALWAYS_FATAL_IF(modes.empty(), "No matching modes for %s range %s", rangeName,
                             to_string(range).c_str());
+
+        // Reset and store idle refresh rate
+        mIdleRefreshRateModeIt = NULL;
+        for (const auto modeIt : modes) {
+            if (isApproxEqual(modeIt->second->getFps(), 60_Hz)) {
+                mIdleRefreshRateModeIt = modeIt;
+                ALOGV("idleRefreshRate set!");
+            }
+        }
 
         const auto stringifyModes = [&] {
             std::string str;
