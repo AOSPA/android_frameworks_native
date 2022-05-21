@@ -18,8 +18,13 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wextra"
 
-// #define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+
+#undef LOG_TAG
+#define LOG_TAG "RefreshRateConfigs (LayerInfo)"
 
 #include "LayerInfo.h"
 
@@ -28,9 +33,6 @@
 
 #include <cutils/compiler.h>
 #include <cutils/trace.h>
-
-#undef LOG_TAG
-#define LOG_TAG "LayerInfo"
 
 namespace android::scheduler {
 
