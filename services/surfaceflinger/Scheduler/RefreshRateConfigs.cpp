@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
-// #define LOG_NDEBUG 0
+#undef LOG_TAG
+#define LOG_TAG "RefreshRateConfigs"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -29,9 +33,6 @@
 #include <chrono>
 #include <cmath>
 #include "../SurfaceFlingerProperties.h"
-
-#undef LOG_TAG
-#define LOG_TAG "RefreshRateConfigs"
 
 using android::gui::WindowInfo;
 

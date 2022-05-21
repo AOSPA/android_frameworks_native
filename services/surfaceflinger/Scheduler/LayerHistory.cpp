@@ -18,6 +18,10 @@
 #define LOG_TAG "LayerHistory"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
+
 #include "LayerHistory.h"
 
 #include <android-base/stringprintf.h>
@@ -122,7 +126,24 @@ void LayerHistory::record(Layer* layer, nsecs_t presentTime, nsecs_t now,
         return;
     }
 
+auto state = layer->getDrawingState();
+
     const auto& info = it->second;
+        ALOGV("LayerHistory::record: %s updating: isVisible=%s, isHiddenByPolicy=%s, priority=%d, "
+              "canReceiveInput=%s, needsInputInfo=%s, isRemovedFromCurrentState=%s, hasInputInfo=%s, "
+              "isOpaque=%s, "
+              "getActiveWidth=%d, getActiveHeight=%d",
+              layer->getName().c_str(), layer->isVisible() ? "true" : "false", layer->isHiddenByPolicy() ? "true" : "false",
+              layer->getPriority(), layer->canReceiveInput() ? "true" : "false",
+              layer->needsInputInfo() ? "true" : "false",
+              layer->isRemovedFromCurrentState() ? "true" : "false",
+              layer->hasInputInfo() ? "true" : "false",
+              layer->isOpaque(state) ? "true" : "false",
+              layer->getActiveWidth(state), layer->getActiveHeight(state));
+/*
+    std::string str = new String();
+    layer->miniDumpHeader(str);
+*/
     const auto layerProps = LayerInfo::LayerProps{
             .visible = layer->isVisible(),
             .bounds = layer->getBounds(),
