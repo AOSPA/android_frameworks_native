@@ -616,13 +616,14 @@ void Scheduler::registerLayer(Layer* layer) {
         windowType == WindowInfo::Type::TOAST ||
         windowType == WindowInfo::Type::SYSTEM_DIALOG ||
         windowType == WindowInfo::Type::KEYGUARD_DIALOG ||
-        windowType == WindowInfo::Type::INPUT_METHOD ||
         windowType == WindowInfo::Type::INPUT_METHOD_DIALOG ||
         windowType == WindowInfo::Type::NAVIGATION_BAR ||
         windowType == WindowInfo::Type::VOLUME_OVERLAY ||
         windowType == WindowInfo::Type::NAVIGATION_BAR_PANEL ||
         windowType == WindowInfo::Type::NOTIFICATION_SHADE) {
         voteType = scheduler::LayerHistory::LayerVoteType::NoVote;
+    } else if (windowType == WindowInfo::Type::INPUT_METHOD) {
+        voteType = scheduler::LayerHistory::LayerVoteType::ExplicitIdle;
     } else if (windowType == WindowInfo::Type::WALLPAPER) {
         // Running Wallpaper at Min is considered as part of content detection.
         voteType = scheduler::LayerHistory::LayerVoteType::Min;
