@@ -336,7 +336,7 @@ private:
     void constructAvailableRefreshRates() REQUIRES(mLock);
 
     std::pair<DisplayModePtr, GlobalSignals> getBestRefreshRateLocked(
-            const std::vector<LayerRequirement>&, GlobalSignals) const REQUIRES(mLock);
+            const std::vector<LayerRequirement>&, GlobalSignals, const bool) const REQUIRES(mLock);
 
     // Returns number of display frames and remainder when dividing the layer refresh period by
     // display refresh period.
@@ -410,6 +410,7 @@ private:
     struct GetBestRefreshRateCache {
         std::pair<std::vector<LayerRequirement>, GlobalSignals> arguments;
         std::pair<DisplayModePtr, GlobalSignals> result;
+        nsecs_t lastTimestamp;
     };
     mutable std::optional<GetBestRefreshRateCache> mGetBestRefreshRateCache GUARDED_BY(mLock);
 
@@ -421,6 +422,8 @@ private:
 
     // Display mode pointer for opportunistically entering idle state (60 Hz)
     std::shared_ptr<const DisplayMode> mIdleRefreshRate;
+
+    static constexpr nsecs_t EXPIRE_TIMEOUT = std::chrono::duration_cast<std::chrono::nanoseconds>(2s).count();
 };
 
 } // namespace android::scheduler

@@ -287,18 +287,25 @@ auto RefreshRateConfigs::getBestRefreshRate(const std::vector<LayerRequirement>&
         -> std::pair<DisplayModePtr, GlobalSignals> {
     std::lock_guard lock(mLock);
 
-    if (mGetBestRefreshRateCache &&
-        mGetBestRefreshRateCache->arguments == std::make_pair(layers, signals)) {
-        return mGetBestRefreshRateCache->result;
+    bool expired = false;
+
+    if (mGetBestRefreshRateCache) {
+        const auto curTime = systemTime(SYSTEM_TIME_MONOTONIC);
+        if ((curTime - mGetBestRefreshRateCache->lastTimestamp) >= EXPIRE_TIMEOUT) {
+            expired = true;
+        } else if (mGetBestRefreshRateCache->arguments == std::make_pair(layers, signals)) {
+            return mGetBestRefreshRateCache->result;
+        }
     }
 
-    const auto result = getBestRefreshRateLocked(layers, signals);
-    mGetBestRefreshRateCache = GetBestRefreshRateCache{{layers, signals}, result};
+    const auto result = getBestRefreshRateLocked(layers, signals, expired);
+    mGetBestRefreshRateCache = GetBestRefreshRateCache{{layers, signals}, result,
+                                                        systemTime(SYSTEM_TIME_MONOTONIC)};
     return result;
 }
 
 auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequirement>& layers,
-                                                  GlobalSignals signals) const
+                                                  GlobalSignals signals, const bool expired) const
         -> std::pair<DisplayModePtr, GlobalSignals> {
     ATRACE_CALL();
     ALOGV("%s: %zu layers", __func__, layers.size());
@@ -454,8 +461,20 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
                 continue;
             }
 
-            const auto layerScore =
+            float layerScore;
+
+            if (layer.vote == LayerVoteType::Heuristic && expired &&
+                isStrictlyLess(60_Hz, mode->getFps())) {
+                // Time for heuristic layer to keep consuming high refresh rate has been expired
+                layerScore = 0;
+                localIsIdle = true;
+                ALOGV("%s expired to keep using %s", formatLayerInfo(layer, weight).c_str(),
+                      to_string(mode->getFps()).c_str(), layerScore);
+            } else {
+                layerScore =
                     calculateLayerScoreLocked(layer, mode->getFps(), isSeamlessSwitch);
+            }
+
             ALOGV("%s gives %s score of %.4f", formatLayerInfo(layer, weight).c_str(),
                   to_string(mode->getFps()).c_str(), layerScore);
 
