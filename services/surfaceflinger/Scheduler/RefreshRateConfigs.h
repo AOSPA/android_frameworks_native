@@ -208,6 +208,7 @@ public:
                                  // ExactOrMultiple compatibility
         ExplicitExact,           // Specific refresh rate that was provided by the app with
                                  // Exact compatibility
+        ExplicitIdle,            // Actively enter the idle state, overriding others
 
     };
 

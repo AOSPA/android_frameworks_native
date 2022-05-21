@@ -153,6 +153,7 @@ LayerHistory::Summary LayerHistory::summarize(const RefreshRateConfigs& refreshR
 
         auto vote = info->getRefreshRateVote(refreshRateConfigs, now);
         // Skip NoVote layer as those don't have any requirements
+        // ExplicitIdle layers are excluded as those need to be inspected by RefreshRateConfigs later
         if (vote.type == LayerHistory::LayerVoteType::NoVote) {
             continue;
         }
