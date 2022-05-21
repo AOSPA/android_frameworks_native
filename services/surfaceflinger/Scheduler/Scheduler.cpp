@@ -15,8 +15,11 @@
  */
 
 #undef LOG_TAG
-#define LOG_TAG "Scheduler"
+#define LOG_TAG "RefreshRateConfigs (Scheduler)"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
 
 #include "Scheduler.h"
 
@@ -609,6 +612,134 @@ void Scheduler::setIgnorePresentFences(bool ignore) {
 void Scheduler::registerLayer(Layer* layer) {
     scheduler::LayerHistory::LayerVoteType voteType;
     const auto windowType = layer->getWindowType();
+
+#ifdef LOG_NDEBUG
+    switch (windowType) {
+    case WindowInfo::Type::UNKNOWN:
+        ALOGV("layer \"%s\" : UNKNOWN", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::FIRST_APPLICATION_WINDOW:
+        ALOGV("layer \"%s\" : FIRST_APPLICATION_WINDOW", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION:
+        ALOGV("layer \"%s\" : APPLICATION", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION_STARTING:
+        ALOGV("layer \"%s\" : APPLICATION_STARTING", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::LAST_APPLICATION_WINDOW:
+        ALOGV("layer \"%s\" : LAST_APPLICATION_WINDOW", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::FIRST_SUB_WINDOW:
+        ALOGV("layer \"%s\" : FIRST_SUB_WINDOW", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION_MEDIA:
+        ALOGV("layer \"%s\" : APPLICATION_MEDIA", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION_SUB_PANEL:
+        ALOGV("layer \"%s\" : APPLICATION_SUB_PANEL", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION_ATTACHED_DIALOG:
+        ALOGV("layer \"%s\" : APPLICATION_ATTACHED_DIALOG", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::APPLICATION_MEDIA_OVERLAY:
+        ALOGV("layer \"%s\" : APPLICATION_MEDIA_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::LAST_SUB_WINDOW:
+        ALOGV("layer \"%s\" : LAST_SUB_WINDOW", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::STATUS_BAR:
+        ALOGV("layer \"%s\" : STATUS_BAR", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SEARCH_BAR:
+        ALOGV("layer \"%s\" : SEARCH_BAR", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::PHONE:
+        ALOGV("layer \"%s\" : PHONE", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SYSTEM_ALERT:
+        ALOGV("layer \"%s\" : SYSTEM_ALERT", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::KEYGUARD:
+        ALOGV("layer \"%s\" : KEYGUARD", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::TOAST:
+        ALOGV("layer \"%s\" : TOAST", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SYSTEM_OVERLAY:
+        ALOGV("layer \"%s\" : SYSTEM_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::PRIORITY_PHONE:
+        ALOGV("layer \"%s\" : PRIORITY_PHONE", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SYSTEM_DIALOG:
+        ALOGV("layer \"%s\" : SYSTEM_DIALOG", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::KEYGUARD_DIALOG:
+        ALOGV("layer \"%s\" : KEYGUARD_DIALOG", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SYSTEM_ERROR:
+        ALOGV("layer \"%s\" : SYSTEM_ERROR", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::INPUT_METHOD:
+        ALOGV("layer \"%s\" : INPUT_METHOD", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::INPUT_METHOD_DIALOG:
+        ALOGV("layer \"%s\" : INPUT_METHOD_DIALOG", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::WALLPAPER:
+        ALOGV("layer \"%s\" : WALLPAPER", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::STATUS_BAR_PANEL:
+        ALOGV("layer \"%s\" : STATUS_BAR_PANEL", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::SECURE_SYSTEM_OVERLAY:
+        ALOGV("layer \"%s\" : SECURE_SYSTEM_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::DRAG:
+        ALOGV("layer \"%s\" : DRAG", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::STATUS_BAR_SUB_PANEL:
+        ALOGV("layer \"%s\" : STATUS_BAR_SUB_PANEL", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::POINTER:
+        ALOGV("layer \"%s\" : POINTER", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::NAVIGATION_BAR:
+        ALOGV("layer \"%s\" : NAVIGATION_BAR", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::VOLUME_OVERLAY:
+        ALOGV("layer \"%s\" : VOLUME_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::BOOT_PROGRESS:
+        ALOGV("layer \"%s\" : BOOT_PROGRESS", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::INPUT_CONSUMER:
+        ALOGV("layer \"%s\" : INPUT_CONSUMER", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::NAVIGATION_BAR_PANEL:
+        ALOGV("layer \"%s\" : NAVIGATION_BAR_PANEL", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::MAGNIFICATION_OVERLAY:
+        ALOGV("layer \"%s\" : MAGNIFICATION_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::ACCESSIBILITY_OVERLAY:
+        ALOGV("layer \"%s\" : ACCESSIBILITY_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::DOCK_DIVIDER:
+        ALOGV("layer \"%s\" : DOCK_DIVIDER", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::ACCESSIBILITY_MAGNIFICATION_OVERLAY:
+        ALOGV("layer \"%s\" : ACCESSIBILITY_MAGNIFICATION_OVERLAY", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::NOTIFICATION_SHADE:
+        ALOGV("layer \"%s\" : NOTIFICATION_SHADE", layer->getName().c_str());
+        break;
+    case WindowInfo::Type::LAST_SYSTEM_WINDOW:
+        ALOGV("layer \"%s\" : LAST_SYSTEM_WINDOW", layer->getName().c_str());
+        break;
+    }
+#endif
 
     if (!mOptions.useContentDetection ||
         windowType == WindowInfo::Type::STATUS_BAR ||

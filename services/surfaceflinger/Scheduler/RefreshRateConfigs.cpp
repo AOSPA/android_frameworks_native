@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
-// #define LOG_NDEBUG 0
+#undef LOG_TAG
+#define LOG_TAG "RefreshRateConfigs"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -28,9 +32,6 @@
 #include <chrono>
 #include <cmath>
 #include "../SurfaceFlingerProperties.h"
-
-#undef LOG_TAG
-#define LOG_TAG "RefreshRateConfigs"
 
 namespace android::scheduler {
 namespace {
@@ -296,6 +297,7 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
     float maxExplicitWeight = 0;
     int seamedFocusedLayers = 0;
     for (const auto& layer : layers) {
+        ALOGV("layerinfo: %s", formatLayerInfo(layer, 0).c_str());
         switch (layer.vote) {
             case LayerVoteType::NoVote:
                 noVoteLayers++;

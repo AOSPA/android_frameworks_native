@@ -18,6 +18,10 @@
 #define LOG_TAG "LayerHistory"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#define LOG_NDEBUG 0
+#define LOG_NIDEBUG 0
+#define LOG_NDDEBUG 0
+
 #include "LayerHistory.h"
 
 #include <android-base/stringprintf.h>
