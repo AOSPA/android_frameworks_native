@@ -355,9 +355,9 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     }
 
     if (layers.empty() || noVoteLayers == layers.size()) {
-        const DisplayModePtr& max = getMaxRefreshRateByPolicyLocked(anchorGroup);
-        ALOGV("no layers with votes - choose %s", to_string(max->getFps()).c_str());
-        return {max, kNoSignals};
+        const DisplayModePtr& current = getCurrentRefreshRateByPolicyLocked();
+        ALOGV("no layers with votes - choose %s", to_string(current->getFps()).c_str());
+        return {current, kNoSignals};
     }
 
     // Only if all layers want Min we should return Min
@@ -731,6 +731,22 @@ const DisplayModePtr& RefreshRateConfigs::getMaxRefreshRateByPolicyLocked(int an
 
     // Default to the highest refresh rate.
     return mPrimaryRefreshRates.back()->second;
+}
+
+const DisplayModePtr& RefreshRateConfigs::getCurrentRefreshRateByPolicyLocked() const {
+    for (const DisplayModeIterator modeIt : mAppRequestRefreshRates) {
+        const auto& mode = modeIt->second;
+        if (mActiveModeIt->second == mode) {
+            return mode;
+        }
+    }
+
+    ALOGE("Can't find current refresh rate by policy with the same mode"
+          " as the current mode %s",
+          to_string(*mActiveModeIt->second).c_str());
+
+    // Default to the current policy's default refresh rate.
+    return mDisplayModes.get(getCurrentPolicyLocked()->defaultMode)->get();
 }
 
 DisplayModePtr RefreshRateConfigs::getActiveMode() const {
