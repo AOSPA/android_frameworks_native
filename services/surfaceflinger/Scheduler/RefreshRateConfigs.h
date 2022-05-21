@@ -387,6 +387,7 @@ private:
     DisplayModeIterator mActiveModeIt GUARDED_BY(mLock);
     DisplayModeIterator mMinRefreshRateModeIt GUARDED_BY(mLock);
     DisplayModeIterator mMaxRefreshRateModeIt GUARDED_BY(mLock);
+    DisplayModeIterator mIdleRefreshRateModeIt GUARDED_BY(mLock);
 
     // Display modes that satisfy the Policy's ranges, filtered and sorted by refresh rate.
     std::vector<DisplayModeIterator> mPrimaryRefreshRates GUARDED_BY(mLock);
