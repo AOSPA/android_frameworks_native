@@ -379,8 +379,8 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     }
 
     if (layers.empty() || noVoteLayers == layers.size()) {
-        const DisplayModePtr& max = getMaxRefreshRateByPolicyLocked(anchorGroup);
-        ALOGV("no layers with votes - choose %s", to_string(max->getFps()).c_str());
+        const DisplayModePtr& max = getCurrentRefreshRateByPolicyLocked(anchorGroup);
+        ALOGV("no layers with votes - choose %s", getCurrentRefreshRateByPolicyLocked().getName().c_str());
         return {max, kNoSignals};
     }
 
