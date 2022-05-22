@@ -80,6 +80,8 @@ std::string RefreshRateConfigs::layerVoteTypeString(LayerVoteType vote) {
             return "Max";
         case LayerVoteType::Heuristic:
             return "Heuristic";
+        case LayerVoteType::HeuristicUnresolved:
+            return "HeuristicUnresolved";
         case LayerVoteType::ExplicitDefault:
             return "ExplicitDefault";
         case LayerVoteType::ExplicitExactOrMultiple:
@@ -126,6 +128,7 @@ bool RefreshRateConfigs::isVoteAllowed(const LayerRequirement& layer,
             break;
         case LayerVoteType::ExplicitDefault:
         case LayerVoteType::ExplicitExact:
+        case LayerVoteType::HeuristicUnresolved:
         case LayerVoteType::Max:
         case LayerVoteType::Min:
         case LayerVoteType::NoVote:
@@ -146,7 +149,7 @@ float RefreshRateConfigs::calculateLayerScoreLocked(const LayerRequirement& laye
     const float seamlessness = isSeamlessSwitch ? 1.0f : kSeamedSwitchPenalty;
 
     // If the layer wants Max, give higher score to the higher refresh rate
-    if (layer.vote == LayerVoteType::Max) {
+    if (layer.vote == LayerVoteType::Max || layer.vote == LayerVoteType::HeuristicUnresolved) {
         const auto ratio = refreshRate.getFps().getValue() /
                 mAppRequestRefreshRates.back()->getFps().getValue();
         // use ratio^2 to get a lower score the more we get further from peak
@@ -287,6 +290,7 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
     int noVoteLayers = 0;
     int minVoteLayers = 0;
     int maxVoteLayers = 0;
+    int heuristicUnresolvedVoteLayers = 0;
     int explicitDefaultVoteLayers = 0;
     int explicitExactOrMultipleVoteLayers = 0;
     int explicitExact = 0;
@@ -302,6 +306,9 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
                 break;
             case LayerVoteType::Max:
                 maxVoteLayers++;
+                break;
+            case LayerVoteType::HeuristicUnresolved:
+                heuristicUnresolvedVoteLayers++;
                 break;
             case LayerVoteType::ExplicitDefault:
                 explicitDefaultVoteLayers++;
@@ -522,7 +529,8 @@ groupLayersByUid(const std::vector<RefreshRateConfigs::LayerRequirement>& layers
         bool skipUid = false;
         for (const auto& layer : layersWithSameUid) {
             if (layer->vote == RefreshRateConfigs::LayerVoteType::Max ||
-                layer->vote == RefreshRateConfigs::LayerVoteType::Heuristic) {
+                layer->vote == RefreshRateConfigs::LayerVoteType::Heuristic ||
+                layer->vote == RefreshRateConfigs::LayerVoteType::HeuristicUnresolved) {
                 skipUid = true;
                 break;
             }
