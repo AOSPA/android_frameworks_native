@@ -202,13 +202,14 @@ public:
         Min,             // Minimal refresh rate available
         Max,             // Maximal refresh rate available
         Heuristic,       // Specific refresh rate that was calculated by platform using a heuristic
+        HeuristicUnresolved,     // Heuristic mode failed to resolve an appropriate refresh rate,
+                                 // functionally equal to Max
         ExplicitDefault, // Specific refresh rate that was provided by the app with Default
                          // compatibility
         ExplicitExactOrMultiple, // Specific refresh rate that was provided by the app with
                                  // ExactOrMultiple compatibility
         ExplicitExact,           // Specific refresh rate that was provided by the app with
                                  // Exact compatibility
-
     };
 
     // Captures the layer requirements for a refresh rate. This will be used to determine the

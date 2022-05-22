@@ -247,8 +247,8 @@ LayerInfo::LayerVote LayerInfo::getRefreshRateVote(const RefreshRateConfigs& ref
         return {LayerHistory::LayerVoteType::Heuristic, refreshRate.value()};
     }
 
-    ALOGV("%s Max (can't resolve refresh rate)", mName.c_str());
-    return {LayerHistory::LayerVoteType::Max, Fps(0.0f)};
+    ALOGV("%s HeuristicUnresolved (can't resolve refresh rate)", mName.c_str());
+    return {LayerHistory::LayerVoteType::HeuristicUnresolved, Fps(0.0f)};
 }
 
 const char* LayerInfo::getTraceTag(android::scheduler::LayerHistory::LayerVoteType type) const {
