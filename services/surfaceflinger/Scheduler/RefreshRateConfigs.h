@@ -203,7 +203,7 @@ public:
         Max,             // Maximal refresh rate available
         Heuristic,       // Specific refresh rate that was calculated by platform using a heuristic
         HeuristicUnresolved,     // Heuristic mode failed to resolve an appropriate refresh rate,
-                                 // functionally equal to Max
+                                 // functions slightly differently than Max when keyboard is active
         ExplicitDefault, // Specific refresh rate that was provided by the app with Default
                          // compatibility
         ExplicitExactOrMultiple, // Specific refresh rate that was provided by the app with
@@ -230,12 +230,14 @@ public:
         float weight = 0.0f;
         // Whether layer is in focus or not based on WindowManager's state
         bool focused = false;
+        // WindowType filled by libgui
+        gui::WindowInfo::Type windowType;
 
         bool operator==(const LayerRequirement& other) const {
             return name == other.name && vote == other.vote &&
                     desiredRefreshRate.equalsWithMargin(other.desiredRefreshRate) &&
                     seamlessness == other.seamlessness && weight == other.weight &&
-                    focused == other.focused;
+                    focused == other.focused && windowType == other.windowType;
         }
 
         bool operator!=(const LayerRequirement& other) const { return !(*this == other); }
@@ -521,6 +523,12 @@ private:
 
     // RefreshRate mode pointer for opportunistically entering idle state (60 Hz)
     std::unique_ptr<const RefreshRate> idleRefreshRate;
+
+    // Maintain high refresh rate for this amount of time even after keyboard dismissal
+    static constexpr nsecs_t KEYBOARD_EXPIRE_TIMEOUT = std::chrono::duration_cast<std::chrono::nanoseconds>(2s).count();
+
+    // Enter idle refresh rate mode after this amount of time to avoid keyboard animations slowing down
+    static constexpr nsecs_t KEYBOARD_THROTTLE_AFTER = std::chrono::duration_cast<std::chrono::nanoseconds>(500ms).count();
 };
 
 } // namespace android::scheduler

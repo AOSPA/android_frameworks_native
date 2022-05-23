@@ -24,6 +24,7 @@
 #include "RefreshRateConfigs.h"
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
+#include <gui/WindowInfo.h>
 #include <utils/Trace.h>
 #include <chrono>
 #include <cmath>
@@ -31,6 +32,8 @@
 
 #undef LOG_TAG
 #define LOG_TAG "RefreshRateConfigs"
+
+using android::gui::WindowInfo;
 
 namespace android::scheduler {
 namespace {
@@ -296,8 +299,53 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
     int explicitExact = 0;
     float maxExplicitWeight = 0;
     int seamedFocusedLayers = 0;
+
+    static bool keyboardIsActive;
+    bool localKeyboardIsActive = false;
+    static nsecs_t keyboardThrottleAfter;
+    const std::string *keyboardName = nullptr;
+
+    /*
+     * savedState is used to store layers information and compare them later.
+     * std::string was used as hashing each layer is more expensive, that'll
+     * only be used for keyboard.
+     */
+    static std::string savedState;
+    static nsecs_t lastKeyboardTime;
+    bool keyboardWasActive;
+    static bool boostedAfterKeyboardWasActive;
+    static nsecs_t boostedAfterKeyboardWasActiveTime;
+
+    if (boostedAfterKeyboardWasActive) {
+        if (systemTime() - lastKeyboardTime < KEYBOARD_EXPIRE_TIMEOUT) {
+            ALOGV("Boosted after keyboard was active, delaying - choose %s",
+                   getCurrentRefreshRateByPolicyLocked().getName().c_str());
+            return getCurrentRefreshRateByPolicyLocked();
+        } else {
+            boostedAfterKeyboardWasActive = false;
+        }
+    }
+
     for (const auto& layer : layers) {
-        switch (layer.vote) {
+        ALOGV("layerinfo: %s", formatLayerInfo(layer, 0).c_str());
+
+        auto vote = layer.vote;
+
+        if (layer.windowType == WindowInfo::Type::INPUT_METHOD &&
+            (systemTime() - lastKeyboardTime >= KEYBOARD_EXPIRE_TIMEOUT)) {
+            keyboardIsActive = true;
+            keyboardName = &layer.name;
+            vote = LayerVoteType::Heuristic;
+            if (!keyboardIsActive && keyboardThrottleAfter == 0) {
+                keyboardThrottleAfter = systemTime() + KEYBOARD_THROTTLE_AFTER;
+                ALOGV("Will forcefully enter idle %ld ms later by %s - choose %s",
+                               KEYBOARD_THROTTLE_AFTER / 1000000L,
+                               keyboardName->c_str(),
+                               getMinRefreshRateByPolicyLocked().getName().c_str());
+            }
+        }
+
+        switch (vote) {
             case LayerVoteType::NoVote:
                 noVoteLayers++;
                 break;
@@ -329,6 +377,81 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
         if (layer.seamlessness == Seamlessness::SeamedAndSeamless && layer.focused) {
             seamedFocusedLayers++;
         }
+    }
+
+    if (keyboardIsActive && keyboardName == nullptr)
+        keyboardIsActive = false; // Reset static variable
+
+    const auto layerVoteTypeInt = [](LayerVoteType vote) {
+        switch (vote) {
+            case LayerVoteType::NoVote:
+            case LayerVoteType::Min:
+            case LayerVoteType::HeuristicUnresolved:
+                // Consider these 3 the same
+                return 0;
+            case LayerVoteType::Heuristic:
+                return 1;
+            case LayerVoteType::Max:
+                return 2;
+            case LayerVoteType::ExplicitDefault:
+                return 3;
+            case LayerVoteType::ExplicitExactOrMultiple:
+                return 4;
+            case LayerVoteType::ExplicitExact:
+                return 5;
+        }
+    };
+
+    if (keyboardIsActive) {
+        if (systemTime() < keyboardThrottleAfter) {
+            ALOGV("Still waiting for keyboardThrottleAfter");
+        } else {
+            localKeyboardIsActive = true;
+            keyboardThrottleAfter = 0;
+        }
+    }
+
+    if (maxVoteLayers == 0 && localKeyboardIsActive && savedState.empty()) {
+        // Save current state
+        for (const auto& layer : layers) {
+            if (layer.windowType == WindowInfo::Type::INPUT_METHOD)
+                continue;
+
+            savedState.append(layer.name);
+            savedState.push_back(char(layerVoteTypeInt(layer.vote) + '0'));
+        }
+
+        ALOGV("Set saved string to \"%s\"", savedState.c_str());
+
+        return getMinRefreshRateByPolicyLocked();
+    }
+
+    if (localKeyboardIsActive) {
+        // Only exit when layer stat changes
+        std::string tmp;
+        for (const auto& layer : layers) {
+            if (layer.windowType == WindowInfo::Type::INPUT_METHOD)
+                continue;
+
+            tmp.append(layer.name);
+            tmp.push_back(char(layerVoteTypeInt(layer.vote) + '0'));
+        }
+
+        if (tmp == savedState) {
+            ALOGV("Keyboard still active - choose %s", getMinRefreshRateByPolicyLocked().getName().c_str());
+            return getMinRefreshRateByPolicyLocked();
+        } else {
+            ALOGV("Keyboard layer status changed, set keyboardIsActive = false");
+            ALOGV("Before: \"%s\"", savedState.c_str());
+            ALOGV("After:  \"%s\"", tmp.c_str());
+            keyboardIsActive = false;
+            // Do not allow keyboard to be immediately re-detected as layers are purged lazily
+            lastKeyboardTime = systemTime();
+            savedState.clear();
+            keyboardWasActive = true;
+        }
+    } else {
+        keyboardWasActive = false;
     }
 
     const bool hasExplicitVoteLayers = explicitDefaultVoteLayers > 0 ||
@@ -382,6 +505,18 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
               layer.desiredRefreshRate.getValue());
         if (layer.vote == LayerVoteType::NoVote || layer.vote == LayerVoteType::Min) {
             continue;
+        }
+
+        if (keyboardWasActive &&
+            layer.desiredRefreshRate.greaterThanOrEqualWithMargin(mCurrentRefreshRate->getFps())) {
+            // Something was rendering at the max refresh rate but limited by the keyboard,
+            // try maximum refresh rate and see how things go.
+            // Do note that we have to delay a little bit before throttling this down so that
+            // LayerInfo can heuristically recalculate.
+            boostedAfterKeyboardWasActive = true;
+            boostedAfterKeyboardWasActiveTime = systemTime();
+            ALOGV("KeyboardWasActive - choose %s", getMaxRefreshRateByPolicyLocked().getName().c_str());
+            return getMaxRefreshRateByPolicyLocked();
         }
 
         auto weight = layer.weight;
@@ -453,6 +588,13 @@ RefreshRate RefreshRateConfigs::getBestRefreshRateLocked(
                   scores[i].refreshRate->getName().c_str(), layerScore);
             scores[i].score += weight * layerScore;
         }
+    }
+
+    if (maxVoteLayers == 0 && heuristicUnresolvedVoteLayers > 0 && localKeyboardIsActive) {
+        // Avoid entering maximum refresh rate just because heuristic failed when keyboard is active
+        ALOGV("Heuristic failed to resolve while keyboard is active, maintain - choose %s",
+               getCurrentRefreshRateByPolicyLocked().getName().c_str());
+        return getCurrentRefreshRateByPolicyLocked();
     }
 
     // Now that we scored all the refresh rates we need to pick the one that got the highest score.
