@@ -2676,9 +2676,12 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
         mDolphinWrapper.dolphinTrackVsyncSignal(frameTime, vsyncId, expectedVsyncTime);
     }
 
-    const uint32_t layerStackId = getDefaultDisplayDeviceLocked()->getLayerStack().id;
-    if (SmomoIntf *smoMo = getSmomoInstance(layerStackId)) {
-        smoMo->OnVsync(expectedVsyncTime);
+    SmomoIntf *smoMo = nullptr;
+    for (auto &instance: mSmomoInstances) {
+        smoMo = instance.smoMo;
+        if (smoMo) {
+            smoMo->OnVsync(expectedVsyncTime);
+        }
     }
 
     // we set this once at the beginning of commit to ensure consistency throughout the whole frame
