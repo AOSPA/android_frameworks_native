@@ -1281,8 +1281,6 @@ void SurfaceFlinger::startUnifiedDraw() {
 #ifdef QTI_UNIFIED_DRAW
     if (mDisplayExtnIntf) {
         // Displays hotplugged at this point.
-        // TODO(b/230790745): Re-enable this function
-        /*
         for (const auto& display : mDisplaysList) {
             const auto id = HalDisplayId::tryCast(display->getId());
             if (id) {
@@ -1298,7 +1296,6 @@ void SurfaceFlinger::startUnifiedDraw() {
                 }
             }
         }
-        */
     }
 #endif
     createPhaseOffsetExtn();
@@ -3576,9 +3573,6 @@ void SurfaceFlinger::computeLayerBounds() {
 }
 
 sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
-    // TODO(b/230790745): Re-enable this function
-    if (/* DISABLES CODE */ (true)) return NULL;
-
     // Return the vsync source from the active displays based on the order in which they are
     // connected.
     // Normally the order of priority is Primary (Built-in/Pluggable) followed by Secondary
@@ -4028,13 +4022,11 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         }
     }
     if (supported) {
-      sp<DisplayDevice> display = getDisplayDeviceLocked(displayToken);
       display->setPowerModeOverrideConfig(true);
     }
 #endif
     if (!state.isVirtual()) {
-        sp<DisplayDevice> displayNew = getDisplayDeviceLocked(displayToken);
-        if (mPluggableVsyncPrioritized && !isInternalDisplay(displayNew)) {
+        if (mPluggableVsyncPrioritized && !isInternalDisplay(display)) {
             // Insert the pluggable display just before the first built-in display
             // so that the earlier pluggable display remains the V-sync source.
             auto it = mDisplaysList.begin();
@@ -4043,9 +4035,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                     break;
                 }
             }
-            mDisplaysList.insert(it, displayNew);
+            mDisplaysList.insert(it, display);
         } else {
-            mDisplaysList.push_back(displayNew);
+            mDisplaysList.push_back(display);
         }
         dispatchDisplayHotplugEvent(display->getPhysicalId(), true);
 
@@ -4072,8 +4064,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         }
     }
 #endif
-    // TODO(b/230790745): add back std::move
-    mDisplays.try_emplace(displayToken, display);
+    mDisplays.try_emplace(displayToken, std::move(display));
     createSmomoInstance(state);
 }
 
@@ -9193,8 +9184,6 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
 
     bool compareStack = false;
     ui::LayerStack previousStackId;
-    // TODO(b/230790745): Re-enable this function
-    /*
     for (const auto& display : mDisplaysList) {
         if (isInternalDisplay(display)) {
             auto currentStackId = display->getLayerStack();
@@ -9207,7 +9196,6 @@ void SurfaceFlinger::updateInternalDisplaysPresentationMode() {
             compareStack = true;
         }
     }
-    */
 }
 
 void SurfaceFlinger::createPhaseOffsetExtn() {
@@ -9305,8 +9293,6 @@ void SurfaceFlinger::setupDisplayExtnFeatures() {
     bool enableDynamicSfIdle = (atoi(propValue) == 0);
 
     if (enableEarlyWakeUp || enableDynamicSfIdle) {
-        // TODO(b/230790745): Re-enable this function
-        /*
         for (const auto& display : mDisplaysList) {
             // Register Internal Physical Displays
             if (isInternalDisplay(display)) {
@@ -9324,7 +9310,6 @@ void SurfaceFlinger::setupDisplayExtnFeatures() {
                 }
             }
         }
-        */
         mEarlyWakeUpEnabled = enableEarlyWakeUp;
         mDynamicSfIdleEnabled = enableDynamicSfIdle;
     }
