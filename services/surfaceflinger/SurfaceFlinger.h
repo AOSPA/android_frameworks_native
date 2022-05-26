@@ -1631,6 +1631,7 @@ private:
     bool mDynamicSfIdleEnabled = false;
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
+    bool mUseWorkDurations = false;
 
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
@@ -1641,6 +1642,7 @@ private:
     float mThermalLevelFps = 0;
     float mLastCachedFps = 0;
     bool mAllowThermalFpsChange = false;
+    std::unordered_map<float, std::pair<int64_t, int64_t>> mWorkDurationConfigsMap;
     std::unordered_map<float, int64_t> mAdvancedSfOffsets;
     bool mLatchMediaContent = false;
 
