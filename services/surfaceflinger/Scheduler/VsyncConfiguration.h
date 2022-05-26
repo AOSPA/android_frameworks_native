@@ -28,6 +28,9 @@
 
 #include "VsyncModulator.h"
 
+using std::unordered_map;
+using std::pair;
+
 namespace android::scheduler {
 
 /*
@@ -47,7 +50,9 @@ public:
 
     virtual void setRefreshRateFps(Fps fps) = 0;
     virtual void dump(std::string& result) const = 0;
-    virtual void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) = 0;
+    virtual void UpdateSfOffsets(unordered_map<float, int64_t>* advancedSfOffsets) = 0;
+    virtual void UpdateWorkDurations(unordered_map<float, pair<int64_t, int64_t>>*
+                                     workDurationConfigs) = 0;
 };
 
 namespace impl {
@@ -87,7 +92,11 @@ public:
     void dump(std::string& result) const override;
 
     // Update the Advanced Sf Offsets for the given refresh rates in mOffsets map
-    void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) override;
+    void UpdateSfOffsets(unordered_map<float, int64_t>* advancedSfOffsets) override;
+
+    // Update the Work Durations for the given refresh rates in mOffsets map
+    void UpdateWorkDurations(unordered_map<float, pair<int64_t, int64_t>>*
+                             workDurationConfigs) override;
 
 protected:
     virtual VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const = 0;
@@ -153,7 +162,11 @@ public:
     explicit WorkDuration(Fps currentRefrshRate);
 
     // Update the Advanced Sf Offsets/Work Durations for the given refresh rates in mOffsets map.
-    void UpdateSfOffsets(std::unordered_map<float, int64_t>* advancedSfOffsets) override;
+    void UpdateSfOffsets(unordered_map<float, int64_t>* advancedSfOffsets) override;
+
+    // Update the Work Durations for the given refresh rates in mOffsets map.
+    void UpdateWorkDurations(unordered_map<float, pair<int64_t, int64_t>>*
+                             workDurationConfigs) override;
 
 protected:
     // Used for unit tests
