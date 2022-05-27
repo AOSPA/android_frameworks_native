@@ -714,6 +714,12 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                 dispatchCachedReportedMode();
             }
         } else {
+            // Need a null pointer check for mPolicy since it's null during boot up
+            std::string str = "UpdateRefreshRate " + (!mPolicy.mode ? "NA" :
+                              std::to_string(mPolicy.mode->getFps().getIntValue())) + " to " +
+                              std::to_string(newMode->getFps().getIntValue());
+            ATRACE_NAME(str.c_str());
+
             mPolicy.mode = newMode;
 
             refreshRateChanged = true;
