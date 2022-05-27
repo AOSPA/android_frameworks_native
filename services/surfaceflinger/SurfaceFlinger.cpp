@@ -7558,7 +7558,10 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 }
                 mDebugDisplayModeSetByBackdoor = false;
                 const status_t result = setActiveModeFromBackdoor(displayToken, modeId);
-                mDebugDisplayModeSetByBackdoor = result == NO_ERROR;
+                if (result == NO_ERROR) {
+                    mDebugDisplayModeSetByBackdoor = true;
+                    ATRACE_NAME(std::string("ModeSwitch " + std::to_string(modeId)).c_str());
+                }
                 return result;
             }
             // Turn on/off frame rate flexibility mode. When turned on it overrides the display
