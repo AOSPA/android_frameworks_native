@@ -4054,11 +4054,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
 #ifdef QTI_UNIFIED_DRAW
     const auto id = HalDisplayId::tryCast(display->getId());
-    if (mDisplayExtnIntf && id) {
-        uint32_t hwcDisplayId;
-        if (!getHwcDisplayId(display, &hwcDisplayId)) {
-           return;
-        }
+    uint32_t hwcDisplayId;
+    if (mDisplayExtnIntf && id && getHwcDisplayId(display, &hwcDisplayId)) {
         if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
             getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
         }
