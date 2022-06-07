@@ -2486,11 +2486,15 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
     auto currentRefreshRate = display->refreshRateConfigs().getActiveMode();
 
     auto policy = display->refreshRateConfigs().getCurrentPolicy();
+    auto setRefreshRate = Fps::fromValue(refreshRate);
+    if(!policy.primaryRange.includes(setRefreshRate)) {
+        return;
+    }
+
     const auto& allRates = display->refreshRateConfigs().getAllRefreshRates();
     auto iter = allRates.cbegin();
     while (iter != allRates.cend()) {
-        const auto& refreshRate = *iter->second;
-        if(policy.primaryRange.includes(refreshRate.getFps())) {
+        if(isApproxEqual(iter->second->getFps(), setRefreshRate)) {
             break;
         }
         ++iter;
