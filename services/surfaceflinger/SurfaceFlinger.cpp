@@ -2486,11 +2486,15 @@ void SurfaceFlinger::setRefreshRateTo(int32_t refreshRate) {
     auto currentRefreshRate = display->refreshRateConfigs().getActiveMode();
 
     auto policy = display->refreshRateConfigs().getCurrentPolicy();
+    auto setRefreshRate = Fps::fromValue(refreshRate);
+    if(!policy.primaryRange.includes(setRefreshRate)) {
+        return;
+    }
+
     const auto& allRates = display->refreshRateConfigs().getAllRefreshRates();
     auto iter = allRates.cbegin();
     while (iter != allRates.cend()) {
-        const auto& refreshRate = *iter->second;
-        if(policy.primaryRange.includes(refreshRate.getFps())) {
+        if(isApproxEqual(iter->second->getFps(), setRefreshRate)) {
             break;
         }
         ++iter;
@@ -4054,11 +4058,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
 #ifdef QTI_UNIFIED_DRAW
     const auto id = HalDisplayId::tryCast(display->getId());
-    if (mDisplayExtnIntf && id) {
-        uint32_t hwcDisplayId;
-        if (!getHwcDisplayId(display, &hwcDisplayId)) {
-           return;
-        }
+    uint32_t hwcDisplayId;
+    if (mDisplayExtnIntf && id && getHwcDisplayId(display, &hwcDisplayId)) {
         if (!mDisplayExtnIntf->TryUnifiedDraw(hwcDisplayId, maxFrameBufferAcquiredBuffers)){
             getHwComposer().tryDrawMethod(*id, IQtiComposerClient::DrawMethod::UNIFIED_DRAW);
         }
