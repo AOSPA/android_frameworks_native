@@ -5045,7 +5045,8 @@ void SurfaceFlinger::checkVirtualDisplayHint(const Vector<DisplayState>& display
             if (what & DisplayState::eSurfaceChanged) {
                 if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
                     if (state.isVirtual() && s.surface != nullptr &&
-                        mVirtualDisplayIdGenerators.hal) {
+                        mVirtualDisplayIdGenerators.hal &&
+                        getHwComposer().getMaxVirtualDisplayCount() > 0) {
                         width = 0;
                         int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
                         ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
