@@ -3511,14 +3511,10 @@ SmomoIntf* SurfaceFlinger::getSmomoInstance(const uint32_t layerStackId) const {
 void SurfaceFlinger::updateSmomoLayerInfo(TransactionState &ts,
         int64_t desiredPresentTime, bool isAutoTimestamp) {
     ts.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        sp<Layer> layer = nullptr;
+        sp<Layer> layer = fromHandle(state.surface).promote();
         SmomoIntf *smoMo = nullptr;
-        {
-            Mutex::Autolock _l(mStateLock);
-            layer = fromHandle(state.surface).promote();
-            if (layer != nullptr) {
-                smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
-            }
+        if (layer != nullptr) {
+            smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
         }
 
         if (smoMo) {
