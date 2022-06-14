@@ -556,7 +556,7 @@ public:
 
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
         mFlinger->callingThreadHasUnscopedSurfaceFlingerAccess(fdp->ConsumeBool());
-        mFlinger->createConnection();
+        const sp<Client> client = new Client(mFlinger);
 
         DisplayIdGenerator<HalVirtualDisplayId> kGenerator;
         HalVirtualDisplayId halVirtualDisplayId = kGenerator.generateId().value();
@@ -589,7 +589,6 @@ public:
         sp<IBinder> display = fuzzBoot(&mFdp);
 
         sp<IGraphicBufferProducer> bufferProducer = sp<mock::GraphicBufferProducer>::make();
-        mFlinger->authenticateSurfaceTexture(bufferProducer.get());
 
         mFlinger->createDisplayEventConnection();
 
@@ -783,7 +782,7 @@ public:
         return mFlinger->onTransact(code, data, reply, flags);
     }
 
-    auto getGPUContextPriority() { return mFlinger->getGPUContextPriority(); }
+    auto getGpuContextPriority() { return mFlinger->getGpuContextPriority(); }
 
     auto calculateMaxAcquiredBufferCount(Fps refreshRate,
                                          std::chrono::nanoseconds presentLatency) const {

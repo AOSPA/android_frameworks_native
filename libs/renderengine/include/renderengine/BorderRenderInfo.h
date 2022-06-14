@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,23 @@
  * limitations under the License.
  */
 
-package android.content.pm;
+#pragma once
+#include <math/mat4.h>
+#include <ui/Region.h>
 
-/**
- * This event is designed for notification to native code listener about
- * any changes on a package including update, deletion and etc.
- *
- * @hide
- */
-parcelable PackageChangeEvent {
-  @utf8InCpp String packageName;
-  long version;
-  long lastUpdateTimeMillis;
-  boolean newInstalled;
-  boolean dataRemoved;
-  boolean isDeleted;
-}
+namespace android {
+namespace renderengine {
+
+struct BorderRenderInfo {
+    float width = 0;
+    half4 color;
+    Region combinedRegion;
+
+    bool operator==(const BorderRenderInfo& rhs) const {
+        return (width == rhs.width && color == rhs.color &&
+                combinedRegion.hasSameRects(rhs.combinedRegion));
+    }
+};
+
+} // namespace renderengine
+} // namespace android

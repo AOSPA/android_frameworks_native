@@ -17,8 +17,8 @@
 #pragma once
 
 #include <android/gui/DropInputMode.h>
+#include <android/gui/ISurfaceComposerClient.h>
 #include <gui/BufferQueue.h>
-#include <gui/ISurfaceComposerClient.h>
 #include <gui/LayerState.h>
 #include <gui/WindowInfo.h>
 #include <layerproto/LayerProtoHeader.h>
@@ -69,11 +69,14 @@ class Colorizer;
 class DisplayDevice;
 class GraphicBuffer;
 class SurfaceFlinger;
-class LayerDebugInfo;
 
 namespace compositionengine {
 class OutputLayer;
 struct LayerFECompositionState;
+}
+
+namespace gui {
+class LayerDebugInfo;
 }
 
 namespace impl {
@@ -744,7 +747,7 @@ public:
     inline const State& getDrawingState() const { return mDrawingState; }
     inline State& getDrawingState() { return mDrawingState; }
 
-    LayerDebugInfo getLayerDebugInfo(const DisplayDevice*) const;
+    gui::LayerDebugInfo getLayerDebugInfo(const DisplayDevice*) const;
 
     void miniDump(std::string& result, const DisplayDevice&) const;
     void dumpFrameStats(std::string& result) const;
@@ -897,6 +900,10 @@ public:
 
     bool setStretchEffect(const StretchEffect& effect);
     StretchEffect getStretchEffect() const;
+    bool enableBorder(bool shouldEnable, float width, const half4& color);
+    bool isBorderEnabled();
+    float getBorderWidth();
+    const half4& getBorderColor();
 
     virtual bool setBufferCrop(const Rect& /* bufferCrop */) { return false; }
     virtual bool setDestinationFrame(const Rect& /* destinationFrame */) { return false; }
@@ -1154,7 +1161,12 @@ private:
     bool mIsAtRoot = false;
 
     uint32_t mLayerCreationFlags;
+
     bool findInHierarchy(const sp<Layer>&);
+
+    bool mBorderEnabled = false;
+    float mBorderWidth;
+    half4 mBorderColor;
     uint32_t smomoLayerStackId = UINT32_MAX;
 public:
     nsecs_t getPreviousGfxInfo();

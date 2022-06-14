@@ -154,6 +154,7 @@ protected:
 
 private:
     void dirtyEntireOutput();
+    void updateCompositionStateForBorder(const compositionengine::CompositionRefreshArgs&);
     compositionengine::OutputLayer* findLayerRequestingBackgroundComposition() const;
     void finishPrepareFrame();
     ui::Dataspace getBestDataspace(ui::Dataspace*, bool*) const;

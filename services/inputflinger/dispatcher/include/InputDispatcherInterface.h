@@ -20,7 +20,7 @@
 #include <InputListener.h>
 #include <android-base/result.h>
 #include <android/gui/FocusRequest.h>
-#include <android/os/BlockUntrustedTouchesMode.h>
+
 #include <android/os/InputEventInjectionResult.h>
 #include <android/os/InputEventInjectionSync.h>
 #include <gui/InputApplication.h>
@@ -68,10 +68,16 @@ public:
      * input injection to proceed.
      * Returns one of the INPUT_EVENT_INJECTION_XXX constants.
      *
-     * This method may be called on any thread (usually by the input manager).
+     * If a targetUid is provided, InputDispatcher will only consider injecting the input event into
+     * windows owned by the provided uid. If the input event is targeted at a window that is not
+     * owned by the provided uid, input injection will fail. If no targetUid is provided, the input
+     * event will be dispatched as-is.
+     *
+     * This method may be called on any thread (usually by the input manager). The caller must
+     * perform all necessary permission checks prior to injecting events.
      */
     virtual android::os::InputEventInjectionResult injectInputEvent(
-            const InputEvent* event, int32_t injectorPid, int32_t injectorUid,
+            const InputEvent* event, std::optional<int32_t> targetUid,
             android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
             uint32_t policyFlags) = 0;
 
@@ -135,13 +141,6 @@ public:
      * the windows above the touch-consuming window.
      */
     virtual void setMaximumObscuringOpacityForTouch(float opacity) = 0;
-
-    /**
-     * Sets the mode of the block untrusted touches feature.
-     *
-     * TODO(b/169067926): Clean-up feature modes.
-     */
-    virtual void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) = 0;
 
     /* Transfers touch focus from one window to another window.
      *

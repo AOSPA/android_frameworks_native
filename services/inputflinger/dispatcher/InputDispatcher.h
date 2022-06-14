@@ -104,7 +104,7 @@ public:
     void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) override;
 
     android::os::InputEventInjectionResult injectInputEvent(
-            const InputEvent* event, int32_t injectorPid, int32_t injectorUid,
+            const InputEvent* event, std::optional<int32_t> targetUid,
             android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
             uint32_t policyFlags) override;
 
@@ -121,7 +121,6 @@ public:
     void setInputFilterEnabled(bool enabled) override;
     bool setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission) override;
     void setMaximumObscuringOpacityForTouch(float opacity) override;
-    void setBlockUntrustedTouchesMode(android::os::BlockUntrustedTouchesMode mode) override;
 
     bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
                             bool isDragDrop = false) override;
@@ -279,7 +278,6 @@ private:
 
     // Event injection and synchronization.
     std::condition_variable mInjectionResultAvailable;
-    bool hasInjectionPermission(int32_t injectorPid, int32_t injectorUid);
     void setInjectionResult(EventEntry& entry,
                             android::os::InputEventInjectionResult injectionResult);
     void transformMotionEntryForInjectionLocked(MotionEntry&,
@@ -345,7 +343,6 @@ private:
     bool mInputFilterEnabled GUARDED_BY(mLock);
     bool mInTouchMode GUARDED_BY(mLock);
     float mMaximumObscuringOpacityForTouch GUARDED_BY(mLock);
-    android::os::BlockUntrustedTouchesMode mBlockUntrustedTouchesMode GUARDED_BY(mLock);
 
     class DispatcherWindowListener : public gui::WindowInfosListener {
     public:
@@ -555,8 +552,6 @@ private:
     void addGlobalMonitoringTargetsLocked(std::vector<InputTarget>& inputTargets, int32_t displayId)
             REQUIRES(mLock);
     void pokeUserActivityLocked(const EventEntry& eventEntry) REQUIRES(mLock);
-    bool checkInjectionPermission(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                                  const InjectionState* injectionState);
     // Enqueue a drag event if needed, and update the touch state.
     // Uses findTouchedWindowTargetsLocked to make the decision
     void addDragEventLocked(const MotionEntry& entry) REQUIRES(mLock);
@@ -655,7 +650,6 @@ private:
     void sendFocusChangedCommandLocked(const sp<IBinder>& oldToken, const sp<IBinder>& newToken)
             REQUIRES(mLock);
     void sendDropWindowCommandLocked(const sp<IBinder>& token, float x, float y) REQUIRES(mLock);
-    void sendUntrustedTouchCommandLocked(const std::string& obscuringPackage) REQUIRES(mLock);
     void onAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
     void onAnrLocked(std::shared_ptr<InputApplicationHandle> application) REQUIRES(mLock);
     void updateLastAnrStateLocked(const sp<android::gui::WindowInfoHandle>& window,

@@ -24,16 +24,35 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GrContextOptions.h>
+#include <SkBlendMode.h>
 #include <SkCanvas.h>
+#include <SkColor.h>
 #include <SkColorFilter.h>
 #include <SkColorMatrix.h>
 #include <SkColorSpace.h>
+#include <SkData.h>
 #include <SkGraphics.h>
 #include <SkImage.h>
 #include <SkImageFilters.h>
+#include <SkImageInfo.h>
+#include <SkM44.h>
+#include <SkMatrix.h>
+#include <SkPaint.h>
+#include <SkPath.h>
+#include <SkPoint.h>
+#include <SkPoint3.h>
+#include <SkRect.h>
+#include <SkRefCnt.h>
 #include <SkRegion.h>
+#include <SkRRect.h>
+#include <SkRuntimeEffect.h>
+#include <SkSamplingOptions.h>
+#include <SkScalar.h>
+#include <SkShader.h>
 #include <SkShadowUtils.h>
+#include <SkString.h>
 #include <SkSurface.h>
+#include <SkTileMode.h>
 #include <android-base/stringprintf.h>
 #include <gl/GrGLInterface.h>
 #include <gui/TraceUtils.h>
@@ -52,8 +71,6 @@
 #include "../gl/GLExtensions.h"
 #include "Cache.h"
 #include "ColorSpaces.h"
-#include "SkBlendMode.h"
-#include "SkImageInfo.h"
 #include "filters/BlurFilter.h"
 #include "filters/GaussianBlurFilter.h"
 #include "filters/KawaseBlurFilter.h"
@@ -311,7 +328,7 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGL
         mProtectedPlaceholderSurface(protectedPlaceholder),
         mDefaultPixelFormat(static_cast<PixelFormat>(args.pixelFormat)),
         mUseColorManagement(args.useColorManagement) {
-    sk_sp<const GrGLInterface> glInterface(GrGLCreateNativeInterface());
+    sk_sp<const GrGLInterface> glInterface = GrGLMakeNativeInterface();
     LOG_ALWAYS_FATAL_IF(!glInterface.get());
 
     GrContextOptions options;
@@ -1228,6 +1245,26 @@ void SkiaGLRenderEngine::drawLayersInternal(
             activeSurface->flush();
         }
     }
+    for (const auto& borderRenderInfo : display.borderInfoList) {
+        SkPaint p;
+        p.setColor(SkColor4f{borderRenderInfo.color.r, borderRenderInfo.color.g,
+                             borderRenderInfo.color.b, borderRenderInfo.color.a});
+        p.setAntiAlias(true);
+        p.setStyle(SkPaint::kStroke_Style);
+        p.setStrokeWidth(borderRenderInfo.width);
+        SkRegion sk_region;
+        SkPath path;
+
+        // Construct a final SkRegion using Regions
+        for (const auto& r : borderRenderInfo.combinedRegion) {
+            sk_region.op({r.left, r.top, r.right, r.bottom}, SkRegion::kUnion_Op);
+        }
+
+        sk_region.getBoundaryPath(&path);
+        canvas->drawPath(path, p);
+        path.close();
+    }
+
     surfaceAutoSaveRestore.restore();
     mCapture->endCapture();
     {

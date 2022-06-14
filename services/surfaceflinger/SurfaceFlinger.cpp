@@ -35,6 +35,7 @@
 #include <android-base/strings.h>
 #include <android/configuration.h>
 #include <android/gui/IDisplayEventConnection.h>
+#include <android/gui/StaticDisplayInfo.h>
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
 #include <android/hardware/configstore/1.1/ISurfaceFlingerConfigs.h>
 #include <android/hardware/configstore/1.1/types.h>
@@ -60,6 +61,7 @@
 #include <ftl/fake_guard.h>
 #include <ftl/future.h>
 #include <ftl/small_map.h>
+#include <gui/AidlStatusUtil.h>
 #include <gui/BufferQueue.h>
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/IProducerListener.h>
@@ -186,6 +188,10 @@ struct ComposerExtnIntf {
 struct ComposerExtnIntf g_comp_ext_intf_;
 #endif
 
+// To enable layer borders in the system, change the below flag to true.
+#undef DOES_CONTAIN_BORDER
+#define DOES_CONTAIN_BORDER false
+
 namespace android {
 
 using namespace std::string_literals;
@@ -202,9 +208,12 @@ using CompositionStrategyPredictionState = android::compositionengine::impl::
 
 using base::StringAppendF;
 using gui::DisplayInfo;
+using gui::GameMode;
 using gui::IDisplayEventConnection;
 using gui::IWindowInfosListener;
+using gui::LayerMetadata;
 using gui::WindowInfo;
+using gui::aidl_utils::binderStatusFromStatusT;
 using ui::ColorMode;
 using ui::Dataspace;
 using ui::DisplayPrimaries;
@@ -615,7 +624,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mUseAdvanceSfOffset = atoi(value);
     ALOGI_IF(mUseAdvanceSfOffset, "Enable Advance SF Phase Offset");
 
-    const size_t defaultListSize = ISurfaceComposer::MAX_LAYERS;
+    const size_t defaultListSize = MAX_LAYERS;
     auto listSize = property_get_int32("debug.sf.max_igbp_list_size", int32_t(defaultListSize));
     mMaxGraphicBufferProducerListSize = (listSize > 0) ? size_t(listSize) : defaultListSize;
     mGraphicBufferProducerListSizeLogThreshold =
@@ -754,11 +763,6 @@ void SurfaceFlinger::binderDied(const wp<IBinder>&) {
 
 void SurfaceFlinger::run() {
     mScheduler->run();
-}
-
-sp<ISurfaceComposerClient> SurfaceFlinger::createConnection() {
-    const sp<Client> client = new Client(this);
-    return client->initCheck() == NO_ERROR ? client : nullptr;
 }
 
 sp<IBinder> SurfaceFlinger::createDisplay(const String8& displayName, bool secure) {
@@ -1334,17 +1338,6 @@ void SurfaceFlinger::startBootAnim() {
 }
 
 // ----------------------------------------------------------------------------
-
-bool SurfaceFlinger::authenticateSurfaceTexture(
-        const sp<IGraphicBufferProducer>& bufferProducer) const {
-    Mutex::Autolock _l(mStateLock);
-    return authenticateSurfaceTextureLocked(bufferProducer);
-}
-
-bool SurfaceFlinger::authenticateSurfaceTextureLocked(
-        const sp<IGraphicBufferProducer>& /* bufferProducer */) const {
-    return false;
-}
 
 status_t SurfaceFlinger::getSupportedFrameTimestamps(
         std::vector<FrameEvent>* outSupported) const {
@@ -2152,7 +2145,7 @@ status_t SurfaceFlinger::injectVSync(nsecs_t when) {
             : BAD_VALUE;
 }
 
-status_t SurfaceFlinger::getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) {
+status_t SurfaceFlinger::getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) {
     outLayers->clear();
     auto future = mScheduler->schedule([=] {
         const auto display = FTL_FAKE_GUARD(mStateLock, getDefaultDisplayDeviceLocked());
@@ -2384,10 +2377,9 @@ status_t SurfaceFlinger::getDisplayDecorationSupport(
 // ----------------------------------------------------------------------------
 
 sp<IDisplayEventConnection> SurfaceFlinger::createDisplayEventConnection(
-        ISurfaceComposer::VsyncSource vsyncSource,
-        ISurfaceComposer::EventRegistrationFlags eventRegistration) {
+        gui::ISurfaceComposer::VsyncSource vsyncSource, EventRegistrationFlags eventRegistration) {
 
-    bool triggerRefresh = vsyncSource != eVsyncSourceSurfaceFlinger;
+    bool triggerRefresh = vsyncSource != gui::ISurfaceComposer::VsyncSource::eVsyncSourceSurfaceFlinger;
     const auto& handle = triggerRefresh ? mAppConnectionHandle : mSfConnectionHandle;
 
     return mScheduler->createDisplayEventConnection(handle, triggerRefresh, eventRegistration);
@@ -2892,6 +2884,22 @@ void SurfaceFlinger::composite(nsecs_t frameTime, int64_t vsyncId)
         if (auto layerFE = layer->getCompositionEngineLayerFE())
             refreshArgs.layers.push_back(layerFE);
     });
+
+    if (DOES_CONTAIN_BORDER) {
+        refreshArgs.borderInfoList.clear();
+        mDrawingState.traverse([&refreshArgs](Layer* layer) {
+            if (layer->isBorderEnabled()) {
+                compositionengine::BorderRenderInfo info;
+                info.width = layer->getBorderWidth();
+                info.color = layer->getBorderColor();
+                layer->traverse(LayerVector::StateSet::Drawing, [&info](Layer* ilayer) {
+                    info.layerIds.push_back(ilayer->getSequence());
+                });
+                refreshArgs.borderInfoList.emplace_back(std::move(info));
+            }
+        });
+    }
+
     refreshArgs.layersWithQueuedFrames.reserve(mLayersWithQueuedFrames.size());
     for (auto layer : mLayersWithQueuedFrames) {
         if (auto layerFE = layer->getCompositionEngineLayerFE())
@@ -4813,9 +4821,9 @@ bool SurfaceFlinger::latchBuffers() {
 status_t SurfaceFlinger::addClientLayer(const sp<Client>& client, const sp<IBinder>& handle,
                                         const sp<Layer>& layer, const wp<Layer>& parent,
                                         bool addToRoot, uint32_t* outTransformHint) {
-    if (mNumLayers >= ISurfaceComposer::MAX_LAYERS) {
+    if (mNumLayers >= MAX_LAYERS) {
         ALOGE("AddClientLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers.load(),
-               ISurfaceComposer::MAX_LAYERS);
+               MAX_LAYERS);
         mCurrentState.traverseInZOrder([&](Layer* layer) {
                const auto& p = layer->getParent();
                ALOGE("layer (%s) ::  parent (%s).",
@@ -5719,6 +5727,11 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
     if (what & layer_state_t::eBlurRegionsChanged) {
         if (layer->setBlurRegions(s.blurRegions)) flags |= eTraversalNeeded;
     }
+    if (what & layer_state_t::eRenderBorderChanged) {
+        if (layer->enableBorder(s.borderEnabled, s.borderWidth, s.borderColor)) {
+            flags |= eTraversalNeeded;
+        }
+    }
     if (what & layer_state_t::eLayerStackChanged) {
         ssize_t idx = mCurrentState.layersSortedByZ.indexOf(layer);
         // We only allow setting layer stacks for top level layers,
@@ -5770,9 +5783,10 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
     }
     std::optional<nsecs_t> dequeueBufferTimestamp;
     if (what & layer_state_t::eMetadataChanged) {
-        dequeueBufferTimestamp = s.metadata.getInt64(METADATA_DEQUEUE_TIME);
+        dequeueBufferTimestamp = s.metadata.getInt64(gui::METADATA_DEQUEUE_TIME);
 
-        if (const int32_t gameMode = s.metadata.getInt32(METADATA_GAME_MODE, -1); gameMode != -1) {
+        if (const int32_t gameMode = s.metadata.getInt32(gui::METADATA_GAME_MODE, -1);
+            gameMode != -1) {
             // The transaction will be received on the Task layer and needs to be applied to all
             // child layers. Child layers that are added at a later point will obtain the game mode
             // info through addChild().
@@ -7068,29 +7082,11 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
 #pragma clang diagnostic push
 #pragma clang diagnostic error "-Wswitch-enum"
     switch (static_cast<ISurfaceComposerTag>(code)) {
-        case ENABLE_VSYNC_INJECTIONS:
-        case INJECT_VSYNC:
-            if (!hasMockHwc()) return PERMISSION_DENIED;
-            [[fallthrough]];
         // These methods should at minimum make sure that the client requested
         // access to SF.
-        case BOOT_FINISHED:
-        case CLEAR_ANIMATION_FRAME_STATS:
-        case GET_ANIMATION_FRAME_STATS:
-        case OVERRIDE_HDR_TYPES:
         case GET_HDR_CAPABILITIES:
-        case SET_DESIRED_DISPLAY_MODE_SPECS:
-        case GET_DESIRED_DISPLAY_MODE_SPECS:
-        case SET_ACTIVE_COLOR_MODE:
-        case SET_BOOT_DISPLAY_MODE:
         case GET_AUTO_LOW_LATENCY_MODE_SUPPORT:
         case GET_GAME_CONTENT_TYPE_SUPPORT:
-        case GET_DISPLAYED_CONTENT_SAMPLING_ATTRIBUTES:
-        case SET_DISPLAY_CONTENT_SAMPLING_ENABLED:
-        case GET_DISPLAYED_CONTENT_SAMPLE:
-        case ADD_TUNNEL_MODE_ENABLED_LISTENER:
-        case REMOVE_TUNNEL_MODE_ENABLED_LISTENER:
-        case SET_GLOBAL_SHADOW_SETTINGS:
         case ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN: {
             // OVERRIDE_HDR_TYPES is used by CTS tests, which acquire the necessary
             // permission dynamically. Don't use the permission cache for this check.
@@ -7103,42 +7099,19 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
             }
             return OK;
         }
-        case GET_LAYER_DEBUG_INFO: {
-            IPCThreadState* ipc = IPCThreadState::self();
-            const int pid = ipc->getCallingPid();
-            const int uid = ipc->getCallingUid();
-            if ((uid != AID_SHELL) && !PermissionCache::checkPermission(sDump, pid, uid)) {
-                ALOGE("Layer debug info permission denied for pid=%d, uid=%d", pid, uid);
-                return PERMISSION_DENIED;
-            }
-            return OK;
-        }
-        // Used by apps to hook Choreographer to SurfaceFlinger.
-        case CREATE_DISPLAY_EVENT_CONNECTION:
         // The following calls are currently used by clients that do not
         // request necessary permissions. However, they do not expose any secret
         // information, so it is OK to pass them.
-        case AUTHENTICATE_SURFACE:
         case GET_ACTIVE_COLOR_MODE:
         case GET_ACTIVE_DISPLAY_MODE:
         case GET_DISPLAY_COLOR_MODES:
-        case GET_DISPLAY_NATIVE_PRIMARIES:
-        case GET_STATIC_DISPLAY_INFO:
-        case GET_DYNAMIC_DISPLAY_INFO:
         case GET_DISPLAY_MODES:
-        case GET_SUPPORTED_FRAME_TIMESTAMPS:
         // Calling setTransactionState is safe, because you need to have been
         // granted a reference to Client* and Handle* to do anything with it.
         case SET_TRANSACTION_STATE:
-        case CREATE_CONNECTION:
-        case GET_COLOR_MANAGEMENT:
-        case GET_COMPOSITION_PREFERENCE:
-        case GET_PROTECTED_CONTENT_SUPPORT:
         case IS_HARDWARE_RC_DISPLAY:
         // setFrameRate() is deliberately available for apps to call without any
         // special permissions.
-        case SET_FRAME_RATE:
-        case GET_DISPLAY_DECORATION_SUPPORT:
         case IS_WIDE_COLOR_DISPLAY:
         case GET_DISPLAY_BRIGHTNESS_SUPPORT:
         case SET_DISPLAY_BRIGHTNESS:
@@ -7149,68 +7122,62 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case CLEAR_BOOT_DISPLAY_MODE:
         case GET_BOOT_DISPLAY_MODE_SUPPORT:
         case SET_AUTO_LOW_LATENCY_MODE:
-        case SET_GAME_CONTENT_TYPE:
-        case SET_FRAME_TIMELINE_INFO:
-        case GET_GPU_CONTEXT_PRIORITY:
-        case GET_MAX_ACQUIRED_BUFFER_COUNT: {
+        case SET_GAME_CONTENT_TYPE: {
             // This is not sensitive information, so should not require permission control.
             return OK;
         }
-        case ADD_FPS_LISTENER:
-        case REMOVE_FPS_LISTENER:
-        case ADD_REGION_SAMPLING_LISTENER:
-        case REMOVE_REGION_SAMPLING_LISTENER: {
-            // codes that require permission check
-            IPCThreadState* ipc = IPCThreadState::self();
-            const int pid = ipc->getCallingPid();
-            const int uid = ipc->getCallingUid();
-            if ((uid != AID_GRAPHICS) &&
-                !PermissionCache::checkPermission(sReadFramebuffer, pid, uid)) {
-                ALOGE("Permission Denial: can't read framebuffer pid=%d, uid=%d", pid, uid);
-                return PERMISSION_DENIED;
-            }
-            return OK;
-        }
-        case ADD_TRANSACTION_TRACE_LISTENER: {
-            IPCThreadState* ipc = IPCThreadState::self();
-            const int uid = ipc->getCallingUid();
-            if (uid == AID_ROOT || uid == AID_GRAPHICS || uid == AID_SYSTEM || uid == AID_SHELL) {
-                return OK;
-            }
-            return PERMISSION_DENIED;
-        }
-        case SET_OVERRIDE_FRAME_RATE: {
-            const int uid = IPCThreadState::self()->getCallingUid();
-            if (uid == AID_ROOT || uid == AID_SYSTEM) {
-                return OK;
-            }
-            return PERMISSION_DENIED;
-        }
-        case ON_PULL_ATOM: {
-            const int uid = IPCThreadState::self()->getCallingUid();
-            if (uid == AID_SYSTEM) {
-                return OK;
-            }
-            return PERMISSION_DENIED;
-        }
-        case ADD_WINDOW_INFOS_LISTENER:
-        case REMOVE_WINDOW_INFOS_LISTENER: {
-            const int uid = IPCThreadState::self()->getCallingUid();
-            if (uid == AID_SYSTEM || uid == AID_GRAPHICS) {
-                return OK;
-            }
-            return PERMISSION_DENIED;
-        }
+        case BOOT_FINISHED:
+        // Used by apps to hook Choreographer to SurfaceFlinger.
+        case CREATE_DISPLAY_EVENT_CONNECTION:
+        case CREATE_CONNECTION:
         case CREATE_DISPLAY:
         case DESTROY_DISPLAY:
         case GET_PRIMARY_PHYSICAL_DISPLAY_ID:
         case GET_PHYSICAL_DISPLAY_IDS:
         case GET_PHYSICAL_DISPLAY_TOKEN:
+        case AUTHENTICATE_SURFACE:
+        case GET_SUPPORTED_FRAME_TIMESTAMPS:
         case GET_DISPLAY_STATE:
         case GET_DISPLAY_STATS:
+        case GET_STATIC_DISPLAY_INFO:
+        case GET_DYNAMIC_DISPLAY_INFO:
+        case GET_DISPLAY_NATIVE_PRIMARIES:
+        case SET_ACTIVE_COLOR_MODE:
+        case SET_BOOT_DISPLAY_MODE:
         case CAPTURE_LAYERS:
         case CAPTURE_DISPLAY:
         case CAPTURE_DISPLAY_BY_ID:
+        case CLEAR_ANIMATION_FRAME_STATS:
+        case GET_ANIMATION_FRAME_STATS:
+        case OVERRIDE_HDR_TYPES:
+        case ON_PULL_ATOM:
+        case ENABLE_VSYNC_INJECTIONS:
+        case INJECT_VSYNC:
+        case GET_LAYER_DEBUG_INFO:
+        case GET_COLOR_MANAGEMENT:
+        case GET_COMPOSITION_PREFERENCE:
+        case GET_DISPLAYED_CONTENT_SAMPLING_ATTRIBUTES:
+        case SET_DISPLAY_CONTENT_SAMPLING_ENABLED:
+        case GET_DISPLAYED_CONTENT_SAMPLE:
+        case GET_PROTECTED_CONTENT_SUPPORT:
+        case ADD_REGION_SAMPLING_LISTENER:
+        case REMOVE_REGION_SAMPLING_LISTENER:
+        case ADD_FPS_LISTENER:
+        case REMOVE_FPS_LISTENER:
+        case ADD_TUNNEL_MODE_ENABLED_LISTENER:
+        case REMOVE_TUNNEL_MODE_ENABLED_LISTENER:
+        case ADD_WINDOW_INFOS_LISTENER:
+        case REMOVE_WINDOW_INFOS_LISTENER:
+        case SET_DESIRED_DISPLAY_MODE_SPECS:
+        case GET_DESIRED_DISPLAY_MODE_SPECS:
+        case SET_GLOBAL_SHADOW_SETTINGS:
+        case GET_DISPLAY_DECORATION_SUPPORT:
+        case SET_FRAME_RATE:
+        case SET_OVERRIDE_FRAME_RATE:
+        case SET_FRAME_TIMELINE_INFO:
+        case ADD_TRANSACTION_TRACE_LISTENER:
+        case GET_GPU_CONTEXT_PRIORITY:
+        case GET_MAX_ACQUIRED_BUFFER_COUNT:
             LOG_FATAL("Deprecated opcode: %d, migrated to AIDL", code);
             return PERMISSION_DENIED;
     }
@@ -8877,43 +8844,10 @@ const std::unordered_map<std::string, uint32_t>& SurfaceFlinger::getGenericLayer
     // on the work to remove the table in that bug rather than adding more to
     // it.
     static const std::unordered_map<std::string, uint32_t> genericLayerMetadataKeyMap{
-            {"org.chromium.arc.V1_0.TaskId", METADATA_TASK_ID},
-            {"org.chromium.arc.V1_0.CursorInfo", METADATA_MOUSE_CURSOR},
+            {"org.chromium.arc.V1_0.TaskId", gui::METADATA_TASK_ID},
+            {"org.chromium.arc.V1_0.CursorInfo", gui::METADATA_MOUSE_CURSOR},
     };
     return genericLayerMetadataKeyMap;
-}
-
-status_t SurfaceFlinger::setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                                      int8_t compatibility, int8_t changeFrameRateStrategy) {
-    if (!ValidateFrameRate(frameRate, compatibility, changeFrameRateStrategy,
-                           "SurfaceFlinger::setFrameRate")) {
-        return BAD_VALUE;
-    }
-
-    static_cast<void>(mScheduler->schedule([=] {
-        Mutex::Autolock lock(mStateLock);
-        if (authenticateSurfaceTextureLocked(surface)) {
-            sp<Layer> layer = (static_cast<MonitoredProducer*>(surface.get()))->getLayer();
-            if (layer == nullptr) {
-                ALOGE("Attempt to set frame rate on a layer that no longer exists");
-                return BAD_VALUE;
-            }
-            const auto strategy =
-                    Layer::FrameRate::convertChangeFrameRateStrategy(changeFrameRateStrategy);
-            if (layer->setFrameRate(
-                        Layer::FrameRate(Fps::fromValue(frameRate),
-                                         Layer::FrameRate::convertCompatibility(compatibility),
-                                         strategy))) {
-                setTransactionFlags(eTraversalNeeded);
-            }
-        } else {
-            ALOGE("Attempt to set frame rate on an unrecognized IGraphicBufferProducer");
-            return BAD_VALUE;
-        }
-        return NO_ERROR;
-    }));
-
-    return NO_ERROR;
 }
 
 status_t SurfaceFlinger::setOverrideFrameRate(uid_t uid, float frameRate) {
@@ -8924,24 +8858,6 @@ status_t SurfaceFlinger::setOverrideFrameRate(uid_t uid, float frameRate) {
 
     mScheduler->setGameModeRefreshRateForUid(FrameRateOverride{static_cast<uid_t>(uid), frameRate});
     mScheduler->onFrameRateOverridesChanged(mAppConnectionHandle, displayId);
-    return NO_ERROR;
-}
-
-status_t SurfaceFlinger::setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
-                                              const FrameTimelineInfo& frameTimelineInfo) {
-    Mutex::Autolock lock(mStateLock);
-    if (!authenticateSurfaceTextureLocked(surface)) {
-        ALOGE("Attempt to set frame timeline info on an unrecognized IGraphicBufferProducer");
-        return BAD_VALUE;
-    }
-
-    sp<Layer> layer = (static_cast<MonitoredProducer*>(surface.get()))->getLayer();
-    if (layer == nullptr) {
-        ALOGE("Attempt to set frame timeline info on a layer that no longer exists");
-        return BAD_VALUE;
-    }
-
-    layer->setFrameTimelineInfoForBuffer(frameTimelineInfo);
     return NO_ERROR;
 }
 
@@ -8964,7 +8880,7 @@ status_t SurfaceFlinger::addTransactionTraceListener(
     return NO_ERROR;
 }
 
-int SurfaceFlinger::getGPUContextPriority() {
+int SurfaceFlinger::getGpuContextPriority() {
     return getRenderEngine().getContextPriority();
 }
 
@@ -9573,24 +9489,58 @@ bool SurfaceFlinger::commitCreatedLayers() {
 
 // gui::ISurfaceComposer
 
+binder::Status SurfaceComposerAIDL::bootFinished() {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+    mFlinger->bootFinished();
+    return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::createDisplayEventConnection(
+        VsyncSource vsyncSource, EventRegistration eventRegistration,
+        sp<IDisplayEventConnection>* outConnection) {
+    sp<IDisplayEventConnection> conn =
+            mFlinger->createDisplayEventConnection(vsyncSource, eventRegistration);
+    if (conn == nullptr) {
+        *outConnection = nullptr;
+        return binderStatusFromStatusT(BAD_VALUE);
+    } else {
+        *outConnection = conn;
+        return binder::Status::ok();
+    }
+}
+
+binder::Status SurfaceComposerAIDL::createConnection(sp<gui::ISurfaceComposerClient>* outClient) {
+    const sp<Client> client = new Client(mFlinger);
+    if (client->initCheck() == NO_ERROR) {
+        *outClient = client;
+        return binder::Status::ok();
+    } else {
+        *outClient = nullptr;
+        return binderStatusFromStatusT(BAD_VALUE);
+    }
+}
+
 binder::Status SurfaceComposerAIDL::createDisplay(const std::string& displayName, bool secure,
                                                   sp<IBinder>* outDisplay) {
     status_t status = checkAccessPermission();
-    if (status == OK) {
-        String8 displayName8 = String8::format("%s", displayName.c_str());
-        *outDisplay = mFlinger->createDisplay(displayName8, secure);
-        return binder::Status::ok();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
     }
-    return binder::Status::fromStatusT(status);
+    String8 displayName8 = String8::format("%s", displayName.c_str());
+    *outDisplay = mFlinger->createDisplay(displayName8, secure);
+    return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::destroyDisplay(const sp<IBinder>& display) {
     status_t status = checkAccessPermission();
-    if (status == OK) {
-        mFlinger->destroyDisplay(display);
-        return binder::Status::ok();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
     }
-    return binder::Status::fromStatusT(status);
+    mFlinger->destroyDisplay(display);
+    return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) {
@@ -9607,7 +9557,7 @@ binder::Status SurfaceComposerAIDL::getPhysicalDisplayIds(std::vector<int64_t>* 
 binder::Status SurfaceComposerAIDL::getPrimaryPhysicalDisplayId(int64_t* outDisplayId) {
     status_t status = checkAccessPermission();
     if (status != OK) {
-        return binder::Status::fromStatusT(status);
+        return binderStatusFromStatusT(status);
     }
 
     PhysicalDisplayId id;
@@ -9615,7 +9565,7 @@ binder::Status SurfaceComposerAIDL::getPrimaryPhysicalDisplayId(int64_t* outDisp
     if (status == NO_ERROR) {
         *outDisplayId = id.value;
     }
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getPhysicalDisplayToken(int64_t displayId,
@@ -9627,10 +9577,23 @@ binder::Status SurfaceComposerAIDL::getPhysicalDisplayToken(int64_t displayId,
 
 binder::Status SurfaceComposerAIDL::setPowerMode(const sp<IBinder>& display, int mode) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->setPowerMode(display, mode);
     return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::getSupportedFrameTimestamps(
+        std::vector<FrameEvent>* outSupported) {
+    status_t status;
+    if (!outSupported) {
+        status = UNEXPECTED_NULL;
+    } else {
+        outSupported->clear();
+        status = mFlinger->getSupportedFrameTimestamps(outSupported);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getDisplayStats(const sp<IBinder>& display,
@@ -9641,7 +9604,7 @@ binder::Status SurfaceComposerAIDL::getDisplayStats(const sp<IBinder>& display,
         outStatInfo->vsyncTime = static_cast<long>(statInfo.vsyncTime);
         outStatInfo->vsyncPeriod = static_cast<long>(statInfo.vsyncPeriod);
     }
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getDisplayState(const sp<IBinder>& display,
@@ -9654,37 +9617,173 @@ binder::Status SurfaceComposerAIDL::getDisplayState(const sp<IBinder>& display,
         outState->layerStackSpaceRect.width = state.layerStackSpaceRect.width;
         outState->layerStackSpaceRect.height = state.layerStackSpaceRect.height;
     }
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getStaticDisplayInfo(const sp<IBinder>& display,
+                                                         gui::StaticDisplayInfo* outInfo) {
+    using Tag = gui::DeviceProductInfo::ManufactureOrModelDate::Tag;
+    ui::StaticDisplayInfo info;
+    status_t status = mFlinger->getStaticDisplayInfo(display, &info);
+    if (status == NO_ERROR) {
+        // convert ui::StaticDisplayInfo to gui::StaticDisplayInfo
+        outInfo->connectionType = static_cast<gui::DisplayConnectionType>(info.connectionType);
+        outInfo->density = info.density;
+        outInfo->secure = info.secure;
+        outInfo->installOrientation = static_cast<gui::Rotation>(info.installOrientation);
+
+        gui::DeviceProductInfo dinfo;
+        std::optional<DeviceProductInfo> dpi = info.deviceProductInfo;
+        dinfo.name = std::move(dpi->name);
+        dinfo.manufacturerPnpId =
+                std::vector<uint8_t>(dpi->manufacturerPnpId.begin(), dpi->manufacturerPnpId.end());
+        dinfo.productId = dpi->productId;
+        if (const auto* model =
+                    std::get_if<DeviceProductInfo::ModelYear>(&dpi->manufactureOrModelDate)) {
+            gui::DeviceProductInfo::ModelYear modelYear;
+            modelYear.year = model->year;
+            dinfo.manufactureOrModelDate.set<Tag::modelYear>(modelYear);
+        } else if (const auto* manufacture = std::get_if<DeviceProductInfo::ManufactureYear>(
+                           &dpi->manufactureOrModelDate)) {
+            gui::DeviceProductInfo::ManufactureYear date;
+            date.modelYear.year = manufacture->year;
+            dinfo.manufactureOrModelDate.set<Tag::manufactureYear>(date);
+        } else if (const auto* manufacture = std::get_if<DeviceProductInfo::ManufactureWeekAndYear>(
+                           &dpi->manufactureOrModelDate)) {
+            gui::DeviceProductInfo::ManufactureWeekAndYear date;
+            date.manufactureYear.modelYear.year = manufacture->year;
+            date.week = manufacture->week;
+            dinfo.manufactureOrModelDate.set<Tag::manufactureWeekAndYear>(date);
+        }
+
+        outInfo->deviceProductInfo = dinfo;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDynamicDisplayInfo(const sp<IBinder>& display,
+                                                          gui::DynamicDisplayInfo* outInfo) {
+    ui::DynamicDisplayInfo info;
+    status_t status = mFlinger->getDynamicDisplayInfo(display, &info);
+    if (status == NO_ERROR) {
+        // convert ui::DynamicDisplayInfo to gui::DynamicDisplayInfo
+        outInfo->supportedDisplayModes.clear();
+        outInfo->supportedDisplayModes.reserve(info.supportedDisplayModes.size());
+        for (const auto& mode : info.supportedDisplayModes) {
+            gui::DisplayMode outMode;
+            outMode.id = mode.id;
+            outMode.resolution.width = mode.resolution.width;
+            outMode.resolution.height = mode.resolution.height;
+            outMode.xDpi = mode.xDpi;
+            outMode.yDpi = mode.yDpi;
+            outMode.refreshRate = mode.refreshRate;
+            outMode.appVsyncOffset = mode.appVsyncOffset;
+            outMode.sfVsyncOffset = mode.sfVsyncOffset;
+            outMode.presentationDeadline = mode.presentationDeadline;
+            outMode.group = mode.group;
+            outInfo->supportedDisplayModes.push_back(outMode);
+        }
+
+        outInfo->activeDisplayModeId = info.activeDisplayModeId;
+
+        outInfo->supportedColorModes.clear();
+        outInfo->supportedColorModes.reserve(info.supportedColorModes.size());
+        for (const auto& cmode : info.supportedColorModes) {
+            outInfo->supportedColorModes.push_back(static_cast<int32_t>(cmode));
+        }
+
+        outInfo->activeColorMode = static_cast<int32_t>(info.activeColorMode);
+
+        gui::HdrCapabilities& hdrCapabilities = outInfo->hdrCapabilities;
+        hdrCapabilities.supportedHdrTypes.clear();
+        hdrCapabilities.supportedHdrTypes.reserve(
+                info.hdrCapabilities.getSupportedHdrTypes().size());
+        for (const auto& hdr : info.hdrCapabilities.getSupportedHdrTypes()) {
+            hdrCapabilities.supportedHdrTypes.push_back(static_cast<int32_t>(hdr));
+        }
+        hdrCapabilities.maxLuminance = info.hdrCapabilities.getDesiredMaxLuminance();
+        hdrCapabilities.maxAverageLuminance = info.hdrCapabilities.getDesiredMaxAverageLuminance();
+        hdrCapabilities.minLuminance = info.hdrCapabilities.getDesiredMinLuminance();
+
+        outInfo->autoLowLatencyModeSupported = info.autoLowLatencyModeSupported;
+        outInfo->gameContentTypeSupported = info.gameContentTypeSupported;
+        outInfo->preferredBootDisplayMode = info.preferredBootDisplayMode;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDisplayNativePrimaries(const sp<IBinder>& display,
+                                                              gui::DisplayPrimaries* outPrimaries) {
+    ui::DisplayPrimaries primaries;
+    status_t status = mFlinger->getDisplayNativePrimaries(display, primaries);
+    if (status == NO_ERROR) {
+        outPrimaries->red.X = primaries.red.X;
+        outPrimaries->red.Y = primaries.red.Y;
+        outPrimaries->red.Z = primaries.red.Z;
+
+        outPrimaries->green.X = primaries.green.X;
+        outPrimaries->green.Y = primaries.green.Y;
+        outPrimaries->green.Z = primaries.green.Z;
+
+        outPrimaries->blue.X = primaries.blue.X;
+        outPrimaries->blue.Y = primaries.blue.Y;
+        outPrimaries->blue.Z = primaries.blue.Z;
+
+        outPrimaries->white.X = primaries.white.X;
+        outPrimaries->white.Y = primaries.white.Y;
+        outPrimaries->white.Z = primaries.white.Z;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setActiveColorMode(const sp<IBinder>& display, int colorMode) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->setActiveColorMode(display, static_cast<ui::ColorMode>(colorMode));
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setBootDisplayMode(const sp<IBinder>& display,
+                                                       int displayModeId) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->setBootDisplayMode(display,
+                                              static_cast<ui::DisplayModeId>(displayModeId));
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::clearBootDisplayMode(const sp<IBinder>& display) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
-    status = mFlinger->clearBootDisplayMode(display);
-    return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->clearBootDisplayMode(display);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getBootDisplayModeSupport(bool* outMode) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
-    status = mFlinger->getBootDisplayModeSupport(outMode);
-    return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->getBootDisplayModeSupport(outMode);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::setAutoLowLatencyMode(const sp<IBinder>& display, bool on) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->setAutoLowLatencyMode(display, on);
     return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::setGameContentType(const sp<IBinder>& display, bool on) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->setGameContentType(display, on);
     return binder::Status::ok();
 }
@@ -9692,7 +9791,7 @@ binder::Status SurfaceComposerAIDL::setGameContentType(const sp<IBinder>& displa
 binder::Status SurfaceComposerAIDL::captureDisplay(
         const DisplayCaptureArgs& args, const sp<IScreenCaptureListener>& captureListener) {
     status_t status = mFlinger->captureDisplay(args, captureListener);
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::captureDisplayById(
@@ -9706,60 +9805,471 @@ binder::Status SurfaceComposerAIDL::captureDisplayById(
     } else {
         status = PERMISSION_DENIED;
     }
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::captureLayers(
         const LayerCaptureArgs& args, const sp<IScreenCaptureListener>& captureListener) {
     status_t status = mFlinger->captureLayers(args, captureListener);
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::clearAnimationFrameStats() {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->clearAnimationFrameStats();
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getAnimationFrameStats(gui::FrameStats* outStats) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    FrameStats stats;
+    status = mFlinger->getAnimationFrameStats(&stats);
+    if (status == NO_ERROR) {
+        outStats->refreshPeriodNano = stats.refreshPeriodNano;
+        outStats->desiredPresentTimesNano.reserve(stats.desiredPresentTimesNano.size());
+        for (const auto& t : stats.desiredPresentTimesNano) {
+            outStats->desiredPresentTimesNano.push_back(t);
+        }
+        outStats->actualPresentTimesNano.reserve(stats.actualPresentTimesNano.size());
+        for (const auto& t : stats.actualPresentTimesNano) {
+            outStats->actualPresentTimesNano.push_back(t);
+        }
+        outStats->frameReadyTimesNano.reserve(stats.frameReadyTimesNano.size());
+        for (const auto& t : stats.frameReadyTimesNano) {
+            outStats->frameReadyTimesNano.push_back(t);
+        }
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::overrideHdrTypes(const sp<IBinder>& display,
+                                                     const std::vector<int32_t>& hdrTypes) {
+    // overrideHdrTypes is used by CTS tests, which acquire the necessary
+    // permission dynamically. Don't use the permission cache for this check.
+    status_t status = checkAccessPermission(false);
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    std::vector<ui::Hdr> hdrTypesVector;
+    for (int32_t i : hdrTypes) {
+        hdrTypesVector.push_back(static_cast<ui::Hdr>(i));
+    }
+    status = mFlinger->overrideHdrTypes(display, hdrTypesVector);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::onPullAtom(int32_t atomId, gui::PullAtomData* outPullData) {
+    status_t status;
+    const int uid = IPCThreadState::self()->getCallingUid();
+    if (uid != AID_SYSTEM) {
+        status = PERMISSION_DENIED;
+    } else {
+        status = mFlinger->onPullAtom(atomId, &outPullData->data, &outPullData->success);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::enableVSyncInjections(bool enable) {
+    if (!mFlinger->hasMockHwc()) {
+        return binderStatusFromStatusT(PERMISSION_DENIED);
+    }
+
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->enableVSyncInjections(enable);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::injectVSync(int64_t when) {
+    if (!mFlinger->hasMockHwc()) {
+        return binderStatusFromStatusT(PERMISSION_DENIED);
+    }
+
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->injectVSync(when);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) {
+    if (!outLayers) {
+        return binderStatusFromStatusT(UNEXPECTED_NULL);
+    }
+
+    IPCThreadState* ipc = IPCThreadState::self();
+    const int pid = ipc->getCallingPid();
+    const int uid = ipc->getCallingUid();
+    if ((uid != AID_SHELL) && !PermissionCache::checkPermission(sDump, pid, uid)) {
+        ALOGE("Layer debug info permission denied for pid=%d, uid=%d", pid, uid);
+        return binderStatusFromStatusT(PERMISSION_DENIED);
+    }
+    status_t status = mFlinger->getLayerDebugInfo(outLayers);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getColorManagement(bool* outGetColorManagement) {
+    status_t status = mFlinger->getColorManagement(outGetColorManagement);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getCompositionPreference(gui::CompositionPreference* outPref) {
+    ui::Dataspace dataspace;
+    ui::PixelFormat pixelFormat;
+    ui::Dataspace wideColorGamutDataspace;
+    ui::PixelFormat wideColorGamutPixelFormat;
+    status_t status =
+            mFlinger->getCompositionPreference(&dataspace, &pixelFormat, &wideColorGamutDataspace,
+                                               &wideColorGamutPixelFormat);
+    if (status == NO_ERROR) {
+        outPref->defaultDataspace = static_cast<int32_t>(dataspace);
+        outPref->defaultPixelFormat = static_cast<int32_t>(pixelFormat);
+        outPref->wideColorGamutDataspace = static_cast<int32_t>(wideColorGamutDataspace);
+        outPref->wideColorGamutPixelFormat = static_cast<int32_t>(wideColorGamutPixelFormat);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDisplayedContentSamplingAttributes(
+        const sp<IBinder>& display, gui::ContentSamplingAttributes* outAttrs) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    ui::PixelFormat format;
+    ui::Dataspace dataspace;
+    uint8_t componentMask;
+    status = mFlinger->getDisplayedContentSamplingAttributes(display, &format, &dataspace,
+                                                             &componentMask);
+    if (status == NO_ERROR) {
+        outAttrs->format = static_cast<int32_t>(format);
+        outAttrs->dataspace = static_cast<int32_t>(dataspace);
+        outAttrs->componentMask = static_cast<int8_t>(componentMask);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setDisplayContentSamplingEnabled(const sp<IBinder>& display,
+                                                                     bool enable,
+                                                                     int8_t componentMask,
+                                                                     int64_t maxFrames) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->setDisplayContentSamplingEnabled(display, enable,
+                                                            static_cast<uint8_t>(componentMask),
+                                                            static_cast<uint64_t>(maxFrames));
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDisplayedContentSample(const sp<IBinder>& display,
+                                                              int64_t maxFrames, int64_t timestamp,
+                                                              gui::DisplayedFrameStats* outStats) {
+    if (!outStats) {
+        return binderStatusFromStatusT(BAD_VALUE);
+    }
+
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    DisplayedFrameStats stats;
+    status = mFlinger->getDisplayedContentSample(display, static_cast<uint64_t>(maxFrames),
+                                                 static_cast<uint64_t>(timestamp), &stats);
+    if (status == NO_ERROR) {
+        // convert from ui::DisplayedFrameStats to gui::DisplayedFrameStats
+        outStats->numFrames = static_cast<int64_t>(stats.numFrames);
+        outStats->component_0_sample.reserve(stats.component_0_sample.size());
+        for (const auto& s : stats.component_0_sample) {
+            outStats->component_0_sample.push_back(static_cast<int64_t>(s));
+        }
+        outStats->component_1_sample.reserve(stats.component_1_sample.size());
+        for (const auto& s : stats.component_1_sample) {
+            outStats->component_1_sample.push_back(static_cast<int64_t>(s));
+        }
+        outStats->component_2_sample.reserve(stats.component_2_sample.size());
+        for (const auto& s : stats.component_2_sample) {
+            outStats->component_2_sample.push_back(static_cast<int64_t>(s));
+        }
+        outStats->component_3_sample.reserve(stats.component_3_sample.size());
+        for (const auto& s : stats.component_3_sample) {
+            outStats->component_3_sample.push_back(static_cast<int64_t>(s));
+        }
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getProtectedContentSupport(bool* outSupported) {
+    status_t status = mFlinger->getProtectedContentSupport(outSupported);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::isWideColorDisplay(const sp<IBinder>& token,
                                                        bool* outIsWideColorDisplay) {
     status_t status = mFlinger->isWideColorDisplay(token, outIsWideColorDisplay);
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::isDeviceRCSupported(const sp<IBinder>& token,
+                                                        bool* outIsDeviceRCSupported) {
+    status_t status = mFlinger->isDeviceRCSupported(token, outIsDeviceRCSupported);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::addRegionSamplingListener(
+        const gui::ARect& samplingArea, const sp<IBinder>& stopLayerHandle,
+        const sp<gui::IRegionSamplingListener>& listener) {
+    status_t status = checkReadFrameBufferPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+    android::Rect rect;
+    rect.left = samplingArea.left;
+    rect.top = samplingArea.top;
+    rect.right = samplingArea.right;
+    rect.bottom = samplingArea.bottom;
+    status = mFlinger->addRegionSamplingListener(rect, stopLayerHandle, listener);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::removeRegionSamplingListener(
+        const sp<gui::IRegionSamplingListener>& listener) {
+    status_t status = checkReadFrameBufferPermission();
+    if (status == OK) {
+        status = mFlinger->removeRegionSamplingListener(listener);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::addFpsListener(int32_t taskId,
+                                                   const sp<gui::IFpsListener>& listener) {
+    status_t status = checkReadFrameBufferPermission();
+    if (status == OK) {
+        status = mFlinger->addFpsListener(taskId, listener);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::removeFpsListener(const sp<gui::IFpsListener>& listener) {
+    status_t status = checkReadFrameBufferPermission();
+    if (status == OK) {
+        status = mFlinger->removeFpsListener(listener);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::addTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->addTunnelModeEnabledListener(listener);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::removeTunnelModeEnabledListener(
+        const sp<gui::ITunnelModeEnabledListener>& listener) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->removeTunnelModeEnabledListener(listener);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setDesiredDisplayModeSpecs(
+        const sp<IBinder>& displayToken, int32_t defaultMode, bool allowGroupSwitching,
+        float primaryRefreshRateMin, float primaryRefreshRateMax, float appRequestRefreshRateMin,
+        float appRequestRefreshRateMax) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->setDesiredDisplayModeSpecs(displayToken,
+                                                      static_cast<ui::DisplayModeId>(defaultMode),
+                                                      allowGroupSwitching, primaryRefreshRateMin,
+                                                      primaryRefreshRateMax,
+                                                      appRequestRefreshRateMin,
+                                                      appRequestRefreshRateMax);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                                               gui::DisplayModeSpecs* outSpecs) {
+    if (!outSpecs) {
+        return binderStatusFromStatusT(BAD_VALUE);
+    }
+
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    ui::DisplayModeId displayModeId;
+    bool allowGroupSwitching;
+    float primaryRefreshRateMin;
+    float primaryRefreshRateMax;
+    float appRequestRefreshRateMin;
+    float appRequestRefreshRateMax;
+    status = mFlinger->getDesiredDisplayModeSpecs(displayToken, &displayModeId,
+                                                  &allowGroupSwitching, &primaryRefreshRateMin,
+                                                  &primaryRefreshRateMax, &appRequestRefreshRateMin,
+                                                  &appRequestRefreshRateMax);
+    if (status == NO_ERROR) {
+        outSpecs->defaultMode = displayModeId;
+        outSpecs->allowGroupSwitching = allowGroupSwitching;
+        outSpecs->primaryRefreshRateMin = primaryRefreshRateMin;
+        outSpecs->primaryRefreshRateMax = primaryRefreshRateMax;
+        outSpecs->appRequestRefreshRateMin = appRequestRefreshRateMin;
+        outSpecs->appRequestRefreshRateMax = appRequestRefreshRateMax;
+    }
+
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getDisplayBrightnessSupport(const sp<IBinder>& displayToken,
                                                                 bool* outSupport) {
     status_t status = mFlinger->getDisplayBrightnessSupport(displayToken, outSupport);
-    return binder::Status::fromStatusT(status);
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::setDisplayBrightness(const sp<IBinder>& displayToken,
                                                          const gui::DisplayBrightness& brightness) {
     status_t status = checkControlDisplayBrightnessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
-    status = mFlinger->setDisplayBrightness(displayToken, brightness);
-    return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->setDisplayBrightness(displayToken, brightness);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::addHdrLayerInfoListener(
         const sp<IBinder>& displayToken, const sp<gui::IHdrLayerInfoListener>& listener) {
     status_t status = checkControlDisplayBrightnessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
-    status = mFlinger->addHdrLayerInfoListener(displayToken, listener);
-    return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->addHdrLayerInfoListener(displayToken, listener);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::removeHdrLayerInfoListener(
         const sp<IBinder>& displayToken, const sp<gui::IHdrLayerInfoListener>& listener) {
     status_t status = checkControlDisplayBrightnessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
-
-    status = mFlinger->removeHdrLayerInfoListener(displayToken, listener);
-    return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->removeHdrLayerInfoListener(displayToken, listener);
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::notifyPowerBoost(int boostId) {
     status_t status = checkAccessPermission();
-    if (status != OK) return binder::Status::fromStatusT(status);
+    if (status == OK) {
+        status = mFlinger->notifyPowerBoost(boostId);
+    }
+    return binderStatusFromStatusT(status);
+}
 
-    status = mFlinger->notifyPowerBoost(boostId);
-    return binder::Status::fromStatusT(status);
+binder::Status SurfaceComposerAIDL::setGlobalShadowSettings(const gui::Color& ambientColor,
+                                                            const gui::Color& spotColor,
+                                                            float lightPosY, float lightPosZ,
+                                                            float lightRadius) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
+
+    half4 ambientColorHalf = {ambientColor.r, ambientColor.g, ambientColor.b, ambientColor.a};
+    half4 spotColorHalf = {spotColor.r, spotColor.g, spotColor.b, spotColor.a};
+    status = mFlinger->setGlobalShadowSettings(ambientColorHalf, spotColorHalf, lightPosY,
+                                               lightPosZ, lightRadius);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getDisplayDecorationSupport(
+        const sp<IBinder>& displayToken, std::optional<gui::DisplayDecorationSupport>* outSupport) {
+    std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport> support;
+    status_t status = mFlinger->getDisplayDecorationSupport(displayToken, &support);
+    if (status != NO_ERROR) {
+        ALOGE("getDisplayDecorationSupport failed with error %d", status);
+        return binderStatusFromStatusT(status);
+    }
+
+    if (!support || !support.has_value()) {
+        outSupport->reset();
+    } else {
+        outSupport->emplace();
+        outSupport->value().format = static_cast<int32_t>(support->format);
+        outSupport->value().alphaInterpretation =
+                static_cast<int32_t>(support->alphaInterpretation);
+    }
+
+    return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::setOverrideFrameRate(int32_t uid, float frameRate) {
+    status_t status;
+    const int c_uid = IPCThreadState::self()->getCallingUid();
+    if (c_uid == AID_ROOT || c_uid == AID_SYSTEM) {
+        status = mFlinger->setOverrideFrameRate(uid, frameRate);
+    } else {
+        ALOGE("setOverrideFrameRate() permission denied for uid: %d", c_uid);
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::addTransactionTraceListener(
+        const sp<gui::ITransactionTraceListener>& listener) {
+    status_t status;
+    IPCThreadState* ipc = IPCThreadState::self();
+    const int uid = ipc->getCallingUid();
+    if (uid == AID_ROOT || uid == AID_GRAPHICS || uid == AID_SYSTEM || uid == AID_SHELL) {
+        status = mFlinger->addTransactionTraceListener(listener);
+    } else {
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getGpuContextPriority(int32_t* outPriority) {
+    *outPriority = mFlinger->getGpuContextPriority();
+    return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::getMaxAcquiredBufferCount(int32_t* buffers) {
+    status_t status = mFlinger->getMaxAcquiredBufferCount(buffers);
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::addWindowInfosListener(
+        const sp<gui::IWindowInfosListener>& windowInfosListener) {
+    status_t status;
+    const int uid = IPCThreadState::self()->getCallingUid();
+    if (uid == AID_SYSTEM || uid == AID_GRAPHICS) {
+        status = mFlinger->addWindowInfosListener(windowInfosListener);
+    } else {
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::removeWindowInfosListener(
+        const sp<gui::IWindowInfosListener>& windowInfosListener) {
+    status_t status;
+    const int uid = IPCThreadState::self()->getCallingUid();
+    if (uid == AID_SYSTEM || uid == AID_GRAPHICS) {
+        status = mFlinger->removeWindowInfosListener(windowInfosListener);
+    } else {
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
 }
 
 status_t SurfaceComposerAIDL::checkAccessPermission(bool usePermissionCache) {
@@ -9782,6 +10292,17 @@ status_t SurfaceComposerAIDL::checkControlDisplayBrightnessPermission() {
     //     ALOGE("Permission Denial: can't control brightness pid=%d, uid=%d", pid, uid);
     //     return PERMISSION_DENIED;
     // }
+    return OK;
+}
+
+status_t SurfaceComposerAIDL::checkReadFrameBufferPermission() {
+    IPCThreadState* ipc = IPCThreadState::self();
+    const int pid = ipc->getCallingPid();
+    const int uid = ipc->getCallingUid();
+    if ((uid != AID_GRAPHICS) && !PermissionCache::checkPermission(sReadFramebuffer, pid, uid)) {
+        ALOGE("Permission Denial: can't read framebuffer pid=%d, uid=%d", pid, uid);
+        return PERMISSION_DENIED;
+    }
     return OK;
 }
 

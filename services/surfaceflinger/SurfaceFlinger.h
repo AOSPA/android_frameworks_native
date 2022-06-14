@@ -25,14 +25,15 @@
 #include <android/gui/BnSurfaceComposer.h>
 #include <android/gui/DisplayStatInfo.h>
 #include <android/gui/DisplayState.h>
+#include <android/gui/ISurfaceComposerClient.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
 #include <ftl/small_map.h>
 #include <gui/BufferQueue.h>
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
-#include <gui/ISurfaceComposerClient.h>
 #include <gui/ITransactionCompletedListener.h>
+#include <gui/LayerDebugInfo.h>
 #include <gui/LayerState.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/mat4.h>
@@ -378,9 +379,6 @@ public:
     void setVsyncEnabledInternal(bool enabled);
     renderengine::RenderEngine& getRenderEngine() const;
 
-    bool authenticateSurfaceTextureLocked(
-        const sp<IGraphicBufferProducer>& bufferProducer) const;
-
     void onLayerFirstRef(Layer*);
     void onLayerDestroyed(Layer*);
     void onLayerUpdate();
@@ -609,6 +607,8 @@ private:
     // Maximum allowed number of display frames that can be set through backdoor
     static const int MAX_ALLOWED_DISPLAY_FRAMES = 2048;
 
+    static const size_t MAX_LAYERS = 4096;
+
     // Implements IBinder.
     status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
     status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
@@ -623,7 +623,6 @@ private:
     }
 
     // Implements ISurfaceComposer
-    sp<ISurfaceComposerClient> createConnection() override;
     sp<IBinder> createDisplay(const String8& displayName, bool secure);
     void destroyDisplay(const sp<IBinder>& displayToken);
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const EXCLUDES(mStateLock) {
@@ -642,13 +641,12 @@ private:
                                  const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
                                  const std::vector<ListenerCallbacks>& listenerCallbacks,
                                  uint64_t transactionId) override;
-    void bootFinished() override;
-    bool authenticateSurfaceTexture(
-            const sp<IGraphicBufferProducer>& bufferProducer) const override;
-    status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const override;
+    void bootFinished();
+    virtual status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
     sp<IDisplayEventConnection> createDisplayEventConnection(
-            ISurfaceComposer::VsyncSource vsyncSource = eVsyncSourceApp,
-            ISurfaceComposer::EventRegistrationFlags eventRegistration = {}) override;
+            gui::ISurfaceComposer::VsyncSource vsyncSource =
+                    gui::ISurfaceComposer::VsyncSource::eVsyncSourceApp,
+            EventRegistrationFlags eventRegistration = {});
 
     status_t captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
     status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
@@ -658,64 +656,60 @@ private:
     status_t getDisplayState(const sp<IBinder>& displayToken, ui::DisplayState*)
             EXCLUDES(mStateLock);
     status_t getStaticDisplayInfo(const sp<IBinder>& displayToken, ui::StaticDisplayInfo*)
-            EXCLUDES(mStateLock) override;
+            EXCLUDES(mStateLock);
     status_t getDynamicDisplayInfo(const sp<IBinder>& displayToken, ui::DynamicDisplayInfo*)
-            EXCLUDES(mStateLock) override;
-    status_t getDisplayNativePrimaries(const sp<IBinder>& displayToken,
-                                       ui::DisplayPrimaries&) override;
-    status_t setActiveColorMode(const sp<IBinder>& displayToken, ui::ColorMode colorMode) override;
+            EXCLUDES(mStateLock);
+    status_t getDisplayNativePrimaries(const sp<IBinder>& displayToken, ui::DisplayPrimaries&);
+    status_t setActiveColorMode(const sp<IBinder>& displayToken, ui::ColorMode colorMode);
     status_t getBootDisplayModeSupport(bool* outSupport) const;
-    status_t setBootDisplayMode(const sp<IBinder>& displayToken, ui::DisplayModeId id) override;
+    status_t setBootDisplayMode(const sp<IBinder>& displayToken, ui::DisplayModeId id);
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken);
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
     void setPowerMode(const sp<IBinder>& displayToken, int mode);
-    status_t clearAnimationFrameStats() override;
-    status_t getAnimationFrameStats(FrameStats* outStats) const override;
+    status_t clearAnimationFrameStats();
+    status_t getAnimationFrameStats(FrameStats* outStats) const;
     status_t overrideHdrTypes(const sp<IBinder>& displayToken,
-                              const std::vector<ui::Hdr>& hdrTypes) override;
-    status_t onPullAtom(const int32_t atomId, std::string* pulledData, bool* success) override;
-    status_t enableVSyncInjections(bool enable) override;
-    status_t injectVSync(nsecs_t when) override;
-    status_t getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) override;
-    status_t getColorManagement(bool* outGetColorManagement) const override;
+                              const std::vector<ui::Hdr>& hdrTypes);
+    status_t onPullAtom(const int32_t atomId, std::string* pulledData, bool* success);
+    status_t enableVSyncInjections(bool enable);
+    status_t injectVSync(nsecs_t when);
+    status_t getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers);
+    status_t getColorManagement(bool* outGetColorManagement) const;
     status_t getCompositionPreference(ui::Dataspace* outDataspace, ui::PixelFormat* outPixelFormat,
                                       ui::Dataspace* outWideColorGamutDataspace,
-                                      ui::PixelFormat* outWideColorGamutPixelFormat) const override;
+                                      ui::PixelFormat* outWideColorGamutPixelFormat) const;
     status_t getDisplayedContentSamplingAttributes(const sp<IBinder>& displayToken,
                                                    ui::PixelFormat* outFormat,
                                                    ui::Dataspace* outDataspace,
-                                                   uint8_t* outComponentMask) const override;
+                                                   uint8_t* outComponentMask) const;
     status_t setDisplayContentSamplingEnabled(const sp<IBinder>& displayToken, bool enable,
-                                              uint8_t componentMask, uint64_t maxFrames) override;
+                                              uint8_t componentMask, uint64_t maxFrames);
     status_t getDisplayedContentSample(const sp<IBinder>& displayToken, uint64_t maxFrames,
-                                       uint64_t timestamp,
-                                       DisplayedFrameStats* outStats) const override;
-    status_t getProtectedContentSupport(bool* outSupported) const override;
+                                       uint64_t timestamp, DisplayedFrameStats* outStats) const;
+    status_t getProtectedContentSupport(bool* outSupported) const;
     status_t isWideColorDisplay(const sp<IBinder>& displayToken, bool* outIsWideColorDisplay) const;
     status_t isDeviceRCSupported(const sp<IBinder>& displayToken,
-                                 bool* outDeviceRCSupported) const override;
+                                 bool* outDeviceRCSupported) const;
     status_t addRegionSamplingListener(const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
-                                       const sp<IRegionSamplingListener>& listener) override;
-    status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener) override;
-    status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener) override;
-    status_t removeFpsListener(const sp<gui::IFpsListener>& listener) override;
-    status_t addTunnelModeEnabledListener(
-            const sp<gui::ITunnelModeEnabledListener>& listener) override;
-    status_t removeTunnelModeEnabledListener(
-            const sp<gui::ITunnelModeEnabledListener>& listener) override;
+                                       const sp<IRegionSamplingListener>& listener);
+    status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener);
+    status_t addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener);
+    status_t removeFpsListener(const sp<gui::IFpsListener>& listener);
+    status_t addTunnelModeEnabledListener(const sp<gui::ITunnelModeEnabledListener>& listener);
+    status_t removeTunnelModeEnabledListener(const sp<gui::ITunnelModeEnabledListener>& listener);
     status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
                                         ui::DisplayModeId displayModeId, bool allowGroupSwitching,
                                         float primaryRefreshRateMin, float primaryRefreshRateMax,
                                         float appRequestRefreshRateMin,
-                                        float appRequestRefreshRateMax) override;
+                                        float appRequestRefreshRateMax);
     status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
                                         ui::DisplayModeId* outDefaultMode,
                                         bool* outAllowGroupSwitching,
                                         float* outPrimaryRefreshRateMin,
                                         float* outPrimaryRefreshRateMax,
                                         float* outAppRequestRefreshRateMin,
-                                        float* outAppRequestRefreshRateMax) override;
+                                        float* outAppRequestRefreshRateMax);
     status_t getDisplayBrightnessSupport(const sp<IBinder>& displayToken, bool* outSupport) const;
     status_t setDisplayBrightness(const sp<IBinder>& displayToken,
                                   const gui::DisplayBrightness& brightness);
@@ -725,33 +719,31 @@ private:
                                         const sp<gui::IHdrLayerInfoListener>& listener);
     status_t notifyPowerBoost(int32_t boostId);
     status_t setGlobalShadowSettings(const half4& ambientColor, const half4& spotColor,
-                                     float lightPosY, float lightPosZ, float lightRadius) override;
+                                     float lightPosY, float lightPosZ, float lightRadius);
     status_t getDisplayDecorationSupport(
             const sp<IBinder>& displayToken,
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
-                    outSupport) const override;
+                    outSupport) const;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
-                          int8_t compatibility, int8_t changeFrameRateStrategy) override;
+                          int8_t compatibility, int8_t changeFrameRateStrategy);
     status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
         std::chrono::steady_clock::time_point earliestPresentTime) const;
     status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
 
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
-                                  const FrameTimelineInfo& frameTimelineInfo) override;
+                                  const gui::FrameTimelineInfo& frameTimelineInfo);
 
-    status_t setOverrideFrameRate(uid_t uid, float frameRate) override;
+    status_t setOverrideFrameRate(uid_t uid, float frameRate);
 
-    status_t addTransactionTraceListener(
-            const sp<gui::ITransactionTraceListener>& listener) override;
+    status_t addTransactionTraceListener(const sp<gui::ITransactionTraceListener>& listener);
 
-    int getGPUContextPriority() override;
+    int getGpuContextPriority();
 
-    status_t getMaxAcquiredBufferCount(int* buffers) const override;
+    status_t getMaxAcquiredBufferCount(int* buffers) const;
 
-    status_t addWindowInfosListener(
-            const sp<gui::IWindowInfosListener>& windowInfosListener) const override;
+    status_t addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener) const;
     status_t removeWindowInfosListener(
-            const sp<gui::IWindowInfosListener>& windowInfosListener) const override;
+            const sp<gui::IWindowInfosListener>& windowInfosListener) const;
 
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
@@ -1353,7 +1345,7 @@ private:
     float mGlobalSaturationFactor = 1.0f;
     mat4 mClientColorMatrix;
 
-    size_t mMaxGraphicBufferProducerListSize = ISurfaceComposer::MAX_LAYERS;
+    size_t mMaxGraphicBufferProducerListSize = MAX_LAYERS;
     // If there are more GraphicBufferProducers tracked by SurfaceFlinger than
     // this threshold, then begin logging.
     size_t mGraphicBufferProducerListSizeLogThreshold =
@@ -1678,8 +1670,13 @@ private:
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
 public:
-    SurfaceComposerAIDL(sp<SurfaceFlinger> sf) { mFlinger = sf; }
+    SurfaceComposerAIDL(sp<SurfaceFlinger> sf) : mFlinger(std::move(sf)) {}
 
+    binder::Status bootFinished() override;
+    binder::Status createDisplayEventConnection(
+            VsyncSource vsyncSource, EventRegistration eventRegistration,
+            sp<gui::IDisplayEventConnection>* outConnection) override;
+    binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
     binder::Status createDisplay(const std::string& displayName, bool secure,
                                  sp<IBinder>* outDisplay) override;
     binder::Status destroyDisplay(const sp<IBinder>& display) override;
@@ -1687,10 +1684,19 @@ public:
     binder::Status getPrimaryPhysicalDisplayId(int64_t* outDisplayId) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;
     binder::Status setPowerMode(const sp<IBinder>& display, int mode) override;
+    binder::Status getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) override;
     binder::Status getDisplayStats(const sp<IBinder>& display,
                                    gui::DisplayStatInfo* outStatInfo) override;
     binder::Status getDisplayState(const sp<IBinder>& display,
                                    gui::DisplayState* outState) override;
+    binder::Status getStaticDisplayInfo(const sp<IBinder>& display,
+                                        gui::StaticDisplayInfo* outInfo) override;
+    binder::Status getDynamicDisplayInfo(const sp<IBinder>& display,
+                                         gui::DynamicDisplayInfo* outInfo) override;
+    binder::Status getDisplayNativePrimaries(const sp<IBinder>& display,
+                                             gui::DisplayPrimaries* outPrimaries) override;
+    binder::Status setActiveColorMode(const sp<IBinder>& display, int colorMode) override;
+    binder::Status setBootDisplayMode(const sp<IBinder>& display, int displayModeId) override;
     binder::Status clearBootDisplayMode(const sp<IBinder>& display) override;
     binder::Status getBootDisplayModeSupport(bool* outMode) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
@@ -1700,8 +1706,47 @@ public:
     binder::Status captureDisplayById(int64_t, const sp<IScreenCaptureListener>&) override;
     binder::Status captureLayers(const LayerCaptureArgs&,
                                  const sp<IScreenCaptureListener>&) override;
+    binder::Status clearAnimationFrameStats() override;
+    binder::Status getAnimationFrameStats(gui::FrameStats* outStats) override;
+    binder::Status overrideHdrTypes(const sp<IBinder>& display,
+                                    const std::vector<int32_t>& hdrTypes) override;
+    binder::Status onPullAtom(int32_t atomId, gui::PullAtomData* outPullData) override;
+    binder::Status enableVSyncInjections(bool enable) override;
+    binder::Status injectVSync(int64_t when) override;
+    binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) override;
+    binder::Status getColorManagement(bool* outGetColorManagement) override;
+    binder::Status getCompositionPreference(gui::CompositionPreference* outPref) override;
+    binder::Status getDisplayedContentSamplingAttributes(
+            const sp<IBinder>& display, gui::ContentSamplingAttributes* outAttrs) override;
+    binder::Status setDisplayContentSamplingEnabled(const sp<IBinder>& display, bool enable,
+                                                    int8_t componentMask,
+                                                    int64_t maxFrames) override;
+    binder::Status getDisplayedContentSample(const sp<IBinder>& display, int64_t maxFrames,
+                                             int64_t timestamp,
+                                             gui::DisplayedFrameStats* outStats) override;
+    binder::Status getProtectedContentSupport(bool* outSupporte) override;
     binder::Status isWideColorDisplay(const sp<IBinder>& token,
                                       bool* outIsWideColorDisplay) override;
+    binder::Status isDeviceRCSupported(const sp<IBinder>& token,
+                                       bool* outIsDeviceRCSupported) override;
+    binder::Status addRegionSamplingListener(
+            const gui::ARect& samplingArea, const sp<IBinder>& stopLayerHandle,
+            const sp<gui::IRegionSamplingListener>& listener) override;
+    binder::Status removeRegionSamplingListener(
+            const sp<gui::IRegionSamplingListener>& listener) override;
+    binder::Status addFpsListener(int32_t taskId, const sp<gui::IFpsListener>& listener) override;
+    binder::Status removeFpsListener(const sp<gui::IFpsListener>& listener) override;
+    binder::Status addTunnelModeEnabledListener(
+            const sp<gui::ITunnelModeEnabledListener>& listener) override;
+    binder::Status removeTunnelModeEnabledListener(
+            const sp<gui::ITunnelModeEnabledListener>& listener) override;
+    binder::Status setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, int32_t defaultMode,
+                                              bool allowGroupSwitching, float primaryRefreshRateMin,
+                                              float primaryRefreshRateMax,
+                                              float appRequestRefreshRateMin,
+                                              float appRequestRefreshRateMax) override;
+    binder::Status getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                              gui::DisplayModeSpecs* outSpecs) override;
     binder::Status getDisplayBrightnessSupport(const sp<IBinder>& displayToken,
                                                bool* outSupport) override;
     binder::Status setDisplayBrightness(const sp<IBinder>& displayToken,
@@ -1712,11 +1757,27 @@ public:
             const sp<IBinder>& displayToken,
             const sp<gui::IHdrLayerInfoListener>& listener) override;
     binder::Status notifyPowerBoost(int boostId) override;
+    binder::Status setGlobalShadowSettings(const gui::Color& ambientColor,
+                                           const gui::Color& spotColor, float lightPosY,
+                                           float lightPosZ, float lightRadius) override;
+    binder::Status getDisplayDecorationSupport(
+            const sp<IBinder>& displayToken,
+            std::optional<gui::DisplayDecorationSupport>* outSupport) override;
+    binder::Status setOverrideFrameRate(int32_t uid, float frameRate) override;
+    binder::Status addTransactionTraceListener(
+            const sp<gui::ITransactionTraceListener>& listener) override;
+    binder::Status getGpuContextPriority(int32_t* outPriority) override;
+    binder::Status getMaxAcquiredBufferCount(int32_t* buffers) override;
+    binder::Status addWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& windowInfosListener) override;
+    binder::Status removeWindowInfosListener(
+            const sp<gui::IWindowInfosListener>& windowInfosListener) override;
 
 private:
     static const constexpr bool kUsePermissionCache = true;
     status_t checkAccessPermission(bool usePermissionCache = kUsePermissionCache);
     status_t checkControlDisplayBrightnessPermission();
+    status_t checkReadFrameBufferPermission();
 
 private:
     sp<SurfaceFlinger> mFlinger;

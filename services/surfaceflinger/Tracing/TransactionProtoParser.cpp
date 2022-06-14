@@ -15,6 +15,7 @@
  */
 
 #include <gui/SurfaceComposerClient.h>
+#include <ui/Fence.h>
 #include <ui/Rect.h>
 
 #include "LayerProtoHelper.h"
@@ -458,7 +459,7 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
             layer.parentSurfaceControlForChild =
                     new SurfaceControl(SurfaceComposerClient::getDefault(),
                                        mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
-                                       nullptr, static_cast<int32_t>(layerId));
+                                       static_cast<int32_t>(layerId));
         }
     }
     if (proto.what() & layer_state_t::eRelativeLayerChanged) {
@@ -469,7 +470,7 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
             layer.relativeLayerSurfaceControl =
                     new SurfaceControl(SurfaceComposerClient::getDefault(),
                                        mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
-                                       nullptr, static_cast<int32_t>(layerId));
+                                       static_cast<int32_t>(layerId));
         }
         layer.z = proto.z();
     }

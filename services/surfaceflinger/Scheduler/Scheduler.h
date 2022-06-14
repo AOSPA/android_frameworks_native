@@ -32,6 +32,8 @@
 #include <ui/GraphicTypes.h>
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
+#include <ui/DisplayStatInfo.h>
+
 #include <scheduler/Features.h>
 
 #include "EventThread.h"
@@ -133,7 +135,7 @@ public:
                                       impl::EventThread::InterceptVSyncsCallback);
 
     sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle, bool triggerRefresh,
-                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+            EventRegistrationFlags eventRegistration = {});
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -255,7 +257,7 @@ private:
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);
     sp<EventThreadConnection> createConnectionInternal(EventThread*, bool triggerRefresh,
-                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+            EventRegistrationFlags eventRegistration = {});
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState) EXCLUDES(mRefreshRateConfigsLock);
