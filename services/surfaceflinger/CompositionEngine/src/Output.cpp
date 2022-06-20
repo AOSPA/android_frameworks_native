@@ -796,6 +796,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
     bool includeGeometry = refreshArgs.updatingGeometryThisFrame;
     uint32_t z = 0;
     bool overrideZ = false;
+    uint64_t outputLayerHash = 0;
     for (auto* layer : getOutputLayersOrderedByZ()) {
         if (layer == peekThroughLayer) {
             // No longer needed, although it should not show up again, so
@@ -822,6 +823,10 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
                     constexpr bool isPeekingThrough = true;
                     peekThroughLayer->writeStateToHWC(includeGeometry, false, z++, overrideZ,
                                                       isPeekingThrough);
+                    outputLayerHash ^= android::hashCombine(
+                            reinterpret_cast<uint64_t>(&peekThroughLayer->getLayerFE()),
+                            z, includeGeometry, overrideZ, isPeekingThrough,
+                            peekThroughLayer->requiresClientComposition());
                 }
 
                 previousOverride = overrideInfo.buffer->getBuffer();
@@ -830,6 +835,12 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
         constexpr bool isPeekingThrough = false;
         layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough);
+        if (!skipLayer) {
+            outputLayerHash ^= android::hashCombine(
+                    reinterpret_cast<uint64_t>(&layer->getLayerFE()),
+                    z, includeGeometry, overrideZ, isPeekingThrough,
+                    layer->requiresClientComposition());
+        }
 #ifdef QTI_UNIFIED_DRAW
         if (hasSecureCamera || hasSecureDisplay || needsProtected) {
             layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::DEFAULT);
@@ -838,6 +849,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         }
 #endif
     }
+    editState().outputLayerHash = outputLayerHash;
 }
 
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {
@@ -1305,34 +1317,31 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // probably to encapsulate the output buffer into a structure that dispatches resource cleanup
     // over to RenderEngine, in which case this flag can be removed from the drawLayers interface.
     const bool useFramebufferCache = outputState.layerFilter.toInternalDisplay;
-    auto [status, drawFence] =
-            renderEngine
-                    .drawLayers(clientCompositionDisplay, clientRenderEngineLayers, tex,
-                                useFramebufferCache, std::move(fd))
-                    .get();
 
-    if (status != NO_ERROR && mClientCompositionRequestCache) {
+    auto fenceResult =
+            toFenceResult(renderEngine
+                                  .drawLayers(clientCompositionDisplay, clientRenderEngineLayers,
+                                              tex, useFramebufferCache, std::move(fd))
+                                  .get());
+
+    if (mClientCompositionRequestCache && fenceStatus(fenceResult) != NO_ERROR) {
         // If rendering was not successful, remove the request from the cache.
         mClientCompositionRequestCache->remove(tex->getBuffer()->getId());
     }
 
-    auto& timeStats = getCompositionEngine().getTimeStats();
-    if (drawFence.get() < 0) {
-        timeStats.recordRenderEngineDuration(renderEngineStart, systemTime());
+    const auto fence = std::move(fenceResult).value_or(Fence::NO_FENCE);
+
+    if (auto& timeStats = getCompositionEngine().getTimeStats(); fence->isValid()) {
+        timeStats.recordRenderEngineDuration(renderEngineStart, std::make_shared<FenceTime>(fence));
     } else {
-        timeStats.recordRenderEngineDuration(renderEngineStart,
-                                             std::make_shared<FenceTime>(
-                                                     new Fence(dup(drawFence.get()))));
+        timeStats.recordRenderEngineDuration(renderEngineStart, systemTime());
     }
 
-    if (clientCompositionLayersFE.size() > 0) {
-        sp<Fence> clientCompFence = new Fence(dup(drawFence.get()));
-        for (auto clientComposedLayer : clientCompositionLayersFE) {
-            clientComposedLayer->setWasClientComposed(clientCompFence);
-        }
+    for (auto* clientComposedLayer : clientCompositionLayersFE) {
+        clientComposedLayer->setWasClientComposed(fence);
     }
 
-    return std::move(drawFence);
+    return base::unique_fd(fence->dup());
 }
 
 std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
@@ -1416,7 +1425,10 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                 }
             }
 
-            outLayerFEs.push_back(&layerFE);
+            if (clientComposition) {
+                outLayerFEs.push_back(&layerFE);
+            }
+
             clientCompositionLayers.insert(clientCompositionLayers.end(),
                                            std::make_move_iterator(results.begin()),
                                            std::make_move_iterator(results.end()));
@@ -1489,19 +1501,15 @@ void Output::postFramebuffer() {
                     Fence::merge("LayerRelease", releaseFence, frame.clientTargetAcquireFence);
         }
         layer->getLayerFE().onLayerDisplayed(
-                ftl::yield<renderengine::RenderEngineResult>(
-                        {NO_ERROR, base::unique_fd(releaseFence->dup())})
-                        .share());
+                ftl::yield<FenceResult>(std::move(releaseFence)).share());
     }
 
     // We've got a list of layers needing fences, that are disjoint with
     // OutputLayersOrderedByZ.  The best we can do is to
     // supply them with the present fence.
     for (auto& weakLayer : mReleasedLayers) {
-        if (auto layer = weakLayer.promote(); layer != nullptr) {
-            layer->onLayerDisplayed(ftl::yield<renderengine::RenderEngineResult>(
-                                            {NO_ERROR, base::unique_fd(frame.presentFence->dup())})
-                                            .share());
+        if (const auto layer = weakLayer.promote()) {
+            layer->onLayerDisplayed(ftl::yield<FenceResult>(frame.presentFence).share());
         }
     }
 
@@ -1553,6 +1561,10 @@ void Output::setTreat170mAsSrgb(bool enable) {
 }
 
 bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refreshArgs) {
+    uint64_t lastOutputLayerHash = getState().lastOutputLayerHash;
+    uint64_t outputLayerHash = getState().outputLayerHash;
+    editState().lastOutputLayerHash = outputLayerHash;
+
     if (!getState().isEnabled || !mHwComposerAsyncWorker) {
         ALOGV("canPredictCompositionStrategy disabled");
         return false;
@@ -1573,6 +1585,11 @@ bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refresh
         return false;
     }
 
+    if (lastOutputLayerHash != outputLayerHash) {
+        ALOGV("canPredictCompositionStrategy output layers changed");
+        return false;
+    }
+
     // If no layer uses clientComposition, then don't predict composition strategy
     // because we have less work to do in parallel.
     if (!anyLayersRequireClientComposition()) {
@@ -1580,12 +1597,7 @@ bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refresh
         return false;
     }
 
-    if (!refreshArgs.updatingOutputGeometryThisFrame) {
-        return true;
-    }
-
-    ALOGV("canPredictCompositionStrategy updatingOutputGeometryThisFrame");
-    return false;
+    return true;
 }
 
 bool Output::anyLayersRequireClientComposition() const {

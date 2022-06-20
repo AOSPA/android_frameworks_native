@@ -167,18 +167,19 @@ impl::EventThread::ThrottleVsyncCallback Scheduler::makeThrottleVsyncCallback() 
 impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction() const {
     return [this](uid_t uid) {
         const Fps refreshRate = holdRefreshRateConfigs()->getActiveMode()->getFps();
-        const nsecs_t basePeriod = refreshRate.getPeriodNsecs();
+        const auto currentPeriod =
+                mVsyncSchedule->getTracker().currentPeriod() ?: refreshRate.getPeriodNsecs();
 
         const auto frameRate = getFrameRateOverride(uid);
         if (!frameRate.has_value()) {
-            return basePeriod;
+            return currentPeriod;
         }
 
         const auto divisor = RefreshRateConfigs::getFrameRateDivisor(refreshRate, *frameRate);
         if (divisor <= 1) {
-            return basePeriod;
+            return currentPeriod;
         }
-        return basePeriod * divisor;
+        return currentPeriod * divisor;
     };
 }
 
@@ -713,6 +714,12 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                 dispatchCachedReportedMode();
             }
         } else {
+            // Need a null pointer check for mPolicy since it's null during boot up
+            std::string str = "UpdateRefreshRate " + (!mPolicy.mode ? "NA" :
+                              std::to_string(mPolicy.mode->getFps().getIntValue())) + " to " +
+                              std::to_string(newMode->getFps().getIntValue());
+            ATRACE_NAME(str.c_str());
+
             mPolicy.mode = newMode;
 
             refreshRateChanged = true;

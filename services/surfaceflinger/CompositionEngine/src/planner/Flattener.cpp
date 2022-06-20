@@ -316,7 +316,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                         state.overrideInfo = {
                                 .buffer = mNewCachedSet->getBuffer(),
                                 .acquireFence = mNewCachedSet->getDrawFence(),
-                                .displayFrame = mNewCachedSet->getBounds(),
+                                .displayFrame = mNewCachedSet->getTextureBounds(),
                                 .dataspace = mNewCachedSet->getOutputDataspace(),
                                 .displaySpace = mNewCachedSet->getOutputSpace(),
                                 .damageRegion = Region::INVALID_REGION,
@@ -356,7 +356,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                 state.overrideInfo = {
                         .buffer = currentLayerIter->getBuffer(),
                         .acquireFence = currentLayerIter->getDrawFence(),
-                        .displayFrame = currentLayerIter->getBounds(),
+                        .displayFrame = currentLayerIter->getTextureBounds(),
                         .dataspace = currentLayerIter->getOutputDataspace(),
                         .displaySpace = currentLayerIter->getOutputSpace(),
                         .damageRegion = Region(),
@@ -401,19 +401,6 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
     return true;
 }
 
-namespace {
-bool isDisplayDecoration(const CachedSet& cachedSet) {
-    return cachedSet.getLayerCount() == 1 &&
-            cachedSet.getFirstLayer()
-                    .getState()
-                    ->getOutputLayer()
-                    ->getLayerFE()
-                    .getCompositionState()
-                    ->compositionType ==
-            aidl::android::hardware::graphics::composer3::Composition::DISPLAY_DECORATION;
-}
-} // namespace
-
 std::vector<Flattener::Run> Flattener::findCandidateRuns(time_point now) const {
     ATRACE_CALL();
     std::vector<Run> runs;
@@ -437,7 +424,7 @@ std::vector<Flattener::Run> Flattener::findCandidateRuns(time_point now) const {
         }
 
         if (layerIsInactive && (firstLayer || runHasFirstLayer || !layerHasBlur) &&
-            !currentSet->hasUnsupportedDataspace() && !isDisplayDecoration(*currentSet)) {
+            !currentSet->hasUnsupportedDataspace()) {
             if (isPartOfRun) {
                 builder.append(currentSet->getLayerCount());
             } else {

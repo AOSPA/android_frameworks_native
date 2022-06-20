@@ -210,6 +210,7 @@ struct FakePhaseOffsets : scheduler::VsyncConfiguration {
     void setRefreshRateFps(Fps) override {}
     void dump(std::string &) const override {}
     void UpdateSfOffsets(std::unordered_map<float, int64_t>*) override {}
+    void UpdateWorkDurations(std::unordered_map<float, std::pair<int64_t, int64_t>>*) override {}
 };
 
 namespace scheduler {
@@ -455,9 +456,6 @@ public:
 
         result = fdp->ConsumeRandomLengthString().c_str();
         mFlinger->dumpStaticScreenStats(result);
-
-        result = fdp->ConsumeRandomLengthString().c_str();
-        mFlinger->dumpFrameEventsLocked(result);
 
         result = fdp->ConsumeRandomLengthString().c_str();
         mFlinger->dumpRawDisplayIdentificationData(dumpArgs, result);
