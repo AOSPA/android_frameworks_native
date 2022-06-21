@@ -255,7 +255,6 @@ void Display::beginFrame() {
 
     auto& hwc = getCompositionEngine().getHwComposer();
 
-    beginDraw();
     if (const auto physicalDisplayId = PhysicalDisplayId::tryCast(*halDisplayId);
         physicalDisplayId && getState().displayBrightness) {
         const status_t result =
@@ -286,6 +285,7 @@ bool Display::chooseCompositionStrategy(
         return false;
     }
 
+    beginDraw();
     // Get any composition changes requested by the HWC device, and apply them.
     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
     auto& hwc = getCompositionEngine().getHwComposer();
