@@ -1041,7 +1041,10 @@ private:
         }
         // The active display is outdated, so fall back to the primary display.
         mActiveDisplayToken.clear();
-        return getDisplayDeviceLocked(getPrimaryDisplayTokenLocked());
+        if (const auto token = getPrimaryDisplayTokenLocked()) {
+            return getDisplayDeviceLocked(token);
+        }
+        return nullptr;
     }
 
     sp<const DisplayDevice> getDefaultDisplayDevice() const EXCLUDES(mStateLock) {
