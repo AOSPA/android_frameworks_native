@@ -1,4 +1,4 @@
-// Copyright (C) 2018 The Android Open Source Project
+// Copyright 2022 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,25 +21,28 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
-cc_library {
-    name: "libdumputils",
-
+cc_test {
+    name: "libshaders_test",
+    test_suites: ["device-tests"],
+    srcs: [
+        "shaders_test.cpp",
+    ],
+    header_libs: [
+        "libtonemap_headers",
+    ],
     shared_libs: [
-        "libbase",
-        "libbinder",
-        "libhidlbase",
-        "liblog",
-        "libutils",
+        "android.hardware.graphics.common-V3-ndk",
+        "android.hardware.graphics.composer3-V1-ndk",
+        "android.hardware.graphics.common@1.2",
+        "libnativewindow",
     ],
-
-    srcs: ["dump_utils.cpp"],
-
-    cflags: [
-        "-Wall",
-        "-Werror",
-    ],
-
-    export_include_dirs: [
-        "include",
+    static_libs: [
+        "libarect",
+        "libgmock",
+        "libgtest",
+        "libmath",
+        "libshaders",
+        "libtonemap",
+        "libui-types",
     ],
 }
