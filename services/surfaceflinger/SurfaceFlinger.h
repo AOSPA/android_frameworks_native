@@ -1657,6 +1657,8 @@ private:
     bool mSentInitialFps = false;
     std::mutex mEarlyWakeUpMutex;
     int mUiLayerFrameCount = 0;
+    bool mAllowHwcForVDS = false;
+    bool mAllowHwcForWFD = false;
 
     // returns the framerate of the layer with the given sequence ID
     float getLayerFramerate(nsecs_t now, int32_t id) const {

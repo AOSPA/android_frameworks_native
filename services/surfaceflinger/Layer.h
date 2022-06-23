@@ -621,6 +621,7 @@ public:
 
     void setWasClientComposed(const sp<Fence>& fence) override {
         mLastClientCompositionFence = fence;
+        mClearClientCompositionFenceOnLayerDisplayed = false;
     }
 
     const char* getDebugName() const override;
@@ -1047,7 +1048,7 @@ protected:
     mutable bool mDrawingStateModified = false;
 
     sp<Fence> mLastClientCompositionFence;
-    bool mAlreadyDisplayedThisCompose = false;
+    bool mClearClientCompositionFenceOnLayerDisplayed = false;
 private:
     virtual void setTransformHint(ui::Transform::RotationFlags) {}
 
