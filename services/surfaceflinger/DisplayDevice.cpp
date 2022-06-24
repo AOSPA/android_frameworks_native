@@ -175,6 +175,7 @@ auto DisplayDevice::getInputInfo() const -> InputInfo {
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
+    resetVsyncPeriod();
     getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
 }
 
@@ -201,6 +202,7 @@ void DisplayDevice::setActiveMode(DisplayModeId id) {
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->changeRefreshRate(mActiveMode->getFps());
     }
+    resetVsyncPeriod();
 }
 
 status_t DisplayDevice::initiateModeChange(const ActiveModeInfo& info,
@@ -241,15 +243,34 @@ std::optional<DisplayModeId> DisplayDevice::translateModeId(hal::HWConfigId hwcI
     return {};
 }
 
+void DisplayDevice::resetVsyncPeriod() {
+    std::scoped_lock<std::mutex> lock(mModeLock);
+    mVsyncPeriodUpdated = true;
+    mVsyncPeriod = 0;
+}
+
 nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
+    std::scoped_lock<std::mutex> lock(mModeLock);
     const auto physicalId = getPhysicalId();
     if (!mHwComposer.isConnected(physicalId)) {
         return 0;
     }
 
+    if (!mVsyncPeriodUpdated && mVsyncPeriod) {
+        ALOGD("%s: value is cached. return %lu", __func__, (unsigned long)mVsyncPeriod);
+        return mVsyncPeriod;
+    }
+
     nsecs_t vsyncPeriod;
     const auto status = mHwComposer.getDisplayVsyncPeriod(physicalId, &vsyncPeriod);
     if (status == NO_ERROR) {
+        ALOGD("%s: Called HWC getDisplayVsyncPeriod. No error. period=%lu", __func__,
+          (unsigned long)vsyncPeriod);
+        if (mVsyncPeriod == vsyncPeriod) {
+            mVsyncPeriodUpdated = false;
+        } else {
+            mVsyncPeriod = vsyncPeriod;
+        }
         return vsyncPeriod;
     }
 
@@ -531,6 +552,7 @@ bool DisplayDevice::setDesiredActiveMode(const ActiveModeInfo& info) {
     // Initiate a mode change.
     mDesiredActiveModeChanged = true;
     mDesiredActiveMode = info;
+    resetVsyncPeriod();
     return true;
 }
 

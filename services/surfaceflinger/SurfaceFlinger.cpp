@@ -2433,6 +2433,31 @@ nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
     return 0;
 }
 
+sp<DisplayDevice> SurfaceFlinger::getCurrentVsyncSource() {
+    if (mNextVsyncSource) {
+        return mNextVsyncSource;
+    } else if (mActiveVsyncSource) {
+        return mActiveVsyncSource;
+    }
+
+    return getDefaultDisplayDeviceLocked();
+}
+
+nsecs_t SurfaceFlinger::getVsyncPeriodFromHWCcb() {
+    auto display = getDefaultDisplayDeviceLocked();
+    if (mNextVsyncSource) {
+        display = mNextVsyncSource;
+    } else if (mActiveVsyncSource) {
+        display = mActiveVsyncSource;
+    }
+
+    if (display && !display->isPrimary()) {
+        return display->getVsyncPeriodFromHWC();
+    }
+
+    return display->refreshRateConfigs().getActiveMode()->getVsyncPeriod();
+}
+
 void SurfaceFlinger::onComposerHalVsync(hal::HWDisplayId hwcDisplayId, int64_t timestamp,
                                         std::optional<hal::VsyncPeriodNanos> vsyncPeriod) {
     const std::string tracePeriod = [vsyncPeriod]() {
@@ -3784,6 +3809,30 @@ void SurfaceFlinger::processDisplayHotplugEventsLocked() {
         } else {
             ALOGV("Removing display %s", to_string(displayId).c_str());
 
+            //need to check if the display we are removing is the active display
+            //if so make the next display in the display list the active display
+            if (getPhysicalDisplayTokenLocked(displayId) == mActiveDisplayToken) {
+                for (const auto& displayTemp : mDisplaysList) {
+                    if (displayTemp->getPhysicalId() != displayId && displayTemp->isPoweredOn()) {
+                        //once we find the next non-active display make it the active display
+                        //if it is powered on
+                        onActiveDisplayChangedLocked(displayTemp);
+                        break;
+                    }
+                }
+                //if no displays are powered on we set the next non-active display as active
+                if (getPhysicalDisplayTokenLocked(displayId) == mActiveDisplayToken) {
+                    for (const auto& displayTemp : mDisplaysList) {
+                        if (displayTemp->getPhysicalId() != displayId) {
+                            //once we find the next non-active display make it the active display
+                            //if it is powered on
+                            onActiveDisplayChangedLocked(displayTemp);
+                            break;
+                        }
+                    }
+                }
+            }
+
             if (const ssize_t index = mCurrentState.displays.indexOfKey(token->get()); index >= 0) {
                 const DisplayDeviceState& state = mCurrentState.displays.valueAt(index);
                 mInterceptor->saveDisplayDeletion(state.sequenceId);
@@ -4036,6 +4085,18 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
             mDisplaysList.push_back(display);
         }
         dispatchDisplayHotplugEvent(display->getPhysicalId(), true);
+
+        updateVsyncSource();
+
+        if (mPluggableVsyncPrioritized && mDisplaysList.front()->getPhysicalId() ==
+            display->getPhysicalId()) {
+            //If this is the first display in displaysList change it to active display
+            //Updating the active display is needed due to
+            //onComposerHalVsync requiring an active display token which only gets updated when
+            //onActiveDisplayChangedLocked(display); is called
+            onActiveDisplayChangedLocked(display);
+        }
+
 
         if (!display->isPrimary() && isInternalDisplay(display)) {
             const auto defaultDisplay = getDefaultDisplayDeviceLocked();
@@ -6143,6 +6204,29 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         // Turn on the display
         if (display->isInternal() && (!activeDisplay || !activeDisplay->isPoweredOn())) {
             onActiveDisplayChangedLocked(display);
+            //Force the device to do a HWresync after we turn on a display
+            updateVsyncSource();
+            mScheduler->resyncToHardwareVsync(true, refreshRate, true);
+        } else if (display->isInternal() &&  activeDisplay->isPoweredOn()) {
+            //if turning on a display that is powered off and active display is on
+            //must determine if this display should be the active display
+            for (const auto& displayTemp : mDisplaysList) {
+                //if the active display is before the current display in displays list leave
+                //the current active display
+                if (getPhysicalDisplayTokenLocked(displayTemp->getPhysicalId())
+                    == mActiveDisplayToken) {
+                    break;
+                }
+                //switch to the display being powered on
+                if (displayTemp->getPhysicalId() == displayId) {
+                    onActiveDisplayChangedLocked(displayTemp);
+                    //update with new vsync source
+                    updateVsyncSource();
+                    //force HWresync
+                    mScheduler->resyncToHardwareVsync(true, refreshRate, true);
+                    break;
+                }
+            }
         }
         // Keep uclamp in a separate syscall and set it before changing to RT due to b/190237315.
         // We can merge the syscall later.
@@ -6184,6 +6268,17 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
             // Make sure HWVsync is disabled before turning off the display
 	    setHWCVsyncEnabled(displayId, hal::Vsync::DISABLE);
         } else {
+            //Update active display
+            if (getPhysicalDisplayTokenLocked(displayId) == mActiveDisplayToken) {
+                for (const auto& displayTemp : mDisplaysList) {
+                    //dont switch to a new display if its not powered on.
+                    if (displayTemp->getPhysicalId() != displayId && displayTemp->isPoweredOn()) {
+                        //once we find the next non-active display make it the active display
+                        onActiveDisplayChangedLocked(displayTemp);
+                        break;
+                    }
+                }
+            }
             updateVsyncSource();
         }
 
