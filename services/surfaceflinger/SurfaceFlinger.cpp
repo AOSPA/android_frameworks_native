@@ -1105,6 +1105,7 @@ void SurfaceFlinger::init() {
 
     mAllowHwcForWFD = base::GetBoolProperty("vendor.display.vds_allow_hwc"s, false);
     mAllowHwcForVDS = mAllowHwcForWFD && base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false);
+    mFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
 
     // Process any initial hotplug and resulting display changes.
     processDisplayHotplugEventsLocked();
@@ -8787,12 +8788,14 @@ bool SurfaceFlinger::canAllocateHwcDisplayIdForVDS(uint64_t usage) {
     // WFD using GLES (directstreaming).
     sDirectStreaming = ((usage & GRALLOC_USAGE_PRIVATE_WFD) &&
                         (usage & GRALLOC_USAGE_SW_READ_OFTEN));
+    bool isWfd = (usage & flag_mask_pvt_wfd) && (usage & flag_mask_hw_video);
 
     // Enabling only the vendor property would allow WFD to use HWC
     // Enabling both the aosp and vendor properties would allow all other VDS to use HWC
     // Disabling both would set all virtual displays to fall back to GPU
-    bool canAllocate = mAllowHwcForVDS || (mAllowHwcForWFD && (usage & flag_mask_pvt_wfd) &&
-                       (usage & flag_mask_hw_video));
+    // In vendor frozen targets, allow WFD to use HWC without any property settings.
+    bool canAllocate = mAllowHwcForVDS || (isWfd && mAllowHwcForWFD) || (isWfd &&
+                       mFirstApiLevel < __ANDROID_API_T__);
 
     if (canAllocate) {
         enableHalVirtualDisplays(true);
