@@ -1628,6 +1628,12 @@ public:
     };
     std::vector<SmomoInfo> mSmomoInstances;
 
+    struct VisibleLayerInfo {
+      std::vector<std::string> layerName;
+      std::vector<int32_t> layerSequence;
+    };
+    VisibleLayerInfo mVisibleLayerInfo;
+
 private:
     bool mEarlyWakeUpEnabled = false;
     bool mDynamicSfIdleEnabled = false;
