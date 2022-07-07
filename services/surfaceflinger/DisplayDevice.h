@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <mutex>
 
 #include <android-base/thread_annotations.h>
 #include <android/native_window.h>
@@ -248,6 +249,7 @@ public:
     void onVsync(nsecs_t timestamp);
     nsecs_t getVsyncPeriodFromHWC() const;
     nsecs_t getRefreshTimestamp() const;
+    void resetVsyncPeriod();
 
     void setPowerModeOverrideConfig(bool supported);
     bool getPowerModeOverrideConfig() const;
@@ -287,6 +289,10 @@ private:
     const DisplayModes mSupportedModes;
 
     std::atomic<nsecs_t> mLastHwVsync = 0;
+
+    mutable std::mutex mModeLock;
+    mutable bool mVsyncPeriodUpdated = true;
+    mutable nsecs_t mVsyncPeriod = 0;
 
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;
