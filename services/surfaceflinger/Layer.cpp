@@ -1127,14 +1127,6 @@ ui::LayerStack Layer::getLayerStack() const {
     return getDrawingState().layerStack;
 }
 
-void Layer::setSmomoLayerStackId() {
-    smomoLayerStackId = getLayerStack().id;
-}
-
-uint32_t Layer::getSmomoLayerStackId() {
-    return smomoLayerStackId;
-}
-
 bool Layer::setShadowRadius(float shadowRadius) {
     if (mDrawingState.shadowRadius == shadowRadius) {
         return false;

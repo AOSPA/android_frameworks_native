@@ -898,8 +898,6 @@ public:
     virtual bool updateGeometry() { return false; }
 
     virtual bool simpleBufferUpdate(const layer_state_t&) const { return false; }
-    void setSmomoLayerStackId();
-    uint32_t getSmomoLayerStackId();
 
 protected:
     friend class impl::SurfaceInterceptor;
@@ -1141,7 +1139,6 @@ private:
 
     uint32_t mLayerCreationFlags;
     bool findInHierarchy(const sp<Layer>&);
-    uint32_t smomoLayerStackId = UINT32_MAX;
 public:
     nsecs_t getPreviousGfxInfo();
 };
