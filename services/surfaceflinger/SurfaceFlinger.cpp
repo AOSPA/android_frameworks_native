@@ -4868,7 +4868,7 @@ status_t SurfaceFlinger::setTransactionState(
 
     const int64_t postTime = systemTime();
 
-    if (mAsyncVdsCreationSupported) {
+    if (mAsyncVdsCreationSupported && std::this_thread::get_id() != mMainThreadId) {
        checkVirtualDisplayHint(displays);
     }
 
