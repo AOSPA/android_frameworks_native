@@ -406,34 +406,34 @@ WorkDuration::WorkDuration(Fps currentRefreshRate)
 void WorkDuration::UpdateWorkDurations(unordered_map<float, pair<int64_t, int64_t>>*
                                        workDurationConfigs) {
     std::lock_guard lock(mLock);
-    for (auto& item : *workDurationConfigs) {
-        float fps = item.first;
-        auto iter = mOffsetsCache.begin();
-        for (iter = mOffsetsCache.begin(); iter != mOffsetsCache.end(); iter++) {
-            float candidateFps = iter->first.getValue();
-            if (fpsEqualsWithMargin(fps,candidateFps)) {
-                break;
-            }
+    for (auto& item : mOffsetsCache) {
+        int fps = item.first.getIntValue();
+        bool foundWorkDurationsConfig = false;
+        auto config = workDurationConfigs->find(fps);
+        if (config != workDurationConfigs->end()) {
+            foundWorkDurationsConfig = true;
         }
 
-        if (iter != mOffsetsCache.end()) {
-            auto vsyncDuration = iter->first.getPeriodNsecs();
-            auto& [early, earlyGpu, late, hwcMinWorkDuration] = iter->second;
-            auto sfWorkDuration = std::chrono::nanoseconds(item.second.first);
-            auto appWorkDuration = std::chrono::nanoseconds(item.second.second);
+        // Update the config for the specified refresh rates or refresh rates lower than 60fps
+        if (foundWorkDurationsConfig || (fps < 60)) {
+            auto vsyncDuration = item.first.getPeriodNsecs();
+            auto& [early, earlyGpu, late, hwcMinWorkDuration] = item.second;
+            auto sfWorkDuration = std::chrono::nanoseconds(
+                                      static_cast<int64_t>(vsyncDuration * 0.75));
+            auto appWorkDuration = (mAppDuration == -1) ? std::chrono::nanoseconds(vsyncDuration)
+                                                        : std::chrono::nanoseconds(mAppDuration);
 
-            late.sfWorkDuration = sfWorkDuration;
-            late.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
-
-            if (mAppDuration == -1) {
-                late.appWorkDuration = std::chrono::nanoseconds(vsyncDuration);
-            } else {
-                late.appWorkDuration = (item.second.second != 0) ? appWorkDuration
-                                                          : std::chrono::nanoseconds(mAppDuration);
+            if (foundWorkDurationsConfig) {
+                sfWorkDuration = std::chrono::nanoseconds(config->second.first);
+                appWorkDuration = (config->second.second == 0) ? appWorkDuration
+                                                 : std::chrono::nanoseconds(config->second.second);
             }
 
+            late.sfWorkDuration = std::chrono::nanoseconds(sfWorkDuration);
+            late.appWorkDuration = appWorkDuration;
+            late.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
             late.appOffset = appDurationToOffset(late.appWorkDuration, late.sfWorkDuration,
-                                                vsyncDuration);
+                                                 vsyncDuration);
 
             early.sfWorkDuration = late.sfWorkDuration;
             early.sfOffset = sfDurationToOffset(late.sfWorkDuration, vsyncDuration);
