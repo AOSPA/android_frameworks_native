@@ -3655,7 +3655,7 @@ void SurfaceFlinger::updateVsyncSource()
         (mActiveVsyncSource != NULL)) {
         // Switch vsync to the new source
         mScheduler->disableHardwareVsync(true);
-        mScheduler->resyncToHardwareVsync(true, Fps::fromValue(getVsyncPeriodFromHWC()));
+        mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(getVsyncPeriodFromHWC()));
     }
 }
 
