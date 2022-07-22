@@ -3439,9 +3439,11 @@ void SurfaceFlinger::UpdateSmomoState() {
         return;
     }
 
-    mDrawingState.traverse([&](Layer* layer) {
-    layer->setSmomoLayerStackId();
-    });
+    if (mSmomoInstances.size() > 1) {
+        mDrawingState.traverse([&](Layer* layer) {
+            layer->setSmomoLayerStackId();
+        });
+    }
 
     // Disable smomo if external or virtual is connected.
     bool enableSmomo = mSmomoInstances.size() == mDisplays.size();
@@ -3520,6 +3522,12 @@ void SurfaceFlinger::UpdateSmomoState() {
 
 SmomoIntf* SurfaceFlinger::getSmomoInstance(const uint32_t layerStackId) const {
     SmomoIntf *smoMo = nullptr;
+
+    if (mSmomoInstances.size() == 1) {
+        smoMo = mSmomoInstances.back().smoMo;
+        return smoMo;
+    }
+
     for (auto &instance: mSmomoInstances) {
         if (instance.layerStackId == layerStackId) {
             smoMo = instance.smoMo;
