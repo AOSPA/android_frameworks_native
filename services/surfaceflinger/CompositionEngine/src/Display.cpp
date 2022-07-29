@@ -340,6 +340,8 @@ void Display::beginDraw() {
          layerFlags.secure_camera = layerCompositionState->isSecureCamera;
          layerFlags.secure_ui     = layerCompositionState->isSecureDisplay;
          layerFlags.secure_video  = layerCompositionState->hasProtectedContent;
+         layerFlags.blur = (layerCompositionState->backgroundBlurRadius > 0) ||
+                           (layerCompositionState->blurRegions.size() > 0);
          displayLayerFlags.push_back(layerFlags);
     }
     fbtLayerInfo.width = getState().orientedDisplaySpace.getBounds().width;
