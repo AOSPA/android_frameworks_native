@@ -1260,7 +1260,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
 
     // Generate the client composition requests for the layers on this output.
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+    const bool supportsProtectedContent = renderEngine.supportsProtectedContent() &&
+                                          mRenderSurface->isProtected();
     std::vector<LayerFE*> clientCompositionLayersFE;
     std::vector<LayerFE::LayerSettings> clientCompositionLayers =
             generateClientCompositionRequests(supportsProtectedContent,
