@@ -1336,7 +1336,7 @@ private:
 
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
-    mutable Mutex mVsyncLock;
+    mutable std::recursive_mutex mVsyncLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     std::vector<std::shared_ptr<CountDownLatch>> mTransactionCommittedSignals;

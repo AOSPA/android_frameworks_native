@@ -2420,6 +2420,8 @@ void SurfaceFlinger::scheduleSample() {
 }
 
 nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     auto display = getDefaultDisplayDeviceLocked();
     if (mNextVsyncSource) {
         display = mNextVsyncSource;
@@ -2435,6 +2437,8 @@ nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
 }
 
 sp<DisplayDevice> SurfaceFlinger::getCurrentVsyncSource() {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     if (mNextVsyncSource) {
         return mNextVsyncSource;
     } else if (mActiveVsyncSource) {
@@ -2445,6 +2449,8 @@ sp<DisplayDevice> SurfaceFlinger::getCurrentVsyncSource() {
 }
 
 nsecs_t SurfaceFlinger::getVsyncPeriodFromHWCcb() {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     auto display = getDefaultDisplayDeviceLocked();
     if (mNextVsyncSource) {
         display = mNextVsyncSource;
@@ -2549,6 +2555,7 @@ void SurfaceFlinger::onComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
         if (info) {
             mDisplaysList.remove(getDisplayDeviceLocked(info->id));
         }
+        std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
         mNextVsyncSource = getVsyncSource();
     }
 
@@ -2595,8 +2602,8 @@ void SurfaceFlinger::setVsyncEnabled(bool enabled) {
 
 void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
     ATRACE_CALL();
-    Mutex::Autolock lockVsync(mVsyncLock);
     Mutex::Autolock lock(mStateLock);
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
 
     mHWCVsyncPendingState = enabled ? hal::Vsync::ENABLE : hal::Vsync::DISABLE;
 
@@ -3639,7 +3646,7 @@ sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
 
 void SurfaceFlinger::updateVsyncSource()
             NO_THREAD_SAFETY_ANALYSIS {
-    Mutex::Autolock lock(mVsyncLock);
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
     mNextVsyncSource = getVsyncSource();
 
     if (mNextVsyncSource == NULL) {
@@ -6179,7 +6186,10 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         return;
     }
 
-    mActiveVsyncSource = getVsyncSource();
+    {
+        std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+        mActiveVsyncSource = getVsyncSource();
+    }
 
     const auto activeDisplay = getDisplayDeviceLocked(mActiveDisplayToken);
     if (activeDisplay != display && display->isInternal() && activeDisplay &&
