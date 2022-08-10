@@ -1640,6 +1640,7 @@ private:
     bool wakeUpPresentationDisplays = false;
     bool mInternalPresentationDisplays = false;
     bool mUseWorkDurations = false;
+    bool mDisplaySizeChanged = false;
 
     composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
     composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;

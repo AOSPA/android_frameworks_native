@@ -4205,7 +4205,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            if (mUseFbScaling && display->isPrimary() && display->isPoweredOn()) {
+            if (mUseFbScaling && display->isPrimary()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
                 DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
                 setFrameBufferSizeForScaling(display, curState, drawingState);
@@ -4296,12 +4296,16 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
         displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
                                      currentState.orientedDisplaySpaceRect);
         display->getRenderSurface()->setViewportAndProjection();
-        display->getRenderSurface()->flipClientTarget(true);
-        // queue a scratch buffer to flip Client Target with updated size
-        display->getRenderSurface()->queueBuffer(std::move(fd));
-        display->getRenderSurface()->flipClientTarget(false);
-        // releases the FrameBuffer that was acquired as part of queueBuffer()
-        display->getRenderSurface()->onPresentDisplayCompleted();
+        if (displayDevice->isPoweredOn()) {
+            display->getRenderSurface()->flipClientTarget(true);
+            // queue a scratch buffer to flip Client Target with updated size
+            display->getRenderSurface()->queueBuffer(std::move(fd));
+            display->getRenderSurface()->flipClientTarget(false);
+            // releases the FrameBuffer that was acquired as part of queueBuffer()
+            display->getRenderSurface()->onPresentDisplayCompleted();
+        } else {
+            mDisplaySizeChanged = true;
+        }
     }
 }
 void SurfaceFlinger::processDisplayChangesLocked() {
@@ -6303,6 +6307,18 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     } else {
         ALOGE("Attempting to set unknown power mode: %d\n", mode);
         getHwComposer().setPowerMode(displayId, mode);
+    }
+
+    if (mDisplaySizeChanged && display->isPrimary()) {
+        base::unique_fd fd;
+        auto compositionDisplay = display->getCompositionDisplay();
+        compositionDisplay->getRenderSurface()->flipClientTarget(true);
+        // queue a scratch buffer to flip Client Target with updated size
+        compositionDisplay->getRenderSurface()->queueBuffer(std::move(fd));
+        compositionDisplay->getRenderSurface()->flipClientTarget(false);
+        // releases the FrameBuffer that was acquired as part of queueBuffer()
+        compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
+        mDisplaySizeChanged = false;
     }
 
     const sp<DisplayDevice> vsyncSource = getVsyncSource();
