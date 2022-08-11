@@ -1260,7 +1260,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
 
     // Generate the client composition requests for the layers on this output.
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+    const bool supportsProtectedContent = renderEngine.supportsProtectedContent() &&
+                                          mRenderSurface->isProtected();
     std::vector<LayerFE*> clientCompositionLayersFE;
     std::vector<LayerFE::LayerSettings> clientCompositionLayers =
             generateClientCompositionRequests(supportsProtectedContent,
@@ -1271,7 +1272,7 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     OutputCompositionState& outputCompositionState = editState();
     // Check if the client composition requests were rendered into the provided graphic buffer. If
     // so, we can reuse the buffer and avoid client composition.
-    if (mClientCompositionRequestCache) {
+    if (mClientCompositionRequestCache && mLayerRequestingBackgroundBlur != nullptr) {
         if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
                                                    clientCompositionDisplay,
                                                    clientCompositionLayers)) {
