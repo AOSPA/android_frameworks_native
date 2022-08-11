@@ -3439,6 +3439,10 @@ void SurfaceFlinger::UpdateSmomoState() {
         return;
     }
 
+    mDrawingState.traverse([&](Layer* layer) {
+    layer->setSmomoLayerStackId();
+    });
+
     // Disable smomo if external or virtual is connected.
     bool enableSmomo = mSmomoInstances.size() == mDisplays.size();
     uint32_t fps = 0;
@@ -3530,33 +3534,24 @@ void SurfaceFlinger::updateSmomoLayerInfo(TransactionState &ts,
         int64_t desiredPresentTime, bool isAutoTimestamp) {
     ts.traverseStatesWithBuffers([&](const layer_state_t& state) {
         sp<Layer> layer = fromHandle(state.surface).promote();
+        SmomoIntf *smoMo = nullptr;
         if (layer != nullptr) {
-            SmomoIntf *smoMo = nullptr;
-            if (mSmomoInstances.size() > 1) {
-                const uint32_t layerStackId = layer->getLayerStack().id;
-                for (auto &instance: mSmomoInstances) {
-                     if (instance.layerStackId == layerStackId) {
-                         smoMo = instance.smoMo;
-                         break;
-                     }
-                }
-            } else if  (mSmomoInstances.size() == 1) {
-                   smoMo = mSmomoInstances[0].smoMo;
-            }
+            smoMo = getSmomoInstance(layer->getSmomoLayerStackId());
+        }
 
-            if (smoMo) {
-                smomo::SmomoBufferStats bufferStats;
-                bufferStats.id = layer->getSequence();
-                bufferStats.auto_timestamp = isAutoTimestamp;
-                bufferStats.timestamp = desiredPresentTime;
-                bufferStats.dequeue_latency = 0;
-                bufferStats.key = desiredPresentTime;
+        if (smoMo) {
+            smomo::SmomoBufferStats bufferStats;
+            bufferStats.id = layer->getSequence();
+            bufferStats.auto_timestamp = isAutoTimestamp;
+            bufferStats.timestamp = desiredPresentTime;
+            bufferStats.dequeue_latency = 0;
+            bufferStats.key = desiredPresentTime;
 #ifdef TIMED_RENDERING_METADATA_FEATURE
-               auto buffer = getExternalTextureFromBufferData(*state.bufferData,
+            auto buffer = getExternalTextureFromBufferData(*state.bufferData,
                     layer->getDebugName());
-               if (buffer && buffer->getBuffer()) {
-                    bufferStats.buffer_hnd = buffer->getBuffer()->handle;
-               }
+            if (buffer && buffer->getBuffer()) {
+                bufferStats.buffer_hnd = buffer->getBuffer()->handle;
+            }
 #endif
             smoMo->CollectLayerStats(bufferStats);
 
@@ -3566,7 +3561,6 @@ void SurfaceFlinger::updateSmomoLayerInfo(TransactionState &ts,
                 scheduleCompositeImmed();
             }
         }
-      }
       });
 }
 
@@ -5320,20 +5314,8 @@ auto SurfaceFlinger::transactionIsReadyToBeApplied(TransactionState& transaction
                 ATRACE_NAME("hasPendingBuffer");
                 return TransactionReadiness::NotReady;
             }
-            SmomoIntf *smoMo = nullptr;
-             if (mSmomoInstances.size() > 1) {
-               const uint32_t layerStackId = layer->getLayerStack().id;
-               for (auto &instance: mSmomoInstances) {
-                 if (instance.layerStackId == layerStackId) {
-                   smoMo = instance.smoMo;
-                   break;
-                 }
-              }
-             } else if (mSmomoInstances.size() == 1) {
-               smoMo = mSmomoInstances[0].smoMo;
-             }
 
-            if (smoMo) {
+            if (SmomoIntf *smoMo = getSmomoInstance(layer->getSmomoLayerStackId())) {
                 if (smoMo->FrameIsEarly(layer->getSequence(), desiredPresentTime)) {
                     return TransactionReadiness::NotReady;
                 }
