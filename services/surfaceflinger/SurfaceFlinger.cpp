@@ -638,6 +638,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("ro.sf.force_light_brightness", value, "0");
     mForceLightBrightness = atoi(value);
 
+    property_get("ro.sf.force_hwc_brightness", value, "0");
+    mForceHwcBrightness = atoi(value);
+
     char property[PROPERTY_VALUE_MAX] = {0};
     if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
         (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
@@ -2246,11 +2249,9 @@ status_t SurfaceFlinger::getDisplayBrightnessSupport(const sp<IBinder>& displayT
     if (!displayId) {
         return NAME_NOT_FOUND;
     }
-    if (mForceLightBrightness) {
-        *outSupport = false;
-        return NO_ERROR;
-    }
-    *outSupport = getHwComposer().hasDisplayCapability(*displayId, DisplayCapability::BRIGHTNESS);
+
+    *outSupport = mForceHwcBrightness ? true : mForceLightBrightness ? false :
+            getHwComposer().hasDisplayCapability(*displayId, DisplayCapability::BRIGHTNESS);
     return NO_ERROR;
 }
 
