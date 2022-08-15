@@ -7238,7 +7238,6 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_DISPLAY_DECORATION_SUPPORT:
         case IS_WIDE_COLOR_DISPLAY:
         case GET_DISPLAY_BRIGHTNESS_SUPPORT:
-        case SET_DISPLAY_BRIGHTNESS:
         case ADD_HDR_LAYER_INFO_LISTENER:
         case REMOVE_HDR_LAYER_INFO_LISTENER:
         case NOTIFY_POWER_BOOST:
@@ -7251,6 +7250,18 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_GPU_CONTEXT_PRIORITY:
         case GET_MAX_ACQUIRED_BUFFER_COUNT: {
             // This is not sensitive information, so should not require permission control.
+            return OK;
+        }
+        case SET_DISPLAY_BRIGHTNESS: {
+            // codes that require permission check
+            IPCThreadState* ipc = IPCThreadState::self();
+            const int pid = ipc->getCallingPid();
+            const int uid = ipc->getCallingUid();
+            if ((uid != AID_GRAPHICS) && (uid != AID_SYSTEM) &&
+                !PermissionCache::checkPermission(sControlDisplayBrightness, pid, uid)) {
+                ALOGE("Permission Denial: can't control brightness pid=%d, uid=%d", pid, uid);
+                return PERMISSION_DENIED;
+            }
             return OK;
         }
         case ADD_FPS_LISTENER:
