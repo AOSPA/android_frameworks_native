@@ -74,7 +74,8 @@ struct Afp_Interface {
     bool (*mPenguinInit)() = nullptr;
     void (*mPenguinQueueBuffer)(const uint64_t objAddr, const char* name,
                                 const bool isAutoTimestamp,
-                                const int64_t requestedPresentTimestamp) = nullptr;
+                                const int64_t requestedPresentTimestamp,
+                                const int window_api) = nullptr;
     void (*mPenguinRemoveItemFromList)(uint64_t objAddr) = nullptr;
     bool mAllPenguinSymbolsFound = false;
     pthread_once_t mInitControl = PTHREAD_ONCE_INIT;
@@ -89,18 +90,15 @@ void AFPLoadAndInit() {
         AFP.mPenguinInit=
             (bool (*) ())dlsym(AFP.mPenguinHandle, "penguinInit");
         AFP.mPenguinQueueBuffer =
-            (void (*) (const uint64_t, const char*,
-                       const bool, const int64_t))dlsym(AFP.mPenguinHandle, "penguinQueueBuffer");
+            (void (*) (const uint64_t, const char*, const bool,
+                       const int64_t, const int))dlsym(AFP.mPenguinHandle, "penguinQueueBuffer");
         AFP.mPenguinRemoveItemFromList =
             (void (*) (uint64_t))dlsym(AFP.mPenguinHandle, "penguinRemoveItemFromList");
         AFP.mAllPenguinSymbolsFound = AFP.mPenguinInit && AFP.mPenguinQueueBuffer
                                                        && AFP.mPenguinRemoveItemFromList;
-    }
-    if (AFP.mAllPenguinSymbolsFound) {
-        if (!AFP.mPenguinInit()) {
+        if (!AFP.mAllPenguinSymbolsFound || !AFP.mPenguinInit()) {
             AFP.mAllPenguinSymbolsFound = false;
-            if (!AFP.mPenguinHandle)
-                dlclose(AFP.mPenguinHandle);
+            dlclose(AFP.mPenguinHandle);
         }
     }
 }
@@ -890,7 +888,8 @@ status_t BufferQueueProducer::queueBuffer(int slot,
 
     if (AFP.mAllPenguinSymbolsFound) {
         AFP.mPenguinQueueBuffer((uint64_t)this, mConsumerName.string(),
-                                 isAutoTimestamp, requestedPresentTimestamp);
+                                 isAutoTimestamp, requestedPresentTimestamp,
+                                 mCore->mConnectedApi);
     }
 
     sp<IConsumerListener> frameAvailableListener;
