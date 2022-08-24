@@ -84,14 +84,15 @@ public:
     void setCallRestriction(CallRestriction restriction);
 
     /**
-     * Get the max number of threads that the kernel can start.
-     *
-     * Note: this is the lower bound. Additional threads may be started.
+     * Get the max number of threads that have joined the thread pool.
+     * This includes kernel started threads, user joined threads and polling
+     * threads if used.
      */
-    size_t getThreadPoolMaxThreadCount() const;
+    size_t getThreadPoolMaxTotalThreadCount() const;
 
     enum class DriverFeature {
         ONEWAY_SPAM_DETECTION,
+        EXTENDED_ERROR,
     };
     // Determine whether a feature is supported by the binder driver.
     static bool isDriverFeatureEnabled(const DriverFeature feature);
@@ -132,8 +133,12 @@ private:
     size_t mExecutingThreadsCount;
     // Number of threads calling IPCThreadState::blockUntilThreadAvailable()
     size_t mWaitingForThreads;
-    // Maximum number for binder threads allowed for this process.
+    // Maximum number of lazy threads to be started in the threadpool by the kernel.
     size_t mMaxThreads;
+    // Current number of threads inside the thread pool.
+    size_t mCurrentThreads;
+    // Current number of pooled threads inside the thread pool.
+    size_t mKernelStartedThreads;
     // Time when thread pool was emptied
     int64_t mStarvationStartTimeMs;
 

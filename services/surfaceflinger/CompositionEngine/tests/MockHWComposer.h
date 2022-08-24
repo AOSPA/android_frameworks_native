@@ -93,9 +93,9 @@ public:
     MOCK_METHOD4(setDisplayContentSamplingEnabled, status_t(HalDisplayId, bool, uint8_t, uint64_t));
     MOCK_METHOD4(getDisplayedContentSample,
                  status_t(HalDisplayId, uint64_t, uint64_t, DisplayedFrameStats*));
-    MOCK_METHOD4(setDisplayBrightness,
-                 std::future<status_t>(PhysicalDisplayId, float, float,
-                                       const Hwc2::Composer::DisplayBrightnessOptions&));
+    MOCK_METHOD(ftl::Future<status_t>, setDisplayBrightness,
+                (PhysicalDisplayId, float, float, const Hwc2::Composer::DisplayBrightnessOptions&),
+                (override));
     MOCK_METHOD2(setDisplayElapseTime, status_t(HalDisplayId, uint64_t));
     MOCK_METHOD2(getDisplayBrightnessSupport, status_t(PhysicalDisplayId, bool*));
 
@@ -146,6 +146,7 @@ public:
     MOCK_METHOD(bool, hasDisplayIdleTimerCapability, (PhysicalDisplayId), (const, override));
     MOCK_METHOD(Hwc2::AidlTransform, getPhysicalDisplayOrientation, (PhysicalDisplayId),
                 (const, override));
+    MOCK_METHOD(bool, getValidateSkipped, (HalDisplayId), (const, override));
     MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
 };
 

@@ -638,7 +638,9 @@ void IPCThreadState::processPostWriteDerefs()
 void IPCThreadState::joinThreadPool(bool isMain)
 {
     LOG_THREADPOOL("**** THREAD %p (PID %d) IS JOINING THE THREAD POOL\n", (void*)pthread_self(), getpid());
-
+    pthread_mutex_lock(&mProcess->mThreadCountLock);
+    mProcess->mCurrentThreads++;
+    pthread_mutex_unlock(&mProcess->mThreadCountLock);
     mOut.writeInt32(isMain ? BC_ENTER_LOOPER : BC_REGISTER_LOOPER);
 
     mIsLooper = true;
@@ -666,6 +668,13 @@ void IPCThreadState::joinThreadPool(bool isMain)
     mOut.writeInt32(BC_EXIT_LOOPER);
     mIsLooper = false;
     talkWithDriver(false);
+    pthread_mutex_lock(&mProcess->mThreadCountLock);
+    LOG_ALWAYS_FATAL_IF(mProcess->mCurrentThreads == 0,
+                        "Threadpool thread count = 0. Thread cannot exist and exit in empty "
+                        "threadpool\n"
+                        "Misconfiguration. Increase threadpool max threads configuration\n");
+    mProcess->mCurrentThreads--;
+    pthread_mutex_unlock(&mProcess->mThreadCountLock);
 }
 
 status_t IPCThreadState::setupPolling(int* fd)
@@ -677,6 +686,9 @@ status_t IPCThreadState::setupPolling(int* fd)
     mOut.writeInt32(BC_ENTER_LOOPER);
     flushCommands();
     *fd = mProcess->mDriverFD;
+    pthread_mutex_lock(&mProcess->mThreadCountLock);
+    mProcess->mCurrentThreads++;
+    pthread_mutex_unlock(&mProcess->mThreadCountLock);
     return 0;
 }
 
@@ -989,6 +1001,7 @@ finish:
         if (acquireResult) *acquireResult = err;
         if (reply) reply->setError(err);
         mLastError = err;
+        logExtendedError();
     }
 
     return err;
@@ -1441,6 +1454,23 @@ status_t IPCThreadState::freeze(pid_t pid, bool enable, uint32_t timeout_ms) {
     // Call again to poll for completion.
     //
     return ret;
+}
+
+void IPCThreadState::logExtendedError() {
+    struct binder_extended_error ee = {.command = BR_OK};
+
+    if (!ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::EXTENDED_ERROR))
+        return;
+
+#if defined(__ANDROID__)
+    if (ioctl(self()->mProcess->mDriverFD, BINDER_GET_EXTENDED_ERROR, &ee) < 0) {
+        ALOGE("Failed to get extended error: %s", strerror(errno));
+        return;
+    }
+#endif
+
+    ALOGE_IF(ee.command != BR_OK, "Binder transaction failure: %d/%d/%d",
+             ee.id, ee.command, ee.param);
 }
 
 void IPCThreadState::freeBuffer(Parcel* parcel, const uint8_t* data,
