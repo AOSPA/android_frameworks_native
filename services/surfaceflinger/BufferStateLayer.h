@@ -39,8 +39,7 @@ public:
     // Implements Layer.
     const char* getType() const override { return "BufferStateLayer"; }
 
-    void onLayerDisplayed(
-            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
+    void onLayerDisplayed(ftl::SharedFuture<FenceResult>) override;
 
     void releasePendingBuffer(nsecs_t dequeueReadyTime) override;
 
@@ -67,8 +66,6 @@ public:
     bool setApi(int32_t api) override;
     bool setSidebandStream(const sp<NativeHandle>& sidebandStream) override;
     bool setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& handles) override;
-    bool addFrameEvent(const sp<Fence>& acquireFence, nsecs_t postedTime,
-                       nsecs_t requestedPresentTime) override;
     bool setPosition(float /*x*/, float /*y*/) override;
     bool setMatrix(const layer_state_t::matrix22_t& /*matrix*/);
 
@@ -125,7 +122,7 @@ private:
                             nsecs_t expectedPresentTime) override;
 
     status_t updateActiveBuffer() override;
-    status_t updateFrameNumber(nsecs_t latchTime) override;
+    status_t updateFrameNumber() override;
 
     sp<Layer> createClone() override;
 

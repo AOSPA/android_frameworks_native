@@ -42,8 +42,7 @@ public:
     // Implements Layer.
     const char* getType() const override { return "BufferQueueLayer"; }
 
-    void onLayerDisplayed(
-            std::shared_future<renderengine::RenderEngineResult> futureRenderEngineResult) override;
+    void onLayerDisplayed(ftl::SharedFuture<FenceResult>) override;
 
     // If a buffer was replaced this frame, release the former buffer
     void releasePendingBuffer(nsecs_t dequeueReadyTime) override;
@@ -103,7 +102,7 @@ private:
                             nsecs_t expectedPresentTime) override;
 
     status_t updateActiveBuffer() override;
-    status_t updateFrameNumber(nsecs_t latchTime) override;
+    status_t updateFrameNumber() override;
     void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& frameTimelineInfo) override;
 
     sp<Layer> createClone() override;

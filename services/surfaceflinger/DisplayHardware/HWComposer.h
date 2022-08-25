@@ -17,7 +17,6 @@
 #pragma once
 
 #include <cstdint>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,6 +25,7 @@
 #include <vector>
 
 #include <android-base/thread_annotations.h>
+#include <ftl/future.h>
 #include <ui/DisplayIdentification.h>
 #include <ui/FenceTime.h>
 
@@ -200,9 +200,12 @@ public:
                                                DisplayedFrameStats* outStats) = 0;
 
     // Sets the brightness of a display.
-    virtual std::future<status_t> setDisplayBrightness(
+    virtual ftl::Future<status_t> setDisplayBrightness(
             PhysicalDisplayId, float brightness, float brightnessNits,
             const Hwc2::Composer::DisplayBrightnessOptions&) = 0;
+
+    // Get whether the display skipped validation on the latest present
+    virtual bool getValidateSkipped(HalDisplayId displayId) const = 0;
 
     // Events handling ---------------------------------------------------------
 
@@ -386,7 +389,7 @@ public:
                                               uint64_t maxFrames) override;
     status_t getDisplayedContentSample(HalDisplayId, uint64_t maxFrames, uint64_t timestamp,
                                        DisplayedFrameStats* outStats) override;
-    std::future<status_t> setDisplayBrightness(
+    ftl::Future<status_t> setDisplayBrightness(
             PhysicalDisplayId, float brightness, float brightnessNits,
             const Hwc2::Composer::DisplayBrightnessOptions&) override;
 
@@ -411,6 +414,8 @@ public:
     std::vector<ui::ColorMode> getColorModes(PhysicalDisplayId) const override;
 
     status_t setActiveColorMode(PhysicalDisplayId, ui::ColorMode, ui::RenderIntent) override;
+
+    bool getValidateSkipped(HalDisplayId displayId) const override;
 
     // Composer 2.4
     ui::DisplayConnectionType getDisplayConnectionType(PhysicalDisplayId) const override;

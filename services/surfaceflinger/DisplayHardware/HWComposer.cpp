@@ -30,7 +30,6 @@
 #include <compositionengine/Output.h>
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
-#include <ftl/future.h>
 #include <log/log.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
@@ -720,13 +719,13 @@ status_t HWComposer::getDisplayedContentSample(HalDisplayId displayId, uint64_t 
     return NO_ERROR;
 }
 
-std::future<status_t> HWComposer::setDisplayBrightness(
+ftl::Future<status_t> HWComposer::setDisplayBrightness(
         PhysicalDisplayId displayId, float brightness, float brightnessNits,
         const Hwc2::Composer::DisplayBrightnessOptions& options) {
     RETURN_IF_INVALID_DISPLAY(displayId, ftl::yield<status_t>(BAD_INDEX));
     auto& display = mDisplayData[displayId].hwcDisplay;
 
-    return ftl::chain(display->setDisplayBrightness(brightness, brightnessNits, options))
+    return display->setDisplayBrightness(brightness, brightnessNits, options)
             .then([displayId](hal::Error error) -> status_t {
                 if (error == hal::Error::UNSUPPORTED) {
                     RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
@@ -737,6 +736,13 @@ std::future<status_t> HWComposer::setDisplayBrightness(
                 RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
                 return NO_ERROR;
             });
+}
+
+bool HWComposer::getValidateSkipped(HalDisplayId displayId) const {
+    if (mDisplayData.count(displayId) == 0) {
+        return false;
+    }
+    return mDisplayData.at(displayId).validateWasSkipped;
 }
 
 status_t HWComposer::setBootDisplayMode(PhysicalDisplayId displayId,
