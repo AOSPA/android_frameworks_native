@@ -372,6 +372,8 @@ const String16 sInternalSystemWindow("android.permission.INTERNAL_SYSTEM_WINDOW"
 
 const char* KERNEL_IDLE_TIMER_PROP = "graphics.display.kernel_idle_timer.enabled";
 
+static const int MAX_TRACING_MEMORY = 1024 * 1024 * 1024; // 1GB
+
 // ---------------------------------------------------------------------------
 int64_t SurfaceFlinger::dispSyncPresentTimeOffset;
 bool SurfaceFlinger::useHwcForRgbToYuv;
@@ -6270,7 +6272,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     if (isDisplayActiveLocked(display)) {
         mTimeStats->setPowerMode(mode);
         mRefreshRateStats->setPowerMode(mode);
-        mScheduler->setDisplayPowerState(mode == hal::PowerMode::ON);
+        mScheduler->setDisplayPowerMode(mode);
     }
 
     setEarlyWakeUpConfig(display, mode);
@@ -8479,6 +8481,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     clientCompositionDisplay.orientation = rotation;
 
     clientCompositionDisplay.outputDataspace = dataspace;
+    clientCompositionDisplay.currentLuminanceNits = displayBrightnessNits;
     clientCompositionDisplay.maxLuminance = DisplayDevice::sDefaultMaxLumiance;
     clientCompositionDisplay.renderIntent =
             static_cast<aidl::android::hardware::graphics::composer3::RenderIntent>(renderIntent);
@@ -9638,6 +9641,8 @@ binder::Status SurfaceComposerAIDL::getStaticDisplayInfo(const sp<IBinder>& disp
         dinfo.manufacturerPnpId =
                 std::vector<uint8_t>(dpi->manufacturerPnpId.begin(), dpi->manufacturerPnpId.end());
         dinfo.productId = dpi->productId;
+        dinfo.relativeAddress =
+                std::vector<uint8_t>(dpi->relativeAddress.begin(), dpi->relativeAddress.end());
         if (const auto* model =
                     std::get_if<DeviceProductInfo::ModelYear>(&dpi->manufactureOrModelDate)) {
             gui::DeviceProductInfo::ModelYear modelYear;
