@@ -113,7 +113,6 @@
 #include <ui/DisplayIdentification.h>
 #include "BackgroundExecutor.h"
 #include "BufferLayer.h"
-#include "BufferQueueLayer.h"
 #include "BufferStateLayer.h"
 #include "Client.h"
 #include "Colorizer.h"
@@ -2749,6 +2748,11 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
         mGpuFrameMissedCount++;
     }
 
+    if (mTracingEnabledChanged) {
+        mLayerTracingEnabled = mLayerTracing.isEnabled();
+        mTracingEnabledChanged = false;
+    }
+
     // If we are in the middle of a mode change and the fence hasn't
     // fired yet just wait for the next commit.
     if (mSetActiveModePending) {
@@ -2797,11 +2801,6 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
         }
     }
 
-    if (mTracingEnabledChanged) {
-        mLayerTracingEnabled = mLayerTracing.isEnabled();
-        mTracingEnabledChanged = false;
-    }
-
     if (mRefreshRateOverlaySpinner) {
         Mutex::Autolock lock(mStateLock);
         if (const auto display = getDefaultDisplayDeviceLocked()) {
@@ -2816,7 +2815,7 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
 
         bool needsTraversal = false;
         if (clearTransactionFlags(eTransactionFlushNeeded)) {
-            needsTraversal |= commitCreatedLayers();
+            needsTraversal |= commitCreatedLayers(vsyncId);
             needsTraversal |= flushTransactionQueues(vsyncId);
         }
 
@@ -2861,8 +2860,9 @@ bool SurfaceFlinger::commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expected
 
     if (mLayerTracingEnabled && !mLayerTracing.flagIsSet(LayerTracing::TRACE_COMPOSITION)) {
         // This will block and tracing should only be enabled for debugging.
-        mLayerTracing.notify(mVisibleRegionsDirty, frameTime);
+        mLayerTracing.notify(mVisibleRegionsDirty, frameTime, vsyncId);
     }
+    mLastCommittedVsyncId = vsyncId;
 
 #ifdef PASS_COMPOSITOR_TID
     if (!mTidSentSuccessfully && mBootFinished && mDisplayExtnIntf) {
@@ -3013,7 +3013,7 @@ void SurfaceFlinger::composite(nsecs_t frameTime, int64_t vsyncId)
     mLayersWithQueuedFrames.clear();
     if (mLayerTracingEnabled && mLayerTracing.flagIsSet(LayerTracing::TRACE_COMPOSITION)) {
         // This will block and should only be used for debugging.
-        mLayerTracing.notify(mVisibleRegionsDirty, frameTime);
+        mLayerTracing.notify(mVisibleRegionsDirty, frameTime, vsyncId);
     }
 
     mVisibleRegionsWereDirtyThisFrame = mVisibleRegionsDirty; // Cache value for use in post-comp
@@ -4372,7 +4372,7 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
                 }
             }
 
-            if (!hintDisplay) {
+            if (!hintDisplay && mDisplays.size() > 0) {
                 // NOTE: TEMPORARY FIX ONLY. Real fix should cause layers to
                 // redraw after transform hint changes. See bug 8508397.
 
@@ -4382,7 +4382,11 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
                 hintDisplay = getDefaultDisplayDeviceLocked();
             }
 
-            layer->updateTransformHint(hintDisplay->getTransformHint());
+            if (hintDisplay) {
+                layer->updateTransformHint(hintDisplay->getTransformHint());
+            } else {
+                ALOGW("Ignoring transform hint update for %s", layer->getDebugName());
+            }
         });
     }
 
@@ -6018,42 +6022,6 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, sp<IBinder>* outHa
     return result;
 }
 
-status_t SurfaceFlinger::createBufferQueueLayer(LayerCreationArgs& args, PixelFormat& format,
-                                                sp<IBinder>* handle,
-                                                sp<IGraphicBufferProducer>* gbp,
-                                                sp<Layer>* outLayer) {
-    // initialize the surfaces
-    switch (format) {
-    case PIXEL_FORMAT_TRANSPARENT:
-    case PIXEL_FORMAT_TRANSLUCENT:
-        format = PIXEL_FORMAT_RGBA_8888;
-        break;
-    case PIXEL_FORMAT_OPAQUE:
-        format = PIXEL_FORMAT_RGBX_8888;
-        break;
-    }
-
-    sp<BufferQueueLayer> layer;
-    args.textureName = getNewTexture();
-    {
-        // Grab the SF state lock during this since it's the only safe way to access
-        // RenderEngine when creating a BufferLayerConsumer
-        // TODO: Check if this lock is still needed here
-        Mutex::Autolock lock(mStateLock);
-        layer = getFactory().createBufferQueueLayer(args);
-    }
-
-    status_t err = layer->setDefaultBufferProperties(0, 0, format);
-    if (err == NO_ERROR) {
-        *handle = layer->getHandle();
-        *gbp = layer->getProducer();
-        *outLayer = layer;
-    }
-
-    ALOGE_IF(err, "createBufferQueueLayer() failed (%s)", strerror(-err));
-    return err;
-}
-
 status_t SurfaceFlinger::createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* handle,
                                                 sp<Layer>* outLayer) {
     args.textureName = getNewTexture();
@@ -7397,7 +7365,8 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                                 (fixedStartingTime) ? fixedStartingTime : systemTime();
                         mScheduler
                                 ->schedule([&]() FTL_FAKE_GUARD(mStateLock) {
-                                    mLayerTracing.notify("start", startingTime);
+                                    mLayerTracing.notify(true /* visibleRegionDirty */,
+                                                         startingTime, mLastCommittedVsyncId);
                                 })
                                 .wait();
                     }
@@ -8632,9 +8601,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
         return NO_ERROR;
     }
 
-    status_t setPolicyResult = overridePolicy
-            ? display->refreshRateConfigs().setOverridePolicy(policy)
-            : display->refreshRateConfigs().setDisplayManagerPolicy(*policy);
+    const status_t setPolicyResult = display->setRefreshRatePolicy(policy, overridePolicy);
     if (setPolicyResult < 0) {
         return BAD_VALUE;
     }
@@ -8929,7 +8896,7 @@ int SurfaceFlinger::getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) con
     return calculateMaxAcquiredBufferCount(refreshRate, presentLatency);
 }
 
-void SurfaceFlinger::handleLayerCreatedLocked(const LayerCreatedState& state) {
+void SurfaceFlinger::handleLayerCreatedLocked(const LayerCreatedState& state, int64_t vsyncId) {
     sp<Layer> layer = state.layer.promote();
     if (!layer) {
         ALOGD("Layer was destroyed soon after creation %p", state.layer.unsafe_get());
@@ -8959,7 +8926,9 @@ void SurfaceFlinger::handleLayerCreatedLocked(const LayerCreatedState& state) {
     }
 
     layer->updateTransformHint(mActiveDisplayTransformHint);
-
+    if (mTransactionTracing) {
+        mTransactionTracing->onLayerAddedToDrawingState(layer->getSequence(), vsyncId);
+    }
     mInterceptor->saveSurfaceCreation(layer);
 }
 
@@ -9470,7 +9439,7 @@ std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextur
     return buffer;
 }
 
-bool SurfaceFlinger::commitCreatedLayers() {
+bool SurfaceFlinger::commitCreatedLayers(int64_t vsyncId) {
     std::vector<LayerCreatedState> createdLayers;
     {
         std::scoped_lock<std::mutex> lock(mCreatedLayersLock);
@@ -9483,7 +9452,7 @@ bool SurfaceFlinger::commitCreatedLayers() {
 
     Mutex::Autolock _l(mStateLock);
     for (const auto& createdLayer : createdLayers) {
-        handleLayerCreatedLocked(createdLayer);
+        handleLayerCreatedLocked(createdLayer, vsyncId);
     }
     createdLayers.clear();
     mLayersAdded = true;

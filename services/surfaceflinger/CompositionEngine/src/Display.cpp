@@ -304,7 +304,7 @@ bool Display::chooseCompositionStrategy(
     }
 
     if (isPowerHintSessionEnabled()) {
-        mPowerAdvisor->setValidateTiming(mId, startTime, systemTime());
+        mPowerAdvisor->setHwcValidateTiming(mId, startTime, systemTime());
         mPowerAdvisor->setRequiresClientComposition(mId, requiresClientComposition);
     }
 
@@ -471,7 +471,7 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
         if (!getCompositionEngine().getHwComposer().getComposer()->isSupported(
                     Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
             getState().previousPresentFence->getSignalTime() != Fence::SIGNAL_TIME_PENDING) {
-            mPowerAdvisor->setPresentDelayedTime(mId, getState().earliestPresentTime);
+            mPowerAdvisor->setHwcPresentDelayedTime(mId, getState().earliestPresentTime);
         }
     }
 
@@ -479,7 +479,7 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
                                    getState().previousPresentFence);
 
     if (isPowerHintSessionEnabled()) {
-        mPowerAdvisor->setPresentTiming(mId, startTime, systemTime());
+        mPowerAdvisor->setHwcPresentTiming(mId, startTime, systemTime());
     }
 
     fences.presentFence = hwc.getPresentFence(*halDisplayIdOpt);

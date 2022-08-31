@@ -98,7 +98,7 @@ void LayerTracing::dump(std::string& result) const {
     mBuffer->dump(result);
 }
 
-void LayerTracing::notify(bool visibleRegionDirty, int64_t time) {
+void LayerTracing::notify(bool visibleRegionDirty, int64_t time, int64_t vsyncId) {
     std::scoped_lock lock(mTraceLock);
     if (!mEnabled) {
         return;
@@ -129,6 +129,7 @@ void LayerTracing::notify(bool visibleRegionDirty, int64_t time) {
         entry.set_excludes_composition_state(true);
     }
     mFlinger.dumpDisplayProto(entry);
+    entry.set_vsync_id(vsyncId);
     mBuffer->emplace(std::move(entry));
 }
 
