@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "ebe7ec6f_b979103c",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2022-09-01T04:52:20Z",
+      "side": 1,
+      "message": "Skipped these commits because they didn\u0027t apply easily:\n\n  https://github.com/AOSPA/android_frameworks_native/commit/a1eadbb101bc96586b3fcf395209059a1e2f34bb\n  https://github.com/AOSPA/android_frameworks_native/commit/7ccc47c868929bd4ac3b9e477c54e9a05e59766d\n  https://github.com/AOSPA/android_frameworks_native/commit/544eafb27e83b9749fb6fa3c10f2593d3b3c6247",
+      "revId": "c016bc4459115abefdf0c8c3a4422013d2127304",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
