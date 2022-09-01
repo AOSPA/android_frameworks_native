@@ -365,8 +365,6 @@ void BufferLayer::onPostComposition(const DisplayDevice* display,
     // composition.
     if (!mBufferInfo.mFrameLatencyNeeded) return;
 
-    mAlreadyDisplayedThisCompose = false;
-
     // Update mFrameEventHistory.
     finalizeFrameEventHistory(glDoneFence, compositorTiming);
 

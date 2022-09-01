@@ -316,7 +316,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                         state.overrideInfo = {
                                 .buffer = mNewCachedSet->getBuffer(),
                                 .acquireFence = mNewCachedSet->getDrawFence(),
-                                .displayFrame = mNewCachedSet->getBounds(),
+                                .displayFrame = mNewCachedSet->getTextureBounds(),
                                 .dataspace = mNewCachedSet->getOutputDataspace(),
                                 .displaySpace = mNewCachedSet->getOutputSpace(),
                                 .damageRegion = Region::INVALID_REGION,
@@ -356,7 +356,7 @@ bool Flattener::mergeWithCachedSets(const std::vector<const LayerState*>& layers
                 state.overrideInfo = {
                         .buffer = currentLayerIter->getBuffer(),
                         .acquireFence = currentLayerIter->getDrawFence(),
-                        .displayFrame = currentLayerIter->getBounds(),
+                        .displayFrame = currentLayerIter->getTextureBounds(),
                         .dataspace = currentLayerIter->getOutputDataspace(),
                         .displaySpace = currentLayerIter->getOutputSpace(),
                         .damageRegion = Region(),
@@ -499,6 +499,13 @@ void Flattener::buildCachedSets(time_point now) {
         // TODO (b/191997217): make it less aggressive, and sync with findCandidateRuns
         if (layer.hasProtectedLayers()) {
             ATRACE_NAME("layer->hasProtectedLayers()");
+            return;
+        }
+    }
+
+    for (const CachedSet& layer : mLayers) {
+        if (layer.hasSolidColorLayers()) {
+            ATRACE_NAME("layer->hasSolidColorLayers()");
             return;
         }
     }
