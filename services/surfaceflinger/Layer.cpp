@@ -748,12 +748,16 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 
     if (s.sequence != mLastCommittedTxSequence) {
         // invalidate and recompute the visible regions if needed
-         mLastCommittedTxSequence = s.sequence;
+        mLastCommittedTxSequence = s.sequence;
         flags |= eVisibleRegion;
         this->contentDirty = true;
 
         // we may use linear filtering, if the matrix scales us
         mNeedsFiltering = getActiveTransform(s).needsBilinearFiltering();
+    }
+
+    if (!mPotentialCursor && (flags & Layer::eVisibleRegion)) {
+        mFlinger->mUpdateInputInfo = true;
     }
 
     commitTransaction(mDrawingState);
@@ -906,7 +910,7 @@ bool Layer::setTrustedOverlay(bool isTrustedOverlay) {
     if (mDrawingState.isTrustedOverlay == isTrustedOverlay) return false;
     mDrawingState.isTrustedOverlay = isTrustedOverlay;
     mDrawingState.modified = true;
-    mFlinger->mInputInfoChanged = true;
+    mFlinger->mUpdateInputInfo = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1003,6 +1007,13 @@ bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
     return true;
 }
 bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix) {
+    if (matrix.dsdx == mDrawingState.transform.dsdx() &&
+        matrix.dtdy == mDrawingState.transform.dtdy() &&
+        matrix.dtdx == mDrawingState.transform.dtdx() &&
+        matrix.dsdy == mDrawingState.transform.dsdy()) {
+        return false;
+    }
+
     ui::Transform t;
     t.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
 
@@ -2093,7 +2104,7 @@ void Layer::setInputInfo(const WindowInfo& info) {
     mDrawingState.inputInfo = info;
     mDrawingState.touchableRegionCrop = fromHandle(info.touchableRegionCropHandle.promote());
     mDrawingState.modified = true;
-    mFlinger->mInputInfoChanged = true;
+    mFlinger->mUpdateInputInfo = true;
     setTransactionFlags(eTransactionNeeded);
 }
 
