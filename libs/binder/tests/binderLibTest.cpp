@@ -30,6 +30,7 @@
 #include <android-base/properties.h>
 #include <android-base/result-gmock.h>
 #include <android-base/result.h>
+#include <android-base/scopeguard.h>
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
 #include <binder/Binder.h>
@@ -1232,6 +1233,53 @@ TEST_F(BinderLibTest, GotSid) {
     EXPECT_THAT(server->transact(BINDER_LIB_TEST_CAN_GET_SID, data, nullptr), StatusEq(OK));
 }
 
+struct TooManyFdsFlattenable : Flattenable<TooManyFdsFlattenable> {
+    TooManyFdsFlattenable(size_t fdCount) : mFdCount(fdCount) {}
+
+    // Flattenable protocol
+    size_t getFlattenedSize() const {
+        // Return a valid non-zero size here so we don't get an unintended
+        // BAD_VALUE from Parcel::write
+        return 16;
+    }
+    size_t getFdCount() const { return mFdCount; }
+    status_t flatten(void *& /*buffer*/, size_t & /*size*/, int *&fds, size_t &count) const {
+        for (size_t i = 0; i < count; i++) {
+            fds[i] = STDIN_FILENO;
+        }
+        return NO_ERROR;
+    }
+    status_t unflatten(void const *& /*buffer*/, size_t & /*size*/, int const *& /*fds*/,
+                       size_t & /*count*/) {
+        /* This doesn't get called */
+        return NO_ERROR;
+    }
+
+    size_t mFdCount;
+};
+
+TEST_F(BinderLibTest, TooManyFdsFlattenable) {
+    rlimit origNofile;
+    int ret = getrlimit(RLIMIT_NOFILE, &origNofile);
+    ASSERT_EQ(0, ret);
+
+    // Restore the original file limits when the test finishes
+    base::ScopeGuard guardUnguard([&]() { setrlimit(RLIMIT_NOFILE, &origNofile); });
+
+    rlimit testNofile = {1024, 1024};
+    ret = setrlimit(RLIMIT_NOFILE, &testNofile);
+    ASSERT_EQ(0, ret);
+
+    Parcel parcel;
+    // Try to write more file descriptors than supported by the OS
+    TooManyFdsFlattenable tooManyFds1(1024);
+    EXPECT_THAT(parcel.write(tooManyFds1), StatusEq(-EMFILE));
+
+    // Try to write more file descriptors than the internal limit
+    TooManyFdsFlattenable tooManyFds2(1025);
+    EXPECT_THAT(parcel.write(tooManyFds2), StatusEq(BAD_VALUE));
+}
+
 TEST(ServiceNotifications, Unregister) {
     auto sm = defaultServiceManager();
     using LocalRegistrationCallback = IServiceManager::LocalRegistrationCallback;
@@ -1264,7 +1312,9 @@ TEST_F(BinderLibTest, ThreadPoolAvailableThreads) {
     std::vector<std::thread> ts;
     for (size_t i = 0; i < kKernelThreads - 1; i++) {
         ts.push_back(std::thread([&] {
-            EXPECT_THAT(server->transact(BINDER_LIB_TEST_LOCK_UNLOCK, data, &reply), NO_ERROR);
+            Parcel local_reply;
+            EXPECT_THAT(server->transact(BINDER_LIB_TEST_LOCK_UNLOCK, data, &local_reply),
+                        NO_ERROR);
         }));
     }
 
@@ -1302,7 +1352,9 @@ TEST_F(BinderLibTest, HangingServices) {
     size_t epochMsBefore = epochMillis();
     for (size_t i = 0; i < kKernelThreads + 1; i++) {
         ts.push_back(std::thread([&] {
-            EXPECT_THAT(server->transact(BINDER_LIB_TEST_LOCK_UNLOCK, data, &reply), NO_ERROR);
+            Parcel local_reply;
+            EXPECT_THAT(server->transact(BINDER_LIB_TEST_LOCK_UNLOCK, data, &local_reply),
+                        NO_ERROR);
         }));
     }
 

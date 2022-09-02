@@ -699,10 +699,7 @@ status_t RpcSession::addOutgoingConnection(std::unique_ptr<RpcTransport> rpcTran
                 mRpcBinderState->sendConnectionInit(connection, sp<RpcSession>::fromExisting(this));
     }
 
-    {
-        std::lock_guard<std::mutex> _l(mMutex);
-        connection->exclusiveTid = std::nullopt;
-    }
+    clearConnectionTid(connection);
 
     return status;
 }
@@ -715,6 +712,7 @@ bool RpcSession::setForServer(const wp<RpcServer>& server, const wp<EventListene
     LOG_ALWAYS_FATAL_IF(mEventListener != nullptr);
     LOG_ALWAYS_FATAL_IF(eventListener == nullptr);
     LOG_ALWAYS_FATAL_IF(mShutdownTrigger != nullptr);
+    LOG_ALWAYS_FATAL_IF(mCtx != nullptr);
 
     mShutdownTrigger = FdTrigger::make();
     if (mShutdownTrigger == nullptr) return false;
@@ -770,6 +768,15 @@ bool RpcSession::removeIncomingConnection(const sp<RpcConnection>& connection) {
         return true;
     }
     return false;
+}
+
+void RpcSession::clearConnectionTid(const sp<RpcConnection>& connection) {
+    std::unique_lock<std::mutex> _l(mMutex);
+    connection->exclusiveTid = std::nullopt;
+    if (mConnections.mWaitingThreads > 0) {
+        _l.unlock();
+        mAvailableConnectionCv.notify_one();
+    }
 }
 
 std::vector<uint8_t> RpcSession::getCertificate(RpcCertificateFormat format) {
@@ -901,12 +908,7 @@ RpcSession::ExclusiveConnection::~ExclusiveConnection() {
     // is using this fd, and it retains the right to it. So, we don't give up
     // exclusive ownership, and no thread is freed.
     if (!mReentrant && mConnection != nullptr) {
-        std::unique_lock<std::mutex> _l(mSession->mMutex);
-        mConnection->exclusiveTid = std::nullopt;
-        if (mSession->mConnections.mWaitingThreads > 0) {
-            _l.unlock();
-            mSession->mAvailableConnectionCv.notify_one();
-        }
+        mSession->clearConnectionTid(mConnection);
     }
 }
 

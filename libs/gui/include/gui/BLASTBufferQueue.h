@@ -259,7 +259,6 @@ private:
     std::queue<sp<SurfaceControl>> mSurfaceControlsWithPendingCallback GUARDED_BY(mMutex);
 
     uint32_t mCurrentMaxAcquiredBufferCount;
-    bool mWaitForTransactionCallback GUARDED_BY(mMutex) = false;
 
     // Flag to determine if syncTransaction should only acquire a single buffer and then clear or
     // continue to acquire buffers until explicitly cleared
@@ -287,6 +286,8 @@ private:
     uint64_t mLastAppliedFrameNumber = 0;
 
     std::function<void(bool)> mTransactionHangCallback;
+
+    std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 };
 
 } // namespace android

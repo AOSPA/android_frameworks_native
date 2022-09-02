@@ -444,7 +444,6 @@ protected:
 
 private:
     friend class BufferLayer;
-    friend class BufferQueueLayer;
     friend class BufferStateLayer;
     friend class Client;
     friend class FpsReporter;
@@ -929,10 +928,6 @@ private:
                          const sp<Layer>& parentLayer = nullptr,
                          uint32_t* outTransformHint = nullptr);
 
-    status_t createBufferQueueLayer(LayerCreationArgs& args, PixelFormat& format,
-                                    sp<IBinder>* outHandle, sp<IGraphicBufferProducer>* outGbp,
-                                    sp<Layer>* outLayer);
-
     status_t createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                                     sp<Layer>* outLayer);
 
@@ -1375,7 +1370,7 @@ private:
     // Set during transaction application stage to track if the input info or children
     // for a layer has changed.
     // TODO: Also move visibleRegions over to a boolean system.
-    bool mInputInfoChanged = false;
+    bool mUpdateInputInfo = false;
     bool mSomeChildrenChanged;
     bool mSomeDataspaceChanged = false;
     bool mForceTransactionDisplayChange = false;
@@ -1442,6 +1437,8 @@ private:
     const std::shared_ptr<TimeStats> mTimeStats;
     const std::unique_ptr<FrameTracer> mFrameTracer;
     const std::unique_ptr<frametimeline::FrameTimeline> mFrameTimeline;
+
+    int64_t mLastCommittedVsyncId = -1;
 
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
@@ -1589,8 +1586,9 @@ private:
     // A temporay pool that store the created layers and will be added to current state in main
     // thread.
     std::vector<LayerCreatedState> mCreatedLayers GUARDED_BY(mCreatedLayersLock);
-    bool commitCreatedLayers();
-    void handleLayerCreatedLocked(const LayerCreatedState& state) REQUIRES(mStateLock);
+    bool commitCreatedLayers(int64_t vsyncId);
+    void handleLayerCreatedLocked(const LayerCreatedState& state, int64_t vsyncId)
+            REQUIRES(mStateLock);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
