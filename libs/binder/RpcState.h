@@ -19,6 +19,7 @@
 #include <binder/IBinder.h>
 #include <binder/Parcel.h>
 #include <binder/RpcSession.h>
+#include <binder/RpcThreads.h>
 
 #include <map>
 #include <optional>
@@ -181,25 +182,35 @@ private:
     [[nodiscard]] status_t rpcSend(
             const sp<RpcSession::RpcConnection>& connection, const sp<RpcSession>& session,
             const char* what, iovec* iovs, int niovs,
-            const std::optional<android::base::function_ref<status_t()>>& altPoll);
-    [[nodiscard]] status_t rpcRec(const sp<RpcSession::RpcConnection>& connection,
-                                  const sp<RpcSession>& session, const char* what, iovec* iovs,
-                                  int niovs);
+            const std::optional<android::base::function_ref<status_t()>>& altPoll,
+            const std::vector<std::variant<base::unique_fd, base::borrowed_fd>>* ancillaryFds =
+                    nullptr);
+    [[nodiscard]] status_t rpcRec(
+            const sp<RpcSession::RpcConnection>& connection, const sp<RpcSession>& session,
+            const char* what, iovec* iovs, int niovs,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>>* ancillaryFds = nullptr);
 
     [[nodiscard]] status_t waitForReply(const sp<RpcSession::RpcConnection>& connection,
                                         const sp<RpcSession>& session, Parcel* reply);
-    [[nodiscard]] status_t processCommand(const sp<RpcSession::RpcConnection>& connection,
-                                          const sp<RpcSession>& session,
-                                          const RpcWireHeader& command, CommandType type);
-    [[nodiscard]] status_t processTransact(const sp<RpcSession::RpcConnection>& connection,
-                                           const sp<RpcSession>& session,
-                                           const RpcWireHeader& command);
-    [[nodiscard]] status_t processTransactInternal(const sp<RpcSession::RpcConnection>& connection,
-                                                   const sp<RpcSession>& session,
-                                                   CommandData transactionData);
+    [[nodiscard]] status_t processCommand(
+            const sp<RpcSession::RpcConnection>& connection, const sp<RpcSession>& session,
+            const RpcWireHeader& command, CommandType type,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>>&& ancillaryFds);
+    [[nodiscard]] status_t processTransact(
+            const sp<RpcSession::RpcConnection>& connection, const sp<RpcSession>& session,
+            const RpcWireHeader& command,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>>&& ancillaryFds);
+    [[nodiscard]] status_t processTransactInternal(
+            const sp<RpcSession::RpcConnection>& connection, const sp<RpcSession>& session,
+            CommandData transactionData,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>>&& ancillaryFds);
     [[nodiscard]] status_t processDecStrong(const sp<RpcSession::RpcConnection>& connection,
                                             const sp<RpcSession>& session,
                                             const RpcWireHeader& command);
+
+    // Whether `parcel` is compatible with `session`.
+    [[nodiscard]] static status_t validateParcel(const sp<RpcSession>& session,
+                                                 const Parcel& parcel, std::string* errorMsg);
 
     struct BinderNode {
         // Two cases:
@@ -247,6 +258,8 @@ private:
         //
 
         // (no additional data specific to remote binders)
+
+        std::string toString() const;
     };
 
     // checks if there is any reference left to a node and erases it. If erase
@@ -258,7 +271,7 @@ private:
     // false - session shutdown, halt
     [[nodiscard]] bool nodeProgressAsyncNumber(BinderNode* node);
 
-    std::mutex mNodeMutex;
+    RpcMutex mNodeMutex;
     bool mTerminated = false;
     uint32_t mNextId = 0;
     // binders known by both sides of a session

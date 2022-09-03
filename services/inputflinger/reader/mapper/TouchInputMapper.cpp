@@ -42,6 +42,8 @@ static constexpr nsecs_t TOUCH_DATA_TIMEOUT = ms2ns(20);
 // data.
 static constexpr nsecs_t STYLUS_DATA_LATENCY = ms2ns(10);
 
+// Minimum width between two pointers to determine a gesture as freeform gesture in mm
+static const float MIN_FREEFORM_GESTURE_WIDTH_IN_MILLIMETER = 30;
 // --- Static Definitions ---
 
 template <typename T>
@@ -204,30 +206,30 @@ void TouchInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
                                  y.fuzz, y.resolution);
         }
 
-        if (mOrientedRanges.haveSize) {
-            info->addMotionRange(mOrientedRanges.size);
+        if (mOrientedRanges.size) {
+            info->addMotionRange(*mOrientedRanges.size);
         }
 
-        if (mOrientedRanges.haveTouchSize) {
-            info->addMotionRange(mOrientedRanges.touchMajor);
-            info->addMotionRange(mOrientedRanges.touchMinor);
+        if (mOrientedRanges.touchMajor) {
+            info->addMotionRange(*mOrientedRanges.touchMajor);
+            info->addMotionRange(*mOrientedRanges.touchMinor);
         }
 
-        if (mOrientedRanges.haveToolSize) {
-            info->addMotionRange(mOrientedRanges.toolMajor);
-            info->addMotionRange(mOrientedRanges.toolMinor);
+        if (mOrientedRanges.toolMajor) {
+            info->addMotionRange(*mOrientedRanges.toolMajor);
+            info->addMotionRange(*mOrientedRanges.toolMinor);
         }
 
-        if (mOrientedRanges.haveOrientation) {
-            info->addMotionRange(mOrientedRanges.orientation);
+        if (mOrientedRanges.orientation) {
+            info->addMotionRange(*mOrientedRanges.orientation);
         }
 
-        if (mOrientedRanges.haveDistance) {
-            info->addMotionRange(mOrientedRanges.distance);
+        if (mOrientedRanges.distance) {
+            info->addMotionRange(*mOrientedRanges.distance);
         }
 
-        if (mOrientedRanges.haveTilt) {
-            info->addMotionRange(mOrientedRanges.tilt);
+        if (mOrientedRanges.tilt) {
+            info->addMotionRange(*mOrientedRanges.tilt);
         }
 
         if (mCursorScrollAccumulator.haveRelativeVWheel()) {
@@ -415,15 +417,15 @@ void TouchInputMapper::configureParameters() {
             ? Parameters::GestureMode::SINGLE_TOUCH
             : Parameters::GestureMode::MULTI_TOUCH;
 
-    String8 gestureModeString;
-    if (getDeviceContext().getConfiguration().tryGetProperty(String8("touch.gestureMode"),
+    std::string gestureModeString;
+    if (getDeviceContext().getConfiguration().tryGetProperty("touch.gestureMode",
                                                              gestureModeString)) {
         if (gestureModeString == "single-touch") {
             mParameters.gestureMode = Parameters::GestureMode::SINGLE_TOUCH;
         } else if (gestureModeString == "multi-touch") {
             mParameters.gestureMode = Parameters::GestureMode::MULTI_TOUCH;
         } else if (gestureModeString != "default") {
-            ALOGW("Invalid value for touch.gestureMode: '%s'", gestureModeString.string());
+            ALOGW("Invalid value for touch.gestureMode: '%s'", gestureModeString.c_str());
         }
     }
 
@@ -445,8 +447,8 @@ void TouchInputMapper::configureParameters() {
 
     mParameters.hasButtonUnderPad = getDeviceContext().hasInputProperty(INPUT_PROP_BUTTONPAD);
 
-    String8 deviceTypeString;
-    if (getDeviceContext().getConfiguration().tryGetProperty(String8("touch.deviceType"),
+    std::string deviceTypeString;
+    if (getDeviceContext().getConfiguration().tryGetProperty("touch.deviceType",
                                                              deviceTypeString)) {
         if (deviceTypeString == "touchScreen") {
             mParameters.deviceType = Parameters::DeviceType::TOUCH_SCREEN;
@@ -457,17 +459,17 @@ void TouchInputMapper::configureParameters() {
         } else if (deviceTypeString == "pointer") {
             mParameters.deviceType = Parameters::DeviceType::POINTER;
         } else if (deviceTypeString != "default") {
-            ALOGW("Invalid value for touch.deviceType: '%s'", deviceTypeString.string());
+            ALOGW("Invalid value for touch.deviceType: '%s'", deviceTypeString.c_str());
         }
     }
 
     mParameters.orientationAware = mParameters.deviceType == Parameters::DeviceType::TOUCH_SCREEN;
-    getDeviceContext().getConfiguration().tryGetProperty(String8("touch.orientationAware"),
+    getDeviceContext().getConfiguration().tryGetProperty("touch.orientationAware",
                                                          mParameters.orientationAware);
 
     mParameters.orientation = Parameters::Orientation::ORIENTATION_0;
-    String8 orientationString;
-    if (getDeviceContext().getConfiguration().tryGetProperty(String8("touch.orientation"),
+    std::string orientationString;
+    if (getDeviceContext().getConfiguration().tryGetProperty("touch.orientation",
                                                              orientationString)) {
         if (mParameters.deviceType != Parameters::DeviceType::TOUCH_SCREEN) {
             ALOGW("The configuration 'touch.orientation' is only supported for touchscreens.");
@@ -478,7 +480,7 @@ void TouchInputMapper::configureParameters() {
         } else if (orientationString == "ORIENTATION_270") {
             mParameters.orientation = Parameters::Orientation::ORIENTATION_270;
         } else if (orientationString != "ORIENTATION_0") {
-            ALOGW("Invalid value for touch.orientation: '%s'", orientationString.string());
+            ALOGW("Invalid value for touch.orientation: '%s'", orientationString.c_str());
         }
     }
 
@@ -490,8 +492,8 @@ void TouchInputMapper::configureParameters() {
         mParameters.hasAssociatedDisplay = true;
         if (mParameters.deviceType == Parameters::DeviceType::TOUCH_SCREEN) {
             mParameters.associatedDisplayIsExternal = getDeviceContext().isExternal();
-            String8 uniqueDisplayId;
-            getDeviceContext().getConfiguration().tryGetProperty(String8("touch.displayId"),
+            std::string uniqueDisplayId;
+            getDeviceContext().getConfiguration().tryGetProperty("touch.displayId",
                                                                  uniqueDisplayId);
             mParameters.uniqueDisplayId = uniqueDisplayId.c_str();
         }
@@ -504,7 +506,7 @@ void TouchInputMapper::configureParameters() {
     // Normally we don't do this for internal touch screens to prevent them from waking
     // up in your pocket but you can enable it using the input device configuration.
     mParameters.wake = getDeviceContext().isExternal();
-    getDeviceContext().getConfiguration().tryGetProperty(String8("touch.wake"), mParameters.wake);
+    getDeviceContext().getConfiguration().tryGetProperty("touch.wake", mParameters.wake);
 }
 
 void TouchInputMapper::dumpParameters(std::string& dump) {
@@ -639,57 +641,58 @@ void TouchInputMapper::initializeSizeRanges() {
         mSizeScale = 0.0f;
     }
 
-    mOrientedRanges.haveTouchSize = true;
-    mOrientedRanges.haveToolSize = true;
-    mOrientedRanges.haveSize = true;
+    mOrientedRanges.touchMajor = InputDeviceInfo::MotionRange{
+            .axis = AMOTION_EVENT_AXIS_TOUCH_MAJOR,
+            .source = mSource,
+            .min = 0,
+            .max = diagonalSize,
+            .flat = 0,
+            .fuzz = 0,
+            .resolution = 0,
+    };
 
-    mOrientedRanges.touchMajor.axis = AMOTION_EVENT_AXIS_TOUCH_MAJOR;
-    mOrientedRanges.touchMajor.source = mSource;
-    mOrientedRanges.touchMajor.min = 0;
-    mOrientedRanges.touchMajor.max = diagonalSize;
-    mOrientedRanges.touchMajor.flat = 0;
-    mOrientedRanges.touchMajor.fuzz = 0;
-    mOrientedRanges.touchMajor.resolution = 0;
     if (mRawPointerAxes.touchMajor.valid) {
         mRawPointerAxes.touchMajor.resolution =
                 clampResolution("touchMajor", mRawPointerAxes.touchMajor.resolution);
-        mOrientedRanges.touchMajor.resolution = mRawPointerAxes.touchMajor.resolution;
+        mOrientedRanges.touchMajor->resolution = mRawPointerAxes.touchMajor.resolution;
     }
 
     mOrientedRanges.touchMinor = mOrientedRanges.touchMajor;
-    mOrientedRanges.touchMinor.axis = AMOTION_EVENT_AXIS_TOUCH_MINOR;
+    mOrientedRanges.touchMinor->axis = AMOTION_EVENT_AXIS_TOUCH_MINOR;
     if (mRawPointerAxes.touchMinor.valid) {
         mRawPointerAxes.touchMinor.resolution =
                 clampResolution("touchMinor", mRawPointerAxes.touchMinor.resolution);
-        mOrientedRanges.touchMinor.resolution = mRawPointerAxes.touchMinor.resolution;
+        mOrientedRanges.touchMinor->resolution = mRawPointerAxes.touchMinor.resolution;
     }
 
-    mOrientedRanges.toolMajor.axis = AMOTION_EVENT_AXIS_TOOL_MAJOR;
-    mOrientedRanges.toolMajor.source = mSource;
-    mOrientedRanges.toolMajor.min = 0;
-    mOrientedRanges.toolMajor.max = diagonalSize;
-    mOrientedRanges.toolMajor.flat = 0;
-    mOrientedRanges.toolMajor.fuzz = 0;
-    mOrientedRanges.toolMajor.resolution = 0;
+    mOrientedRanges.toolMajor = InputDeviceInfo::MotionRange{
+            .axis = AMOTION_EVENT_AXIS_TOOL_MAJOR,
+            .source = mSource,
+            .min = 0,
+            .max = diagonalSize,
+            .flat = 0,
+            .fuzz = 0,
+            .resolution = 0,
+    };
     if (mRawPointerAxes.toolMajor.valid) {
         mRawPointerAxes.toolMajor.resolution =
                 clampResolution("toolMajor", mRawPointerAxes.toolMajor.resolution);
-        mOrientedRanges.toolMajor.resolution = mRawPointerAxes.toolMajor.resolution;
+        mOrientedRanges.toolMajor->resolution = mRawPointerAxes.toolMajor.resolution;
     }
 
     mOrientedRanges.toolMinor = mOrientedRanges.toolMajor;
-    mOrientedRanges.toolMinor.axis = AMOTION_EVENT_AXIS_TOOL_MINOR;
+    mOrientedRanges.toolMinor->axis = AMOTION_EVENT_AXIS_TOOL_MINOR;
     if (mRawPointerAxes.toolMinor.valid) {
         mRawPointerAxes.toolMinor.resolution =
                 clampResolution("toolMinor", mRawPointerAxes.toolMinor.resolution);
-        mOrientedRanges.toolMinor.resolution = mRawPointerAxes.toolMinor.resolution;
+        mOrientedRanges.toolMinor->resolution = mRawPointerAxes.toolMinor.resolution;
     }
 
     if (mCalibration.sizeCalibration == Calibration::SizeCalibration::GEOMETRIC) {
-        mOrientedRanges.touchMajor.resolution *= mGeometricScale;
-        mOrientedRanges.touchMinor.resolution *= mGeometricScale;
-        mOrientedRanges.toolMajor.resolution *= mGeometricScale;
-        mOrientedRanges.toolMinor.resolution *= mGeometricScale;
+        mOrientedRanges.touchMajor->resolution *= mGeometricScale;
+        mOrientedRanges.touchMinor->resolution *= mGeometricScale;
+        mOrientedRanges.toolMajor->resolution *= mGeometricScale;
+        mOrientedRanges.toolMinor->resolution *= mGeometricScale;
     } else {
         // Support for other calibrations can be added here.
         ALOGW("%s calibration is not supported for size ranges at the moment. "
@@ -697,13 +700,15 @@ void TouchInputMapper::initializeSizeRanges() {
               ftl::enum_string(mCalibration.sizeCalibration).c_str());
     }
 
-    mOrientedRanges.size.axis = AMOTION_EVENT_AXIS_SIZE;
-    mOrientedRanges.size.source = mSource;
-    mOrientedRanges.size.min = 0;
-    mOrientedRanges.size.max = 1.0;
-    mOrientedRanges.size.flat = 0;
-    mOrientedRanges.size.fuzz = 0;
-    mOrientedRanges.size.resolution = 0;
+    mOrientedRanges.size = InputDeviceInfo::MotionRange{
+            .axis = AMOTION_EVENT_AXIS_SIZE,
+            .source = mSource,
+            .min = 0,
+            .max = 1.0,
+            .flat = 0,
+            .fuzz = 0,
+            .resolution = 0,
+    };
 }
 
 void TouchInputMapper::initializeOrientedRanges() {
@@ -730,21 +735,23 @@ void TouchInputMapper::initializeOrientedRanges() {
     float pressureMax = 1.0;
     if (mCalibration.pressureCalibration == Calibration::PressureCalibration::PHYSICAL ||
         mCalibration.pressureCalibration == Calibration::PressureCalibration::AMPLITUDE) {
-        if (mCalibration.havePressureScale) {
-            mPressureScale = mCalibration.pressureScale;
+        if (mCalibration.pressureScale) {
+            mPressureScale = *mCalibration.pressureScale;
             pressureMax = mPressureScale * mRawPointerAxes.pressure.maxValue;
         } else if (mRawPointerAxes.pressure.valid && mRawPointerAxes.pressure.maxValue != 0) {
             mPressureScale = 1.0f / mRawPointerAxes.pressure.maxValue;
         }
     }
 
-    mOrientedRanges.pressure.axis = AMOTION_EVENT_AXIS_PRESSURE;
-    mOrientedRanges.pressure.source = mSource;
-    mOrientedRanges.pressure.min = 0;
-    mOrientedRanges.pressure.max = pressureMax;
-    mOrientedRanges.pressure.flat = 0;
-    mOrientedRanges.pressure.fuzz = 0;
-    mOrientedRanges.pressure.resolution = 0;
+    mOrientedRanges.pressure = InputDeviceInfo::MotionRange{
+            .axis = AMOTION_EVENT_AXIS_PRESSURE,
+            .source = mSource,
+            .min = 0,
+            .max = pressureMax,
+            .flat = 0,
+            .fuzz = 0,
+            .resolution = 0,
+    };
 
     // Tilt
     mTiltXCenter = 0;
@@ -765,29 +772,30 @@ void TouchInputMapper::initializeOrientedRanges() {
             mTiltYScale = 1.0 / mRawPointerAxes.tiltY.resolution;
         }
 
-        mOrientedRanges.haveTilt = true;
-
-        mOrientedRanges.tilt.axis = AMOTION_EVENT_AXIS_TILT;
-        mOrientedRanges.tilt.source = mSource;
-        mOrientedRanges.tilt.min = 0;
-        mOrientedRanges.tilt.max = M_PI_2;
-        mOrientedRanges.tilt.flat = 0;
-        mOrientedRanges.tilt.fuzz = 0;
-        mOrientedRanges.tilt.resolution = 0;
+        mOrientedRanges.tilt = InputDeviceInfo::MotionRange{
+                .axis = AMOTION_EVENT_AXIS_TILT,
+                .source = mSource,
+                .min = 0,
+                .max = M_PI_2,
+                .flat = 0,
+                .fuzz = 0,
+                .resolution = 0,
+        };
     }
 
     // Orientation
     mOrientationScale = 0;
     if (mHaveTilt) {
-        mOrientedRanges.haveOrientation = true;
+        mOrientedRanges.orientation = InputDeviceInfo::MotionRange{
+                .axis = AMOTION_EVENT_AXIS_ORIENTATION,
+                .source = mSource,
+                .min = -M_PI,
+                .max = M_PI,
+                .flat = 0,
+                .fuzz = 0,
+                .resolution = 0,
+        };
 
-        mOrientedRanges.orientation.axis = AMOTION_EVENT_AXIS_ORIENTATION;
-        mOrientedRanges.orientation.source = mSource;
-        mOrientedRanges.orientation.min = -M_PI;
-        mOrientedRanges.orientation.max = M_PI;
-        mOrientedRanges.orientation.flat = 0;
-        mOrientedRanges.orientation.fuzz = 0;
-        mOrientedRanges.orientation.resolution = 0;
     } else if (mCalibration.orientationCalibration != Calibration::OrientationCalibration::NONE) {
         if (mCalibration.orientationCalibration ==
             Calibration::OrientationCalibration::INTERPOLATED) {
@@ -802,37 +810,34 @@ void TouchInputMapper::initializeOrientedRanges() {
             }
         }
 
-        mOrientedRanges.haveOrientation = true;
-
-        mOrientedRanges.orientation.axis = AMOTION_EVENT_AXIS_ORIENTATION;
-        mOrientedRanges.orientation.source = mSource;
-        mOrientedRanges.orientation.min = -M_PI_2;
-        mOrientedRanges.orientation.max = M_PI_2;
-        mOrientedRanges.orientation.flat = 0;
-        mOrientedRanges.orientation.fuzz = 0;
-        mOrientedRanges.orientation.resolution = 0;
+        mOrientedRanges.orientation = InputDeviceInfo::MotionRange{
+                .axis = AMOTION_EVENT_AXIS_ORIENTATION,
+                .source = mSource,
+                .min = -M_PI_2,
+                .max = M_PI_2,
+                .flat = 0,
+                .fuzz = 0,
+                .resolution = 0,
+        };
     }
 
     // Distance
     mDistanceScale = 0;
     if (mCalibration.distanceCalibration != Calibration::DistanceCalibration::NONE) {
         if (mCalibration.distanceCalibration == Calibration::DistanceCalibration::SCALED) {
-            if (mCalibration.haveDistanceScale) {
-                mDistanceScale = mCalibration.distanceScale;
-            } else {
-                mDistanceScale = 1.0f;
-            }
+            mDistanceScale = mCalibration.distanceScale.value_or(1.0f);
         }
 
-        mOrientedRanges.haveDistance = true;
+        mOrientedRanges.distance = InputDeviceInfo::MotionRange{
 
-        mOrientedRanges.distance.axis = AMOTION_EVENT_AXIS_DISTANCE;
-        mOrientedRanges.distance.source = mSource;
-        mOrientedRanges.distance.min = mRawPointerAxes.distance.minValue * mDistanceScale;
-        mOrientedRanges.distance.max = mRawPointerAxes.distance.maxValue * mDistanceScale;
-        mOrientedRanges.distance.flat = 0;
-        mOrientedRanges.distance.fuzz = mRawPointerAxes.distance.fuzz * mDistanceScale;
-        mOrientedRanges.distance.resolution = 0;
+                .axis = AMOTION_EVENT_AXIS_DISTANCE,
+                .source = mSource,
+                .min = mRawPointerAxes.distance.minValue * mDistanceScale,
+                .max = mRawPointerAxes.distance.maxValue * mDistanceScale,
+                .flat = 0,
+                .fuzz = mRawPointerAxes.distance.fuzz * mDistanceScale,
+                .resolution = 0,
+        };
     }
 
     // Compute oriented precision, scales and ranges.
@@ -936,6 +941,11 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
     // Raw width and height in the natural orientation.
     const int32_t rawWidth = mRawPointerAxes.getRawWidth();
     const int32_t rawHeight = mRawPointerAxes.getRawHeight();
+    const int32_t rawXResolution = mRawPointerAxes.x.resolution;
+    const int32_t rawYResolution = mRawPointerAxes.y.resolution;
+    // Calculate the mean resolution when both x and y resolution are set, otherwise set it to 0.
+    const float rawMeanResolution =
+            (rawXResolution > 0 && rawYResolution > 0) ? (rawXResolution + rawYResolution) / 2 : 0;
 
     const bool viewportChanged = mViewport != *newViewport;
     bool skipViewportUpdate = false;
@@ -1053,6 +1063,10 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
             mPointerController->fade(PointerControllerInterface::Transition::IMMEDIATE);
         }
     } else {
+        if (mPointerController != nullptr && mDeviceMode == DeviceMode::DIRECT &&
+            !mConfig.showTouches) {
+            mPointerController->clearSpots();
+        }
         mPointerController.reset();
     }
 
@@ -1090,10 +1104,14 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
                     mConfig.pointerGestureZoomSpeedRatio * displayDiagonal / rawDiagonal;
             mPointerYZoomScale = mPointerXZoomScale;
 
-            // Max width between pointers to detect a swipe gesture is more than some fraction
-            // of the diagonal axis of the touch pad.  Touches that are wider than this are
-            // translated into freeform gestures.
-            mPointerGestureMaxSwipeWidth = mConfig.pointerGestureSwipeMaxWidthRatio * rawDiagonal;
+            // Calculate the min freeform gesture width. It will be 0 when the resolution of any
+            // axis is non positive value.
+            const float minFreeformGestureWidth =
+                    rawMeanResolution * MIN_FREEFORM_GESTURE_WIDTH_IN_MILLIMETER;
+
+            mPointerGestureMaxSwipeWidth =
+                    std::max(mConfig.pointerGestureSwipeMaxWidthRatio * rawDiagonal,
+                             minFreeformGestureWidth);
 
             // Abort current pointer usages because the state has changed.
             const nsecs_t readTime = when; // synthetic event
@@ -1188,8 +1206,8 @@ void TouchInputMapper::parseCalibration() {
 
     // Size
     out.sizeCalibration = Calibration::SizeCalibration::DEFAULT;
-    String8 sizeCalibrationString;
-    if (in.tryGetProperty(String8("touch.size.calibration"), sizeCalibrationString)) {
+    std::string sizeCalibrationString;
+    if (in.tryGetProperty("touch.size.calibration", sizeCalibrationString)) {
         if (sizeCalibrationString == "none") {
             out.sizeCalibration = Calibration::SizeCalibration::NONE;
         } else if (sizeCalibrationString == "geometric") {
@@ -1201,18 +1219,28 @@ void TouchInputMapper::parseCalibration() {
         } else if (sizeCalibrationString == "area") {
             out.sizeCalibration = Calibration::SizeCalibration::AREA;
         } else if (sizeCalibrationString != "default") {
-            ALOGW("Invalid value for touch.size.calibration: '%s'", sizeCalibrationString.string());
+            ALOGW("Invalid value for touch.size.calibration: '%s'", sizeCalibrationString.c_str());
         }
     }
 
-    out.haveSizeScale = in.tryGetProperty(String8("touch.size.scale"), out.sizeScale);
-    out.haveSizeBias = in.tryGetProperty(String8("touch.size.bias"), out.sizeBias);
-    out.haveSizeIsSummed = in.tryGetProperty(String8("touch.size.isSummed"), out.sizeIsSummed);
+    float sizeScale;
+
+    if (in.tryGetProperty("touch.size.scale", sizeScale)) {
+        out.sizeScale = sizeScale;
+    }
+    float sizeBias;
+    if (in.tryGetProperty("touch.size.bias", sizeBias)) {
+        out.sizeBias = sizeBias;
+    }
+    bool sizeIsSummed;
+    if (in.tryGetProperty("touch.size.isSummed", sizeIsSummed)) {
+        out.sizeIsSummed = sizeIsSummed;
+    }
 
     // Pressure
     out.pressureCalibration = Calibration::PressureCalibration::DEFAULT;
-    String8 pressureCalibrationString;
-    if (in.tryGetProperty(String8("touch.pressure.calibration"), pressureCalibrationString)) {
+    std::string pressureCalibrationString;
+    if (in.tryGetProperty("touch.pressure.calibration", pressureCalibrationString)) {
         if (pressureCalibrationString == "none") {
             out.pressureCalibration = Calibration::PressureCalibration::NONE;
         } else if (pressureCalibrationString == "physical") {
@@ -1221,16 +1249,19 @@ void TouchInputMapper::parseCalibration() {
             out.pressureCalibration = Calibration::PressureCalibration::AMPLITUDE;
         } else if (pressureCalibrationString != "default") {
             ALOGW("Invalid value for touch.pressure.calibration: '%s'",
-                  pressureCalibrationString.string());
+                  pressureCalibrationString.c_str());
         }
     }
 
-    out.havePressureScale = in.tryGetProperty(String8("touch.pressure.scale"), out.pressureScale);
+    float pressureScale;
+    if (in.tryGetProperty("touch.pressure.scale", pressureScale)) {
+        out.pressureScale = pressureScale;
+    }
 
     // Orientation
     out.orientationCalibration = Calibration::OrientationCalibration::DEFAULT;
-    String8 orientationCalibrationString;
-    if (in.tryGetProperty(String8("touch.orientation.calibration"), orientationCalibrationString)) {
+    std::string orientationCalibrationString;
+    if (in.tryGetProperty("touch.orientation.calibration", orientationCalibrationString)) {
         if (orientationCalibrationString == "none") {
             out.orientationCalibration = Calibration::OrientationCalibration::NONE;
         } else if (orientationCalibrationString == "interpolated") {
@@ -1239,36 +1270,39 @@ void TouchInputMapper::parseCalibration() {
             out.orientationCalibration = Calibration::OrientationCalibration::VECTOR;
         } else if (orientationCalibrationString != "default") {
             ALOGW("Invalid value for touch.orientation.calibration: '%s'",
-                  orientationCalibrationString.string());
+                  orientationCalibrationString.c_str());
         }
     }
 
     // Distance
     out.distanceCalibration = Calibration::DistanceCalibration::DEFAULT;
-    String8 distanceCalibrationString;
-    if (in.tryGetProperty(String8("touch.distance.calibration"), distanceCalibrationString)) {
+    std::string distanceCalibrationString;
+    if (in.tryGetProperty("touch.distance.calibration", distanceCalibrationString)) {
         if (distanceCalibrationString == "none") {
             out.distanceCalibration = Calibration::DistanceCalibration::NONE;
         } else if (distanceCalibrationString == "scaled") {
             out.distanceCalibration = Calibration::DistanceCalibration::SCALED;
         } else if (distanceCalibrationString != "default") {
             ALOGW("Invalid value for touch.distance.calibration: '%s'",
-                  distanceCalibrationString.string());
+                  distanceCalibrationString.c_str());
         }
     }
 
-    out.haveDistanceScale = in.tryGetProperty(String8("touch.distance.scale"), out.distanceScale);
+    float distanceScale;
+    if (in.tryGetProperty("touch.distance.scale", distanceScale)) {
+        out.distanceScale = distanceScale;
+    }
 
     out.coverageCalibration = Calibration::CoverageCalibration::DEFAULT;
-    String8 coverageCalibrationString;
-    if (in.tryGetProperty(String8("touch.coverage.calibration"), coverageCalibrationString)) {
+    std::string coverageCalibrationString;
+    if (in.tryGetProperty("touch.coverage.calibration", coverageCalibrationString)) {
         if (coverageCalibrationString == "none") {
             out.coverageCalibration = Calibration::CoverageCalibration::NONE;
         } else if (coverageCalibrationString == "box") {
             out.coverageCalibration = Calibration::CoverageCalibration::BOX;
         } else if (coverageCalibrationString != "default") {
             ALOGW("Invalid value for touch.coverage.calibration: '%s'",
-                  coverageCalibrationString.string());
+                  coverageCalibrationString.c_str());
         }
     }
 }
@@ -1322,17 +1356,17 @@ void TouchInputMapper::dumpCalibration(std::string& dump) {
     dump += INDENT4 "touch.size.calibration: ";
     dump += ftl::enum_string(mCalibration.sizeCalibration) + "\n";
 
-    if (mCalibration.haveSizeScale) {
-        dump += StringPrintf(INDENT4 "touch.size.scale: %0.3f\n", mCalibration.sizeScale);
+    if (mCalibration.sizeScale) {
+        dump += StringPrintf(INDENT4 "touch.size.scale: %0.3f\n", *mCalibration.sizeScale);
     }
 
-    if (mCalibration.haveSizeBias) {
-        dump += StringPrintf(INDENT4 "touch.size.bias: %0.3f\n", mCalibration.sizeBias);
+    if (mCalibration.sizeBias) {
+        dump += StringPrintf(INDENT4 "touch.size.bias: %0.3f\n", *mCalibration.sizeBias);
     }
 
-    if (mCalibration.haveSizeIsSummed) {
+    if (mCalibration.sizeIsSummed) {
         dump += StringPrintf(INDENT4 "touch.size.isSummed: %s\n",
-                             toString(mCalibration.sizeIsSummed));
+                             toString(*mCalibration.sizeIsSummed));
     }
 
     // Pressure
@@ -1350,8 +1384,8 @@ void TouchInputMapper::dumpCalibration(std::string& dump) {
             ALOG_ASSERT(false);
     }
 
-    if (mCalibration.havePressureScale) {
-        dump += StringPrintf(INDENT4 "touch.pressure.scale: %0.3f\n", mCalibration.pressureScale);
+    if (mCalibration.pressureScale) {
+        dump += StringPrintf(INDENT4 "touch.pressure.scale: %0.3f\n", *mCalibration.pressureScale);
     }
 
     // Orientation
@@ -1381,8 +1415,8 @@ void TouchInputMapper::dumpCalibration(std::string& dump) {
             ALOG_ASSERT(false);
     }
 
-    if (mCalibration.haveDistanceScale) {
-        dump += StringPrintf(INDENT4 "touch.distance.scale: %0.3f\n", mCalibration.distanceScale);
+    if (mCalibration.distanceScale) {
+        dump += StringPrintf(INDENT4 "touch.distance.scale: %0.3f\n", *mCalibration.distanceScale);
     }
 
     switch (mCalibration.coverageCalibration) {
@@ -2171,7 +2205,7 @@ void TouchInputMapper::cookPointerData() {
                     size = 0;
                 }
 
-                if (mCalibration.haveSizeIsSummed && mCalibration.sizeIsSummed) {
+                if (mCalibration.sizeIsSummed && *mCalibration.sizeIsSummed) {
                     uint32_t touchingCount = mCurrentRawState.rawPointerData.touchingIdBits.count();
                     if (touchingCount > 1) {
                         touchMajor /= touchingCount;
@@ -2197,13 +2231,16 @@ void TouchInputMapper::cookPointerData() {
                     toolMinor = toolMajor;
                 }
 
-                mCalibration.applySizeScaleAndBias(&touchMajor);
-                mCalibration.applySizeScaleAndBias(&touchMinor);
-                mCalibration.applySizeScaleAndBias(&toolMajor);
-                mCalibration.applySizeScaleAndBias(&toolMinor);
+                mCalibration.applySizeScaleAndBias(touchMajor);
+                mCalibration.applySizeScaleAndBias(touchMinor);
+                mCalibration.applySizeScaleAndBias(toolMajor);
+                mCalibration.applySizeScaleAndBias(toolMinor);
                 size *= mSizeScale;
                 break;
-            default:
+            case Calibration::SizeCalibration::DEFAULT:
+                LOG_ALWAYS_FATAL("Resolution should not be 'DEFAULT' at this point");
+                break;
+            case Calibration::SizeCalibration::NONE:
                 touchMajor = 0;
                 touchMinor = 0;
                 toolMajor = 0;
@@ -2300,10 +2337,9 @@ void TouchInputMapper::cookPointerData() {
                 bottom = float(mRawPointerAxes.x.maxValue - rawLeft) * mXScale;
                 top = float(mRawPointerAxes.x.maxValue - rawRight) * mXScale;
                 orientation -= M_PI_2;
-                if (mOrientedRanges.haveOrientation &&
-                    orientation < mOrientedRanges.orientation.min) {
+                if (mOrientedRanges.orientation && orientation < mOrientedRanges.orientation->min) {
                     orientation +=
-                            (mOrientedRanges.orientation.max - mOrientedRanges.orientation.min);
+                            (mOrientedRanges.orientation->max - mOrientedRanges.orientation->min);
                 }
                 break;
             case DISPLAY_ORIENTATION_180:
@@ -2312,10 +2348,9 @@ void TouchInputMapper::cookPointerData() {
                 bottom = float(mRawPointerAxes.y.maxValue - rawTop) * mYScale;
                 top = float(mRawPointerAxes.y.maxValue - rawBottom) * mYScale;
                 orientation -= M_PI;
-                if (mOrientedRanges.haveOrientation &&
-                    orientation < mOrientedRanges.orientation.min) {
+                if (mOrientedRanges.orientation && orientation < mOrientedRanges.orientation->min) {
                     orientation +=
-                            (mOrientedRanges.orientation.max - mOrientedRanges.orientation.min);
+                            (mOrientedRanges.orientation->max - mOrientedRanges.orientation->min);
                 }
                 break;
             case DISPLAY_ORIENTATION_270:
@@ -2324,10 +2359,9 @@ void TouchInputMapper::cookPointerData() {
                 bottom = float(rawRight - mRawPointerAxes.x.minValue) * mXScale;
                 top = float(rawLeft - mRawPointerAxes.x.minValue) * mXScale;
                 orientation += M_PI_2;
-                if (mOrientedRanges.haveOrientation &&
-                    orientation > mOrientedRanges.orientation.max) {
+                if (mOrientedRanges.orientation && orientation > mOrientedRanges.orientation->max) {
                     orientation -=
-                            (mOrientedRanges.orientation.max - mOrientedRanges.orientation.min);
+                            (mOrientedRanges.orientation->max - mOrientedRanges.orientation->min);
                 }
                 break;
             default:

@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <android/gui/IWindowInfosReportedListener.h>
 #include <android/native_window.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ITransactionCompletedListener.h>
@@ -166,7 +167,7 @@ struct layer_state_t {
         eTransformToDisplayInverseChanged = 0x00080000,
         eCropChanged = 0x00100000,
         eBufferChanged = 0x00200000,
-        /* unused 0x00400000, */
+        eDefaultFrameRateCompatibilityChanged = 0x00400000,
         eDataspaceChanged = 0x00800000,
         eHdrMetadataChanged = 0x01000000,
         eSurfaceDamageRegionChanged = 0x02000000,
@@ -276,6 +277,9 @@ struct layer_state_t {
     int8_t frameRateCompatibility;
     int8_t changeFrameRateStrategy;
 
+    // Default frame rate compatibility used to set the layer refresh rate votetype.
+    int8_t defaultFrameRateCompatibility;
+
     // Set by window manager indicating the layer and all its children are
     // in a different orientation than the display. The hint suggests that
     // the graphic producers should receive a transform hint as if the
@@ -360,7 +364,9 @@ struct DisplayState {
 
 struct InputWindowCommands {
     std::vector<gui::FocusRequest> focusRequests;
-    bool syncInputWindows{false};
+    std::unordered_set<sp<gui::IWindowInfosReportedListener>,
+                       SpHash<gui::IWindowInfosReportedListener>>
+            windowInfosReportedListeners;
 
     // Merges the passed in commands and returns true if there were any changes.
     bool merge(const InputWindowCommands& other);

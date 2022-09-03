@@ -20,15 +20,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <linux/sched.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/resource.h>
 #include <unistd.h>
 
 #include <binder/Binder.h>
@@ -40,6 +39,7 @@
 #include <binder/Status.h>
 #include <binder/TextOutput.h>
 
+#include <android-base/scopeguard.h>
 #include <cutils/ashmem.h>
 #include <cutils/compiler.h>
 #include <utils/Flattenable.h>
@@ -51,12 +51,27 @@
 #include "RpcState.h"
 #include "Static.h"
 #include "Utils.h"
+
+// A lot of code in this file uses definitions from the
+// Linux kernel header for Binder <linux/android/binder.h>
+// which is included indirectly via "binder_module.h".
+// Non-Linux OSes do not have that header, so libbinder should be
+// built for those targets without kernel binder support, i.e.,
+// without BINDER_WITH_KERNEL_IPC. For this reason, all code in this
+// file that depends on kernel binder, including the header itself,
+// is conditional on BINDER_WITH_KERNEL_IPC.
+#ifdef BINDER_WITH_KERNEL_IPC
+#include <linux/sched.h>
 #include "binder_module.h"
+#else  // BINDER_WITH_KERNEL_IPC
+// Needed by {read,write}Pointer
+typedef uintptr_t binder_uintptr_t;
+#endif // BINDER_WITH_KERNEL_IPC
 
 #define LOG_REFS(...)
-//#define LOG_REFS(...) ALOG(LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+// #define LOG_REFS(...) ALOG(LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOG_ALLOC(...)
-//#define LOG_ALLOC(...) ALOG(LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+// #define LOG_ALLOC(...) ALOG(LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 
@@ -99,6 +114,7 @@ enum {
     BLOB_ASHMEM_MUTABLE = 2,
 };
 
+#ifdef BINDER_WITH_KERNEL_IPC
 static void acquire_object(const sp<ProcessState>& proc, const flat_binder_object& obj,
                            const void* who) {
     switch (obj.hdr.type) {
@@ -151,6 +167,11 @@ static void release_object(const sp<ProcessState>& proc, const flat_binder_objec
 
     ALOGE("Invalid object type 0x%08x", obj.hdr.type);
 }
+#endif // BINDER_WITH_KERNEL_IPC
+
+static int toRawFd(const std::variant<base::unique_fd, base::borrowed_fd>& v) {
+    return std::visit([](const auto& fd) { return fd.get(); }, v);
+}
 
 Parcel::RpcFields::RpcFields(const sp<RpcSession>& session) : mSession(session) {
     LOG_ALWAYS_FATAL_IF(mSession == nullptr);
@@ -178,9 +199,11 @@ status_t Parcel::finishUnflattenBinder(
     return OK;
 }
 
+#ifdef BINDER_WITH_KERNEL_IPC
 static constexpr inline int schedPolicyMask(int policy, int priority) {
     return (priority & FLAT_BINDER_FLAG_PRIORITY_MASK) | ((policy & 3) << FLAT_BINDER_FLAG_SCHED_POLICY_SHIFT);
 }
+#endif // BINDER_WITH_KERNEL_IPC
 
 status_t Parcel::flattenBinder(const sp<IBinder>& binder) {
     BBinder* local = nullptr;
@@ -205,6 +228,7 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder) {
         return finishFlattenBinder(binder);
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     flat_binder_object obj;
 
     int schedBits = 0;
@@ -261,6 +285,10 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder) {
     if (status != OK) return status;
 
     return finishFlattenBinder(binder);
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+    return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 status_t Parcel::unflattenBinder(sp<IBinder>* out) const
@@ -290,6 +318,7 @@ status_t Parcel::unflattenBinder(sp<IBinder>* out) const
         return finishUnflattenBinder(binder, out);
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     const flat_binder_object* flat = readObject(false);
 
     if (flat) {
@@ -307,6 +336,10 @@ status_t Parcel::unflattenBinder(sp<IBinder>* out) const
         }
     }
     return BAD_TYPE;
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+    return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +504,7 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
     err = NO_ERROR;
 
     if (auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
         auto* otherKernelFields = parcel->maybeKernelFields();
         LOG_ALWAYS_FATAL_IF(otherKernelFields == nullptr);
 
@@ -530,6 +564,67 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
                 }
             }
         }
+#else
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
+    } else {
+        auto* rpcFields = maybeRpcFields();
+        LOG_ALWAYS_FATAL_IF(rpcFields == nullptr);
+        auto* otherRpcFields = parcel->maybeRpcFields();
+        if (otherRpcFields == nullptr) {
+            return BAD_TYPE;
+        }
+        if (rpcFields->mSession != otherRpcFields->mSession) {
+            return BAD_TYPE;
+        }
+
+        const size_t savedDataPos = mDataPos;
+        base::ScopeGuard scopeGuard = [&]() { mDataPos = savedDataPos; };
+
+        rpcFields->mObjectPositions.reserve(otherRpcFields->mObjectPositions.size());
+        if (otherRpcFields->mFds != nullptr) {
+            if (rpcFields->mFds == nullptr) {
+                rpcFields->mFds = std::make_unique<decltype(rpcFields->mFds)::element_type>();
+            }
+            rpcFields->mFds->reserve(otherRpcFields->mFds->size());
+        }
+        for (size_t i = 0; i < otherRpcFields->mObjectPositions.size(); i++) {
+            const binder_size_t objPos = otherRpcFields->mObjectPositions[i];
+            if (offset <= objPos && objPos < offset + len) {
+                size_t newDataPos = objPos - offset + startPos;
+                rpcFields->mObjectPositions.push_back(newDataPos);
+
+                mDataPos = newDataPos;
+                int32_t objectType;
+                if (status_t status = readInt32(&objectType); status != OK) {
+                    return status;
+                }
+                if (objectType != RpcFields::TYPE_NATIVE_FILE_DESCRIPTOR) {
+                    continue;
+                }
+
+                if (!mAllowFds) {
+                    return FDS_NOT_ALLOWED;
+                }
+
+                // Read FD, duplicate, and add to list.
+                int32_t fdIndex;
+                if (status_t status = readInt32(&fdIndex); status != OK) {
+                    return status;
+                }
+                const auto& oldFd = otherRpcFields->mFds->at(fdIndex);
+                // To match kernel binder behavior, we always dup, even if the
+                // FD was unowned in the source parcel.
+                rpcFields->mFds->emplace_back(
+                        base::unique_fd(fcntl(toRawFd(oldFd), F_DUPFD_CLOEXEC, 0)));
+                // Fixup the index in the data.
+                mDataPos = newDataPos + 4;
+                if (status_t status = writeInt32(rpcFields->mFds->size() - 1); status != OK) {
+                    return status;
+                }
+            }
+        }
     }
 
     return err;
@@ -584,7 +679,7 @@ void Parcel::restoreAllowFds(bool lastValue)
 bool Parcel::hasFileDescriptors() const
 {
     if (const auto* rpcFields = maybeRpcFields()) {
-        return false;
+        return rpcFields->mFds != nullptr && !rpcFields->mFds->empty();
     }
     auto* kernelFields = maybeKernelFields();
     if (!kernelFields->mFdsKnown) {
@@ -596,6 +691,7 @@ bool Parcel::hasFileDescriptors() const
 std::vector<sp<IBinder>> Parcel::debugReadAllStrongBinders() const {
     std::vector<sp<IBinder>> ret;
 
+#ifdef BINDER_WITH_KERNEL_IPC
     const auto* kernelFields = maybeKernelFields();
     if (kernelFields == nullptr) {
         return ret;
@@ -615,40 +711,43 @@ std::vector<sp<IBinder>> Parcel::debugReadAllStrongBinders() const {
     }
 
     setDataPosition(initPosition);
+#endif // BINDER_WITH_KERNEL_IPC
+
     return ret;
 }
 
 std::vector<int> Parcel::debugReadAllFileDescriptors() const {
     std::vector<int> ret;
 
-    const auto* kernelFields = maybeKernelFields();
-    if (kernelFields == nullptr) {
-        return ret;
+    if (const auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
+        size_t initPosition = dataPosition();
+        for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
+            binder_size_t offset = kernelFields->mObjects[i];
+            const flat_binder_object* flat =
+                    reinterpret_cast<const flat_binder_object*>(mData + offset);
+            if (flat->hdr.type != BINDER_TYPE_FD) continue;
+
+            setDataPosition(offset);
+
+            int fd = readFileDescriptor();
+            LOG_ALWAYS_FATAL_IF(fd == -1);
+            ret.push_back(fd);
+        }
+        setDataPosition(initPosition);
+#else
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+#endif
+    } else if (const auto* rpcFields = maybeRpcFields(); rpcFields && rpcFields->mFds) {
+        for (const auto& fd : *rpcFields->mFds) {
+            ret.push_back(toRawFd(fd));
+        }
     }
 
-    size_t initPosition = dataPosition();
-    for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
-        binder_size_t offset = kernelFields->mObjects[i];
-        const flat_binder_object* flat =
-                reinterpret_cast<const flat_binder_object*>(mData + offset);
-        if (flat->hdr.type != BINDER_TYPE_FD) continue;
-
-        setDataPosition(offset);
-
-        int fd = readFileDescriptor();
-        LOG_ALWAYS_FATAL_IF(fd == -1);
-        ret.push_back(fd);
-    }
-
-    setDataPosition(initPosition);
     return ret;
 }
 
 status_t Parcel::hasFileDescriptorsInRange(size_t offset, size_t len, bool* result) const {
-    const auto* kernelFields = maybeKernelFields();
-    if (kernelFields == nullptr) {
-        return BAD_TYPE;
-    }
     if (len > INT32_MAX || offset > INT32_MAX) {
         // Don't accept size_t values which may have come from an inadvertent conversion from a
         // negative int.
@@ -659,20 +758,38 @@ status_t Parcel::hasFileDescriptorsInRange(size_t offset, size_t len, bool* resu
         return BAD_VALUE;
     }
     *result = false;
-    for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
-        size_t pos = kernelFields->mObjects[i];
-        if (pos < offset) continue;
-        if (pos + sizeof(flat_binder_object) > offset + len) {
-            if (kernelFields->mObjectsSorted) {
+    if (const auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
+        for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
+            size_t pos = kernelFields->mObjects[i];
+            if (pos < offset) continue;
+            if (pos + sizeof(flat_binder_object) > offset + len) {
+                if (kernelFields->mObjectsSorted) {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+            const flat_binder_object* flat =
+                    reinterpret_cast<const flat_binder_object*>(mData + pos);
+            if (flat->hdr.type == BINDER_TYPE_FD) {
+                *result = true;
                 break;
-            } else {
-                continue;
             }
         }
-        const flat_binder_object* flat = reinterpret_cast<const flat_binder_object*>(mData + pos);
-        if (flat->hdr.type == BINDER_TYPE_FD) {
-            *result = true;
-            break;
+#else
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
+    } else if (const auto* rpcFields = maybeRpcFields()) {
+        for (uint32_t pos : rpcFields->mObjectPositions) {
+            if (offset <= pos && pos < limit) {
+                const auto* type = reinterpret_cast<const RpcFields::ObjectType*>(mData + pos);
+                if (*type == RpcFields::TYPE_NATIVE_FILE_DESCRIPTOR) {
+                    *result = true;
+                    break;
+                }
+            }
         }
     }
     return NO_ERROR;
@@ -716,6 +833,7 @@ void Parcel::updateWorkSourceRequestHeaderPosition() const {
     }
 }
 
+#ifdef BINDER_WITH_KERNEL_IPC
 #if defined(__ANDROID_VNDK__)
 constexpr int32_t kHeader = B_PACK_CHARS('V', 'N', 'D', 'R');
 #elif defined(__ANDROID_RECOVERY__)
@@ -723,6 +841,7 @@ constexpr int32_t kHeader = B_PACK_CHARS('R', 'E', 'C', 'O');
 #else
 constexpr int32_t kHeader = B_PACK_CHARS('S', 'Y', 'S', 'T');
 #endif
+#endif // BINDER_WITH_KERNEL_IPC
 
 // Write RPC headers.  (previously just the interface token)
 status_t Parcel::writeInterfaceToken(const String16& interface)
@@ -732,12 +851,17 @@ status_t Parcel::writeInterfaceToken(const String16& interface)
 
 status_t Parcel::writeInterfaceToken(const char16_t* str, size_t len) {
     if (auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
         const IPCThreadState* threadState = IPCThreadState::self();
         writeInt32(threadState->getStrictModePolicy() | STRICT_MODE_PENALTY_GATHER);
         updateWorkSourceRequestHeaderPosition();
         writeInt32(threadState->shouldPropagateWorkSource() ? threadState->getCallingWorkSourceUid()
                                                             : IPCThreadState::kUnsetWorkSource);
         writeInt32(kHeader);
+#else  // BINDER_WITH_KERNEL_IPC
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
     }
 
     // currently the interface identification token is just its name as a string
@@ -794,6 +918,7 @@ bool Parcel::enforceInterface(const char16_t* interface,
                               IPCThreadState* threadState) const
 {
     if (auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
         // StrictModePolicy.
         int32_t strictPolicy = readInt32();
         if (threadState == nullptr) {
@@ -819,6 +944,11 @@ bool Parcel::enforceInterface(const char16_t* interface,
                   header);
             return false;
         }
+#else  // BINDER_WITH_KERNEL_IPC
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)threadState;
+        return false;
+#endif // BINDER_WITH_KERNEL_IPC
     }
 
     // Interface descriptor.
@@ -1293,13 +1423,43 @@ status_t Parcel::writeNativeHandle(const native_handle* handle)
     return err;
 }
 
-status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership)
-{
-    if (isForRpc()) {
-        ALOGE("Cannot write file descriptor to remote binder.");
-        return BAD_TYPE;
+status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership) {
+    if (auto* rpcFields = maybeRpcFields()) {
+        std::variant<base::unique_fd, base::borrowed_fd> fdVariant;
+        if (takeOwnership) {
+            fdVariant = base::unique_fd(fd);
+        } else {
+            fdVariant = base::borrowed_fd(fd);
+        }
+        if (!mAllowFds) {
+            return FDS_NOT_ALLOWED;
+        }
+        switch (rpcFields->mSession->getFileDescriptorTransportMode()) {
+            case RpcSession::FileDescriptorTransportMode::NONE: {
+                return FDS_NOT_ALLOWED;
+            }
+            case RpcSession::FileDescriptorTransportMode::UNIX: {
+                if (rpcFields->mFds == nullptr) {
+                    rpcFields->mFds = std::make_unique<decltype(rpcFields->mFds)::element_type>();
+                }
+                size_t dataPos = mDataPos;
+                if (dataPos > UINT32_MAX) {
+                    return NO_MEMORY;
+                }
+                if (status_t err = writeInt32(RpcFields::TYPE_NATIVE_FILE_DESCRIPTOR); err != OK) {
+                    return err;
+                }
+                if (status_t err = writeInt32(rpcFields->mFds->size()); err != OK) {
+                    return err;
+                }
+                rpcFields->mObjectPositions.push_back(dataPos);
+                rpcFields->mFds->push_back(std::move(fdVariant));
+                return OK;
+            }
+        }
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     flat_binder_object obj;
     obj.hdr.type = BINDER_TYPE_FD;
     obj.flags = 0x7f | FLAT_BINDER_FLAG_ACCEPTS_FDS;
@@ -1307,6 +1467,12 @@ status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership)
     obj.handle = fd;
     obj.cookie = takeOwnership ? 1 : 0;
     return writeObject(obj, true);
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+    (void)fd;
+    (void)takeOwnership;
+    return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 status_t Parcel::writeDupFileDescriptor(int fd)
@@ -1460,6 +1626,7 @@ status_t Parcel::writeObject(const flat_binder_object& val, bool nullMetaData)
     auto* kernelFields = maybeKernelFields();
     LOG_ALWAYS_FATAL_IF(kernelFields == nullptr, "Can't write flat_binder_object to RPC Parcel");
 
+#ifdef BINDER_WITH_KERNEL_IPC
     const bool enoughData = (mDataPos+sizeof(val)) <= mDataCapacity;
     const bool enoughObjects = kernelFields->mObjectsSize < kernelFields->mObjectsCapacity;
     if (enoughData && enoughObjects) {
@@ -1502,6 +1669,12 @@ restart_write:
     }
 
     goto restart_write;
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+    (void)val;
+    (void)nullMetaData;
+    return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 status_t Parcel::writeNoException()
@@ -1519,6 +1692,7 @@ status_t Parcel::validateReadData(size_t upperBound) const
         return OK;
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     // Don't allow non-object reads on object data
     if (kernelFields->mObjectsSorted || kernelFields->mObjectsSize <= 1) {
     data_sorted:
@@ -1571,6 +1745,10 @@ data_unsorted:
     kernelFields->mNextObjectHint = 0;
     kernelFields->mObjectsSorted = true;
     goto data_sorted;
+#else  // BINDER_WITH_KERNEL_IPC
+    (void)upperBound;
+    return NO_ERROR;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 status_t Parcel::read(void* outData, size_t len) const
@@ -2038,8 +2216,32 @@ native_handle* Parcel::readNativeHandle() const
     return h;
 }
 
-int Parcel::readFileDescriptor() const
-{
+int Parcel::readFileDescriptor() const {
+    if (const auto* rpcFields = maybeRpcFields()) {
+        if (!std::binary_search(rpcFields->mObjectPositions.begin(),
+                                rpcFields->mObjectPositions.end(), mDataPos)) {
+            ALOGW("Attempt to read file descriptor from Parcel %p at offset %zu that is not in the "
+                  "object list",
+                  this, mDataPos);
+            return BAD_TYPE;
+        }
+
+        int32_t objectType = readInt32();
+        if (objectType != RpcFields::TYPE_NATIVE_FILE_DESCRIPTOR) {
+            return BAD_TYPE;
+        }
+
+        int32_t fdIndex = readInt32();
+        if (rpcFields->mFds == nullptr || fdIndex < 0 ||
+            static_cast<size_t>(fdIndex) >= rpcFields->mFds->size()) {
+            ALOGE("RPC Parcel contains invalid file descriptor index. index=%d fd_count=%zu",
+                  fdIndex, rpcFields->mFds ? rpcFields->mFds->size() : 0);
+            return BAD_VALUE;
+        }
+        return toRawFd(rpcFields->mFds->at(fdIndex));
+    }
+
+#ifdef BINDER_WITH_KERNEL_IPC
     const flat_binder_object* flat = readObject(true);
 
     if (flat && flat->hdr.type == BINDER_TYPE_FD) {
@@ -2047,10 +2249,13 @@ int Parcel::readFileDescriptor() const
     }
 
     return BAD_TYPE;
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+    return INVALID_OPERATION;
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
-int Parcel::readParcelFileDescriptor() const
-{
+int Parcel::readParcelFileDescriptor() const {
     int32_t hasComm = readInt32();
     int fd = readFileDescriptor();
     if (hasComm != 0) {
@@ -2203,6 +2408,8 @@ status_t Parcel::read(FlattenableHelperInterface& val) const
 
     return err;
 }
+
+#ifdef BINDER_WITH_KERNEL_IPC
 const flat_binder_object* Parcel::readObject(bool nullMetaData) const
 {
     const auto* kernelFields = maybeKernelFields();
@@ -2268,24 +2475,29 @@ const flat_binder_object* Parcel::readObject(bool nullMetaData) const
     }
     return nullptr;
 }
+#endif // BINDER_WITH_KERNEL_IPC
 
 void Parcel::closeFileDescriptors() {
-    auto* kernelFields = maybeKernelFields();
-    if (kernelFields == nullptr) {
-        return;
-    }
-    size_t i = kernelFields->mObjectsSize;
-    if (i > 0) {
-        //ALOGI("Closing file descriptors for %zu objects...", i);
-    }
-    while (i > 0) {
-        i--;
-        const flat_binder_object* flat =
-                reinterpret_cast<flat_binder_object*>(mData + kernelFields->mObjects[i]);
-        if (flat->hdr.type == BINDER_TYPE_FD) {
-            //ALOGI("Closing fd: %ld", flat->handle);
-            close(flat->handle);
+    if (auto* kernelFields = maybeKernelFields()) {
+#ifdef BINDER_WITH_KERNEL_IPC
+        size_t i = kernelFields->mObjectsSize;
+        if (i > 0) {
+            // ALOGI("Closing file descriptors for %zu objects...", i);
         }
+        while (i > 0) {
+            i--;
+            const flat_binder_object* flat =
+                    reinterpret_cast<flat_binder_object*>(mData + kernelFields->mObjects[i]);
+            if (flat->hdr.type == BINDER_TYPE_FD) {
+                // ALOGI("Closing fd: %ld", flat->handle);
+                close(flat->handle);
+            }
+        }
+#else  // BINDER_WITH_KERNEL_IPC
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+#endif // BINDER_WITH_KERNEL_IPC
+    } else if (auto* rpcFields = maybeRpcFields()) {
+        rpcFields->mFds.reset();
     }
 }
 
@@ -2331,6 +2543,7 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize, const bin
     kernelFields->mObjectsSize = kernelFields->mObjectsCapacity = objectsCount;
     mOwner = relFunc;
 
+#ifdef BINDER_WITH_KERNEL_IPC
     binder_size_t minOffset = 0;
     for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
         binder_size_t offset = kernelFields->mObjects[i];
@@ -2361,21 +2574,58 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize, const bin
         minOffset = offset + sizeof(flat_binder_object);
     }
     scanForFds();
+#else  // BINDER_WITH_KERNEL_IPC
+    LOG_ALWAYS_FATAL_IF(objectsCount != 0,
+                        "Non-zero objects count passed to Parcel with kernel driver disabled");
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
-void Parcel::rpcSetDataReference(const sp<RpcSession>& session, const uint8_t* data,
-                                 size_t dataSize, release_func relFunc) {
+status_t Parcel::rpcSetDataReference(
+        const sp<RpcSession>& session, const uint8_t* data, size_t dataSize,
+        const uint32_t* objectTable, size_t objectTableSize,
+        std::vector<std::variant<base::unique_fd, base::borrowed_fd>>&& ancillaryFds,
+        release_func relFunc) {
     // this code uses 'mOwner == nullptr' to understand whether it owns memory
     LOG_ALWAYS_FATAL_IF(relFunc == nullptr, "must provide cleanup function");
 
     LOG_ALWAYS_FATAL_IF(session == nullptr);
 
+    if (objectTableSize != ancillaryFds.size()) {
+        ALOGE("objectTableSize=%zu ancillaryFds.size=%zu", objectTableSize, ancillaryFds.size());
+        relFunc(data, dataSize, nullptr, 0);
+        return BAD_VALUE;
+    }
+    for (size_t i = 0; i < objectTableSize; i++) {
+        uint32_t minObjectEnd;
+        if (__builtin_add_overflow(objectTable[i], sizeof(RpcFields::ObjectType), &minObjectEnd) ||
+            minObjectEnd >= dataSize) {
+            ALOGE("received out of range object position: %" PRIu32 " (parcel size is %zu)",
+                  objectTable[i], dataSize);
+            relFunc(data, dataSize, nullptr, 0);
+            return BAD_VALUE;
+        }
+    }
+
     freeData();
     markForRpc(session);
+
+    auto* rpcFields = maybeRpcFields();
+    LOG_ALWAYS_FATAL_IF(rpcFields == nullptr); // guaranteed by markForRpc.
 
     mData = const_cast<uint8_t*>(data);
     mDataSize = mDataCapacity = dataSize;
     mOwner = relFunc;
+
+    rpcFields->mObjectPositions.reserve(objectTableSize);
+    for (size_t i = 0; i < objectTableSize; i++) {
+        rpcFields->mObjectPositions.push_back(objectTable[i]);
+    }
+    if (!ancillaryFds.empty()) {
+        rpcFields->mFds = std::make_unique<decltype(rpcFields->mFds)::element_type>();
+        *rpcFields->mFds = std::move(ancillaryFds);
+    }
+
+    return OK;
 }
 
 void Parcel::print(TextOutput& to, uint32_t /*flags*/) const
@@ -2388,6 +2638,7 @@ void Parcel::print(TextOutput& to, uint32_t /*flags*/) const
     } else if (dataSize() > 0) {
         const uint8_t* DATA = data();
         to << indent << HexDump(DATA, dataSize()) << dedent;
+#ifdef BINDER_WITH_KERNEL_IPC
         if (const auto* kernelFields = maybeKernelFields()) {
             const binder_size_t* OBJS = kernelFields->mObjects;
             const size_t N = objectsCount();
@@ -2399,6 +2650,7 @@ void Parcel::print(TextOutput& to, uint32_t /*flags*/) const
                    << TypeCode(flat->hdr.type & 0x7f7f7f00) << " = " << flat->binder;
             }
         }
+#endif // BINDER_WITH_KERNEL_IPC
     } else {
         to << "NULL";
     }
@@ -2413,6 +2665,7 @@ void Parcel::releaseObjects()
         return;
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     size_t i = kernelFields->mObjectsSize;
     if (i == 0) {
         return;
@@ -2425,6 +2678,7 @@ void Parcel::releaseObjects()
         const flat_binder_object* flat = reinterpret_cast<flat_binder_object*>(data + objects[i]);
         release_object(proc, *flat, this);
     }
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 void Parcel::acquireObjects()
@@ -2434,6 +2688,7 @@ void Parcel::acquireObjects()
         return;
     }
 
+#ifdef BINDER_WITH_KERNEL_IPC
     size_t i = kernelFields->mObjectsSize;
     if (i == 0) {
         return;
@@ -2446,6 +2701,7 @@ void Parcel::acquireObjects()
         const flat_binder_object* flat = reinterpret_cast<flat_binder_object*>(data + objects[i]);
         acquire_object(proc, *flat, this);
     }
+#endif // BINDER_WITH_KERNEL_IPC
 }
 
 void Parcel::freeData()
@@ -2460,7 +2716,9 @@ void Parcel::freeDataNoInit()
         LOG_ALLOC("Parcel %p: freeing other owner data", this);
         //ALOGI("Freeing data ref of %p (pid=%d)", this, getpid());
         auto* kernelFields = maybeKernelFields();
-        mOwner(this, mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
+        // Close FDs before freeing, otherwise they will leak for kernel binder.
+        closeFileDescriptors();
+        mOwner(mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
                kernelFields ? kernelFields->mObjectsSize : 0);
     } else {
         LOG_ALLOC("Parcel %p: freeing allocated data", this);
@@ -2558,6 +2816,9 @@ status_t Parcel::restartWrite(size_t desired)
         kernelFields->mObjectsSorted = false;
         kernelFields->mHasFds = false;
         kernelFields->mFdsKnown = true;
+    } else if (auto* rpcFields = maybeRpcFields()) {
+        rpcFields->mObjectPositions.clear();
+        rpcFields->mFds.reset();
     }
     mAllowFds = true;
 
@@ -2573,17 +2834,26 @@ status_t Parcel::continueWrite(size_t desired)
     }
 
     auto* kernelFields = maybeKernelFields();
+    auto* rpcFields = maybeRpcFields();
 
     // If shrinking, first adjust for any objects that appear
     // after the new data size.
-    size_t objectsSize = kernelFields ? kernelFields->mObjectsSize : 0;
-    if (kernelFields && desired < mDataSize) {
+    size_t objectsSize =
+            kernelFields ? kernelFields->mObjectsSize : rpcFields->mObjectPositions.size();
+    if (desired < mDataSize) {
         if (desired == 0) {
             objectsSize = 0;
         } else {
-            while (objectsSize > 0) {
-                if (kernelFields->mObjects[objectsSize - 1] < desired) break;
-                objectsSize--;
+            if (kernelFields) {
+                while (objectsSize > 0) {
+                    if (kernelFields->mObjects[objectsSize - 1] < desired) break;
+                    objectsSize--;
+                }
+            } else {
+                while (objectsSize > 0) {
+                    if (rpcFields->mObjectPositions[objectsSize - 1] < desired) break;
+                    objectsSize--;
+                }
             }
         }
     }
@@ -2604,7 +2874,7 @@ status_t Parcel::continueWrite(size_t desired)
         }
         binder_size_t* objects = nullptr;
 
-        if (objectsSize) {
+        if (kernelFields && objectsSize) {
             objects = (binder_size_t*)calloc(objectsSize, sizeof(binder_size_t));
             if (!objects) {
                 free(data);
@@ -2620,6 +2890,12 @@ status_t Parcel::continueWrite(size_t desired)
             acquireObjects();
             kernelFields->mObjectsSize = oldObjectsSize;
         }
+        if (rpcFields) {
+            if (status_t status = truncateRpcObjects(objectsSize); status != OK) {
+                free(data);
+                return status;
+            }
+        }
 
         if (mData) {
             memcpy(data, mData, mDataSize < desired ? mDataSize : desired);
@@ -2627,8 +2903,13 @@ status_t Parcel::continueWrite(size_t desired)
         if (objects && kernelFields && kernelFields->mObjects) {
             memcpy(objects, kernelFields->mObjects, objectsSize * sizeof(binder_size_t));
         }
-        //ALOGI("Freeing data ref of %p (pid=%d)", this, getpid());
-        mOwner(this, mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
+        // ALOGI("Freeing data ref of %p (pid=%d)", this, getpid());
+        if (kernelFields) {
+            // TODO(b/239222407): This seems wrong. We should only free FDs when
+            // they are in a truncated section of the parcel.
+            closeFileDescriptors();
+        }
+        mOwner(mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
                kernelFields ? kernelFields->mObjectsSize : 0);
         mOwner = nullptr;
 
@@ -2649,6 +2930,7 @@ status_t Parcel::continueWrite(size_t desired)
 
     } else if (mData) {
         if (kernelFields && objectsSize < kernelFields->mObjectsSize) {
+#ifdef BINDER_WITH_KERNEL_IPC
             // Need to release refs on any objects we are dropping.
             const sp<ProcessState> proc(ProcessState::self());
             for (size_t i = objectsSize; i < kernelFields->mObjectsSize; i++) {
@@ -2677,6 +2959,14 @@ status_t Parcel::continueWrite(size_t desired)
             kernelFields->mObjectsSize = objectsSize;
             kernelFields->mNextObjectHint = 0;
             kernelFields->mObjectsSorted = false;
+#else  // BINDER_WITH_KERNEL_IPC
+            LOG_ALWAYS_FATAL("Non-zero numObjects for RPC Parcel");
+#endif // BINDER_WITH_KERNEL_IPC
+        }
+        if (rpcFields) {
+            if (status_t status = truncateRpcObjects(objectsSize); status != OK) {
+                return status;
+            }
         }
 
         // We own the data, so we can just do a realloc().
@@ -2734,6 +3024,35 @@ status_t Parcel::continueWrite(size_t desired)
     return NO_ERROR;
 }
 
+status_t Parcel::truncateRpcObjects(size_t newObjectsSize) {
+    auto* rpcFields = maybeRpcFields();
+    if (newObjectsSize == 0) {
+        rpcFields->mObjectPositions.clear();
+        if (rpcFields->mFds) {
+            rpcFields->mFds->clear();
+        }
+        return OK;
+    }
+    while (rpcFields->mObjectPositions.size() > newObjectsSize) {
+        uint32_t pos = rpcFields->mObjectPositions.back();
+        rpcFields->mObjectPositions.pop_back();
+        const auto type = *reinterpret_cast<const RpcFields::ObjectType*>(mData + pos);
+        if (type == RpcFields::TYPE_NATIVE_FILE_DESCRIPTOR) {
+            const auto fdIndex =
+                    *reinterpret_cast<const int32_t*>(mData + pos + sizeof(RpcFields::ObjectType));
+            if (rpcFields->mFds == nullptr || fdIndex < 0 ||
+                static_cast<size_t>(fdIndex) >= rpcFields->mFds->size()) {
+                ALOGE("RPC Parcel contains invalid file descriptor index. index=%d fd_count=%zu",
+                      fdIndex, rpcFields->mFds ? rpcFields->mFds->size() : 0);
+                return BAD_VALUE;
+            }
+            // In practice, this always removes the last element.
+            rpcFields->mFds->erase(rpcFields->mFds->begin() + fdIndex);
+        }
+    }
+    return OK;
+}
+
 void Parcel::initState()
 {
     LOG_ALLOC("Parcel %p: initState", this);
@@ -2760,6 +3079,7 @@ void Parcel::scanForFds() const {
     kernelFields->mFdsKnown = true;
 }
 
+#ifdef BINDER_WITH_KERNEL_IPC
 size_t Parcel::getBlobAshmemSize() const
 {
     // This used to return the size of all blobs that were written to ashmem, now we're returning
@@ -2792,6 +3112,7 @@ size_t Parcel::getOpenAshmemSize() const
     }
     return openAshmemSize;
 }
+#endif // BINDER_WITH_KERNEL_IPC
 
 // --- Parcel::Blob ---
 

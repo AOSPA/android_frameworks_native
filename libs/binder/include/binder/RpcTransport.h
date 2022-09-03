@@ -22,6 +22,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include <android-base/function_ref.h>
 #include <android-base/unique_fd.h>
@@ -61,16 +63,23 @@ public:
      * to read/write data. If this returns an error, that error is returned from
      * this function.
      *
+     * ancillaryFds - FDs to be sent via UNIX domain dockets or Trusty IPC. When
+     * reading, if `ancillaryFds` is null, any received FDs will be silently
+     * dropped and closed (by the OS). Appended values will always be unique_fd,
+     * the variant type is used to avoid extra copies elsewhere.
+     *
      * Return:
      *   OK - succeeded in completely processing 'size'
      *   error - interrupted (failure or trigger)
      */
     [[nodiscard]] virtual status_t interruptableWriteFully(
             FdTrigger *fdTrigger, iovec *iovs, int niovs,
-            const std::optional<android::base::function_ref<status_t()>> &altPoll) = 0;
+            const std::optional<android::base::function_ref<status_t()>> &altPoll,
+            const std::vector<std::variant<base::unique_fd, base::borrowed_fd>> *ancillaryFds) = 0;
     [[nodiscard]] virtual status_t interruptableReadFully(
             FdTrigger *fdTrigger, iovec *iovs, int niovs,
-            const std::optional<android::base::function_ref<status_t()>> &altPoll) = 0;
+            const std::optional<android::base::function_ref<status_t()>> &altPoll,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>> *ancillaryFds) = 0;
 
 protected:
     RpcTransport() = default;

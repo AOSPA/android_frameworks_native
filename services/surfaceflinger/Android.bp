@@ -212,8 +212,6 @@ filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
         "BackgroundExecutor.cpp",
-        "BufferLayer.cpp",
-        "BufferLayerConsumer.cpp",
         "BufferStateLayer.cpp",
         "ClientCache.cpp",
         "Client.cpp",
@@ -239,10 +237,8 @@ filegroup {
         "WindowInfosListenerInvoker.cpp",
         "Layer.cpp",
         "LayerProtoHelper.cpp",
-        "LayerRejecter.cpp",
         "LayerRenderArea.cpp",
         "LayerVector.cpp",
-        "MonitoredProducer.cpp",
         "NativeWindowSurface.cpp",
         "RefreshRateOverlay.cpp",
         "RegionSamplingThread.cpp",
@@ -350,7 +346,7 @@ cc_library_shared {
         "liblog",
     ],
     static_libs: [
-        "SurfaceFlingerProperties",
+        "libSurfaceFlingerProperties",
     ],
     export_shared_lib_headers: [
         "android.hardware.graphics.common@1.2",
@@ -358,6 +354,6 @@ cc_library_shared {
         "libui",
     ],
     export_static_lib_headers: [
-        "SurfaceFlingerProperties",
+        "libSurfaceFlingerProperties",
     ],
 }

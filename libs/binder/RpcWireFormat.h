@@ -45,7 +45,8 @@ static_assert(sizeof(RpcWireAddress) == sizeof(uint64_t));
 struct RpcConnectionHeader {
     uint32_t version; // maximum supported by caller
     uint8_t options;
-    uint8_t reservered[9];
+    uint8_t fileDescriptorTransportMode;
+    uint8_t reservered[8];
     // Follows is sessionIdSize bytes.
     // if size is 0, this is requesting a new session.
     uint16_t sessionIdSize;
@@ -108,6 +109,10 @@ enum : uint32_t {
 
 // serialization is like:
 // |RpcWireHeader|struct desginated by 'command'| (over and over again)
+//
+// When file descriptors are included in out-of-band data (e.g. in unix domain
+// sockets), they are always paired with the RpcWireHeader bytes of the
+// transaction or reply the file descriptors belong to.
 
 struct RpcWireHeader {
     uint32_t command; // RPC_COMMAND_*
