@@ -53,7 +53,6 @@
 #include "DisplayHardware/HWComposer.h"
 #include "FrameTracker.h"
 #include "LayerVector.h"
-#include "MonitoredProducer.h"
 #include "RenderArea.h"
 #include "Scheduler/LayerInfo.h"
 #include "SurfaceFlinger.h"
@@ -137,13 +136,14 @@ public:
 
     struct RoundedCornerState {
         RoundedCornerState() = default;
-        RoundedCornerState(FloatRect cropRect, float radius)
+        RoundedCornerState(const FloatRect& cropRect, const vec2& radius)
               : cropRect(cropRect), radius(radius) {}
 
         // Rounded rectangle in local layer coordinate space.
         FloatRect cropRect = FloatRect();
         // Radius of the rounded rectangle.
-        float radius = 0.0f;
+        vec2 radius;
+        bool hasRoundedCorners() const { return radius.x > 0.0f && radius.y > 0.0f; }
     };
 
     using FrameRate = scheduler::LayerInfo::FrameRate;
@@ -234,6 +234,9 @@ public:
 
         // Priority of the layer assigned by Window Manager.
         int32_t frameRateSelectionPriority;
+
+        // Default frame rate compatibility used to set the layer refresh rate votetype.
+        FrameRateCompatibility defaultFrameRateCompatibility;
 
         FrameRate frameRate;
 
@@ -438,6 +441,7 @@ public:
     virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace);
     virtual bool setColorSpaceAgnostic(const bool agnostic);
     virtual bool setDimmingEnabled(const bool dimmingEnabled);
+    virtual bool setDefaultFrameRateCompatibility(FrameRateCompatibility compatibility);
     virtual bool setFrameRateSelectionPriority(int32_t priority);
     virtual bool setFixedTransformHint(ui::Transform::RotationFlags fixedTransformHint);
     virtual void setAutoRefresh(bool /* autoRefresh */) {}
@@ -447,6 +451,9 @@ public:
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
     int32_t getPriority();
+    //
+    virtual FrameRateCompatibility getDefaultFrameRateCompatibility() const;
+    //
     virtual ui::Dataspace getDataSpace() const { return ui::Dataspace::UNKNOWN; }
 
     virtual sp<compositionengine::LayerFE> getCompositionEngineLayerFE() const;
@@ -600,7 +607,7 @@ public:
     // corner crop does not intersect with its own rounded corner crop.
     virtual RoundedCornerState getRoundedCornerState() const;
 
-    bool hasRoundedCorners() const override { return getRoundedCornerState().radius > .0f; }
+    bool hasRoundedCorners() const override { return getRoundedCornerState().hasRoundedCorners(); }
 
     virtual PixelFormat getPixelFormat() const { return PIXEL_FORMAT_NONE; }
     /**

@@ -598,9 +598,9 @@ public:
     void                print(TextOutput& to, uint32_t flags = 0) const;
 
 private:
-    typedef void        (*release_func)(Parcel* parcel,
-                                        const uint8_t* data, size_t dataSize,
-                                        const binder_size_t* objects, size_t objectsSize);
+    // `objects` and `objectsSize` always 0 for RPC Parcels.
+    typedef void (*release_func)(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
+                                 size_t objectsSize);
 
     uintptr_t           ipcData() const;
     size_t              ipcDataSize() const;
@@ -608,8 +608,12 @@ private:
     size_t              ipcObjectsCount() const;
     void ipcSetDataReference(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
                              size_t objectsCount, release_func relFunc);
-    void rpcSetDataReference(const sp<RpcSession>& session, const uint8_t* data, size_t dataSize,
-                             release_func relFunc);
+    // Takes ownership even when an error is returned.
+    status_t rpcSetDataReference(
+            const sp<RpcSession>& session, const uint8_t* data, size_t dataSize,
+            const uint32_t* objectTable, size_t objectTableSize,
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>>&& ancillaryFds,
+            release_func relFunc);
 
     status_t            finishWrite(size_t len);
     void                releaseObjects();
@@ -620,6 +624,7 @@ private:
     status_t            restartWrite(size_t desired);
     // Set the capacity to `desired`, truncating the Parcel if necessary.
     status_t            continueWrite(size_t desired);
+    status_t truncateRpcObjects(size_t newObjectsSize);
     status_t            writePointer(uintptr_t val);
     status_t            readPointer(uintptr_t *pArg) const;
     uintptr_t           readPointer() const;
@@ -1179,10 +1184,20 @@ private:
         c->clear(); // must clear before resizing/reserving otherwise move ctors may be called.
         if constexpr (is_pointer_equivalent_array_v<T>) {
             // could consider POD without gaps and alignment of 4.
-            auto data = reinterpret_cast<const T*>(
-                    readInplace(static_cast<size_t>(size) * sizeof(T)));
+            size_t dataLen;
+            if (__builtin_mul_overflow(size, sizeof(T), &dataLen)) {
+                return -EOVERFLOW;
+            }
+            auto data = reinterpret_cast<const T*>(readInplace(dataLen));
             if (data == nullptr) return BAD_VALUE;
-            c->insert(c->begin(), data, data + size); // insert should do a reserve().
+            // std::vector::insert and similar methods will require type-dependent
+            // byte alignment when inserting from a const iterator such as `data`,
+            // e.g. 8 byte alignment for int64_t, and so will not work if `data`
+            // is 4 byte aligned (which is all Parcel guarantees). Copying
+            // the contents into the vector directly, where possible, circumvents
+            // this.
+            c->resize(size);
+            memcpy(c->data(), data, dataLen);
         } else if constexpr (std::is_same_v<T, bool>
                 || std::is_same_v<T, char16_t>) {
             c->reserve(size); // avoids default initialization
@@ -1279,6 +1294,23 @@ private:
 
         // Should always be non-null.
         const sp<RpcSession> mSession;
+
+        enum ObjectType : int32_t {
+            TYPE_BINDER_NULL = 0,
+            TYPE_BINDER = 1,
+            // FD to be passed via native transport (Trusty IPC or UNIX domain socket).
+            TYPE_NATIVE_FILE_DESCRIPTOR = 2,
+        };
+
+        // Sorted.
+        std::vector<uint32_t> mObjectPositions;
+
+        // File descriptors referenced by the parcel data. Should be indexed
+        // using the offsets in the parcel data. Don't assume the list is in the
+        // same order as `mObjectPositions`.
+        //
+        // Boxed to save space. Lazy allocated.
+        std::unique_ptr<std::vector<std::variant<base::unique_fd, base::borrowed_fd>>> mFds;
     };
     std::variant<KernelFields, RpcFields> mVariantFields;
 

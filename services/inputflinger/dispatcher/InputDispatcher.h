@@ -119,7 +119,8 @@ public:
     void setFocusedDisplay(int32_t displayId) override;
     void setInputDispatchMode(bool enabled, bool frozen) override;
     void setInputFilterEnabled(bool enabled) override;
-    bool setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission) override;
+    bool setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission,
+                        int32_t displayId) override;
     void setMaximumObscuringOpacityForTouch(float opacity) override;
 
     bool transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
@@ -550,6 +551,7 @@ private:
 
     void addWindowTargetLocked(const sp<android::gui::WindowInfoHandle>& windowHandle,
                                int32_t targetFlags, BitSet32 pointerIds,
+                               std::optional<nsecs_t> firstDownTimeInTarget,
                                std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
     void addGlobalMonitoringTargetsLocked(std::vector<InputTarget>& inputTargets, int32_t displayId)
             REQUIRES(mLock);
@@ -621,12 +623,14 @@ private:
                                                         const CancelationOptions& options)
             REQUIRES(mLock);
 
-    void synthesizePointerDownEventsForConnectionLocked(const sp<Connection>& connection)
+    void synthesizePointerDownEventsForConnectionLocked(const nsecs_t downTime,
+                                                        const sp<Connection>& connection)
             REQUIRES(mLock);
 
-    // Splitting motion events across windows.
+    // Splitting motion events across windows. When splitting motion event for a target,
+    // splitDownTime refers to the time of first 'down' event on that particular target
     std::unique_ptr<MotionEntry> splitMotionEvent(const MotionEntry& originalMotionEntry,
-                                                  BitSet32 pointerIds);
+                                                  BitSet32 pointerIds, nsecs_t splitDownTime);
 
     // Reset and drop everything the dispatcher is doing.
     void resetAndDropEverythingLocked(const char* reason) REQUIRES(mLock);
@@ -681,6 +685,9 @@ private:
     // Check window ownership
     bool focusedWindowIsOwnedByLocked(int32_t pid, int32_t uid) REQUIRES(mLock);
     bool recentWindowsAreOwnedByLocked(int32_t pid, int32_t uid) REQUIRES(mLock);
+
+    // Per display touch mode enabled
+    const bool kPerDisplayTouchModeEnabled;
 
     sp<InputReporterInterface> mReporter;
 };

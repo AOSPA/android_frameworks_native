@@ -111,18 +111,6 @@ public:
         mCreateBufferQueue(outProducer, outConsumer, consumerIsSurfaceFlinger);
     }
 
-    sp<IGraphicBufferProducer> createMonitoredProducer(const sp<IGraphicBufferProducer>& producer,
-                                                       const sp<SurfaceFlinger>& flinger,
-                                                       const wp<Layer>& layer) override {
-        return new MonitoredProducer(producer, flinger, layer);
-    }
-
-    sp<BufferLayerConsumer> createBufferLayerConsumer(const sp<IGraphicBufferConsumer>& consumer,
-                                                      renderengine::RenderEngine& renderEngine,
-                                                      uint32_t textureName, Layer* layer) override {
-        return new BufferLayerConsumer(consumer, renderEngine, textureName, layer);
-    }
-
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer>& producer) override {
         if (!mCreateNativeWindowSurface) return nullptr;
@@ -500,8 +488,6 @@ public:
         return static_cast<impl::HWComposer&>(mFlinger->getHwComposer());
     }
     auto& getCompositionEngine() const { return mFlinger->getCompositionEngine(); }
-
-    const auto& getCompositorTiming() const { return mFlinger->getBE().mCompositorTiming; }
 
     mock::FrameTracer* getFrameTracer() const {
         return static_cast<mock::FrameTracer*>(mFlinger->mFrameTracer.get());

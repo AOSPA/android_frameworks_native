@@ -18,19 +18,20 @@
 #include <android-base/threads.h>
 #include <android-base/unique_fd.h>
 #include <binder/IBinder.h>
+#include <binder/RpcThreads.h>
 #include <binder/RpcTransport.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
 
 #include <map>
 #include <optional>
-#include <thread>
 #include <vector>
 
 namespace android {
 
 class Parcel;
 class RpcServer;
+class RpcServerTrusty;
 class RpcSocketAddress;
 class RpcState;
 class RpcTransport;
@@ -94,6 +95,18 @@ public:
      */
     [[nodiscard]] bool setProtocolVersion(uint32_t version);
     std::optional<uint32_t> getProtocolVersion();
+
+    enum class FileDescriptorTransportMode : uint8_t {
+        NONE = 0,
+        // Send file descriptors via unix domain socket ancillary data.
+        UNIX = 1,
+    };
+
+    /**
+     * Set the transport for sending and receiving file descriptors.
+     */
+    void setFileDescriptorTransportMode(FileDescriptorTransportMode mode);
+    FileDescriptorTransportMode getFileDescriptorTransportMode();
 
     /**
      * This should be called once per thread, matching 'join' in the remote
@@ -190,6 +203,7 @@ public:
 private:
     friend sp<RpcSession>;
     friend RpcServer;
+    friend RpcServerTrusty;
     friend RpcState;
     explicit RpcSession(std::unique_ptr<RpcTransportCtx> ctx);
 
@@ -206,10 +220,10 @@ private:
     public:
         void onSessionAllIncomingThreadsEnded(const sp<RpcSession>& session) override;
         void onSessionIncomingThreadEnded() override;
-        void waitForShutdown(std::unique_lock<std::mutex>& lock, const sp<RpcSession>& session);
+        void waitForShutdown(RpcMutexUniqueLock& lock, const sp<RpcSession>& session);
 
     private:
-        std::condition_variable mCv;
+        RpcConditionVariable mCv;
     };
     friend WaitForShutdownListener;
 
@@ -232,7 +246,7 @@ private:
     //
     // transfer ownership of thread (usually done while a lock is taken on the
     // structure which originally owns the thread)
-    void preJoinThreadOwnership(std::thread thread);
+    void preJoinThreadOwnership(RpcMaybeThread thread);
     // pass FD to thread and read initial connection information
     struct PreJoinSetupResult {
         // Server connection object associated with this
@@ -314,7 +328,7 @@ private:
     // For a more complicated case, the client might itself open up a thread to
     // serve calls to the server at all times (e.g. if it hosts a callback)
 
-    wp<RpcServer> mForServer; // maybe null, for client sessions
+    wp<RpcServer> mForServer;                      // maybe null, for client sessions
     sp<WaitForShutdownListener> mShutdownListener; // used for client sessions
     wp<EventListener> mEventListener; // mForServer if server, mShutdownListener if client
 
@@ -328,13 +342,14 @@ private:
 
     std::unique_ptr<RpcState> mRpcBinderState;
 
-    std::mutex mMutex; // for all below
+    RpcMutex mMutex; // for all below
 
     size_t mMaxIncomingThreads = 0;
     size_t mMaxOutgoingThreads = kDefaultMaxOutgoingThreads;
     std::optional<uint32_t> mProtocolVersion;
+    FileDescriptorTransportMode mFileDescriptorTransportMode = FileDescriptorTransportMode::NONE;
 
-    std::condition_variable mAvailableConnectionCv; // for mWaitingThreads
+    RpcConditionVariable mAvailableConnectionCv; // for mWaitingThreads
 
     struct ThreadState {
         size_t mWaitingThreads = 0;
@@ -343,7 +358,7 @@ private:
         std::vector<sp<RpcConnection>> mOutgoing;
         size_t mMaxIncoming = 0;
         std::vector<sp<RpcConnection>> mIncoming;
-        std::map<std::thread::id, std::thread> mThreads;
+        std::map<RpcMaybeThread::id, RpcMaybeThread> mThreads;
     } mConnections;
 };
 

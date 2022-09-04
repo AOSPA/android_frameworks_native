@@ -334,18 +334,6 @@ public:
         mCreateBufferQueue(outProducer, outConsumer, consumerIsSurfaceFlinger);
     }
 
-    sp<IGraphicBufferProducer> createMonitoredProducer(const sp<IGraphicBufferProducer> &producer,
-                                                       const sp<SurfaceFlinger> &flinger,
-                                                       const wp<Layer> &layer) override {
-        return new MonitoredProducer(producer, flinger, layer);
-    }
-
-    sp<BufferLayerConsumer> createBufferLayerConsumer(const sp<IGraphicBufferConsumer> &consumer,
-                                                      renderengine::RenderEngine &renderEngine,
-                                                      uint32_t textureName, Layer *layer) override {
-        return new BufferLayerConsumer(consumer, renderEngine, textureName, layer);
-    }
-
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer> &producer) override {
         if (!mCreateNativeWindowSurface) return nullptr;
@@ -536,16 +524,6 @@ public:
         mFlinger->setVsyncConfig(vsyncConfig, fdp->ConsumeIntegral<nsecs_t>());
     }
 
-    void updateCompositorTiming(FuzzedDataProvider *fdp) {
-        std::shared_ptr<FenceTime> presentFenceTime = FenceTime::NO_FENCE;
-        mFlinger->updateCompositorTiming({}, fdp->ConsumeIntegral<nsecs_t>(), presentFenceTime);
-    }
-
-    void getCompositorTiming() {
-        CompositorTiming compositorTiming;
-        mFlinger->getCompositorTiming(&compositorTiming);
-    }
-
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
         mFlinger->callingThreadHasUnscopedSurfaceFlingerAccess(fdp->ConsumeBool());
         const sp<Client> client = new Client(mFlinger);
@@ -640,11 +618,8 @@ public:
 
         mFlinger->postComposition();
 
-        getCompositorTiming();
+        mFlinger->trackPresentLatency(mFdp.ConsumeIntegral<nsecs_t>(), FenceTime::NO_FENCE);
 
-        updateCompositorTiming(&mFdp);
-
-        mFlinger->setCompositorTimingSnapped({}, mFdp.ConsumeIntegral<nsecs_t>());
         FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postFrame());
         mFlinger->calculateExpectedPresentTime({});
 

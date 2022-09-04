@@ -63,6 +63,7 @@ layer_state_t::layer_state_t()
         frameRate(0.0f),
         frameRateCompatibility(ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT),
         changeFrameRateStrategy(ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS),
+        defaultFrameRateCompatibility(ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT),
         fixedTransformHint(ui::Transform::ROT_INVALID),
         autoRefresh(false),
         isTrustedOverlay(false),
@@ -137,6 +138,7 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeFloat, frameRate);
     SAFE_PARCEL(output.writeByte, frameRateCompatibility);
     SAFE_PARCEL(output.writeByte, changeFrameRateStrategy);
+    SAFE_PARCEL(output.writeByte, defaultFrameRateCompatibility);
     SAFE_PARCEL(output.writeUint32, fixedTransformHint);
     SAFE_PARCEL(output.writeBool, autoRefresh);
     SAFE_PARCEL(output.writeBool, dimmingEnabled);
@@ -257,6 +259,7 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readFloat, &frameRate);
     SAFE_PARCEL(input.readByte, &frameRateCompatibility);
     SAFE_PARCEL(input.readByte, &changeFrameRateStrategy);
+    SAFE_PARCEL(input.readByte, &defaultFrameRateCompatibility);
     SAFE_PARCEL(input.readUint32, &tmpUint32);
     fixedTransformHint = static_cast<ui::Transform::RotationFlags>(tmpUint32);
     SAFE_PARCEL(input.readBool, &autoRefresh);
@@ -573,6 +576,10 @@ void layer_state_t::merge(const layer_state_t& other) {
         borderWidth = other.borderWidth;
         borderColor = other.borderColor;
     }
+    if (other.what & eDefaultFrameRateCompatibilityChanged) {
+        what |= eDefaultFrameRateCompatibilityChanged;
+        defaultFrameRateCompatibility = other.defaultFrameRateCompatibility;
+    }
     if (other.what & eFrameRateSelectionPriority) {
         what |= eFrameRateSelectionPriority;
         frameRateSelectionPriority = other.frameRateSelectionPriority;
@@ -664,29 +671,44 @@ bool InputWindowCommands::merge(const InputWindowCommands& other) {
     changes |= !other.focusRequests.empty();
     focusRequests.insert(focusRequests.end(), std::make_move_iterator(other.focusRequests.begin()),
                          std::make_move_iterator(other.focusRequests.end()));
-    changes |= other.syncInputWindows && !syncInputWindows;
-    syncInputWindows |= other.syncInputWindows;
+    changes |= !other.windowInfosReportedListeners.empty();
+    windowInfosReportedListeners.insert(other.windowInfosReportedListeners.begin(),
+                                        other.windowInfosReportedListeners.end());
     return changes;
 }
 
 bool InputWindowCommands::empty() const {
-    return focusRequests.empty() && !syncInputWindows;
+    return focusRequests.empty() && windowInfosReportedListeners.empty();
 }
 
 void InputWindowCommands::clear() {
     focusRequests.clear();
-    syncInputWindows = false;
+    windowInfosReportedListeners.clear();
 }
 
 status_t InputWindowCommands::write(Parcel& output) const {
     SAFE_PARCEL(output.writeParcelableVector, focusRequests);
-    SAFE_PARCEL(output.writeBool, syncInputWindows);
+
+    SAFE_PARCEL(output.writeInt32, windowInfosReportedListeners.size());
+    for (const auto& listener : windowInfosReportedListeners) {
+        SAFE_PARCEL(output.writeStrongBinder, listener);
+    }
+
     return NO_ERROR;
 }
 
 status_t InputWindowCommands::read(const Parcel& input) {
     SAFE_PARCEL(input.readParcelableVector, &focusRequests);
-    SAFE_PARCEL(input.readBool, &syncInputWindows);
+
+    int listenerSize = 0;
+    SAFE_PARCEL_READ_SIZE(input.readInt32, &listenerSize, input.dataSize());
+    windowInfosReportedListeners.reserve(listenerSize);
+    for (int i = 0; i < listenerSize; i++) {
+        sp<gui::IWindowInfosReportedListener> listener;
+        SAFE_PARCEL(input.readStrongBinder, &listener);
+        windowInfosReportedListeners.insert(listener);
+    }
+
     return NO_ERROR;
 }
 

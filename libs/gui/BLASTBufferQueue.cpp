@@ -161,7 +161,6 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
     id++;
     mBufferItemConsumer->setName(String8(consumerName.c_str()));
     mBufferItemConsumer->setFrameAvailableListener(this);
-    mBufferItemConsumer->setBufferFreedListener(this);
 
     ComposerServiceAIDL::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
@@ -621,6 +620,7 @@ Rect BLASTBufferQueue::computeCrop(const BufferItem& item) {
 }
 
 void BLASTBufferQueue::acquireAndReleaseBuffer() {
+    BBQ_TRACE();
     BufferItem bufferItem;
     status_t status =
             mBufferItemConsumer->acquireBuffer(&bufferItem, 0 /* expectedPresent */, false);
@@ -634,6 +634,7 @@ void BLASTBufferQueue::acquireAndReleaseBuffer() {
 }
 
 void BLASTBufferQueue::flushAndWaitForFreeBuffer(std::unique_lock<std::mutex>& lock) {
+    BBQ_TRACE();
     if (!mSyncedFrameNumbers.empty() && mNumFrameAvailable > 0) {
         // We are waiting on a previous sync's transaction callback so allow another sync
         // transaction to proceed.
@@ -664,8 +665,8 @@ void BLASTBufferQueue::onFrameAvailable(const BufferItem& item) {
     bool waitForTransactionCallback = !mSyncedFrameNumbers.empty();
 
     {
-        BBQ_TRACE();
         std::unique_lock _lock{mMutex};
+        BBQ_TRACE();
         const bool syncTransactionSet = mTransactionReadyCallback != nullptr;
         BQA_LOGV("onFrameAvailable-start syncTransactionSet=%s", boolToString(syncTransactionSet));
 
@@ -1142,7 +1143,6 @@ void BLASTBufferQueue::abandon() {
     if (mBufferItemConsumer != nullptr) {
         mBufferItemConsumer->abandon();
         mBufferItemConsumer->setFrameAvailableListener(nullptr);
-        mBufferItemConsumer->setBufferFreedListener(nullptr);
     }
     mBufferItemConsumer = nullptr;
     mConsumer = nullptr;

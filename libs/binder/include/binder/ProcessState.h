@@ -29,6 +29,10 @@ namespace android {
 
 class IPCThreadState;
 
+/**
+ * Kernel binder process state. All operations here refer to kernel binder. This
+ * object is allocated per process.
+ */
 class ProcessState : public virtual RefBase {
 public:
     static sp<ProcessState> self();
@@ -126,7 +130,7 @@ private:
     void* mVMStart;
 
     // Protects thread count and wait variables below.
-    pthread_mutex_t mThreadCountLock;
+    mutable pthread_mutex_t mThreadCountLock;
     // Broadcast whenever mWaitingForThreads > 0
     pthread_cond_t mThreadCountDecrement;
     // Number of binder threads current executing a command.
