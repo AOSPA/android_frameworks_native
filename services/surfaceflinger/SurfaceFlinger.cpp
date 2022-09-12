@@ -2420,6 +2420,8 @@ void SurfaceFlinger::scheduleSample() {
 }
 
 nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     auto display = getDefaultDisplayDeviceLocked();
     if (mNextVsyncSource) {
         display = mNextVsyncSource;
@@ -2435,6 +2437,8 @@ nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
 }
 
 sp<DisplayDevice> SurfaceFlinger::getCurrentVsyncSource() {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     if (mNextVsyncSource) {
         return mNextVsyncSource;
     } else if (mActiveVsyncSource) {
@@ -2445,6 +2449,8 @@ sp<DisplayDevice> SurfaceFlinger::getCurrentVsyncSource() {
 }
 
 nsecs_t SurfaceFlinger::getVsyncPeriodFromHWCcb() {
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+
     auto display = getDefaultDisplayDeviceLocked();
     if (mNextVsyncSource) {
         display = mNextVsyncSource;
@@ -2549,6 +2555,7 @@ void SurfaceFlinger::onComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
         if (info) {
             mDisplaysList.remove(getDisplayDeviceLocked(info->id));
         }
+        std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
         mNextVsyncSource = getVsyncSource();
     }
 
@@ -2595,8 +2602,8 @@ void SurfaceFlinger::setVsyncEnabled(bool enabled) {
 
 void SurfaceFlinger::setVsyncEnabledInternal(bool enabled) {
     ATRACE_CALL();
-    Mutex::Autolock lockVsync(mVsyncLock);
     Mutex::Autolock lock(mStateLock);
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
 
     mHWCVsyncPendingState = enabled ? hal::Vsync::ENABLE : hal::Vsync::DISABLE;
 
@@ -3647,7 +3654,7 @@ sp<DisplayDevice> SurfaceFlinger::getVsyncSource() {
 
 void SurfaceFlinger::updateVsyncSource()
             NO_THREAD_SAFETY_ANALYSIS {
-    Mutex::Autolock lock(mVsyncLock);
+    std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
     mNextVsyncSource = getVsyncSource();
 
     if (mNextVsyncSource == NULL) {
@@ -4215,7 +4222,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            if (mUseFbScaling && display->isPrimary() && display->isPoweredOn()) {
+            if (mUseFbScaling && display->isPrimary()) {
                 const ssize_t index = mCurrentState.displays.indexOfKey(displayToken);
                 DisplayDeviceState& curState = mCurrentState.displays.editValueAt(index);
                 setFrameBufferSizeForScaling(display, curState, drawingState);
@@ -4306,12 +4313,16 @@ void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevic
         displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
                                      currentState.orientedDisplaySpaceRect);
         display->getRenderSurface()->setViewportAndProjection();
-        display->getRenderSurface()->flipClientTarget(true);
-        // queue a scratch buffer to flip Client Target with updated size
-        display->getRenderSurface()->queueBuffer(std::move(fd));
-        display->getRenderSurface()->flipClientTarget(false);
-        // releases the FrameBuffer that was acquired as part of queueBuffer()
-        display->getRenderSurface()->onPresentDisplayCompleted();
+        if (displayDevice->isPoweredOn()) {
+            display->getRenderSurface()->flipClientTarget(true);
+            // queue a scratch buffer to flip Client Target with updated size
+            display->getRenderSurface()->queueBuffer(std::move(fd));
+            display->getRenderSurface()->flipClientTarget(false);
+            // releases the FrameBuffer that was acquired as part of queueBuffer()
+            display->getRenderSurface()->onPresentDisplayCompleted();
+        } else {
+            mDisplaySizeChanged = true;
+        }
     }
 }
 void SurfaceFlinger::processDisplayChangesLocked() {
@@ -6187,7 +6198,10 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         return;
     }
 
-    mActiveVsyncSource = getVsyncSource();
+    {
+        std::lock_guard<std::recursive_mutex> lockVsync(mVsyncLock);
+        mActiveVsyncSource = getVsyncSource();
+    }
 
     const auto activeDisplay = getDisplayDeviceLocked(mActiveDisplayToken);
     if (activeDisplay != display && display->isInternal() && activeDisplay &&
@@ -6316,6 +6330,18 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     } else {
         ALOGE("Attempting to set unknown power mode: %d\n", mode);
         getHwComposer().setPowerMode(displayId, mode);
+    }
+
+    if (mDisplaySizeChanged && display->isPrimary()) {
+        base::unique_fd fd;
+        auto compositionDisplay = display->getCompositionDisplay();
+        compositionDisplay->getRenderSurface()->flipClientTarget(true);
+        // queue a scratch buffer to flip Client Target with updated size
+        compositionDisplay->getRenderSurface()->queueBuffer(std::move(fd));
+        compositionDisplay->getRenderSurface()->flipClientTarget(false);
+        // releases the FrameBuffer that was acquired as part of queueBuffer()
+        compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
+        mDisplaySizeChanged = false;
     }
 
     const sp<DisplayDevice> vsyncSource = getVsyncSource();
@@ -7225,7 +7251,6 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_DISPLAY_DECORATION_SUPPORT:
         case IS_WIDE_COLOR_DISPLAY:
         case GET_DISPLAY_BRIGHTNESS_SUPPORT:
-        case SET_DISPLAY_BRIGHTNESS:
         case ADD_HDR_LAYER_INFO_LISTENER:
         case REMOVE_HDR_LAYER_INFO_LISTENER:
         case NOTIFY_POWER_BOOST:
@@ -7238,6 +7263,18 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_GPU_CONTEXT_PRIORITY:
         case GET_MAX_ACQUIRED_BUFFER_COUNT: {
             // This is not sensitive information, so should not require permission control.
+            return OK;
+        }
+        case SET_DISPLAY_BRIGHTNESS: {
+            // codes that require permission check
+            IPCThreadState* ipc = IPCThreadState::self();
+            const int pid = ipc->getCallingPid();
+            const int uid = ipc->getCallingUid();
+            if ((uid != AID_GRAPHICS) && (uid != AID_SYSTEM) &&
+                !PermissionCache::checkPermission(sControlDisplayBrightness, pid, uid)) {
+                ALOGE("Permission Denial: can't control brightness pid=%d, uid=%d", pid, uid);
+                return PERMISSION_DENIED;
+            }
             return OK;
         }
         case ADD_FPS_LISTENER:
