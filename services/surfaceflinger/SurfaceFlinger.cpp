@@ -4101,14 +4101,6 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
         updateVsyncSource();
 
-        if (mPluggableVsyncPrioritized && mDisplaysList.front()->getPhysicalId() ==
-            display->getPhysicalId()) {
-            //If this is the first display in displaysList change it to active display
-            //Updating the active display is needed due to
-            //onComposerHalVsync requiring an active display token which only gets updated when
-            //onActiveDisplayChangedLocked(display); is called
-            onActiveDisplayChangedLocked(display);
-        }
 
 
         if (!display->isPrimary() && isInternalDisplay(display)) {
@@ -6227,7 +6219,8 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
             //Force the device to do a HWresync after we turn on a display
             updateVsyncSource();
             mScheduler->resyncToHardwareVsync(true, refreshRate, true);
-        } else if (display->isInternal() &&  activeDisplay->isPoweredOn()) {
+        } else if ((mPluggableVsyncPrioritized && (displayId != getPrimaryDisplayIdLocked())) ||
+                    (display->isInternal() &&  activeDisplay->isPoweredOn())) {
             //if turning on a display that is powered off and active display is on
             //must determine if this display should be the active display
             for (const auto& displayTemp : mDisplaysList) {
