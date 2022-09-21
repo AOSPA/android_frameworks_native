@@ -87,3 +87,22 @@ cc_test {
     ],
     static_libs: ["libgmock"],
 }
+
+cc_fuzz {
+    name: "servicemanager_fuzzer",
+    defaults: [
+        "servicemanager_defaults",
+        "service_fuzzer_defaults",
+    ],
+    host_supported: true,
+    srcs: ["ServiceManagerFuzzer.cpp"],
+    fuzz_config: {
+        libfuzzer_options: [
+            "max_len=50000",
+        ],
+        cc: [
+            "smoreland@google.com",
+            "waghpawan@google.com",
+        ],
+    },
+}

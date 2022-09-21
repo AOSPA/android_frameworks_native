@@ -115,7 +115,7 @@ public:
 
     // Renders the cached set with the supplied output composition state.
     void render(renderengine::RenderEngine& re, TexturePool& texturePool,
-                const OutputCompositionState& outputState);
+                const OutputCompositionState& outputState, bool deviceHandlesColorTransform);
 
     void dump(std::string& result) const;
 
@@ -150,8 +150,6 @@ public:
     bool hasSolidColorLayers() const;
 
 private:
-    CachedSet() = default;
-
     const NonBufferHash mFingerprint;
     std::chrono::steady_clock::time_point mLastUpdate = std::chrono::steady_clock::now();
     std::vector<Layer> mLayers;

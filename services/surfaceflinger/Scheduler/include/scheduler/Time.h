@@ -32,36 +32,49 @@ static_assert(SchedulerClock::is_steady);
 struct Duration;
 
 struct TimePoint : scheduler::SchedulerClock::time_point {
-    explicit TimePoint(const Duration&);
+    constexpr TimePoint() = default;
+    explicit constexpr TimePoint(const Duration&);
 
     // Implicit conversion from std::chrono counterpart.
     constexpr TimePoint(scheduler::SchedulerClock::time_point p)
           : scheduler::SchedulerClock::time_point(p) {}
 
-    static TimePoint fromNs(nsecs_t);
+    static constexpr TimePoint fromNs(nsecs_t);
 
     nsecs_t ns() const;
 };
 
 struct Duration : TimePoint::duration {
     // Implicit conversion from std::chrono counterpart.
-    constexpr Duration(TimePoint::duration d) : TimePoint::duration(d) {}
+    template <typename R, typename P>
+    constexpr Duration(std::chrono::duration<R, P> d) : TimePoint::duration(d) {}
 
-    static Duration fromNs(nsecs_t ns) { return {std::chrono::nanoseconds(ns)}; }
+    static constexpr Duration fromNs(nsecs_t ns) { return {std::chrono::nanoseconds(ns)}; }
 
     nsecs_t ns() const { return std::chrono::nanoseconds(*this).count(); }
 };
 
 using Period = Duration;
 
-inline TimePoint::TimePoint(const Duration& d) : scheduler::SchedulerClock::time_point(d) {}
+constexpr TimePoint::TimePoint(const Duration& d) : scheduler::SchedulerClock::time_point(d) {}
 
-inline TimePoint TimePoint::fromNs(nsecs_t ns) {
+constexpr TimePoint TimePoint::fromNs(nsecs_t ns) {
     return TimePoint(Duration::fromNs(ns));
 }
 
 inline nsecs_t TimePoint::ns() const {
     return Duration(time_since_epoch()).ns();
+}
+
+// Shorthand to convert the tick count of a Duration to Period and Rep. For example:
+//
+//     const auto i = ticks<std::ratio<1>>(d);      // Integer seconds.
+//     const auto f = ticks<std::milli, float>(d);  // Floating-point milliseconds.
+//
+template <typename Period, typename Rep = Duration::rep>
+constexpr Rep ticks(Duration d) {
+    using D = std::chrono::duration<Rep, Period>;
+    return std::chrono::duration_cast<D>(d).count();
 }
 
 } // namespace android

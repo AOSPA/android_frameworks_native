@@ -150,40 +150,23 @@ public:
     using FrameRateCompatibility = scheduler::LayerInfo::FrameRateCompatibility;
 
     struct State {
-        Geometry active_legacy;
-        Geometry requested_legacy;
         int32_t z;
-
         ui::LayerStack layerStack;
-
         uint32_t flags;
-        uint8_t reserved[2];
         int32_t sequence; // changes when visible regions can change
         bool modified;
-
         // Crop is expressed in layer space coordinate.
         Rect crop;
-        Rect requestedCrop;
-
-        // the transparentRegion hint is a bit special, it's latched only
-        // when we receive a buffer -- this is because it's "content"
-        // dependent.
-        Region activeTransparentRegion_legacy;
-        Region requestedTransparentRegion_legacy;
-
         LayerMetadata metadata;
-
         // If non-null, a Surface this Surface's Z-order is interpreted relative to.
         wp<Layer> zOrderRelativeOf;
         bool isRelativeOf{false};
 
         // A list of surfaces whose Z-order is interpreted relative to ours.
         SortedVector<wp<Layer>> zOrderRelatives;
-
         half4 color;
         float cornerRadius;
         int backgroundBlurRadius;
-
         gui::WindowInfo inputInfo;
         wp<Layer> touchableRegionCrop;
 
@@ -192,15 +175,10 @@ public:
 
         // The fields below this point are only used by BufferStateLayer
         uint64_t frameNumber;
-        uint32_t width;
-        uint32_t height;
         ui::Transform transform;
-
         uint32_t bufferTransform;
         bool transformToDisplayInverse;
-
         Region transparentRegionHint;
-
         std::shared_ptr<renderengine::ExternalTexture> buffer;
         client_cache_t clientCacheId;
         sp<Fence> acquireFence;
@@ -208,11 +186,9 @@ public:
         HdrMetadata hdrMetadata;
         Region surfaceDamageRegion;
         int32_t api;
-
         sp<NativeHandle> sidebandStream;
         mat4 colorTransform;
         bool hasColorTransform;
-
         // pointer to background color layer that, if set, appears below the buffer state layer
         // and the buffer state layer's children.  Z order will be set to
         // INT_MIN
@@ -237,7 +213,6 @@ public:
 
         // Default frame rate compatibility used to set the layer refresh rate votetype.
         FrameRateCompatibility defaultFrameRateCompatibility;
-
         FrameRate frameRate;
 
         // The combined frame rate of parents / children of this layer
@@ -257,7 +232,6 @@ public:
 
         // When the transaction was posted
         nsecs_t postTime;
-
         sp<ITransactionCompletedListener> releaseBufferListener;
         // SurfaceFrame that tracks the timeline of Transactions that contain a Buffer. Only one
         // such SurfaceFrame exists because only one buffer can be presented on the layer per vsync.
@@ -278,16 +252,11 @@ public:
 
         // Whether or not this layer is a trusted overlay for input
         bool isTrustedOverlay;
-
         Rect bufferCrop;
         Rect destinationFrame;
-
         sp<IBinder> releaseBufferEndpoint;
-
         gui::DropInputMode dropInputMode;
-
         bool autoRefresh = false;
-
         bool dimmingEnabled = true;
     };
 
@@ -345,32 +314,6 @@ public:
 
     virtual sp<Layer> createClone() = 0;
 
-    // Geometry setting functions.
-    //
-    // The following group of functions are used to specify the layers
-    // bounds, and the mapping of the texture on to those bounds. According
-    // to various settings changes to them may apply immediately, or be delayed until
-    // a pending resize is completed by the producer submitting a buffer. For example
-    // if we were to change the buffer size, and update the matrix ahead of the
-    // new buffer arriving, then we would be stretching the buffer to a different
-    // aspect before and after the buffer arriving, which probably isn't what we wanted.
-    //
-    // The first set of geometry functions are controlled by the scaling mode, described
-    // in window.h. The scaling mode may be set by the client, as it submits buffers.
-    //
-    // Put simply, if our scaling mode is SCALING_MODE_FREEZE, then
-    // matrix updates will not be applied while a resize is pending
-    // and the size and transform will remain in their previous state
-    // until a new buffer is submitted. If the scaling mode is another value
-    // then the old-buffer will immediately be scaled to the pending size
-    // and the new matrix will be immediately applied following this scaling
-    // transformation.
-
-    // Set the default buffer size for the assosciated Producer, in pixels. This is
-    // also the rendered size of the layer prior to any transformations. Parent
-    // or local matrix transformations will not affect the size of the buffer,
-    // but may affect it's on-screen size or clipping.
-    virtual bool setSize(uint32_t w, uint32_t h);
     // Set a 2x2 transformation matrix on the layer. This transform
     // will be applied after parent transforms, but before any final
     // producer specified transform.
@@ -407,7 +350,7 @@ public:
     // is specified in pixels.
     virtual bool setBackgroundBlurRadius(int backgroundBlurRadius);
     virtual bool setBlurRegions(const std::vector<BlurRegion>& effectRegions);
-    virtual bool setTransparentRegionHint(const Region& transparent);
+    bool setTransparentRegionHint(const Region& transparent);
     virtual bool setTrustedOverlay(bool);
     virtual bool setFlags(uint32_t flags, uint32_t mask);
     virtual bool setLayerStack(ui::LayerStack);
@@ -501,11 +444,9 @@ public:
     // to avoid grabbing the lock again to avoid deadlock
     virtual bool isCreatedFromMainThread() const { return false; }
 
-    uint32_t getActiveWidth(const Layer::State& s) const { return s.width; }
-    uint32_t getActiveHeight(const Layer::State& s) const { return s.height; }
     ui::Transform getActiveTransform(const Layer::State& s) const { return s.transform; }
-    virtual Region getActiveTransparentRegion(const Layer::State& s) const {
-        return s.activeTransparentRegion_legacy;
+    Region getActiveTransparentRegion(const Layer::State& s) const {
+        return s.transparentRegionHint;
     }
     virtual Rect getCrop(const Layer::State& s) const { return s.crop; }
     virtual bool needsFiltering(const DisplayDevice*) const { return false; }
@@ -525,11 +466,7 @@ public:
 
     virtual void updateCloneBufferInfo(){};
 
-    virtual void setDefaultBufferSize(uint32_t /*w*/, uint32_t /*h*/) {}
-
     virtual bool isHdrY410() const { return false; }
-
-    virtual bool shouldPresentNow(nsecs_t /*expectedPresentTime*/) const { return false; }
 
     /*
      * called after composition.
@@ -543,17 +480,13 @@ public:
     // If a buffer was replaced this frame, release the former buffer
     virtual void releasePendingBuffer(nsecs_t /*dequeueReadyTime*/) { }
 
-    virtual void finalizeFrameEventHistory(const std::shared_ptr<FenceTime>& /*glDoneFence*/,
-                                           const CompositorTiming& /*compositorTiming*/) {}
-
     /*
      * latchBuffer - called each time the screen is redrawn and returns whether
      * the visible regions need to be recomputed (this is a fairly heavy
      * operation, so this should be set only if needed). Typically this is used
      * to figure out if the content or size of a surface has changed.
      */
-    virtual bool latchBuffer(bool& /*recomputeVisibleRegions*/, nsecs_t /*latchTime*/,
-                             nsecs_t /*expectedPresentTime*/) {
+    virtual bool latchBuffer(bool& /*recomputeVisibleRegions*/, nsecs_t /*latchTime*/) {
         return false;
     }
 
@@ -625,8 +558,9 @@ public:
     const compositionengine::LayerFECompositionState* getCompositionState() const override;
     bool onPreComposition(nsecs_t) override;
     void prepareCompositionState(compositionengine::LayerFE::StateSubset subset) override;
-    std::vector<compositionengine::LayerFE::LayerSettings> prepareClientCompositionList(
-            compositionengine::LayerFE::ClientCompositionTargetSettings&) override;
+
+    std::optional<compositionengine::LayerFE::LayerSettings> prepareClientComposition(
+            compositionengine::LayerFE::ClientCompositionTargetSettings&) const override;
     void onLayerDisplayed(ftl::SharedFuture<FenceResult>) override;
 
     void setWasClientComposed(const sp<Fence>& fence) override {
@@ -859,7 +793,11 @@ public:
     bool getPremultipledAlpha() const;
     void setInputInfo(const gui::WindowInfo& info);
 
-    gui::WindowInfo fillInputInfo(const ui::Transform& displayTransform, bool displayIsSecure);
+    struct InputDisplayArgs {
+        const ui::Transform* transform = nullptr;
+        bool isSecure = false;
+    };
+    gui::WindowInfo fillInputInfo(const InputDisplayArgs& displayArgs);
 
     /**
      * Returns whether this layer has an explicitly set input-info.
@@ -927,16 +865,9 @@ protected:
     friend class TransactionSurfaceFrameTest;
 
     virtual void setInitialValuesForClone(const sp<Layer>& clonedFrom);
-    virtual std::optional<compositionengine::LayerFE::LayerSettings> prepareClientComposition(
-            compositionengine::LayerFE::ClientCompositionTargetSettings&);
     virtual void preparePerFrameCompositionState();
     virtual void commitTransaction(State& stateToCommit);
     virtual void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&) {}
-
-    // Returns mCurrentScaling mode (originating from the
-    // Client) or mOverrideScalingMode mode (originating from
-    // the Surface Controller) if set.
-    virtual uint32_t getEffectiveScalingMode() const { return 0; }
 
     sp<compositionengine::LayerFE> asLayerFE() const;
     sp<Layer> getClonedFrom() { return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr; }
@@ -954,7 +885,8 @@ protected:
     // Modifies the passed in layer settings to clear the contents. If the blackout flag is set,
     // the settings clears the content with a solid black fill.
     void prepareClearClientComposition(LayerFE::LayerSettings&, bool blackout) const;
-    void prepareShadowClientComposition(LayerFE::LayerSettings& caster, const Rect& layerStackRect);
+    void prepareShadowClientComposition(LayerFE::LayerSettings& caster,
+                                        const Rect& layerStackRect) const;
 
     void prepareBasicGeometryCompositionState();
     void prepareGeometryCompositionState();

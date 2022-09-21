@@ -111,8 +111,8 @@ public:
     // Test instances
 
     TestableSurfaceFlinger mFlinger;
-    sp<mock::NativeWindow> mNativeWindow = new mock::NativeWindow();
-    sp<GraphicBuffer> mBuffer = new GraphicBuffer();
+    sp<mock::NativeWindow> mNativeWindow = sp<mock::NativeWindow>::make();
+    sp<GraphicBuffer> mBuffer = sp<GraphicBuffer>::make();
     Hwc2::mock::PowerAdvisor mPowerAdvisor;
 
     // These mocks are created by the test, but are destroyed by SurfaceFlinger
@@ -120,7 +120,7 @@ public:
     // to keep a reference to them for use in setting up call expectations.
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
     Hwc2::mock::Composer* mComposer = nullptr;
-    sp<mock::SurfaceInterceptor> mSurfaceInterceptor = new mock::SurfaceInterceptor;
+    sp<mock::SurfaceInterceptor> mSurfaceInterceptor = sp<mock::SurfaceInterceptor>::make();
 
     mock::VsyncController* mVsyncController = new mock::VsyncController;
     mock::VSyncTracker* mVSyncTracker = new mock::VSyncTracker;
@@ -434,14 +434,18 @@ struct HwcDisplayVariant {
         }
     }
 
+    template <bool kFailedHotplug = false>
     static void setupHwcHotplugCallExpectations(DisplayTransactionTest* test) {
-        constexpr auto CONNECTION_TYPE =
-                PhysicalDisplay::CONNECTION_TYPE == ui::DisplayConnectionType::Internal
-                ? IComposerClient::DisplayConnectionType::INTERNAL
-                : IComposerClient::DisplayConnectionType::EXTERNAL;
+        if constexpr (!kFailedHotplug) {
+            constexpr auto CONNECTION_TYPE =
+                    PhysicalDisplay::CONNECTION_TYPE == ui::DisplayConnectionType::Internal
+                    ? IComposerClient::DisplayConnectionType::INTERNAL
+                    : IComposerClient::DisplayConnectionType::EXTERNAL;
 
-        EXPECT_CALL(*test->mComposer, getDisplayConnectionType(HWC_DISPLAY_ID, _))
-                .WillOnce(DoAll(SetArgPointee<1>(CONNECTION_TYPE), Return(hal::V2_4::Error::NONE)));
+            EXPECT_CALL(*test->mComposer, getDisplayConnectionType(HWC_DISPLAY_ID, _))
+                    .WillOnce(DoAll(SetArgPointee<1>(CONNECTION_TYPE),
+                                    Return(hal::V2_4::Error::NONE)));
+        }
 
         EXPECT_CALL(*test->mComposer, setClientTargetSlotCount(_))
                 .WillOnce(Return(hal::Error::NONE));

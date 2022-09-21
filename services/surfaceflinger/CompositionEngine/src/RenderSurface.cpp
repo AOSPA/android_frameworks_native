@@ -261,10 +261,6 @@ void RenderSurface::onPresentDisplayCompleted() {
     mDisplaySurface->onFrameCommitted();
 }
 
-void RenderSurface::flip() {
-    mPageFlipCount++;
-}
-
 void RenderSurface::setViewportAndProjection() {
     Rect sourceCrop = Rect(mSize);
     Rect viewPort = Rect(mSize.width,  mSize.height);
@@ -281,20 +277,11 @@ void RenderSurface::dump(std::string& out) const {
     dumpVal(out, "size", mSize);
     StringAppendF(&out, "ANativeWindow=%p (format %d) ", mNativeWindow.get(),
                   ANativeWindow_getFormat(mNativeWindow.get()));
-    dumpVal(out, "flips", mPageFlipCount);
     out.append("\n");
 
     String8 surfaceDump;
     mDisplaySurface->dumpAsString(surfaceDump);
     out.append(surfaceDump);
-}
-
-std::uint32_t RenderSurface::getPageFlipCount() const {
-    return mPageFlipCount;
-}
-
-void RenderSurface::setPageFlipCountForTest(std::uint32_t count) {
-    mPageFlipCount = count;
 }
 
 void RenderSurface::setSizeForTest(const ui::Size& size) {

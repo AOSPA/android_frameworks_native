@@ -636,8 +636,7 @@ SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
         mDesiredPresentTime(other.mDesiredPresentTime),
         mIsAutoTimestamp(other.mIsAutoTimestamp),
         mFrameTimelineInfo(other.mFrameTimelineInfo),
-        mApplyToken(other.mApplyToken),
-        mWindowInfosReportedEvent(other.mWindowInfosReportedEvent) {
+        mApplyToken(other.mApplyToken) {
     mDisplayStates = other.mDisplayStates;
     mComposerStates = other.mComposerStates;
     mInputWindowCommands = other.mInputWindowCommands;
@@ -881,9 +880,6 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::merge(Tr
     mEarlyWakeupStart = mEarlyWakeupStart || other.mEarlyWakeupStart;
     mEarlyWakeupEnd = mEarlyWakeupEnd || other.mEarlyWakeupEnd;
     mApplyToken = other.mApplyToken;
-    if (other.mWindowInfosReportedEvent) {
-        mWindowInfosReportedEvent = std::move(other.mWindowInfosReportedEvent);
-    }
 
     mergeFrameTimelineInfo(mFrameTimelineInfo, other.mFrameTimelineInfo);
 
@@ -906,7 +902,6 @@ void SurfaceComposerClient::Transaction::clear() {
     mIsAutoTimestamp = true;
     clearFrameTimelineInfo(mFrameTimelineInfo);
     mApplyToken = nullptr;
-    mWindowInfosReportedEvent = nullptr;
 }
 
 uint64_t SurfaceComposerClient::Transaction::getId() {
@@ -1043,19 +1038,13 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
         flags |= ISurfaceComposer::eEarlyWakeupEnd;
     }
 
-    sp<IBinder> applyToken = mApplyToken
-            ? mApplyToken
-            : IInterface::asBinder(TransactionCompletedListener::getIInstance());
+    sp<IBinder> applyToken = mApplyToken ? mApplyToken : sApplyToken;
 
     sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, flags, applyToken,
                             mInputWindowCommands, mDesiredPresentTime, mIsAutoTimestamp,
                             {} /*uncacheBuffer - only set in doUncacheBufferTransaction*/,
                             hasListenerCallbacks, listenerCallbacks, mId);
     mId = generateId();
-
-    if (mWindowInfosReportedEvent && !mWindowInfosReportedEvent->wait()) {
-        ALOGE("Timed out waiting for window infos to be reported.");
-    }
 
     // Clear the current states and flags
     clear();
@@ -1064,6 +1053,15 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     return NO_ERROR;
 }
 
+sp<IBinder> SurfaceComposerClient::Transaction::sApplyToken = new BBinder();
+
+sp<IBinder> SurfaceComposerClient::Transaction::getDefaultApplyToken() {
+    return sApplyToken;
+}
+
+void SurfaceComposerClient::Transaction::setDefaultApplyToken(sp<IBinder> applyToken) {
+    sApplyToken = applyToken;
+}
 // ---------------------------------------------------------------------------
 
 sp<IBinder> SurfaceComposerClient::createDisplay(const String8& displayName, bool secure) {
@@ -1092,16 +1090,6 @@ std::vector<PhysicalDisplayId> SurfaceComposerClient::getPhysicalDisplayIds() {
         }
     }
     return physicalDisplayIds;
-}
-
-status_t SurfaceComposerClient::getPrimaryPhysicalDisplayId(PhysicalDisplayId* id) {
-    int64_t displayId;
-    binder::Status status =
-            ComposerServiceAIDL::getComposerService()->getPrimaryPhysicalDisplayId(&displayId);
-    if (status.isOk()) {
-        *id = *DisplayId::fromValue<PhysicalDisplayId>(static_cast<uint64_t>(displayId));
-    }
-    return statusTFromBinderStatus(status);
 }
 
 std::optional<PhysicalDisplayId> SurfaceComposerClient::getInternalDisplayId() {
@@ -1182,21 +1170,6 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::show(
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::hide(
         const sp<SurfaceControl>& sc) {
     return setFlags(sc, layer_state_t::eLayerHidden, layer_state_t::eLayerHidden);
-}
-
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setSize(
-        const sp<SurfaceControl>& sc, uint32_t w, uint32_t h) {
-    layer_state_t* s = getLayerState(sc);
-    if (!s) {
-        mStatus = BAD_INDEX;
-        return *this;
-    }
-    s->what |= layer_state_t::eSizeChanged;
-    s->w = w;
-    s->h = h;
-
-    registerSurfaceControlForCallback(sc);
-    return *this;
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLayer(
@@ -1288,8 +1261,11 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setAlpha
         mStatus = BAD_INDEX;
         return *this;
     }
+    if (alpha < 0.0f || alpha > 1.0f) {
+        ALOGE("SurfaceComposerClient::Transaction::setAlpha: invalid alpha %f, clamping", alpha);
+    }
     s->what |= layer_state_t::eAlphaChanged;
-    s->alpha = alpha;
+    s->alpha = std::clamp(alpha, 0.f, 1.f);
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -1743,25 +1719,10 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFocus
     return *this;
 }
 
-class NotifyWindowInfosReported : public gui::BnWindowInfosReportedListener {
-public:
-    NotifyWindowInfosReported(
-            std::shared_ptr<SurfaceComposerClient::Event> windowInfosReportedEvent)
-          : mWindowInfosReportedEvent(windowInfosReportedEvent) {}
-
-    binder::Status onWindowInfosReported() {
-        mWindowInfosReportedEvent->set();
-        return binder::Status::ok();
-    }
-
-private:
-    std::shared_ptr<SurfaceComposerClient::Event> mWindowInfosReportedEvent;
-};
-
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::syncInputWindows() {
-    mWindowInfosReportedEvent = std::make_shared<Event>();
-    mInputWindowCommands.windowInfosReportedListeners.insert(
-            sp<NotifyWindowInfosReported>::make(mWindowInfosReportedEvent));
+SurfaceComposerClient::Transaction&
+SurfaceComposerClient::Transaction::addWindowInfosReportedListener(
+        sp<gui::IWindowInfosReportedListener> windowInfosReportedListener) {
+    mInputWindowCommands.windowInfosReportedListeners.insert(windowInfosReportedListener);
     return *this;
 }
 
@@ -2194,6 +2155,16 @@ sp<SurfaceControl> SurfaceComposerClient::mirrorSurface(SurfaceControl* mirrorFr
     sp<IBinder> mirrorFromHandle = mirrorFromSurface->getHandle();
     gui::MirrorSurfaceResult result;
     const binder::Status status = mClient->mirrorSurface(mirrorFromHandle, &result);
+    const status_t err = statusTFromBinderStatus(status);
+    if (err == NO_ERROR) {
+        return new SurfaceControl(this, result.handle, result.layerId);
+    }
+    return nullptr;
+}
+
+sp<SurfaceControl> SurfaceComposerClient::mirrorDisplay(DisplayId displayId) {
+    gui::MirrorSurfaceResult result;
+    const binder::Status status = mClient->mirrorDisplay(displayId.value, &result);
     const status_t err = statusTFromBinderStatus(status);
     if (err == NO_ERROR) {
         return new SurfaceControl(this, result.handle, result.layerId);
@@ -2855,19 +2826,6 @@ void ReleaseCallbackThread::threadMain() {
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------------
-
-void SurfaceComposerClient::Event::set() {
-    std::lock_guard<std::mutex> lock(mMutex);
-    mComplete = true;
-    mConditionVariable.notify_all();
-}
-
-bool SurfaceComposerClient::Event::wait() {
-    std::unique_lock<std::mutex> lock(mMutex);
-    return mConditionVariable.wait_for(lock, sTimeout, [this] { return mComplete; });
 }
 
 } // namespace android

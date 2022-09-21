@@ -252,11 +252,7 @@ std::shared_ptr<HWC2::Layer> HWComposer::createLayer(HalDisplayId displayId) {
 }
 
 bool HWComposer::isConnected(PhysicalDisplayId displayId) const {
-    if (mDisplayData.count(displayId)) {
-        return mDisplayData.at(displayId).hwcDisplay->isConnected();
-    }
-
-    return false;
+    return mDisplayData.count(displayId) && mDisplayData.at(displayId).hwcDisplay->isConnected();
 }
 
 std::vector<HWComposer::HWCDisplayMode> HWComposer::getModes(PhysicalDisplayId displayId) const {
@@ -286,17 +282,12 @@ std::vector<HWComposer::HWCDisplayMode> HWComposer::getModes(PhysicalDisplayId d
 
 std::optional<hal::HWConfigId> HWComposer::getActiveMode(PhysicalDisplayId displayId) const {
     RETURN_IF_INVALID_DISPLAY(displayId, std::nullopt);
-
     const auto hwcId = *fromPhysicalDisplayId(displayId);
-    ALOGV("[%" PRIu64 "] getActiveMode", hwcId);
+
     hal::HWConfigId configId;
-    auto error = static_cast<hal::Error>(mComposer->getActiveConfig(hwcId, &configId));
+    const auto error = static_cast<hal::Error>(mComposer->getActiveConfig(hwcId, &configId));
 
-    if (error == hal::Error::BAD_CONFIG) {
-        LOG_DISPLAY_ERROR(displayId, "No active mode");
-        return std::nullopt;
-    }
-
+    RETURN_IF_HWC_ERROR_FOR("getActiveConfig", error, displayId, std::nullopt);
     return configId;
 }
 
@@ -959,18 +950,15 @@ std::optional<DisplayIdentificationInfo> HWComposer::onHotplugDisconnect(
         return {};
     }
 
-    // The display will later be destroyed by a call to
-    // destroyDisplay(). For now we just mark it disconnected.
-    if (isConnected(*displayId)) {
-        mDisplayData[*displayId].hwcDisplay->setConnected(false);
-    } else {
+    if (!isConnected(*displayId)) {
         LOG_HWC_DISPLAY_ERROR(hwcDisplayId, "Already disconnected");
+        return {};
     }
-    // The cleanup of Disconnect is handled through HWComposer::disconnectDisplay
-    // via SurfaceFlinger's onHotplugReceived callback handling
-    return DisplayIdentificationInfo{.id = *displayId,
-                                     .name = std::string(),
-                                     .deviceProductInfo = std::nullopt};
+
+    // The display will later be destroyed by a call to HWComposer::disconnectDisplay. For now, mark
+    // it as disconnected.
+    mDisplayData.at(*displayId).hwcDisplay->setConnected(false);
+    return DisplayIdentificationInfo{.id = *displayId};
 }
 
 void HWComposer::loadCapabilities() {

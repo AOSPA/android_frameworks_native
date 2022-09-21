@@ -344,6 +344,8 @@ public:
     //      B               B'
     sp<SurfaceControl> mirrorSurface(SurfaceControl* mirrorFromSurface);
 
+    sp<SurfaceControl> mirrorDisplay(DisplayId displayId);
+
     //! Create a virtual display
     static sp<IBinder> createDisplay(const String8& displayName, bool secure);
 
@@ -352,7 +354,6 @@ public:
 
     //! Get stable IDs for connected physical displays
     static std::vector<PhysicalDisplayId> getPhysicalDisplayIds();
-    static status_t getPrimaryPhysicalDisplayId(PhysicalDisplayId*);
     static std::optional<PhysicalDisplayId> getInternalDisplayId();
 
     //! Get token for a physical display given its stable ID
@@ -390,24 +391,9 @@ public:
         std::unordered_set<sp<SurfaceControl>, SCHash> surfaceControls;
     };
 
-    // TODO(b/222421815) this class should be removed when
-    // SurfaceComposerClient::Transaction::syncInputWindows is removed and replaced with a method
-    // for adding callbacks to InputWindowCommands.
-    class Event {
-    private:
-        static constexpr std::chrono::seconds sTimeout{5};
-
-        bool mComplete = false;
-        std::condition_variable mConditionVariable;
-        std::mutex mMutex;
-
-    public:
-        void set();
-        bool wait();
-    };
-
     class Transaction : public Parcelable {
     private:
+        static sp<IBinder> sApplyToken;
         void releaseBufferIfOverwriting(const layer_state_t& state);
         static void mergeFrameTimelineInfo(FrameTimelineInfo& t, const FrameTimelineInfo& other);
         static void clearFrameTimelineInfo(FrameTimelineInfo& t);
@@ -455,8 +441,6 @@ public:
         InputWindowCommands mInputWindowCommands;
         int mStatus = NO_ERROR;
 
-        std::shared_ptr<Event> mWindowInfosReportedEvent = nullptr;
-
         layer_state_t* getLayerState(const sp<SurfaceControl>& sc);
         DisplayState& getDisplayState(const sp<IBinder>& token);
 
@@ -488,10 +472,9 @@ public:
         Transaction& merge(Transaction&& other);
         Transaction& show(const sp<SurfaceControl>& sc);
         Transaction& hide(const sp<SurfaceControl>& sc);
-        Transaction& setPosition(const sp<SurfaceControl>& sc,
-                float x, float y);
-        Transaction& setSize(const sp<SurfaceControl>& sc,
-                uint32_t w, uint32_t h);
+        Transaction& setPosition(const sp<SurfaceControl>& sc, float x, float y);
+        // b/243180033 remove once functions are not called from vendor code
+        Transaction& setSize(const sp<SurfaceControl>&, uint32_t, uint32_t) { return *this; }
         Transaction& setLayer(const sp<SurfaceControl>& sc,
                 int32_t z);
 
@@ -591,7 +574,9 @@ public:
 
         Transaction& setInputWindowInfo(const sp<SurfaceControl>& sc, const gui::WindowInfo& info);
         Transaction& setFocusedWindow(const gui::FocusRequest& request);
-        Transaction& syncInputWindows();
+
+        Transaction& addWindowInfosReportedListener(
+                sp<gui::IWindowInfosReportedListener> windowInfosReportedListener);
 
         // Set a color transform matrix on the given layer on the built-in display.
         Transaction& setColorTransform(const sp<SurfaceControl>& sc, const mat3& matrix,
@@ -687,6 +672,9 @@ public:
          * TODO (b/213644870): Remove all permissioned things from Transaction
          */
         void sanitize();
+
+        static sp<IBinder> getDefaultApplyToken();
+        static void setDefaultApplyToken(sp<IBinder> applyToken);
     };
 
     status_t clearLayerFrameStats(const sp<IBinder>& token) const;

@@ -237,7 +237,7 @@ void Display::setReleasedLayers(const compositionengine::CompositionRefreshArgs&
                             });
 
         if (hasQueuedFrames) {
-            releasedLayers.emplace_back(layerFE);
+            releasedLayers.emplace_back(wp<LayerFE>::fromExisting(layerFE));
         }
     }
 
@@ -521,7 +521,7 @@ void Display::finishFrame(const compositionengine::CompositionRefreshArgs& refre
     // 1) It is being handled by hardware composer, which may need this to
     //    keep its virtual display state machine in sync, or
     // 2) There is work to be done (the dirty region isn't empty)
-    if (GpuVirtualDisplayId::tryCast(mId) && getDirtyRegion().isEmpty()) {
+    if (GpuVirtualDisplayId::tryCast(mId) && !mustRecompose()) {
         ALOGV("Skipping display composition");
         return;
     }

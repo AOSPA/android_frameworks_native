@@ -72,8 +72,8 @@ public:
                                      nsecs_t presentEndTime) = 0;
     // Reports the expected time that the current frame will present to the display
     virtual void setExpectedPresentTime(nsecs_t expectedPresentTime) = 0;
-    // Reports the most recent present fence time once it's known at the end of the frame
-    virtual void setPresentFenceTime(nsecs_t presentFenceTime) = 0;
+    // Reports the most recent present fence time and end time once known
+    virtual void setSfPresentTiming(nsecs_t presentFenceTime, nsecs_t presentEndTime) = 0;
     // Reports whether a display used client composition this frame
     virtual void setRequiresClientComposition(DisplayId displayId,
                                               bool requiresClientComposition) = 0;
@@ -143,7 +143,7 @@ public:
     void setSkippedValidate(DisplayId displayId, bool skipped) override;
     void setRequiresClientComposition(DisplayId displayId, bool requiresClientComposition) override;
     void setExpectedPresentTime(nsecs_t expectedPresentTime) override;
-    void setPresentFenceTime(nsecs_t presentFenceTime) override;
+    void setSfPresentTiming(nsecs_t presentFenceTime, nsecs_t presentEndTime) override;
     void setHwcPresentDelayedTime(
             DisplayId displayId,
             std::chrono::steady_clock::time_point earliestFrameStartTime) override;
@@ -156,6 +156,13 @@ public:
     bool canNotifyDisplayUpdateImminent() override;
 
 private:
+    friend class PowerAdvisorTest;
+
+    // Tracks if powerhal exists
+    bool mHasHal = true;
+    // Holds the hal wrapper for getPowerHal
+    std::unique_ptr<HalWrapper> mHalWrapper GUARDED_BY(mPowerHalMutex) = nullptr;
+
     HalWrapper* getPowerHal() REQUIRES(mPowerHalMutex);
     bool mReconnectPowerHal GUARDED_BY(mPowerHalMutex) = false;
     std::mutex mPowerHalMutex;
@@ -247,17 +254,17 @@ private:
 
     // Current frame's delay
     nsecs_t mFrameDelayDuration = 0;
-    // Last frame's composite end time
-    nsecs_t mLastCompositeEndTime = -1;
     // Last frame's post-composition duration
     nsecs_t mLastPostcompDuration = 0;
     // Buffer of recent commit start times
     RingBuffer<nsecs_t, 2> mCommitStartTimes;
     // Buffer of recent expected present times
     RingBuffer<nsecs_t, 2> mExpectedPresentTimes;
-    // Most recent present fence time, set at the end of the frame once known
+    // Most recent present fence time, provided by SF after composition engine finishes presenting
     nsecs_t mLastPresentFenceTime = -1;
-    // Target for the entire pipeline including gpu
+    // Most recent composition engine present end time, returned with the present fence from SF
+    nsecs_t mLastSfPresentEndTime = -1;
+    // Target duration for the entire pipeline including gpu
     std::optional<nsecs_t> mTotalFrameTargetDuration;
     // Updated list of display IDs
     std::vector<DisplayId> mDisplayIds;
@@ -334,7 +341,7 @@ private:
     static const bool sTraceHintSessionData;
     static constexpr const std::chrono::nanoseconds kDefaultTarget = 16ms;
     // Amount of time after the last message was sent before the session goes stale
-    // actually 100ms but we use 80 here to ideally avoid going stale
+    // actually 100ms but we use 80 here to give some slack
     static constexpr const std::chrono::nanoseconds kStaleTimeout = 80ms;
 };
 

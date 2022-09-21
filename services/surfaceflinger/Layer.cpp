@@ -80,6 +80,7 @@ using android::hardware::graphics::common::V1_0::BufferUsage;
 namespace android {
 namespace {
 constexpr int kDumpTableRowLength = 159;
+const ui::Transform kIdentityTransform;
 } // namespace
 
 using namespace ftl::flag_operators;
@@ -95,7 +96,7 @@ std::atomic<int32_t> Layer::sSequence{1};
 
 Layer::Layer(const LayerCreationArgs& args)
       : sequence(args.sequence.value_or(sSequence++)),
-        mFlinger(args.flinger),
+        mFlinger(sp<SurfaceFlinger>::fromExisting(args.flinger)),
         mName(base::StringPrintf("%s#%d", args.name.c_str(), sequence)),
         mClientRef(args.client),
         mWindowType(static_cast<WindowInfo::Type>(
@@ -112,16 +113,11 @@ Layer::Layer(const LayerCreationArgs& args)
         sSequence = *args.sequence + 1;
     }
     mDrawingState.flags = layerFlags;
-    mDrawingState.active_legacy.transform.set(0, 0);
     mDrawingState.crop.makeInvalid();
-    mDrawingState.requestedCrop = mDrawingState.crop;
     mDrawingState.z = 0;
     mDrawingState.color.a = 1.0f;
     mDrawingState.layerStack = ui::DEFAULT_LAYER_STACK;
     mDrawingState.sequence = 0;
-    mDrawingState.requested_legacy = mDrawingState.active_legacy;
-    mDrawingState.width = UINT32_MAX;
-    mDrawingState.height = UINT32_MAX;
     mDrawingState.transform.set(0, 0);
     mDrawingState.frameNumber = 0;
     mDrawingState.bufferTransform = 0;
@@ -229,7 +225,7 @@ void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
     }
 
     if (!std::binary_search(layersInTree.begin(), layersInTree.end(), strongRelative.get())) {
-        strongRelative->removeZOrderRelative(this);
+        strongRelative->removeZOrderRelative(wp<Layer>::fromExisting(this));
         mFlinger->setTransactionFlags(eTraversalNeeded);
         setZOrderRelativeOf(nullptr);
     }
@@ -241,13 +237,13 @@ void Layer::removeFromCurrentState() {
         mFlinger->mScheduler->deregisterLayer(this);
     }
 
-    mFlinger->markLayerPendingRemovalLocked(this);
+    mFlinger->markLayerPendingRemovalLocked(sp<Layer>::fromExisting(this));
 }
 
 sp<Layer> Layer::getRootLayer() {
     sp<Layer> parent = getParent();
     if (parent == nullptr) {
-        return this;
+        return sp<Layer>::fromExisting(this);
     }
     return parent->getRootLayer();
 }
@@ -290,7 +286,7 @@ sp<IBinder> Layer::getHandle() {
         return nullptr;
     }
     mGetHandleCalled = true;
-    return new Handle(mFlinger, this);
+    return sp<Handle>::make(mFlinger, sp<Layer>::fromExisting(this));
 }
 
 // ---------------------------------------------------------------------------
@@ -527,8 +523,9 @@ void Layer::prepareCursorCompositionState() {
 }
 
 sp<compositionengine::LayerFE> Layer::asLayerFE() const {
-    return const_cast<compositionengine::LayerFE*>(
+    compositionengine::LayerFE* layerFE = const_cast<compositionengine::LayerFE*>(
             static_cast<const compositionengine::LayerFE*>(this));
+    return sp<compositionengine::LayerFE>::fromExisting(layerFE);
 }
 
 sp<compositionengine::LayerFE> Layer::getCompositionEngineLayerFE() const {
@@ -580,7 +577,7 @@ const char* Layer::getDebugName() const {
 // ---------------------------------------------------------------------------
 
 std::optional<compositionengine::LayerFE::LayerSettings> Layer::prepareClientComposition(
-        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
+        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) const {
     if (!getCompositionState()) {
         return {};
     }
@@ -656,30 +653,6 @@ void Layer::prepareClearClientComposition(LayerFE::LayerSettings& layerSettings,
     // If layer is blacked out, force alpha to 1 so that we draw a black color layer.
     layerSettings.alpha = blackout ? 1.0f : 0.0f;
     layerSettings.name = getName();
-}
-
-// TODO(b/188891810): This method now only ever returns 0 or 1 layers so we should return
-// std::optional instead of a vector.  Additionally, we should consider removing
-// this method entirely in favor of calling prepareClientComposition directly.
-std::vector<compositionengine::LayerFE::LayerSettings> Layer::prepareClientCompositionList(
-        compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) {
-    std::optional<compositionengine::LayerFE::LayerSettings> layerSettings =
-            prepareClientComposition(targetSettings);
-    // Nothing to render.
-    if (!layerSettings) {
-        return {};
-    }
-
-    // HWC requests to clear this layer.
-    if (targetSettings.clearContent) {
-        prepareClearClientComposition(*layerSettings, false /* blackout */);
-        return {*layerSettings};
-    }
-
-    // set the shadow for the layer if needed
-    prepareShadowClientComposition(*layerSettings, targetSettings.viewport);
-
-    return {*layerSettings};
 }
 
 aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionType(
@@ -836,7 +809,7 @@ bool Layer::setLayer(int32_t z) {
     if (mDrawingState.zOrderRelativeOf != nullptr) {
         sp<Layer> strongRelative = mDrawingState.zOrderRelativeOf.promote();
         if (strongRelative != nullptr) {
-            strongRelative->removeZOrderRelative(this);
+            strongRelative->removeZOrderRelative(wp<Layer>::fromExisting(this));
         }
         setZOrderRelativeOf(nullptr);
     }
@@ -894,10 +867,10 @@ bool Layer::setRelativeLayer(const sp<IBinder>& relativeToHandle, int32_t relati
 
     auto oldZOrderRelativeOf = mDrawingState.zOrderRelativeOf.promote();
     if (oldZOrderRelativeOf != nullptr) {
-        oldZOrderRelativeOf->removeZOrderRelative(this);
+        oldZOrderRelativeOf->removeZOrderRelative(wp<Layer>::fromExisting(this));
     }
     setZOrderRelativeOf(relative);
-    relative->addZOrderRelative(this);
+    relative->addZOrderRelative(wp<Layer>::fromExisting(this));
 
     setTransactionFlags(eTransactionNeeded);
 
@@ -919,20 +892,6 @@ bool Layer::isTrustedOverlay() const {
     }
     const auto& p = mDrawingParent.promote();
     return (p != nullptr) && p->isTrustedOverlay();
-}
-
-bool Layer::setSize(uint32_t w, uint32_t h) {
-    if (mDrawingState.requested_legacy.w == w && mDrawingState.requested_legacy.h == h)
-        return false;
-    mDrawingState.requested_legacy.w = w;
-    mDrawingState.requested_legacy.h = h;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-
-    // record the new size, from this point on, when the client request
-    // a buffer, it'll get the new size.
-    setDefaultBufferSize(mDrawingState.requested_legacy.w, mDrawingState.requested_legacy.h);
-    return true;
 }
 
 bool Layer::setAlpha(float alpha) {
@@ -1024,7 +983,8 @@ bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix) {
 }
 
 bool Layer::setTransparentRegionHint(const Region& transparent) {
-    mDrawingState.requestedTransparentRegion_legacy = transparent;
+    mDrawingState.sequence++;
+    mDrawingState.transparentRegionHint = transparent;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -1053,9 +1013,8 @@ bool Layer::setFlags(uint32_t flags, uint32_t mask) {
 }
 
 bool Layer::setCrop(const Rect& crop) {
-    if (mDrawingState.requestedCrop == crop) return false;
+    if (mDrawingState.crop == crop) return false;
     mDrawingState.sequence++;
-    mDrawingState.requestedCrop = crop;
     mDrawingState.crop = crop;
 
     mDrawingState.modified = true;
@@ -1278,7 +1237,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
 
 void Layer::updateTreeHasFrameRateVote() {
     const auto root = [&]() -> sp<Layer> {
-        sp<Layer> layer = this;
+        sp<Layer> layer = sp<Layer>::fromExisting(this);
         while (auto parent = layer->getParent()) {
             layer = parent;
         }
@@ -1493,7 +1452,6 @@ gui::LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const
     sp<Layer> parent = mDrawingParent.promote();
     info.mParentName = parent ? parent->getName() : "none"s;
     info.mType = getType();
-    info.mTransparentRegion = ds.activeTransparentRegion_legacy;
 
     info.mVisibleRegion = getVisibleRegion(display);
     info.mSurfaceDamageRegion = surfaceDamageRegion;
@@ -1501,8 +1459,6 @@ gui::LayerDebugInfo Layer::getLayerDebugInfo(const DisplayDevice* display) const
     info.mX = ds.transform.tx();
     info.mY = ds.transform.ty();
     info.mZ = ds.z;
-    info.mWidth = ds.width;
-    info.mHeight = ds.height;
     info.mCrop = ds.crop;
     info.mColor = ds.color;
     info.mFlags = ds.flags;
@@ -1653,7 +1609,7 @@ void Layer::addChild(const sp<Layer>& layer) {
     setTransactionFlags(eTransactionNeeded);
 
     mCurrentChildren.add(layer);
-    layer->setParent(this);
+    layer->setParent(sp<Layer>::fromExisting(this));
     layer->setGameModeForTree(mGameMode);
     updateTreeHasFrameRateVote();
 }
@@ -1698,11 +1654,11 @@ bool Layer::reparent(const sp<IBinder>& newParentHandle) {
 
     sp<Layer> parent = getParent();
     if (parent != nullptr) {
-        parent->removeChild(this);
+        parent->removeChild(sp<Layer>::fromExisting(this));
     }
 
     if (newParentHandle != nullptr) {
-        newParent->addChild(this);
+        newParent->addChild(sp<Layer>::fromExisting(this));
         if (!newParent->isRemovedFromCurrentState()) {
             addToCurrentState();
         } else {
@@ -1984,8 +1940,11 @@ half4 Layer::getColor() const {
 }
 
 int32_t Layer::getBackgroundBlurRadius() const {
-    const auto& p = mDrawingParent.promote();
+    if (getDrawingState().backgroundBlurRadius == 0) {
+        return 0;
+    }
 
+    const auto& p = mDrawingParent.promote();
     half parentAlpha = (p != nullptr) ? p->getAlpha() : 1.0_hf;
     return parentAlpha * getDrawingState().backgroundBlurRadius;
 }
@@ -2041,7 +2000,7 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
 }
 
 void Layer::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
-                                           const Rect& layerStackRect) {
+                                           const Rect& layerStackRect) const {
     renderengine::ShadowSettings state = mFlinger->mDrawingState.globalShadowSettings;
 
     // Note: this preserves existing behavior of shadowing the entire layer and not cropping it if
@@ -2100,7 +2059,7 @@ void Layer::commitChildList() {
                   zOrderRelativeOf->mName.c_str());
             ALOGE("Severing rel Z loop, potentially dangerous");
             mDrawingState.isRelativeOf = false;
-            zOrderRelativeOf->removeZOrderRelative(this);
+            zOrderRelativeOf->removeZOrderRelative(wp<Layer>::fromExisting(this));
         }
     }
 }
@@ -2152,8 +2111,6 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
     layerInfo->set_dataspace(dataspaceDetails(static_cast<android_dataspace>(getDataSpace())));
     layerInfo->set_queued_frames(getQueuedFrameCount());
     layerInfo->set_curr_frame(mCurrentFrameNumber);
-    layerInfo->set_effective_scaling_mode(getEffectiveScalingMode());
-
     layerInfo->set_requested_corner_radius(getDrawingState().cornerRadius);
     layerInfo->set_corner_radius(
             (getRoundedCornerState().radius.x + getRoundedCornerState().radius.y) / 2.0);
@@ -2202,7 +2159,7 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
         }
     }
 
-    LayerProtoHelper::writeToProto(state.activeTransparentRegion_legacy,
+    LayerProtoHelper::writeToProto(state.transparentRegionHint,
                                    [&]() { return layerInfo->mutable_transparent_region(); });
 
     layerInfo->set_layer_stack(getLayerStack().id);
@@ -2211,9 +2168,6 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     LayerProtoHelper::writePositionToProto(requestedTransform.tx(), requestedTransform.ty(), [&]() {
         return layerInfo->mutable_requested_position();
     });
-
-    LayerProtoHelper::writeSizeToProto(state.width, state.height,
-                                       [&]() { return layerInfo->mutable_size(); });
 
     LayerProtoHelper::writeToProto(state.crop, [&]() { return layerInfo->mutable_crop(); });
 
@@ -2249,7 +2203,8 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     if ((traceFlags & LayerTracing::TRACE_INPUT) && needsInputInfo()) {
         WindowInfo info;
         if (useDrawing) {
-            info = fillInputInfo(ui::Transform(), /* displayIsSecure */ true);
+            info = fillInputInfo(
+                    InputDisplayArgs{.transform = &kIdentityTransform, .isSecure = true});
         } else {
             info = state.inputInfo;
         }
@@ -2379,7 +2334,7 @@ void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDi
 }
 
 void Layer::fillTouchOcclusionMode(WindowInfo& info) {
-    sp<Layer> p = this;
+    sp<Layer> p = sp<Layer>::fromExisting(this);
     while (p != nullptr && !p->hasInputInfo()) {
         p = p->mDrawingParent.promote();
     }
@@ -2456,7 +2411,7 @@ void Layer::handleDropInputMode(gui::WindowInfo& info) const {
     }
 }
 
-WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool displayIsSecure) {
+WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
     if (!hasInputInfo()) {
         mDrawingState.inputInfo.name = getName();
         mDrawingState.inputInfo.ownerUid = mOwnerUid;
@@ -2465,11 +2420,20 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
         mDrawingState.inputInfo.displayId = getLayerStack().id;
     }
 
+    const ui::Transform& displayTransform =
+            displayArgs.transform != nullptr ? *displayArgs.transform : kIdentityTransform;
+
     WindowInfo info = mDrawingState.inputInfo;
     info.id = sequence;
     info.displayId = getLayerStack().id;
 
     fillInputFrameInfo(info, displayTransform);
+
+    if (displayArgs.transform == nullptr) {
+        // Do not let the window receive touches if it is not associated with a valid display
+        // transform. We still allow the window to receive keys and prevent ANRs.
+        info.inputConfig |= WindowInfo::InputConfig::NOT_TOUCHABLE;
+    }
 
     // For compatibility reasons we let layers which can receive input
     // receive input before they have actually submitted a buffer. Because
@@ -2488,7 +2452,7 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
 
     // If the window will be blacked out on a display because the display does not have the secure
     // flag and the layer has the secure flag set, then drop input.
-    if (!displayIsSecure && isSecure()) {
+    if (!displayArgs.isSecure && isSecure()) {
         info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
     }
 
@@ -2522,7 +2486,7 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
 
 sp<Layer> Layer::getClonedRoot() {
     if (mClonedChild != nullptr) {
-        return this;
+        return sp<Layer>::fromExisting(this);
     }
     if (mDrawingParent == nullptr || mDrawingParent.promote() == nullptr) {
         return nullptr;
@@ -2576,7 +2540,7 @@ void Layer::updateMirrorInfo() {
     }
 
     mClonedChild->updateClonedDrawingState(clonedLayersMap);
-    mClonedChild->updateClonedChildren(this, clonedLayersMap);
+    mClonedChild->updateClonedChildren(sp<Layer>::fromExisting(this), clonedLayersMap);
     mClonedChild->updateClonedRelatives(clonedLayersMap);
 }
 
@@ -2587,7 +2551,7 @@ void Layer::updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayer
     if (isClonedFromAlive()) {
         sp<Layer> clonedFrom = getClonedFrom();
         cloneDrawingState(clonedFrom.get());
-        clonedLayersMap.emplace(clonedFrom, this);
+        clonedLayersMap.emplace(clonedFrom, sp<Layer>::fromExisting(this));
     }
 
     // The clone layer may have children in drawingState since they may have been created and
@@ -2631,7 +2595,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
         if (clonedLayersMap.count(cropLayer) == 0) {
             // Real layer had a crop layer but it's not in the cloned hierarchy. Just set to
             // self as crop layer to avoid going outside bounds.
-            mDrawingState.touchableRegionCrop = this;
+            mDrawingState.touchableRegionCrop = wp<Layer>::fromExisting(this);
         } else {
             const sp<Layer>& clonedCropLayer = clonedLayersMap.at(cropLayer);
             mDrawingState.touchableRegionCrop = clonedCropLayer;
@@ -2643,7 +2607,7 @@ void Layer::updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLa
 }
 
 void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {
-    mDrawingState.zOrderRelativeOf = nullptr;
+    mDrawingState.zOrderRelativeOf = wp<Layer>();
     mDrawingState.zOrderRelatives.clear();
 
     if (!isClonedFromAlive()) {
@@ -2679,7 +2643,7 @@ void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLa
 
 void Layer::addChildToDrawing(const sp<Layer>& layer) {
     mDrawingChildren.add(layer);
-    layer->mDrawingParent = this;
+    layer->mDrawingParent = sp<Layer>::fromExisting(this);
 }
 
 Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t compatibility) {
@@ -2745,7 +2709,7 @@ wp<Layer> Layer::fromHandle(const sp<IBinder>& handleBinder) {
     }
 
     // We can safely cast this binder since its local and we verified its interface descriptor.
-    sp<Handle> handle = static_cast<Handle*>(handleBinder.get());
+    sp<Handle> handle = sp<Handle>::cast(handleBinder);
     return handle->owner;
 }
 

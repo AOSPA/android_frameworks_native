@@ -555,10 +555,10 @@ InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& polic
         mLatencyAggregator(),
         mLatencyTracker(&mLatencyAggregator),
         kPerDisplayTouchModeEnabled(mPolicy->isPerDisplayTouchModeEnabled()) {
-    mLooper = new Looper(false);
+    mLooper = sp<Looper>::make(false);
     mReporter = createInputReporter();
 
-    mWindowInfoListener = new DispatcherWindowListener(*this);
+    mWindowInfoListener = sp<DispatcherWindowListener>::make(*this);
     SurfaceComposerClient::getDefault()->addWindowInfosListener(mWindowInfoListener);
 
     mKeyRepeatState.lastKeyEntry = nullptr;
@@ -658,6 +658,13 @@ void InputDispatcher::processNoFocusedWindowAnrLocked() {
             getFocusedWindowHandleLocked(mAwaitedApplicationDisplayId);
     if (focusedWindowHandle != nullptr) {
         return; // We now have a focused window. No need for ANR.
+    }
+    std::optional<FocusRequest> pendingRequest =
+            mFocusResolver.getFocusRequest(mAwaitedApplicationDisplayId);
+    if (pendingRequest.has_value() && onAnrLocked(*pendingRequest)) {
+        // We don't have a focusable window but we know which window should have
+        // been focused. Blame that process in case it doesn't belong to the focused app.
+        return;
     }
     onAnrLocked(mAwaitedFocusedApplication);
 }
@@ -2207,10 +2214,7 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
 
             // Update the temporary touch state.
             BitSet32 pointerIds;
-            if (isSplit) {
-                uint32_t pointerId = entry.pointerProperties[pointerIndex].id;
-                pointerIds.markBit(pointerId);
-            }
+            pointerIds.markBit(entry.pointerProperties[pointerIndex].id);
 
             tempTouchState.addOrUpdateWindow(windowHandle, targetFlags, pointerIds,
                                              entry.eventTime);
@@ -2297,9 +2301,7 @@ InputEventInjectionResult InputDispatcher::findTouchedWindowTargetsLocked(
                 }
 
                 BitSet32 pointerIds;
-                if (isSplit) {
-                    pointerIds.markBit(entry.pointerProperties[0].id);
-                }
+                pointerIds.markBit(entry.pointerProperties[0].id);
                 tempTouchState.addOrUpdateWindow(newTouchedWindowHandle, targetFlags, pointerIds,
                                                  entry.eventTime);
             }
@@ -2477,21 +2479,28 @@ Failed:
             }
         } else if (maskedAction == AMOTION_EVENT_ACTION_POINTER_UP) {
             // One pointer went up.
-            if (isSplit) {
-                int32_t pointerIndex = getMotionEventActionPointerIndex(action);
-                uint32_t pointerId = entry.pointerProperties[pointerIndex].id;
+            int32_t pointerIndex = getMotionEventActionPointerIndex(action);
+            uint32_t pointerId = entry.pointerProperties[pointerIndex].id;
 
-                for (size_t i = 0; i < tempTouchState.windows.size();) {
-                    TouchedWindow& touchedWindow = tempTouchState.windows[i];
-                    if (touchedWindow.targetFlags & InputTarget::FLAG_SPLIT) {
-                        touchedWindow.pointerIds.clearBit(pointerId);
-                        if (touchedWindow.pointerIds.isEmpty()) {
-                            tempTouchState.windows.erase(tempTouchState.windows.begin() + i);
-                            continue;
-                        }
-                    }
-                    i += 1;
+            for (size_t i = 0; i < tempTouchState.windows.size();) {
+                TouchedWindow& touchedWindow = tempTouchState.windows[i];
+                touchedWindow.pointerIds.clearBit(pointerId);
+                if (touchedWindow.pointerIds.isEmpty()) {
+                    tempTouchState.windows.erase(tempTouchState.windows.begin() + i);
+                    continue;
                 }
+                i += 1;
+            }
+        } else if (!isSplit && maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+            // If no split, we suppose all touched windows should receive pointer down.
+            const int32_t pointerIndex = getMotionEventActionPointerIndex(action);
+            for (size_t i = 0; i < tempTouchState.windows.size(); i++) {
+                TouchedWindow& touchedWindow = tempTouchState.windows[i];
+                // Ignore drag window for it should just track one pointer.
+                if (mDragState && mDragState->dragWindow == touchedWindow.windowHandle) {
+                    continue;
+                }
+                touchedWindow.pointerIds.markBit(entry.pointerProperties[pointerIndex].id);
             }
         }
 
@@ -4507,6 +4516,14 @@ void InputDispatcher::transformMotionEntryForInjectionLocked(
     if (it == mDisplayInfos.end()) return;
     const auto& transformToDisplay = it->second.transform.inverse() * injectedTransform;
 
+    if (entry.xCursorPosition != AMOTION_EVENT_INVALID_CURSOR_POSITION &&
+        entry.yCursorPosition != AMOTION_EVENT_INVALID_CURSOR_POSITION) {
+        const vec2 cursor =
+                MotionEvent::calculateTransformedXY(entry.source, transformToDisplay,
+                                                    {entry.xCursorPosition, entry.yCursorPosition});
+        entry.xCursorPosition = cursor.x;
+        entry.yCursorPosition = cursor.y;
+    }
     for (uint32_t i = 0; i < entry.pointerCount; i++) {
         entry.pointerCoords[i] =
                 MotionEvent::calculateTransformedCoords(entry.source, transformToDisplay,
@@ -5113,14 +5130,13 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
 
         // Store the dragging window.
         if (isDragDrop) {
-            if (pointerIds.count() > 1) {
-                ALOGW("The drag and drop cannot be started when there is more than 1 pointer on the"
-                      " window.");
+            if (pointerIds.count() != 1) {
+                ALOGW("The drag and drop cannot be started when there is no pointer or more than 1"
+                      " pointer on the window.");
                 return false;
             }
-            // If the window didn't not support split or the source is mouse, the pointerIds count
-            // would be 0, so we have to track the pointer 0.
-            const int32_t id = pointerIds.count() == 0 ? 0 : pointerIds.firstMarkedBit();
+            // Track the pointer id for drag window and generate the drag state.
+            const int32_t id = pointerIds.firstMarkedBit();
             mDragState = std::make_unique<DragState>(toWindowHandle, id);
         }
 
@@ -5501,7 +5517,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
         const sp<IBinder>& token = serverChannel->getConnectionToken();
         int fd = serverChannel->getFd();
         sp<Connection> connection =
-                new Connection(std::move(serverChannel), false /*monitor*/, mIdGenerator);
+                sp<Connection>::make(std::move(serverChannel), false /*monitor*/, mIdGenerator);
 
         if (mConnectionsByToken.find(token) != mConnectionsByToken.end()) {
             ALOGE("Created a new connection, but the token %p is already known", token.get());
@@ -5511,7 +5527,8 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
         std::function<int(int events)> callback = std::bind(&InputDispatcher::handleReceiveCallback,
                                                             this, std::placeholders::_1, token);
 
-        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, new LooperEventCallback(callback), nullptr);
+        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
+                       nullptr);
     } // release lock
 
     // Wake the looper because some connections have changed.
@@ -5537,7 +5554,8 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
                                           << " without a specified display.";
         }
 
-        sp<Connection> connection = new Connection(serverChannel, true /*monitor*/, mIdGenerator);
+        sp<Connection> connection =
+                sp<Connection>::make(serverChannel, true /*monitor*/, mIdGenerator);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
         const int fd = serverChannel->getFd();
 
@@ -5550,7 +5568,8 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
 
         mGlobalMonitorsByDisplay[displayId].emplace_back(serverChannel, pid);
 
-        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, new LooperEventCallback(callback), nullptr);
+        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
+                       nullptr);
     }
 
     // Wake the looper because some connections have changed.
@@ -5834,6 +5853,25 @@ void InputDispatcher::sendDropWindowCommandLocked(const sp<IBinder>& token, floa
         mPolicy->notifyDropWindow(token, x, y);
     };
     postCommandLocked(std::move(command));
+}
+
+bool InputDispatcher::onAnrLocked(const android::gui::FocusRequest& pendingFocusRequest) {
+    if (pendingFocusRequest.token == nullptr) {
+        return false;
+    }
+
+    const std::string reason = android::base::StringPrintf("%s is not focusable.",
+                                                           pendingFocusRequest.windowName.c_str());
+    updateLastAnrStateLocked(pendingFocusRequest.windowName, reason);
+    sp<Connection> connection = getConnectionLocked(pendingFocusRequest.token);
+    if (connection != nullptr) {
+        processConnectionUnresponsiveLocked(*connection, std::move(reason));
+        // Stop waking up for events on this connection, it is already unresponsive
+        cancelEventsForAnrLocked(connection);
+    } else {
+        sendWindowUnresponsiveCommandLocked(pendingFocusRequest.token, std::nullopt, reason);
+    }
+    return true;
 }
 
 void InputDispatcher::onAnrLocked(const sp<Connection>& connection) {
@@ -6358,11 +6396,18 @@ void InputDispatcher::onWindowInfosChanged(const std::vector<WindowInfo>& window
     std::unordered_map<int32_t, std::vector<sp<WindowInfoHandle>>> handlesPerDisplay;
     for (const auto& info : windowInfos) {
         handlesPerDisplay.emplace(info.displayId, std::vector<sp<WindowInfoHandle>>());
-        handlesPerDisplay[info.displayId].push_back(new WindowInfoHandle(info));
+        handlesPerDisplay[info.displayId].push_back(sp<WindowInfoHandle>::make(info));
     }
 
     { // acquire lock
         std::scoped_lock _l(mLock);
+
+        // Ensure that we have an entry created for all existing displays so that if a displayId has
+        // no windows, we can tell that the windows were removed from the display.
+        for (const auto& [displayId, _] : mWindowHandlesByDisplay) {
+            handlesPerDisplay[displayId];
+        }
+
         mDisplayInfos.clear();
         for (const auto& displayInfo : displayInfos) {
             mDisplayInfos.emplace(displayInfo.displayId, displayInfo);

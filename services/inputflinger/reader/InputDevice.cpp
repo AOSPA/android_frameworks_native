@@ -35,6 +35,8 @@
 #include "SwitchInputMapper.h"
 #include "VibratorInputMapper.h"
 
+using android::hardware::input::InputDeviceCountryCode;
+
 namespace android {
 
 InputDevice::InputDevice(InputReaderContext* context, int32_t id, int32_t generation,
@@ -110,7 +112,8 @@ void InputDevice::dump(std::string& dump, const std::string& eventHubDevStr) {
         dump += "<none>\n";
     }
     dump += StringPrintf(INDENT2 "HasMic:     %s\n", toString(mHasMic));
-    dump += StringPrintf(INDENT2 "Sources: 0x%08x\n", deviceInfo.getSources());
+    dump += StringPrintf(INDENT2 "Sources: %s\n",
+                         inputEventSourceToString(deviceInfo.getSources()).c_str());
     dump += StringPrintf(INDENT2 "KeyboardType: %d\n", deviceInfo.getKeyboardType());
     dump += StringPrintf(INDENT2 "ControllerNum: %d\n", deviceInfo.getControllerNumber());
 
@@ -128,10 +131,10 @@ void InputDevice::dump(std::string& dump, const std::string& eventHubDevStr) {
                 snprintf(name, sizeof(name), "%d", range.axis);
             }
             dump += StringPrintf(INDENT3
-                                 "%s: source=0x%08x, "
+                                 "%s: source=%s, "
                                  "min=%0.3f, max=%0.3f, flat=%0.3f, fuzz=%0.3f, resolution=%0.3f\n",
-                                 name, range.source, range.min, range.max, range.flat, range.fuzz,
-                                 range.resolution);
+                                 name, inputEventSourceToString(range.source).c_str(), range.min,
+                                 range.max, range.flat, range.fuzz, range.resolution);
         }
     }
 
@@ -239,6 +242,7 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
     mSources = 0;
     mClasses = ftl::Flags<InputDeviceClass>(0);
     mControllerNumber = 0;
+    mCountryCode = InputDeviceCountryCode::INVALID;
 
     for_each_subdevice([this](InputDeviceContext& context) {
         mClasses |= context.getDeviceClasses();
@@ -249,6 +253,16 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
                       "controller numbers");
             }
             mControllerNumber = controllerNumber;
+        }
+
+        InputDeviceCountryCode countryCode = context.getCountryCode();
+        if (countryCode != InputDeviceCountryCode::INVALID) {
+            if (mCountryCode != InputDeviceCountryCode::INVALID && mCountryCode != countryCode) {
+                ALOGW("InputDevice::configure(): %s device contains multiple unique country "
+                      "codes",
+                      getName().c_str());
+            }
+            mCountryCode = countryCode;
         }
     });
 
@@ -421,7 +435,7 @@ void InputDevice::updateExternalStylusState(const StylusState& state) {
 InputDeviceInfo InputDevice::getDeviceInfo() {
     InputDeviceInfo outDeviceInfo;
     outDeviceInfo.initialize(mId, mGeneration, mControllerNumber, mIdentifier, mAlias, mIsExternal,
-                             mHasMic);
+                             mHasMic, mCountryCode);
     for_each_mapper(
             [&outDeviceInfo](InputMapper& mapper) { mapper.populateDeviceInfo(&outDeviceInfo); });
 

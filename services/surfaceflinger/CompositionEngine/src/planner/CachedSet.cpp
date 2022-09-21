@@ -159,7 +159,8 @@ void CachedSet::updateAge(std::chrono::steady_clock::time_point now) {
 }
 
 void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& texturePool,
-                       const OutputCompositionState& outputState) {
+                       const OutputCompositionState& outputState,
+                       bool deviceHandlesColorTransform) {
     ATRACE_CALL();
     const Rect& viewport = outputState.layerStackSpace.getContent();
     const ui::Dataspace& outputDataspace = outputState.dataspace;
@@ -170,6 +171,8 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
             .physicalDisplay = outputState.framebufferSpace.getContent(),
             .clip = viewport,
             .outputDataspace = outputDataspace,
+            .colorTransform = outputState.colorTransformMatrix,
+            .deviceHandlesColorTransform = deviceHandlesColorTransform,
             .orientation = orientation,
             .targetLuminanceNits = outputState.displayBrightnessNits,
     };
@@ -190,11 +193,11 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
     std::vector<renderengine::LayerSettings> layerSettings;
     renderengine::LayerSettings highlight;
     for (const auto& layer : mLayers) {
-        const auto clientCompositionList =
-                layer.getState()->getOutputLayer()->getLayerFE().prepareClientCompositionList(
-                        targetSettings);
-        layerSettings.insert(layerSettings.end(), clientCompositionList.cbegin(),
-                             clientCompositionList.cend());
+        if (auto clientCompositionSettings =
+                    layer.getState()->getOutputLayer()->getLayerFE().prepareClientComposition(
+                            targetSettings)) {
+            layerSettings.push_back(std::move(*clientCompositionSettings));
+        }
     }
 
     renderengine::LayerSettings blurLayerSettings;
@@ -202,43 +205,40 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
         auto blurSettings = targetSettings;
         blurSettings.blurSetting =
                 LayerFE::ClientCompositionTargetSettings::BlurSetting::BackgroundBlurOnly;
-        auto clientCompositionList =
-                mBlurLayer->getOutputLayer()->getLayerFE().prepareClientCompositionList(
-                        blurSettings);
-        blurLayerSettings = clientCompositionList.back();
+
+        auto blurLayerSettings =
+                mBlurLayer->getOutputLayer()->getLayerFE().prepareClientComposition(blurSettings);
         // This mimics Layer::prepareClearClientComposition
-        blurLayerSettings.skipContentDraw = true;
-        blurLayerSettings.name = std::string("blur layer");
+        blurLayerSettings->skipContentDraw = true;
+        blurLayerSettings->name = std::string("blur layer");
         // Clear out the shadow settings
-        blurLayerSettings.shadow = {};
-        layerSettings.push_back(blurLayerSettings);
+        blurLayerSettings->shadow = {};
+        layerSettings.push_back(std::move(*blurLayerSettings));
     }
 
-    renderengine::LayerSettings holePunchSettings;
-    renderengine::LayerSettings holePunchBackgroundSettings;
     if (mHolePunchLayer) {
         auto& layerFE = mHolePunchLayer->getOutputLayer()->getLayerFE();
-        auto clientCompositionList = layerFE.prepareClientCompositionList(targetSettings);
-        // Assume that the final layer contains the buffer that we want to
-        // replace with a hole punch.
-        holePunchSettings = clientCompositionList.back();
+
+        auto holePunchSettings = layerFE.prepareClientComposition(targetSettings);
         // This mimics Layer::prepareClearClientComposition
-        holePunchSettings.source.buffer.buffer = nullptr;
-        holePunchSettings.source.solidColor = half3(0.0f, 0.0f, 0.0f);
-        holePunchSettings.disableBlending = true;
-        holePunchSettings.alpha = 0.0f;
-        holePunchSettings.name =
+        holePunchSettings->source.buffer.buffer = nullptr;
+        holePunchSettings->source.solidColor = half3(0.0f, 0.0f, 0.0f);
+        holePunchSettings->disableBlending = true;
+        holePunchSettings->alpha = 0.0f;
+        holePunchSettings->name =
                 android::base::StringPrintf("hole punch layer for %s", layerFE.getDebugName());
-        layerSettings.push_back(holePunchSettings);
 
         // Add a solid background as the first layer in case there is no opaque
         // buffer behind the punch hole
+        renderengine::LayerSettings holePunchBackgroundSettings;
         holePunchBackgroundSettings.alpha = 1.0f;
         holePunchBackgroundSettings.name = std::string("holePunchBackground");
-        holePunchBackgroundSettings.geometry.boundaries = holePunchSettings.geometry.boundaries;
+        holePunchBackgroundSettings.geometry.boundaries = holePunchSettings->geometry.boundaries;
         holePunchBackgroundSettings.geometry.positionTransform =
-                holePunchSettings.geometry.positionTransform;
-        layerSettings.emplace(layerSettings.begin(), holePunchBackgroundSettings);
+                holePunchSettings->geometry.positionTransform;
+        layerSettings.emplace(layerSettings.begin(), std::move(holePunchBackgroundSettings));
+
+        layerSettings.push_back(std::move(*holePunchSettings));
     }
 
     if (sDebugHighlighLayers) {
@@ -273,11 +273,10 @@ void CachedSet::render(renderengine::RenderEngine& renderEngine, TexturePool& te
 
     constexpr bool kUseFramebufferCache = false;
 
-    auto fenceResult =
-            toFenceResult(renderEngine
-                                  .drawLayers(displaySettings, layerSettings, texture->get(),
-                                              kUseFramebufferCache, std::move(bufferFence))
-                                  .get());
+    auto fenceResult = renderEngine
+                               .drawLayers(displaySettings, layerSettings, texture->get(),
+                                           kUseFramebufferCache, std::move(bufferFence))
+                               .get();
 
     if (fenceStatus(fenceResult) == NO_ERROR) {
         mDrawFence = std::move(fenceResult).value_or(Fence::NO_FENCE);

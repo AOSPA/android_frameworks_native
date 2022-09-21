@@ -40,18 +40,17 @@ public:
         PrimaryDisplayVariant::setupNativeWindowSurfaceCreationCallExpectations(this);
         PrimaryDisplayVariant::setupHwcGetActiveConfigCallExpectations(this);
 
+        DisplayModes modes = makeModes(kMode60, kMode90, kMode120, kMode90_4K);
+        auto configs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
+
+        setupScheduler(configs);
+
         mFlinger.onComposerHalHotplug(PrimaryDisplayVariant::HWC_DISPLAY_ID, Connection::CONNECTED);
+        mFlinger.configureAndCommit();
 
-        {
-            DisplayModes modes = makeModes(kMode60, kMode90, kMode120, kMode90_4K);
-            auto configs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
-
-            mDisplay = PrimaryDisplayVariant::makeFakeExistingDisplayInjector(this)
-                               .setDisplayModes(std::move(modes), kModeId60, std::move(configs))
-                               .inject();
-        }
-
-        setupScheduler(mDisplay->holdRefreshRateConfigs());
+        mDisplay = PrimaryDisplayVariant::makeFakeExistingDisplayInjector(this)
+                           .setDisplayModes(std::move(modes), kModeId60, std::move(configs))
+                           .inject();
 
         // isVsyncPeriodSwitchSupported should return true, otherwise the SF's HWC proxy
         // will call setActiveConfig instead of setActiveConfigWithConstraints.
@@ -87,13 +86,15 @@ void DisplayModeSwitchingTest::setupScheduler(
 
     EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*eventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
-                                                       ResyncCallback())));
+            .WillOnce(Return(sp<EventThreadConnection>::make(eventThread.get(),
+                                                             mock::EventThread::kCallingUid,
+                                                             ResyncCallback())));
 
     EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
-                                                       ResyncCallback())));
+            .WillOnce(Return(sp<EventThreadConnection>::make(sfEventThread.get(),
+                                                             mock::EventThread::kCallingUid,
+                                                             ResyncCallback())));
 
     auto vsyncController = std::make_unique<mock::VsyncController>();
     auto vsyncTracker = std::make_unique<mock::VSyncTracker>();

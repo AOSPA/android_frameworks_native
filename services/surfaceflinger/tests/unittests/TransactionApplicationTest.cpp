@@ -60,13 +60,15 @@ public:
 
         EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*eventThread, createEventConnection(_, _))
-                .WillOnce(Return(new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
-                                                           ResyncCallback())));
+                .WillOnce(Return(sp<EventThreadConnection>::make(eventThread.get(),
+                                                                 mock::EventThread::kCallingUid,
+                                                                 ResyncCallback())));
 
         EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
-                .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
-                                                           ResyncCallback())));
+                .WillOnce(Return(sp<EventThreadConnection>::make(sfEventThread.get(),
+                                                                 mock::EventThread::kCallingUid,
+                                                                 ResyncCallback())));
 
         EXPECT_CALL(*mVSyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
         EXPECT_CALL(*mVSyncTracker, currentPeriod())
@@ -117,7 +119,7 @@ public:
     }
 
     void NotPlacedOnTransactionQueue(uint32_t flags) {
-        ASSERT_EQ(0u, mFlinger.getTransactionQueue().size());
+        ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
         TransactionInfo transaction;
         setupSingle(transaction, flags,
@@ -140,12 +142,12 @@ public:
             EXPECT_LE(returnedTime, applicationTime + mFlinger.getAnimationTransactionTimeout());
         }
         // Each transaction should have been placed on the transaction queue
-        auto transactionQueue = mFlinger.getTransactionQueue();
-        EXPECT_EQ(1u, transactionQueue.size());
+        auto& transactionQueue = mFlinger.getTransactionQueue();
+        EXPECT_FALSE(transactionQueue.isEmpty());
     }
 
     void PlaceOnTransactionQueue(uint32_t flags) {
-        ASSERT_EQ(0u, mFlinger.getTransactionQueue().size());
+        ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
 
         // first check will see desired present time has not passed,
@@ -171,12 +173,12 @@ public:
                       applicationSentTime + mFlinger.getAnimationTransactionTimeout());
         }
         // This transaction should have been placed on the transaction queue
-        auto transactionQueue = mFlinger.getTransactionQueue();
-        EXPECT_EQ(1u, transactionQueue.size());
+        auto& transactionQueue = mFlinger.getTransactionQueue();
+        EXPECT_FALSE(transactionQueue.isEmpty());
     }
 
     void BlockedByPriorTransaction(uint32_t flags) {
-        ASSERT_EQ(0u, mFlinger.getTransactionQueue().size());
+        ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         nsecs_t time = systemTime();
         EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(2);
 
@@ -239,8 +241,8 @@ public:
     int mTransactionNumber = 0;
 };
 
-TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
-    ASSERT_EQ(0u, mFlinger.getTransactionQueue().size());
+TEST_F(TransactionApplicationTest, AddToPendingQueue) {
+    ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
     EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
 
     TransactionInfo transactionA; // transaction to go on pending queue
@@ -253,10 +255,27 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
                                  mHasListenerCallbacks, mCallbacks, transactionA.id);
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
-    ASSERT_EQ(1u, transactionQueue.size());
+    ASSERT_FALSE(transactionQueue.isEmpty());
 
-    auto& transactionState = transactionQueue.front();
+    auto transactionState = transactionQueue.pop().value();
     checkEqual(transactionA, transactionState);
+}
+
+TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
+    ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
+    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
+
+    TransactionInfo transactionA; // transaction to go on pending queue
+    setupSingle(transactionA, /*flags*/ 0, /*desiredPresentTime*/ s2ns(1), false,
+                FrameTimelineInfo{});
+    mFlinger.setTransactionState(transactionA.frameTimelineInfo, transactionA.states,
+                                 transactionA.displays, transactionA.flags, transactionA.applyToken,
+                                 transactionA.inputWindowCommands, transactionA.desiredPresentTime,
+                                 transactionA.isAutoTimestamp, transactionA.uncacheBuffer,
+                                 mHasListenerCallbacks, mCallbacks, transactionA.id);
+
+    auto& transactionQueue = mFlinger.getTransactionQueue();
+    ASSERT_FALSE(transactionQueue.isEmpty());
 
     // because flushing uses the cached expected present time, we send an empty
     // transaction here (sending a null applyToken to fake it as from a
@@ -272,7 +291,7 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     // passed
     mFlinger.flushTransactionQueues();
 
-    EXPECT_EQ(0u, transactionQueue.size());
+    EXPECT_TRUE(mFlinger.getTransactionQueue().isEmpty());
 }
 
 TEST_F(TransactionApplicationTest, NotPlacedOnTransactionQueue_Synchronous) {
@@ -306,7 +325,9 @@ public:
     void TearDown() override {
         // Clear all transaction queues to release all transactions we sent
         // in the tests. Otherwise, gmock complains about memory leaks.
-        mFlinger.getTransactionQueue().clear();
+        while (!mFlinger.getTransactionQueue().isEmpty()) {
+            mFlinger.getTransactionQueue().pop();
+        }
         mFlinger.getPendingTransactionQueue().clear();
         mFlinger.getTransactionCommittedSignals().clear();
         mFlinger.commitTransactionsLocked(eTransactionMask);
@@ -358,7 +379,7 @@ public:
     void setTransactionStates(const std::vector<TransactionInfo>& transactions,
                               size_t expectedTransactionsApplied,
                               size_t expectedTransactionsPending) {
-        EXPECT_EQ(0u, mFlinger.getTransactionQueue().size());
+        EXPECT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         EXPECT_EQ(0u, mFlinger.getPendingTransactionQueue().size());
 
         for (const auto& transaction : transactions) {
@@ -370,7 +391,7 @@ public:
                                          mHasListenerCallbacks, mCallbacks, transaction.id);
         }
         mFlinger.flushTransactionQueues();
-        EXPECT_EQ(0u, mFlinger.getTransactionQueue().size());
+        EXPECT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         EXPECT_EQ(expectedTransactionsPending, mFlinger.getPendingTransactionQueue().size());
         EXPECT_EQ(expectedTransactionsApplied, mFlinger.getTransactionCommittedSignals().size());
     }
