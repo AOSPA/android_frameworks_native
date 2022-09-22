@@ -88,10 +88,7 @@ proto::LayerState TransactionProtoParser::toProto(const layer_state_t& layer) {
     if (layer.what & layer_state_t::eLayerChanged) {
         proto.set_z(layer.z);
     }
-    if (layer.what & layer_state_t::eSizeChanged) {
-        proto.set_w(layer.w);
-        proto.set_h(layer.h);
-    }
+
     if (layer.what & layer_state_t::eLayerStackChanged) {
         proto.set_layer_stack(layer.layerStack.id);
     }
@@ -376,10 +373,6 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
     if (proto.what() & layer_state_t::eLayerChanged) {
         layer.z = proto.z();
     }
-    if (proto.what() & layer_state_t::eSizeChanged) {
-        layer.w = proto.w();
-        layer.h = proto.h();
-    }
     if (proto.what() & layer_state_t::eLayerStackChanged) {
         layer.layerStack.id = proto.layer_stack();
     }
@@ -457,9 +450,9 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
             layer.parentSurfaceControlForChild = nullptr;
         } else {
             layer.parentSurfaceControlForChild =
-                    new SurfaceControl(SurfaceComposerClient::getDefault(),
-                                       mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
-                                       static_cast<int32_t>(layerId));
+                    sp<SurfaceControl>::make(SurfaceComposerClient::getDefault(),
+                                             mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
+                                             static_cast<int32_t>(layerId));
         }
     }
     if (proto.what() & layer_state_t::eRelativeLayerChanged) {
@@ -468,9 +461,9 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
             layer.relativeLayerSurfaceControl = nullptr;
         } else {
             layer.relativeLayerSurfaceControl =
-                    new SurfaceControl(SurfaceComposerClient::getDefault(),
-                                       mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
-                                       static_cast<int32_t>(layerId));
+                    sp<SurfaceControl>::make(SurfaceComposerClient::getDefault(),
+                                             mMapper->getLayerHandle(static_cast<int32_t>(layerId)),
+                                             static_cast<int32_t>(layerId));
         }
         layer.z = proto.z();
     }
@@ -502,7 +495,7 @@ void TransactionProtoParser::fromProto(const proto::LayerState& proto, layer_sta
             inputInfo.touchableRegionCropHandle =
                     mMapper->getLayerHandle(static_cast<int32_t>(layerId));
         } else {
-            inputInfo.touchableRegionCropHandle = nullptr;
+            inputInfo.touchableRegionCropHandle = wp<IBinder>();
         }
 
         layer.windowInfoHandle = sp<gui::WindowInfoHandle>::make(inputInfo);

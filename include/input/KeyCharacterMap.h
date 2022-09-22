@@ -18,6 +18,7 @@
 #define _LIBINPUT_KEY_CHARACTER_MAP_H
 
 #include <stdint.h>
+#include <list>
 
 #ifdef __linux__
 #include <binder/IBinder.h>
@@ -152,29 +153,22 @@ public:
 
 private:
     struct Behavior {
-        Behavior();
-        Behavior(const Behavior& other);
-
-        /* The next behavior in the list, or NULL if none. */
-        Behavior* next;
-
         /* The meta key modifiers for this behavior. */
-        int32_t metaState;
+        int32_t metaState = 0;
 
         /* The character to insert. */
-        char16_t character;
+        char16_t character = 0;
 
         /* The fallback keycode if the key is not handled. */
-        int32_t fallbackKeyCode;
+        int32_t fallbackKeyCode = 0;
 
         /* The replacement keycode if the key has to be replaced outright. */
-        int32_t replacementKeyCode;
+        int32_t replacementKeyCode = 0;
     };
 
     struct Key {
         Key();
         Key(const Key& other);
-        ~Key();
 
         /* The single character label printed on the key, or 0 if none. */
         char16_t label;
@@ -184,7 +178,7 @@ private:
 
         /* The list of key behaviors sorted from most specific to least specific
          * meta key binding. */
-        Behavior* firstBehavior;
+        std::list<Behavior> behaviors;
     };
 
     class Parser {
@@ -240,8 +234,7 @@ private:
     KeyCharacterMap(const std::string& filename);
 
     bool getKey(int32_t keyCode, const Key** outKey) const;
-    bool getKeyBehavior(int32_t keyCode, int32_t metaState,
-            const Key** outKey, const Behavior** outBehavior) const;
+    const Behavior* getKeyBehavior(int32_t keyCode, int32_t metaState) const;
     static bool matchesMetaState(int32_t eventMetaState, int32_t behaviorMetaState);
 
     bool findKey(char16_t ch, int32_t* outKeyCode, int32_t* outMetaState) const;

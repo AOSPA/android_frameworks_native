@@ -20,8 +20,6 @@
 #include <ostream>
 #include <unordered_set>
 
-#include <compositionengine/FenceResult.h>
-
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -33,6 +31,7 @@
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
 #include <ftl/future.h>
+#include <ui/FenceResult.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
@@ -150,11 +149,11 @@ public:
         uint64_t frameNumber = 0;
     };
 
-    // Returns the z-ordered list of LayerSettings to pass to RenderEngine::drawLayers. The list
-    // may contain shadows casted by the layer or the content of the layer itself.  If the layer
-    // does not render then an empty list will be returned.
-    virtual std::vector<LayerSettings> prepareClientCompositionList(
-            ClientCompositionTargetSettings&) = 0;
+    // Returns the LayerSettings to pass to RenderEngine::drawLayers. The state may contain shadows
+    // casted by the layer or the content of the layer itself. If the layer does not render then an
+    // empty optional will be returned.
+    virtual std::optional<LayerSettings> prepareClientComposition(
+            ClientCompositionTargetSettings&) const = 0;
 
     // Called after the layer is displayed to update the presentation fence
     virtual void onLayerDisplayed(ftl::SharedFuture<FenceResult>) = 0;

@@ -83,6 +83,7 @@ cc_defaults {
         "-Wunused",
         "-Wunreachable-code",
         "-Wconversion",
+        "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
     ],
 }
 
@@ -216,7 +217,6 @@ filegroup {
         "ClientCache.cpp",
         "Client.cpp",
         "EffectLayer.cpp",
-        "ContainerLayer.cpp",
         "DisplayDevice.cpp",
         "DisplayHardware/AidlComposerHal.cpp",
         "DisplayHardware/HidlComposerHal.cpp",
@@ -234,6 +234,7 @@ filegroup {
         "FrameTracer/FrameTracer.cpp",
         "FrameTracker.cpp",
         "HdrLayerInfoReporter.cpp",
+        "HwcSlotGenerator.cpp",
         "WindowInfosListenerInvoker.cpp",
         "Layer.cpp",
         "LayerProtoHelper.cpp",

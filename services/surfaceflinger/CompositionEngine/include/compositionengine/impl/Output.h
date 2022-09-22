@@ -154,6 +154,8 @@ protected:
     virtual const compositionengine::CompositionEngine& getCompositionEngine() const = 0;
     virtual void dumpState(std::string& out) const = 0;
 
+    bool mustRecompose() const;
+
 private:
     void dirtyEntireOutput();
     void updateCompositionStateForBorder(const compositionengine::CompositionRefreshArgs&);
@@ -173,6 +175,9 @@ private:
     std::unique_ptr<ClientCompositionRequestCache> mClientCompositionRequestCache;
     std::unique_ptr<planner::Planner> mPlanner;
     std::unique_ptr<HwcAsyncWorker> mHwComposerAsyncWorker;
+
+    // Whether the content must be recomposed this frame.
+    bool mMustRecompose = false;
 };
 
 // This template factory function standardizes the implementation details of the

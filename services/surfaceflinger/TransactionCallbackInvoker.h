@@ -26,10 +26,10 @@
 
 #include <android-base/thread_annotations.h>
 #include <binder/IBinder.h>
-#include <compositionengine/FenceResult.h>
 #include <ftl/future.h>
 #include <gui/ITransactionCompletedListener.h>
 #include <ui/Fence.h>
+#include <ui/FenceResult.h>
 
 namespace android {
 
@@ -70,7 +70,7 @@ public:
     status_t registerUnpresentedCallbackHandle(const sp<CallbackHandle>& handle);
     void addEmptyTransaction(const ListenerCallbacks& listenerCallbacks);
 
-    void addPresentFence(const sp<Fence>& presentFence);
+    void addPresentFence(sp<Fence>);
 
     void sendCallbacks(bool onCommitOnly);
     void clearCompletedTransactions() {

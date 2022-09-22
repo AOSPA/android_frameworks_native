@@ -13,12 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
 #include <memory>
 
 #include <android-base/result.h>
 #include <android-base/unique_fd.h>
 #include <utils/Errors.h>
+
+#include <binder/RpcTransport.h>
 
 namespace android {
 
@@ -52,7 +55,7 @@ public:
      *   true - time to read!
      *   false - trigger happened
      */
-    [[nodiscard]] status_t triggerablePoll(base::borrowed_fd fd, int16_t event);
+    [[nodiscard]] status_t triggerablePoll(const android::TransportFd& transportFd, int16_t event);
 
 private:
 #ifdef BINDER_RPC_SINGLE_THREADED

@@ -218,7 +218,7 @@ protected:
             return err;
         }
         captureResults = captureListener->waitForResults();
-        return captureResults.result;
+        return fenceStatus(captureResults.fenceResult);
     }
 
     sp<Surface> mSurface;
@@ -742,10 +742,6 @@ public:
     }
 
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* /*outDisplayIds*/) override {
-        return binder::Status::ok();
-    }
-
-    binder::Status getPrimaryPhysicalDisplayId(int64_t* /*outDisplayId*/) override {
         return binder::Status::ok();
     }
 

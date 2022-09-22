@@ -60,8 +60,8 @@ protected:
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
     sp<DisplayDevice> mDisplay;
     sp<compositionengine::mock::DisplaySurface> mDisplaySurface =
-            new compositionengine::mock::DisplaySurface();
-    mock::NativeWindow* mNativeWindow = new mock::NativeWindow();
+            sp<compositionengine::mock::DisplaySurface>::make();
+    sp<mock::NativeWindow> mNativeWindow = sp<mock::NativeWindow>::make();
     mock::TimeStats* mTimeStats = new mock::TimeStats();
     Hwc2::mock::PowerAdvisor* mPowerAdvisor = nullptr;
     Hwc2::mock::Composer* mComposer = nullptr;
@@ -97,6 +97,7 @@ void SurfaceFlingerPowerHintTest::SetUp() {
                     .setNativeWindow(mNativeWindow)
                     .setPowerMode(hal::PowerMode::ON)
                     .inject();
+    mFlinger.mutableActiveDisplayToken() = mDisplay->getDisplayToken();
 }
 
 void SurfaceFlingerPowerHintTest::setupScheduler() {
@@ -105,13 +106,15 @@ void SurfaceFlingerPowerHintTest::setupScheduler() {
 
     EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*eventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
-                                                       ResyncCallback())));
+            .WillOnce(Return(sp<EventThreadConnection>::make(eventThread.get(),
+                                                             mock::EventThread::kCallingUid,
+                                                             ResyncCallback())));
 
     EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
-            .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
-                                                       ResyncCallback())));
+            .WillOnce(Return(sp<EventThreadConnection>::make(sfEventThread.get(),
+                                                             mock::EventThread::kCallingUid,
+                                                             ResyncCallback())));
 
     auto vsyncController = std::make_unique<mock::VsyncController>();
     auto vsyncTracker = std::make_unique<mock::VSyncTracker>();
@@ -130,22 +133,41 @@ void SurfaceFlingerPowerHintTest::setupScheduler() {
 TEST_F(SurfaceFlingerPowerHintTest, sendDurationsIncludingHwcWaitTime) {
     ON_CALL(*mPowerAdvisor, usePowerHintSession()).WillByDefault(Return(true));
 
-    const std::chrono::nanoseconds mockVsyncPeriod = 15ms;
     EXPECT_CALL(*mPowerAdvisor, setTargetWorkDuration(_)).Times(1);
-
-    const nsecs_t now = systemTime();
-    const std::chrono::nanoseconds mockHwcRunTime = 20ms;
     EXPECT_CALL(*mDisplaySurface,
                 prepareFrame(compositionengine::DisplaySurface::CompositionType::Hwc))
             .Times(1);
-    EXPECT_CALL(*mComposer, presentOrValidateDisplay(HWC_DISPLAY, _, _, _, _, _))
-            .WillOnce([mockHwcRunTime] {
-                std::this_thread::sleep_for(mockHwcRunTime);
-                return hardware::graphics::composer::V2_1::Error::NONE;
-            });
+    EXPECT_CALL(*mComposer, presentOrValidateDisplay(HWC_DISPLAY, _, _, _, _, _)).WillOnce([] {
+        constexpr Duration kMockHwcRunTime = 20ms;
+        std::this_thread::sleep_for(kMockHwcRunTime);
+        return hardware::graphics::composer::V2_1::Error::NONE;
+    });
     EXPECT_CALL(*mPowerAdvisor, sendActualWorkDuration()).Times(1);
-    static constexpr bool kVsyncId = 123; // arbitrary
-    mFlinger.commitAndComposite(now, kVsyncId, now + mockVsyncPeriod.count());
+
+    const TimePoint frameTime = scheduler::SchedulerClock::now();
+    constexpr Period kMockVsyncPeriod = 15ms;
+    mFlinger.commitAndComposite(frameTime, VsyncId{123}, frameTime + kMockVsyncPeriod);
+}
+
+TEST_F(SurfaceFlingerPowerHintTest, inactiveOnDisplayDoze) {
+    ON_CALL(*mPowerAdvisor, usePowerHintSession()).WillByDefault(Return(true));
+
+    mDisplay->setPowerMode(hal::PowerMode::DOZE);
+
+    EXPECT_CALL(*mPowerAdvisor, setTargetWorkDuration(_)).Times(0);
+    EXPECT_CALL(*mDisplaySurface,
+                prepareFrame(compositionengine::DisplaySurface::CompositionType::Hwc))
+            .Times(1);
+    EXPECT_CALL(*mComposer, presentOrValidateDisplay(HWC_DISPLAY, _, _, _, _, _)).WillOnce([] {
+        constexpr Duration kMockHwcRunTime = 20ms;
+        std::this_thread::sleep_for(kMockHwcRunTime);
+        return hardware::graphics::composer::V2_1::Error::NONE;
+    });
+    EXPECT_CALL(*mPowerAdvisor, sendActualWorkDuration()).Times(0);
+
+    const TimePoint frameTime = scheduler::SchedulerClock::now();
+    constexpr Period kMockVsyncPeriod = 15ms;
+    mFlinger.commitAndComposite(frameTime, VsyncId{123}, frameTime + kMockVsyncPeriod);
 }
 
 } // namespace

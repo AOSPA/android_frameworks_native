@@ -27,10 +27,10 @@
 #include <compositionengine/impl/Display.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <compositionengine/mock/DisplaySurface.h>
+#include <ftl/fake_guard.h>
 #include <gui/ScreenCaptureResults.h>
 
 #include "BufferStateLayer.h"
-#include "ContainerLayer.h"
 #include "DisplayDevice.h"
 #include "EffectLayer.h"
 #include "FakeVsyncConfiguration.h"
@@ -84,21 +84,21 @@ public:
     }
 
     sp<SurfaceInterceptor> createSurfaceInterceptor() override {
-        return new android::impl::SurfaceInterceptor();
+        return sp<android::impl::SurfaceInterceptor>::make();
     }
 
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
-        return new StartPropertySetThread(timestampPropertyValue);
+        return sp<StartPropertySetThread>::make(timestampPropertyValue);
     }
 
     sp<DisplayDevice> createDisplayDevice(DisplayDeviceCreationArgs& creationArgs) override {
-        return new DisplayDevice(creationArgs);
+        return sp<DisplayDevice>::make(creationArgs);
     }
 
     sp<GraphicBuffer> createGraphicBuffer(uint32_t width, uint32_t height, PixelFormat format,
                                           uint32_t layerCount, uint64_t usage,
                                           std::string requestorName) override {
-        return new GraphicBuffer(width, height, format, layerCount, usage, requestorName);
+        return sp<GraphicBuffer>::make(width, height, format, layerCount, usage, requestorName);
     }
 
     void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
@@ -126,10 +126,6 @@ public:
     }
 
     sp<EffectLayer> createEffectLayer(const LayerCreationArgs&) override { return nullptr; }
-
-    sp<ContainerLayer> createContainerLayer(const LayerCreationArgs&) override {
-        return nullptr;
-    }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
         return std::make_unique<mock::FrameTracer>();
@@ -321,25 +317,29 @@ public:
      * Forwarding for functions being tested
      */
 
-    nsecs_t commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expectedVSyncTime) {
-        mFlinger->commit(frameTime, vsyncId, expectedVSyncTime);
+    void configure() { mFlinger->configure(); }
+
+    void configureAndCommit() {
+        configure();
+        commitTransactionsLocked(eDisplayTransactionNeeded);
+    }
+
+    TimePoint commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expectedVsyncTime) {
+        mFlinger->commit(frameTime, vsyncId, expectedVsyncTime);
         return frameTime;
     }
 
-    nsecs_t commit(nsecs_t frameTime, int64_t vsyncId) {
-        std::chrono::nanoseconds period = 10ms;
-        return commit(frameTime, vsyncId, frameTime + period.count());
+    TimePoint commit(TimePoint frameTime, VsyncId vsyncId) {
+        return commit(frameTime, vsyncId, frameTime + Period(10ms));
     }
 
-    nsecs_t commit() {
-        const nsecs_t now = systemTime();
-        const nsecs_t expectedVsyncTime = now + 10'000'000;
-        return commit(now, kVsyncId, expectedVsyncTime);
+    TimePoint commit() {
+        const TimePoint frameTime = scheduler::SchedulerClock::now();
+        return commit(frameTime, kVsyncId);
     }
 
-    void commitAndComposite(const nsecs_t frameTime, const int64_t vsyncId,
-                            const nsecs_t expectedVsyncTime) {
-        mFlinger->composite(commit(frameTime, vsyncId, expectedVsyncTime), kVsyncId);
+    void commitAndComposite(TimePoint frameTime, VsyncId vsyncId, TimePoint expectedVsyncTime) {
+        mFlinger->composite(commit(frameTime, vsyncId, expectedVsyncTime), vsyncId);
     }
 
     void commitAndComposite() { mFlinger->composite(commit(), kVsyncId); }
@@ -369,9 +369,9 @@ public:
                                                        dispSurface, producer);
     }
 
-    auto commitTransactionsLocked(uint32_t transactionFlags) {
+    void commitTransactionsLocked(uint32_t transactionFlags) {
         Mutex::Autolock lock(mFlinger->mStateLock);
-        return mFlinger->commitTransactionsLocked(transactionFlags);
+        mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
     void onComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection) {
@@ -421,7 +421,7 @@ public:
         return mFlinger->SurfaceFlinger::getDisplayNativePrimaries(displayToken, primaries);
     }
 
-    auto& getTransactionQueue() { return mFlinger->mTransactionQueue; }
+    auto& getTransactionQueue() { return mFlinger->mLocklessTransactionQueue; }
     auto& getPendingTransactionQueue() { return mFlinger->mPendingTransactionQueues; }
     auto& getTransactionCommittedSignals() { return mFlinger->mTransactionCommittedSignals; }
 
@@ -437,7 +437,9 @@ public:
                                              listenerCallbacks, transactionId);
     }
 
-    auto flushTransactionQueues() { return mFlinger->flushTransactionQueues(0); };
+    auto flushTransactionQueues() {
+        return FTL_FAKE_GUARD(kMainThreadContext, mFlinger->flushTransactionQueues(kVsyncId));
+    }
 
     auto onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) {
         return mFlinger->onTransact(code, data, reply, flags);
@@ -481,8 +483,6 @@ public:
      * Read-only access to private data to assert post-conditions.
      */
 
-    const auto& getAnimFrameTracker() const { return mFlinger->mAnimFrameTracker; }
-    const auto& getHasPoweredOff() const { return mFlinger->mHasPoweredOff; }
     const auto& getVisibleRegionsDirty() const { return mFlinger->mVisibleRegionsDirty; }
     auto& getHwComposer() const {
         return static_cast<impl::HWComposer&>(mFlinger->getHwComposer());
@@ -506,7 +506,9 @@ public:
     const auto& currentState() const { return mFlinger->mCurrentState; }
     const auto& drawingState() const { return mFlinger->mDrawingState; }
     const auto& transactionFlags() const { return mFlinger->mTransactionFlags; }
+
     const auto& hwcPhysicalDisplayIdMap() const { return getHwComposer().mPhysicalDisplayIdMap; }
+    const auto& hwcDisplayData() const { return getHwComposer().mDisplayData; }
 
     auto& mutableHasWideColorDisplay() { return SurfaceFlinger::hasWideColorDisplay; }
 
@@ -721,8 +723,8 @@ public:
                                   std::optional<ui::DisplayConnectionType> connectionType,
                                   std::optional<hal::HWDisplayId> hwcDisplayId, bool isPrimary)
               : mFlinger(flinger),
-                mCreationArgs(flinger.mFlinger.get(), flinger.mFlinger->getHwComposer(),
-                              mDisplayToken, display),
+                mCreationArgs(flinger.mFlinger, flinger.mFlinger->getHwComposer(), mDisplayToken,
+                              display),
                 mHwcDisplayId(hwcDisplayId) {
             mCreationArgs.connectionType = connectionType;
             mCreationArgs.isPrimary = isPrimary;
@@ -870,13 +872,13 @@ public:
 
     private:
         TestableSurfaceFlinger& mFlinger;
-        sp<BBinder> mDisplayToken = new BBinder();
+        sp<BBinder> mDisplayToken = sp<BBinder>::make();
         DisplayDeviceCreationArgs mCreationArgs;
         const std::optional<hal::HWDisplayId> mHwcDisplayId;
     };
 
 private:
-    constexpr static int64_t kVsyncId = 123;
+    static constexpr VsyncId kVsyncId{123};
 
     void getModeFromFps(float, DisplayModePtr&) {return; }
 

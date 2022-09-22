@@ -117,11 +117,12 @@ static std::shared_ptr<ExternalTexture> allocateBuffer(RenderEngine& re, uint32_
                                                        uint64_t extraUsageFlags = 0,
                                                        std::string name = "output") {
     return std::make_shared<
-            impl::ExternalTexture>(new GraphicBuffer(width, height, HAL_PIXEL_FORMAT_RGBA_8888, 1,
-                                                     GRALLOC_USAGE_HW_RENDER |
-                                                             GRALLOC_USAGE_HW_TEXTURE |
-                                                             extraUsageFlags,
-                                                     std::move(name)),
+            impl::ExternalTexture>(sp<GraphicBuffer>::make(width, height,
+                                                           HAL_PIXEL_FORMAT_RGBA_8888, 1u,
+                                                           GRALLOC_USAGE_HW_RENDER |
+                                                                   GRALLOC_USAGE_HW_TEXTURE |
+                                                                   extraUsageFlags,
+                                                           std::move(name)),
                                    re,
                                    impl::ExternalTexture::Usage::READABLE |
                                            impl::ExternalTexture::Usage::WRITEABLE);
@@ -158,9 +159,10 @@ static std::shared_ptr<ExternalTexture> copyBuffer(RenderEngine& re,
     };
     auto layers = std::vector<LayerSettings>{layer};
 
-    auto [status, drawFence] =
-            re.drawLayers(display, layers, texture, kUseFrameBufferCache, base::unique_fd()).get();
-    sp<Fence> waitFence = sp<Fence>::make(std::move(drawFence));
+    sp<Fence> waitFence =
+            re.drawLayers(display, layers, texture, kUseFrameBufferCache, base::unique_fd())
+                    .get()
+                    .value();
     waitFence->waitForever(LOG_TAG);
     return texture;
 }
@@ -189,10 +191,10 @@ static void benchDrawLayers(RenderEngine& re, const std::vector<LayerSettings>& 
 
     // This loop starts and stops the timer.
     for (auto _ : benchState) {
-        auto [status, drawFence] = re.drawLayers(display, layers, outputBuffer,
-                                                 kUseFrameBufferCache, base::unique_fd())
-                                           .get();
-        sp<Fence> waitFence = sp<Fence>::make(std::move(drawFence));
+        sp<Fence> waitFence = re.drawLayers(display, layers, outputBuffer, kUseFrameBufferCache,
+                                            base::unique_fd())
+                                      .get()
+                                      .value();
         waitFence->waitForever(LOG_TAG);
     }
 

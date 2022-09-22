@@ -25,7 +25,11 @@
 #include <android/gui/IDisplayEventConnection.h>
 #include <private/gui/BitTube.h>
 #include <utils/Looper.h>
+#include <utils/StrongPointer.h>
 #include <utils/Timers.h>
+
+#include <scheduler/Time.h>
+#include <scheduler/VsyncId.h>
 
 #include "EventThread.h"
 #include "TracedOrdinal.h"
@@ -34,8 +38,9 @@
 namespace android {
 
 struct ICompositor {
-    virtual bool commit(nsecs_t frameTime, int64_t vsyncId, nsecs_t expectedVsyncTime) = 0;
-    virtual void composite(nsecs_t frameTime, int64_t vsyncId) = 0;
+    virtual void configure() = 0;
+    virtual bool commit(TimePoint frameTime, VsyncId, TimePoint expectedVsyncTime) = 0;
+    virtual void composite(TimePoint frameTime, VsyncId) = 0;
     virtual void sample() = 0;
 
 protected:
@@ -47,6 +52,9 @@ class Task : public MessageHandler {
     template <typename G>
     friend auto makeTask(G&&);
 
+    template <typename... Args>
+    friend sp<Task<F>> sp<Task<F>>::make(Args&&... args);
+
     explicit Task(F&& f) : mTask(std::move(f)) {}
 
     void handleMessage(const Message&) override { mTask(); }
@@ -57,7 +65,7 @@ class Task : public MessageHandler {
 
 template <typename F>
 inline auto makeTask(F&& f) {
-    sp<Task<F>> task = new Task<F>(std::move(f));
+    sp<Task<F>> task = sp<Task<F>>::make(std::forward<F>(f));
     return std::make_pair(task, task->mTask.get_future());
 }
 
@@ -71,6 +79,7 @@ public:
     virtual void setInjector(sp<EventThreadConnection>) = 0;
     virtual void waitMessage() = 0;
     virtual void postMessage(sp<MessageHandler>&&) = 0;
+    virtual void scheduleConfigure() = 0;
     virtual void scheduleFrame() = 0;
     virtual void scheduleFrameImmed() = 0;
 
@@ -85,8 +94,9 @@ protected:
     class Handler : public MessageHandler {
         MessageQueue& mQueue;
         std::atomic_bool mFramePending = false;
-        std::atomic<int64_t> mVsyncId = 0;
-        std::atomic<nsecs_t> mExpectedVsyncTime = 0;
+
+        std::atomic<VsyncId> mVsyncId;
+        std::atomic<TimePoint> mExpectedVsyncTime;
 
     public:
         explicit Handler(MessageQueue& queue) : mQueue(queue) {}
@@ -94,7 +104,7 @@ protected:
 
         bool isFramePending() const;
 
-        virtual void dispatchFrame(int64_t vsyncId, nsecs_t expectedVsyncTime);
+        virtual void dispatchFrame(VsyncId, TimePoint expectedVsyncTime);
         virtual void dispatchFrameImmed();
     };
 
@@ -106,6 +116,8 @@ protected:
     void vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, nsecs_t readyTime);
 
 private:
+    virtual void onFrameSignal(ICompositor&, VsyncId, TimePoint expectedVsyncTime) = 0;
+
     ICompositor& mCompositor;
     const sp<Looper> mLooper;
     const sp<Handler> mHandler;
@@ -117,7 +129,7 @@ private:
         mutable std::mutex mutex;
         TracedOrdinal<std::chrono::nanoseconds> workDuration
                 GUARDED_BY(mutex) = {"VsyncWorkDuration-sf", std::chrono::nanoseconds(0)};
-        std::chrono::nanoseconds lastCallbackTime GUARDED_BY(mutex) = std::chrono::nanoseconds{0};
+        TimePoint lastCallbackTime GUARDED_BY(mutex);
         std::optional<nsecs_t> scheduledFrameTime GUARDED_BY(mutex);
         TracedOrdinal<int> value = {"VSYNC-sf", 0};
     };
@@ -144,6 +156,7 @@ public:
     void waitMessage() override;
     void postMessage(sp<MessageHandler>&&) override;
 
+    void scheduleConfigure() override;
     void scheduleFrame() override;
     void scheduleFrameImmed() override;
 
