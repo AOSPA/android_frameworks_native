@@ -1066,17 +1066,17 @@ void Output::beginFrame() {
     //   frame, then nothing more until we get new layers.
     // - When a display is created with a private layer stack, we won't
     //   emit any black frames until a layer is added to the layer stack.
-    const bool mustRecompose = dirty && !(empty && wasEmpty);
+    mMustRecompose = dirty && !(empty && wasEmpty);
 
     const char flagPrefix[] = {'-', '+'};
     static_cast<void>(flagPrefix);
-    ALOGV_IF("%s: %s composition for %s (%cdirty %cempty %cwasEmpty)", __FUNCTION__,
-             mustRecompose ? "doing" : "skipping", getName().c_str(), flagPrefix[dirty],
-             flagPrefix[empty], flagPrefix[wasEmpty]);
+    ALOGV("%s: %s composition for %s (%cdirty %cempty %cwasEmpty)", __func__,
+          mMustRecompose ? "doing" : "skipping", getName().c_str(), flagPrefix[dirty],
+          flagPrefix[empty], flagPrefix[wasEmpty]);
 
-    mRenderSurface->beginFrame(mustRecompose);
+    mRenderSurface->beginFrame(mMustRecompose);
 
-    if (mustRecompose) {
+    if (mMustRecompose) {
         outputState.lastCompositionHadVisibleLayers = !empty;
     }
 }
@@ -1211,7 +1211,8 @@ void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositi
 
     if (isPowerHintSessionEnabled()) {
         // get fence end time to know when gpu is complete in display
-        setHintSessionGpuFence(std::make_unique<FenceTime>(new Fence(dup(optReadyFence->get()))));
+        setHintSessionGpuFence(
+                std::make_unique<FenceTime>(sp<Fence>::make(dup(optReadyFence->get()))));
     }
     // swap buffers (presentation)
     mRenderSurface->queueBuffer(std::move(*optReadyFence));
@@ -1348,7 +1349,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
             ATRACE_NAME("ClientCompositionCacheHit");
             outputCompositionState.reusedClientComposition = true;
             setExpensiveRenderingExpected(false);
-            return base::unique_fd();
+            // b/239944175 pass the fence associated with the buffer.
+            return base::unique_fd(std::move(fd));
         }
         ATRACE_NAME("ClientCompositionCacheMiss");
         mClientCompositionRequestCache->add(tex->getBuffer()->getId(), clientCompositionDisplay,
@@ -1388,11 +1390,10 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // over to RenderEngine, in which case this flag can be removed from the drawLayers interface.
     const bool useFramebufferCache = outputState.layerFilter.toInternalDisplay;
 
-    auto fenceResult =
-            toFenceResult(renderEngine
-                                  .drawLayers(clientCompositionDisplay, clientRenderEngineLayers,
-                                              tex, useFramebufferCache, std::move(fd))
-                                  .get());
+    auto fenceResult = renderEngine
+                               .drawLayers(clientCompositionDisplay, clientRenderEngineLayers, tex,
+                                           useFramebufferCache, std::move(fd))
+                               .get();
 
     if (mClientCompositionRequestCache && fenceStatus(fenceResult) != NO_ERROR) {
         // If rendering was not successful, remove the request from the cache.
@@ -1424,7 +1425,7 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
     bool firstLayer = true;
 
     bool disableBlurs = false;
-    sp<GraphicBuffer> previousOverrideBuffer = nullptr;
+    uint64_t previousOverrideBufferId = 0;
 
     for (auto* layer : getOutputLayersOrderedByZ()) {
         const auto& layerState = layer->getState();
@@ -1460,11 +1461,10 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                 !layerState.visibleRegion.subtract(layerState.shadowRegion).isEmpty();
 
         if (clientComposition || clearClientComposition) {
-            std::vector<LayerFE::LayerSettings> results;
-            if (layer->getState().overrideInfo.buffer != nullptr) {
-                if (layer->getState().overrideInfo.buffer->getBuffer() != previousOverrideBuffer) {
-                    results = layer->getOverrideCompositionList();
-                    previousOverrideBuffer = layer->getState().overrideInfo.buffer->getBuffer();
+            if (auto overrideSettings = layer->getOverrideCompositionSettings()) {
+                if (overrideSettings->bufferId != previousOverrideBufferId) {
+                    previousOverrideBufferId = overrideSettings->bufferId;
+                    clientCompositionLayers.push_back(std::move(*overrideSettings));
                     ALOGV("Replacing [%s] with override in RE", layer->getLayerFE().getDebugName());
                 } else {
                     ALOGV("Skipping redundant override buffer for [%s] in RE",
@@ -1490,20 +1490,18 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                        .clearContent = !clientComposition,
                                        .blurSetting = blurSetting,
                                        .whitePointNits = layerState.whitePointNits};
-                results = layerFE.prepareClientCompositionList(targetSettings);
-                if (realContentIsVisible && !results.empty()) {
-                    layer->editState().clientCompositionTimestamp = systemTime();
+                if (auto clientCompositionSettings =
+                            layerFE.prepareClientComposition(targetSettings)) {
+                    clientCompositionLayers.push_back(std::move(*clientCompositionSettings));
+                    if (realContentIsVisible) {
+                        layer->editState().clientCompositionTimestamp = systemTime();
+                    }
                 }
             }
 
             if (clientComposition) {
                 outLayerFEs.push_back(&layerFE);
             }
-
-            clientCompositionLayers.insert(clientCompositionLayers.end(),
-                                           std::make_move_iterator(results.begin()),
-                                           std::make_move_iterator(results.end()));
-            results.clear();
         }
 
         firstLayer = false;
@@ -1551,7 +1549,6 @@ void Output::postFramebuffer() {
 
     auto& outputState = editState();
     outputState.dirtyRegion.clear();
-    mRenderSurface->flip();
 
     auto frame = presentAndGetFrameFences();
 
@@ -1598,7 +1595,8 @@ void Output::postFramebuffer() {
 
 void Output::renderCachedSets(const CompositionRefreshArgs& refreshArgs) {
     if (mPlanner) {
-        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime);
+        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime,
+                                   getState().usesDeviceComposition || getSkipColorTransform());
     }
 }
 
@@ -1691,6 +1689,10 @@ void Output::finishPrepareFrame() {
         mPlanner->reportFinalPlan(getOutputLayersOrderedByZ());
     }
     mRenderSurface->prepareFrame(state.usesClientComposition, state.usesDeviceComposition);
+}
+
+bool Output::mustRecompose() const {
+    return mMustRecompose;
 }
 
 void Output::getVisibleLayerInfo(std::vector<std::string> *layerName,

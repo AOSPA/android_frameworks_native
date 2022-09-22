@@ -71,7 +71,6 @@ public:
                 (override));
     MOCK_METHOD(binder::Status, destroyDisplay, (const sp<IBinder>&), (override));
     MOCK_METHOD(binder::Status, getPhysicalDisplayIds, (std::vector<int64_t>*), (override));
-    MOCK_METHOD(binder::Status, getPrimaryPhysicalDisplayId, (int64_t*), (override));
     MOCK_METHOD(binder::Status, getPhysicalDisplayToken, (int64_t, sp<IBinder>*), (override));
     MOCK_METHOD(binder::Status, setPowerMode, (const sp<IBinder>&, int), (override));
     MOCK_METHOD(binder::Status, getSupportedFrameTimestamps, (std::vector<FrameEvent>*),
@@ -174,6 +173,9 @@ public:
     MOCK_METHOD(binder::Status, mirrorSurface,
                 (const sp<IBinder>& mirrorFromHandle, gui::MirrorSurfaceResult* outResult),
                 (override));
+
+    MOCK_METHOD(binder::Status, mirrorDisplay,
+                (int64_t displayId, gui::MirrorSurfaceResult* outResult), (override));
 };
 
 class FakeDisplayEventDispatcher : public DisplayEventDispatcher {

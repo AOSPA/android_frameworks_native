@@ -100,6 +100,36 @@ void* BpBinder::ObjectManager::detach(const void* objectID) {
     return value;
 }
 
+namespace {
+struct Tag {
+    wp<IBinder> binder;
+};
+} // namespace
+
+static void cleanWeak(const void* /* id */, void* obj, void* /* cookie */) {
+    delete static_cast<Tag*>(obj);
+}
+
+sp<IBinder> BpBinder::ObjectManager::lookupOrCreateWeak(const void* objectID, object_make_func make,
+                                                        const void* makeArgs) {
+    entry_t& e = mObjects[objectID];
+    if (e.object != nullptr) {
+        if (auto attached = static_cast<Tag*>(e.object)->binder.promote()) {
+            return attached;
+        }
+    } else {
+        e.object = new Tag;
+        LOG_ALWAYS_FATAL_IF(!e.object, "no more memory");
+    }
+    sp<IBinder> newObj = make(makeArgs);
+
+    static_cast<Tag*>(e.object)->binder = newObj;
+    e.cleanupCookie = nullptr;
+    e.func = cleanWeak;
+
+    return newObj;
+}
+
 void BpBinder::ObjectManager::kill()
 {
     const size_t N = mObjects.size();
@@ -343,11 +373,23 @@ status_t BpBinder::transact(
 status_t BpBinder::linkToDeath(
     const sp<DeathRecipient>& recipient, void* cookie, uint32_t flags)
 {
-    if (isRpcBinder()) return UNKNOWN_TRANSACTION;
-
-    if constexpr (!kEnableKernelIpc) {
+    if (isRpcBinder()) {
+        if (rpcSession()->getMaxIncomingThreads() < 1) {
+            LOG_ALWAYS_FATAL("Cannot register a DeathRecipient without any incoming connections.");
+            return INVALID_OPERATION;
+        }
+    } else if constexpr (!kEnableKernelIpc) {
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
         return INVALID_OPERATION;
+    } else {
+        if (ProcessState::self()->getThreadPoolMaxTotalThreadCount() == 0) {
+            ALOGW("Linking to death on %s but there are no threads (yet?) listening to incoming "
+                  "transactions. See ProcessState::startThreadPool and "
+                  "ProcessState::setThreadPoolMaxThreadCount. Generally you should setup the "
+                  "binder "
+                  "threadpool before other initialization steps.",
+                  String8(getInterfaceDescriptor()).c_str());
+        }
     }
 
     Obituary ob;
@@ -357,14 +399,6 @@ status_t BpBinder::linkToDeath(
 
     LOG_ALWAYS_FATAL_IF(recipient == nullptr,
                         "linkToDeath(): recipient must be non-NULL");
-
-    if (ProcessState::self()->getThreadPoolMaxTotalThreadCount() == 0) {
-        ALOGW("Linking to death on %s but there are no threads (yet?) listening to incoming "
-              "transactions. See ProcessState::startThreadPool and "
-              "ProcessState::setThreadPoolMaxThreadCount. Generally you should setup the binder "
-              "threadpool before other initialization steps.",
-              String8(getInterfaceDescriptor()).c_str());
-    }
 
     {
         AutoMutex _l(mLock);
@@ -376,10 +410,14 @@ status_t BpBinder::linkToDeath(
                     return NO_MEMORY;
                 }
                 ALOGV("Requesting death notification: %p handle %d\n", this, binderHandle());
-                getWeakRefs()->incWeak(this);
-                IPCThreadState* self = IPCThreadState::self();
-                self->requestDeathNotification(binderHandle(), this);
-                self->flushCommands();
+                if (!isRpcBinder()) {
+                    if constexpr (kEnableKernelIpc) {
+                        getWeakRefs()->incWeak(this);
+                        IPCThreadState* self = IPCThreadState::self();
+                        self->requestDeathNotification(binderHandle(), this);
+                        self->flushCommands();
+                    }
+                }
             }
             ssize_t res = mObituaries->add(ob);
             return res >= (ssize_t)NO_ERROR ? (status_t)NO_ERROR : res;
@@ -394,9 +432,7 @@ status_t BpBinder::unlinkToDeath(
     const wp<DeathRecipient>& recipient, void* cookie, uint32_t flags,
     wp<DeathRecipient>* outRecipient)
 {
-    if (isRpcBinder()) return UNKNOWN_TRANSACTION;
-
-    if constexpr (!kEnableKernelIpc) {
+    if (!kEnableKernelIpc && !isRpcBinder()) {
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
         return INVALID_OPERATION;
     }
@@ -419,9 +455,13 @@ status_t BpBinder::unlinkToDeath(
             mObituaries->removeAt(i);
             if (mObituaries->size() == 0) {
                 ALOGV("Clearing death notification: %p handle %d\n", this, binderHandle());
-                IPCThreadState* self = IPCThreadState::self();
-                self->clearDeathNotification(binderHandle(), this);
-                self->flushCommands();
+                if (!isRpcBinder()) {
+                    if constexpr (kEnableKernelIpc) {
+                        IPCThreadState* self = IPCThreadState::self();
+                        self->clearDeathNotification(binderHandle(), this);
+                        self->flushCommands();
+                    }
+                }
                 delete mObituaries;
                 mObituaries = nullptr;
             }
@@ -434,9 +474,7 @@ status_t BpBinder::unlinkToDeath(
 
 void BpBinder::sendObituary()
 {
-    LOG_ALWAYS_FATAL_IF(isRpcBinder(), "Cannot send obituary for remote binder.");
-
-    if constexpr (!kEnableKernelIpc) {
+    if (!kEnableKernelIpc && !isRpcBinder()) {
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
         return;
     }
@@ -451,9 +489,13 @@ void BpBinder::sendObituary()
     Vector<Obituary>* obits = mObituaries;
     if(obits != nullptr) {
         ALOGV("Clearing sent death notification: %p handle %d\n", this, binderHandle());
-        IPCThreadState* self = IPCThreadState::self();
-        self->clearDeathNotification(binderHandle(), this);
-        self->flushCommands();
+        if (!isRpcBinder()) {
+            if constexpr (kEnableKernelIpc) {
+                IPCThreadState* self = IPCThreadState::self();
+                self->clearDeathNotification(binderHandle(), this);
+                self->flushCommands();
+            }
+        }
         mObituaries = nullptr;
     }
     mObitsSent = 1;
@@ -502,6 +544,12 @@ void* BpBinder::detachObject(const void* objectID) {
 void BpBinder::withLock(const std::function<void()>& doWithLock) {
     AutoMutex _l(mLock);
     doWithLock();
+}
+
+sp<IBinder> BpBinder::lookupOrCreateWeak(const void* objectID, object_make_func make,
+                                         const void* makeArgs) {
+    AutoMutex _l(mLock);
+    return mObjects.lookupOrCreateWeak(objectID, make, makeArgs);
 }
 
 BpBinder* BpBinder::remoteBinder()

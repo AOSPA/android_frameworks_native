@@ -763,7 +763,11 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     // We must support R8G8B8A8
     std::vector<VkSurfaceFormatKHR> all_formats = {
         {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        // Also allow to use PASS_THROUGH + HAL_DATASPACE_ARBITRARY
+        {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_PASS_THROUGH_EXT},
+        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_PASS_THROUGH_EXT},
+    };
 
     if (colorspace_ext) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
@@ -1234,11 +1238,15 @@ VkResult CreateSwapchainKHR(VkDevice device,
               decodePixelFormat(native_pixel_format).c_str(), strerror(-err), err);
         return VK_ERROR_SURFACE_LOST_KHR;
     }
-    err = native_window_set_buffers_data_space(window, native_dataspace);
-    if (err != android::OK) {
-        ALOGE("native_window_set_buffers_data_space(%d) failed: %s (%d)",
-              native_dataspace, strerror(-err), err);
-        return VK_ERROR_SURFACE_LOST_KHR;
+
+    /* Respect consumer default dataspace upon HAL_DATASPACE_ARBITRARY. */
+    if (native_dataspace != HAL_DATASPACE_ARBITRARY) {
+        err = native_window_set_buffers_data_space(window, native_dataspace);
+        if (err != android::OK) {
+            ALOGE("native_window_set_buffers_data_space(%d) failed: %s (%d)",
+                  native_dataspace, strerror(-err), err);
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
     }
 
     err = native_window_set_buffers_dimensions(

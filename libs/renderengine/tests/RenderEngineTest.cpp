@@ -232,14 +232,14 @@ public:
     std::shared_ptr<renderengine::ExternalTexture> allocateDefaultBuffer() {
         return std::make_shared<
                 renderengine::impl::
-                        ExternalTexture>(new GraphicBuffer(DEFAULT_DISPLAY_WIDTH,
-                                                           DEFAULT_DISPLAY_HEIGHT,
-                                                           HAL_PIXEL_FORMAT_RGBA_8888, 1,
-                                                           GRALLOC_USAGE_SW_READ_OFTEN |
-                                                                   GRALLOC_USAGE_SW_WRITE_OFTEN |
-                                                                   GRALLOC_USAGE_HW_RENDER |
-                                                                   GRALLOC_USAGE_HW_TEXTURE,
-                                                           "output"),
+                        ExternalTexture>(sp<GraphicBuffer>::
+                                                 make(DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT,
+                                                      HAL_PIXEL_FORMAT_RGBA_8888, 1,
+                                                      GRALLOC_USAGE_SW_READ_OFTEN |
+                                                              GRALLOC_USAGE_SW_WRITE_OFTEN |
+                                                              GRALLOC_USAGE_HW_RENDER |
+                                                              GRALLOC_USAGE_HW_TEXTURE,
+                                                      "output"),
                                          *mRE,
                                          renderengine::impl::ExternalTexture::Usage::READABLE |
                                                  renderengine::impl::ExternalTexture::Usage::
@@ -251,12 +251,12 @@ public:
                                                                         uint32_t height) {
         return std::make_shared<
                 renderengine::impl::
-                        ExternalTexture>(new GraphicBuffer(width, height,
-                                                           HAL_PIXEL_FORMAT_RGBA_8888, 1,
-                                                           GRALLOC_USAGE_SW_READ_OFTEN |
-                                                                   GRALLOC_USAGE_SW_WRITE_OFTEN |
-                                                                   GRALLOC_USAGE_HW_TEXTURE,
-                                                           "input"),
+                        ExternalTexture>(sp<GraphicBuffer>::
+                                                 make(width, height, HAL_PIXEL_FORMAT_RGBA_8888, 1,
+                                                      GRALLOC_USAGE_SW_READ_OFTEN |
+                                                              GRALLOC_USAGE_SW_WRITE_OFTEN |
+                                                              GRALLOC_USAGE_HW_TEXTURE,
+                                                      "input"),
                                          *mRE,
                                          renderengine::impl::ExternalTexture::Usage::READABLE |
                                                  renderengine::impl::ExternalTexture::Usage::
@@ -285,10 +285,12 @@ public:
     }
 
     std::shared_ptr<renderengine::ExternalTexture> allocateR8Buffer(int width, int height) {
-        auto buffer = new GraphicBuffer(width, height, android::PIXEL_FORMAT_R_8, 1,
-                                        GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN |
-                                                GRALLOC_USAGE_HW_TEXTURE,
-                                        "r8");
+        const auto kUsageFlags =
+                static_cast<uint64_t>(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN |
+                                      GRALLOC_USAGE_HW_TEXTURE);
+        auto buffer =
+                sp<GraphicBuffer>::make(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                                        android::PIXEL_FORMAT_R_8, 1u, kUsageFlags, "r8");
         if (buffer->initCheck() != 0) {
             // Devices are not required to support R8.
             return nullptr;
@@ -526,16 +528,15 @@ public:
 
     void invokeDraw(const renderengine::DisplaySettings& settings,
                     const std::vector<renderengine::LayerSettings>& layers) {
-        std::future<renderengine::RenderEngineResult> result =
+        ftl::Future<FenceResult> future =
                 mRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd());
+        ASSERT_TRUE(future.valid());
 
-        ASSERT_TRUE(result.valid());
-        auto [status, fence] = result.get();
+        auto result = future.get();
+        ASSERT_TRUE(result.ok());
 
-        ASSERT_EQ(NO_ERROR, status);
-        if (fence.ok()) {
-            sync_wait(fence.get(), -1);
-        }
+        auto fence = result.value();
+        fence->waitForever(LOG_TAG);
 
         if (layers.size() > 0 && mGLESRE != nullptr) {
             ASSERT_TRUE(mGLESRE->isFramebufferImageCachedForTesting(mBuffer->getBuffer()->getId()));
@@ -1496,13 +1497,13 @@ void RenderEngineTest::tonemap(ui::Dataspace sourceDataspace, std::function<vec3
 
     auto buf = std::make_shared<
             renderengine::impl::
-                    ExternalTexture>(new GraphicBuffer(kGreyLevels, 1, HAL_PIXEL_FORMAT_RGBA_8888,
-                                                       1,
-                                                       GRALLOC_USAGE_SW_READ_OFTEN |
-                                                               GRALLOC_USAGE_SW_WRITE_OFTEN |
-                                                               GRALLOC_USAGE_HW_RENDER |
-                                                               GRALLOC_USAGE_HW_TEXTURE,
-                                                       "input"),
+                    ExternalTexture>(sp<GraphicBuffer>::make(kGreyLevels, 1,
+                                                             HAL_PIXEL_FORMAT_RGBA_8888, 1,
+                                                             GRALLOC_USAGE_SW_READ_OFTEN |
+                                                                     GRALLOC_USAGE_SW_WRITE_OFTEN |
+                                                                     GRALLOC_USAGE_HW_RENDER |
+                                                                     GRALLOC_USAGE_HW_TEXTURE,
+                                                             "input"),
                                      *mRE,
                                      renderengine::impl::ExternalTexture::Usage::READABLE |
                                              renderengine::impl::ExternalTexture::Usage::WRITEABLE);
@@ -1529,13 +1530,13 @@ void RenderEngineTest::tonemap(ui::Dataspace sourceDataspace, std::function<vec3
 
     mBuffer = std::make_shared<
             renderengine::impl::
-                    ExternalTexture>(new GraphicBuffer(kGreyLevels, 1, HAL_PIXEL_FORMAT_RGBA_8888,
-                                                       1,
-                                                       GRALLOC_USAGE_SW_READ_OFTEN |
-                                                               GRALLOC_USAGE_SW_WRITE_OFTEN |
-                                                               GRALLOC_USAGE_HW_RENDER |
-                                                               GRALLOC_USAGE_HW_TEXTURE,
-                                                       "output"),
+                    ExternalTexture>(sp<GraphicBuffer>::make(kGreyLevels, 1,
+                                                             HAL_PIXEL_FORMAT_RGBA_8888, 1,
+                                                             GRALLOC_USAGE_SW_READ_OFTEN |
+                                                                     GRALLOC_USAGE_SW_WRITE_OFTEN |
+                                                                     GRALLOC_USAGE_HW_RENDER |
+                                                                     GRALLOC_USAGE_HW_TEXTURE,
+                                                             "output"),
                                      *mRE,
                                      renderengine::impl::ExternalTexture::Usage::READABLE |
                                              renderengine::impl::ExternalTexture::Usage::WRITEABLE);
@@ -1679,13 +1680,13 @@ TEST_P(RenderEngineTest, drawLayers_nullOutputBuffer) {
     layer.geometry.boundaries = fullscreenRect().toFloatRect();
     BufferSourceVariant<ForceOpaqueBufferVariant>::fillColor(layer, 1.0f, 0.0f, 0.0f, this);
     layers.push_back(layer);
-    std::future<renderengine::RenderEngineResult> result =
+    ftl::Future<FenceResult> future =
             mRE->drawLayers(settings, layers, nullptr, true, base::unique_fd());
 
-    ASSERT_TRUE(result.valid());
-    auto [status, fence] = result.get();
-    ASSERT_EQ(BAD_VALUE, status);
-    ASSERT_FALSE(fence.ok());
+    ASSERT_TRUE(future.valid());
+    auto result = future.get();
+    ASSERT_FALSE(result.ok());
+    ASSERT_EQ(BAD_VALUE, result.error());
 }
 
 TEST_P(RenderEngineTest, drawLayers_doesNotCacheFramebuffer) {
@@ -1710,15 +1711,14 @@ TEST_P(RenderEngineTest, drawLayers_doesNotCacheFramebuffer) {
     layer.alpha = 1.0;
     layers.push_back(layer);
 
-    std::future<renderengine::RenderEngineResult> result =
+    ftl::Future<FenceResult> future =
             mRE->drawLayers(settings, layers, mBuffer, false, base::unique_fd());
-    ASSERT_TRUE(result.valid());
-    auto [status, fence] = result.get();
+    ASSERT_TRUE(future.valid());
+    auto result = future.get();
 
-    ASSERT_EQ(NO_ERROR, status);
-    if (fence.ok()) {
-        sync_wait(fence.get(), -1);
-    }
+    ASSERT_TRUE(result.ok());
+    auto fence = result.value();
+    fence->waitForever(LOG_TAG);
 
     ASSERT_FALSE(mGLESRE->isFramebufferImageCachedForTesting(mBuffer->getBuffer()->getId()));
     expectBufferColor(fullscreenRect(), 255, 0, 0, 255);
@@ -2217,20 +2217,20 @@ TEST_P(RenderEngineTest, cleanupPostRender_cleansUpOnce) {
     layer.alpha = 1.0;
     layers.push_back(layer);
 
-    std::future<renderengine::RenderEngineResult> resultOne =
+    ftl::Future<FenceResult> futureOne =
             mRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd());
-    ASSERT_TRUE(resultOne.valid());
-    auto [statusOne, fenceOne] = resultOne.get();
-    ASSERT_EQ(NO_ERROR, statusOne);
+    ASSERT_TRUE(futureOne.valid());
+    auto resultOne = futureOne.get();
+    ASSERT_TRUE(resultOne.ok());
+    auto fenceOne = resultOne.value();
 
-    std::future<renderengine::RenderEngineResult> resultTwo =
-            mRE->drawLayers(settings, layers, mBuffer, true, std::move(fenceOne));
-    ASSERT_TRUE(resultTwo.valid());
-    auto [statusTwo, fenceTwo] = resultTwo.get();
-    ASSERT_EQ(NO_ERROR, statusTwo);
-    if (fenceTwo.ok()) {
-        sync_wait(fenceTwo.get(), -1);
-    }
+    ftl::Future<FenceResult> futureTwo =
+            mRE->drawLayers(settings, layers, mBuffer, true, base::unique_fd(fenceOne->dup()));
+    ASSERT_TRUE(futureTwo.valid());
+    auto resultTwo = futureTwo.get();
+    ASSERT_TRUE(resultTwo.ok());
+    auto fenceTwo = resultTwo.value();
+    fenceTwo->waitForever(LOG_TAG);
 
     // Only cleanup the first time.
     EXPECT_FALSE(mRE->canSkipPostRenderCleanup());

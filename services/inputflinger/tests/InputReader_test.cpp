@@ -38,8 +38,11 @@
 #include <gtest/gtest.h>
 #include <gui/constants.h>
 
+#include "android/hardware/input/InputDeviceCountryCode.h"
 #include "input/DisplayViewport.h"
 #include "input/Input.h"
+
+using android::hardware::input::InputDeviceCountryCode;
 
 namespace android {
 
@@ -455,6 +458,7 @@ class FakeEventHub : public EventHubInterface {
         BitArray<MSC_MAX> mscBitmask;
         std::vector<VirtualKeyDefinition> virtualKeys;
         bool enabled;
+        InputDeviceCountryCode countryCode;
 
         status_t enable() {
             enabled = true;
@@ -509,7 +513,7 @@ public:
         enqueueEvent(ARBITRARY_TIME, READ_TIME, deviceId, EventHubInterface::DEVICE_REMOVED, 0, 0);
     }
 
-    bool isDeviceEnabled(int32_t deviceId) {
+    bool isDeviceEnabled(int32_t deviceId) const override {
         Device* device = getDevice(deviceId);
         if (device == nullptr) {
             ALOGE("Incorrect device id=%" PRId32 " provided to %s", deviceId, __func__);
@@ -518,7 +522,7 @@ public:
         return device->enabled;
     }
 
-    status_t enableDevice(int32_t deviceId) {
+    status_t enableDevice(int32_t deviceId) override {
         status_t result;
         Device* device = getDevice(deviceId);
         if (device == nullptr) {
@@ -533,7 +537,7 @@ public:
         return result;
     }
 
-    status_t disableDevice(int32_t deviceId) {
+    status_t disableDevice(int32_t deviceId) override {
         Device* device = getDevice(deviceId);
         if (device == nullptr) {
             ALOGE("Incorrect device id=%" PRId32 " provided to %s", deviceId, __func__);
@@ -582,6 +586,11 @@ public:
     void setKeyCodeState(int32_t deviceId, int32_t keyCode, int32_t state) {
         Device* device = getDevice(deviceId);
         device->keyCodeStates.replaceValueFor(keyCode, state);
+    }
+
+    void setCountryCode(int32_t deviceId, InputDeviceCountryCode countryCode) {
+        Device* device = getDevice(deviceId);
+        device->countryCode = countryCode;
     }
 
     void setScanCodeState(int32_t deviceId, int32_t scanCode, int32_t state) {
@@ -795,8 +804,8 @@ private:
 
     status_t mapAxis(int32_t, int32_t, AxisInfo*) const override { return NAME_NOT_FOUND; }
 
-    base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(int32_t deviceId,
-                                                                      int32_t absCode) {
+    base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(
+            int32_t deviceId, int32_t absCode) const override {
         Device* device = getDevice(deviceId);
         if (!device) {
             return Errorf("Sensor device not found.");
@@ -843,6 +852,14 @@ private:
             }
         }
         return AKEY_STATE_UNKNOWN;
+    }
+
+    InputDeviceCountryCode getCountryCode(int32_t deviceId) const override {
+        Device* device = getDevice(deviceId);
+        if (device) {
+            return device->countryCode;
+        }
+        return InputDeviceCountryCode::INVALID;
     }
 
     int32_t getKeyCodeState(int32_t deviceId, int32_t keyCode) const override {
@@ -981,7 +998,7 @@ private:
 
     void cancelVibrate(int32_t) override {}
 
-    std::vector<int32_t> getVibratorIds(int32_t deviceId) override { return mVibrators; };
+    std::vector<int32_t> getVibratorIds(int32_t deviceId) const override { return mVibrators; };
 
     std::optional<int32_t> getBatteryCapacity(int32_t, int32_t) const override {
         return BATTERY_CAPACITY;
@@ -991,13 +1008,14 @@ private:
         return BATTERY_STATUS;
     }
 
-    const std::vector<int32_t> getRawBatteryIds(int32_t deviceId) { return {}; }
+    std::vector<int32_t> getRawBatteryIds(int32_t deviceId) const override { return {}; }
 
-    std::optional<RawBatteryInfo> getRawBatteryInfo(int32_t deviceId, int32_t batteryId) {
+    std::optional<RawBatteryInfo> getRawBatteryInfo(int32_t deviceId,
+                                                    int32_t batteryId) const override {
         return std::nullopt;
     }
 
-    const std::vector<int32_t> getRawLightIds(int32_t deviceId) override {
+    std::vector<int32_t> getRawLightIds(int32_t deviceId) const override {
         std::vector<int32_t> ids;
         for (const auto& [rawId, info] : mRawLightInfos) {
             ids.push_back(rawId);
@@ -1005,7 +1023,7 @@ private:
         return ids;
     }
 
-    std::optional<RawLightInfo> getRawLightInfo(int32_t deviceId, int32_t lightId) override {
+    std::optional<RawLightInfo> getRawLightInfo(int32_t deviceId, int32_t lightId) const override {
         auto it = mRawLightInfos.find(lightId);
         if (it == mRawLightInfos.end()) {
             return std::nullopt;
@@ -1022,7 +1040,7 @@ private:
         mLightIntensities.emplace(lightId, intensities);
     };
 
-    std::optional<int32_t> getLightBrightness(int32_t deviceId, int32_t lightId) override {
+    std::optional<int32_t> getLightBrightness(int32_t deviceId, int32_t lightId) const override {
         auto lightIt = mLightBrightness.find(lightId);
         if (lightIt == mLightBrightness.end()) {
             return std::nullopt;
@@ -1031,7 +1049,7 @@ private:
     }
 
     std::optional<std::unordered_map<LightColor, int32_t>> getLightIntensities(
-            int32_t deviceId, int32_t lightId) override {
+            int32_t deviceId, int32_t lightId) const override {
         auto lightIt = mLightIntensities.find(lightId);
         if (lightIt == mLightIntensities.end()) {
             return std::nullopt;
@@ -1039,13 +1057,9 @@ private:
         return lightIt->second;
     };
 
-    virtual bool isExternal(int32_t) const {
-        return false;
-    }
+    void dump(std::string&) const override {}
 
-    void dump(std::string&) override {}
-
-    void monitor() override {}
+    void monitor() const override {}
 
     void requestReopenDevices() override {}
 
@@ -1332,7 +1346,7 @@ class InputReaderPolicyTest : public testing::Test {
 protected:
     sp<FakeInputReaderPolicy> mFakePolicy;
 
-    void SetUp() override { mFakePolicy = new FakeInputReaderPolicy(); }
+    void SetUp() override { mFakePolicy = sp<FakeInputReaderPolicy>::make(); }
     void TearDown() override { mFakePolicy.clear(); }
 };
 
@@ -1570,7 +1584,7 @@ protected:
 
     void SetUp() override {
         mFakeEventHub = std::make_unique<FakeEventHub>();
-        mFakePolicy = new FakeInputReaderPolicy();
+        mFakePolicy = sp<FakeInputReaderPolicy>::make();
         mFakeListener = std::make_unique<TestInputListener>();
 
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
@@ -2254,7 +2268,7 @@ protected:
     std::shared_ptr<FakePointerController> mFakePointerController;
 
     void SetUp() override {
-        mFakePolicy = new FakeInputReaderPolicy();
+        mFakePolicy = sp<FakeInputReaderPolicy>::make();
         mFakePointerController = std::make_shared<FakePointerController>();
         mFakePolicy->setPointerController(mFakePointerController);
         mTestListener = std::make_unique<TestInputListener>(2000ms /*eventHappenedTimeout*/,
@@ -2653,7 +2667,7 @@ protected:
 
     void SetUp() override {
         mFakeEventHub = std::make_unique<FakeEventHub>();
-        mFakePolicy = new FakeInputReaderPolicy();
+        mFakePolicy = sp<FakeInputReaderPolicy>::make();
         mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
                                                             *mFakeListener);
@@ -2686,6 +2700,17 @@ TEST_F(InputDeviceTest, ImmutableProperties) {
     ASSERT_EQ(DEVICE_ID, mDevice->getId());
     ASSERT_STREQ(DEVICE_NAME, mDevice->getName().c_str());
     ASSERT_EQ(ftl::Flags<InputDeviceClass>(0), mDevice->getClasses());
+}
+
+TEST_F(InputDeviceTest, CountryCodeCorrectlyMapped) {
+    mFakeEventHub->setCountryCode(EVENTHUB_ID, InputDeviceCountryCode::INTERNATIONAL);
+
+    // Configuration
+    mDevice->addMapper<FakeInputMapper>(EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD);
+    InputReaderConfiguration config;
+    mDevice->configure(ARBITRARY_TIME, &config, 0);
+
+    ASSERT_EQ(InputDeviceCountryCode::INTERNATIONAL, mDevice->getDeviceInfo().getCountryCode());
 }
 
 TEST_F(InputDeviceTest, WhenDeviceCreated_EnabledIsFalse) {
@@ -2940,11 +2965,13 @@ protected:
 
     virtual void SetUp(ftl::Flags<InputDeviceClass> classes) {
         mFakeEventHub = std::make_unique<FakeEventHub>();
-        mFakePolicy = new FakeInputReaderPolicy();
+        mFakePolicy = sp<FakeInputReaderPolicy>::make();
         mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
                                                             *mFakeListener);
         mDevice = newDevice(DEVICE_ID, DEVICE_NAME, DEVICE_LOCATION, EVENTHUB_ID, classes);
+        // Consume the device reset notification generated when adding a new device.
+        mFakeListener->assertNotifyDeviceResetWasCalled();
     }
 
     void SetUp() override {
@@ -2969,6 +2996,8 @@ protected:
             mReader->loopOnce();
         }
         mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(), changes);
+        // Loop the reader to flush the input listener queue.
+        mReader->loopOnce();
     }
 
     std::shared_ptr<InputDevice> newDevice(int32_t deviceId, const std::string& name,
@@ -2992,6 +3021,8 @@ protected:
         configureDevice(0);
         mDevice->reset(ARBITRARY_TIME);
         mapper.reset(ARBITRARY_TIME);
+        // Loop the reader to flush the input listener queue.
+        mReader->loopOnce();
         return mapper;
     }
 
@@ -3017,6 +3048,7 @@ protected:
         event.code = code;
         event.value = value;
         mapper.process(&event);
+        // Loop the reader to flush the input listener queue.
         mReader->loopOnce();
     }
 
@@ -4084,6 +4116,37 @@ TEST_F(KeyboardInputMapperTest, Process_LockedKeysShouldToggleInMultiDevices) {
     ASSERT_EQ(AMETA_NONE, mapper2.getMetaState());
 }
 
+TEST_F(KeyboardInputMapperTest, Process_DisabledDevice) {
+    const int32_t USAGE_A = 0x070004;
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_HOME, 0, AKEYCODE_HOME, POLICY_FLAG_WAKE);
+    mFakeEventHub->addKey(EVENTHUB_ID, 0, USAGE_A, AKEYCODE_A, POLICY_FLAG_WAKE);
+
+    KeyboardInputMapper& mapper =
+            addMapperAndConfigure<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD,
+                                                       AINPUT_KEYBOARD_TYPE_ALPHABETIC);
+    // Key down by scan code.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_HOME, 1);
+    NotifyKeyArgs args;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(DEVICE_ID, args.deviceId);
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, args.source);
+    ASSERT_EQ(ARBITRARY_TIME, args.eventTime);
+    ASSERT_EQ(AKEY_EVENT_ACTION_DOWN, args.action);
+    ASSERT_EQ(AKEYCODE_HOME, args.keyCode);
+    ASSERT_EQ(KEY_HOME, args.scanCode);
+    ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM, args.flags);
+
+    // Disable device, it should synthesize cancellation events for down events.
+    mFakePolicy->addDisabledDevice(DEVICE_ID);
+    configureDevice(InputReaderConfiguration::CHANGE_ENABLED_STATE);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(AKEY_EVENT_ACTION_UP, args.action);
+    ASSERT_EQ(AKEYCODE_HOME, args.keyCode);
+    ASSERT_EQ(KEY_HOME, args.scanCode);
+    ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_CANCELED, args.flags);
+}
+
 // --- KeyboardInputMapperTest_ExternalDevice ---
 
 class KeyboardInputMapperTest_ExternalDevice : public InputMapperTest {
@@ -4913,7 +4976,6 @@ TEST_F(CursorInputMapperTest, Process_PointerCapture) {
     ASSERT_TRUE(mReader->getContext()->getGeneration() != generation);
 
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
-    ASSERT_EQ(ARBITRARY_TIME, resetArgs.eventTime);
     ASSERT_EQ(DEVICE_ID, resetArgs.deviceId);
 
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
@@ -5317,25 +5379,6 @@ TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsNotSpecifiedAndNot
     SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
 
     ASSERT_EQ(AINPUT_SOURCE_MOUSE, mapper.getSources());
-}
-
-TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsNotSpecifiedAndIsACursor_ReturnsTouchPad) {
-    mFakeEventHub->addRelativeAxis(EVENTHUB_ID, REL_X);
-    mFakeEventHub->addRelativeAxis(EVENTHUB_ID, REL_Y);
-    prepareButtons();
-    prepareAxes(POSITION);
-    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
-
-    ASSERT_EQ(AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
-}
-
-TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsTouchPad_ReturnsTouchPad) {
-    prepareButtons();
-    prepareAxes(POSITION);
-    addConfigurationProperty("touch.deviceType", "touchPad");
-    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
-
-    ASSERT_EQ(AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
 }
 
 TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsTouchScreen_ReturnsTouchScreen) {
@@ -6694,6 +6737,89 @@ TEST_F(SingleTouchInputMapperTest, Process_WhenAbsPressureIsPresent_HoversIfItsV
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+}
+
+TEST_F(SingleTouchInputMapperTest,
+       Process_WhenViewportDisplayIdChanged_TouchIsCanceledAndDeviceIsReset) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    NotifyMotionArgs motionArgs;
+
+    // Down.
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+
+    // We should receive a down event
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+
+    // Change display id
+    clearViewports();
+    prepareSecondaryDisplay(ViewportType::INTERNAL);
+
+    // We should receive a cancel event
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_ACTION_CANCEL, motionArgs.action);
+    // Then receive reset called
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+}
+
+TEST_F(SingleTouchInputMapperTest,
+       Process_WhenViewportActiveStatusChanged_TouchIsCanceledAndDeviceIsReset) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+    NotifyMotionArgs motionArgs;
+
+    // Start a new gesture.
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+
+    // Make the viewport inactive. This will put the device in disabled mode.
+    auto viewport = mFakePolicy->getDisplayViewportByType(ViewportType::INTERNAL);
+    viewport->isActive = false;
+    mFakePolicy->updateViewport(*viewport);
+    configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+
+    // We should receive a cancel event for the ongoing gesture.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_ACTION_CANCEL, motionArgs.action);
+    // Then we should be notified that the device was reset.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+
+    // No events are generated while the viewport is inactive.
+    processMove(mapper, 101, 201);
+    processSync(mapper);
+    processDown(mapper, 102, 202);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+
+    // Make the viewport active again. The device should resume processing events.
+    viewport->isActive = true;
+    mFakePolicy->updateViewport(*viewport);
+    configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+
+    // The device is reset because it changes back to direct mode, without generating any events.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+
+    // Start a new gesture.
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+
+    // No more events.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasNotCalled());
 }
 
 // --- TouchDisplayProjectionTest ---
@@ -8553,27 +8679,27 @@ TEST_F(MultiTouchInputMapperTest, Process_DeactivateViewport_AbortTouches) {
     ASSERT_TRUE(mFakePolicy->updateViewport(displayViewport));
     configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
 
-    // Finger move
+    // The ongoing touch should be canceled immediately
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    EXPECT_EQ(AMOTION_EVENT_ACTION_CANCEL, motionArgs.action);
+
+    // Finger move is ignored
     x += 10, y += 10;
     processPosition(mapper, x, y);
     processSync(mapper);
-
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
-    EXPECT_EQ(AMOTION_EVENT_ACTION_CANCEL, motionArgs.action);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
 
     // Reactivate display viewport
     displayViewport.isActive = true;
     ASSERT_TRUE(mFakePolicy->updateViewport(displayViewport));
     configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
 
-    // Finger move again
+    // Finger move again starts new gesture
     x += 10, y += 10;
     processPosition(mapper, x, y);
     processSync(mapper);
-
-    // Gesture is aborted, so events after display is activated won't be dispatched until there is
-    // no pointer on the touch device.
-    mFakeListener->assertNotifyMotionWasNotCalled();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
 }
 
 TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShowTouches) {
@@ -8739,6 +8865,10 @@ TEST_F(MultiTouchInputMapperTest, VideoFrames_WhenNotOrientationAware_AreRotated
         // window's coordinate space.
         frames[0].rotate(getInverseRotation(orientation));
         ASSERT_EQ(frames, motionArgs.videoFrames);
+
+        // Release finger.
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     }
 }
 
@@ -9801,7 +9931,7 @@ protected:
 
     virtual void SetUp(ftl::Flags<InputDeviceClass> classes) {
         mFakeEventHub = std::make_unique<FakeEventHub>();
-        mFakePolicy = new FakeInputReaderPolicy();
+        mFakePolicy = sp<FakeInputReaderPolicy>::make();
         mFakeListener = std::make_unique<TestInputListener>();
         mReader = std::make_unique<InstrumentedInputReader>(mFakeEventHub, mFakePolicy,
                                                             *mFakeListener);

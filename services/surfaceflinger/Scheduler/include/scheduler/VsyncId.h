@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,29 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-#include <sys/types.h>
+#pragma once
 
 #include <cstdint>
 
-#include "Layer.h"
-
 namespace android {
 
-class ContainerLayer : public Layer {
-public:
-    explicit ContainerLayer(const LayerCreationArgs&);
-    ~ContainerLayer() override;
+// TODO(b/185536303): Import StrongTyping.h into FTL so it can be used here.
 
-    const char* getType() const override { return "ContainerLayer"; }
-    bool isVisible() const override;
-
-    bool isCreatedFromMainThread() const override { return true; }
-
-protected:
-    bool canDrawShadows() const override { return false; }
-    sp<Layer> createClone() override;
+// Sequential frame identifier, also known as FrameTimeline token.
+struct VsyncId {
+    int64_t value = -1;
 };
+
+inline bool operator==(VsyncId lhs, VsyncId rhs) {
+    return lhs.value == rhs.value;
+}
 
 } // namespace android

@@ -31,7 +31,6 @@
 #include <ui/DynamicDisplayInfo.h>
 
 #include "BufferStateLayer.h"
-#include "ContainerLayer.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/ComposerHal.h"
 #include "EffectLayer.h"
@@ -154,14 +153,22 @@ static constexpr ui::PixelFormat kPixelFormats[] = {ui::PixelFormat::RGBA_8888,
                                                     ui::PixelFormat::YCBCR_P010,
                                                     ui::PixelFormat::HSV_888};
 
-FloatRect getFuzzedFloatRect(FuzzedDataProvider *fdp) {
+inline VsyncId getFuzzedVsyncId(FuzzedDataProvider& fdp) {
+    return VsyncId{fdp.ConsumeIntegral<int64_t>()};
+}
+
+inline TimePoint getFuzzedTimePoint(FuzzedDataProvider& fdp) {
+    return TimePoint::fromNs(fdp.ConsumeIntegral<nsecs_t>());
+}
+
+inline FloatRect getFuzzedFloatRect(FuzzedDataProvider* fdp) {
     return FloatRect(fdp->ConsumeFloatingPoint<float>() /*left*/,
                      fdp->ConsumeFloatingPoint<float>() /*right*/,
                      fdp->ConsumeFloatingPoint<float>() /*top*/,
                      fdp->ConsumeFloatingPoint<float>() /*bottom*/);
 }
 
-HdrMetadata getFuzzedHdrMetadata(FuzzedDataProvider *fdp) {
+inline HdrMetadata getFuzzedHdrMetadata(FuzzedDataProvider* fdp) {
     HdrMetadata hdrMetadata;
     if (fdp->ConsumeBool()) {
         hdrMetadata.cta8613.maxContentLightLevel = fdp->ConsumeFloatingPoint<float>();
@@ -272,8 +279,9 @@ public:
 
 private:
     // ICompositor overrides:
-    bool commit(nsecs_t, int64_t, nsecs_t) override { return false; }
-    void composite(nsecs_t, int64_t) override {}
+    void configure() override {}
+    bool commit(TimePoint, VsyncId, TimePoint) override { return false; }
+    void composite(TimePoint, VsyncId) override {}
     void sample() override {}
 
     // MessageQueue overrides:
@@ -286,13 +294,18 @@ private:
 namespace surfaceflinger::test {
 
 class Factory final : public surfaceflinger::Factory {
+    struct NoOpMessageQueue : android::impl::MessageQueue {
+        using android::impl::MessageQueue::MessageQueue;
+        void onFrameSignal(ICompositor&, VsyncId, TimePoint) override {}
+    };
+
 public:
     ~Factory() = default;
 
-    std::unique_ptr<HWComposer> createHWComposer(const std::string &) override { return nullptr; }
+    std::unique_ptr<HWComposer> createHWComposer(const std::string&) override { return nullptr; }
 
-    std::unique_ptr<MessageQueue> createMessageQueue(ICompositor &compositor) {
-        return std::make_unique<android::impl::MessageQueue>(compositor);
+    std::unique_ptr<MessageQueue> createMessageQueue(ICompositor& compositor) {
+        return std::make_unique<NoOpMessageQueue>(compositor);
     }
 
     std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
@@ -307,21 +320,21 @@ public:
     }
 
     sp<SurfaceInterceptor> createSurfaceInterceptor() override {
-        return new android::impl::SurfaceInterceptor();
+        return sp<android::impl::SurfaceInterceptor>::make();
     }
 
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
-        return new StartPropertySetThread(timestampPropertyValue);
+        return sp<StartPropertySetThread>::make(timestampPropertyValue);
     }
 
     sp<DisplayDevice> createDisplayDevice(DisplayDeviceCreationArgs &creationArgs) override {
-        return new DisplayDevice(creationArgs);
+        return sp<DisplayDevice>::make(creationArgs);
     }
 
     sp<GraphicBuffer> createGraphicBuffer(uint32_t width, uint32_t height, PixelFormat format,
                                           uint32_t layerCount, uint64_t usage,
                                           std::string requestorName) override {
-        return new GraphicBuffer(width, height, format, layerCount, usage, requestorName);
+        return sp<GraphicBuffer>::make(width, height, format, layerCount, usage, requestorName);
     }
 
     void createBufferQueue(sp<IGraphicBufferProducer> *outProducer,
@@ -349,11 +362,7 @@ public:
     }
 
     sp<EffectLayer> createEffectLayer(const LayerCreationArgs &args) override {
-        return new EffectLayer(args);
-    }
-
-    sp<ContainerLayer> createContainerLayer(const LayerCreationArgs &args) override {
-        return new ContainerLayer(args);
+        return sp<EffectLayer>::make(args);
     }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
@@ -431,13 +440,11 @@ public:
         mFlinger->clearStatsLocked(dumpArgs, result);
 
         mFlinger->dumpTimeStats(dumpArgs, fdp->ConsumeBool(), result);
-        FTL_FAKE_GUARD(kMainThreadContext, mFlinger->logFrameStats());
+        FTL_FAKE_GUARD(kMainThreadContext,
+                       mFlinger->logFrameStats(TimePoint::fromNs(fdp->ConsumeIntegral<nsecs_t>())));
 
         result = fdp->ConsumeRandomLengthString().c_str();
         mFlinger->dumpFrameTimeline(dumpArgs, result);
-
-        result = fdp->ConsumeRandomLengthString().c_str();
-        mFlinger->dumpStaticScreenStats(result);
 
         result = fdp->ConsumeRandomLengthString().c_str();
         mFlinger->dumpRawDisplayIdentificationData(dumpArgs, result);
@@ -526,7 +533,7 @@ public:
 
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
         mFlinger->callingThreadHasUnscopedSurfaceFlingerAccess(fdp->ConsumeBool());
-        const sp<Client> client = new Client(mFlinger);
+        const sp<Client> client = sp<Client>::make(mFlinger);
 
         DisplayIdGenerator<HalVirtualDisplayId> kGenerator;
         HalVirtualDisplayId halVirtualDisplayId = kGenerator.generateId().value();
@@ -535,7 +542,9 @@ public:
         ui::PixelFormat pixelFormat{};
         mFlinger->getHwComposer().allocateVirtualDisplay(halVirtualDisplayId, uiSize, &pixelFormat);
 
-        PhysicalDisplayId physicalDisplayId = SurfaceComposerClient::getInternalDisplayId().value();
+        PhysicalDisplayId physicalDisplayId =
+                SurfaceComposerClient::getInternalDisplayId().value_or(
+                        PhysicalDisplayId::fromPort(fdp->ConsumeIntegral<uint8_t>()));
         mFlinger->getHwComposer().allocatePhysicalDisplay(kHwDisplayId, physicalDisplayId);
 
         sp<IBinder> display =
@@ -571,7 +580,6 @@ public:
         mFlinger->setAutoLowLatencyMode(display, mFdp.ConsumeBool());
         mFlinger->setGameContentType(display, mFdp.ConsumeBool());
         mFlinger->setPowerMode(display, mFdp.ConsumeIntegral<int>());
-        mFlinger->clearAnimationFrameStats();
 
         overrideHdrTypes(display, &mFdp);
 
@@ -599,13 +607,14 @@ public:
 
         setVsyncConfig(&mFdp);
 
-        mFlinger->flushTransactionQueues(0);
+        FTL_FAKE_GUARD(kMainThreadContext,
+                       mFlinger->flushTransactionQueues(getFuzzedVsyncId(mFdp)));
 
         mFlinger->setTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
         mFlinger->clearTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
         mFlinger->commitOffscreenLayers();
 
-        mFlinger->frameIsEarly(mFdp.ConsumeIntegral<nsecs_t>(), mFdp.ConsumeIntegral<int64_t>());
+        mFlinger->frameIsEarly(getFuzzedTimePoint(mFdp), getFuzzedVsyncId(mFdp));
         mFlinger->computeLayerBounds();
         mFlinger->startBootAnim();
 
@@ -616,11 +625,8 @@ public:
 
         mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mFdp.ConsumeIntegral<uid_t>());
 
-        mFlinger->postComposition();
+        FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postComposition());
 
-        mFlinger->trackPresentLatency(mFdp.ConsumeIntegral<nsecs_t>(), FenceTime::NO_FENCE);
-
-        FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postFrame());
         mFlinger->calculateExpectedPresentTime({});
 
         mFlinger->enableHalVirtualDisplays(mFdp.ConsumeBool());
@@ -728,7 +734,7 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto &getTransactionQueue() { return mFlinger->mTransactionQueue; }
+    auto &getTransactionQueue() { return mFlinger->mLocklessTransactionQueue; }
     auto &getPendingTransactionQueue() { return mFlinger->mPendingTransactionQueues; }
 
     auto setTransactionState(
@@ -742,8 +748,6 @@ public:
                                              isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,
                                              listenerCallbacks, transactionId);
     }
-
-    auto flushTransactionQueues() { return mFlinger->flushTransactionQueues(0); };
 
     auto onTransact(uint32_t code, const Parcel &data, Parcel *reply, uint32_t flags) {
         return mFlinger->onTransact(code, data, reply, flags);
@@ -785,7 +789,8 @@ private:
     void triggerOnFrameRateOverridesChanged() override {}
 
     surfaceflinger::test::Factory mFactory;
-    sp<SurfaceFlinger> mFlinger = new SurfaceFlinger(mFactory, SurfaceFlinger::SkipInitialization);
+    sp<SurfaceFlinger> mFlinger =
+            sp<SurfaceFlinger>::make(mFactory, SurfaceFlinger::SkipInitialization);
     scheduler::TestableScheduler *mScheduler = nullptr;
     std::shared_ptr<scheduler::RefreshRateConfigs> mRefreshRateConfigs;
 };
