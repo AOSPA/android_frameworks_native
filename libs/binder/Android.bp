@@ -89,6 +89,7 @@ cc_defaults {
         "Stability.cpp",
         "Status.cpp",
         "TextOutput.cpp",
+        "Trace.cpp",
         "Utils.cpp",
     ],
 
@@ -478,6 +479,9 @@ aidl_interface {
     backend: {
         java: {
             enabled: false,
+        },
+        cpp: {
+            gen_trace: false,
         },
     },
 }

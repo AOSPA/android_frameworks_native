@@ -286,7 +286,7 @@ bool Display::chooseCompositionStrategy(
         return false;
     }
 
-    const nsecs_t startTime = systemTime();
+    const TimePoint startTime = TimePoint::now();
 
     // Get any composition changes requested by the HWC device, and apply them.
     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
@@ -304,7 +304,7 @@ bool Display::chooseCompositionStrategy(
     }
 
     if (isPowerHintSessionEnabled()) {
-        mPowerAdvisor->setHwcValidateTiming(mId, startTime, systemTime());
+        mPowerAdvisor->setHwcValidateTiming(mId, startTime, TimePoint::now());
         mPowerAdvisor->setRequiresClientComposition(mId, requiresClientComposition);
     }
 
@@ -465,7 +465,7 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
 
     auto& hwc = getCompositionEngine().getHwComposer();
 
-    const nsecs_t startTime = systemTime();
+    const TimePoint startTime = TimePoint::now();
 
     if (isPowerHintSessionEnabled()) {
         if (!getCompositionEngine().getHwComposer().getComposer()->isSupported(
@@ -479,7 +479,7 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
                                    getState().previousPresentFence);
 
     if (isPowerHintSessionEnabled()) {
-        mPowerAdvisor->setHwcPresentTiming(mId, startTime, systemTime());
+        mPowerAdvisor->setHwcPresentTiming(mId, startTime, TimePoint::now());
     }
 
     fences.presentFence = hwc.getPresentFence(*halDisplayIdOpt);

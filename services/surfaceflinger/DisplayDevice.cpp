@@ -39,6 +39,7 @@
 #include <system/window.h>
 #include <ui/GraphicTypes.h>
 
+#include "Display/DisplaySnapshot.h"
 #include "DisplayDevice.h"
 #include "Layer.h"
 #include "RefreshRateOverlay.h"
@@ -63,12 +64,10 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
         mHwComposer(args.hwComposer),
         mDisplayToken(args.displayToken),
         mSequenceId(args.sequenceId),
-        mConnectionType(args.connectionType),
         mCompositionDisplay{args.compositionDisplay},
         mActiveModeFPSTrace("ActiveModeFPS -" + to_string(getId())),
         mActiveModeFPSHwcTrace("ActiveModeFPS_HWC -" + to_string(getId())),
         mPhysicalOrientation(args.physicalOrientation),
-        mSupportedModes(std::move(args.supportedModes)),
         mIsPrimary(args.isPrimary),
         mIsPowerModeOverride(false),
         mRefreshRateConfigs(std::move(args.refreshRateConfigs)) {
@@ -105,7 +104,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
 
     mCompositionDisplay->getRenderSurface()->initialize();
 
-    setPowerMode(args.initialPowerMode);
+    if (args.initialPowerMode.has_value()) setPowerMode(args.initialPowerMode.value());
 
     // initialize the display orientation transform.
     setProjection(ui::ROTATION_0, Rect::INVALID_RECT, Rect::INVALID_RECT);
@@ -131,10 +130,6 @@ void DisplayDevice::setDisplayName(const std::string& displayName) {
         mDisplayName = displayName;
         mCompositionDisplay->setName(displayName);
     }
-}
-
-void DisplayDevice::setDeviceProductInfo(std::optional<DeviceProductInfo> info) {
-    mDeviceProductInfo = std::move(info);
 }
 
 auto DisplayDevice::getInputInfo() const -> InputInfo {
@@ -171,31 +166,37 @@ auto DisplayDevice::getInputInfo() const -> InputInfo {
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     mPowerMode = mode;
-    getCompositionDisplay()->setCompositionEnabled(mPowerMode != hal::PowerMode::OFF);
+
+    getCompositionDisplay()->setCompositionEnabled(mPowerMode.has_value() &&
+                                                   *mPowerMode != hal::PowerMode::OFF);
 }
 
 void DisplayDevice::enableLayerCaching(bool enable) {
     getCompositionDisplay()->setLayerCachingEnabled(enable);
 }
 
-hal::PowerMode DisplayDevice::getPowerMode() const {
+std::optional<hal::PowerMode> DisplayDevice::getPowerMode() const {
     return mPowerMode;
 }
 
 bool DisplayDevice::isPoweredOn() const {
-    return mPowerMode != hal::PowerMode::OFF;
+    return mPowerMode && *mPowerMode != hal::PowerMode::OFF;
 }
 
-void DisplayDevice::setActiveMode(DisplayModeId id) {
-    const auto mode = getMode(id);
-    LOG_FATAL_IF(!mode, "Cannot set active mode which is not supported.");
-    ATRACE_INT(mActiveModeFPSTrace.c_str(), mode->getFps().getIntValue());
-    mActiveMode = mode;
+void DisplayDevice::setActiveMode(DisplayModeId modeId, const display::DisplaySnapshot& snapshot) {
+    const auto modeOpt = snapshot.displayModes().get(modeId);
+    LOG_ALWAYS_FATAL_IF(!modeOpt, "Unknown mode");
+
+    mActiveMode = modeOpt->get();
+    const Fps fps = mActiveMode->getFps();
+
+    ATRACE_INT(mActiveModeFPSTrace.c_str(), fps.getIntValue());
+
     if (mRefreshRateConfigs) {
-        mRefreshRateConfigs->setActiveModeId(mActiveMode->getId());
+        mRefreshRateConfigs->setActiveModeId(modeId);
     }
     if (mRefreshRateOverlay) {
-        mRefreshRateOverlay->changeRefreshRate(mActiveMode->getFps());
+        mRefreshRateOverlay->changeRefreshRate(fps);
     }
 }
 
@@ -217,25 +218,6 @@ status_t DisplayDevice::initiateModeChange(const ActiveModeInfo& info,
 
 const DisplayModePtr& DisplayDevice::getActiveMode() const {
     return mActiveMode;
-}
-
-const DisplayModes& DisplayDevice::getSupportedModes() const {
-    return mSupportedModes;
-}
-
-DisplayModePtr DisplayDevice::getMode(DisplayModeId modeId) const {
-    const DisplayModePtr nullMode;
-    return mSupportedModes.get(modeId).value_or(std::cref(nullMode));
-}
-
-std::optional<DisplayModeId> DisplayDevice::translateModeId(hal::HWConfigId hwcId) const {
-    const auto it =
-            std::find_if(mSupportedModes.begin(), mSupportedModes.end(),
-                         [hwcId](const auto& pair) { return pair.second->getHwcId() == hwcId; });
-    if (it != mSupportedModes.end()) {
-        return it->second->getId();
-    }
-    return {};
 }
 
 nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
@@ -275,10 +257,10 @@ ui::Dataspace DisplayDevice::getCompositionDataSpace() const {
     return mCompositionDisplay->getState().dataspace;
 }
 
-void DisplayDevice::setLayerStack(ui::LayerStack stack) {
-    mCompositionDisplay->setLayerFilter({stack, isInternal()});
+void DisplayDevice::setLayerFilter(ui::LayerFilter filter) {
+    mCompositionDisplay->setLayerFilter(filter);
     if (mRefreshRateOverlay) {
-        mRefreshRateOverlay->setLayerStack(stack);
+        mRefreshRateOverlay->setLayerStack(filter.layerStack);
     }
 }
 
@@ -350,11 +332,7 @@ std::string DisplayDevice::getDebugName() const {
 
     std::string name = "Display "s + to_string(getId()) + " ("s;
 
-    if (mConnectionType) {
-        name += isInternal() ? "internal"s : "external"s;
-    } else {
-        name += "virtual"s;
-    }
+    name += isVirtual() ? "virtual"s : "physical"s;
 
     if (isPrimary()) {
         name += ", primary"s;
@@ -368,17 +346,8 @@ void DisplayDevice::dump(std::string& result) const {
 
     result += getDebugName();
 
-    if (!isVirtual()) {
-        result += "\n   deviceProductInfo="s;
-        if (mDeviceProductInfo) {
-            mDeviceProductInfo->dump(result);
-        } else {
-            result += "{}"s;
-        }
-    }
-
     result += "\n   powerMode="s;
-    result += to_string(mPowerMode);
+    result += mPowerMode.has_value() ? to_string(mPowerMode.value()) : "OFF(reset)";
     result += '\n';
 
     if (mRefreshRateConfigs) {
