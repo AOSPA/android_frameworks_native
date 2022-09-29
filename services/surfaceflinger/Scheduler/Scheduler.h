@@ -35,6 +35,7 @@
 #include <ui/DisplayStatInfo.h>
 
 #include <scheduler/Features.h>
+#include <scheduler/Time.h>
 
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
@@ -181,6 +182,7 @@ public:
     void recordLayerHistory(Layer*, nsecs_t presentTime, LayerHistory::LayerUpdateType updateType)
             EXCLUDES(mRefreshRateConfigsLock);
     void setModeChangePending(bool pending);
+    void setDefaultFrameRateCompatibility(Layer*);
     void deregisterLayer(Layer*);
 
     // Detects content using layer history, and selects a matching refresh rate.
@@ -192,15 +194,13 @@ public:
     // Indicates that touch interaction is taking place.
     void onTouchHint();
 
-    void setDisplayPowerState(bool normal);
+    void setDisplayPowerMode(hal::PowerMode powerMode);
 
-    VSyncDispatch& getVsyncDispatch() { return mVsyncSchedule->getDispatch(); }
+    VsyncSchedule& getVsyncSchedule() { return *mVsyncSchedule; }
 
     // Returns true if a given vsync timestamp is considered valid vsync
     // for a given uid
     bool isVsyncValid(nsecs_t expectedVsyncTimestamp, uid_t uid) const;
-
-    std::chrono::steady_clock::time_point getPreviousVsyncFrom(nsecs_t expectedPresentTime) const;
 
     void dump(std::string&) const;
     void dump(ConnectionHandle, std::string&) const;
@@ -334,7 +334,7 @@ private:
         TimerState idleTimer = TimerState::Reset;
         TouchState touch = TouchState::Inactive;
         TimerState displayPowerTimer = TimerState::Expired;
-        bool isDisplayPowerStateNormal = true;
+        hal::PowerMode displayPowerMode = hal::PowerMode::ON;
 
         // Chosen display mode.
         DisplayModePtr mode;

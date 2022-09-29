@@ -30,7 +30,6 @@ namespace android {
 
 typedef int32_t PixelFormat;
 
-class BufferQueueLayer;
 class BufferLayerConsumer;
 class BufferStateLayer;
 class ContainerLayer;
@@ -86,19 +85,12 @@ public:
     virtual void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
                                    sp<IGraphicBufferConsumer>* outConsumer,
                                    bool consumerIsSurfaceFlinger) = 0;
-    virtual sp<IGraphicBufferProducer> createMonitoredProducer(const sp<IGraphicBufferProducer>&,
-                                                               const sp<SurfaceFlinger>&,
-                                                               const wp<Layer>&) = 0;
-    virtual sp<BufferLayerConsumer> createBufferLayerConsumer(const sp<IGraphicBufferConsumer>&,
-                                                              renderengine::RenderEngine&,
-                                                              uint32_t tex, Layer*) = 0;
 
     virtual std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer>&) = 0;
 
     virtual std::unique_ptr<compositionengine::CompositionEngine> createCompositionEngine() = 0;
 
-    virtual sp<BufferQueueLayer> createBufferQueueLayer(const LayerCreationArgs& args) = 0;
     virtual sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs& args) = 0;
     virtual sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) = 0;
     virtual sp<ContainerLayer> createContainerLayer(const LayerCreationArgs& args) = 0;

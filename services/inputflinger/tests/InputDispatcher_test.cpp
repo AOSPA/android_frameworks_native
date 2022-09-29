@@ -58,6 +58,8 @@ static constexpr int32_t POINTER_1_DOWN =
         AMOTION_EVENT_ACTION_POINTER_DOWN | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 static constexpr int32_t POINTER_2_DOWN =
         AMOTION_EVENT_ACTION_POINTER_DOWN | (2 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+static constexpr int32_t POINTER_3_DOWN =
+        AMOTION_EVENT_ACTION_POINTER_DOWN | (3 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 static constexpr int32_t POINTER_1_UP =
         AMOTION_EVENT_ACTION_POINTER_UP | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 
@@ -497,6 +499,11 @@ private:
         ASSERT_NE(nullptr, mFilteredEvent) << "Expected filterInputEvent() to have been called.";
         verify(*mFilteredEvent);
         mFilteredEvent = nullptr;
+    }
+
+    bool isPerDisplayTouchModeEnabled() {
+        // TODO(b/198499018): Make this a regular property once per display touch mode is enabled
+        return false;
     }
 };
 
@@ -1944,6 +1951,77 @@ TEST_F(InputDispatcherTest, SplitWorksWhenNonTouchableWindowIsTouched) {
     window2->consumeMotionDown();
 }
 
+/**
+ * When splitting touch events the downTime should be adjusted such that the downTime corresponds
+ * to the event time of the first ACTION_DOWN sent to the particular window.
+ */
+TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window1 =
+            new FakeWindowHandle(application, mDispatcher, "Window1", DISPLAY_ID);
+    window1->setTouchableRegion(Region{{0, 0, 100, 100}});
+    sp<FakeWindowHandle> window2 =
+            new FakeWindowHandle(application, mDispatcher, "Window2", DISPLAY_ID);
+    window2->setTouchableRegion(Region{{100, 0, 200, 100}});
+
+    mDispatcher->setInputWindows({{DISPLAY_ID, {window1, window2}}});
+
+    NotifyMotionArgs args;
+    // Touch down on the first window
+    mDispatcher->notifyMotion(&(args = generateTouchArgs(AMOTION_EVENT_ACTION_DOWN, {{50, 50}})));
+
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent1 = window1->consume();
+    window2->assertNoEvents();
+    MotionEvent& motionEvent1 = static_cast<MotionEvent&>(*inputEvent1);
+    nsecs_t downTimeForWindow1 = motionEvent1.getDownTime();
+    ASSERT_EQ(motionEvent1.getDownTime(), motionEvent1.getEventTime());
+
+    // Now touch down on the window with another pointer
+    mDispatcher->notifyMotion(&(args = generateTouchArgs(POINTER_1_DOWN, {{50, 50}, {150, 50}})));
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent2 = window2->consume();
+    MotionEvent& motionEvent2 = static_cast<MotionEvent&>(*inputEvent2);
+    nsecs_t downTimeForWindow2 = motionEvent2.getDownTime();
+    ASSERT_NE(downTimeForWindow1, downTimeForWindow2);
+    ASSERT_EQ(motionEvent2.getDownTime(), motionEvent2.getEventTime());
+
+    // Now move the pointer on the second window
+    mDispatcher->notifyMotion(
+            &(args = generateTouchArgs(AMOTION_EVENT_ACTION_MOVE, {{50, 50}, {151, 51}})));
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent3 = window2->consume();
+    MotionEvent& motionEvent3 = static_cast<MotionEvent&>(*inputEvent3);
+    ASSERT_EQ(motionEvent3.getDownTime(), downTimeForWindow2);
+
+    // Now add new touch down on the second window
+    mDispatcher->notifyMotion(
+            &(args = generateTouchArgs(POINTER_2_DOWN, {{50, 50}, {151, 51}, {150, 50}})));
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent4 = window2->consume();
+    MotionEvent& motionEvent4 = static_cast<MotionEvent&>(*inputEvent4);
+    ASSERT_EQ(motionEvent4.getDownTime(), downTimeForWindow2);
+
+    // TODO(b/232530217): do not send the unnecessary MOVE event and delete the next line
+    window1->consumeMotionMove();
+    window1->assertNoEvents();
+
+    // Now move the pointer on the first window
+    mDispatcher->notifyMotion(
+            &(args = generateTouchArgs(AMOTION_EVENT_ACTION_MOVE, {{51, 51}, {151, 51}})));
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent5 = window1->consume();
+    MotionEvent& motionEvent5 = static_cast<MotionEvent&>(*inputEvent5);
+    ASSERT_EQ(motionEvent5.getDownTime(), downTimeForWindow1);
+
+    mDispatcher->notifyMotion(&(
+            args = generateTouchArgs(POINTER_3_DOWN, {{51, 51}, {151, 51}, {150, 50}, {50, 50}})));
+    mDispatcher->waitForIdle();
+    InputEvent* inputEvent6 = window1->consume();
+    MotionEvent& motionEvent6 = static_cast<MotionEvent&>(*inputEvent6);
+    ASSERT_EQ(motionEvent6.getDownTime(), downTimeForWindow1);
+}
+
 TEST_F(InputDispatcherTest, HoverMoveEnterMouseClickAndHoverMoveExit) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowLeft =
@@ -3223,7 +3301,7 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
 
     SCOPED_TRACE("Disable touch mode");
     mDispatcher->setInTouchMode(false, windowInfo.ownerPid, windowInfo.ownerUid,
-                                /* hasPermission */ true);
+                                true /*hasPermission*/, ADISPLAY_ID_DEFAULT);
     window->consumeTouchModeEvent(false);
     window->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -3237,7 +3315,7 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
 
     SCOPED_TRACE("Enable touch mode again");
     mDispatcher->setInTouchMode(true, windowInfo.ownerPid, windowInfo.ownerUid,
-                                /* hasPermission */ true);
+                                true /*hasPermission*/, ADISPLAY_ID_DEFAULT);
     window->consumeTouchModeEvent(true);
     window->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -6097,6 +6175,7 @@ protected:
     sp<FakeWindowHandle> mWindow;
     sp<FakeWindowHandle> mSecondWindow;
     sp<FakeWindowHandle> mDragWindow;
+    sp<FakeWindowHandle> mSpyWindow;
 
     void SetUp() override {
         InputDispatcherTest::SetUp();
@@ -6107,8 +6186,13 @@ protected:
         mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
         mSecondWindow->setFrame(Rect(100, 0, 200, 100));
 
+        mSpyWindow = new FakeWindowHandle(mApp, mDispatcher, "SpyWindow", ADISPLAY_ID_DEFAULT);
+        mSpyWindow->setSpy(true);
+        mSpyWindow->setTrustedOverlay(true);
+        mSpyWindow->setFrame(Rect(0, 0, 200, 100));
+
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
-        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}}});
+        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mSpyWindow, mWindow, mSecondWindow}}});
     }
 
     void injectDown() {
@@ -6119,6 +6203,8 @@ protected:
 
         // Window should receive motion event.
         mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+        // Spy window should also receive motion event
+        mSpyWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
     }
 
     // Start performing drag, we will create a drag window and transfer touch to it.
@@ -6131,8 +6217,9 @@ protected:
 
         // The drag window covers the entire display
         mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
+        mDragWindow->setTouchableRegion(Region{{0, 0, 0, 0}});
         mDispatcher->setInputWindows(
-                {{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
+                {{ADISPLAY_ID_DEFAULT, {mDragWindow, mSpyWindow, mWindow, mSecondWindow}}});
 
         // Transfer touch focus to the drag window
         bool transferred =
@@ -6208,6 +6295,30 @@ TEST_F(InputDispatcherDragTests, DragEnterAndDragExit) {
     mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherDragTests, DragEnterAndPointerDownPilfersPointers) {
+    performDrag();
+
+    // No cancel event after drag start
+    mSpyWindow->assertNoEvents();
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(60).y(60))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    // Receives cancel for first pointer after next pointer down
+    mSpyWindow->consumeMotionCancel();
+    mSpyWindow->consumeMotionDown();
+
+    mSpyWindow->assertNoEvents();
 }
 
 TEST_F(InputDispatcherDragTests, DragAndDrop) {
@@ -6408,6 +6519,58 @@ TEST_F(InputDispatcherDragTests, DragAndDropWhenSplitTouch) {
     mSecondWindow->consumeMotionMove();
 }
 
+TEST_F(InputDispatcherDragTests, DragAndDropWhenMultiDisplays) {
+    performDrag();
+
+    // Update window of second display.
+    sp<FakeWindowHandle> windowInSecondary =
+            new FakeWindowHandle(mApp, mDispatcher, "D_2", SECOND_DISPLAY_ID);
+    mDispatcher->setInputWindows({{SECOND_DISPLAY_ID, {windowInSecondary}}});
+
+    // Let second display has a touch state.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
+                                                   AINPUT_SOURCE_TOUCHSCREEN)
+                                        .displayId(SECOND_DISPLAY_ID)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                                         .x(100)
+                                                         .y(100))
+                                        .build()));
+    windowInSecondary->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_DOWN,
+                                    SECOND_DISPLAY_ID, 0 /* expectedFlag */);
+    // Update window again.
+    mDispatcher->setInputWindows({{SECOND_DISPLAY_ID, {windowInSecondary}}});
+
+    // Move on window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT, {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->consumeDragEvent(false, 50, 50);
+
+    // drop to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                             {150, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mFakePolicy->assertDropTargetEquals(mSecondWindow->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+}
+
 class InputDispatcherDropInputFeatureTest : public InputDispatcherTest {};
 
 TEST_F(InputDispatcherDropInputFeatureTest, WindowDropsInput) {
@@ -6560,14 +6723,15 @@ protected:
 
         // Set initial touch mode to InputDispatcher::kDefaultInTouchMode.
         if (mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, WINDOW_PID,
-                                        WINDOW_UID, /* hasPermission */ true)) {
+                                        WINDOW_UID, true /*hasPermission*/, ADISPLAY_ID_DEFAULT)) {
             mWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
             mSecondWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
         }
     }
 
     void changeAndVerifyTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission) {
-        ASSERT_TRUE(mDispatcher->setInTouchMode(inTouchMode, pid, uid, hasPermission));
+        ASSERT_TRUE(mDispatcher->setInTouchMode(inTouchMode, pid, uid, hasPermission,
+                                                ADISPLAY_ID_DEFAULT));
         mWindow->consumeTouchModeEvent(inTouchMode);
         mSecondWindow->consumeTouchModeEvent(inTouchMode);
     }
@@ -6576,7 +6740,7 @@ protected:
 TEST_F(InputDispatcherTouchModeChangedTests, FocusedWindowCanChangeTouchMode) {
     const WindowInfo& windowInfo = *mWindow->getInfo();
     changeAndVerifyTouchMode(!InputDispatcher::kDefaultInTouchMode, windowInfo.ownerPid,
-                             windowInfo.ownerUid, /* hasPermission */ false);
+                             windowInfo.ownerUid, false /*hasPermission*/);
 }
 
 TEST_F(InputDispatcherTouchModeChangedTests, NonFocusedWindowOwnerCannotChangeTouchMode) {
@@ -6585,7 +6749,8 @@ TEST_F(InputDispatcherTouchModeChangedTests, NonFocusedWindowOwnerCannotChangeTo
     int32_t ownerUid = windowInfo.ownerUid;
     mWindow->setOwnerInfo(/* pid */ -1, /* uid */ -1);
     ASSERT_FALSE(mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, ownerPid,
-                                             ownerUid, /* hasPermission */ false));
+                                             ownerUid, false /*hasPermission*/,
+                                             ADISPLAY_ID_DEFAULT));
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
 }
@@ -6596,14 +6761,14 @@ TEST_F(InputDispatcherTouchModeChangedTests, NonWindowOwnerMayChangeTouchModeOnP
     int32_t ownerUid = windowInfo.ownerUid;
     mWindow->setOwnerInfo(/* pid */ -1, /* uid */ -1);
     changeAndVerifyTouchMode(!InputDispatcher::kDefaultInTouchMode, ownerPid, ownerUid,
-                             /* hasPermission */ true);
+                             true /*hasPermission*/);
 }
 
 TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTouchMode) {
     const WindowInfo& windowInfo = *mWindow->getInfo();
     ASSERT_FALSE(mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode,
                                              windowInfo.ownerPid, windowInfo.ownerUid,
-                                             /* hasPermission */ true));
+                                             true /*hasPermission*/, ADISPLAY_ID_DEFAULT));
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
 }
@@ -6622,7 +6787,7 @@ TEST_F(InputDispatcherTouchModeChangedTests, CanChangeTouchModeWhenOwningLastInt
     const WindowInfo& windowInfo = *mWindow->getInfo();
     ASSERT_TRUE(mDispatcher->setInTouchMode(!InputDispatcher::kDefaultInTouchMode,
                                             windowInfo.ownerPid, windowInfo.ownerUid,
-                                            /* hasPermission= */ false));
+                                            false /*hasPermission*/, ADISPLAY_ID_DEFAULT));
 }
 
 class InputDispatcherSpyWindowTest : public InputDispatcherTest {
@@ -6811,123 +6976,6 @@ TEST_F(InputDispatcherSpyWindowTest, WatchOutsideTouches) {
 }
 
 /**
- * A spy window can pilfer pointers. When this happens, touch gestures that are currently sent to
- * any other windows - including other spy windows - will also be cancelled.
- */
-TEST_F(InputDispatcherSpyWindowTest, PilferPointers) {
-    auto window = createForeground();
-    auto spy1 = createSpy();
-    auto spy2 = createSpy();
-    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy1, spy2, window}}});
-
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-    window->consumeMotionDown();
-    spy1->consumeMotionDown();
-    spy2->consumeMotionDown();
-
-    // Pilfer pointers from the second spy window.
-    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy2->getToken()));
-    spy2->assertNoEvents();
-    spy1->consumeMotionCancel();
-    window->consumeMotionCancel();
-
-    // The rest of the gesture should only be sent to the second spy window.
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
-                                ADISPLAY_ID_DEFAULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-    spy2->consumeMotionMove();
-    spy1->assertNoEvents();
-    window->assertNoEvents();
-}
-
-/**
- * A spy window can pilfer pointers for a gesture even after the foreground window has been removed
- * in the middle of the gesture.
- */
-TEST_F(InputDispatcherSpyWindowTest, CanPilferAfterWindowIsRemovedMidStream) {
-    auto window = createForeground();
-    auto spy = createSpy();
-    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
-
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
-    spy->consumeMotionDown(ADISPLAY_ID_DEFAULT);
-
-    window->releaseChannel();
-
-    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
-
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-    spy->consumeMotionUp(ADISPLAY_ID_DEFAULT);
-}
-
-/**
- * After a spy window pilfers pointers, new pointers that go down in its bounds should be sent to
- * the spy, but not to any other windows.
- */
-TEST_F(InputDispatcherSpyWindowTest, ContinuesToReceiveGestureAfterPilfer) {
-    auto spy = createSpy();
-    auto window = createForeground();
-
-    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
-
-    // First finger down on the window and the spy.
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
-                               {100, 200}))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-    spy->consumeMotionDown();
-    window->consumeMotionDown();
-
-    // Spy window pilfers the pointers.
-    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
-    window->consumeMotionCancel();
-
-    // Second finger down on the window and spy, but the window should not receive the pointer down.
-    const MotionEvent secondFingerDownEvent =
-            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
-                    .displayId(ADISPLAY_ID_DEFAULT)
-                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
-                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
-                                     .x(100)
-                                     .y(200))
-                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
-                    .build();
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
-                                InputEventInjectionSync::WAIT_FOR_RESULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-
-    spy->consumeMotionPointerDown(1 /*pointerIndex*/);
-
-    // Third finger goes down outside all windows, so injection should fail.
-    const MotionEvent thirdFingerDownEvent =
-            MotionEventBuilder(POINTER_2_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
-                    .displayId(ADISPLAY_ID_DEFAULT)
-                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
-                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
-                                     .x(100)
-                                     .y(200))
-                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
-                    .pointer(PointerBuilder(/* id */ 2, AMOTION_EVENT_TOOL_TYPE_FINGER).x(-5).y(-5))
-                    .build();
-    ASSERT_EQ(InputEventInjectionResult::FAILED,
-              injectMotionEvent(mDispatcher, thirdFingerDownEvent, INJECT_EVENT_TIMEOUT,
-                                InputEventInjectionSync::WAIT_FOR_RESULT))
-            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
-
-    spy->assertNoEvents();
-    window->assertNoEvents();
-}
-
-/**
  * Even when a spy window spans over multiple foreground windows, the spy should receive all
  * pointers that are down within its bounds.
  */
@@ -7058,6 +7106,277 @@ TEST_F(InputDispatcherSpyWindowTest, UnfocusableSpyDoesNotReceiveKeyEvents) {
             << "Inject key event should return InputEventInjectionResult::SUCCEEDED";
     window->consumeKeyUp(ADISPLAY_ID_NONE);
 
+    spy->assertNoEvents();
+}
+
+using InputDispatcherPilferPointersTest = InputDispatcherSpyWindowTest;
+
+/**
+ * A spy window can pilfer pointers. When this happens, touch gestures used by the spy window that
+ * are currently sent to any other windows - including other spy windows - will also be cancelled.
+ */
+TEST_F(InputDispatcherPilferPointersTest, PilferPointers) {
+    auto window = createForeground();
+    auto spy1 = createSpy();
+    auto spy2 = createSpy();
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy1, spy2, window}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy1->consumeMotionDown();
+    spy2->consumeMotionDown();
+
+    // Pilfer pointers from the second spy window.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy2->getToken()));
+    spy2->assertNoEvents();
+    spy1->consumeMotionCancel();
+    window->consumeMotionCancel();
+
+    // The rest of the gesture should only be sent to the second spy window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy2->consumeMotionMove();
+    spy1->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * A spy window can pilfer pointers for a gesture even after the foreground window has been removed
+ * in the middle of the gesture.
+ */
+TEST_F(InputDispatcherPilferPointersTest, CanPilferAfterWindowIsRemovedMidStream) {
+    auto window = createForeground();
+    auto spy = createSpy();
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    spy->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    window->releaseChannel();
+
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+}
+
+/**
+ * After a spy window pilfers pointers, new pointers that go down in its bounds should be sent to
+ * the spy, but not to any other windows.
+ */
+TEST_F(InputDispatcherPilferPointersTest, ContinuesToReceiveGestureAfterPilfer) {
+    auto spy = createSpy();
+    auto window = createForeground();
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // First finger down on the window and the spy.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {100, 200}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionDown();
+    window->consumeMotionDown();
+
+    // Spy window pilfers the pointers.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
+    window->consumeMotionCancel();
+
+    // Second finger down on the window and spy, but the window should not receive the pointer down.
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(100)
+                                     .y(200))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    spy->consumeMotionPointerDown(1 /*pointerIndex*/);
+
+    // Third finger goes down outside all windows, so injection should fail.
+    const MotionEvent thirdFingerDownEvent =
+            MotionEventBuilder(POINTER_2_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(100)
+                                     .y(200))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 2, AMOTION_EVENT_TOOL_TYPE_FINGER).x(-5).y(-5))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
+              injectMotionEvent(mDispatcher, thirdFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    spy->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * After a spy window pilfers pointers, only the pointers used by the spy should be canceled
+ */
+TEST_F(InputDispatcherPilferPointersTest, PartiallyPilferRequiredPointers) {
+    auto spy = createSpy();
+    spy->setFrame(Rect(0, 0, 100, 100));
+    auto window = createForeground();
+    window->setFrame(Rect(0, 0, 200, 200));
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // First finger down on the window only
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {150, 150}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+
+    // Second finger down on the spy and window
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(150)
+                                     .y(150))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionDown();
+    window->consumeMotionPointerDown(1);
+
+    // Third finger down on the spy and window
+    const MotionEvent thirdFingerDownEvent =
+            MotionEventBuilder(POINTER_2_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(150)
+                                     .y(150))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .pointer(PointerBuilder(/* id */ 2, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, thirdFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionPointerDown(1);
+    window->consumeMotionPointerDown(2);
+
+    // Spy window pilfers the pointers.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
+    window->consumeMotionPointerUp(/* idx */ 2, ADISPLAY_ID_DEFAULT, AMOTION_EVENT_FLAG_CANCELED);
+    window->consumeMotionPointerUp(/* idx */ 1, ADISPLAY_ID_DEFAULT, AMOTION_EVENT_FLAG_CANCELED);
+
+    spy->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * After a spy window pilfers pointers, all pilfered pointers that have already been dispatched to
+ * other windows should be canceled. If this results in the cancellation of all pointers for some
+ * window, then that window should receive ACTION_CANCEL.
+ */
+TEST_F(InputDispatcherPilferPointersTest, PilferAllRequiredPointers) {
+    auto spy = createSpy();
+    spy->setFrame(Rect(0, 0, 100, 100));
+    auto window = createForeground();
+    window->setFrame(Rect(0, 0, 200, 200));
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // First finger down on both spy and window
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {10, 10}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->consumeMotionDown();
+
+    // Second finger down on the spy and window
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    spy->consumeMotionPointerDown(1);
+    window->consumeMotionPointerDown(1);
+
+    // Spy window pilfers the pointers.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
+    window->consumeMotionCancel();
+
+    spy->assertNoEvents();
+    window->assertNoEvents();
+}
+
+/**
+ * After a spy window pilfers pointers, new pointers that are not touching the spy window can still
+ * be sent to other windows
+ */
+TEST_F(InputDispatcherPilferPointersTest, CanReceivePointersAfterPilfer) {
+    auto spy = createSpy();
+    spy->setFrame(Rect(0, 0, 100, 100));
+    auto window = createForeground();
+    window->setFrame(Rect(0, 0, 200, 200));
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spy, window}}});
+
+    // First finger down on both window and spy
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {10, 10}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    spy->consumeMotionDown();
+
+    // Spy window pilfers the pointers.
+    EXPECT_EQ(OK, mDispatcher->pilferPointers(spy->getToken()));
+    window->consumeMotionCancel();
+
+    // Second finger down on the window only
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(150)
+                                     .y(150))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown();
+    window->assertNoEvents();
+
+    // TODO(b/232530217): do not send the unnecessary MOVE event and delete the next line
+    spy->consumeMotionMove();
     spy->assertNoEvents();
 }
 

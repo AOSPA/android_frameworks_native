@@ -62,7 +62,6 @@
 #include <mutex>
 #include <sstream>
 
-#include "BufferLayer.h"
 #include "Colorizer.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWComposer.h"
@@ -70,8 +69,6 @@
 #include "FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
 #include "LayerProtoHelper.h"
-#include "LayerRejecter.h"
-#include "MonitoredProducer.h"
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
@@ -150,6 +147,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mDrawingState.isTrustedOverlay = false;
     mDrawingState.dropInputMode = gui::DropInputMode::NONE;
     mDrawingState.dimmingEnabled = true;
+    mDrawingState.defaultFrameRateCompatibility = FrameRateCompatibility::Default;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
         // Set an invalid color so there is no color fill.
@@ -158,10 +156,8 @@ Layer::Layer(const LayerCreationArgs& args)
         mDrawingState.color.b = -1.0_hf;
     }
 
-    CompositorTiming compositorTiming;
-    args.flinger->getCompositorTiming(&compositorTiming);
-    mFrameEventHistory.initializeCompositorTiming(compositorTiming);
-    mFrameTracker.setDisplayRefreshPeriod(compositorTiming.interval);
+    mFrameTracker.setDisplayRefreshPeriod(
+            args.flinger->mScheduler->getVsyncPeriodFromRefreshRateConfigs());
 
     mCallingPid = args.callingPid;
     mCallingUid = args.callingUid;
@@ -219,8 +215,7 @@ LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client,
  * Layer.  So, the implementation is done in BufferLayer.  When called on a
  * EffectLayer object, it's essentially a NOP.
  */
-void Layer::onLayerDisplayed(
-        std::shared_future<renderengine::RenderEngineResult> /*futureRenderEngineResult*/) {}
+void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult>) {}
 
 void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
     if (mDrawingState.zOrderRelativeOf == nullptr) {
@@ -414,7 +409,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     const auto& drawingState{getDrawingState()};
     const auto alpha = static_cast<float>(getAlpha());
     const bool opaque = isOpaque(drawingState);
-    const bool usesRoundedCorners = getRoundedCornerState().radius != 0.f;
+    const bool usesRoundedCorners = hasRoundedCorners();
 
     auto blendMode = Hwc2::IComposerClient::BlendMode::NONE;
     if (!opaque || alpha != 1.0f) {
@@ -495,7 +490,7 @@ void Layer::preparePerFrameCompositionState() {
     compositionState->hasProtectedContent = isProtected();
     compositionState->dimmingEnabled = isDimmingEnabled();
 
-    const bool usesRoundedCorners = getRoundedCornerState().radius != 0.f;
+    const bool usesRoundedCorners = hasRoundedCorners();
 
     compositionState->isOpaque =
             isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
@@ -751,12 +746,16 @@ uint32_t Layer::doTransaction(uint32_t flags) {
 
     if (s.sequence != mLastCommittedTxSequence) {
         // invalidate and recompute the visible regions if needed
-         mLastCommittedTxSequence = s.sequence;
+        mLastCommittedTxSequence = s.sequence;
         flags |= eVisibleRegion;
         this->contentDirty = true;
 
         // we may use linear filtering, if the matrix scales us
         mNeedsFiltering = getActiveTransform(s).needsBilinearFiltering();
+    }
+
+    if (!mPotentialCursor && (flags & Layer::eVisibleRegion)) {
+        mFlinger->mUpdateInputInfo = true;
     }
 
     commitTransaction(mDrawingState);
@@ -909,7 +908,7 @@ bool Layer::setTrustedOverlay(bool isTrustedOverlay) {
     if (mDrawingState.isTrustedOverlay == isTrustedOverlay) return false;
     mDrawingState.isTrustedOverlay = isTrustedOverlay;
     mDrawingState.modified = true;
-    mFlinger->mInputInfoChanged = true;
+    mFlinger->mUpdateInputInfo = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1006,6 +1005,13 @@ bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
     return true;
 }
 bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix) {
+    if (matrix.dsdx == mDrawingState.transform.dsdx() &&
+        matrix.dtdy == mDrawingState.transform.dtdy() &&
+        matrix.dtdx == mDrawingState.transform.dtdx() &&
+        matrix.dsdy == mDrawingState.transform.dsdy()) {
+        return false;
+    }
+
     ui::Transform t;
     t.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
 
@@ -1121,6 +1127,19 @@ int32_t Layer::getFrameRateSelectionPriority() const {
 
 int32_t Layer::getPriority() {
     return mPriority;
+}
+
+bool Layer::setDefaultFrameRateCompatibility(FrameRateCompatibility compatibility) {
+    if (mDrawingState.defaultFrameRateCompatibility == compatibility) return false;
+    mDrawingState.defaultFrameRateCompatibility = compatibility;
+    mDrawingState.modified = true;
+    mFlinger->mScheduler->setDefaultFrameRateCompatibility(this);
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+scheduler::LayerInfo::FrameRateCompatibility Layer::getDefaultFrameRateCompatibility() const {
+    return mDrawingState.defaultFrameRateCompatibility;
 }
 
 bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
@@ -1598,51 +1617,15 @@ void Layer::getFrameStats(FrameStats* outStats) const {
     mFrameTracker.getStats(outStats);
 }
 
-void Layer::dumpFrameEvents(std::string& result) {
-    StringAppendF(&result, "- Layer %s (%s, %p)\n", getName().c_str(), getType(), this);
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
-    mFrameEventHistory.checkFencesForCompletion();
-    mFrameEventHistory.dump(result);
-}
-
 void Layer::dumpCallingUidPid(std::string& result) const {
     StringAppendF(&result, "Layer %s (%s) callingPid:%d callingUid:%d ownerUid:%d\n",
                   getName().c_str(), getType(), mCallingPid, mCallingUid, mOwnerUid);
 }
 
 void Layer::onDisconnect() {
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
-    mFrameEventHistory.onDisconnect();
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->onDestroy(layerId);
     mFlinger->mFrameTracer->onDestroy(layerId);
-}
-
-void Layer::addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
-                                     FrameEventHistoryDelta* outDelta) {
-    if (newTimestamps) {
-        mFlinger->mTimeStats->setPostTime(getSequence(), newTimestamps->frameNumber,
-                                          getName().c_str(), mOwnerUid, newTimestamps->postedTime,
-                                          getGameMode());
-        mFlinger->mTimeStats->setAcquireFence(getSequence(), newTimestamps->frameNumber,
-                                              newTimestamps->acquireFence);
-    }
-
-    Mutex::Autolock lock(mFrameEventHistoryMutex);
-    if (newTimestamps) {
-        // If there are any unsignaled fences in the aquire timeline at this
-        // point, the previously queued frame hasn't been latched yet. Go ahead
-        // and try to get the signal time here so the syscall is taken out of
-        // the main thread's critical path.
-        mAcquireTimeline.updateSignalTimes();
-        // Push the new fence after updating since it's likely still pending.
-        mAcquireTimeline.push(newTimestamps->acquireFence);
-        mFrameEventHistory.addQueue(*newTimestamps);
-    }
-
-    if (outDelta) {
-        mFrameEventHistory.getAndResetDelta(outDelta);
-    }
 }
 
 size_t Layer::getChildrenCount() const {
@@ -1692,8 +1675,10 @@ ssize_t Layer::removeChild(const sp<Layer>& layer) {
 void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
     for (const sp<Layer>& child : mDrawingChildren) {
         child->mDrawingParent = newParent;
+        const float parentShadowRadius =
+                newParent->canDrawShadows() ? 0.f : newParent->mEffectiveShadowRadius;
         child->computeBounds(newParent->mBounds, newParent->mEffectiveTransform,
-                             newParent->mEffectiveShadowRadius);
+                             parentShadowRadius);
     }
 }
 
@@ -2020,27 +2005,22 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
     const auto& parent = mDrawingParent.promote();
     if (parent != nullptr) {
         parentSettings = parent->getRoundedCornerState();
-        if (parentSettings.radius > 0) {
+        if (parentSettings.hasRoundedCorners()) {
             ui::Transform t = getActiveTransform(getDrawingState());
             t = t.inverse();
             parentSettings.cropRect = t.transform(parentSettings.cropRect);
-            // The rounded corners shader only accepts 1 corner radius for performance reasons,
-            // but a transform matrix can define horizontal and vertical scales.
-            // Let's take the average between both of them and pass into the shader, practically we
-            // never do this type of transformation on windows anyway.
-            auto scaleX = sqrtf(t[0][0] * t[0][0] + t[0][1] * t[0][1]);
-            auto scaleY = sqrtf(t[1][0] * t[1][0] + t[1][1] * t[1][1]);
-            parentSettings.radius *= (scaleX + scaleY) / 2.0f;
+            parentSettings.radius.x *= t.getScaleX();
+            parentSettings.radius.y *= t.getScaleY();
         }
     }
 
     // Get layer settings
     Rect layerCropRect = getCroppedBufferSize(getDrawingState());
-    const float radius = getDrawingState().cornerRadius;
+    const vec2 radius(getDrawingState().cornerRadius, getDrawingState().cornerRadius);
     RoundedCornerState layerSettings(layerCropRect.toFloatRect(), radius);
-    const bool layerSettingsValid = layerSettings.radius > 0 && layerCropRect.isValid();
+    const bool layerSettingsValid = layerSettings.hasRoundedCorners() && layerCropRect.isValid();
 
-    if (layerSettingsValid && parentSettings.radius > 0) {
+    if (layerSettingsValid && parentSettings.hasRoundedCorners()) {
         // If the parent and the layer have rounded corner settings, use the parent settings if the
         // parent crop is entirely inside the layer crop.
         // This has limitations and cause rendering artifacts. See b/200300845 for correct fix.
@@ -2054,7 +2034,7 @@ Layer::RoundedCornerState Layer::getRoundedCornerState() const {
         }
     } else if (layerSettingsValid) {
         return layerSettings;
-    } else if (parentSettings.radius > 0) {
+    } else if (parentSettings.hasRoundedCorners()) {
         return parentSettings;
     }
     return {};
@@ -2130,7 +2110,7 @@ void Layer::setInputInfo(const WindowInfo& info) {
     mDrawingState.inputInfo = info;
     mDrawingState.touchableRegionCrop = fromHandle(info.touchableRegionCropHandle.promote());
     mDrawingState.modified = true;
-    mFlinger->mInputInfoChanged = true;
+    mFlinger->mUpdateInputInfo = true;
     setTransactionFlags(eTransactionNeeded);
 }
 
@@ -2175,7 +2155,8 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
     layerInfo->set_effective_scaling_mode(getEffectiveScalingMode());
 
     layerInfo->set_requested_corner_radius(getDrawingState().cornerRadius);
-    layerInfo->set_corner_radius(getRoundedCornerState().radius);
+    layerInfo->set_corner_radius(
+            (getRoundedCornerState().radius.x + getRoundedCornerState().radius.y) / 2.0);
     layerInfo->set_background_blur_radius(getBackgroundBlurRadius());
     layerInfo->set_is_trusted_overlay(isTrustedOverlay());
     LayerProtoHelper::writeToProtoDeprecated(transform, layerInfo->mutable_transform());
@@ -2300,6 +2281,37 @@ Rect Layer::getInputBounds() const {
     return getCroppedBufferSize(getDrawingState());
 }
 
+// Applies the given transform to the region, while protecting against overflows caused by any
+// offsets. If applying the offset in the transform to any of the Rects in the region would result
+// in an overflow, they are not added to the output Region.
+static Region transformTouchableRegionSafely(const ui::Transform& t, const Region& r,
+                                             const std::string& debugWindowName) {
+    // Round the translation using the same rounding strategy used by ui::Transform.
+    const auto tx = static_cast<int32_t>(t.tx() + 0.5);
+    const auto ty = static_cast<int32_t>(t.ty() + 0.5);
+
+    ui::Transform transformWithoutOffset = t;
+    transformWithoutOffset.set(0.f, 0.f);
+
+    const Region transformed = transformWithoutOffset.transform(r);
+
+    // Apply the translation to each of the Rects in the region while discarding any that overflow.
+    Region ret;
+    for (const auto& rect : transformed) {
+        Rect newRect;
+        if (__builtin_add_overflow(rect.left, tx, &newRect.left) ||
+            __builtin_add_overflow(rect.top, ty, &newRect.top) ||
+            __builtin_add_overflow(rect.right, tx, &newRect.right) ||
+            __builtin_add_overflow(rect.bottom, ty, &newRect.bottom)) {
+            ALOGE("Applying transform to touchable region of window '%s' resulted in an overflow.",
+                  debugWindowName.c_str());
+            continue;
+        }
+        ret.orSelf(newRect);
+    }
+    return ret;
+}
+
 void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDisplay) {
     Rect tmpBounds = getInputBounds();
     if (!tmpBounds.isValid()) {
@@ -2362,7 +2374,8 @@ void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDi
     info.transform = inputToDisplay.inverse();
 
     // The touchable region is specified in the input coordinate space. Change it to display space.
-    info.touchableRegion = inputToDisplay.transform(info.touchableRegion);
+    info.touchableRegion =
+            transformTouchableRegionSafely(inputToDisplay, info.touchableRegion, mName);
 }
 
 void Layer::fillTouchOcclusionMode(WindowInfo& info) {
@@ -2497,6 +2510,7 @@ WindowInfo Layer::fillInputInfo(const ui::Transform& displayTransform, bool disp
     // If the layer is a clone, we need to crop the input region to cloned root to prevent
     // touches from going outside the cloned area.
     if (isClone()) {
+        info.inputConfig |= WindowInfo::InputConfig::CLONE;
         if (const sp<Layer> clonedRoot = getClonedRoot()) {
             const Rect rect = displayTransform.transform(Rect{clonedRoot->mScreenBounds});
             info.touchableRegion = info.touchableRegion.intersect(rect);
@@ -2676,6 +2690,8 @@ Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t comp
             return FrameRateCompatibility::ExactOrMultiple;
         case ANATIVEWINDOW_FRAME_RATE_EXACT:
             return FrameRateCompatibility::Exact;
+        case ANATIVEWINDOW_FRAME_RATE_MIN:
+            return FrameRateCompatibility::Min;
         case ANATIVEWINDOW_FRAME_RATE_NO_VOTE:
             return FrameRateCompatibility::NoVote;
         default:

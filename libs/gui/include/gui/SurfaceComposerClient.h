@@ -390,6 +390,22 @@ public:
         std::unordered_set<sp<SurfaceControl>, SCHash> surfaceControls;
     };
 
+    // TODO(b/222421815) this class should be removed when
+    // SurfaceComposerClient::Transaction::syncInputWindows is removed and replaced with a method
+    // for adding callbacks to InputWindowCommands.
+    class Event {
+    private:
+        static constexpr std::chrono::seconds sTimeout{5};
+
+        bool mComplete = false;
+        std::condition_variable mConditionVariable;
+        std::mutex mMutex;
+
+    public:
+        void set();
+        bool wait();
+    };
+
     class Transaction : public Parcelable {
     private:
         void releaseBufferIfOverwriting(const layer_state_t& state);
@@ -439,6 +455,8 @@ public:
         InputWindowCommands mInputWindowCommands;
         int mStatus = NO_ERROR;
 
+        std::shared_ptr<Event> mWindowInfosReportedEvent = nullptr;
+
         layer_state_t* getLayerState(const sp<SurfaceControl>& sc);
         DisplayState& getDisplayState(const sp<IBinder>& token);
 
@@ -459,6 +477,10 @@ public:
 
         // Clears the contents of the transaction without applying it.
         void clear();
+
+        // Returns the current id of the transaction.
+        // The id is updated every time the transaction is applied.
+        uint64_t getId();
 
         status_t apply(bool synchronous = false, bool oneWay = false);
         // Merge another transaction in to this one, clearing other
@@ -581,6 +603,9 @@ public:
 
         Transaction& setFrameRate(const sp<SurfaceControl>& sc, float frameRate,
                                   int8_t compatibility, int8_t changeFrameRateStrategy);
+
+        Transaction& setDefaultFrameRateCompatibility(const sp<SurfaceControl>& sc,
+                                                      int8_t compatibility);
 
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that

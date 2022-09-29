@@ -1212,14 +1212,70 @@ TEST_F(FlattenerTest, flattenLayers_skipsHDR2) {
     EXPECT_EQ(nullptr, overrideBuffer3);
 }
 
-TEST_F(FlattenerTest, flattenLayers_skips_DISPLAY_DECORATION) {
+TEST_F(FlattenerTest, flattenLayers_skipsColorLayers) {
+    auto& layerState1 = mTestLayers[0]->layerState;
+    const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
+    auto& layerState2 = mTestLayers[1]->layerState;
+    const auto& overrideBuffer2 = layerState2->getOutputLayer()->getState().overrideInfo.buffer;
+    auto& layerState3 = mTestLayers[2]->layerState;
+    const auto& overrideBuffer3 = layerState3->getOutputLayer()->getState().overrideInfo.buffer;
+    auto& layerState4 = mTestLayers[3]->layerState;
+    const auto& overrideBuffer4 = layerState4->getOutputLayer()->getState().overrideInfo.buffer;
+
+    // Rewrite the first two layers to just be a solid color.
+    mTestLayers[0]->layerFECompositionState.color = half4(255.f, 0.f, 0.f, 255.f);
+    mTestLayers[0]->layerFECompositionState.buffer = nullptr;
+    mTestLayers[1]->layerFECompositionState.color = half4(0.f, 255.f, 0.f, 255.f);
+    mTestLayers[1]->layerFECompositionState.buffer = nullptr;
+
+    const std::vector<const LayerState*> layers = {
+            layerState1.get(),
+            layerState2.get(),
+            layerState3.get(),
+            layerState4.get(),
+    };
+
+    initializeFlattener(layers);
+
+    mTime += 200ms;
+    initializeOverrideBuffer(layers);
+    EXPECT_EQ(getNonBufferHash(layers),
+              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
+
+    // This will render a CachedSet.
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _))
+            .WillOnce(Return(ByMove(
+                    futureOf<renderengine::RenderEngineResult>({NO_ERROR, base::unique_fd()}))));
+    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+
+    // We've rendered a CachedSet, but we haven't merged it in.
+    EXPECT_EQ(nullptr, overrideBuffer1);
+    EXPECT_EQ(nullptr, overrideBuffer2);
+    EXPECT_EQ(nullptr, overrideBuffer3);
+    EXPECT_EQ(nullptr, overrideBuffer4);
+
+    // This time we merge the CachedSet in, so we have a new hash, and we should
+    // only have two sets.
+    EXPECT_CALL(mRenderEngine, drawLayers(_, _, _, _, _)).Times(0);
+    initializeOverrideBuffer(layers);
+    EXPECT_NE(getNonBufferHash(layers),
+              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
+    mFlattener->renderCachedSets(mOutputState, std::nullopt);
+
+    EXPECT_EQ(nullptr, overrideBuffer1);
+    EXPECT_EQ(nullptr, overrideBuffer2);
+    EXPECT_EQ(overrideBuffer3, overrideBuffer4);
+    EXPECT_NE(nullptr, overrideBuffer4);
+}
+
+TEST_F(FlattenerTest, flattenLayers_includes_DISPLAY_DECORATION) {
     auto& layerState1 = mTestLayers[0]->layerState;
     const auto& overrideBuffer1 = layerState1->getOutputLayer()->getState().overrideInfo.buffer;
 
     auto& layerState2 = mTestLayers[1]->layerState;
     const auto& overrideBuffer2 = layerState2->getOutputLayer()->getState().overrideInfo.buffer;
 
-    // The third layer uses DISPLAY_DECORATION, which should never be cached.
+    // The third layer uses DISPLAY_DECORATION, which should be cached.
     auto& layerState3 = mTestLayers[2]->layerState;
     const auto& overrideBuffer3 = layerState3->getOutputLayer()->getState().overrideInfo.buffer;
     mTestLayers[2]->layerFECompositionState.compositionType =
@@ -1260,7 +1316,7 @@ TEST_F(FlattenerTest, flattenLayers_skips_DISPLAY_DECORATION) {
 
     EXPECT_NE(nullptr, overrideBuffer1);
     EXPECT_EQ(overrideBuffer1, overrideBuffer2);
-    EXPECT_EQ(nullptr, overrideBuffer3);
+    EXPECT_EQ(overrideBuffer1, overrideBuffer3);
 }
 
 } // namespace

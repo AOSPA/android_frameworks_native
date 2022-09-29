@@ -331,20 +331,9 @@ void MotionClassifier::reset(const NotifyDeviceResetArgs& args) {
     enqueueEvent(std::make_unique<NotifyDeviceResetArgs>(args));
 }
 
-const char* MotionClassifier::getServiceStatus() REQUIRES(mLock) {
-    if (!mService) {
-        return "null";
-    }
-
-    if (AIBinder_ping(mService->asBinder().get()) == STATUS_OK) {
-        return "running";
-    }
-    return "not responding";
-}
-
 void MotionClassifier::dump(std::string& dump) {
     std::scoped_lock lock(mLock);
-    dump += StringPrintf(INDENT2 "mService status: %s\n", getServiceStatus());
+    dump += StringPrintf(INDENT2 "mService connected: %s\n", mService ? "true" : "false");
     dump += StringPrintf(INDENT2 "mEvents: %zu element(s) (max=%zu)\n",
             mEvents.size(), MAX_EVENTS);
     dump += INDENT2 "mClassifications, mLastDownTimes:\n";
@@ -365,9 +354,21 @@ void MotionClassifier::dump(std::string& dump) {
     }
 }
 
+void MotionClassifier::monitor() {
+    std::scoped_lock lock(mLock);
+    if (mService) {
+        // Ping the HAL service to ensure it is alive and not blocked.
+        const binder_status_t status = AIBinder_ping(mService->asBinder().get());
+        if (status != STATUS_OK) {
+            ALOGW("IInputProcessor HAL is not responding; binder ping result: %s",
+                  AStatus_getDescription(AStatus_fromStatus(status)));
+        }
+    }
+}
+
 // --- InputClassifier ---
 
-InputClassifier::InputClassifier(InputListenerInterface& listener) : mListener(listener) {}
+InputClassifier::InputClassifier(InputListenerInterface& listener) : mQueuedListener(listener) {}
 
 void InputClassifier::onBinderDied(void* cookie) {
     InputClassifier* classifier = static_cast<InputClassifier*>(cookie);
@@ -417,55 +418,67 @@ void InputClassifier::setMotionClassifierEnabled(bool enabled) {
 
 void InputClassifier::notifyConfigurationChanged(const NotifyConfigurationChangedArgs* args) {
     // pass through
-    mListener.notifyConfigurationChanged(args);
+    mQueuedListener.notifyConfigurationChanged(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifyKey(const NotifyKeyArgs* args) {
     // pass through
-    mListener.notifyKey(args);
+    mQueuedListener.notifyKey(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifyMotion(const NotifyMotionArgs* args) {
-    std::scoped_lock lock(mLock);
-    // MotionClassifier is only used for touch events, for now
-    const bool sendToMotionClassifier = mMotionClassifier && isTouchEvent(*args);
-    if (!sendToMotionClassifier) {
-        mListener.notifyMotion(args);
-        return;
-    }
-
-    NotifyMotionArgs newArgs(*args);
-    newArgs.classification = mMotionClassifier->classify(newArgs);
-    mListener.notifyMotion(&newArgs);
+    { // acquire lock
+        std::scoped_lock lock(mLock);
+        // MotionClassifier is only used for touch events, for now
+        const bool sendToMotionClassifier = mMotionClassifier && isTouchEvent(*args);
+        if (!sendToMotionClassifier) {
+            mQueuedListener.notifyMotion(args);
+        } else {
+            NotifyMotionArgs newArgs(*args);
+            newArgs.classification = mMotionClassifier->classify(newArgs);
+            mQueuedListener.notifyMotion(&newArgs);
+        }
+    } // release lock
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifySensor(const NotifySensorArgs* args) {
     // pass through
-    mListener.notifySensor(args);
+    mQueuedListener.notifySensor(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifyVibratorState(const NotifyVibratorStateArgs* args) {
     // pass through
-    mListener.notifyVibratorState(args);
+    mQueuedListener.notifyVibratorState(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifySwitch(const NotifySwitchArgs* args) {
     // pass through
-    mListener.notifySwitch(args);
+    mQueuedListener.notifySwitch(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifyDeviceReset(const NotifyDeviceResetArgs* args) {
-    std::scoped_lock lock(mLock);
-    if (mMotionClassifier) {
-        mMotionClassifier->reset(*args);
-    }
+    { // acquire lock
+        std::scoped_lock lock(mLock);
+        if (mMotionClassifier) {
+            mMotionClassifier->reset(*args);
+        }
+    } // release lock
+
     // continue to next stage
-    mListener.notifyDeviceReset(args);
+    mQueuedListener.notifyDeviceReset(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) {
     // pass through
-    mListener.notifyPointerCaptureChanged(args);
+    mQueuedListener.notifyPointerCaptureChanged(args);
+    mQueuedListener.flush();
 }
 
 void InputClassifier::setMotionClassifierLocked(
@@ -488,6 +501,11 @@ void InputClassifier::dump(std::string& dump) {
         dump += INDENT2 "<nullptr>";
     }
     dump += "\n";
+}
+
+void InputClassifier::monitor() {
+    std::scoped_lock lock(mLock);
+    if (mMotionClassifier) mMotionClassifier->monitor();
 }
 
 InputClassifier::~InputClassifier() {

@@ -69,9 +69,7 @@ private:
     bool mPreviouslyConnected GUARDED_BY(mMutex);
 };
 
-class BLASTBufferQueue
-    : public ConsumerBase::FrameAvailableListener, public BufferItemConsumer::BufferFreedListener
-{
+class BLASTBufferQueue : public ConsumerBase::FrameAvailableListener {
 public:
     BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
     BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
@@ -90,7 +88,6 @@ public:
         return mNumUndequeued;
     }
 
-    void onBufferFreed(const wp<GraphicBuffer>&/* graphicBuffer*/) override { /* TODO */ }
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
     void onFrameDequeued(const uint64_t) override;
@@ -259,7 +256,6 @@ private:
     std::queue<sp<SurfaceControl>> mSurfaceControlsWithPendingCallback GUARDED_BY(mMutex);
 
     uint32_t mCurrentMaxAcquiredBufferCount;
-    bool mWaitForTransactionCallback GUARDED_BY(mMutex) = false;
 
     // Flag to determine if syncTransaction should only acquire a single buffer and then clear or
     // continue to acquire buffers until explicitly cleared
@@ -287,6 +283,8 @@ private:
     uint64_t mLastAppliedFrameNumber = 0;
 
     std::function<void(bool)> mTransactionHangCallback;
+
+    std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 };
 
 } // namespace android

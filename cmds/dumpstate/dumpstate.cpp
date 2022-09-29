@@ -15,6 +15,7 @@
  */
 
 #define LOG_TAG "dumpstate"
+#define ATRACE_TAG ATRACE_TAG_ALWAYS
 
 #include <dirent.h>
 #include <errno.h>
@@ -76,6 +77,7 @@
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
 #include <cutils/sockets.h>
+#include <cutils/trace.h>
 #include <debuggerd/client.h>
 #include <dumpsys.h>
 #include <dumputils/dump_utils.h>
@@ -88,6 +90,7 @@
 #include <private/android_logger.h>
 #include <serviceutils/PriorityDumper.h>
 #include <utils/StrongPointer.h>
+#include <vintf/VintfObject.h>
 #include "DumpstateInternal.h"
 #include "DumpstateService.h"
 #include "dumpstate.h"
@@ -829,7 +832,8 @@ status_t Dumpstate::AddZipEntryFromFd(const std::string& entry_name, int fd,
 
     // Logging statement  below is useful to time how long each entry takes, but it's too verbose.
     // MYLOGD("Adding zip entry %s\n", entry_name.c_str());
-    int32_t err = zip_writer_->StartEntryWithTime(valid_name.c_str(), ZipWriter::kCompress,
+    size_t flags = ZipWriter::kCompress | ZipWriter::kDefaultCompression;
+    int32_t err = zip_writer_->StartEntryWithTime(valid_name.c_str(), flags,
                                                   get_mtime(fd, ds.now_));
     if (err != 0) {
         MYLOGE("zip_writer_->StartEntryWithTime(%s): %s\n", valid_name.c_str(),
@@ -921,7 +925,8 @@ void Dumpstate::AddDir(const std::string& dir, bool recursive) {
 
 bool Dumpstate::AddTextZipEntry(const std::string& entry_name, const std::string& content) {
     MYLOGD("Adding zip text entry %s\n", entry_name.c_str());
-    int32_t err = zip_writer_->StartEntryWithTime(entry_name.c_str(), ZipWriter::kCompress, ds.now_);
+    size_t flags = ZipWriter::kCompress | ZipWriter::kDefaultCompression;
+    int32_t err = zip_writer_->StartEntryWithTime(entry_name.c_str(), flags, ds.now_);
     if (err != 0) {
         MYLOGE("zip_writer_->StartEntryWithTime(%s): %s\n", entry_name.c_str(),
                ZipWriter::ErrorCodeString(err));
@@ -1394,6 +1399,23 @@ static void DumpHals(int out_fd = STDOUT_FILENO) {
     }
 }
 
+// Dump all of the files that make up the vendor interface.
+// See the files listed in dumpFileList() for the latest list of files.
+static void DumpVintf() {
+    const auto vintfFiles = android::vintf::details::dumpFileList();
+    for (const auto vintfFile : vintfFiles) {
+        struct stat st;
+        if (stat(vintfFile.c_str(), &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                ds.AddDir(vintfFile, true /* recursive */);
+            } else {
+                ds.EnqueueAddZipEntryAndCleanupIfNeeded(ZIP_ROOT_DIR + vintfFile,
+                        vintfFile);
+            }
+        }
+    }
+}
+
 static void DumpExternalFragmentationInfo() {
     struct stat st;
     if (stat("/proc/buddyinfo", &st) != 0) {
@@ -1486,7 +1508,6 @@ static void DumpCheckins(int out_fd = STDOUT_FILENO) {
     dprintf(out_fd, "========================================================\n");
 
     RunDumpsys("CHECKIN BATTERYSTATS", {"batterystats", "-c"}, out_fd);
-    RunDumpsys("CHECKIN MEMINFO", {"meminfo", "--checkin"}, out_fd);
     RunDumpsys("CHECKIN NETSTATS", {"netstats", "--checkin"}, out_fd);
     RunDumpsys("CHECKIN PROCSTATS", {"procstats", "-c"}, out_fd);
     RunDumpsys("CHECKIN USAGESTATS", {"usagestats", "-c"}, out_fd);
@@ -1619,6 +1640,8 @@ static Dumpstate::RunStatus dumpstate() {
         do_dmesg();
     }
 
+    DumpVintf();
+
     RunCommand("LIST OF OPEN FILES", {"lsof"}, CommandOptions::AS_ROOT);
 
     RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(for_each_pid, do_showmap, "SMAPS OF ALL PROCESSES");
@@ -1648,7 +1671,7 @@ static Dumpstate::RunStatus dumpstate() {
 
     DumpPacketStats();
 
-    RunDumpsys("EBPF MAP STATS", {"netd", "trafficcontroller"});
+    RunDumpsys("EBPF MAP STATS", {"connectivity", "trafficcontroller"});
 
     DoKmsg();
 
@@ -2084,7 +2107,7 @@ Dumpstate::RunStatus Dumpstate::DumpTraces(const char** path) {
     int timeout_failures = 0;
     bool dalvik_found = false;
 
-    const std::set<int> hal_pids = get_interesting_hal_pids();
+    const std::set<int> hal_pids = get_interesting_pids();
 
     struct dirent* d;
     while ((d = readdir(proc.get()))) {
@@ -3076,7 +3099,9 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
     TEMP_FAILURE_RETRY(dup2(dup_stdout_fd, fileno(stdout)));
 
     // Zip the (now complete) .tmp file within the internal directory.
+    ATRACE_BEGIN("FinalizeFile");
     FinalizeFile();
+    ATRACE_END();
 
     // Share the final file with the caller if the user has consented or Shell is the caller.
     Dumpstate::RunStatus status = Dumpstate::RunStatus::OK;
@@ -3387,6 +3412,9 @@ DurationReporter::DurationReporter(const std::string& title, bool logcat_only, b
         duration_fd_(duration_fd) {
     if (!title_.empty()) {
         started_ = Nanotime();
+        if (title_.find("SHOW MAP") == std::string::npos) {
+            ATRACE_ASYNC_BEGIN(title_.c_str(), 0);
+        }
     }
 }
 
@@ -3400,6 +3428,9 @@ DurationReporter::~DurationReporter() {
             // Use "Yoda grammar" to make it easier to grep|sort sections.
             dprintf(duration_fd_, "------ %.3fs was the duration of '%s' ------\n",
                     elapsed, title_.c_str());
+        }
+        if (title_.find("SHOW MAP") == std::string::npos) {
+            ATRACE_ASYNC_END(title_.c_str(), 0);
         }
     }
 }

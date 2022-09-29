@@ -24,6 +24,9 @@ interface IBinderRpcTest {
     // number of known RPC binders to process, RpcState::countBinders by session
     int[] countBinders();
 
+    // Return a null binder with a non-nullable return type.
+    IBinder getNullBinder();
+
     // Caller sends server, callee pings caller's server and returns error code.
     int pingMe(IBinder binder);
     @nullable IBinder repeatBinder(@nullable IBinder binder);
@@ -64,4 +67,8 @@ interface IBinderRpcTest {
     void scheduleShutdown();
 
     void useKernelBinderCallingId();
+
+    ParcelFileDescriptor echoAsFile(@utf8InCpp String content);
+
+    ParcelFileDescriptor concatFiles(in List<ParcelFileDescriptor> files);
 }

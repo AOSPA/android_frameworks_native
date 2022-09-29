@@ -219,7 +219,7 @@ private:
         mSpotsByDisplay[displayId] = newSpots;
     }
 
-    void clearSpots() override {}
+    void clearSpots() override { mSpotsByDisplay.clear(); }
 
     std::map<int32_t, std::vector<int32_t>> mSpotsByDisplay;
 };
@@ -373,7 +373,11 @@ public:
         mConfig.defaultPointerDisplayId = pointerDisplayId;
     }
 
+    void setPointerGestureEnabled(bool enabled) { mConfig.pointerGesturesEnabled = enabled; }
+
     float getPointerGestureMovementSpeedRatio() { return mConfig.pointerGestureMovementSpeedRatio; }
+
+    float getPointerGestureZoomSpeedRatio() { return mConfig.pointerGestureZoomSpeedRatio; }
 
     void setVelocityControlParams(const VelocityControlParameters& params) {
         mConfig.pointerVelocityControlParameters = params;
@@ -546,7 +550,7 @@ public:
         enqueueEvent(ARBITRARY_TIME, READ_TIME, 0, EventHubInterface::FINISHED_DEVICE_SCAN, 0, 0);
     }
 
-    void addConfigurationProperty(int32_t deviceId, const String8& key, const String8& value) {
+    void addConfigurationProperty(int32_t deviceId, const char* key, const char* value) {
         Device* device = getDevice(deviceId);
         device->configuration.addProperty(key, value);
     }
@@ -887,13 +891,13 @@ private:
     }
 
     // Return true if the device has non-empty key layout.
-    bool markSupportedKeyCodes(int32_t deviceId, size_t numCodes, const int32_t* keyCodes,
+    bool markSupportedKeyCodes(int32_t deviceId, const std::vector<int32_t>& keyCodes,
                                uint8_t* outFlags) const override {
         bool result = false;
         Device* device = getDevice(deviceId);
         if (device) {
             result = device->keysByScanCode.size() > 0 || device->keysByUsageCode.size() > 0;
-            for (size_t i = 0; i < numCodes; i++) {
+            for (size_t i = 0; i < keyCodes.size(); i++) {
                 for (size_t j = 0; j < device->keysByScanCode.size(); j++) {
                     if (keyCodes[i] == device->keysByScanCode.valueAt(j).keyCode) {
                         outFlags[i] = 1;
@@ -1209,9 +1213,9 @@ private:
     }
 
     // Return true if the device has non-empty key layout.
-    bool markSupportedKeyCodes(uint32_t, size_t numCodes, const int32_t* keyCodes,
+    bool markSupportedKeyCodes(uint32_t, const std::vector<int32_t>& keyCodes,
                                uint8_t* outFlags) override {
-        for (size_t i = 0; i < numCodes; i++) {
+        for (size_t i = 0; i < keyCodes.size(); i++) {
             for (size_t j = 0; j < mSupportedKeyCodes.size(); j++) {
                 if (keyCodes[i] == mSupportedKeyCodes[j]) {
                     outFlags[i] = 1;
@@ -1855,34 +1859,37 @@ TEST_F(InputReaderTest, MarkSupportedKeyCodes_ForwardsRequestsToMappers) {
     mapper.addSupportedKeyCode(AKEYCODE_A);
     mapper.addSupportedKeyCode(AKEYCODE_B);
 
-    const int32_t keyCodes[4] = { AKEYCODE_A, AKEYCODE_B, AKEYCODE_1, AKEYCODE_2 };
+    const std::vector<int32_t> keyCodes{AKEYCODE_A, AKEYCODE_B, AKEYCODE_1, AKEYCODE_2};
     uint8_t flags[4] = { 0, 0, 0, 1 };
 
-    ASSERT_FALSE(mReader->hasKeys(0, AINPUT_SOURCE_ANY, 4, keyCodes, flags))
+    ASSERT_FALSE(mReader->hasKeys(0, AINPUT_SOURCE_ANY, keyCodes, flags))
             << "Should return false when device id is >= 0 but unknown.";
     ASSERT_TRUE(!flags[0] && !flags[1] && !flags[2] && !flags[3]);
 
     flags[3] = 1;
-    ASSERT_FALSE(mReader->hasKeys(deviceId, AINPUT_SOURCE_TRACKBALL, 4, keyCodes, flags))
+    ASSERT_FALSE(mReader->hasKeys(deviceId, AINPUT_SOURCE_TRACKBALL, keyCodes, flags))
             << "Should return false when device id is valid but the sources are not supported by "
                "the device.";
     ASSERT_TRUE(!flags[0] && !flags[1] && !flags[2] && !flags[3]);
 
     flags[3] = 1;
-    ASSERT_TRUE(mReader->hasKeys(deviceId, AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_TRACKBALL, 4,
+    ASSERT_TRUE(mReader->hasKeys(deviceId, AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_TRACKBALL,
                                  keyCodes, flags))
             << "Should return value provided by mapper when device id is valid and the device "
                "supports some of the sources.";
     ASSERT_TRUE(flags[0] && flags[1] && !flags[2] && !flags[3]);
 
     flags[3] = 1;
-    ASSERT_FALSE(mReader->hasKeys(-1, AINPUT_SOURCE_TRACKBALL, 4, keyCodes, flags))
-            << "Should return false when the device id is < 0 but the sources are not supported by any device.";
+    ASSERT_FALSE(mReader->hasKeys(-1, AINPUT_SOURCE_TRACKBALL, keyCodes, flags))
+            << "Should return false when the device id is < 0 but the sources are not supported by "
+               "any device.";
     ASSERT_TRUE(!flags[0] && !flags[1] && !flags[2] && !flags[3]);
 
     flags[3] = 1;
-    ASSERT_TRUE(mReader->hasKeys(-1, AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_TRACKBALL, 4, keyCodes, flags))
-            << "Should return value provided by mapper when device id is < 0 and one of the devices supports some of the sources.";
+    ASSERT_TRUE(
+            mReader->hasKeys(-1, AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_TRACKBALL, keyCodes, flags))
+            << "Should return value provided by mapper when device id is < 0 and one of the "
+               "devices supports some of the sources.";
     ASSERT_TRUE(flags[0] && flags[1] && !flags[2] && !flags[3]);
 }
 
@@ -2718,9 +2725,9 @@ TEST_F(InputDeviceTest, WhenNoMappersAreRegistered_DeviceIsIgnored) {
     ASSERT_EQ(AKEY_STATE_UNKNOWN, mDevice->getSwitchState(AINPUT_SOURCE_KEYBOARD, 0))
             << "Ignored device should return unknown switch state.";
 
-    const int32_t keyCodes[2] = { AKEYCODE_A, AKEYCODE_B };
+    const std::vector<int32_t> keyCodes{AKEYCODE_A, AKEYCODE_B};
     uint8_t flags[2] = { 0, 1 };
-    ASSERT_FALSE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_KEYBOARD, 2, keyCodes, flags))
+    ASSERT_FALSE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_KEYBOARD, keyCodes, flags))
             << "Ignored device should never mark any key codes.";
     ASSERT_EQ(0, flags[0]) << "Flag for unsupported key should be unchanged.";
     ASSERT_EQ(1, flags[1]) << "Flag for unsupported key should be unchanged.";
@@ -2728,7 +2735,7 @@ TEST_F(InputDeviceTest, WhenNoMappersAreRegistered_DeviceIsIgnored) {
 
 TEST_F(InputDeviceTest, WhenMappersAreRegistered_DeviceIsNotIgnoredAndForwardsRequestsToMappers) {
     // Configuration.
-    mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, String8("key"), String8("value"));
+    mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, "key", "value");
 
     FakeInputMapper& mapper1 =
             mDevice->addMapper<FakeInputMapper>(EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD);
@@ -2749,10 +2756,10 @@ TEST_F(InputDeviceTest, WhenMappersAreRegistered_DeviceIsNotIgnoredAndForwardsRe
     InputReaderConfiguration config;
     mDevice->configure(ARBITRARY_TIME, &config, 0);
 
-    String8 propertyValue;
-    ASSERT_TRUE(mDevice->getConfiguration().tryGetProperty(String8("key"), propertyValue))
+    std::string propertyValue;
+    ASSERT_TRUE(mDevice->getConfiguration().tryGetProperty("key", propertyValue))
             << "Device should have read configuration during configuration phase.";
-    ASSERT_STREQ("value", propertyValue.string());
+    ASSERT_EQ("value", propertyValue);
 
     ASSERT_NO_FATAL_FAILURE(mapper1.assertConfigureWasCalled());
     ASSERT_NO_FATAL_FAILURE(mapper2.assertConfigureWasCalled());
@@ -2795,16 +2802,16 @@ TEST_F(InputDeviceTest, WhenMappersAreRegistered_DeviceIsNotIgnoredAndForwardsRe
     ASSERT_EQ(AKEY_STATE_DOWN, mDevice->getSwitchState(AINPUT_SOURCE_KEYBOARD, 4))
             << "Should query mapper when source is supported.";
 
-    const int32_t keyCodes[4] = { AKEYCODE_A, AKEYCODE_B, AKEYCODE_1, AKEYCODE_2 };
+    const std::vector<int32_t> keyCodes{AKEYCODE_A, AKEYCODE_B, AKEYCODE_1, AKEYCODE_2};
     uint8_t flags[4] = { 0, 0, 0, 1 };
-    ASSERT_FALSE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_TRACKBALL, 4, keyCodes, flags))
+    ASSERT_FALSE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_TRACKBALL, keyCodes, flags))
             << "Should do nothing when source is unsupported.";
     ASSERT_EQ(0, flags[0]) << "Flag should be unchanged when source is unsupported.";
     ASSERT_EQ(0, flags[1]) << "Flag should be unchanged when source is unsupported.";
     ASSERT_EQ(0, flags[2]) << "Flag should be unchanged when source is unsupported.";
     ASSERT_EQ(1, flags[3]) << "Flag should be unchanged when source is unsupported.";
 
-    ASSERT_TRUE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_KEYBOARD, 4, keyCodes, flags))
+    ASSERT_TRUE(mDevice->markSupportedKeyCodes(AINPUT_SOURCE_KEYBOARD, keyCodes, flags))
             << "Should query mapper when source is supported.";
     ASSERT_EQ(1, flags[0]) << "Flag for supported key should be set.";
     ASSERT_EQ(1, flags[1]) << "Flag for supported key should be set.";
@@ -2950,7 +2957,7 @@ protected:
     }
 
     void addConfigurationProperty(const char* key, const char* value) {
-        mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, String8(key), String8(value));
+        mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, key, value);
     }
 
     void configureDevice(uint32_t changes) {
@@ -3726,9 +3733,8 @@ TEST_F(KeyboardInputMapperTest, MarkSupportedKeyCodes) {
 
     mFakeEventHub->addKey(EVENTHUB_ID, KEY_A, 0, AKEYCODE_A, 0);
 
-    const int32_t keyCodes[2] = { AKEYCODE_A, AKEYCODE_B };
     uint8_t flags[2] = { 0, 0 };
-    ASSERT_TRUE(mapper.markSupportedKeyCodes(AINPUT_SOURCE_ANY, 1, keyCodes, flags));
+    ASSERT_TRUE(mapper.markSupportedKeyCodes(AINPUT_SOURCE_ANY, {AKEYCODE_A, AKEYCODE_B}, flags));
     ASSERT_TRUE(flags[0]);
     ASSERT_FALSE(flags[1]);
 }
@@ -4969,6 +4975,48 @@ TEST_F(CursorInputMapperTest, PointerCaptureDisablesVelocityProcessing) {
     ASSERT_EQ(20, args.pointerCoords[0].getY());
 }
 
+TEST_F(CursorInputMapperTest, PointerCaptureDisablesOrientationChanges) {
+    addConfigurationProperty("cursor.mode", "pointer");
+    CursorInputMapper& mapper = addMapperAndConfigure<CursorInputMapper>();
+
+    NotifyDeviceResetArgs resetArgs;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
+    ASSERT_EQ(ARBITRARY_TIME, resetArgs.eventTime);
+    ASSERT_EQ(DEVICE_ID, resetArgs.deviceId);
+
+    // Ensure the display is rotated.
+    prepareDisplay(DISPLAY_ORIENTATION_90);
+
+    NotifyMotionArgs args;
+
+    // Verify that the coordinates are rotated.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE, args.source);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, args.action);
+    ASSERT_EQ(-20, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X));
+    ASSERT_EQ(10, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
+
+    // Enable Pointer Capture.
+    mFakePolicy->setPointerCapture(true);
+    configureDevice(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
+    NotifyPointerCaptureChangedArgs captureArgs;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyCaptureWasCalled(&captureArgs));
+    ASSERT_TRUE(captureArgs.request.enable);
+
+    // Move and verify rotation is not applied.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
+    ASSERT_EQ(10, args.pointerCoords[0].getX());
+    ASSERT_EQ(20, args.pointerCoords[0].getY());
+}
+
 TEST_F(CursorInputMapperTest, Process_ShouldHandleDisplayId) {
     CursorInputMapper& mapper = addMapperAndConfigure<CursorInputMapper>();
 
@@ -5363,9 +5411,9 @@ TEST_F(SingleTouchInputMapperTest, MarkSupportedKeyCodes) {
     prepareVirtualKeys();
     SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
 
-    const int32_t keys[2] = { AKEYCODE_HOME, AKEYCODE_A };
     uint8_t flags[2] = { 0, 0 };
-    ASSERT_TRUE(mapper.markSupportedKeyCodes(AINPUT_SOURCE_ANY, 2, keys, flags));
+    ASSERT_TRUE(
+            mapper.markSupportedKeyCodes(AINPUT_SOURCE_ANY, {AKEYCODE_HOME, AKEYCODE_A}, flags));
     ASSERT_TRUE(flags[0]);
     ASSERT_FALSE(flags[1]);
 }
@@ -8578,7 +8626,8 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShowTouches) {
 
     // Default device will reconfigure above, need additional reconfiguration for another device.
     device2->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
-                       InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+                       InputReaderConfiguration::CHANGE_DISPLAY_INFO |
+                               InputReaderConfiguration::CHANGE_SHOW_TOUCHES);
 
     // Two fingers down at default display.
     int32_t x1 = 100, y1 = 125, x2 = 300, y2 = 500;
@@ -8605,6 +8654,13 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShowTouches) {
     iter = fakePointerController->getSpots().find(SECONDARY_DISPLAY_ID);
     ASSERT_TRUE(iter != fakePointerController->getSpots().end());
     ASSERT_EQ(size_t(2), iter->second.size());
+
+    // Disable the show touches configuration and ensure the spots are cleared.
+    mFakePolicy->setShowTouches(false);
+    device2->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                       InputReaderConfiguration::CHANGE_SHOW_TOUCHES);
+
+    ASSERT_TRUE(fakePointerController->getSpots().empty());
 }
 
 TEST_F(MultiTouchInputMapperTest, VideoFrames_ReceivedByListener) {
@@ -9410,6 +9466,258 @@ TEST_F(MultiTouchInputMapperTest, WhenCapturedAndNotCaptured_GetSources) {
     mFakePolicy->setPointerCapture(true);
     configureDevice(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     ASSERT_EQ(AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
+}
+
+class MultiTouchPointerModeTest : public MultiTouchInputMapperTest {
+protected:
+    float mPointerMovementScale;
+    float mPointerXZoomScale;
+    void preparePointerMode(int xAxisResolution, int yAxisResolution) {
+        addConfigurationProperty("touch.deviceType", "pointer");
+        std::shared_ptr<FakePointerController> fakePointerController =
+                std::make_shared<FakePointerController>();
+        fakePointerController->setBounds(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
+        fakePointerController->setPosition(0, 0);
+        fakePointerController->setButtonState(0);
+        prepareDisplay(DISPLAY_ORIENTATION_0);
+
+        prepareAxes(POSITION);
+        prepareAbsoluteAxisResolution(xAxisResolution, yAxisResolution);
+        // In order to enable swipe and freeform gesture in pointer mode, pointer capture
+        // needs to be disabled, and the pointer gesture needs to be enabled.
+        mFakePolicy->setPointerCapture(false);
+        mFakePolicy->setPointerGestureEnabled(true);
+        mFakePolicy->setPointerController(fakePointerController);
+
+        float rawDiagonal = hypotf(RAW_X_MAX - RAW_X_MIN, RAW_Y_MAX - RAW_Y_MIN);
+        float displayDiagonal = hypotf(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+        mPointerMovementScale =
+                mFakePolicy->getPointerGestureMovementSpeedRatio() * displayDiagonal / rawDiagonal;
+        mPointerXZoomScale =
+                mFakePolicy->getPointerGestureZoomSpeedRatio() * displayDiagonal / rawDiagonal;
+    }
+
+    void prepareAbsoluteAxisResolution(int xAxisResolution, int yAxisResolution) {
+        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_MT_POSITION_X, RAW_X_MIN, RAW_X_MAX,
+                                       /*flat*/ 0,
+                                       /*fuzz*/ 0, /*resolution*/ xAxisResolution);
+        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_MT_POSITION_Y, RAW_Y_MIN, RAW_Y_MAX,
+                                       /*flat*/ 0,
+                                       /*fuzz*/ 0, /*resolution*/ yAxisResolution);
+    }
+};
+
+/**
+ * Two fingers down on a pointer mode touch pad. The width
+ * of the two finger is larger than 1/4 of the touch pack diagnal length. However, it
+ * is smaller than the fixed min physical length 30mm. Two fingers' distance must
+ * be greater than the both value to be freeform gesture, so that after two
+ * fingers start to move downwards, the gesture should be swipe.
+ */
+TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthSwipe) {
+    // The min freeform gesture width is 25units/mm x 30mm = 750
+    // which is greater than fraction of the diagnal length of the touchpad (349).
+    // Thus, MaxSwipWidth is 750.
+    preparePointerMode(25 /*xResolution*/, 25 /*yResolution*/);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+    NotifyMotionArgs motionArgs;
+
+    // Two fingers down at once.
+    // The two fingers are 450 units apart, expects the current gesture to be PRESS
+    // Pointer's initial position is used the [0,0] coordinate.
+    int32_t x1 = 100, y1 = 125, x2 = 550, y2 = 125;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_NO_FATAL_FAILURE(
+            assertPointerCoords(motionArgs.pointerCoords[0], 0, 0, 1, 0, 0, 0, 0, 0, 0, 0));
+
+    // It should be recognized as a SWIPE gesture when two fingers start to move down,
+    // that there should be 1 pointer.
+    int32_t movingDistance = 200;
+    y1 += movingDistance;
+    y2 += movingDistance;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], 0,
+                                                movingDistance * mPointerMovementScale, 1, 0, 0, 0,
+                                                0, 0, 0, 0));
+}
+
+/**
+ * Two fingers down on a pointer mode touch pad. The width of the two finger is larger
+ * than the minimum freeform gesture width, 30mm. However, it is smaller than 1/4 of
+ * the touch pack diagnal length. Two fingers' distance must be greater than the both
+ * value to be freeform gesture, so that after two fingers start to move downwards,
+ * the gesture should be swipe.
+ */
+TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthLowResolutionSwipe) {
+    // The min freeform gesture width is 5units/mm x 30mm = 150
+    // which is greater than fraction of the diagnal length of the touchpad (349).
+    // Thus, MaxSwipWidth is the fraction of the diagnal length, 349.
+    preparePointerMode(5 /*xResolution*/, 5 /*yResolution*/);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+    NotifyMotionArgs motionArgs;
+
+    // Two fingers down at once.
+    // The two fingers are 250 units apart, expects the current gesture to be PRESS
+    // Pointer's initial position is used the [0,0] coordinate.
+    int32_t x1 = 100, y1 = 125, x2 = 350, y2 = 125;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_NO_FATAL_FAILURE(
+            assertPointerCoords(motionArgs.pointerCoords[0], 0, 0, 1, 0, 0, 0, 0, 0, 0, 0));
+
+    // It should be recognized as a SWIPE gesture when two fingers start to move down,
+    // and there should be 1 pointer.
+    int32_t movingDistance = 200;
+    y1 += movingDistance;
+    y2 += movingDistance;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    // New coordinate is the scaled relative coordinate from the initial coordinate.
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], 0,
+                                                movingDistance * mPointerMovementScale, 1, 0, 0, 0,
+                                                0, 0, 0, 0));
+}
+
+/**
+ * Touch the touch pad with two fingers with a distance wider than the minimum freeform
+ * gesture width and 1/4 of the diagnal length of the touchpad. Expect to receive
+ * freeform gestures after two fingers start to move downwards.
+ */
+TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthFreeform) {
+    preparePointerMode(25 /*xResolution*/, 25 /*yResolution*/);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+
+    NotifyMotionArgs motionArgs;
+
+    // Two fingers down at once. Wider than the max swipe width.
+    // The gesture is expected to be PRESS, then transformed to FREEFORM
+    int32_t x1 = 100, y1 = 125, x2 = 900, y2 = 125;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    // One pointer for PRESS, and its coordinate is used as the origin for pointer coordinates.
+    ASSERT_NO_FATAL_FAILURE(
+            assertPointerCoords(motionArgs.pointerCoords[0], 0, 0, 1, 0, 0, 0, 0, 0, 0, 0));
+
+    int32_t movingDistance = 200;
+
+    // Move two fingers down, expect a cancel event because gesture is changing to freeform,
+    // then two down events for two pointers.
+    y1 += movingDistance;
+    y2 += movingDistance;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    // The previous PRESS gesture is cancelled, because it is transformed to freeform
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_CANCEL, motionArgs.action);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_EQ(1U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_EQ(2U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_POINTER_DOWN, motionArgs.action & AMOTION_EVENT_ACTION_MASK);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    // Two pointers' scaled relative coordinates from their initial centroid.
+    // Initial y coordinates are 0 as y1 and y2 have the same value.
+    float cookedX1 = (x1 - x2) / 2 * mPointerXZoomScale;
+    float cookedX2 = (x2 - x1) / 2 * mPointerXZoomScale;
+    // When pointers move,  the new coordinates equal to the initial coordinates plus
+    // scaled moving distance.
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], cookedX1,
+                                                movingDistance * mPointerMovementScale, 1, 0, 0, 0,
+                                                0, 0, 0, 0));
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[1], cookedX2,
+                                                movingDistance * mPointerMovementScale, 1, 0, 0, 0,
+                                                0, 0, 0, 0));
+
+    // Move two fingers down again, expect one MOVE motion event.
+    y1 += movingDistance;
+    y2 += movingDistance;
+
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, x1, y1);
+    processMTSync(mapper);
+    processId(mapper, SECOND_TRACKING_ID);
+    processPosition(mapper, x2, y2);
+    processMTSync(mapper);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    ASSERT_EQ(2U, motionArgs.pointerCount);
+    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, motionArgs.action);
+    ASSERT_EQ(AMOTION_EVENT_TOOL_TYPE_FINGER, motionArgs.pointerProperties[0].toolType);
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0], cookedX1,
+                                                movingDistance * 2 * mPointerMovementScale, 1, 0, 0,
+                                                0, 0, 0, 0, 0));
+    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[1], cookedX2,
+                                                movingDistance * 2 * mPointerMovementScale, 1, 0, 0,
+                                                0, 0, 0, 0, 0));
 }
 
 // --- JoystickInputMapperTest ---

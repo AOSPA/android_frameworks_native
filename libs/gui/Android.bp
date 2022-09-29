@@ -189,6 +189,7 @@ cc_defaults {
         "BufferHubConsumer.cpp",
         "BufferHubProducer.cpp",
         "BufferItemConsumer.cpp",
+        "CompositorTiming.cpp",
         "ConsumerBase.cpp",
         "CpuConsumer.cpp",
         "DebugEGLImageTracker.cpp",
@@ -330,7 +331,6 @@ filegroup {
 cc_defaults {
     name: "libgui_bufferqueue-defaults",
 
-    clang: true,
     cflags: [
         "-Wall",
         "-Werror",
@@ -351,7 +351,7 @@ cc_defaults {
     },
 
     whole_static_libs: [
-        "LibGuiProperties",
+        "libLibGuiProperties",
     ],
 
     shared_libs: [

@@ -16,6 +16,7 @@
 
 #undef LOG_TAG
 #define LOG_TAG "LayerTraceGenerator"
+//#define LOG_NDEBUG 0
 
 #include <TestableSurfaceFlinger.h>
 #include <Tracing/TransactionProtoParser.h>
@@ -70,19 +71,6 @@ public:
                            sp<IGraphicBufferConsumer>* /* outConsumer */,
                            bool /* consumerIsSurfaceFlinger */) override {}
 
-    sp<IGraphicBufferProducer> createMonitoredProducer(
-            const sp<IGraphicBufferProducer>& /* producer */,
-            const sp<SurfaceFlinger>& /* flinger */, const wp<Layer>& /* layer */) override {
-        return nullptr;
-    }
-
-    sp<BufferLayerConsumer> createBufferLayerConsumer(
-            const sp<IGraphicBufferConsumer>& /* consumer */,
-            renderengine::RenderEngine& /* renderEngine */, uint32_t /* textureName */,
-            Layer* /* layer */) override {
-        return nullptr;
-    }
-
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer>& /* producer */) override {
         return nullptr;
@@ -102,10 +90,6 @@ public:
 
     sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) {
         return new EffectLayer(args);
-    }
-
-    sp<BufferQueueLayer> createBufferQueueLayer(const LayerCreationArgs&) override {
-        return nullptr;
     }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
@@ -140,6 +124,14 @@ public:
         data.writeInterfaceToken(String16("android.ui.ISurfaceComposer"));
         data.writeInt32(flags);
         transact(1033, data, &reply, 0 /* flags */);
+    }
+
+    void setLayerTraceSize(int32_t sizeInKb) {
+        Parcel data;
+        Parcel reply;
+        data.writeInterfaceToken(String16("android.ui.ISurfaceComposer"));
+        data.writeInt32(sizeInKb);
+        transact(1029, data, &reply, 0 /* flags */);
     }
 
     void startLayerTracing(int64_t traceStartTime) {
@@ -206,6 +198,7 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
     mFlinger.mutableMaxRenderTargetSize() = 16384;
 
     flinger->setLayerTracingFlags(LayerTracing::TRACE_INPUT | LayerTracing::TRACE_BUFFERS);
+    flinger->setLayerTraceSize(512 * 1024); // 512MB buffer size
     flinger->startLayerTracing(traceFile.entry(0).elapsed_realtime_nanos());
     std::unique_ptr<TraceGenFlingerDataMapper> mapper =
             std::make_unique<TraceGenFlingerDataMapper>();
@@ -218,9 +211,10 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
     for (int i = 0; i < traceFile.entry_size(); i++) {
         proto::TransactionTraceEntry entry = traceFile.entry(i);
         ALOGV("    Entry %04d/%04d for time=%" PRId64 " vsyncid=%" PRId64
-              " layers +%d -%d transactions=%d",
+              " layers +%d -%d handles -%d transactions=%d",
               i, traceFile.entry_size(), entry.elapsed_realtime_nanos(), entry.vsync_id(),
-              entry.added_layers_size(), entry.removed_layers_size(), entry.transactions_size());
+              entry.added_layers_size(), entry.removed_layers_size(),
+              entry.removed_layer_handles_size(), entry.transactions_size());
 
         for (int j = 0; j < entry.added_layers_size(); j++) {
             // create layers
@@ -239,7 +233,7 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
                     (dataMapper->mLayerHandles.find(tracingArgs.parentId) ==
                      dataMapper->mLayerHandles.end())) {
                     args.addToRoot = false;
-                } else {
+                } else if (tracingArgs.parentId != -1) {
                     parentHandle = dataMapper->getLayerHandle(tracingArgs.parentId);
                 }
                 mFlinger.createLayer(args, &outHandle, parentHandle, &outLayerId,
@@ -266,13 +260,13 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
                                          transaction.listenerCallbacks, transaction.id);
         }
 
-        for (int j = 0; j < entry.removed_layer_handles_size(); j++) {
-            dataMapper->mLayerHandles.erase(entry.removed_layer_handles(j));
-        }
-
         frameTime = entry.elapsed_realtime_nanos();
         vsyncId = entry.vsync_id();
         mFlinger.commit(frameTime, vsyncId);
+
+        for (int j = 0; j < entry.removed_layer_handles_size(); j++) {
+            dataMapper->mLayerHandles.erase(entry.removed_layer_handles(j));
+        }
     }
 
     flinger->stopLayerTracing(outputLayersTracePath);

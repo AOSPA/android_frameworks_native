@@ -785,12 +785,16 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     if (AHardwareBuffer_isSupported(&desc)) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
             VK_FORMAT_R5G6B5_UNORM_PACK16, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
+        all_formats.emplace_back(VkSurfaceFormatKHR{
+            VK_FORMAT_R5G6B5_UNORM_PACK16, VK_COLOR_SPACE_PASS_THROUGH_EXT});
     }
 
     desc.format = AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
     if (AHardwareBuffer_isSupported(&desc)) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
             VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
+        all_formats.emplace_back(VkSurfaceFormatKHR{
+            VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_PASS_THROUGH_EXT});
         if (wide_color_support) {
             all_formats.emplace_back(
                 VkSurfaceFormatKHR{VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -806,6 +810,9 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
         all_formats.emplace_back(
             VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
                                VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
+        all_formats.emplace_back(
+            VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+                               VK_COLOR_SPACE_PASS_THROUGH_EXT});
         if (wide_color_support) {
             all_formats.emplace_back(
                 VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
@@ -939,8 +946,7 @@ VkResult GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice pdev,
         // VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and
         // VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR.  We technically cannot
         // know if VK_PRESENT_MODE_SHARED_MAILBOX_KHR is supported without a
-        // surface, and that cannot be relied upon.
-        present_modes.push_back(VK_PRESENT_MODE_MAILBOX_KHR);
+        // surface, and that cannot be relied upon.  Therefore, don't return it.
         present_modes.push_back(VK_PRESENT_MODE_FIFO_KHR);
     } else {
         ANativeWindow* window = SurfaceFromHandle(surface)->window.get();
@@ -1844,6 +1850,11 @@ VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
             if (swapchain_result != VK_SUCCESS) {
                 OrphanSwapchain(device, &swapchain);
             }
+            // Android will only return VK_SUBOPTIMAL_KHR for vkQueuePresentKHR,
+            // and only when the window's transform/rotation changes.  Extent
+            // changes will not cause VK_SUBOPTIMAL_KHR because of the
+            // application issues that were caused when the following transform
+            // change was added.
             int window_transform_hint;
             err = window->query(window, NATIVE_WINDOW_TRANSFORM_HINT,
                                 &window_transform_hint);

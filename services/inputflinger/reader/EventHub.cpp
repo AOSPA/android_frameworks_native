@@ -452,8 +452,7 @@ bool EventHub::Device::hasKeycodeLocked(int keycode) const {
         return false;
     }
 
-    std::vector<int32_t> scanCodes;
-    keyMap.keyLayoutMap->findScanCodesForKey(keycode, &scanCodes);
+    std::vector<int32_t> scanCodes = keyMap.keyLayoutMap->findScanCodesForKey(keycode);
     const size_t N = scanCodes.size();
     for (size_t i = 0; i < N && i <= KEY_MAX; i++) {
         int32_t sc = scanCodes[i];
@@ -503,7 +502,7 @@ status_t EventHub::Device::loadKeyMapLocked() {
 bool EventHub::Device::isExternalDeviceLocked() {
     if (configuration) {
         bool value;
-        if (configuration->tryGetProperty(String8("device.internal"), value)) {
+        if (configuration->tryGetProperty("device.internal", value)) {
             return !value;
         }
     }
@@ -513,7 +512,7 @@ bool EventHub::Device::isExternalDeviceLocked() {
 bool EventHub::Device::deviceHasMicLocked() {
     if (configuration) {
         bool value;
-        if (configuration->tryGetProperty(String8("audio.mic"), value)) {
+        if (configuration->tryGetProperty("audio.mic", value)) {
             return value;
         }
     }
@@ -548,10 +547,10 @@ status_t EventHub::Device::mapLed(int32_t led, int32_t* outScanCode) const {
         return NAME_NOT_FOUND;
     }
 
-    int32_t scanCode;
-    if (keyMap.keyLayoutMap->findScanCodeForLed(led, &scanCode) != NAME_NOT_FOUND) {
-        if (scanCode >= 0 && scanCode <= LED_MAX && ledBitmask.test(scanCode)) {
-            *outScanCode = scanCode;
+    std::optional<int32_t> scanCode = keyMap.keyLayoutMap->findScanCodeForLed(led);
+    if (scanCode.has_value()) {
+        if (*scanCode >= 0 && *scanCode <= LED_MAX && ledBitmask.test(*scanCode)) {
+            *outScanCode = *scanCode;
             return NO_ERROR;
         }
     }
@@ -688,6 +687,7 @@ EventHub::EventHub(void)
     LOG_ALWAYS_FATAL_IF(mEpollFd < 0, "Could not create epoll instance: %s", strerror(errno));
 
     mINotifyFd = inotify_init1(IN_CLOEXEC);
+    LOG_ALWAYS_FATAL_IF(mINotifyFd < 0, "Could not create inotify instance: %s", strerror(errno));
 
     std::error_code errorCode;
     bool isDeviceInotifyAdded = false;
@@ -865,8 +865,7 @@ int32_t EventHub::getKeyCodeState(int32_t deviceId, int32_t keyCode) const {
 
     Device* device = getDeviceLocked(deviceId);
     if (device != nullptr && device->hasValidFd() && device->keyMap.haveKeyLayout()) {
-        std::vector<int32_t> scanCodes;
-        device->keyMap.keyLayoutMap->findScanCodesForKey(keyCode, &scanCodes);
+        std::vector<int32_t> scanCodes = device->keyMap.keyLayoutMap->findScanCodesForKey(keyCode);
         if (scanCodes.size() != 0) {
             if (device->readDeviceBitMask(EVIOCGKEY(0), device->keyState) >= 0) {
                 for (size_t i = 0; i < scanCodes.size(); i++) {
@@ -890,8 +889,8 @@ int32_t EventHub::getKeyCodeForKeyLocation(int32_t deviceId, int32_t locationKey
         device->keyMap.keyLayoutMap == nullptr) {
         return AKEYCODE_UNKNOWN;
     }
-    std::vector<int32_t> scanCodes;
-    device->keyMap.keyLayoutMap->findScanCodesForKey(locationKeyCode, &scanCodes);
+    std::vector<int32_t> scanCodes =
+            device->keyMap.keyLayoutMap->findScanCodesForKey(locationKeyCode);
     if (scanCodes.empty()) {
         ALOGW("Failed to get key code for key location: no scan code maps to key code %d for input"
               "device %d",
@@ -954,26 +953,22 @@ status_t EventHub::getAbsoluteAxisValue(int32_t deviceId, int32_t axis, int32_t*
     return -1;
 }
 
-bool EventHub::markSupportedKeyCodes(int32_t deviceId, size_t numCodes, const int32_t* keyCodes,
+bool EventHub::markSupportedKeyCodes(int32_t deviceId, const std::vector<int32_t>& keyCodes,
                                      uint8_t* outFlags) const {
     std::scoped_lock _l(mLock);
 
     Device* device = getDeviceLocked(deviceId);
     if (device != nullptr && device->keyMap.haveKeyLayout()) {
-        std::vector<int32_t> scanCodes;
-        for (size_t codeIndex = 0; codeIndex < numCodes; codeIndex++) {
-            scanCodes.clear();
+        for (size_t codeIndex = 0; codeIndex < keyCodes.size(); codeIndex++) {
+            std::vector<int32_t> scanCodes =
+                    device->keyMap.keyLayoutMap->findScanCodesForKey(keyCodes[codeIndex]);
 
-            status_t err = device->keyMap.keyLayoutMap->findScanCodesForKey(keyCodes[codeIndex],
-                                                                            &scanCodes);
-            if (!err) {
-                // check the possible scan codes identified by the layout map against the
-                // map of codes actually emitted by the driver
-                for (size_t sc = 0; sc < scanCodes.size(); sc++) {
-                    if (device->keyBitmask.test(scanCodes[sc])) {
-                        outFlags[codeIndex] = 1;
-                        break;
-                    }
+            // check the possible scan codes identified by the layout map against the
+            // map of codes actually emitted by the driver
+            for (const int32_t scanCode : scanCodes) {
+                if (device->keyBitmask.test(scanCode)) {
+                    outFlags[codeIndex] = 1;
+                    break;
                 }
             }
         }
@@ -1027,14 +1022,15 @@ status_t EventHub::mapAxis(int32_t deviceId, int32_t scanCode, AxisInfo* outAxis
     std::scoped_lock _l(mLock);
     Device* device = getDeviceLocked(deviceId);
 
-    if (device != nullptr && device->keyMap.haveKeyLayout()) {
-        status_t err = device->keyMap.keyLayoutMap->mapAxis(scanCode, outAxisInfo);
-        if (err == NO_ERROR) {
-            return NO_ERROR;
-        }
+    if (device == nullptr || !device->keyMap.haveKeyLayout()) {
+        return NAME_NOT_FOUND;
     }
-
-    return NAME_NOT_FOUND;
+    std::optional<AxisInfo> info = device->keyMap.keyLayoutMap->mapAxis(scanCode);
+    if (!info.has_value()) {
+        return NAME_NOT_FOUND;
+    }
+    *outAxisInfo = *info;
+    return NO_ERROR;
 }
 
 base::Result<std::pair<InputDeviceSensorType, int32_t>> EventHub::mapSensor(int32_t deviceId,
@@ -1728,7 +1724,10 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         // before closing the devices.
         if (mPendingINotify && mPendingEventIndex >= mPendingEventCount) {
             mPendingINotify = false;
-            readNotifyLocked();
+            const auto res = readNotifyLocked();
+            if (!res.ok()) {
+                ALOGW("Failed to read from inotify: %s", res.error().message().c_str());
+            }
             deviceChanged = true;
         }
 
@@ -2077,10 +2076,9 @@ void EventHub::openDeviceLocked(const std::string& devicePath) {
     }
 
     // See if this is a rotary encoder type device.
-    String8 deviceType = String8();
-    if (device->configuration &&
-        device->configuration->tryGetProperty(String8("device.type"), deviceType)) {
-        if (!deviceType.compare(String8("rotaryEncoder"))) {
+    std::string deviceType;
+    if (device->configuration && device->configuration->tryGetProperty("device.type", deviceType)) {
+        if (deviceType == "rotaryEncoder") {
             device->classes |= InputDeviceClass::ROTARY_ENCODER;
         }
     }
@@ -2418,53 +2416,56 @@ void EventHub::closeDeviceLocked(Device& device) {
     mDevices.erase(device.id);
 }
 
-status_t EventHub::readNotifyLocked() {
-    int res;
-    char event_buf[512];
-    int event_size;
-    int event_pos = 0;
-    struct inotify_event* event;
+base::Result<void> EventHub::readNotifyLocked() {
+    static constexpr auto EVENT_SIZE = static_cast<ssize_t>(sizeof(inotify_event));
+    uint8_t eventBuffer[512];
+    ssize_t sizeRead;
 
     ALOGV("EventHub::readNotify nfd: %d\n", mINotifyFd);
-    res = read(mINotifyFd, event_buf, sizeof(event_buf));
-    if (res < (int)sizeof(*event)) {
-        if (errno == EINTR) return 0;
-        ALOGW("could not get event, %s\n", strerror(errno));
-        return -1;
-    }
+    do {
+        sizeRead = read(mINotifyFd, eventBuffer, sizeof(eventBuffer));
+    } while (sizeRead < 0 && errno == EINTR);
 
-    while (res >= (int)sizeof(*event)) {
-        event = (struct inotify_event*)(event_buf + event_pos);
-        if (event->len) {
-            if (event->wd == mDeviceInputWd) {
-                std::string filename = std::string(DEVICE_INPUT_PATH) + "/" + event->name;
-                if (event->mask & IN_CREATE) {
-                    openDeviceLocked(filename);
-                } else {
-                    ALOGI("Removing device '%s' due to inotify event\n", filename.c_str());
-                    closeDeviceByPathLocked(filename);
-                }
-            } else if (event->wd == mDeviceWd) {
-                if (isV4lTouchNode(event->name)) {
-                    std::string filename = std::string(DEVICE_PATH) + "/" + event->name;
-                    if (event->mask & IN_CREATE) {
-                        openVideoDeviceLocked(filename);
-                    } else {
-                        ALOGI("Removing video device '%s' due to inotify event", filename.c_str());
-                        closeVideoDeviceByPathLocked(filename);
-                    }
-                } else if (strcmp(event->name, "input") == 0 && event->mask & IN_CREATE) {
-                    addDeviceInputInotify();
-                }
-            } else {
-                LOG_ALWAYS_FATAL("Unexpected inotify event, wd = %i", event->wd);
-            }
-        }
-        event_size = sizeof(*event) + event->len;
-        res -= event_size;
-        event_pos += event_size;
+    if (sizeRead < EVENT_SIZE) return Errorf("could not get event, %s", strerror(errno));
+
+    for (ssize_t eventPos = 0; sizeRead >= EVENT_SIZE;) {
+        const inotify_event* event;
+        event = (const inotify_event*)(eventBuffer + eventPos);
+        if (event->len == 0) continue;
+
+        handleNotifyEventLocked(*event);
+
+        const ssize_t eventSize = EVENT_SIZE + event->len;
+        sizeRead -= eventSize;
+        eventPos += eventSize;
     }
-    return 0;
+    return {};
+}
+
+void EventHub::handleNotifyEventLocked(const inotify_event& event) {
+    if (event.wd == mDeviceInputWd) {
+        std::string filename = std::string(DEVICE_INPUT_PATH) + "/" + event.name;
+        if (event.mask & IN_CREATE) {
+            openDeviceLocked(filename);
+        } else {
+            ALOGI("Removing device '%s' due to inotify event\n", filename.c_str());
+            closeDeviceByPathLocked(filename);
+        }
+    } else if (event.wd == mDeviceWd) {
+        if (isV4lTouchNode(event.name)) {
+            std::string filename = std::string(DEVICE_PATH) + "/" + event.name;
+            if (event.mask & IN_CREATE) {
+                openVideoDeviceLocked(filename);
+            } else {
+                ALOGI("Removing video device '%s' due to inotify event", filename.c_str());
+                closeVideoDeviceByPathLocked(filename);
+            }
+        } else if (strcmp(event.name, "input") == 0 && event.mask & IN_CREATE) {
+            addDeviceInputInotify();
+        }
+    } else {
+        LOG_ALWAYS_FATAL("Unexpected inotify event, wd = %i", event.wd);
+    }
 }
 
 status_t EventHub::scanDirLocked(const std::string& dirname) {

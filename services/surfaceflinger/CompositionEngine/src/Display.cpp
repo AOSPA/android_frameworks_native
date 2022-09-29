@@ -286,11 +286,14 @@ bool Display::chooseCompositionStrategy(
         return false;
     }
 
+    const nsecs_t startTime = systemTime();
+
     // Get any composition changes requested by the HWC device, and apply them.
     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
     auto& hwc = getCompositionEngine().getHwComposer();
+    const bool requiresClientComposition = anyLayersRequireClientComposition();
     if (status_t result =
-                hwc.getDeviceCompositionChanges(*halDisplayId, anyLayersRequireClientComposition(),
+                hwc.getDeviceCompositionChanges(*halDisplayId, requiresClientComposition,
                                                 getState().earliestPresentTime,
                                                 getState().previousPresentFence,
                                                 getState().expectedPresentTime, outChanges);
@@ -298,6 +301,11 @@ bool Display::chooseCompositionStrategy(
         ALOGE("chooseCompositionStrategy failed for %s: %d (%s)", getName().c_str(), result,
               strerror(-result));
         return false;
+    }
+
+    if (isPowerHintSessionEnabled()) {
+        mPowerAdvisor->setHwcValidateTiming(mId, startTime, systemTime());
+        mPowerAdvisor->setRequiresClientComposition(mId, requiresClientComposition);
     }
 
     return true;
@@ -456,8 +464,23 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
     endDraw();
 
     auto& hwc = getCompositionEngine().getHwComposer();
+
+    const nsecs_t startTime = systemTime();
+
+    if (isPowerHintSessionEnabled()) {
+        if (!getCompositionEngine().getHwComposer().getComposer()->isSupported(
+                    Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
+            getState().previousPresentFence->getSignalTime() != Fence::SIGNAL_TIME_PENDING) {
+            mPowerAdvisor->setHwcPresentDelayedTime(mId, getState().earliestPresentTime);
+        }
+    }
+
     hwc.presentAndGetReleaseFences(*halDisplayIdOpt, getState().earliestPresentTime,
                                    getState().previousPresentFence);
+
+    if (isPowerHintSessionEnabled()) {
+        mPowerAdvisor->setHwcPresentTiming(mId, startTime, systemTime());
+    }
 
     fences.presentFence = hwc.getPresentFence(*halDisplayIdOpt);
 
@@ -484,6 +507,14 @@ void Display::setExpensiveRenderingExpected(bool enabled) {
     }
 }
 
+bool Display::isPowerHintSessionEnabled() {
+    return mPowerAdvisor != nullptr && mPowerAdvisor->usePowerHintSession();
+}
+
+void Display::setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) {
+    mPowerAdvisor->setGpuFenceTime(mId, std::move(gpuFence));
+}
+
 void Display::finishFrame(const compositionengine::CompositionRefreshArgs& refreshArgs,
                           GpuCompositionResult&& result) {
     // We only need to actually compose the display if:
@@ -496,6 +527,13 @@ void Display::finishFrame(const compositionengine::CompositionRefreshArgs& refre
     }
 
     impl::Output::finishFrame(refreshArgs, std::move(result));
+
+    if (isPowerHintSessionEnabled()) {
+        auto& hwc = getCompositionEngine().getHwComposer();
+        if (auto halDisplayId = HalDisplayId::tryCast(mId)) {
+            mPowerAdvisor->setSkippedValidate(mId, hwc.getValidateSkipped(*halDisplayId));
+        }
+    }
 }
 
 void Display::endDraw() {

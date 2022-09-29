@@ -147,7 +147,7 @@ public:
 
     int32_t getKeyCodeState(uint32_t sourceMask, int32_t keyCode) override;
     int32_t getScanCodeState(uint32_t sourceMask, int32_t scanCode) override;
-    bool markSupportedKeyCodes(uint32_t sourceMask, size_t numCodes, const int32_t* keyCodes,
+    bool markSupportedKeyCodes(uint32_t sourceMask, const std::vector<int32_t>& keyCodes,
                                uint8_t* outFlags) override;
 
     void cancelTouch(nsecs_t when, nsecs_t readTime) override;
@@ -248,12 +248,9 @@ protected:
 
         SizeCalibration sizeCalibration;
 
-        bool haveSizeScale;
-        float sizeScale;
-        bool haveSizeBias;
-        float sizeBias;
-        bool haveSizeIsSummed;
-        bool sizeIsSummed;
+        std::optional<float> sizeScale;
+        std::optional<float> sizeBias;
+        std::optional<bool> sizeIsSummed;
 
         // Pressure
         enum class PressureCalibration {
@@ -264,8 +261,7 @@ protected:
         };
 
         PressureCalibration pressureCalibration;
-        bool havePressureScale;
-        float pressureScale;
+        std::optional<float> pressureScale;
 
         // Orientation
         enum class OrientationCalibration {
@@ -285,8 +281,7 @@ protected:
         };
 
         DistanceCalibration distanceCalibration;
-        bool haveDistanceScale;
-        float distanceScale;
+        std::optional<float> distanceScale;
 
         enum class CoverageCalibration {
             DEFAULT,
@@ -296,15 +291,15 @@ protected:
 
         CoverageCalibration coverageCalibration;
 
-        inline void applySizeScaleAndBias(float* outSize) const {
-            if (haveSizeScale) {
-                *outSize *= sizeScale;
+        inline void applySizeScaleAndBias(float& outSize) const {
+            if (sizeScale) {
+                outSize *= *sizeScale;
             }
-            if (haveSizeBias) {
-                *outSize += sizeBias;
+            if (sizeBias) {
+                outSize += *sizeBias;
             }
-            if (*outSize < 0) {
-                *outSize = 0;
+            if (outSize < 0) {
+                outSize = 0;
             }
         }
     } mCalibration;
@@ -475,35 +470,29 @@ private:
         InputDeviceInfo::MotionRange y;
         InputDeviceInfo::MotionRange pressure;
 
-        bool haveSize;
-        InputDeviceInfo::MotionRange size;
+        std::optional<InputDeviceInfo::MotionRange> size;
 
-        bool haveTouchSize;
-        InputDeviceInfo::MotionRange touchMajor;
-        InputDeviceInfo::MotionRange touchMinor;
+        std::optional<InputDeviceInfo::MotionRange> touchMajor;
+        std::optional<InputDeviceInfo::MotionRange> touchMinor;
 
-        bool haveToolSize;
-        InputDeviceInfo::MotionRange toolMajor;
-        InputDeviceInfo::MotionRange toolMinor;
+        std::optional<InputDeviceInfo::MotionRange> toolMajor;
+        std::optional<InputDeviceInfo::MotionRange> toolMinor;
 
-        bool haveOrientation;
-        InputDeviceInfo::MotionRange orientation;
+        std::optional<InputDeviceInfo::MotionRange> orientation;
 
-        bool haveDistance;
-        InputDeviceInfo::MotionRange distance;
+        std::optional<InputDeviceInfo::MotionRange> distance;
 
-        bool haveTilt;
-        InputDeviceInfo::MotionRange tilt;
-
-        OrientedRanges() { clear(); }
+        std::optional<InputDeviceInfo::MotionRange> tilt;
 
         void clear() {
-            haveSize = false;
-            haveTouchSize = false;
-            haveToolSize = false;
-            haveOrientation = false;
-            haveDistance = false;
-            haveTilt = false;
+            size = std::nullopt;
+            touchMajor = std::nullopt;
+            touchMinor = std::nullopt;
+            toolMajor = std::nullopt;
+            toolMinor = std::nullopt;
+            orientation = std::nullopt;
+            distance = std::nullopt;
+            tilt = std::nullopt;
         }
     } mOrientedRanges;
 
@@ -527,7 +516,9 @@ private:
     float mPointerXZoomScale;
     float mPointerYZoomScale;
 
-    // The maximum swipe width.
+    // The maximum swipe width between pointers to detect a swipe gesture
+    // in the number of pixels.Touches that are wider than this are translated
+    // into freeform gestures.
     float mPointerGestureMaxSwipeWidth;
 
     struct PointerDistanceHeapElement {

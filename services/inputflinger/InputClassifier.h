@@ -78,9 +78,14 @@ public:
     virtual void reset(const NotifyDeviceResetArgs& args) = 0;
 
     /**
-     * Dump the state of the motion classifier
+     * Dump the state of the motion classifier.
      */
     virtual void dump(std::string& dump) = 0;
+
+    /**
+     * Called by the heartbeat to ensure the HAL is still processing normally.
+     */
+    virtual void monitor() = 0;
 };
 
 /**
@@ -95,6 +100,9 @@ public:
      * This method may be called on any thread (usually by the input manager).
      */
     virtual void dump(std::string& dump) = 0;
+
+    /** Called by the heartbeat to ensure that the classifier has not deadlocked. */
+    virtual void monitor() = 0;
 
     InputClassifierInterface() { }
     virtual ~InputClassifierInterface() { }
@@ -152,13 +160,14 @@ public:
     virtual void reset(const NotifyDeviceResetArgs& args) override;
 
     virtual void dump(std::string& dump) override;
+    virtual void monitor() override;
 
 private:
     friend class MotionClassifierTest; // to create MotionClassifier with a test HAL implementation
     explicit MotionClassifier(
             std::shared_ptr<aidl::android::hardware::input::processor::IInputProcessor> service);
 
-    // The events that need to be sent to the HAL.
+    /** The events that need to be sent to the HAL. */
     BlockingQueue<ClassifierEvent> mEvents;
     /**
      * Add an event to the queue mEvents.
@@ -247,6 +256,7 @@ public:
     void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) override;
 
     void dump(std::string& dump) override;
+    void monitor() override;
 
     ~InputClassifier();
 
@@ -257,7 +267,7 @@ private:
     // Protect access to mMotionClassifier, since it may become null via a hidl callback
     std::mutex mLock;
     // The next stage to pass input events to
-    InputListenerInterface& mListener;
+    QueuedInputListener mQueuedListener;
 
     std::unique_ptr<MotionClassifierInterface> mMotionClassifier GUARDED_BY(mLock);
     std::future<void> mInitializeMotionClassifier GUARDED_BY(mLock);

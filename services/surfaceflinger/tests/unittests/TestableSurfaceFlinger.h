@@ -29,7 +29,6 @@
 #include <compositionengine/mock/DisplaySurface.h>
 #include <gui/ScreenCaptureResults.h>
 
-#include "BufferQueueLayer.h"
 #include "BufferStateLayer.h"
 #include "ContainerLayer.h"
 #include "DisplayDevice.h"
@@ -112,18 +111,6 @@ public:
         mCreateBufferQueue(outProducer, outConsumer, consumerIsSurfaceFlinger);
     }
 
-    sp<IGraphicBufferProducer> createMonitoredProducer(const sp<IGraphicBufferProducer>& producer,
-                                                       const sp<SurfaceFlinger>& flinger,
-                                                       const wp<Layer>& layer) override {
-        return new MonitoredProducer(producer, flinger, layer);
-    }
-
-    sp<BufferLayerConsumer> createBufferLayerConsumer(const sp<IGraphicBufferConsumer>& consumer,
-                                                      renderengine::RenderEngine& renderEngine,
-                                                      uint32_t textureName, Layer* layer) override {
-        return new BufferLayerConsumer(consumer, renderEngine, textureName, layer);
-    }
-
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer>& producer) override {
         if (!mCreateNativeWindowSurface) return nullptr;
@@ -132,10 +119,6 @@ public:
 
     std::unique_ptr<compositionengine::CompositionEngine> createCompositionEngine() override {
         return compositionengine::impl::createCompositionEngine();
-    }
-
-    sp<BufferQueueLayer> createBufferQueueLayer(const LayerCreationArgs&) override {
-        return nullptr;
     }
 
     sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs&) override {
@@ -330,6 +313,10 @@ public:
         layer->mDrawingParent = drawingParent;
     }
 
+    void setPowerHintSessionMode(bool early, bool late) {
+        mFlinger->mPowerHintSessionMode = {.late = late, .early = early};
+    }
+
     /* ------------------------------------------------------------------------
      * Forwarding for functions being tested
      */
@@ -501,8 +488,6 @@ public:
         return static_cast<impl::HWComposer&>(mFlinger->getHwComposer());
     }
     auto& getCompositionEngine() const { return mFlinger->getCompositionEngine(); }
-
-    const auto& getCompositorTiming() const { return mFlinger->getBE().mCompositorTiming; }
 
     mock::FrameTracer* getFrameTracer() const {
         return static_cast<mock::FrameTracer*>(mFlinger->mFrameTracer.get());

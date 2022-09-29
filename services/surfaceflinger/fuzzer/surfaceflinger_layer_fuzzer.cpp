@@ -18,9 +18,8 @@
 #include <Client.h>
 #include <DisplayDevice.h>
 #include <EffectLayer.h>
-#include <LayerRejecter.h>
 #include <LayerRenderArea.h>
-#include <MonitoredProducer.h>
+#include <ftl/future.h>
 #include <fuzzer/FuzzedDataProvider.h>
 #include <gui/IProducerListener.h>
 #include <gui/LayerDebugInfo.h>
@@ -116,17 +115,18 @@ void LayerFuzzer::invokeBufferStateLayer() {
     sp<Fence> fence = sp<Fence>::make();
     const std::shared_ptr<FenceTime> fenceTime = std::make_shared<FenceTime>(fence);
 
-    const CompositorTiming compositor = {mFdp.ConsumeIntegral<int64_t>(),
-                                         mFdp.ConsumeIntegral<int64_t>(),
-                                         mFdp.ConsumeIntegral<int64_t>()};
-    std::packaged_task<renderengine::RenderEngineResult()> renderResult([&] {
-        return renderengine::RenderEngineResult{mFdp.ConsumeIntegral<int32_t>(),
-                                                base::unique_fd(fence->get())};
-    });
-    layer->onLayerDisplayed(renderResult.get_future());
+    const CompositorTiming compositorTiming(mFdp.ConsumeIntegral<int64_t>(),
+                                            mFdp.ConsumeIntegral<int64_t>(),
+                                            mFdp.ConsumeIntegral<int64_t>(),
+                                            mFdp.ConsumeIntegral<int64_t>());
+
+    layer->onLayerDisplayed(ftl::yield<FenceResult>(fence).share());
+    layer->onLayerDisplayed(
+            ftl::yield<FenceResult>(base::unexpected(mFdp.ConsumeIntegral<status_t>())).share());
+
     layer->releasePendingBuffer(mFdp.ConsumeIntegral<int64_t>());
-    layer->finalizeFrameEventHistory(fenceTime, compositor);
-    layer->onPostComposition(nullptr, fenceTime, fenceTime, compositor);
+    layer->finalizeFrameEventHistory(fenceTime, compositorTiming);
+    layer->onPostComposition(nullptr, fenceTime, fenceTime, compositorTiming);
     layer->isBufferDue(mFdp.ConsumeIntegral<int64_t>());
 
     layer->setTransform(mFdp.ConsumeIntegral<uint32_t>());
@@ -148,8 +148,6 @@ void LayerFuzzer::invokeBufferStateLayer() {
     const bool ownsHandle = mFdp.ConsumeBool();
     sp<NativeHandle> nativeHandle = sp<NativeHandle>::make(testHandle, ownsHandle);
     layer->setSidebandStream(nativeHandle);
-    layer->addFrameEvent(fence, mFdp.ConsumeIntegral<int64_t>() /*postedTime*/,
-                         mFdp.ConsumeIntegral<int64_t>() /*requestedTime*/);
     layer->computeSourceBounds(getFuzzedFloatRect(&mFdp));
 
     layer->fenceHasSignaled();

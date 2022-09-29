@@ -30,7 +30,6 @@
 #include <ui/DisplayStatInfo.h>
 #include <ui/DynamicDisplayInfo.h>
 
-#include "BufferQueueLayer.h"
 #include "BufferStateLayer.h"
 #include "ContainerLayer.h"
 #include "DisplayDevice.h"
@@ -335,18 +334,6 @@ public:
         mCreateBufferQueue(outProducer, outConsumer, consumerIsSurfaceFlinger);
     }
 
-    sp<IGraphicBufferProducer> createMonitoredProducer(const sp<IGraphicBufferProducer> &producer,
-                                                       const sp<SurfaceFlinger> &flinger,
-                                                       const wp<Layer> &layer) override {
-        return new MonitoredProducer(producer, flinger, layer);
-    }
-
-    sp<BufferLayerConsumer> createBufferLayerConsumer(const sp<IGraphicBufferConsumer> &consumer,
-                                                      renderengine::RenderEngine &renderEngine,
-                                                      uint32_t textureName, Layer *layer) override {
-        return new BufferLayerConsumer(consumer, renderEngine, textureName, layer);
-    }
-
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer> &producer) override {
         if (!mCreateNativeWindowSurface) return nullptr;
@@ -355,10 +342,6 @@ public:
 
     std::unique_ptr<compositionengine::CompositionEngine> createCompositionEngine() override {
         return compositionengine::impl::createCompositionEngine();
-    }
-
-    sp<BufferQueueLayer> createBufferQueueLayer(const LayerCreationArgs &) override {
-        return nullptr;
     }
 
     sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs &) override {
@@ -457,9 +440,6 @@ public:
         mFlinger->dumpStaticScreenStats(result);
 
         result = fdp->ConsumeRandomLengthString().c_str();
-        mFlinger->dumpFrameEventsLocked(result);
-
-        result = fdp->ConsumeRandomLengthString().c_str();
         mFlinger->dumpRawDisplayIdentificationData(dumpArgs, result);
 
         LayersProto layersProto = mFlinger->dumpDrawingStateProto(fdp->ConsumeIntegral<uint32_t>());
@@ -542,16 +522,6 @@ public:
     void setVsyncConfig(FuzzedDataProvider *fdp) {
         const scheduler::VsyncModulator::VsyncConfig vsyncConfig{};
         mFlinger->setVsyncConfig(vsyncConfig, fdp->ConsumeIntegral<nsecs_t>());
-    }
-
-    void updateCompositorTiming(FuzzedDataProvider *fdp) {
-        std::shared_ptr<FenceTime> presentFenceTime = FenceTime::NO_FENCE;
-        mFlinger->updateCompositorTiming({}, fdp->ConsumeIntegral<nsecs_t>(), presentFenceTime);
-    }
-
-    void getCompositorTiming() {
-        CompositorTiming compositorTiming;
-        mFlinger->getCompositorTiming(&compositorTiming);
     }
 
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
@@ -648,11 +618,8 @@ public:
 
         mFlinger->postComposition();
 
-        getCompositorTiming();
+        mFlinger->trackPresentLatency(mFdp.ConsumeIntegral<nsecs_t>(), FenceTime::NO_FENCE);
 
-        updateCompositorTiming(&mFdp);
-
-        mFlinger->setCompositorTimingSnapped({}, mFdp.ConsumeIntegral<nsecs_t>());
         FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postFrame());
         mFlinger->calculateExpectedPresentTime({});
 

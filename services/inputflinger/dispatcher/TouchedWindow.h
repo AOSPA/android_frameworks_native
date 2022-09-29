@@ -30,6 +30,10 @@ struct TouchedWindow {
     sp<gui::WindowInfoHandle> windowHandle;
     int32_t targetFlags;
     BitSet32 pointerIds; // zero unless target flag FLAG_SPLIT is set
+    bool isPilferingPointers = false;
+    // Time at which the first action down occurred on this window.
+    // NOTE: This is not initialized in case of HOVER entry/exit and DISPATCH_AS_OUTSIDE scenario.
+    std::optional<nsecs_t> firstDownTimeInTarget;
 };
 
 } // namespace inputdispatcher

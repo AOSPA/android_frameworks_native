@@ -30,7 +30,7 @@ void TouchState::reset() {
 }
 
 void TouchState::addOrUpdateWindow(const sp<WindowInfoHandle>& windowHandle, int32_t targetFlags,
-                                   BitSet32 pointerIds) {
+                                   BitSet32 pointerIds, std::optional<nsecs_t> eventTime) {
     if (targetFlags & InputTarget::FLAG_SPLIT) {
         split = true;
     }
@@ -42,17 +42,22 @@ void TouchState::addOrUpdateWindow(const sp<WindowInfoHandle>& windowHandle, int
             if (targetFlags & InputTarget::FLAG_DISPATCH_AS_SLIPPERY_EXIT) {
                 touchedWindow.targetFlags &= ~InputTarget::FLAG_DISPATCH_AS_IS;
             }
+            // For cases like hover enter/exit or DISPATCH_AS_OUTSIDE a touch window might not have
+            // downTime set initially. Need to update existing window when an pointer is down for
+            // the window.
             touchedWindow.pointerIds.value |= pointerIds.value;
+            if (!touchedWindow.firstDownTimeInTarget.has_value()) {
+                touchedWindow.firstDownTimeInTarget = eventTime;
+            }
             return;
         }
     }
-
-    if (preventNewTargets) return; // Don't add new TouchedWindows.
 
     TouchedWindow touchedWindow;
     touchedWindow.windowHandle = windowHandle;
     touchedWindow.targetFlags = targetFlags;
     touchedWindow.pointerIds = pointerIds;
+    touchedWindow.firstDownTimeInTarget = eventTime;
     windows.push_back(touchedWindow);
 }
 
@@ -77,6 +82,27 @@ void TouchState::filterNonAsIsTouchWindows() {
             windows.erase(windows.begin() + i);
         }
     }
+}
+
+void TouchState::cancelPointersForWindowsExcept(const BitSet32 pointerIds,
+                                                const sp<IBinder>& token) {
+    if (pointerIds.isEmpty()) return;
+    std::for_each(windows.begin(), windows.end(), [&pointerIds, &token](TouchedWindow& w) {
+        if (w.windowHandle->getToken() != token) {
+            w.pointerIds &= BitSet32(~pointerIds.value);
+        }
+    });
+    std::erase_if(windows, [](const TouchedWindow& w) { return w.pointerIds.isEmpty(); });
+}
+
+void TouchState::cancelPointersForNonPilferingWindows(const BitSet32 pointerIds) {
+    if (pointerIds.isEmpty()) return;
+    std::for_each(windows.begin(), windows.end(), [&pointerIds](TouchedWindow& w) {
+        if (!w.isPilferingPointers) {
+            w.pointerIds &= BitSet32(~pointerIds.value);
+        }
+    });
+    std::erase_if(windows, [](const TouchedWindow& w) { return w.pointerIds.isEmpty(); });
 }
 
 void TouchState::filterWindowsExcept(const sp<IBinder>& token) {

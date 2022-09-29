@@ -25,9 +25,9 @@
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
 #include <android/hardware/configstore/1.1/ISurfaceFlingerConfigs.h>
 #include <configstore/Utils.h>
+#include <ftl/fake_guard.h>
 #include <gui/WindowInfo.h>
 #include <system/window.h>
-#include <ui/DisplayStatInfo.h>
 #include <utils/Timers.h>
 #include <utils/Trace.h>
 
@@ -94,9 +94,13 @@ void Scheduler::startTimers() {
 }
 
 void Scheduler::setRefreshRateConfigs(std::shared_ptr<RefreshRateConfigs> configs) {
+    // The current RefreshRateConfigs instance may outlive this call, so unbind its idle timer.
     {
-        // The current RefreshRateConfigs instance may outlive this call, so unbind its idle timer.
-        std::scoped_lock lock(mRefreshRateConfigsLock);
+        // mRefreshRateConfigsLock is not locked here to avoid the deadlock
+        // as the callback can attempt to acquire the lock before stopIdleTimer can finish
+        // the execution. It's safe to FakeGuard as main thread is the only thread that
+        // writes to the mRefreshRateConfigs.
+        ftl::FakeGuard guard(mRefreshRateConfigsLock);
         if (mRefreshRateConfigs) {
             mRefreshRateConfigs->stopIdleTimer();
             mRefreshRateConfigs->clearIdleTimerCallbacks();
@@ -167,18 +171,18 @@ impl::EventThread::ThrottleVsyncCallback Scheduler::makeThrottleVsyncCallback() 
 impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction() const {
     return [this](uid_t uid) {
         const Fps refreshRate = holdRefreshRateConfigs()->getActiveMode()->getFps();
-        const nsecs_t basePeriod = refreshRate.getPeriodNsecs();
+        const nsecs_t currentPeriod = mVsyncSchedule->period().ns() ?: refreshRate.getPeriodNsecs();
 
         const auto frameRate = getFrameRateOverride(uid);
         if (!frameRate.has_value()) {
-            return basePeriod;
+            return currentPeriod;
         }
 
         const auto divisor = RefreshRateConfigs::getFrameRateDivisor(refreshRate, *frameRate);
         if (divisor <= 1) {
-            return basePeriod;
+            return currentPeriod;
         }
-        return basePeriod * divisor;
+        return currentPeriod * divisor;
     };
 }
 
@@ -518,24 +522,10 @@ void Scheduler::addPresentFence(std::shared_ptr<FenceTime> fence) {
 }
 
 void Scheduler::registerLayer(Layer* layer) {
-    using WindowType = gui::WindowInfo::Type;
-
-    scheduler::LayerHistory::LayerVoteType voteType;
-
-    if (!mFeatures.test(Feature::kContentDetection) ||
-        layer->getWindowType() == WindowType::STATUS_BAR) {
-        voteType = scheduler::LayerHistory::LayerVoteType::NoVote;
-    } else if (layer->getWindowType() == WindowType::WALLPAPER) {
-        // Running Wallpaper at Min is considered as part of content detection.
-        voteType = scheduler::LayerHistory::LayerVoteType::Min;
-    } else {
-        voteType = scheduler::LayerHistory::LayerVoteType::Heuristic;
-    }
-
     // If the content detection feature is off, we still keep the layer history,
     // since we use it for other features (like Frame Rate API), so layers
     // still need to be registered.
-    mLayerHistory.registerLayer(layer, voteType);
+    mLayerHistory.registerLayer(layer, mFeatures.test(Feature::kContentDetection));
 }
 
 void Scheduler::deregisterLayer(Layer* layer) {
@@ -554,6 +544,11 @@ void Scheduler::recordLayerHistory(Layer* layer, nsecs_t presentTime,
 
 void Scheduler::setModeChangePending(bool pending) {
     mLayerHistory.setModeChangePending(pending);
+}
+
+void Scheduler::setDefaultFrameRateCompatibility(Layer* layer) {
+    mLayerHistory.setDefaultFrameRateCompatibility(layer,
+                                                   mFeatures.test(Feature::kContentDetection));
 }
 
 void Scheduler::chooseRefreshRateForContent() {
@@ -580,11 +575,12 @@ void Scheduler::onTouchHint() {
     }
 }
 
-void Scheduler::setDisplayPowerState(bool normal) {
+void Scheduler::setDisplayPowerMode(hal::PowerMode powerMode) {
     {
         std::lock_guard<std::mutex> lock(mPolicyLock);
-        mPolicy.isDisplayPowerStateNormal = normal;
+        mPolicy.displayPowerMode = powerMode;
     }
+    mVsyncSchedule->getController().setDisplayPowerMode(powerMode);
 
     if (mDisplayPowerTimer) {
         mDisplayPowerTimer->reset();
@@ -739,7 +735,8 @@ auto Scheduler::chooseDisplayMode() -> std::pair<DisplayModePtr, GlobalSignals> 
     // If Display Power is not in normal operation we want to be in performance mode. When coming
     // back to normal mode, a grace period is given with DisplayPowerTimer.
     if (mDisplayPowerTimer &&
-        (!mPolicy.isDisplayPowerStateNormal || mPolicy.displayPowerTimer == TimerState::Reset)) {
+        (mPolicy.displayPowerMode != hal::PowerMode::ON ||
+         mPolicy.displayPowerTimer == TimerState::Reset)) {
         constexpr GlobalSignals kNoSignals;
         return {configs->getMaxRefreshRateByPolicy(), kNoSignals};
     }
@@ -800,13 +797,6 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     }
 
     mFrameRateOverrideMappings.setPreferredRefreshRateForUid(frameRateOverride);
-}
-
-std::chrono::steady_clock::time_point Scheduler::getPreviousVsyncFrom(
-        nsecs_t expectedPresentTime) const {
-    const auto presentTime = std::chrono::nanoseconds(expectedPresentTime);
-    const auto vsyncPeriod = std::chrono::nanoseconds(mVsyncSchedule->getTracker().currentPeriod());
-    return std::chrono::steady_clock::time_point(presentTime - vsyncPeriod);
 }
 
 void Scheduler::setIdleState() {

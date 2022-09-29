@@ -28,8 +28,10 @@
 #include <android/gui/ISurfaceComposerClient.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
+#include <ftl/future.h>
 #include <ftl/small_map.h>
 #include <gui/BufferQueue.h>
+#include <gui/CompositorTiming.h>
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/ITransactionCompletedListener.h>
@@ -50,6 +52,7 @@
 #include <utils/Trace.h>
 #include <utils/threads.h>
 
+#include <compositionengine/FenceResult.h>
 #include <compositionengine/OutputColorSetting.h>
 #include <scheduler/Fps.h>
 
@@ -77,7 +80,6 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -187,13 +189,6 @@ enum class LatchUnsignaledConfig {
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
 struct SurfaceFlingerBE {
-    FenceTimeline mGlCompositionDoneTimeline;
-    FenceTimeline mDisplayTimeline;
-
-    // protected by mCompositorTimingLock;
-    mutable std::mutex mCompositorTimingLock;
-    CompositorTiming mCompositorTiming;
-
     // Only accessed from the main thread.
     struct CompositePresentTime {
         nsecs_t composite = -1;
@@ -402,7 +397,6 @@ public:
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
     bool mDisableClientCompositionCache = false;
-    void windowInfosReported();
 
     // Disables expensive rendering for all displays
     // This is scheduled on the main thread
@@ -446,13 +440,11 @@ protected:
 
 private:
     friend class BufferLayer;
-    friend class BufferQueueLayer;
     friend class BufferStateLayer;
     friend class Client;
     friend class FpsReporter;
     friend class TunnelModeEnabledReporter;
     friend class Layer;
-    friend class MonitoredProducer;
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
     friend class LayerRenderArea;
@@ -466,7 +458,7 @@ private:
     using VsyncModulator = scheduler::VsyncModulator;
     using TransactionSchedule = scheduler::TransactionSchedule;
     using TraverseLayersFunction = std::function<void(const LayerVector::Visitor&)>;
-    using RenderAreaFuture = std::future<std::unique_ptr<RenderArea>>;
+    using RenderAreaFuture = ftl::Future<std::unique_ptr<RenderArea>>;
     using DumpArgs = Vector<String16>;
     using Dumper = std::function<void(const DumpArgs&, bool asProto, std::string&)>;
 
@@ -603,7 +595,6 @@ private:
         }
     }
 
-    static const int MAX_TRACING_MEMORY = 100 * 1024 * 1024; // 100MB
     // Maximum allowed number of display frames that can be set through backdoor
     static const int MAX_ALLOWED_DISPLAY_FRAMES = 2048;
 
@@ -932,10 +923,6 @@ private:
                          const sp<Layer>& parentLayer = nullptr,
                          uint32_t* outTransformHint = nullptr);
 
-    status_t createBufferQueueLayer(LayerCreationArgs& args, PixelFormat& format,
-                                    sp<IBinder>* outHandle, sp<IGraphicBufferProducer>* outGbp,
-                                    sp<Layer>* outLayer);
-
     status_t createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                                     sp<Layer>* outLayer);
 
@@ -965,14 +952,15 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
-    std::shared_future<renderengine::RenderEngineResult> captureScreenCommon(
-            RenderAreaFuture, TraverseLayersFunction, ui::Size bufferSize, ui::PixelFormat,
-            bool allowProtected, bool grayscale, const sp<IScreenCaptureListener>&);
-    std::shared_future<renderengine::RenderEngineResult> captureScreenCommon(
+    ftl::SharedFuture<FenceResult> captureScreenCommon(RenderAreaFuture, TraverseLayersFunction,
+                                                       ui::Size bufferSize, ui::PixelFormat,
+                                                       bool allowProtected, bool grayscale,
+                                                       const sp<IScreenCaptureListener>&);
+    ftl::SharedFuture<FenceResult> captureScreenCommon(
             RenderAreaFuture, TraverseLayersFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, const sp<IScreenCaptureListener>&);
-    std::shared_future<renderengine::RenderEngineResult> renderScreenImpl(
+    ftl::SharedFuture<FenceResult> renderScreenImpl(
             const RenderArea&, TraverseLayersFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
             bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock);
@@ -1081,11 +1069,9 @@ private:
     sp<DisplayDevice> getVsyncSource();
     void updateVsyncSource();
     void postComposition();
-    void getCompositorTiming(CompositorTiming* compositorTiming);
-    void updateCompositorTiming(const DisplayStatInfo& stats, nsecs_t compositeTime,
-                                std::shared_ptr<FenceTime>& presentFenceTime);
-    void setCompositorTimingSnapped(const DisplayStatInfo& stats,
-                                    nsecs_t compositeToPresentLatency);
+
+    // Returns the composite-to-present latency of the latest presented frame.
+    nsecs_t trackPresentLatency(nsecs_t compositeTime, std::shared_ptr<FenceTime> presentFenceTime);
 
     void postFrame() REQUIRES(kMainThreadContext);
 
@@ -1123,33 +1109,28 @@ private:
         getHwComposer().setVsyncEnabled(id, enabled);
     }
 
+    using FenceTimePtr = std::shared_ptr<FenceTime>;
+
     void setRefreshRateTo(int32_t refreshRate);
 
     struct FenceWithFenceTime {
         sp<Fence> fence = Fence::NO_FENCE;
-        std::shared_ptr<FenceTime> fenceTime = FenceTime::NO_FENCE;
+        FenceTimePtr fenceTime = FenceTime::NO_FENCE;
     };
 
     // Gets the fence for the previous frame.
     // Must be called on the main thread.
     FenceWithFenceTime previousFrameFence();
 
-    // Whether the previous frame has not yet been presented to the display.
-    // If graceTimeMs is positive, this method waits for at most the provided
-    // grace period before reporting if the frame missed.
-    // Must be called on the main thread.
-    bool previousFramePending(int graceTimeMs = 0);
+    const FenceTimePtr& getPreviousPresentFence(nsecs_t frameTime, Period)
+            REQUIRES(kMainThreadContext);
 
-    // Returns the previous time that the frame was presented. If the frame has
-    // not been presented yet, then returns Fence::SIGNAL_TIME_PENDING. If there
-    // is no pending frame, then returns Fence::SIGNAL_TIME_INVALID.
-    // Must be called on the main thread.
-    nsecs_t previousFramePresentTime();
+    // Blocks the thread waiting for up to graceTimeMs in case the fence is about to signal.
+    static bool isFencePending(const FenceTimePtr&, int graceTimeMs);
 
     // Calculates the expected present time for this frame. For negative offsets, performs a
     // correction using the predicted vsync for the next frame instead.
-
-    nsecs_t calculateExpectedPresentTime(DisplayStatInfo) const;
+    TimePoint calculateExpectedPresentTime(nsecs_t frameTime) const;
 
     /*
      * Display identification
@@ -1211,8 +1192,6 @@ private:
 
     void dumpVSync(std::string& result) const REQUIRES(mStateLock);
     void dumpStaticScreenStats(std::string& result) const;
-    // Not const because each Layer needs to query Fences and cache timestamps.
-    void dumpFrameEventsLocked(std::string& result);
 
     void dumpCompositionDisplays(std::string& result) const REQUIRES(mStateLock);
     void dumpDisplays(std::string& result) const REQUIRES(mStateLock);
@@ -1379,7 +1358,7 @@ private:
     // Set during transaction application stage to track if the input info or children
     // for a layer has changed.
     // TODO: Also move visibleRegions over to a boolean system.
-    bool mInputInfoChanged = false;
+    bool mUpdateInputInfo = false;
     bool mSomeChildrenChanged;
     bool mSomeDataspaceChanged = false;
     bool mForceTransactionDisplayChange = false;
@@ -1391,7 +1370,7 @@ private:
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithQueuedFrames;
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
-    std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
+
     // True if in the previous frame at least one layer was composed via the GPU.
     bool mHadClientComposition = false;
     // True if in the previous frame at least one layer was composed via HW Composer.
@@ -1446,6 +1425,8 @@ private:
     const std::shared_ptr<TimeStats> mTimeStats;
     const std::unique_ptr<FrameTracer> mFrameTracer;
     const std::unique_ptr<frametimeline::FrameTimeline> mFrameTimeline;
+
+    int64_t mLastCommittedVsyncId = -1;
 
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
@@ -1538,6 +1519,8 @@ private:
 
     std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
 
+    std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
+
     std::atomic<nsecs_t> mExpectedPresentTime = 0;
     nsecs_t mScheduledPresentTime = 0;
     hal::Vsync mHWCVsyncPendingState = hal::Vsync::DISABLE;
@@ -1593,8 +1576,9 @@ private:
     // A temporay pool that store the created layers and will be added to current state in main
     // thread.
     std::vector<LayerCreatedState> mCreatedLayers GUARDED_BY(mCreatedLayersLock);
-    bool commitCreatedLayers();
-    void handleLayerCreatedLocked(const LayerCreatedState& state) REQUIRES(mStateLock);
+    bool commitCreatedLayers(int64_t vsyncId);
+    void handleLayerCreatedLocked(const LayerCreatedState& state, int64_t vsyncId)
+            REQUIRES(mStateLock);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
@@ -1656,12 +1640,12 @@ private:
         return mScheduler->getLayerFramerate(now, id);
     }
 
+    bool mPowerHintSessionEnabled;
+
     struct {
-        bool sessionEnabled = false;
-        nsecs_t commitStart;
-        nsecs_t compositeStart;
-        nsecs_t presentEnd;
-    } mPowerHintSessionData GUARDED_BY(kMainThreadContext);
+        bool late = false;
+        bool early = false;
+    } mPowerHintSessionMode;
 
     nsecs_t mAnimationTransactionTimeout = s2ns(5);
 
