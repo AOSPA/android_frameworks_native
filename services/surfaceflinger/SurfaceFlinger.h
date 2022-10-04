@@ -404,7 +404,6 @@ protected:
 
 private:
     friend class BufferLayer;
-    friend class BufferStateLayer;
     friend class Client;
     friend class FpsReporter;
     friend class TunnelModeEnabledReporter;
@@ -445,7 +444,20 @@ private:
 
         const LayerVector::StateSet stateSet = LayerVector::StateSet::Invalid;
         LayerVector layersSortedByZ;
-        DefaultKeyedVector< wp<IBinder>, DisplayDeviceState> displays;
+
+        // TODO(b/241285876): Replace deprecated DefaultKeyedVector with ftl::SmallMap.
+        DefaultKeyedVector<wp<IBinder>, DisplayDeviceState> displays;
+
+        std::optional<size_t> getDisplayIndex(PhysicalDisplayId displayId) const {
+            for (size_t i = 0; i < displays.size(); i++) {
+                const auto& state = displays.valueAt(i);
+                if (state.physical && state.physical->id == displayId) {
+                    return i;
+                }
+            }
+
+            return {};
+        }
 
         bool colorMatrixChanged = true;
         mat4 colorMatrix;
@@ -745,22 +757,20 @@ private:
     // Show spinner with refresh rate overlay
     bool mRefreshRateOverlaySpinner = false;
 
-    // Called on the main thread in response to initializeDisplays()
-    void onInitializeDisplays() REQUIRES(mStateLock);
     // Sets the desired active mode bit. It obtains the lock, and sets mDesiredActiveMode.
     void setDesiredActiveMode(const ActiveModeInfo& info) REQUIRES(mStateLock);
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId);
     // Sets the active mode and a new refresh rate in SF.
-    void updateInternalStateWithChangedMode() REQUIRES(mStateLock);
+    void updateInternalStateWithChangedMode() REQUIRES(mStateLock, kMainThreadContext);
     // Calls to setActiveMode on the main thread if there is a pending mode change
     // that needs to be applied.
-    void setActiveModeInHwcIfNeeded() REQUIRES(mStateLock);
+    void setActiveModeInHwcIfNeeded() REQUIRES(mStateLock, kMainThreadContext);
     void clearDesiredActiveModeState(const sp<DisplayDevice>&) REQUIRES(mStateLock);
     // Called when active mode is no longer is progress
     void desiredActiveModeChangeDone(const sp<DisplayDevice>&) REQUIRES(mStateLock);
     // Called on the main thread in response to setPowerMode()
     void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
-            REQUIRES(mStateLock);
+            REQUIRES(mStateLock, kMainThreadContext);
 
     // Returns true if the display has a visible HDR layer in its layer stack.
     bool hasVisibleHdrLayer(const sp<DisplayDevice>& display) REQUIRES(mStateLock);
@@ -777,8 +787,9 @@ private:
             const std::optional<scheduler::RefreshRateConfigs::Policy>& policy, bool overridePolicy)
             EXCLUDES(mStateLock);
 
-    void commitTransactions() EXCLUDES(mStateLock);
-    void commitTransactionsLocked(uint32_t transactionFlags) REQUIRES(mStateLock);
+    void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
+    void commitTransactionsLocked(uint32_t transactionFlags)
+            REQUIRES(mStateLock, kMainThreadContext);
     void doCommitTransactions() REQUIRES(mStateLock);
 
     // Returns whether a new buffer has been latched.
@@ -801,7 +812,7 @@ private:
     void updateFrameScheduler();
     void syncToDisplayHardware();
 
-    void initScheduler(const sp<DisplayDevice>& display) REQUIRES(mStateLock);
+    void initScheduler(const sp<const DisplayDevice>&) REQUIRES(mStateLock);
     void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
     void setVsyncConfig(const VsyncModulator::VsyncConfig&, nsecs_t vsyncPeriod);
 
@@ -934,8 +945,10 @@ private:
     /*
      * Display and layer stack management
      */
-    // called when starting, or restarting after system_server death
+
+    // Called during boot, and restart after system_server death.
     void initializeDisplays();
+    void onInitializeDisplays() REQUIRES(mStateLock, kMainThreadContext);
 
     bool isDisplayActiveLocked(const sp<const DisplayDevice>& display) const REQUIRES(mStateLock) {
         return display->getDisplayToken() == mActiveDisplayToken;
@@ -1072,11 +1085,12 @@ private:
             const DisplayDeviceState& state,
             const sp<compositionengine::DisplaySurface>& displaySurface,
             const sp<IGraphicBufferProducer>& producer) REQUIRES(mStateLock);
-    void processDisplayChangesLocked() REQUIRES(mStateLock);
+    void processDisplayChangesLocked() REQUIRES(mStateLock, kMainThreadContext);
     void processDisplayRemoved(const wp<IBinder>& displayToken) REQUIRES(mStateLock);
     void processDisplayChanged(const wp<IBinder>& displayToken,
                                const DisplayDeviceState& currentState,
-                               const DisplayDeviceState& drawingState) REQUIRES(mStateLock);
+                               const DisplayDeviceState& drawingState)
+            REQUIRES(mStateLock, kMainThreadContext);
     void setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
                                       DisplayDeviceState& currentState,
                                       const DisplayDeviceState& drawingState);
@@ -1152,9 +1166,10 @@ private:
             REQUIRES(mStateLock);
     void releaseVirtualDisplay(VirtualDisplayId);
 
-    void onActiveDisplayChangedLocked(const sp<DisplayDevice>& activeDisplay) REQUIRES(mStateLock);
+    void onActiveDisplayChangedLocked(const sp<DisplayDevice>& activeDisplay)
+            REQUIRES(mStateLock, kMainThreadContext);
 
-    void onActiveDisplaySizeChanged(const sp<DisplayDevice>& activeDisplay);
+    void onActiveDisplaySizeChanged(const sp<const DisplayDevice>&);
 
     /*
      * Debugging & dumpsys
@@ -1276,7 +1291,7 @@ private:
     void handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
 
     void updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& activeDisplay)
-            REQUIRES(mStateLock);
+            REQUIRES(mStateLock, kMainThreadContext);
 
     bool isHdrLayer(Layer* layer) const;
 
@@ -1514,7 +1529,7 @@ private:
 
     std::unique_ptr<Hwc2::PowerAdvisor> mPowerAdvisor;
 
-    void enableRefreshRateOverlay(bool enable) REQUIRES(mStateLock);
+    void enableRefreshRateOverlay(bool enable) REQUIRES(mStateLock, kMainThreadContext);
 
     // Flag used to set override desired display mode from backdoor
     bool mDebugDisplayModeSetByBackdoor = false;

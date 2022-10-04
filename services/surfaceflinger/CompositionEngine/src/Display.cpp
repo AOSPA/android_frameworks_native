@@ -244,6 +244,24 @@ void Display::setReleasedLayers(const compositionengine::CompositionRefreshArgs&
     setReleasedLayers(std::move(releasedLayers));
 }
 
+void Display::applyDisplayBrightness(const bool applyImmediately) {
+    auto& hwc = getCompositionEngine().getHwComposer();
+    const auto halDisplayId = HalDisplayId::tryCast(*getDisplayId());
+    if (const auto physicalDisplayId = PhysicalDisplayId::tryCast(*halDisplayId);
+        physicalDisplayId && getState().displayBrightness) {
+        const status_t result =
+                hwc.setDisplayBrightness(*physicalDisplayId, *getState().displayBrightness,
+                                         getState().displayBrightnessNits,
+                                         Hwc2::Composer::DisplayBrightnessOptions{
+                                                 .applyImmediately = applyImmediately})
+                        .get();
+        ALOGE_IF(result != NO_ERROR, "setDisplayBrightness failed for %s: %d, (%s)",
+                 getName().c_str(), result, strerror(-result));
+    }
+    // Clear out the display brightness now that it's been communicated to composer.
+    editState().displayBrightness.reset();
+}
+
 void Display::beginFrame() {
     Output::beginFrame();
 
@@ -253,22 +271,7 @@ void Display::beginFrame() {
         return;
     }
 
-    auto& hwc = getCompositionEngine().getHwComposer();
-
-    beginDraw();
-    if (const auto physicalDisplayId = PhysicalDisplayId::tryCast(*halDisplayId);
-        physicalDisplayId && getState().displayBrightness) {
-        const status_t result =
-                hwc.setDisplayBrightness(*physicalDisplayId, *getState().displayBrightness,
-                                         getState().displayBrightnessNits,
-                                         Hwc2::Composer::DisplayBrightnessOptions{
-                                                 .applyImmediately = false})
-                        .get();
-        ALOGE_IF(result != NO_ERROR, "setDisplayBrightness failed for %s: %d, (%s)",
-                 getName().c_str(), result, strerror(-result));
-    }
-    // Clear out the display brightness now that it's been communicated to composer.
-    editState().displayBrightness.reset();
+    applyDisplayBrightness(false);
 }
 
 bool Display::chooseCompositionStrategy(

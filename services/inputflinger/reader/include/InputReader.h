@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_INPUT_READER_H
-#define _UI_INPUTREADER_INPUT_READER_H
+#pragma once
 
 #include <PointerControllerInterface.h>
 #include <android-base/thread_annotations.h>
@@ -99,6 +98,8 @@ public:
     std::optional<int32_t> getBatteryCapacity(int32_t deviceId) override;
 
     std::optional<int32_t> getBatteryStatus(int32_t deviceId) override;
+
+    std::optional<std::string> getBatteryDevicePath(int32_t deviceId) override;
 
     std::vector<InputDeviceLightInfo> getLights(int32_t deviceId) override;
 
@@ -246,5 +247,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _UI_INPUTREADER_INPUT_READER_H

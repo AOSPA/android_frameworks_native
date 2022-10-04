@@ -41,8 +41,8 @@ public:
     std::unique_ptr<surfaceflinger::NativeWindowSurface> createNativeWindowSurface(
             const sp<IGraphicBufferProducer>&) override;
     std::unique_ptr<compositionengine::CompositionEngine> createCompositionEngine() override;
-    sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs& args) override;
-    sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) override;
+    sp<Layer> createBufferStateLayer(const LayerCreationArgs& args) override;
+    sp<Layer> createEffectLayer(const LayerCreationArgs& args) override;
     std::unique_ptr<FrameTracer> createFrameTracer() override;
     std::unique_ptr<frametimeline::FrameTimeline> createFrameTimeline(
             std::shared_ptr<TimeStats> timeStats, pid_t surfaceFlingerPid) override;
