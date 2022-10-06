@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_READER_BASE_H
-#define _UI_INPUT_READER_BASE_H
+#pragma once
 
 #include <android/os/IInputConstants.h>
 #include <input/DisplayViewport.h>
@@ -114,6 +113,8 @@ public:
     virtual std::optional<int32_t> getBatteryCapacity(int32_t deviceId) = 0;
     /* Get battery status of a particular input device. */
     virtual std::optional<int32_t> getBatteryStatus(int32_t deviceId) = 0;
+    /* Get the device path for the battery of an input device. */
+    virtual std::optional<std::string> getBatteryDevicePath(int32_t deviceId) = 0;
 
     virtual std::vector<InputDeviceLightInfo> getLights(int32_t deviceId) = 0;
 
@@ -395,5 +396,3 @@ public:
 };
 
 } // namespace android
-
-#endif // _UI_INPUT_READER_COMMON_H

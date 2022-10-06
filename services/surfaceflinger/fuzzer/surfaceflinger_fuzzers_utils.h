@@ -30,10 +30,8 @@
 #include <ui/DisplayStatInfo.h>
 #include <ui/DynamicDisplayInfo.h>
 
-#include "BufferStateLayer.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/ComposerHal.h"
-#include "EffectLayer.h"
 #include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
 #include "Layer.h"
@@ -357,12 +355,10 @@ public:
         return compositionengine::impl::createCompositionEngine();
     }
 
-    sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs &) override {
-        return nullptr;
-    }
+    sp<Layer> createBufferStateLayer(const LayerCreationArgs &) override { return nullptr; }
 
-    sp<EffectLayer> createEffectLayer(const LayerCreationArgs &args) override {
-        return sp<EffectLayer>::make(args);
+    sp<Layer> createEffectLayer(const LayerCreationArgs &args) override {
+        return sp<Layer>::make(args);
     }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
@@ -601,14 +597,18 @@ public:
         mFlinger->binderDied(display);
         mFlinger->onFirstRef();
 
-        mFlinger->commitTransactions();
         mFlinger->updateInputFlinger();
         mFlinger->updateCursorAsync();
 
         setVsyncConfig(&mFdp);
 
-        FTL_FAKE_GUARD(kMainThreadContext,
-                       mFlinger->flushTransactionQueues(getFuzzedVsyncId(mFdp)));
+        {
+            ftl::FakeGuard guard(kMainThreadContext);
+
+            mFlinger->commitTransactions();
+            mFlinger->flushTransactionQueues(getFuzzedVsyncId(mFdp));
+            mFlinger->postComposition();
+        }
 
         mFlinger->setTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
         mFlinger->clearTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
@@ -624,8 +624,6 @@ public:
                                              mFdp.ConsumeIntegral<uint32_t>());
 
         mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mFdp.ConsumeIntegral<uid_t>());
-
-        FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postComposition());
 
         mFlinger->calculateExpectedPresentTime({});
 
@@ -665,7 +663,8 @@ public:
         }
 
         mRefreshRateConfigs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
-        const auto fps = mRefreshRateConfigs->getActiveMode()->getFps();
+        const auto fps =
+                FTL_FAKE_GUARD(kMainThreadContext, mRefreshRateConfigs->getActiveMode().getFps());
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
         mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
                 mFlinger->mVsyncConfiguration->getCurrentConfigs());
@@ -716,9 +715,9 @@ public:
 
     void enableHalVirtualDisplays(bool enable) { mFlinger->enableHalVirtualDisplays(enable); }
 
-    auto commitTransactionsLocked(uint32_t transactionFlags) {
+    void commitTransactionsLocked(uint32_t transactionFlags) FTL_FAKE_GUARD(kMainThreadContext) {
         Mutex::Autolock lock(mFlinger->mStateLock);
-        return mFlinger->commitTransactionsLocked(transactionFlags);
+        mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
     auto setDisplayStateLocked(const DisplayState &s) {

@@ -30,9 +30,7 @@
 #include <ftl/fake_guard.h>
 #include <gui/ScreenCaptureResults.h>
 
-#include "BufferStateLayer.h"
 #include "DisplayDevice.h"
-#include "EffectLayer.h"
 #include "FakeVsyncConfiguration.h"
 #include "FrameTracer/FrameTracer.h"
 #include "Layer.h"
@@ -121,11 +119,9 @@ public:
         return compositionengine::impl::createCompositionEngine();
     }
 
-    sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs&) override {
-        return nullptr;
-    }
+    sp<Layer> createBufferStateLayer(const LayerCreationArgs&) override { return nullptr; }
 
-    sp<EffectLayer> createEffectLayer(const LayerCreationArgs&) override { return nullptr; }
+    sp<Layer> createEffectLayer(const LayerCreationArgs&) override { return nullptr; }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
         return std::make_unique<mock::FrameTracer>();
@@ -223,7 +219,7 @@ public:
             configs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
         }
 
-        const auto fps = configs->getActiveMode()->getFps();
+        const auto fps = FTL_FAKE_GUARD(kMainThreadContext, configs->getActiveMode().getFps());
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
         mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
                 mFlinger->mVsyncConfiguration->getCurrentConfigs());
@@ -289,7 +285,7 @@ public:
                                        const sp<NativeHandle>& sidebandStream) {
         layer->mDrawingState.sidebandStream = sidebandStream;
         layer->mSidebandStream = sidebandStream;
-        layer->editCompositionState()->sidebandStream = sidebandStream;
+        layer->editLayerSnapshot()->sidebandStream = sidebandStream;
     }
 
     void setLayerCompositionType(const sp<Layer>& layer,
@@ -371,6 +367,7 @@ public:
 
     void commitTransactionsLocked(uint32_t transactionFlags) {
         Mutex::Autolock lock(mFlinger->mStateLock);
+        ftl::FakeGuard guard(kMainThreadContext);
         mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
@@ -464,6 +461,7 @@ public:
 
     void onActiveDisplayChanged(const sp<DisplayDevice>& activeDisplay) {
         Mutex::Autolock lock(mFlinger->mStateLock);
+        ftl::FakeGuard guard(kMainThreadContext);
         mFlinger->onActiveDisplayChangedLocked(activeDisplay);
     }
 

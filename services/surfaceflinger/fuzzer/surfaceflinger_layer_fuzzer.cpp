@@ -14,10 +14,8 @@
  * limitations under the License.
  *
  */
-#include <BufferStateLayer.h>
 #include <Client.h>
 #include <DisplayDevice.h>
-#include <EffectLayer.h>
 #include <LayerRenderArea.h>
 #include <ftl/future.h>
 #include <fuzzer/FuzzedDataProvider.h>
@@ -79,13 +77,13 @@ void LayerFuzzer::invokeEffectLayer() {
     TestableSurfaceFlinger flinger;
     sp<Client> client = sp<Client>::make(sp<SurfaceFlinger>::fromExisting(flinger.flinger()));
     const LayerCreationArgs layerCreationArgs = createLayerCreationArgs(&flinger, client);
-    sp<EffectLayer> effectLayer = sp<EffectLayer>::make(layerCreationArgs);
+    sp<Layer> effectLayer = sp<Layer>::make(layerCreationArgs);
 
     effectLayer->setColor({(mFdp.ConsumeFloatingPointInRange<float>(0, 255) /*x*/,
                             mFdp.ConsumeFloatingPointInRange<float>(0, 255) /*y*/,
                             mFdp.ConsumeFloatingPointInRange<float>(0, 255) /*z*/)});
     effectLayer->setDataspace(mFdp.PickValueInArray(kDataspaces));
-    sp<EffectLayer> parent = sp<EffectLayer>::make(layerCreationArgs);
+    sp<Layer> parent = sp<Layer>::make(layerCreationArgs);
     effectLayer->setChildrenDrawingParent(parent);
 
     const FrameTimelineInfo frameInfo = getFuzzedFrameTimelineInfo();
@@ -110,8 +108,7 @@ void LayerFuzzer::invokeEffectLayer() {
 void LayerFuzzer::invokeBufferStateLayer() {
     TestableSurfaceFlinger flinger;
     sp<Client> client = sp<Client>::make(sp<SurfaceFlinger>::fromExisting(flinger.flinger()));
-    sp<BufferStateLayer> layer =
-            sp<BufferStateLayer>::make(createLayerCreationArgs(&flinger, client));
+    sp<Layer> layer = sp<Layer>::make(createLayerCreationArgs(&flinger, client));
     sp<Fence> fence = sp<Fence>::make();
     const std::shared_ptr<FenceTime> fenceTime = std::make_shared<FenceTime>(fence);
 
@@ -149,7 +146,8 @@ void LayerFuzzer::invokeBufferStateLayer() {
     layer->computeSourceBounds(getFuzzedFloatRect(&mFdp));
 
     layer->fenceHasSignaled();
-    layer->onPreComposition(mFdp.ConsumeIntegral<int64_t>());
+    layer->onPreComposition(mFdp.ConsumeIntegral<int64_t>(),
+                            false /*updatingOutputGeometryThisFrame*/);
     const std::vector<sp<CallbackHandle>> callbacks;
     layer->setTransactionCompletedListeners(callbacks);
 

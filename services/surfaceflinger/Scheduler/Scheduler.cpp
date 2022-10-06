@@ -182,7 +182,7 @@ impl::EventThread::ThrottleVsyncCallback Scheduler::makeThrottleVsyncCallback() 
 
 impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction() const {
     return [this](uid_t uid) {
-        const Fps refreshRate = holdRefreshRateConfigs()->getActiveMode()->getFps();
+        const Fps refreshRate = holdRefreshRateConfigs()->getActiveModePtr()->getFps();
         const nsecs_t currentPeriod = mVsyncSchedule->period().ns() ?: refreshRate.getPeriodNsecs();
 
         const auto frameRate = getFrameRateOverride(uid);
@@ -329,7 +329,7 @@ void Scheduler::dispatchCachedReportedMode() {
     // mode change is in progress. In that case we shouldn't dispatch an event
     // as it will be dispatched when the current mode changes.
     if (std::scoped_lock lock(mRefreshRateConfigsLock);
-        mRefreshRateConfigs->getActiveMode() != mPolicy.mode) {
+        mRefreshRateConfigs->getActiveModePtr() != mPolicy.mode) {
         return;
     }
 
@@ -470,7 +470,7 @@ void Scheduler::resyncAndRefresh() {
 
     const auto refreshRate = [&] {
         std::scoped_lock lock(mRefreshRateConfigsLock);
-        return mRefreshRateConfigs->getActiveMode()->getFps();
+        return mRefreshRateConfigs->getActiveModePtr()->getFps();
     }();
     mLastVsyncPeriodChangeTimeline->refreshRequired = false;
     resyncToHardwareVsync(true /* makeAvailable */, refreshRate, true);
@@ -486,7 +486,7 @@ void Scheduler::resync() {
     if (now - last > kIgnoreDelay) {
         const auto refreshRate = [&] {
             std::scoped_lock lock(mRefreshRateConfigsLock);
-            return mRefreshRateConfigs->getActiveMode()->getFps();
+            return mRefreshRateConfigs->getActiveModePtr()->getFps();
         }();
         resyncToHardwareVsync(false, refreshRate);
     }
@@ -610,7 +610,7 @@ void Scheduler::kernelIdleTimerCallback(TimerState state) {
     // magic number
     const Fps refreshRate = [&] {
         std::scoped_lock lock(mRefreshRateConfigsLock);
-        return mRefreshRateConfigs->getActiveMode()->getFps();
+        return mRefreshRateConfigs->getActiveModePtr()->getFps();
     }();
 
     constexpr Fps FPS_THRESHOLD_FOR_KERNEL_TIMER = 65_Hz;
@@ -709,9 +709,11 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
         if (currentState == newState) return {};
         currentState = std::forward<T>(newState);
 
-        std::tie(newMode, consideredSignals) = chooseDisplayMode();
         // TODO(b/226947083) QC value-adds were deleted here due to change in
         // datatype
+        const auto [rankings, signals] = getRankedDisplayModes();
+        newMode = rankings.front().displayModePtr;
+        consideredSignals = signals;
         frameRateOverridesChanged = updateFrameRateOverrides(consideredSignals, newMode->getFps());
 
         if (mPolicy.mode == newMode) {
@@ -739,31 +741,28 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
     return consideredSignals;
 }
 
-auto Scheduler::chooseDisplayMode() -> std::pair<DisplayModePtr, GlobalSignals> {
+auto Scheduler::getRankedDisplayModes()
+        -> std::pair<std::vector<RefreshRateRanking>, GlobalSignals> {
     ATRACE_CALL();
 
     const auto configs = holdRefreshRateConfigs();
 
-    // If Display Power is not in normal operation we want to be in performance mode. When coming
-    // back to normal mode, a grace period is given with DisplayPowerTimer.
-    if (mDisplayPowerTimer &&
-        (mPolicy.displayPowerMode != hal::PowerMode::ON ||
-         mPolicy.displayPowerTimer == TimerState::Reset)) {
-        constexpr GlobalSignals kNoSignals;
-        return {configs->getMaxRefreshRateByPolicy(), kNoSignals};
-    }
+    const bool powerOnImminent = mDisplayPowerTimer &&
+            (mPolicy.displayPowerMode != hal::PowerMode::ON ||
+             mPolicy.displayPowerTimer == TimerState::Reset);
 
     const GlobalSignals signals{.touch = mTouchTimer && mPolicy.touch == TouchState::Active,
-                                .idle = mPolicy.idleTimer == TimerState::Expired};
+                                .idle = mPolicy.idleTimer == TimerState::Expired,
+                                .powerOnImminent = powerOnImminent};
 
-    return configs->getBestRefreshRate(mPolicy.contentRequirements, signals);
+    return configs->getRankedRefreshRates(mPolicy.contentRequirements, signals);
 }
 
 DisplayModePtr Scheduler::getPreferredDisplayMode() {
     std::lock_guard<std::mutex> lock(mPolicyLock);
     // Make sure the stored mode is up to date.
     if (mPolicy.mode) {
-        mPolicy.mode = chooseDisplayMode().first;
+        mPolicy.mode = getRankedDisplayModes().first.front().displayModePtr;
     }
     return mPolicy.mode;
 }
