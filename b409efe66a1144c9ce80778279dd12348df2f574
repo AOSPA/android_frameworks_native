@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "81dc507f_ed8631be",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 4
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000469
+      },
+      "writtenOn": "2022-10-09T08:58:44Z",
+      "side": 1,
+      "message": "Causes refresh rate to drop too soon, leading to jank",
+      "revId": "b409efe66a1144c9ce80778279dd12348df2f574",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
