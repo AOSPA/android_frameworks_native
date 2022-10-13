@@ -233,9 +233,7 @@ public:
     bool onKernelTimerChanged(std::optional<DisplayModeId>, bool timerExpired);
     void animateRefreshRateOverlay();
 
-    void onVsync(nsecs_t timestamp);
     nsecs_t getVsyncPeriodFromHWC() const;
-    nsecs_t getRefreshTimestamp() const;
 
     void setPowerModeOverrideConfig(bool supported);
     bool getPowerModeOverrideConfig() const;
@@ -275,8 +273,6 @@ private:
 
     std::optional<float> mStagedBrightness;
     float mBrightness = -1.f;
-
-    std::atomic<nsecs_t> mLastHwVsync = 0;
 
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;

@@ -174,6 +174,8 @@ enum class InputLightClass : uint32_t {
     MULTI_INTENSITY = 0x00000040,
     /* The input light has max brightness node. */
     MAX_BRIGHTNESS = 0x00000080,
+    /* The input light has kbd_backlight name */
+    KEYBOARD_BACKLIGHT = 0x00000100,
 };
 
 enum class InputBatteryClass : uint32_t {
@@ -193,6 +195,9 @@ struct RawLightInfo {
     ftl::Flags<InputLightClass> flags;
     std::array<int32_t, COLOR_NUM> rgbIndex;
     std::filesystem::path path;
+
+    bool operator==(const RawLightInfo&) const = default;
+    bool operator!=(const RawLightInfo&) const = default;
 };
 
 /* Describes a raw battery. */
@@ -201,6 +206,9 @@ struct RawBatteryInfo {
     std::string name;
     ftl::Flags<InputBatteryClass> flags;
     std::filesystem::path path;
+
+    bool operator==(const RawBatteryInfo&) const = default;
+    bool operator!=(const RawBatteryInfo&) const = default;
 };
 
 /*
@@ -280,7 +288,7 @@ public:
      *
      * Returns the number of events obtained, or 0 if the timeout expired.
      */
-    virtual size_t getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSize) = 0;
+    virtual std::vector<RawEvent> getEvents(int timeoutMillis) = 0;
     virtual std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) = 0;
     virtual base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(
             int32_t deviceId, int32_t absCode) const = 0;
@@ -498,7 +506,7 @@ public:
     bool markSupportedKeyCodes(int32_t deviceId, const std::vector<int32_t>& keyCodes,
                                uint8_t* outFlags) const override final;
 
-    size_t getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSize) override final;
+    std::vector<RawEvent> getEvents(int timeoutMillis) override final;
     std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) override final;
 
     bool hasScanCode(int32_t deviceId, int32_t scanCode) const override final;
@@ -549,6 +557,10 @@ private:
         hardware::input::InputDeviceCountryCode countryCode;
         std::unordered_map<int32_t /*batteryId*/, RawBatteryInfo> batteryInfos;
         std::unordered_map<int32_t /*lightId*/, RawLightInfo> lightInfos;
+
+        bool operator==(const AssociatedDevice&) const = default;
+        bool operator!=(const AssociatedDevice&) const = default;
+        std::string dump() const;
     };
 
     struct Device {
@@ -582,7 +594,7 @@ private:
 
         // A shared_ptr of a device associated with the input device.
         // The input devices that have the same sysfs path have the same associated device.
-        const std::shared_ptr<const AssociatedDevice> associatedDevice;
+        std::shared_ptr<const AssociatedDevice> associatedDevice;
 
         int32_t controllerNumber;
 

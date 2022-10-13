@@ -2486,17 +2486,12 @@ void SurfaceFlinger::onComposerHalVsync(hal::HWDisplayId hwcDisplayId, int64_t t
     ATRACE_FORMAT("onComposerHalVsync%s", tracePeriod.c_str());
 
     Mutex::Autolock lock(mStateLock);
-    const auto displayId = getHwComposer().toPhysicalDisplayId(hwcDisplayId);
-    if (displayId) {
-        const auto token = getPhysicalDisplayTokenLocked(*displayId);
-        const auto display = getDisplayDeviceLocked(token);
-        display->onVsync(timestamp);
-    }
 
     if (!getHwComposer().onVsync(hwcDisplayId, timestamp)) {
         return;
     }
 
+    const auto displayId = getHwComposer().toPhysicalDisplayId(hwcDisplayId);
     const bool isActiveDisplay =
             displayId && getPhysicalDisplayTokenLocked(*displayId) == mActiveDisplayToken;
     if (!isActiveDisplay) {
@@ -2927,6 +2922,13 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         displayIds.push_back(display->getId());
     }
     mPowerAdvisor->setDisplays(displayIds);
+
+    const bool updateTaskMetadata = mCompositionEngine->getFeatureFlags().test(
+            compositionengine::Feature::kSnapshotLayerMetadata);
+    if (updateTaskMetadata && (mVisibleRegionsDirty || mLayerMetadataSnapshotNeeded)) {
+        updateLayerMetadataSnapshot();
+        mLayerMetadataSnapshotNeeded = false;
+    }
 
     if (DOES_CONTAIN_BORDER) {
         refreshArgs.borderInfoList.clear();
@@ -5702,7 +5704,10 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
             layer->setGameModeForTree(static_cast<GameMode>(gameMode));
         }
 
-        if (layer->setMetadata(s.metadata)) flags |= eTraversalNeeded;
+        if (layer->setMetadata(s.metadata)) {
+            flags |= eTraversalNeeded;
+            mLayerMetadataSnapshotNeeded = true;
+        }
     }
     if (what & layer_state_t::eColorSpaceAgnosticChanged) {
         if (layer->setColorSpaceAgnostic(s.colorSpaceAgnostic)) {
@@ -6306,6 +6311,25 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
 
         const auto flag = args.empty() ? ""s : std::string(String8(args[0]));
 
+        // Traversal of drawing state must happen on the main thread.
+        // Otherwise, SortedVector may have shared ownership during concurrent
+        // traversals, which can result in use-after-frees.
+        std::string compositionLayers;
+        mScheduler
+                ->schedule([&] {
+                    StringAppendF(&compositionLayers, "Composition layers\n");
+                    mDrawingState.traverseInZOrder([&](Layer* layer) {
+                        auto* compositionState = layer->getCompositionState();
+                        if (!compositionState || !compositionState->isVisible) return;
+
+                        android::base::StringAppendF(&compositionLayers, "* Layer %p (%s)\n", layer,
+                                                     layer->getDebugName() ? layer->getDebugName()
+                                                                           : "<unknown>");
+                        compositionState->dump(compositionLayers);
+                    });
+                })
+                .get();
+
         bool dumpLayers = true;
         {
             TimedLock lock(mStateLock, s2ns(1), __func__);
@@ -6326,7 +6350,7 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                     dumpMini(result);
                     dumpLayers = false;
                 } else {
-                    dumpAllLocked(args, result);
+                    dumpAllLocked(args, compositionLayers, result);
                 }
             }
         }
@@ -6415,7 +6439,25 @@ void SurfaceFlinger::dumpDrawCycle(bool prePrepare) {
     {
         Mutex::Autolock lock(mStateLock);
         if (mFileDump.fullDump) {
-            dumpAllLocked(args, dumpsys);
+            // Traversal of drawing state must happen on the main thread.
+            // Otherwise, SortedVector may have shared ownership during concurrent
+            // traversals, which can result in use-after-frees.
+            std::string compositionLayers;
+            mScheduler
+                ->schedule([&] {
+                    StringAppendF(&compositionLayers, "Composition layers\n");
+                    mDrawingState.traverseInZOrder([&](Layer* layer) {
+                        auto* compositionState = layer->getCompositionState();
+                        if (!compositionState || !compositionState->isVisible) return;
+
+                        android::base::StringAppendF(&compositionLayers, "* Layer %p (%s)\n", layer,
+                                                     layer->getDebugName() ? layer->getDebugName()
+                                                                           : "<unknown>");
+                        compositionState->dump(compositionLayers);
+                    });
+                })
+                .get();
+            dumpAllLocked(args, compositionLayers, dumpsys);
         } else {
             dumpMini(dumpsys);
         }
@@ -6794,7 +6836,8 @@ void SurfaceFlinger::dumpMini(std::string& result) const {
     getHwComposer().dump(result);
 }
 
-void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, std::string& result) const {
+void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& compositionLayers,
+                                   std::string& result) const {
     const bool colorize = !args.empty() && args[0] == String16("--color");
     Colorizer colorizer(colorize);
 
@@ -6842,18 +6885,7 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, std::string& result) co
     StringAppendF(&result, "Visible layers (count = %zu)\n", mNumLayers.load());
     colorizer.reset(result);
 
-    {
-        StringAppendF(&result, "Composition layers\n");
-        mDrawingState.traverseInZOrder([&](Layer* layer) {
-            auto* compositionState = layer->getCompositionState();
-            if (!compositionState || !compositionState->isVisible) return;
-
-            android::base::StringAppendF(&result, "* Layer %p (%s)\n", layer,
-                                         layer->getDebugName() ? layer->getDebugName()
-                                                               : "<unknown>");
-            compositionState->dump(result);
-        });
-    }
+    result.append(compositionLayers);
 
     colorizer.bold(result);
     StringAppendF(&result, "Displays (%zu entries)\n", mDisplays.size());
@@ -9447,6 +9479,31 @@ bool SurfaceFlinger::commitCreatedLayers(VsyncId vsyncId) {
     createdLayers.clear();
     mLayersAdded = true;
     return true;
+}
+
+void SurfaceFlinger::updateLayerMetadataSnapshot() {
+    LayerMetadata parentMetadata;
+    for (const auto& layer : mDrawingState.layersSortedByZ) {
+        layer->updateMetadataSnapshot(parentMetadata);
+    }
+
+    std::unordered_set<Layer*> visited;
+    mDrawingState.traverse([&visited](Layer* layer) {
+        if (visited.find(layer) != visited.end()) {
+            return;
+        }
+
+        // If the layer isRelativeOf, then either it's relative metadata will be set
+        // recursively when updateRelativeMetadataSnapshot is called on its relative parent or
+        // it's relative parent has been deleted. Clear the layer's relativeLayerMetadata to ensure
+        // that layers with deleted relative parents don't hold stale relativeLayerMetadata.
+        if (layer->getDrawingState().isRelativeOf) {
+            layer->editLayerSnapshot()->relativeLayerMetadata = {};
+            return;
+        }
+
+        layer->updateRelativeMetadataSnapshot({}, visited);
+    });
 }
 
 // gui::ISurfaceComposer

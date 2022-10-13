@@ -58,6 +58,12 @@ public:
     void binderDied(const wp<IBinder>& who) override;
     void handleClientCallbacks();
 
+    /**
+     *  This API is added for debug purposes. It clears members which hold service and callback
+     * information.
+     */
+    void clear();
+
 protected:
     virtual void tryStartService(const std::string& name);
 
@@ -68,7 +74,7 @@ private:
         int32_t dumpPriority;
         bool hasClients = false; // notifications sent on true -> false.
         bool guaranteeClient = false; // forces the client check to true
-        pid_t debugPid = 0; // the process in which this service runs
+        Access::CallingContext ctx;   // process that originally registers this
 
         // the number of clients of the service, including servicemanager itself
         ssize_t getNodeStrongRefCount();
