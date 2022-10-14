@@ -79,6 +79,7 @@ public:
 #endif
     MOCK_CONST_METHOD1(hasDeviceComposition, bool(const std::optional<DisplayId>&));
     MOCK_CONST_METHOD1(getPresentFence, sp<Fence>(HalDisplayId));
+    MOCK_METHOD(nsecs_t, getPresentTimestamp, (PhysicalDisplayId), (const, override));
     MOCK_CONST_METHOD2(getLayerReleaseFence, sp<Fence>(HalDisplayId, HWC2::Layer*));
     MOCK_METHOD3(setOutputBuffer,
                  status_t(HalVirtualDisplayId, const sp<Fence>&, const sp<GraphicBuffer>&));

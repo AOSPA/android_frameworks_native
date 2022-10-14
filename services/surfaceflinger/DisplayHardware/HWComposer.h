@@ -165,8 +165,9 @@ public:
     // reset state when a display is disconnected
     virtual void disconnectDisplay(HalDisplayId) = 0;
 
-    // get the present fence received from the last call to present.
+    // Get the present fence/timestamp received from the last call to present.
     virtual sp<Fence> getPresentFence(HalDisplayId) const = 0;
+    virtual nsecs_t getPresentTimestamp(PhysicalDisplayId) const = 0;
 
     // Get last release fence for the given layer
     virtual sp<Fence> getLayerReleaseFence(HalDisplayId, HWC2::Layer*) const = 0;
@@ -219,7 +220,7 @@ public:
     // TODO(b/157555476): Remove when the framework has proper support for headless mode
     virtual bool updatesDeviceProductInfoOnHotplugReconnect() const = 0;
 
-    virtual bool onVsync(hal::HWDisplayId, int64_t timestamp) = 0;
+    virtual bool onVsync(hal::HWDisplayId, nsecs_t timestamp) = 0;
     virtual void setVsyncEnabled(PhysicalDisplayId, hal::Vsync enabled) = 0;
 
     virtual bool isConnected(PhysicalDisplayId) const = 0;
@@ -357,8 +358,9 @@ public:
     // reset state when a display is disconnected
     void disconnectDisplay(HalDisplayId) override;
 
-    // get the present fence received from the last call to present.
+    // Get the present fence/timestamp received from the last call to present.
     sp<Fence> getPresentFence(HalDisplayId) const override;
+    nsecs_t getPresentTimestamp(PhysicalDisplayId) const override;
 
     // Get last release fence for the given layer
     sp<Fence> getLayerReleaseFence(HalDisplayId, HWC2::Layer*) const override;
@@ -401,7 +403,7 @@ public:
 
     bool updatesDeviceProductInfoOnHotplugReconnect() const override;
 
-    bool onVsync(hal::HWDisplayId, int64_t timestamp) override;
+    bool onVsync(hal::HWDisplayId, nsecs_t timestamp) override;
     void setVsyncEnabled(PhysicalDisplayId, hal::Vsync enabled) override;
     status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) override;
 
@@ -479,7 +481,10 @@ private:
 
     struct DisplayData {
         std::unique_ptr<HWC2::Display> hwcDisplay;
+
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
+        nsecs_t lastPresentTimestamp = 0;
+
         std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
 
         bool validateWasSkipped;
@@ -489,8 +494,6 @@ private:
 
         std::mutex vsyncEnabledLock;
         hal::Vsync vsyncEnabled GUARDED_BY(vsyncEnabledLock) = hal::Vsync::DISABLE;
-
-        nsecs_t lastHwVsync = 0;
     };
 
     std::optional<DisplayIdentificationInfo> onHotplugConnect(hal::HWDisplayId);

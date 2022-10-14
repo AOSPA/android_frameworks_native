@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,15 @@
 
 #pragma once
 
-#include <binder/IBinder.h>
+#include <ftl/flags.h>
+#include <cstdint>
 
-namespace android {
+namespace android::compositionengine {
 
-sp<IBinder> RpcTrustyConnect(const char* device, const char* port);
+enum class Feature : int32_t {
+    kSnapshotLayerMetadata = 1 << 0,
+};
 
-sp<RpcSession> RpcTrustyConnectWithSessionInitializer(
-        const char* device, const char* port,
-        std::function<void(sp<RpcSession>&)> sessionInitializer);
+using FeatureFlags = ftl::Flags<Feature>;
 
-} // namespace android
+} // namespace android::compositionengine

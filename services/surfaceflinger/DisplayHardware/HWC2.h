@@ -75,7 +75,7 @@ using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 struct ComposerCallback {
     virtual void onComposerHalHotplug(hal::HWDisplayId, hal::Connection) = 0;
     virtual void onComposerHalRefresh(hal::HWDisplayId) = 0;
-    virtual void onComposerHalVsync(hal::HWDisplayId, int64_t timestamp,
+    virtual void onComposerHalVsync(hal::HWDisplayId, nsecs_t timestamp,
                                     std::optional<hal::VsyncPeriodNanos>) = 0;
     virtual void onComposerHalVsyncPeriodTimingChanged(hal::HWDisplayId,
                                                        const hal::VsyncPeriodChangeTimeline&) = 0;

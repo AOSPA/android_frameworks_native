@@ -76,6 +76,8 @@ static constexpr size_t OBFUSCATED_LENGTH = 8;
 static constexpr int32_t FF_STRONG_MAGNITUDE_CHANNEL_IDX = 0;
 static constexpr int32_t FF_WEAK_MAGNITUDE_CHANNEL_IDX = 1;
 
+static constexpr size_t EVENT_BUFFER_SIZE = 256;
+
 // Mapping for input battery class node IDs lookup.
 // https://www.kernel.org/doc/Documentation/power/power_supply_class.txt
 static const std::unordered_map<std::string, InputBatteryClass> BATTERY_CLASSES =
@@ -117,7 +119,8 @@ static const std::unordered_map<std::string, InputLightClass> LIGHT_CLASSES =
          {"brightness", InputLightClass::BRIGHTNESS},
          {"multi_index", InputLightClass::MULTI_INDEX},
          {"multi_intensity", InputLightClass::MULTI_INTENSITY},
-         {"max_brightness", InputLightClass::MAX_BRIGHTNESS}};
+         {"max_brightness", InputLightClass::MAX_BRIGHTNESS},
+         {"kbd_backlight", InputLightClass::KEYBOARD_BACKLIGHT}};
 
 // Mapping for input multicolor led class node names.
 // https://www.kernel.org/doc/html/latest/leds/leds-class-multicolor.html
@@ -365,15 +368,26 @@ static std::unordered_map<int32_t /*lightId*/, RawLightInfo> readLightsConfigura
         info.path = nodePath;
         info.name = nodePath.filename();
         info.maxBrightness = std::nullopt;
-        size_t nameStart = info.name.rfind(":");
-        if (nameStart != std::string::npos) {
-            // Trim the name to color name
-            info.name = info.name.substr(nameStart + 1);
-            // Set InputLightClass flag for colors
-            const auto it = LIGHT_CLASSES.find(info.name);
-            if (it != LIGHT_CLASSES.end()) {
-                info.flags |= it->second;
+
+        // Light name should follow the naming pattern <name>:<color>:<function>
+        // Refer kernel docs /leds/leds-class.html for valid supported LED names.
+        std::regex indexPattern("([a-zA-Z0-9_.:]*:)?([a-zA-Z0-9_.]*):([a-zA-Z0-9_.]*)");
+        std::smatch results;
+
+        if (std::regex_match(info.name, results, indexPattern)) {
+            // regex_match will return full match at index 0 and <name> at index 1. For RawLightInfo
+            // we only care about sections <color> and <function> which will be at index 2 and 3.
+            for (int i = 2; i <= 3; i++) {
+                const auto it = LIGHT_CLASSES.find(results.str(i));
+                if (it != LIGHT_CLASSES.end()) {
+                    info.flags |= it->second;
+                }
             }
+
+            // Set name of the raw light to <function> which represents playerIDs for LEDs that
+            // turn on/off based on the current player ID (Refer to PeripheralController.cpp for
+            // player ID logic)
+            info.name = results.str(3);
         }
         // Scan the path for all the files
         // Refer to https://www.kernel.org/doc/Documentation/leds/leds-class.txt
@@ -1404,17 +1418,28 @@ std::shared_ptr<const EventHub::AssociatedDevice> EventHub::obtainAssociatedDevi
     }
 
     const auto& path = *sysfsRootPathOpt;
-    for (const auto& [id, dev] : mDevices) {
-        if (dev->associatedDevice && dev->associatedDevice->sysfsRootPath == path) {
-            return dev->associatedDevice;
-        }
-    }
 
-    return std::make_shared<AssociatedDevice>(
+    std::shared_ptr<const AssociatedDevice> associatedDevice = std::make_shared<AssociatedDevice>(
             AssociatedDevice{.sysfsRootPath = path,
                              .countryCode = readCountryCodeLocked(path),
                              .batteryInfos = readBatteryConfiguration(path),
                              .lightInfos = readLightsConfiguration(path)});
+
+    bool associatedDeviceChanged = false;
+    for (const auto& [id, dev] : mDevices) {
+        if (dev->associatedDevice && dev->associatedDevice->sysfsRootPath == path) {
+            if (*associatedDevice != *dev->associatedDevice) {
+                associatedDeviceChanged = true;
+                dev->associatedDevice = associatedDevice;
+            }
+            associatedDevice = dev->associatedDevice;
+        }
+    }
+    ALOGI_IF(associatedDeviceChanged,
+             "The AssociatedDevice changed for path '%s'. Using new AssociatedDevice: %s",
+             path.c_str(), associatedDevice->dump().c_str());
+
+    return associatedDevice;
 }
 
 void EventHub::vibrate(int32_t deviceId, const VibrationElement& element) {
@@ -1621,15 +1646,12 @@ std::optional<int32_t> EventHub::getBatteryStatus(int32_t deviceId, int32_t batt
     return std::nullopt;
 }
 
-size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSize) {
-    ALOG_ASSERT(bufferSize >= 1);
-
+std::vector<RawEvent> EventHub::getEvents(int timeoutMillis) {
     std::scoped_lock _l(mLock);
 
-    struct input_event readBuffer[bufferSize];
+    std::array<input_event, EVENT_BUFFER_SIZE> readBuffer;
 
-    RawEvent* event = buffer;
-    size_t capacity = bufferSize;
+    std::vector<RawEvent> events;
     bool awoken = false;
     for (;;) {
         nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
@@ -1649,15 +1671,17 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         for (auto it = mClosingDevices.begin(); it != mClosingDevices.end();) {
             std::unique_ptr<Device> device = std::move(*it);
             ALOGV("Reporting device closed: id=%d, name=%s\n", device->id, device->path.c_str());
-            event->when = now;
-            event->deviceId = (device->id == mBuiltInKeyboardId)
+            const int32_t deviceId = (device->id == mBuiltInKeyboardId)
                     ? ReservedInputDeviceId::BUILT_IN_KEYBOARD_ID
                     : device->id;
-            event->type = DEVICE_REMOVED;
-            event += 1;
+            events.push_back({
+                    .when = now,
+                    .deviceId = deviceId,
+                    .type = DEVICE_REMOVED,
+            });
             it = mClosingDevices.erase(it);
             mNeedToSendFinishedDeviceScan = true;
-            if (--capacity == 0) {
+            if (events.size() == EVENT_BUFFER_SIZE) {
                 break;
             }
         }
@@ -1672,10 +1696,12 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
             std::unique_ptr<Device> device = std::move(*mOpeningDevices.rbegin());
             mOpeningDevices.pop_back();
             ALOGV("Reporting device opened: id=%d, name=%s\n", device->id, device->path.c_str());
-            event->when = now;
-            event->deviceId = device->id == mBuiltInKeyboardId ? 0 : device->id;
-            event->type = DEVICE_ADDED;
-            event += 1;
+            const int32_t deviceId = device->id == mBuiltInKeyboardId ? 0 : device->id;
+            events.push_back({
+                    .when = now,
+                    .deviceId = deviceId,
+                    .type = DEVICE_ADDED,
+            });
 
             // Try to find a matching video device by comparing device names
             for (auto it = mUnattachedVideoDevices.begin(); it != mUnattachedVideoDevices.end();
@@ -1693,17 +1719,18 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                 ALOGW("Device id %d exists, replaced.", device->id);
             }
             mNeedToSendFinishedDeviceScan = true;
-            if (--capacity == 0) {
+            if (events.size() == EVENT_BUFFER_SIZE) {
                 break;
             }
         }
 
         if (mNeedToSendFinishedDeviceScan) {
             mNeedToSendFinishedDeviceScan = false;
-            event->when = now;
-            event->type = FINISHED_DEVICE_SCAN;
-            event += 1;
-            if (--capacity == 0) {
+            events.push_back({
+                    .when = now,
+                    .type = FINISHED_DEVICE_SCAN,
+            });
+            if (events.size() == EVENT_BUFFER_SIZE) {
                 break;
             }
         }
@@ -1767,12 +1794,13 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
             // This must be an input event
             if (eventItem.events & EPOLLIN) {
                 int32_t readSize =
-                        read(device->fd, readBuffer, sizeof(struct input_event) * capacity);
+                        read(device->fd, readBuffer.data(),
+                             sizeof(decltype(readBuffer)::value_type) * readBuffer.size());
                 if (readSize == 0 || (readSize < 0 && errno == ENODEV)) {
                     // Device was removed before INotify noticed.
                     ALOGW("could not get event, removed? (fd: %d size: %" PRId32
-                          " bufferSize: %zu capacity: %zu errno: %d)\n",
-                          device->fd, readSize, bufferSize, capacity, errno);
+                          " capacity: %zu errno: %d)\n",
+                          device->fd, readSize, readBuffer.size(), errno);
                     deviceChanged = true;
                     closeDeviceLocked(*device);
                 } else if (readSize < 0) {
@@ -1782,21 +1810,21 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                 } else if ((readSize % sizeof(struct input_event)) != 0) {
                     ALOGE("could not get event (wrong size: %d)", readSize);
                 } else {
-                    int32_t deviceId = device->id == mBuiltInKeyboardId ? 0 : device->id;
+                    const int32_t deviceId = device->id == mBuiltInKeyboardId ? 0 : device->id;
 
-                    size_t count = size_t(readSize) / sizeof(struct input_event);
+                    const size_t count = size_t(readSize) / sizeof(struct input_event);
                     for (size_t i = 0; i < count; i++) {
                         struct input_event& iev = readBuffer[i];
-                        event->when = processEventTimestamp(iev);
-                        event->readTime = systemTime(SYSTEM_TIME_MONOTONIC);
-                        event->deviceId = deviceId;
-                        event->type = iev.type;
-                        event->code = iev.code;
-                        event->value = iev.value;
-                        event += 1;
-                        capacity -= 1;
+                        events.push_back({
+                                .when = processEventTimestamp(iev),
+                                .readTime = systemTime(SYSTEM_TIME_MONOTONIC),
+                                .deviceId = deviceId,
+                                .type = iev.type,
+                                .code = iev.code,
+                                .value = iev.value,
+                        });
                     }
-                    if (capacity == 0) {
+                    if (events.size() >= EVENT_BUFFER_SIZE) {
                         // The result buffer is full.  Reset the pending event index
                         // so we will try to read the device again on the next iteration.
                         mPendingEventIndex -= 1;
@@ -1832,7 +1860,7 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         }
 
         // Return now if we have collected any events or if we were explicitly awoken.
-        if (event != buffer || awoken) {
+        if (!events.empty() || awoken) {
             break;
         }
 
@@ -1878,7 +1906,7 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
     }
 
     // All done, return the number of events we read.
-    return event - buffer;
+    return events;
 }
 
 std::vector<TouchVideoFrame> EventHub::getVideoFrames(int32_t deviceId) {
@@ -2631,6 +2659,11 @@ void EventHub::dump(std::string& dump) const {
 void EventHub::monitor() const {
     // Acquire and release the lock to ensure that the event hub has not deadlocked.
     std::unique_lock<std::mutex> lock(mLock);
+}
+
+std::string EventHub::AssociatedDevice::dump() const {
+    return StringPrintf("path=%s, numBatteries=%zu, numLight=%zu", sysfsRootPath.c_str(),
+                        batteryInfos.size(), lightInfos.size());
 }
 
 } // namespace android
