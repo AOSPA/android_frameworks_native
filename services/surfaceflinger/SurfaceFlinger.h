@@ -1662,7 +1662,9 @@ private:
     bool mSendEarlyWakeUp = false;
     bool mSentInitialFps = false;
     std::mutex mEarlyWakeUpMutex;
-    int mUiLayerFrameCount = 0;
+    // use default max fps at beginning later will
+    // set with actual max fps
+    int mUiLayerFrameCount = 180;
     bool mAllowHwcForVDS = false;
     bool mAllowHwcForWFD = false;
     int mFirstApiLevel = 0;

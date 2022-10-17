@@ -3506,18 +3506,19 @@ void SurfaceFlinger::UpdateSmomoState() {
         bool is_valid_content_fps = false;
         if (mSmomoInstances.size() == 1) {
             if (content_fps > 0) {
-                if (mLayersWithQueuedFrames.size() > 1) {
-                    mUiLayerFrameCount++;
-                } else {
-                    mUiLayerFrameCount = 0;
+                if (mLayersWithQueuedFrames.size() == 1 && !mUiLayerFrameCount) {
+                    is_valid_content_fps = true;
                 }
-
-                is_valid_content_fps = (mUiLayerFrameCount < fps) ? true : false;
+                if (mLayersWithQueuedFrames.size() > 1) {
+                    mUiLayerFrameCount = fps;
+                }
+                if (mUiLayerFrameCount > 0) {
+                    mUiLayerFrameCount--;
+                }
             } else {
-                mUiLayerFrameCount = 0;
+                mUiLayerFrameCount = fps;
             }
         }
-
         setContentFps(is_valid_content_fps ? content_fps : fps);
     }
 
