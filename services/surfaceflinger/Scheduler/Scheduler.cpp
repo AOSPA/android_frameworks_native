@@ -43,7 +43,6 @@
 #include "DispSyncSource.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
-#include "InjectVSyncSource.h"
 #include "OneShotTimer.h"
 #include "SurfaceFlingerProperties.h"
 #include "VSyncPredictor.h"
@@ -56,6 +55,39 @@
             return __VA_ARGS__;                                      \
         }                                                            \
     } while (false)
+
+namespace {
+
+using android::Fps;
+using android::FpsApproxEqual;
+using android::FpsHash;
+using android::scheduler::AggregatedFpsScore;
+using android::scheduler::RefreshRateRankingsAndSignals;
+
+// Returns the aggregated score per Fps for the RefreshRateRankingsAndSignals sourced.
+auto getAggregatedScoresPerFps(
+        const std::vector<RefreshRateRankingsAndSignals>& refreshRateRankingsAndSignalsPerDisplay)
+        -> std::unordered_map<Fps, AggregatedFpsScore, FpsHash, FpsApproxEqual> {
+    std::unordered_map<Fps, AggregatedFpsScore, FpsHash, FpsApproxEqual> aggregatedScoresPerFps;
+
+    for (const auto& refreshRateRankingsAndSignal : refreshRateRankingsAndSignalsPerDisplay) {
+        const auto& refreshRateRankings = refreshRateRankingsAndSignal.refreshRateRankings;
+
+        std::for_each(refreshRateRankings.begin(), refreshRateRankings.end(), [&](const auto& it) {
+            const auto [score, result] =
+                    aggregatedScoresPerFps.try_emplace(it.displayModePtr->getFps(),
+                                                       AggregatedFpsScore{it.score,
+                                                                          /* numDisplays */ 1});
+            if (!result) { // update
+                score->second.totalScore += it.score;
+                score->second.numDisplays++;
+            }
+        });
+    }
+    return aggregatedScoresPerFps;
+}
+
+} // namespace
 
 namespace android::scheduler {
 
@@ -198,15 +230,14 @@ impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction(
     };
 }
 
-ConnectionHandle Scheduler::createConnection(
-        const char* connectionName, frametimeline::TokenManager* tokenManager,
-        std::chrono::nanoseconds workDuration, std::chrono::nanoseconds readyDuration,
-        impl::EventThread::InterceptVSyncsCallback interceptCallback) {
+ConnectionHandle Scheduler::createConnection(const char* connectionName,
+                                             frametimeline::TokenManager* tokenManager,
+                                             std::chrono::nanoseconds workDuration,
+                                             std::chrono::nanoseconds readyDuration) {
     auto vsyncSource = makePrimaryDispSyncSource(connectionName, workDuration, readyDuration);
     auto throttleVsync = makeThrottleVsyncCallback();
     auto getVsyncPeriod = makeGetVsyncPeriodFunction();
     auto eventThread = std::make_unique<impl::EventThread>(std::move(vsyncSource), tokenManager,
-                                                           std::move(interceptCallback),
                                                            std::move(throttleVsync),
                                                            std::move(getVsyncPeriod));
     bool triggerRefresh = !strcmp(connectionName, "app");
@@ -384,44 +415,6 @@ DisplayStatInfo Scheduler::getDisplayStatInfo(nsecs_t now) {
     const auto vsyncTime = mVsyncSchedule->getTracker().nextAnticipatedVSyncTimeFrom(now);
     const auto vsyncPeriod = mVsyncSchedule->getTracker().currentPeriod();
     return DisplayStatInfo{.vsyncTime = vsyncTime, .vsyncPeriod = vsyncPeriod};
-}
-
-ConnectionHandle Scheduler::enableVSyncInjection(bool enable) {
-    if (mInjectVSyncs == enable) {
-        return {};
-    }
-
-    ALOGV("%s VSYNC injection", enable ? "Enabling" : "Disabling");
-
-    if (!mInjectorConnectionHandle) {
-        auto vsyncSource = std::make_unique<InjectVSyncSource>();
-        mVSyncInjector = vsyncSource.get();
-
-        auto eventThread =
-                std::make_unique<impl::EventThread>(std::move(vsyncSource),
-                                                    /*tokenManager=*/nullptr,
-                                                    impl::EventThread::InterceptVSyncsCallback(),
-                                                    impl::EventThread::ThrottleVsyncCallback(),
-                                                    impl::EventThread::GetVsyncPeriodFunction());
-
-        // EventThread does not dispatch VSYNC unless the display is connected and powered on.
-        eventThread->onHotplugReceived(PhysicalDisplayId::fromPort(0), true);
-        eventThread->onScreenAcquired();
-
-        mInjectorConnectionHandle = createConnection(std::move(eventThread), false /*No Refresh*/);
-    }
-
-    mInjectVSyncs = enable;
-    return mInjectorConnectionHandle;
-}
-
-bool Scheduler::injectVSync(nsecs_t when, nsecs_t expectedVSyncTime, nsecs_t deadlineTimestamp) {
-    if (!mInjectVSyncs || !mVSyncInjector) {
-        return false;
-    }
-
-    mVSyncInjector->onInjectSyncEvent(when, expectedVSyncTime, deadlineTimestamp);
-    return true;
 }
 
 void Scheduler::enableHardwareVsync() {
@@ -697,6 +690,7 @@ template <typename S, typename T>
 auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals {
     DisplayModePtr newMode;
     GlobalSignals consideredSignals;
+    std::vector<DisplayModeConfig> displayModeConfigs;
 
     bool refreshRateChanged = false;
     bool frameRateOverridesChanged;
@@ -711,9 +705,27 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
 
         // TODO(b/226947083) QC value-adds were deleted here due to change in
         // datatype
-        const auto [rankings, signals] = getRankedDisplayModes();
-        newMode = rankings.front().displayModePtr;
-        consideredSignals = signals;
+        displayModeConfigs = getBestDisplayModeConfigs();
+
+        // mPolicy holds the current mode, using the current mode we find out
+        // what display is currently being tracked through the policy and
+        // then find the DisplayModeConfig for that display. So that
+        // later we check if the policy mode has changed for the same display in policy.
+        // If mPolicy mode isn't available then we take the first display from the best display
+        // modes as the candidate for policy changes and frame rate overrides.
+        // TODO(b/240743786) Update the single display based assumptions and make mode changes
+        // and mPolicy per display.
+        const DisplayModeConfig& displayModeConfigForCurrentPolicy = mPolicy.mode
+                ? *std::find_if(displayModeConfigs.begin(), displayModeConfigs.end(),
+                                [&](const auto& displayModeConfig) REQUIRES(mPolicyLock) {
+                                    return displayModeConfig.displayModePtr
+                                                   ->getPhysicalDisplayId() ==
+                                            mPolicy.mode->getPhysicalDisplayId();
+                                })
+                : displayModeConfigs.front();
+
+        newMode = displayModeConfigForCurrentPolicy.displayModePtr;
+        consideredSignals = displayModeConfigForCurrentPolicy.signals;
         frameRateOverridesChanged = updateFrameRateOverrides(consideredSignals, newMode->getFps());
 
         if (mPolicy.mode == newMode) {
@@ -731,9 +743,7 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
     if (refreshRateChanged) {
         // TODO(b/226947083) QC value-adds were deleted here due to change in
         // datatype
-        mSchedulerCallback.requestDisplayMode(std::move(newMode),
-                                              consideredSignals.idle ? DisplayModeEvent::None
-                                                                     : DisplayModeEvent::Changed);
+        mSchedulerCallback.requestDisplayModes(std::move(displayModeConfigs));
     }
     if (frameRateOverridesChanged) {
         mSchedulerCallback.triggerOnFrameRateOverridesChanged();
@@ -741,28 +751,89 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
     return consideredSignals;
 }
 
-auto Scheduler::getRankedDisplayModes()
-        -> std::pair<std::vector<RefreshRateRanking>, GlobalSignals> {
+void Scheduler::registerDisplay(const sp<const DisplayDevice>& display) {
+    const bool ok = mDisplays.try_emplace(display->getPhysicalId(), display).second;
+    ALOGE_IF(!ok, "Duplicate display registered");
+}
+
+void Scheduler::unregisterDisplay(PhysicalDisplayId displayId) {
+    mDisplays.erase(displayId);
+}
+
+std::vector<DisplayModeConfig> Scheduler::getBestDisplayModeConfigs() const {
     ATRACE_CALL();
 
-    const auto configs = holdRefreshRateConfigs();
+    std::vector<RefreshRateRankingsAndSignals> refreshRateRankingsAndSignalsPerDisplay;
+    refreshRateRankingsAndSignalsPerDisplay.reserve(mDisplays.size());
 
+    for (const auto& [id, display] : mDisplays) {
+        const auto [rankings, signals] =
+                display->holdRefreshRateConfigs()
+                        ->getRankedRefreshRates(mPolicy.contentRequirements, makeGlobalSignals());
+
+        refreshRateRankingsAndSignalsPerDisplay.emplace_back(
+                RefreshRateRankingsAndSignals{rankings, signals});
+    }
+
+    // FPS and their Aggregated score.
+    std::unordered_map<Fps, AggregatedFpsScore, FpsHash, FpsApproxEqual> aggregatedScoresPerFps =
+            getAggregatedScoresPerFps(refreshRateRankingsAndSignalsPerDisplay);
+
+    auto maxScoreIt = aggregatedScoresPerFps.cbegin();
+    // Selects the max Fps that is present on all the displays.
+    for (auto it = aggregatedScoresPerFps.cbegin(); it != aggregatedScoresPerFps.cend(); ++it) {
+        const auto [fps, aggregatedScore] = *it;
+        if (aggregatedScore.numDisplays == mDisplays.size() &&
+            aggregatedScore.totalScore >= maxScoreIt->second.totalScore) {
+            maxScoreIt = it;
+        }
+    }
+    return getDisplayModeConfigsForTheChosenFps(maxScoreIt->first,
+                                                refreshRateRankingsAndSignalsPerDisplay);
+}
+
+std::vector<DisplayModeConfig> Scheduler::getDisplayModeConfigsForTheChosenFps(
+        Fps chosenFps,
+        const std::vector<RefreshRateRankingsAndSignals>& refreshRateRankingsAndSignalsPerDisplay)
+        const {
+    std::vector<DisplayModeConfig> displayModeConfigs;
+    displayModeConfigs.reserve(mDisplays.size());
+    using fps_approx_ops::operator==;
+    std::for_each(refreshRateRankingsAndSignalsPerDisplay.begin(),
+                  refreshRateRankingsAndSignalsPerDisplay.end(),
+                  [&](const auto& refreshRateRankingsAndSignal) {
+                      for (const auto& ranking : refreshRateRankingsAndSignal.refreshRateRankings) {
+                          if (ranking.displayModePtr->getFps() == chosenFps) {
+                              displayModeConfigs.emplace_back(
+                                      DisplayModeConfig{refreshRateRankingsAndSignal.globalSignals,
+                                                        ranking.displayModePtr});
+                              break;
+                          }
+                      }
+                  });
+    return displayModeConfigs;
+}
+
+GlobalSignals Scheduler::makeGlobalSignals() const {
     const bool powerOnImminent = mDisplayPowerTimer &&
             (mPolicy.displayPowerMode != hal::PowerMode::ON ||
              mPolicy.displayPowerTimer == TimerState::Reset);
 
-    const GlobalSignals signals{.touch = mTouchTimer && mPolicy.touch == TouchState::Active,
-                                .idle = mPolicy.idleTimer == TimerState::Expired,
-                                .powerOnImminent = powerOnImminent};
-
-    return configs->getRankedRefreshRates(mPolicy.contentRequirements, signals);
+    return {.touch = mTouchTimer && mPolicy.touch == TouchState::Active,
+            .idle = mPolicy.idleTimer == TimerState::Expired,
+            .powerOnImminent = powerOnImminent};
 }
 
 DisplayModePtr Scheduler::getPreferredDisplayMode() {
     std::lock_guard<std::mutex> lock(mPolicyLock);
     // Make sure the stored mode is up to date.
     if (mPolicy.mode) {
-        mPolicy.mode = getRankedDisplayModes().first.front().displayModePtr;
+        const auto configs = holdRefreshRateConfigs();
+        const auto rankings =
+                configs->getRankedRefreshRates(mPolicy.contentRequirements, makeGlobalSignals())
+                        .first;
+
+        mPolicy.mode = rankings.front().displayModePtr;
     }
     return mPolicy.mode;
 }

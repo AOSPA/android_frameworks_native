@@ -154,7 +154,6 @@ cc_defaults {
         "libserviceutils",
         "libshaders",
         "libtonemap",
-        "libtrace_proto",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -260,11 +259,11 @@ filegroup {
         "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
-        "SurfaceInterceptor.cpp",
         "Tracing/LayerTracing.cpp",
         "Tracing/TransactionTracing.cpp",
         "Tracing/TransactionProtoParser.cpp",
         "TransactionCallbackInvoker.cpp",
+        "TransactionHandler.cpp",
         "TunnelModeEnabledReporter.cpp",
     ],
 }
@@ -295,7 +294,6 @@ cc_defaults {
     ],
     static_libs: [
         "libserviceutils",
-        "libtrace_proto",
     ],
 }
 

@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -34,9 +35,11 @@
 
 #include <ui/DisplayStatInfo.h>
 
+#include <DisplayDevice.h>
 #include <scheduler/Features.h>
 #include <scheduler/Time.h>
 
+#include "Display/DisplayMap.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "LayerHistory.h"
@@ -77,7 +80,6 @@ struct hash<android::scheduler::ConnectionHandle> {
 namespace android {
 
 class FenceTime;
-class InjectVSyncSource;
 
 namespace frametimeline {
 class TokenManager;
@@ -85,17 +87,41 @@ class TokenManager;
 
 namespace scheduler {
 
+using GlobalSignals = RefreshRateConfigs::GlobalSignals;
+
+// Config representing the DisplayMode and considered signals for the Display.
+struct DisplayModeConfig {
+    const GlobalSignals signals;
+    const DisplayModePtr displayModePtr;
+
+    DisplayModeConfig(GlobalSignals signals, DisplayModePtr displayModePtr)
+          : signals(signals), displayModePtr(std::move(displayModePtr)) {}
+};
+
 struct ISchedulerCallback {
     using DisplayModeEvent = scheduler::DisplayModeEvent;
 
     virtual void setVsyncEnabled(bool) = 0;
-    virtual void requestDisplayMode(DisplayModePtr, DisplayModeEvent) = 0;
+    virtual void requestDisplayModes(std::vector<DisplayModeConfig>) = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
     virtual void getModeFromFps(float, DisplayModePtr&) = 0;
 
 protected:
     ~ISchedulerCallback() = default;
+};
+
+// Holds the total score of the FPS and
+// number of displays the FPS is found in.
+struct AggregatedFpsScore {
+    float totalScore;
+    size_t numDisplays;
+};
+
+// Represents the RefreshRateRankings and GlobalSignals for the selected RefreshRateRankings.
+struct RefreshRateRankingsAndSignals {
+    std::vector<RefreshRateRanking> refreshRateRankings;
+    GlobalSignals globalSignals;
 };
 
 class Scheduler : android::impl::MessageQueue {
@@ -114,7 +140,6 @@ public:
     void createVsyncSchedule(FeatureFlags);
 
     using Impl::initVsync;
-    using Impl::setInjector;
 
     using Impl::getScheduledFrameTime;
     using Impl::setDuration;
@@ -133,8 +158,7 @@ public:
 
     ConnectionHandle createConnection(const char* connectionName, frametimeline::TokenManager*,
                                       std::chrono::nanoseconds workDuration,
-                                      std::chrono::nanoseconds readyDuration,
-                                      android::impl::EventThread::InterceptVSyncsCallback);
+                                      std::chrono::nanoseconds readyDuration);
 
     sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle, bool triggerRefresh,
             EventRegistrationFlags eventRegistration = {});
@@ -155,11 +179,6 @@ public:
                      std::chrono::nanoseconds readyDuration);
 
     DisplayStatInfo getDisplayStatInfo(nsecs_t now);
-
-    // Returns injector handle if injection has toggled, or an invalid handle otherwise.
-    ConnectionHandle enableVSyncInjection(bool enable);
-    // Returns false if injection is disabled.
-    bool injectVSync(nsecs_t when, nsecs_t expectedVSyncTime, nsecs_t deadlineTimestamp);
     void enableHardwareVsync();
     void disableHardwareVsync(bool makeUnavailable);
 
@@ -245,6 +264,9 @@ public:
         return mLayerHistory.getLayerFramerate(now, id);
     }
 
+    void registerDisplay(const sp<const DisplayDevice>&);
+    void unregisterDisplay(PhysicalDisplayId);
+
     void setIdleState();
     void updateThermalFps(float fps);
 
@@ -271,8 +293,6 @@ private:
 
     void setVsyncPeriod(nsecs_t period, bool force_resync = false);
 
-    using GlobalSignals = RefreshRateConfigs::GlobalSignals;
-
     struct Policy;
 
     // Sets the S state of the policy to the T value under mPolicyLock, and chooses a display mode
@@ -280,10 +300,14 @@ private:
     template <typename S, typename T>
     GlobalSignals applyPolicy(S Policy::*, T&&) EXCLUDES(mPolicyLock);
 
-    // Returns the list of display modes in descending order of their priority that fulfills the
-    // policy, and the signals that were considered.
-    std::pair<std::vector<RefreshRateRanking>, GlobalSignals> getRankedDisplayModes()
-            REQUIRES(mPolicyLock);
+    // Returns the best display mode per display.
+    std::vector<DisplayModeConfig> getBestDisplayModeConfigs() const REQUIRES(mPolicyLock);
+
+    // Returns the list of DisplayModeConfigs per display for the chosenFps.
+    std::vector<DisplayModeConfig> getDisplayModeConfigsForTheChosenFps(
+            Fps chosenFps, const std::vector<RefreshRateRankingsAndSignals>&) const;
+
+    GlobalSignals makeGlobalSignals() const REQUIRES(mPolicyLock);
 
     bool updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) REQUIRES(mPolicyLock);
 
@@ -309,10 +333,6 @@ private:
     mutable std::mutex mConnectionsLock;
     std::unordered_map<ConnectionHandle, Connection> mConnections GUARDED_BY(mConnectionsLock);
 
-    bool mInjectVSyncs = false;
-    InjectVSyncSource* mVSyncInjector = nullptr;
-    ConnectionHandle mInjectorConnectionHandle;
-
     mutable std::mutex mHWVsyncLock;
     bool mPrimaryHWVsyncEnabled GUARDED_BY(mHWVsyncLock) = false;
     bool mHWVsyncAvailable GUARDED_BY(mHWVsyncLock) = false;
@@ -333,6 +353,10 @@ private:
     ISchedulerCallback& mSchedulerCallback;
 
     mutable std::mutex mPolicyLock;
+
+    // Holds the Physical displays registered through the SurfaceFlinger, used for making
+    // the refresh rate selections.
+    display::PhysicalDisplayMap<PhysicalDisplayId, const sp<const DisplayDevice>> mDisplays;
 
     struct Policy {
         // Policy for choosing the display mode.

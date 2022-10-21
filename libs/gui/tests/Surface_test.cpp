@@ -263,7 +263,10 @@ TEST_F(SurfaceTest, ScreenshotsOfProtectedBuffersDontSucceed) {
     sp<ANativeWindow> anw(mSurface);
 
     // Verify the screenshot works with no protected buffers.
-    const sp<IBinder> display = ComposerServiceAIDL::getInstance().getInternalDisplayToken();
+    const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+    ASSERT_FALSE(ids.empty());
+    // display 0 is picked for now, can extend to support all displays if needed
+    const sp<IBinder> display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
     ASSERT_FALSE(display == nullptr);
 
     DisplayCaptureArgs captureArgs;
@@ -848,10 +851,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status enableVSyncInjections(bool /*enable*/) override { return binder::Status::ok(); }
-
-    binder::Status injectVSync(int64_t /*when*/) override { return binder::Status::ok(); }
-
     binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* /*outLayers*/) override {
         return binder::Status::ok();
     }
@@ -976,11 +975,6 @@ public:
     }
 
     binder::Status setOverrideFrameRate(int32_t /*uid*/, float /*frameRate*/) override {
-        return binder::Status::ok();
-    }
-
-    binder::Status addTransactionTraceListener(
-            const sp<gui::ITransactionTraceListener>& /*listener*/) override {
         return binder::Status::ok();
     }
 

@@ -18,6 +18,7 @@
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 #include <libgui_fuzzer_utils.h>
+#include "android-base/stringprintf.h"
 
 using namespace android;
 
@@ -175,7 +176,9 @@ sp<SurfaceControl> SurfaceComposerClientFuzzer::makeSurfaceControl() {
     uint32_t flags = mFdp.ConsumeIntegral<uint32_t>();
     int32_t format = mFdp.ConsumeIntegral<int32_t>();
     int32_t layerId = mFdp.ConsumeIntegral<int32_t>();
-    return new SurfaceControl(client, handle, layerId, width, height, format, transformHint, flags);
+    std::string layerName = base::StringPrintf("#%d", layerId);
+    return new SurfaceControl(client, handle, layerId, layerName, width, height, format,
+                              transformHint, flags);
 }
 
 void SurfaceComposerClientFuzzer::invokeSurfaceComposerTransaction() {
@@ -267,10 +270,6 @@ void SurfaceComposerClientFuzzer::invokeSurfaceComposerClient() {
     sp<BnGraphicBufferProducer> producer;
     sp<Surface> surfaceParent(
             new Surface(producer, mFdp.ConsumeBool() /*controlledByApp*/, handle));
-
-    SurfaceComposerClient::enableVSyncInjections(mFdp.ConsumeBool() /*secure*/);
-    nsecs_t when = mFdp.ConsumeIntegral<uint32_t>();
-    SurfaceComposerClient::injectVSync(when);
 
     fuzzOnPullAtom();
     SurfaceComposerClient::setDisplayContentSamplingEnabled(displayToken,

@@ -41,6 +41,7 @@
 #include "OS.h"
 #include "RpcSocketAddress.h"
 #include "RpcState.h"
+#include "RpcTransportUtils.h"
 #include "RpcWireFormat.h"
 #include "Utils.h"
 
@@ -145,6 +146,34 @@ RpcSession::FileDescriptorTransportMode RpcSession::getFileDescriptorTransportMo
 
 status_t RpcSession::setupUnixDomainClient(const char* path) {
     return setupSocketClient(UnixSocketAddress(path));
+}
+
+status_t RpcSession::setupUnixDomainSocketBootstrapClient(unique_fd bootstrapFd) {
+    mBootstrapTransport =
+            mCtx->newTransport(RpcTransportFd(std::move(bootstrapFd)), mShutdownTrigger.get());
+    return setupClient([&](const std::vector<uint8_t>& sessionId, bool incoming) {
+        int socks[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, socks) < 0) {
+            int savedErrno = errno;
+            ALOGE("Failed socketpair: %s", strerror(savedErrno));
+            return -savedErrno;
+        }
+        unique_fd clientFd(socks[0]), serverFd(socks[1]);
+
+        int zero = 0;
+        iovec iov{&zero, sizeof(zero)};
+        std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
+        fds.push_back(std::move(serverFd));
+
+        status_t status = mBootstrapTransport->interruptableWriteFully(mShutdownTrigger.get(), &iov,
+                                                                       1, std::nullopt, &fds);
+        if (status != OK) {
+            ALOGE("Failed to send fd over bootstrap transport: %s", strerror(-status));
+            return status;
+        }
+
+        return initAndAddConnection(RpcTransportFd(std::move(clientFd)), sessionId, incoming);
+    });
 }
 
 status_t RpcSession::setupVsockClient(unsigned int cid, unsigned int port) {
@@ -295,16 +324,18 @@ void RpcSession::WaitForShutdownListener::onSessionAllIncomingThreadsEnded(
 }
 
 void RpcSession::WaitForShutdownListener::onSessionIncomingThreadEnded() {
+    mShutdownCount += 1;
     mCv.notify_all();
 }
 
 void RpcSession::WaitForShutdownListener::waitForShutdown(RpcMutexUniqueLock& lock,
                                                           const sp<RpcSession>& session) {
-    while (session->mConnections.mIncoming.size() > 0) {
+    while (mShutdownCount < session->mConnections.mMaxIncoming) {
         if (std::cv_status::timeout == mCv.wait_for(lock, std::chrono::seconds(1))) {
             ALOGE("Waiting for RpcSession to shut down (1s w/o progress): %zu incoming connections "
-                  "still.",
-                  session->mConnections.mIncoming.size());
+                  "still %zu/%zu fully shutdown.",
+                  session->mConnections.mIncoming.size(), mShutdownCount.load(),
+                  session->mConnections.mMaxIncoming);
         }
     }
 }

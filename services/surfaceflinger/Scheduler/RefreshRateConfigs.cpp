@@ -28,6 +28,7 @@
 #include <android-base/stringprintf.h>
 #include <ftl/enum.h>
 #include <ftl/fake_guard.h>
+#include <ftl/match.h>
 #include <utils/Trace.h>
 
 #include "../SurfaceFlingerProperties.h"
@@ -115,6 +116,20 @@ bool canModesSupportFrameRateOverride(const std::vector<DisplayModeIterator>& so
         }
     }
     return false;
+}
+
+std::string toString(const RefreshRateConfigs::PolicyVariant& policy) {
+    using namespace std::string_literals;
+
+    return ftl::match(
+            policy,
+            [](const RefreshRateConfigs::DisplayManagerPolicy& policy) {
+                return "DisplayManagerPolicy"s + policy.toString();
+            },
+            [](const RefreshRateConfigs::OverridePolicy& policy) {
+                return "OverridePolicy"s + policy.toString();
+            },
+            [](RefreshRateConfigs::NoOverridePolicy) { return "NoOverridePolicy"s; });
 }
 
 } // namespace
@@ -299,7 +314,8 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
     // Keep the display at max refresh rate for the duration of powering on the display.
     if (signals.powerOnImminent) {
         ALOGV("Power On Imminent");
-        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Descending),
+        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Descending,
+                                              /*preferredDisplayModeOpt*/ std::nullopt),
                 GlobalSignals{.powerOnImminent = true}};
     }
 
@@ -359,7 +375,8 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
     // selected a refresh rate to see if we should apply touch boost.
     if (signals.touch && !hasExplicitVoteLayers) {
         ALOGV("Touch Boost");
-        return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending),
+        return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending,
+                                              /*preferredDisplayModeOpt*/ std::nullopt),
                 GlobalSignals{.touch = true}};
     }
 
@@ -371,20 +388,23 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
 
     if (!signals.touch && signals.idle && !(primaryRangeIsSingleRate && hasExplicitVoteLayers)) {
         ALOGV("Idle");
-        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Ascending),
+        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Ascending,
+                                              /*preferredDisplayModeOpt*/ std::nullopt),
                 GlobalSignals{.idle = true}};
     }
 
     if (layers.empty() || noVoteLayers == layers.size()) {
         ALOGV("No layers with votes");
-        return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending),
+        return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending,
+                                              /*preferredDisplayModeOpt*/ std::nullopt),
                 kNoSignals};
     }
 
     // Only if all layers want Min we should return Min
     if (noVoteLayers + minVoteLayers == layers.size()) {
         ALOGV("All layers Min");
-        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Ascending),
+        return {getRefreshRatesByPolicyLocked(activeMode.getGroup(), RefreshRateOrder::Ascending,
+                                              /*preferredDisplayModeOpt*/ std::nullopt),
                 kNoSignals};
     }
 
@@ -545,13 +565,17 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
                        return RefreshRateRanking{score.modeIt->second, score.overallScore};
                    });
 
+    const bool noLayerScore = std::all_of(scores.begin(), scores.end(), [](RefreshRateScore score) {
+        return score.overallScore == 0;
+    });
+
     if (primaryRangeIsSingleRate) {
         // If we never scored any layers, then choose the rate from the primary
         // range instead of picking a random score from the app range.
-        if (std::all_of(scores.begin(), scores.end(),
-                        [](RefreshRateScore score) { return score.overallScore == 0; })) {
+        if (noLayerScore) {
             ALOGV("Layers not scored");
-            return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending),
+            return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending,
+                                                  /*preferredDisplayModeOpt*/ std::nullopt),
                     kNoSignals};
         } else {
             return {rankedRefreshRates, kNoSignals};
@@ -573,7 +597,8 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
     }();
 
     const auto& touchRefreshRates =
-            getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending);
+            getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Descending,
+                                          /*preferredDisplayModeOpt*/ std::nullopt);
     using fps_approx_ops::operator<;
 
     if (signals.touch && explicitDefaultVoteLayers == 0 && touchBoostForExplicitExact &&
@@ -581,6 +606,15 @@ auto RefreshRateConfigs::getRankedRefreshRatesLocked(const std::vector<LayerRequ
                 touchRefreshRates.front().displayModePtr->getFps()) {
         ALOGV("Touch Boost");
         return {touchRefreshRates, GlobalSignals{.touch = true}};
+    }
+
+    // If we never scored any layers, and we don't favor high refresh rates, prefer to stay with the
+    // current config
+    if (noLayerScore && refreshRateOrder == RefreshRateOrder::Ascending) {
+        const auto preferredDisplayMode = activeMode.getId();
+        return {getRefreshRatesByPolicyLocked(anchorGroup, RefreshRateOrder::Ascending,
+                                              preferredDisplayMode),
+                kNoSignals};
     }
 
     return {rankedRefreshRates, kNoSignals};
@@ -752,15 +786,29 @@ const DisplayModePtr& RefreshRateConfigs::getMaxRefreshRateByPolicyLocked(int an
 }
 
 std::vector<RefreshRateRanking> RefreshRateConfigs::getRefreshRatesByPolicyLocked(
-        std::optional<int> anchorGroupOpt, RefreshRateOrder refreshRateOrder) const {
-    std::vector<RefreshRateRanking> rankings;
+        std::optional<int> anchorGroupOpt, RefreshRateOrder refreshRateOrder,
+        std::optional<DisplayModeId> preferredDisplayModeOpt) const {
+    std::deque<RefreshRateRanking> rankings;
     const auto makeRanking = [&](const DisplayModeIterator it) REQUIRES(mLock) {
         const auto& mode = it->second;
-        const bool inverseScore = (refreshRateOrder == RefreshRateOrder::Ascending);
-        const float score = calculateRefreshRateScoreForFps(mode->getFps());
-        if (!anchorGroupOpt || mode->getGroup() == anchorGroupOpt) {
-            rankings.push_back(RefreshRateRanking{mode, inverseScore ? 1.0f / score : score});
+        if (anchorGroupOpt && mode->getGroup() != anchorGroupOpt) {
+            return;
         }
+
+        float score = calculateRefreshRateScoreForFps(mode->getFps());
+        const bool inverseScore = (refreshRateOrder == RefreshRateOrder::Ascending);
+        if (inverseScore) {
+            score = 1.0f / score;
+        }
+        if (preferredDisplayModeOpt) {
+            if (*preferredDisplayModeOpt == mode->getId()) {
+                rankings.push_front(RefreshRateRanking{mode, /*score*/ 1.0f});
+                return;
+            }
+            constexpr float kNonPreferredModePenalty = 0.95f;
+            score *= kNonPreferredModePenalty;
+        }
+        rankings.push_back(RefreshRateRanking{mode, score});
     };
 
     if (refreshRateOrder == RefreshRateOrder::Ascending) {
@@ -770,14 +818,15 @@ std::vector<RefreshRateRanking> RefreshRateConfigs::getRefreshRatesByPolicyLocke
     }
 
     if (!rankings.empty() || !anchorGroupOpt) {
-        return rankings;
+        return {rankings.begin(), rankings.end()};
     }
 
     ALOGW("Can't find %s refresh rate by policy with the same mode group"
           " as the mode group %d",
           refreshRateOrder == RefreshRateOrder::Ascending ? "min" : "max", anchorGroupOpt.value());
 
-    return getRefreshRatesByPolicyLocked(/*anchorGroupOpt*/ std::nullopt, refreshRateOrder);
+    return getRefreshRatesByPolicyLocked(/*anchorGroupOpt*/ std::nullopt, refreshRateOrder,
+                                         preferredDisplayModeOpt);
 }
 
 DisplayModePtr RefreshRateConfigs::getActiveModePtr() const {
@@ -876,35 +925,60 @@ bool RefreshRateConfigs::isPolicyValidLocked(const Policy& policy) const {
             policy.appRequestRange.max >= policy.primaryRange.max;
 }
 
-status_t RefreshRateConfigs::setDisplayManagerPolicy(const Policy& policy) {
-    std::lock_guard lock(mLock);
-    if (!isPolicyValidLocked(policy)) {
-        ALOGE("Invalid refresh rate policy: %s", policy.toString().c_str());
-        return BAD_VALUE;
-    }
-    mGetRankedRefreshRatesCache.reset();
-    Policy previousPolicy = *getCurrentPolicyLocked();
-    mDisplayManagerPolicy = policy;
-    if (*getCurrentPolicyLocked() == previousPolicy) {
-        return CURRENT_POLICY_UNCHANGED;
-    }
-    constructAvailableRefreshRates();
-    return NO_ERROR;
-}
+auto RefreshRateConfigs::setPolicy(const PolicyVariant& policy) -> SetPolicyResult {
+    Policy oldPolicy;
+    {
+        std::lock_guard lock(mLock);
+        oldPolicy = *getCurrentPolicyLocked();
 
-status_t RefreshRateConfigs::setOverridePolicy(const std::optional<Policy>& policy) {
-    std::lock_guard lock(mLock);
-    if (policy && !isPolicyValidLocked(*policy)) {
-        return BAD_VALUE;
+        const bool valid = ftl::match(
+                policy,
+                [this](const auto& policy) {
+                    ftl::FakeGuard guard(mLock);
+                    if (!isPolicyValidLocked(policy)) {
+                        ALOGE("Invalid policy: %s", policy.toString().c_str());
+                        return false;
+                    }
+
+                    using T = std::decay_t<decltype(policy)>;
+
+                    if constexpr (std::is_same_v<T, DisplayManagerPolicy>) {
+                        mDisplayManagerPolicy = policy;
+                    } else {
+                        static_assert(std::is_same_v<T, OverridePolicy>);
+                        mOverridePolicy = policy;
+                    }
+                    return true;
+                },
+                [this](NoOverridePolicy) {
+                    ftl::FakeGuard guard(mLock);
+                    mOverridePolicy.reset();
+                    return true;
+                });
+
+        if (!valid) {
+            return SetPolicyResult::Invalid;
+        }
+
+        mGetRankedRefreshRatesCache.reset();
+
+        if (*getCurrentPolicyLocked() == oldPolicy) {
+            return SetPolicyResult::Unchanged;
+        }
+        constructAvailableRefreshRates();
     }
-    mGetRankedRefreshRatesCache.reset();
-    Policy previousPolicy = *getCurrentPolicyLocked();
-    mOverridePolicy = policy;
-    if (*getCurrentPolicyLocked() == previousPolicy) {
-        return CURRENT_POLICY_UNCHANGED;
-    }
-    constructAvailableRefreshRates();
-    return NO_ERROR;
+
+    const auto displayId = getActiveMode().getPhysicalDisplayId();
+    const unsigned numModeChanges = std::exchange(mNumModeSwitchesInPolicy, 0u);
+
+    ALOGI("Display %s policy changed\n"
+          "Previous: %s\n"
+          "Current:  %s\n"
+          "%u mode changes were performed under the previous policy",
+          to_string(displayId).c_str(), oldPolicy.toString().c_str(), toString(policy).c_str(),
+          numModeChanges);
+
+    return SetPolicyResult::Changed;
 }
 
 const RefreshRateConfigs::Policy* RefreshRateConfigs::getCurrentPolicyLocked() const {
@@ -1039,47 +1113,45 @@ bool RefreshRateConfigs::isFractionalPairOrMultiple(Fps smaller, Fps bigger) {
             isApproxEqual(bigger, Fps::fromValue(smaller.getValue() * multiplier * kCoef));
 }
 
-void RefreshRateConfigs::dump(std::string& result) const {
-    using namespace std::string_literals;
+void RefreshRateConfigs::dump(utils::Dumper& dumper) const {
+    using namespace std::string_view_literals;
 
     std::lock_guard lock(mLock);
 
     const auto activeModeId = getActiveModeItLocked()->first;
-    result += "   activeModeId="s;
-    result += std::to_string(activeModeId.value());
+    dumper.dump("activeModeId"sv, std::to_string(activeModeId.value()));
 
-    result += "\n   displayModes=\n"s;
-    for (const auto& [id, mode] : mDisplayModes) {
-        result += "      "s;
-        result += to_string(*mode);
-        result += '\n';
+    dumper.dump("displayModes"sv);
+    {
+        utils::Dumper::Indent indent(dumper);
+        for (const auto& [id, mode] : mDisplayModes) {
+            dumper.dump({}, to_string(*mode));
+        }
     }
 
-    base::StringAppendF(&result, "   displayManagerPolicy=%s\n",
-                        mDisplayManagerPolicy.toString().c_str());
+    dumper.dump("displayManagerPolicy"sv, mDisplayManagerPolicy.toString());
 
     if (const Policy& currentPolicy = *getCurrentPolicyLocked();
         mOverridePolicy && currentPolicy != mDisplayManagerPolicy) {
-        base::StringAppendF(&result, "   overridePolicy=%s\n", currentPolicy.toString().c_str());
+        dumper.dump("overridePolicy"sv, currentPolicy.toString());
     }
 
-    base::StringAppendF(&result, "   supportsFrameRateOverrideByContent=%s\n",
-                        mSupportsFrameRateOverrideByContent ? "true" : "false");
+    dumper.dump("supportsFrameRateOverrideByContent"sv, mSupportsFrameRateOverrideByContent);
 
-    result += "   idleTimer="s;
+    std::string idleTimer;
     if (mIdleTimer) {
-        result += mIdleTimer->dump();
+        idleTimer = mIdleTimer->dump();
     } else {
-        result += "off"s;
+        idleTimer = "off"sv;
     }
 
     if (const auto controller = mConfig.kernelIdleTimerController) {
-        base::StringAppendF(&result, " (kernel via %s)", ftl::enum_string(*controller).c_str());
+        base::StringAppendF(&idleTimer, " (kernel via %s)", ftl::enum_string(*controller).c_str());
     } else {
-        result += " (platform)"s;
+        idleTimer += " (platform)"sv;
     }
 
-    result += '\n';
+    dumper.dump("idleTimer"sv, idleTimer);
 }
 
 std::chrono::milliseconds RefreshRateConfigs::getIdleTimerTimeout() {

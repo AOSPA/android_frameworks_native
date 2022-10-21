@@ -262,7 +262,7 @@ struct DisplayPowerCase {
         if (injector.physicalDisplay()
                     .transform(&display::PhysicalDisplay::isInternal)
                     .value_or(false)) {
-            test->mFlinger.mutableActiveDisplayToken() = display->getDisplayToken();
+            test->mFlinger.mutableActiveDisplayId() = display->getPhysicalId();
         }
 
         return display;
@@ -274,13 +274,6 @@ struct DisplayPowerCase {
 
     static void setupRepaintEverythingCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mFlinger.scheduler(), scheduleFrame()).Times(1);
-    }
-
-    static void setupSurfaceInterceptorCallExpectations(DisplayTransactionTest* test,
-                                                        PowerMode mode) {
-        EXPECT_CALL(*test->mSurfaceInterceptor, isEnabled()).WillOnce(Return(true));
-        EXPECT_CALL(*test->mSurfaceInterceptor, savePowerModeUpdate(_, static_cast<int32_t>(mode)))
-                .Times(1);
     }
 
     static void setupComposerCallExpectations(DisplayTransactionTest* test, PowerMode mode) {
@@ -349,7 +342,6 @@ void SetPowerModeInternalTest::transitionDisplayCommon() {
     // --------------------------------------------------------------------
     // Call Expectations
 
-    Case::setupSurfaceInterceptorCallExpectations(this, Case::Transition::TARGET_POWER_MODE);
     Case::Transition::template setupCallExpectations<Case>(this);
 
     // --------------------------------------------------------------------

@@ -46,7 +46,6 @@
 #include "StartPropertySetThread.h"
 #include "SurfaceFlinger.h"
 #include "SurfaceFlingerDefaultFactory.h"
-#include "SurfaceInterceptor.h"
 #include "ThreadContext.h"
 #include "TimeStats/TimeStats.h"
 
@@ -60,7 +59,6 @@
 #include "tests/unittests/mock/MockFrameTimeline.h"
 #include "tests/unittests/mock/MockFrameTracer.h"
 #include "tests/unittests/mock/MockNativeWindowSurface.h"
-#include "tests/unittests/mock/MockSurfaceInterceptor.h"
 #include "tests/unittests/mock/MockTimeStats.h"
 #include "tests/unittests/mock/MockVSyncTracker.h"
 #include "tests/unittests/mock/MockVsyncController.h"
@@ -317,10 +315,6 @@ public:
         return nullptr;
     }
 
-    sp<SurfaceInterceptor> createSurfaceInterceptor() override {
-        return sp<android::impl::SurfaceInterceptor>::make();
-    }
-
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
         return sp<StartPropertySetThread>::make(timestampPropertyValue);
     }
@@ -456,10 +450,6 @@ public:
         mFlinger->calculateColorMatrix(fdp->ConsumeFloatingPoint<float>());
         mFlinger->updateColorMatrixLocked();
         mFlinger->CheckTransactCodeCredentials(fdp->ConsumeIntegral<uint32_t>());
-
-        const CountDownLatch transactionCommittedSignal(fdp->ConsumeIntegral<uint32_t>());
-        mFlinger->waitForSynchronousTransaction(transactionCommittedSignal);
-        mFlinger->signalSynchronousTransactions(fdp->ConsumeIntegral<uint32_t>());
     }
 
     void getCompositionPreference() {
@@ -527,6 +517,13 @@ public:
         mFlinger->setVsyncConfig(vsyncConfig, fdp->ConsumeIntegral<nsecs_t>());
     }
 
+    // TODO(b/248317436): extend to cover all displays for multi-display devices
+    static std::optional<PhysicalDisplayId> getFirstDisplayId() {
+        std::vector<PhysicalDisplayId> ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        if (ids.empty()) return {};
+        return ids.front();
+    }
+
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
         mFlinger->callingThreadHasUnscopedSurfaceFlingerAccess(fdp->ConsumeBool());
         const sp<Client> client = sp<Client>::make(mFlinger);
@@ -538,9 +535,8 @@ public:
         ui::PixelFormat pixelFormat{};
         mFlinger->getHwComposer().allocateVirtualDisplay(halVirtualDisplayId, uiSize, &pixelFormat);
 
-        PhysicalDisplayId physicalDisplayId =
-                SurfaceComposerClient::getInternalDisplayId().value_or(
-                        PhysicalDisplayId::fromPort(fdp->ConsumeIntegral<uint8_t>()));
+        PhysicalDisplayId physicalDisplayId = getFirstDisplayId().value_or(
+                PhysicalDisplayId::fromPort(fdp->ConsumeIntegral<uint8_t>()));
         mFlinger->getHwComposer().allocatePhysicalDisplay(kHwDisplayId, physicalDisplayId);
 
         sp<IBinder> display =
@@ -580,8 +576,6 @@ public:
         overrideHdrTypes(display, &mFdp);
 
         onPullAtom(&mFdp);
-
-        mFlinger->injectVSync(mFdp.ConsumeIntegral<nsecs_t>());
 
         getCompositionPreference();
         getDisplayedContentSample(display, &mFdp);
@@ -733,8 +727,10 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto &getTransactionQueue() { return mFlinger->mLocklessTransactionQueue; }
-    auto &getPendingTransactionQueue() { return mFlinger->mPendingTransactionQueues; }
+    auto &getTransactionQueue() { return mFlinger->mTransactionHandler.mLocklessTransactionQueue; }
+    auto &getPendingTransactionQueue() {
+        return mFlinger->mTransactionHandler.mPendingTransactionQueues;
+    }
 
     auto setTransactionState(
             const FrameTimelineInfo &frameTimelineInfo, const Vector<ComposerState> &states,
@@ -762,11 +758,10 @@ public:
     /* Read-write access to private data to set up preconditions and assert
      * post-conditions.
      */
-
-    auto &mutableCurrentState() { return mFlinger->mCurrentState; }
-    auto &mutableDisplays() { return mFlinger->mDisplays; }
-    auto &mutableDrawingState() { return mFlinger->mDrawingState; }
-    auto &mutableInterceptor() { return mFlinger->mInterceptor; }
+    auto& mutableSupportsWideColor() { return mFlinger->mSupportsWideColor; }
+    auto& mutableCurrentState() { return mFlinger->mCurrentState; }
+    auto& mutableDisplays() { return mFlinger->mDisplays; }
+    auto& mutableDrawingState() { return mFlinger->mDrawingState; }
 
     auto fromHandle(const sp<IBinder> &handle) { return mFlinger->fromHandle(handle); }
 
@@ -774,7 +769,6 @@ public:
         mutableDisplays().clear();
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
-        mutableInterceptor().clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
         mFlinger->mCompositionEngine->setRenderEngine(
@@ -783,7 +777,7 @@ public:
 
 private:
     void setVsyncEnabled(bool) override {}
-    void requestDisplayMode(DisplayModePtr, DisplayModeEvent) override {}
+    void requestDisplayModes(std::vector<scheduler::DisplayModeConfig>) override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() override {}
 

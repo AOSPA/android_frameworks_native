@@ -47,6 +47,7 @@
 #include "Scheduler/RefreshRateConfigs.h"
 #include "ThreadContext.h"
 #include "TracedOrdinal.h"
+#include "Utils/Dumper.h"
 
 namespace android {
 
@@ -238,10 +239,6 @@ public:
     void setPowerModeOverrideConfig(bool supported);
     bool getPowerModeOverrideConfig() const;
 
-    status_t setRefreshRatePolicy(
-            const std::optional<scheduler::RefreshRateConfigs::Policy>& policy,
-            bool overridePolicy);
-
     // release HWC resources (if any) for removable displays
     void disconnect();
 
@@ -249,7 +246,7 @@ public:
      * Debugging
      */
     std::string getDebugName() const;
-    void dump(std::string& result) const;
+    void dump(utils::Dumper&) const;
 
 private:
     const sp<SurfaceFlinger> mFlinger;
@@ -291,8 +288,6 @@ private:
     TracedOrdinal<bool> mDesiredActiveModeChanged
             GUARDED_BY(mActiveModeLock) = {"DesiredActiveModeChanged", false};
     ActiveModeInfo mUpcomingActiveMode GUARDED_BY(kMainThreadContext);
-
-    std::atomic_int mNumModeSwitchesInPolicy = 0;
 };
 
 struct DisplayDeviceState {
