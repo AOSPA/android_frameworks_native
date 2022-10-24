@@ -26,8 +26,6 @@
 
 namespace android {
 
-class CountDownLatch;
-
 struct TransactionState {
     TransactionState() = default;
 
@@ -66,6 +64,15 @@ struct TransactionState {
         }
     }
 
+    template <typename Visitor>
+    void traverseStatesWithBuffersWhileTrue(Visitor&& visitor) const {
+        for (const auto& [state] : states) {
+            if (state.hasBufferChanges() && state.hasValidBuffer() && state.surface) {
+                if (!visitor(state)) return;
+            }
+        }
+    }
+
     // TODO(b/185535769): Remove FrameHint. Instead, reset the idle timer (of the relevant physical
     // display) on the main thread if commit leads to composite. Then, RefreshRateOverlay should be
     // able to setFrameRate once, rather than for each transaction.
@@ -97,49 +104,7 @@ struct TransactionState {
     int originPid;
     int originUid;
     uint64_t id;
-    std::shared_ptr<CountDownLatch> transactionCommittedSignal;
     bool sentFenceTimeoutWarning = false;
-};
-
-class CountDownLatch {
-public:
-    enum {
-        eSyncTransaction = 1 << 0,
-    };
-    explicit CountDownLatch(uint32_t flags) : mFlags(flags) {}
-
-    // True if there is no waiting condition after count down.
-    bool countDown(uint32_t flag) {
-        std::unique_lock<std::mutex> lock(mMutex);
-        if (mFlags == 0) {
-            return true;
-        }
-        mFlags &= ~flag;
-        if (mFlags == 0) {
-            mCountDownComplete.notify_all();
-            return true;
-        }
-        return false;
-    }
-
-    // Return true if triggered.
-    bool wait_until(const std::chrono::nanoseconds& timeout) const {
-        std::unique_lock<std::mutex> lock(mMutex);
-        const auto untilTime = std::chrono::system_clock::now() + timeout;
-        while (mFlags != 0) {
-            // Conditional variables can be woken up sporadically, so we check count
-            // to verify the wakeup was triggered by |countDown|.
-            if (std::cv_status::timeout == mCountDownComplete.wait_until(lock, untilTime)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-private:
-    uint32_t mFlags;
-    mutable std::condition_variable mCountDownComplete;
-    mutable std::mutex mMutex;
 };
 
 } // namespace android

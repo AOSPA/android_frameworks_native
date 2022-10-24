@@ -68,7 +68,6 @@ public:
     MultiTouchMotionAccumulator();
 
     void configure(InputDeviceContext& deviceContext, size_t slotCount, bool usingSlotsProtocol);
-    void reset(InputDeviceContext& deviceContext);
     void process(const RawEvent* rawEvent);
     void finishSync();
     bool hasStylus() const;
@@ -85,7 +84,7 @@ private:
     bool mUsingSlotsProtocol;
     bool mHaveStylus;
 
-    void clearSlots(int32_t initialSlot);
+    void resetSlots();
     void warnIfNotInUse(const RawEvent& event, const Slot& slot);
 };
 
@@ -94,8 +93,8 @@ public:
     explicit MultiTouchInputMapper(InputDeviceContext& deviceContext);
     ~MultiTouchInputMapper() override;
 
-    void reset(nsecs_t when) override;
-    void process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
 protected:
     void syncTouch(nsecs_t when, RawState* outState) override;

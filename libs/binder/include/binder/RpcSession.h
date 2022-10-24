@@ -100,6 +100,8 @@ public:
         NONE = 0,
         // Send file descriptors via unix domain socket ancillary data.
         UNIX = 1,
+        // Send file descriptors as Trusty IPC handles.
+        TRUSTY = 2,
     };
 
     /**
@@ -113,6 +115,11 @@ public:
      * process.
      */
     [[nodiscard]] status_t setupUnixDomainClient(const char* path);
+
+    /**
+     * Connects to an RPC server over a nameless Unix domain socket pair.
+     */
+    [[nodiscard]] status_t setupUnixDomainSocketBootstrapClient(base::unique_fd bootstrap);
 
     /**
      * Connects to an RPC server at the CVD & port.
@@ -233,6 +240,7 @@ private:
 
     private:
         RpcConditionVariable mCv;
+        std::atomic<size_t> mShutdownCount = 0;
     };
     friend WaitForShutdownListener;
 
@@ -366,11 +374,14 @@ private:
 
     RpcConditionVariable mAvailableConnectionCv; // for mWaitingThreads
 
+    std::unique_ptr<RpcTransport> mBootstrapTransport;
+
     struct ThreadState {
         size_t mWaitingThreads = 0;
         // hint index into clients, ++ when sending an async transaction
         size_t mOutgoingOffset = 0;
         std::vector<sp<RpcConnection>> mOutgoing;
+        // max size of mIncoming. Once any thread starts down, no more can be started.
         size_t mMaxIncoming = 0;
         std::vector<sp<RpcConnection>> mIncoming;
         std::map<RpcMaybeThread::id, RpcMaybeThread> mThreads;

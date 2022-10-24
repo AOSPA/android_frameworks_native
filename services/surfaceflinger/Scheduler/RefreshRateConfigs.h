@@ -21,6 +21,7 @@
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include <gui/DisplayEventReceiver.h>
 
@@ -32,6 +33,7 @@
 #include "Scheduler/OneShotTimer.h"
 #include "Scheduler/StrongTyping.h"
 #include "ThreadContext.h"
+#include "Utils/Dumper.h"
 
 namespace android::scheduler {
 
@@ -66,8 +68,7 @@ public:
     static constexpr nsecs_t MARGIN_FOR_PERIOD_CALCULATION =
             std::chrono::nanoseconds(800us).count();
 
-    struct Policy {
-    private:
+    class Policy {
         static constexpr int kAllowGroupSwitchingDefault = false;
 
     public:
@@ -117,23 +118,28 @@ public:
         std::string toString() const;
     };
 
-    // Return code set*Policy() to indicate the current policy is unchanged.
-    static constexpr int CURRENT_POLICY_UNCHANGED = 1;
+    enum class SetPolicyResult { Invalid, Unchanged, Changed };
 
     // We maintain the display manager policy and the override policy separately. The override
     // policy is used by CTS tests to get a consistent device state for testing. While the override
     // policy is set, it takes precedence over the display manager policy. Once the override policy
     // is cleared, we revert to using the display manager policy.
+    struct DisplayManagerPolicy : Policy {
+        using Policy::Policy;
+    };
 
-    // Sets the display manager policy to choose refresh rates. The return value will be:
-    //   - A negative value if the policy is invalid or another error occurred.
-    //   - NO_ERROR if the policy was successfully updated, and the current policy is different from
-    //     what it was before the call.
-    //   - CURRENT_POLICY_UNCHANGED if the policy was successfully updated, but the current policy
-    //     is the same as it was before the call.
-    status_t setDisplayManagerPolicy(const Policy& policy) EXCLUDES(mLock);
-    // Sets the override policy. See setDisplayManagerPolicy() for the meaning of the return value.
-    status_t setOverridePolicy(const std::optional<Policy>& policy) EXCLUDES(mLock);
+    struct OverridePolicy : Policy {
+        using Policy::Policy;
+    };
+
+    struct NoOverridePolicy {};
+
+    using PolicyVariant = std::variant<DisplayManagerPolicy, OverridePolicy, NoOverridePolicy>;
+
+    SetPolicyResult setPolicy(const PolicyVariant&) EXCLUDES(mLock) REQUIRES(kMainThreadContext);
+
+    void onModeChangeInitiated() REQUIRES(kMainThreadContext) { mNumModeSwitchesInPolicy++; }
+
     // Gets the current policy, which will be the override policy if active, and the display manager
     // policy otherwise.
     Policy getCurrentPolicy() const EXCLUDES(mLock);
@@ -339,7 +345,7 @@ public:
         mIdleTimer->reset();
     }
 
-    void dump(std::string& result) const EXCLUDES(mLock);
+    void dump(utils::Dumper&) const EXCLUDES(mLock);
 
     std::chrono::milliseconds getIdleTimerTimeout();
 
@@ -372,9 +378,9 @@ private:
 
     // Returns the rankings in RefreshRateOrder. May change at runtime.
     // Only uses the primary range, not the app request range.
-    std::vector<RefreshRateRanking> getRefreshRatesByPolicyLocked(std::optional<int> anchorGroupOpt,
-                                                                  RefreshRateOrder) const
-            REQUIRES(mLock);
+    std::vector<RefreshRateRanking> getRefreshRatesByPolicyLocked(
+            std::optional<int> anchorGroupOpt, RefreshRateOrder,
+            std::optional<DisplayModeId> preferredDisplayModeOpt) const REQUIRES(mLock);
 
     const Policy* getCurrentPolicyLocked() const REQUIRES(mLock);
     bool isPolicyValidLocked(const Policy& policy) const REQUIRES(mLock);
@@ -419,6 +425,8 @@ private:
 
     Policy mDisplayManagerPolicy GUARDED_BY(mLock);
     std::optional<Policy> mOverridePolicy GUARDED_BY(mLock);
+
+    unsigned mNumModeSwitchesInPolicy GUARDED_BY(kMainThreadContext) = 0;
 
     mutable std::mutex mLock;
 

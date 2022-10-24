@@ -77,10 +77,6 @@ namespace gui {
 class LayerDebugInfo;
 }
 
-namespace impl {
-class SurfaceInterceptor;
-}
-
 namespace frametimeline {
 class SurfaceFrame;
 } // namespace frametimeline
@@ -886,7 +882,9 @@ public:
 
     bool mPendingHWCDestroy{false};
 
-    bool backpressureEnabled() { return mDrawingState.flags & layer_state_t::eEnableBackpressure; }
+    bool backpressureEnabled() const {
+        return mDrawingState.flags & layer_state_t::eEnableBackpressure;
+    }
 
     bool setStretchEffect(const StretchEffect& effect);
     StretchEffect getStretchEffect() const;
@@ -921,8 +919,6 @@ public:
     uint32_t getSmomoLayerStackId();
 
 protected:
-    friend class impl::SurfaceInterceptor;
-
     // For unit tests
     friend class TestableSurfaceFlinger;
     friend class FpsReporterTest;

@@ -181,8 +181,20 @@ struct ProcessSession {
             wp<RpcSession> weakSession = session;
             session = nullptr;
 
-            EXPECT_EQ(nullptr, weakSession.promote())
-                    << (debugBacktrace(host.getPid()), debugBacktrace(getpid()), "Leaked session");
+            // b/244325464 - 'getStrongCount' is printing '1' on failure here, which indicates the
+            // the object should not actually be promotable. By looping, we distinguish a race here
+            // from a bug causing the object to not be promotable.
+            for (size_t i = 0; i < 3; i++) {
+                sp<RpcSession> strongSession = weakSession.promote();
+                EXPECT_EQ(nullptr, strongSession)
+                        << (debugBacktrace(host.getPid()), debugBacktrace(getpid()),
+                            "Leaked sess: ")
+                        << strongSession->getStrongCount() << " checked time " << i;
+
+                if (strongSession != nullptr) {
+                    sleep(1);
+                }
+            }
         }
     }
 };
@@ -242,6 +254,25 @@ static base::unique_fd connectTo(const RpcSocketAddress& addr) {
     return serverFd;
 }
 
+static base::unique_fd connectToUnixBootstrap(const RpcTransportFd& transportFd) {
+    base::unique_fd sockClient, sockServer;
+    if (!base::Socketpair(SOCK_STREAM, &sockClient, &sockServer)) {
+        int savedErrno = errno;
+        LOG(FATAL) << "Failed socketpair(): " << strerror(savedErrno);
+    }
+
+    int zero = 0;
+    iovec iov{&zero, sizeof(zero)};
+    std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
+    fds.emplace_back(std::move(sockServer));
+
+    if (sendMessageOnSocket(transportFd, &iov, 1, &fds) < 0) {
+        int savedErrno = errno;
+        LOG(FATAL) << "Failed sendMessageOnSocket: " << strerror(savedErrno);
+    }
+    return std::move(sockClient);
+}
+
 using RunServiceFn = void (*)(android::base::borrowed_fd writeEnd,
                               android::base::borrowed_fd readEnd);
 
@@ -262,7 +293,14 @@ public:
     // Whether the test params support sending FDs in parcels.
     bool supportsFdTransport() const {
         return clientVersion() >= 1 && serverVersion() >= 1 && rpcSecurity() != RpcSecurity::TLS &&
-                (socketType() == SocketType::PRECONNECTED || socketType() == SocketType::UNIX);
+                (socketType() == SocketType::PRECONNECTED || socketType() == SocketType::UNIX ||
+                 socketType() == SocketType::UNIX_BOOTSTRAP);
+    }
+
+    void SetUp() override {
+        if (socketType() == SocketType::UNIX_BOOTSTRAP && rpcSecurity() == RpcSecurity::TLS) {
+            GTEST_SKIP() << "Unix bootstrap not supported over a TLS transport";
+        }
     }
 
     static inline std::string PrintParamInfo(const testing::TestParamInfo<ParamType>& info) {
@@ -296,6 +334,14 @@ public:
                                             singleThreaded ? "_single_threaded" : "",
                                             noKernel ? "_no_kernel" : "");
 
+        base::unique_fd bootstrapClientFd, bootstrapServerFd;
+        // Do not set O_CLOEXEC, bootstrapServerFd needs to survive fork/exec.
+        // This is because we cannot pass ParcelFileDescriptor over a pipe.
+        if (!base::Socketpair(SOCK_STREAM, &bootstrapClientFd, &bootstrapServerFd)) {
+            int savedErrno = errno;
+            LOG(FATAL) << "Failed socketpair(): " << strerror(savedErrno);
+        }
+
         auto ret = ProcessSession{
                 .host = Process([=](android::base::borrowed_fd writeEnd,
                                     android::base::borrowed_fd readEnd) {
@@ -313,6 +359,7 @@ public:
         serverConfig.serverVersion = serverVersion;
         serverConfig.vsockPort = allocateVsockPort();
         serverConfig.addr = allocateSocketAddress();
+        serverConfig.unixBootstrapFd = bootstrapServerFd.get();
         for (auto mode : options.serverSupportedFileDescriptorTransportModes) {
             serverConfig.serverSupportedFileDescriptorTransportModes.push_back(
                     static_cast<int32_t>(mode));
@@ -361,6 +408,10 @@ public:
                     break;
                 case SocketType::UNIX:
                     status = session->setupUnixDomainClient(serverConfig.addr.c_str());
+                    break;
+                case SocketType::UNIX_BOOTSTRAP:
+                    status = session->setupUnixDomainSocketBootstrapClient(
+                            base::unique_fd(dup(bootstrapClientFd.get())));
                     break;
                 case SocketType::VSOCK:
                     status = session->setupVsockClient(VMADDR_CID_LOCAL, serverConfig.vsockPort);
@@ -428,7 +479,8 @@ TEST_P(BinderRpc, SeparateRootObject) {
     }
 
     SocketType type = std::get<0>(GetParam());
-    if (type == SocketType::PRECONNECTED || type == SocketType::UNIX) {
+    if (type == SocketType::PRECONNECTED || type == SocketType::UNIX ||
+        type == SocketType::UNIX_BOOTSTRAP) {
         // we can't get port numbers for unix sockets
         return;
     }
@@ -786,12 +838,12 @@ TEST_P(BinderRpc, ThreadPoolGreaterThanEqualRequested) {
         ts.push_back(std::thread([&] { proc.rootIface->lockUnlock(); }));
     }
 
-    usleep(100000); // give chance for calls on other threads
+    usleep(10000); // give chance for calls on other threads
 
     // other calls still work
     EXPECT_EQ(OK, proc.rootBinder->pingBinder());
 
-    constexpr size_t blockTimeMs = 500;
+    constexpr size_t blockTimeMs = 50;
     size_t epochMsBefore = epochMillis();
     // after this, we should never see a response within this time
     EXPECT_OK(proc.rootIface->unlockInMsAsync(blockTimeMs));
@@ -918,6 +970,45 @@ TEST_P(BinderRpc, OnewayCallDoesNotWait) {
 
     size_t epochMsAfter = epochMillis();
     EXPECT_LT(epochMsAfter, epochMsBefore + kReallyLongTimeMs);
+}
+
+TEST_P(BinderRpc, OnewayCallQueueingWithFds) {
+    if (!supportsFdTransport()) {
+        GTEST_SKIP() << "Would fail trivially (which is tested elsewhere)";
+    }
+    if (clientOrServerSingleThreaded()) {
+        GTEST_SKIP() << "This test requires multiple threads";
+    }
+
+    // This test forces a oneway transaction to be queued by issuing two
+    // `blockingSendFdOneway` calls, then drains the queue by issuing two
+    // `blockingRecvFd` calls.
+    //
+    // For more details about the queuing semantics see
+    // https://developer.android.com/reference/android/os/IBinder#FLAG_ONEWAY
+
+    auto proc = createRpcTestSocketServerProcess({
+            .numThreads = 3,
+            .clientFileDescriptorTransportMode = RpcSession::FileDescriptorTransportMode::UNIX,
+            .serverSupportedFileDescriptorTransportModes =
+                    {RpcSession::FileDescriptorTransportMode::UNIX},
+    });
+
+    EXPECT_OK(proc.rootIface->blockingSendFdOneway(
+            android::os::ParcelFileDescriptor(mockFileDescriptor("a"))));
+    EXPECT_OK(proc.rootIface->blockingSendFdOneway(
+            android::os::ParcelFileDescriptor(mockFileDescriptor("b"))));
+
+    android::os::ParcelFileDescriptor fdA;
+    EXPECT_OK(proc.rootIface->blockingRecvFd(&fdA));
+    std::string result;
+    CHECK(android::base::ReadFdToString(fdA.get(), &result));
+    EXPECT_EQ(result, "a");
+
+    android::os::ParcelFileDescriptor fdB;
+    EXPECT_OK(proc.rootIface->blockingRecvFd(&fdB));
+    CHECK(android::base::ReadFdToString(fdB.get(), &result));
+    EXPECT_EQ(result, "b");
 }
 
 TEST_P(BinderRpc, OnewayCallQueueing) {
@@ -1083,7 +1174,7 @@ TEST_P(BinderRpc, SingleDeathRecipient) {
     }
 
     std::unique_lock<std::mutex> lock(dr->mMtx);
-    ASSERT_TRUE(dr->mCv.wait_for(lock, 1000ms, [&]() { return dr->dead; }));
+    ASSERT_TRUE(dr->mCv.wait_for(lock, 100ms, [&]() { return dr->dead; }));
 
     // need to wait for the session to shutdown so we don't "Leak session"
     EXPECT_TRUE(proc.proc.sessions.at(0).session->shutdownAndWait(true));
@@ -1118,7 +1209,7 @@ TEST_P(BinderRpc, SingleDeathRecipientOnShutdown) {
 
     std::unique_lock<std::mutex> lock(dr->mMtx);
     if (!dr->dead) {
-        EXPECT_EQ(std::cv_status::no_timeout, dr->mCv.wait_for(lock, 1000ms));
+        EXPECT_EQ(std::cv_status::no_timeout, dr->mCv.wait_for(lock, 100ms));
     }
     EXPECT_TRUE(dr->dead) << "Failed to receive the death notification.";
 
@@ -1525,7 +1616,7 @@ static bool testSupportVsockLoopback() {
 }
 
 static std::vector<SocketType> testSocketTypes(bool hasPreconnected = true) {
-    std::vector<SocketType> ret = {SocketType::UNIX, SocketType::INET};
+    std::vector<SocketType> ret = {SocketType::UNIX, SocketType::UNIX_BOOTSTRAP, SocketType::INET};
 
     if (hasPreconnected) ret.push_back(SocketType::PRECONNECTED);
 
@@ -1701,7 +1792,7 @@ TEST_P(BinderRpcServerOnly, Shutdown) {
 
     bool shutdown = false;
     for (int i = 0; i < 10 && !shutdown; i++) {
-        usleep(300 * 1000); // 300ms; total 3s
+        usleep(30 * 1000); // 30ms; total 300ms
         if (server->shutdown()) shutdown = true;
     }
     ASSERT_TRUE(shutdown) << "server->shutdown() never returns true";
@@ -1726,6 +1817,8 @@ public:
     // A server that handles client socket connections.
     class Server {
     public:
+        using AcceptConnection = std::function<base::unique_fd(Server*)>;
+
         explicit Server() {}
         Server(Server&&) = default;
         ~Server() { shutdownAndWait(); }
@@ -1749,6 +1842,21 @@ public:
                     mConnectToServer = [addr] {
                         return connectTo(UnixSocketAddress(addr.c_str()));
                     };
+                } break;
+                case SocketType::UNIX_BOOTSTRAP: {
+                    base::unique_fd bootstrapFdClient, bootstrapFdServer;
+                    if (!base::Socketpair(SOCK_STREAM, &bootstrapFdClient, &bootstrapFdServer)) {
+                        return AssertionFailure() << "Socketpair() failed";
+                    }
+                    auto status = rpcServer->setupUnixDomainSocketBootstrapServer(
+                            std::move(bootstrapFdServer));
+                    if (status != OK) {
+                        return AssertionFailure() << "setupUnixDomainSocketBootstrapServer: "
+                                                  << statusToString(status);
+                    }
+                    mBootstrapSocket = RpcTransportFd(std::move(bootstrapFdClient));
+                    mAcceptConnection = &Server::recvmsgServerConnection;
+                    mConnectToServer = [this] { return connectToUnixBootstrap(mBootstrapSocket); };
                 } break;
                 case SocketType::VSOCK: {
                     auto port = allocateVsockPort();
@@ -1797,14 +1905,33 @@ public:
             LOG_ALWAYS_FATAL_IF(!mSetup, "Call Server::setup first!");
             mThread = std::make_unique<std::thread>(&Server::run, this);
         }
+
+        base::unique_fd acceptServerConnection() {
+            return base::unique_fd(TEMP_FAILURE_RETRY(
+                    accept4(mFd.fd.get(), nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK)));
+        }
+
+        base::unique_fd recvmsgServerConnection() {
+            std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
+            int buf;
+            iovec iov{&buf, sizeof(buf)};
+
+            if (receiveMessageFromSocket(mFd, &iov, 1, &fds) < 0) {
+                int savedErrno = errno;
+                LOG(FATAL) << "Failed receiveMessage: " << strerror(savedErrno);
+            }
+            if (fds.size() != 1) {
+                LOG(FATAL) << "Expected one FD from receiveMessage(), got " << fds.size();
+            }
+            return std::move(std::get<base::unique_fd>(fds[0]));
+        }
+
         void run() {
             LOG_ALWAYS_FATAL_IF(!mSetup, "Call Server::setup first!");
 
             std::vector<std::thread> threads;
             while (OK == mFdTrigger->triggerablePoll(mFd, POLLIN)) {
-                base::unique_fd acceptedFd(
-                        TEMP_FAILURE_RETRY(accept4(mFd.fd.get(), nullptr, nullptr /*length*/,
-                                                   SOCK_CLOEXEC | SOCK_NONBLOCK)));
+                base::unique_fd acceptedFd = mAcceptConnection(this);
                 threads.emplace_back(&Server::handleOne, this, std::move(acceptedFd));
             }
 
@@ -1831,8 +1958,9 @@ public:
     private:
         std::unique_ptr<std::thread> mThread;
         ConnectToServer mConnectToServer;
+        AcceptConnection mAcceptConnection = &Server::acceptServerConnection;
         std::unique_ptr<FdTrigger> mFdTrigger = FdTrigger::make();
-        RpcTransportFd mFd;
+        RpcTransportFd mFd, mBootstrapSocket;
         std::unique_ptr<RpcTransportCtx> mCtx;
         std::shared_ptr<RpcCertificateVerifierSimple> mCertVerifier =
                 std::make_shared<RpcCertificateVerifierSimple>();

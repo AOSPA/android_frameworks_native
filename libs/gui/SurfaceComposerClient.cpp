@@ -16,6 +16,7 @@
 
 #define LOG_TAG "SurfaceComposerClient"
 
+#include <semaphore.h>
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -24,6 +25,7 @@
 #include <android/gui/ISurfaceComposerClient.h>
 #include <android/gui/IWindowInfosListener.h>
 #include <android/os/IInputConstants.h>
+#include <gui/TraceUtils.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/SortedVector.h>
@@ -356,7 +358,8 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                                       transactionStats.latchTime, surfaceStats.acquireTimeOrFence,
                                       transactionStats.presentFence,
                                       surfaceStats.previousReleaseFence, surfaceStats.transformHint,
-                                      surfaceStats.eventStats);
+                                      surfaceStats.eventStats,
+                                      surfaceStats.currentMaxAcquiredBufferCount);
             }
 
             callbackFunction(transactionStats.latchTime, transactionStats.presentFence,
@@ -381,7 +384,8 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                                       transactionStats.latchTime, surfaceStats.acquireTimeOrFence,
                                       transactionStats.presentFence,
                                       surfaceStats.previousReleaseFence, surfaceStats.transformHint,
-                                      surfaceStats.eventStats);
+                                      surfaceStats.eventStats,
+                                      surfaceStats.currentMaxAcquiredBufferCount);
                 if (callbacksMap[callbackId].surfaceControls[surfaceStats.surfaceControl]) {
                     callbacksMap[callbackId]
                             .surfaceControls[surfaceStats.surfaceControl]
@@ -907,9 +911,14 @@ void SurfaceComposerClient::doUncacheBufferTransaction(uint64_t cacheId) {
     uncacheBuffer.token = BufferCache::getInstance().getToken();
     uncacheBuffer.id = cacheId;
 
-    sf->setTransactionState(FrameTimelineInfo{}, {}, {}, ISurfaceComposer::eOneWay,
-                            Transaction::getDefaultApplyToken(), {}, systemTime(), true,
-                            uncacheBuffer, false, {}, generateId());
+    status_t status =
+            sf->setTransactionState(FrameTimelineInfo{}, {}, {}, ISurfaceComposer::eOneWay,
+                                    Transaction::getDefaultApplyToken(), {}, systemTime(), true,
+                                    uncacheBuffer, false, {}, generateId());
+    if (status != NO_ERROR) {
+        ALOGE_AND_TRACE("SurfaceComposerClient::doUncacheBufferTransaction - %s",
+                        strerror(-status));
+    }
 }
 
 void SurfaceComposerClient::Transaction::cacheBuffers() {
@@ -958,12 +967,55 @@ void SurfaceComposerClient::Transaction::cacheBuffers() {
     }
 }
 
+class SyncCallback {
+public:
+    static void function(void* callbackContext, nsecs_t /* latchTime */,
+                         const sp<Fence>& /* presentFence */,
+                         const std::vector<SurfaceControlStats>& /* stats */) {
+        if (!callbackContext) {
+            ALOGE("failed to get callback context for SyncCallback");
+        }
+        SyncCallback* helper = static_cast<SyncCallback*>(callbackContext);
+        LOG_ALWAYS_FATAL_IF(sem_post(&helper->mSemaphore), "sem_post failed");
+    }
+    ~SyncCallback() {
+        if (mInitialized) {
+            LOG_ALWAYS_FATAL_IF(sem_destroy(&mSemaphore), "sem_destroy failed");
+        }
+    }
+    void init() {
+        LOG_ALWAYS_FATAL_IF(clock_gettime(CLOCK_MONOTONIC, &mTimeoutTimespec) == -1,
+                            "clock_gettime() fail! in SyncCallback::init");
+        mTimeoutTimespec.tv_sec += 4;
+        LOG_ALWAYS_FATAL_IF(sem_init(&mSemaphore, 0, 0), "sem_init failed");
+        mInitialized = true;
+    }
+    void wait() {
+        int result = sem_clockwait(&mSemaphore, CLOCK_MONOTONIC, &mTimeoutTimespec);
+        if (result && errno != ETIMEDOUT && errno != EINTR) {
+            LOG_ALWAYS_FATAL("sem_clockwait failed(%d)", errno);
+        } else if (errno == ETIMEDOUT) {
+            ALOGW("Sync transaction timed out waiting for commit callback.");
+        }
+    }
+    void* getContext() { return static_cast<void*>(this); }
+
+private:
+    sem_t mSemaphore;
+    bool mInitialized = false;
+    timespec mTimeoutTimespec;
+};
+
 status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay) {
     if (mStatus != NO_ERROR) {
         return mStatus;
     }
 
-    sp<ISurfaceComposer> sf(ComposerService::getComposerService());
+    SyncCallback syncCallback;
+    if (synchronous) {
+        syncCallback.init();
+        addTransactionCommittedCallback(syncCallback.function, syncCallback.getContext());
+    }
 
     bool hasListenerCallbacks = !mListenerCallbacks.empty();
     std::vector<ListenerCallbacks> listenerCallbacks;
@@ -998,15 +1050,12 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     Vector<DisplayState> displayStates;
     uint32_t flags = 0;
 
-    for (auto const& kv : mComposerStates){
+    for (auto const& kv : mComposerStates) {
         composerStates.add(kv.second);
     }
 
     displayStates = std::move(mDisplayStates);
 
-    if (synchronous) {
-        flags |= ISurfaceComposer::eSynchronous;
-    }
     if (mAnimation) {
         flags |= ISurfaceComposer::eAnimation;
     }
@@ -1030,6 +1079,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
 
     sp<IBinder> applyToken = mApplyToken ? mApplyToken : sApplyToken;
 
+    sp<ISurfaceComposer> sf(ComposerService::getComposerService());
     sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, flags, applyToken,
                             mInputWindowCommands, mDesiredPresentTime, mIsAutoTimestamp,
                             {} /*uncacheBuffer - only set in doUncacheBufferTransaction*/,
@@ -1038,6 +1088,10 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
 
     // Clear the current states and flags
     clear();
+
+    if (synchronous) {
+        syncCallback.wait();
+    }
 
     mStatus = NO_ERROR;
     return NO_ERROR;
@@ -1082,22 +1136,12 @@ std::vector<PhysicalDisplayId> SurfaceComposerClient::getPhysicalDisplayIds() {
     return physicalDisplayIds;
 }
 
-std::optional<PhysicalDisplayId> SurfaceComposerClient::getInternalDisplayId() {
-    ComposerServiceAIDL& instance = ComposerServiceAIDL::getInstance();
-    return instance.getInternalDisplayId();
-}
-
 sp<IBinder> SurfaceComposerClient::getPhysicalDisplayToken(PhysicalDisplayId displayId) {
     sp<IBinder> display = nullptr;
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->getPhysicalDisplayToken(displayId.value,
                                                                                &display);
     return status.isOk() ? display : nullptr;
-}
-
-sp<IBinder> SurfaceComposerClient::getInternalDisplayToken() {
-    ComposerServiceAIDL& instance = ComposerServiceAIDL::getInstance();
-    return instance.getInternalDisplayToken();
 }
 
 void SurfaceComposerClient::Transaction::setAnimationTransaction() {
@@ -1255,7 +1299,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setAlpha
         ALOGE("SurfaceComposerClient::Transaction::setAlpha: invalid alpha %f, clamping", alpha);
     }
     s->what |= layer_state_t::eAlphaChanged;
-    s->alpha = std::clamp(alpha, 0.f, 1.f);
+    s->color.a = std::clamp(alpha, 0.f, 1.f);
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -1386,7 +1430,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setColor
         return *this;
     }
     s->what |= layer_state_t::eColorChanged;
-    s->color = color;
+    s->color.rgb = color;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -1401,7 +1445,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBackg
     }
 
     s->what |= layer_state_t::eBackgroundColorChanged;
-    s->color = color;
+    s->color.rgb = color;
     s->bgColorAlpha = alpha;
     s->bgColorDataspace = dataspace;
 
@@ -1416,8 +1460,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setTrans
         mStatus = BAD_INDEX;
         return *this;
     }
-    s->what |= layer_state_t::eTransformChanged;
-    s->transform = transform;
+    s->what |= layer_state_t::eBufferTransformChanged;
+    s->bufferTransform = transform;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -2108,6 +2152,10 @@ sp<SurfaceControl> SurfaceComposerClient::createSurface(const String8& name, uin
     return s;
 }
 
+static std::string toString(const String16& string) {
+    return std::string(String8(string).c_str());
+}
+
 status_t SurfaceComposerClient::createSurfaceChecked(const String8& name, uint32_t w, uint32_t h,
                                                      PixelFormat format,
                                                      sp<SurfaceControl>* outSurface, int32_t flags,
@@ -2127,7 +2175,8 @@ status_t SurfaceComposerClient::createSurfaceChecked(const String8& name, uint32
         }
         ALOGE_IF(err, "SurfaceComposerClient::createSurface error %s", strerror(-err));
         if (err == NO_ERROR) {
-            *outSurface = new SurfaceControl(this, result.handle, result.layerId, w, h, format,
+            *outSurface = new SurfaceControl(this, result.handle, result.layerId,
+                                             toString(result.layerName), w, h, format,
                                              result.transformHint, flags);
         }
     }
@@ -2140,21 +2189,21 @@ sp<SurfaceControl> SurfaceComposerClient::mirrorSurface(SurfaceControl* mirrorFr
     }
 
     sp<IBinder> mirrorFromHandle = mirrorFromSurface->getHandle();
-    gui::MirrorSurfaceResult result;
+    gui::CreateSurfaceResult result;
     const binder::Status status = mClient->mirrorSurface(mirrorFromHandle, &result);
     const status_t err = statusTFromBinderStatus(status);
     if (err == NO_ERROR) {
-        return new SurfaceControl(this, result.handle, result.layerId);
+        return new SurfaceControl(this, result.handle, result.layerId, toString(result.layerName));
     }
     return nullptr;
 }
 
 sp<SurfaceControl> SurfaceComposerClient::mirrorDisplay(DisplayId displayId) {
-    gui::MirrorSurfaceResult result;
+    gui::CreateSurfaceResult result;
     const binder::Status status = mClient->mirrorDisplay(displayId.value, &result);
     const status_t err = statusTFromBinderStatus(status);
     if (err == NO_ERROR) {
-        return new SurfaceControl(this, result.handle, result.layerId);
+        return new SurfaceControl(this, result.handle, result.layerId, toString(result.layerName));
     }
     return nullptr;
 }
@@ -2193,18 +2242,6 @@ status_t SurfaceComposerClient::getLayerFrameStats(const sp<IBinder>& token,
 }
 
 // ----------------------------------------------------------------------------
-
-status_t SurfaceComposerClient::enableVSyncInjections(bool enable) {
-    sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
-    binder::Status status = sf->enableVSyncInjections(enable);
-    return statusTFromBinderStatus(status);
-}
-
-status_t SurfaceComposerClient::injectVSync(nsecs_t when) {
-    sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
-    binder::Status status = sf->injectVSync(when);
-    return statusTFromBinderStatus(status);
-}
 
 status_t SurfaceComposerClient::getDisplayState(const sp<IBinder>& display,
                                                 ui::DisplayState* state) {
@@ -2710,8 +2747,7 @@ std::optional<DisplayDecorationSupport> SurfaceComposerClient::getDisplayDecorat
             ComposerServiceAIDL::getComposerService()->getDisplayDecorationSupport(displayToken,
                                                                                    &gsupport);
     std::optional<DisplayDecorationSupport> support;
-    // TODO (b/241277093): Remove `false && ` once b/241278870 is fixed.
-    if (false && status.isOk() && gsupport.has_value()) {
+    if (status.isOk() && gsupport.has_value()) {
         support.emplace(DisplayDecorationSupport{
           .format =
                 static_cast<aidl::android::hardware::graphics::common::PixelFormat>(

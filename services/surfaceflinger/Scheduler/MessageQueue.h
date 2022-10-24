@@ -76,7 +76,6 @@ public:
     virtual void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                            std::chrono::nanoseconds workDuration) = 0;
     virtual void setDuration(std::chrono::nanoseconds workDuration) = 0;
-    virtual void setInjector(sp<EventThreadConnection>) = 0;
     virtual void waitMessage() = 0;
     virtual void postMessage(sp<MessageHandler>&&) = 0;
     virtual void scheduleConfigure() = 0;
@@ -134,16 +133,7 @@ private:
         TracedOrdinal<int> value = {"VSYNC-sf", 0};
     };
 
-    struct Injector {
-        gui::BitTube tube;
-        std::mutex mutex;
-        sp<EventThreadConnection> connection GUARDED_BY(mutex);
-    };
-
     Vsync mVsync;
-    Injector mInjector;
-
-    void injectorCallback();
 
 public:
     explicit MessageQueue(ICompositor&);
@@ -151,7 +141,6 @@ public:
     void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                    std::chrono::nanoseconds workDuration) override;
     void setDuration(std::chrono::nanoseconds workDuration) override;
-    void setInjector(sp<EventThreadConnection>) override;
 
     void waitMessage() override;
     void postMessage(sp<MessageHandler>&&) override;

@@ -102,8 +102,6 @@ public:
     MOCK_METHOD(binder::Status, overrideHdrTypes, (const sp<IBinder>&, const std::vector<int32_t>&),
                 (override));
     MOCK_METHOD(binder::Status, onPullAtom, (int32_t, gui::PullAtomData*), (override));
-    MOCK_METHOD(binder::Status, enableVSyncInjections, (bool), (override));
-    MOCK_METHOD(binder::Status, injectVSync, (int64_t), (override));
     MOCK_METHOD(binder::Status, getLayerDebugInfo, (std::vector<gui::LayerDebugInfo>*), (override));
     MOCK_METHOD(binder::Status, getColorManagement, (bool*), (override));
     MOCK_METHOD(binder::Status, getCompositionPreference, (gui::CompositionPreference*),
@@ -148,8 +146,6 @@ public:
     MOCK_METHOD(binder::Status, getDisplayDecorationSupport,
                 (const sp<IBinder>&, std::optional<gui::DisplayDecorationSupport>*), (override));
     MOCK_METHOD(binder::Status, setOverrideFrameRate, (int32_t, float), (override));
-    MOCK_METHOD(binder::Status, addTransactionTraceListener,
-                (const sp<gui::ITransactionTraceListener>&), (override));
     MOCK_METHOD(binder::Status, getGpuContextPriority, (int32_t*), (override));
     MOCK_METHOD(binder::Status, getMaxAcquiredBufferCount, (int32_t*), (override));
     MOCK_METHOD(binder::Status, addWindowInfosListener, (const sp<gui::IWindowInfosListener>&),
@@ -171,11 +167,11 @@ public:
                 (const sp<IBinder>& handle, gui::FrameStats* outStats), (override));
 
     MOCK_METHOD(binder::Status, mirrorSurface,
-                (const sp<IBinder>& mirrorFromHandle, gui::MirrorSurfaceResult* outResult),
+                (const sp<IBinder>& mirrorFromHandle, gui::CreateSurfaceResult* outResult),
                 (override));
 
     MOCK_METHOD(binder::Status, mirrorDisplay,
-                (int64_t displayId, gui::MirrorSurfaceResult* outResult), (override));
+                (int64_t displayId, gui::CreateSurfaceResult* outResult), (override));
 };
 
 class FakeDisplayEventDispatcher : public DisplayEventDispatcher {
