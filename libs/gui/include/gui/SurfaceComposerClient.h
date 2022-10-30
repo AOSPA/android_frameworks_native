@@ -69,7 +69,7 @@ struct SurfaceControlStats {
     SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime,
                         std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence,
                         const sp<Fence>& presentFence, const sp<Fence>& prevReleaseFence,
-                        uint32_t hint, FrameEventHistoryStats eventStats,
+                        std::optional<uint32_t> hint, FrameEventHistoryStats eventStats,
                         uint32_t currentMaxAcquiredBufferCount)
           : surfaceControl(sc),
             latchTime(latchTime),
@@ -85,7 +85,7 @@ struct SurfaceControlStats {
     std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence = -1;
     sp<Fence> presentFence;
     sp<Fence> previousReleaseFence;
-    uint32_t transformHint = 0;
+    std::optional<uint32_t> transformHint = 0;
     FrameEventHistoryStats frameEventStats;
     uint32_t currentMaxAcquiredBufferCount = 0;
 };
@@ -182,6 +182,10 @@ public:
 
     // Gets if boot display mode operations are supported on a device
     static status_t getBootDisplayModeSupport(bool* support);
+
+    // Gets the overlay properties of the device
+    static status_t getOverlaySupport(gui::OverlayProperties* outProperties);
+
     // Sets the user-preferred display mode that a device should boot in
     static status_t setBootDisplayMode(const sp<IBinder>& display, ui::DisplayModeId);
     // Clears the user-preferred display mode

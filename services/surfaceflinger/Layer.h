@@ -52,6 +52,7 @@
 #include "DisplayHardware/HWComposer.h"
 #include "FrameTracker.h"
 #include "HwcSlotGenerator.h"
+#include "LayerFE.h"
 #include "LayerVector.h"
 #include "Scheduler/LayerInfo.h"
 #include "SurfaceFlinger.h"
@@ -97,7 +98,7 @@ struct LayerCreationArgs {
     bool addToRoot = true;
 };
 
-class Layer : public virtual RefBase, compositionengine::LayerFE {
+class Layer : public virtual RefBase {
     static std::atomic<int32_t> sSequence;
     // The following constants represent priority of the window. SF uses this information when
     // deciding which window has a priority when deciding about the refresh rate of the screen.
@@ -127,43 +128,6 @@ public:
                     (transform.ty() == rhs.transform.ty());
         }
         inline bool operator!=(const Geometry& rhs) const { return !operator==(rhs); }
-    };
-
-    struct RoundedCornerState {
-        RoundedCornerState() = default;
-        RoundedCornerState(const FloatRect& cropRect, const vec2& radius)
-              : cropRect(cropRect), radius(radius) {}
-
-        // Rounded rectangle in local layer coordinate space.
-        FloatRect cropRect = FloatRect();
-        // Radius of the rounded rectangle.
-        vec2 radius;
-        bool hasRoundedCorners() const { return radius.x > 0.0f && radius.y > 0.0f; }
-    };
-
-    // LayerSnapshot stores Layer state used by Composition Engine and Render Engine. Composition
-    // Engine uses a pointer to LayerSnapshot (as LayerFECompositionState*) and the LayerSettings
-    // passed to Render Engine are created using properties stored on this struct.
-    //
-    // TODO(b/238781169) Implement LayerFE as a separate subclass. Migrate LayerSnapshot to that
-    // LayerFE subclass.
-    struct LayerSnapshot : public compositionengine::LayerFECompositionState {
-        int32_t sequence;
-        std::string name;
-        uint32_t textureName;
-        bool contentOpaque;
-        RoundedCornerState roundedCorner;
-        StretchEffect stretchEffect;
-        FloatRect transformedBounds;
-        renderengine::ShadowSettings shadowSettings;
-        bool premultipliedAlpha;
-        bool isHdrY410;
-        bool bufferNeedsFiltering;
-        ui::Transform transform;
-        Rect bufferSize;
-        std::shared_ptr<renderengine::ExternalTexture> externalTexture;
-        LayerMetadata layerMetadata;
-        LayerMetadata relativeLayerMetadata;
     };
 
     using FrameRate = scheduler::LayerInfo::FrameRate;
@@ -414,7 +378,7 @@ public:
     ui::Dataspace getDataSpace() const;
     ui::Dataspace getRequestedDataSpace() const;
 
-    virtual sp<compositionengine::LayerFE> getCompositionEngineLayerFE() const;
+    virtual sp<LayerFE> getCompositionEngineLayerFE() const;
 
     const LayerSnapshot* getLayerSnapshot() const;
     LayerSnapshot* editLayerSnapshot();
@@ -558,7 +522,7 @@ public:
     // corner crop does not intersect with its own rounded corner crop.
     virtual RoundedCornerState getRoundedCornerState() const;
 
-    bool hasRoundedCorners() const override { return getRoundedCornerState().hasRoundedCorners(); }
+    bool hasRoundedCorners() const { return getRoundedCornerState().hasRoundedCorners(); }
 
     PixelFormat getPixelFormat() const;
     /**
@@ -599,24 +563,15 @@ public:
     // implements compositionengine::LayerFE
     const compositionengine::LayerFECompositionState* getCompositionState() const;
     bool fenceHasSignaled() const;
-    // Called before composition. updatingOutputGeometryThisFrame is used by ARC++'s Layer subclass.
-    bool onPreComposition(nsecs_t refreshStartTime, bool updatingOutputGeometryThisFrame);
-    std::optional<compositionengine::LayerFE::LayerSettings> prepareClientComposition(
-            compositionengine::LayerFE::ClientCompositionTargetSettings&) const override;
+    bool onPreComposition(nsecs_t refreshStartTime);
     void onLayerDisplayed(ftl::SharedFuture<FenceResult>);
 
-    void setWasClientComposed(const sp<Fence>& fence) override {
+    void setWasClientComposed(const sp<Fence>& fence) {
         mLastClientCompositionFence = fence;
         mClearClientCompositionFenceOnLayerDisplayed = false;
     }
 
-    const LayerMetadata* getMetadata() const override { return &mSnapshot->layerMetadata; }
-
-    const LayerMetadata* getRelativeMetadata() const override {
-        return &mSnapshot->relativeLayerMetadata;
-    }
-
-    const char* getDebugName() const override;
+    const char* getDebugName() const;
 
     bool setShadowRadius(float shadowRadius);
 
@@ -641,7 +596,7 @@ public:
     // Compute bounds for the layer and cache the results.
     void computeBounds(FloatRect parentBounds, ui::Transform parentTransform, float shadowRadius);
 
-    int32_t getSequence() const override { return sequence; }
+    int32_t getSequence() const { return sequence; }
 
     // For tracing.
     // TODO: Replace with raw buffer id from buffer metadata when that becomes available.
@@ -728,7 +683,7 @@ public:
      * Sets display transform hint on BufferLayerConsumer.
      */
     void updateTransformHint(ui::Transform::RotationFlags);
-
+    void skipReportingTransformHint();
     inline const State& getDrawingState() const { return mDrawingState; }
     inline State& getDrawingState() { return mDrawingState; }
 
@@ -907,7 +862,7 @@ public:
 
     // Updates the LayerSnapshot. This must be called prior to sending layer data to
     // CompositionEngine or RenderEngine (i.e. before calling CompositionEngine::present or
-    // Layer::prepareClientComposition).
+    // LayerFE::prepareClientComposition).
     //
     // TODO(b/238781169) Remove direct calls to RenderEngine::drawLayers that don't go through
     // CompositionEngine to create a single path for composing layers.
@@ -935,7 +890,6 @@ protected:
     void gatherBufferInfo();
     void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&);
 
-    sp<compositionengine::LayerFE> asLayerFE() const;
     sp<Layer> getClonedFrom() { return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr; }
     bool isClone() { return mClonedFrom != nullptr; }
     bool isClonedFromAlive() { return getClonedFrom() != nullptr; }
@@ -947,12 +901,6 @@ protected:
     void updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
     void addChildToDrawing(const sp<Layer>&);
     void updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
-
-    // Modifies the passed in layer settings to clear the contents. If the blackout flag is set,
-    // the settings clears the content with a solid black fill.
-    void prepareClearClientComposition(LayerFE::LayerSettings&, bool blackout) const;
-    void prepareShadowClientComposition(LayerFE::LayerSettings& caster,
-                                        const Rect& layerStackRect) const;
 
     void prepareBasicGeometryCompositionState();
     void prepareGeometryCompositionState();
@@ -1114,10 +1062,6 @@ private:
     // Fills in the frame and transform info for the gui::WindowInfo.
     void fillInputFrameInfo(gui::WindowInfo&, const ui::Transform& screenToDisplay);
 
-    // Computes the transform matrix using the setFilteringEnabled to determine whether the
-    // transform matrix should be computed for use with bilinear filtering.
-    void getDrawingTransformMatrix(bool filteringEnabled, float outMatrix[16]) const;
-
     inline void tracePendingBufferCount(int32_t pendingBuffers);
 
     // Latch sideband stream and returns true if the dirty region should be updated.
@@ -1141,8 +1085,6 @@ private:
                                    const sp<Fence>& releaseFence,
                                    uint32_t currentMaxAcquiredBufferCount);
 
-    std::optional<compositionengine::LayerFE::LayerSettings> prepareClientCompositionInternal(
-            compositionengine::LayerFE::ClientCompositionTargetSettings&) const;
     // Returns true if there is a valid color to fill.
     bool fillsColor() const;
     // Returns true if this layer has a blur value.
@@ -1152,13 +1094,13 @@ private:
         return ((mSidebandStream != nullptr) || (mBufferInfo.mBuffer != nullptr));
     }
 
+    bool hasBufferOrSidebandStreamInDrawing() const {
+        return ((mDrawingState.sidebandStream != nullptr) || (mDrawingState.buffer != nullptr));
+    }
+
     bool hasSomethingToDraw() const { return hasEffect() || hasBufferOrSidebandStream(); }
-    void prepareBufferStateClientComposition(
-            compositionengine::LayerFE::LayerSettings&,
-            compositionengine::LayerFE::ClientCompositionTargetSettings&) const;
-    void prepareEffectsClientComposition(
-            compositionengine::LayerFE::LayerSettings&,
-            compositionengine::LayerFE::ClientCompositionTargetSettings&) const;
+
+    void updateChildrenSnapshots(bool updateGeometry);
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is
@@ -1220,6 +1162,7 @@ private:
     // Transform hint provided to the producer. This must be accessed holding
     // the mStateLock.
     ui::Transform::RotationFlags mTransformHint = ui::Transform::ROT_0;
+    bool mSkipReportingTransformHint = true;
 
     ReleaseCallbackId mPreviousReleaseCallbackId = ReleaseCallbackId::INVALID_ID;
     uint64_t mPreviousReleasedFrameNumber = 0;
@@ -1234,7 +1177,7 @@ private:
 
     std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;
     // An upper bound on the number of SurfaceFrames in the pending classifications deque.
-    static constexpr int kPendingClassificationMaxSurfaceFrames = 25;
+    static constexpr int kPendingClassificationMaxSurfaceFrames = 50;
 
     const std::string mBlastTransactionName{"BufferTX - " + mName};
     // This integer is incremented everytime a buffer arrives at the server for this layer,
@@ -1254,9 +1197,35 @@ private:
 
     sp<HwcSlotGenerator> mHwcSlotGenerator;
 
+    sp<LayerFE> mLayerFE;
     std::unique_ptr<LayerSnapshot> mSnapshot = std::make_unique<LayerSnapshot>();
+
+    friend class LayerSnapshotGuard;
 public:
     nsecs_t getPreviousGfxInfo();
+};
+
+// LayerSnapshotGuard manages the movement of LayerSnapshot between a Layer and its corresponding
+// LayerFE. This class must be used whenever LayerFEs are passed to CompositionEngine. Instances of
+// LayerSnapshotGuard should only be constructed on the main thread and should not be moved outside
+// the main thread.
+//
+// Moving the snapshot instead of sharing common state prevents use of LayerFE outside the main
+// thread by making errors obvious (i.e. use outside the main thread results in SEGFAULTs due to
+// nullptr dereference).
+class LayerSnapshotGuard {
+public:
+    LayerSnapshotGuard(Layer* layer) REQUIRES(kMainThreadContext);
+    ~LayerSnapshotGuard() REQUIRES(kMainThreadContext);
+
+    LayerSnapshotGuard(const LayerSnapshotGuard&) = delete;
+    LayerSnapshotGuard& operator=(const LayerSnapshotGuard&) = delete;
+
+    LayerSnapshotGuard(LayerSnapshotGuard&& other) REQUIRES(kMainThreadContext);
+    LayerSnapshotGuard& operator=(LayerSnapshotGuard&& other) REQUIRES(kMainThreadContext);
+
+private:
+    Layer* mLayer;
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

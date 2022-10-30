@@ -17,6 +17,7 @@
 #include "UinputDevice.h"
 
 #include <android-base/stringprintf.h>
+#include <cutils/memory.h>
 #include <fcntl.h>
 
 namespace android {
@@ -58,11 +59,11 @@ void UinputDevice::init() {
 }
 
 void UinputDevice::injectEvent(uint16_t type, uint16_t code, int32_t value) {
+    // uinput ignores the timestamp
     struct input_event event = {};
     event.type = type;
     event.code = code;
     event.value = value;
-    event.time = {}; // uinput ignores the timestamp
 
     if (write(mDeviceFd, &event, sizeof(input_event)) < 0) {
         std::string msg = base::StringPrintf("Could not write event %" PRIu16 " %" PRIu16

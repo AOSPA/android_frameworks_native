@@ -386,10 +386,11 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
                                       surfaceStats.previousReleaseFence, surfaceStats.transformHint,
                                       surfaceStats.eventStats,
                                       surfaceStats.currentMaxAcquiredBufferCount);
-                if (callbacksMap[callbackId].surfaceControls[surfaceStats.surfaceControl]) {
+                if (callbacksMap[callbackId].surfaceControls[surfaceStats.surfaceControl] &&
+                    surfaceStats.transformHint.has_value()) {
                     callbacksMap[callbackId]
                             .surfaceControls[surfaceStats.surfaceControl]
-                            ->setTransformHint(surfaceStats.transformHint);
+                            ->setTransformHint(*surfaceStats.transformHint);
                 }
                 // If there is buffer id set, we look up any pending client release buffer callbacks
                 // and call them. This is a performance optimization when we have a transaction
@@ -2448,6 +2449,12 @@ status_t SurfaceComposerClient::setActiveColorMode(const sp<IBinder>& display,
 status_t SurfaceComposerClient::getBootDisplayModeSupport(bool* support) {
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->getBootDisplayModeSupport(support);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::getOverlaySupport(gui::OverlayProperties* outProperties) {
+    binder::Status status =
+            ComposerServiceAIDL::getComposerService()->getOverlaySupport(outProperties);
     return statusTFromBinderStatus(status);
 }
 

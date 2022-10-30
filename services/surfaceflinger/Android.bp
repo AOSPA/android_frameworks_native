@@ -226,6 +226,7 @@ filegroup {
         "DisplayRenderArea.cpp",
         "Effects/Daltonizer.cpp",
         "EventLog/EventLog.cpp",
+        "FrontEnd/TransactionHandler.cpp",
         "FlagManager.cpp",
         "FpsReporter.cpp",
         "FrameTracer/FrameTracer.cpp",
@@ -234,6 +235,7 @@ filegroup {
         "HwcSlotGenerator.cpp",
         "WindowInfosListenerInvoker.cpp",
         "Layer.cpp",
+        "LayerFE.cpp",
         "LayerProtoHelper.cpp",
         "LayerRenderArea.cpp",
         "LayerVector.cpp",
@@ -263,7 +265,6 @@ filegroup {
         "Tracing/TransactionTracing.cpp",
         "Tracing/TransactionProtoParser.cpp",
         "TransactionCallbackInvoker.cpp",
-        "TransactionHandler.cpp",
         "TunnelModeEnabledReporter.cpp",
     ],
 }
