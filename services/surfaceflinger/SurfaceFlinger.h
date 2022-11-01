@@ -65,6 +65,7 @@
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
 #include "FlagManager.h"
+#include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
 #include "Scheduler/RefreshRateConfigs.h"
 #include "Scheduler/RefreshRateStats.h"
@@ -75,7 +76,6 @@
 #include "Tracing/LayerTracing.h"
 #include "Tracing/TransactionTracing.h"
 #include "TransactionCallbackInvoker.h"
-#include "TransactionHandler.h"
 #include "TransactionState.h"
 
 #include <atomic>
@@ -614,6 +614,7 @@ private:
     status_t setActiveColorMode(const sp<IBinder>& displayToken, ui::ColorMode colorMode);
     status_t getBootDisplayModeSupport(bool* outSupport) const;
     status_t setBootDisplayMode(const sp<display::DisplayToken>&, DisplayModeId);
+    status_t getOverlaySupport(gui::OverlayProperties* outProperties) const;
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken);
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
@@ -904,7 +905,8 @@ private:
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             const RenderArea&, TraverseLayersFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
-            bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock);
+            bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock)
+            REQUIRES(kMainThreadContext);
 
 
     bool canAllocateHwcDisplayIdForVDS(uint64_t usage);
@@ -1550,7 +1552,6 @@ private:
 
     const sp<WindowInfosListenerInvoker> mWindowInfosListenerInvoker;
     void setRefreshRates(const sp<DisplayDevice>& display);
-    void UpdateSmomoState();
     void updateSmomoLayerInfo(TransactionState &ts,
         int64_t desiredPresentTime, bool isAutoTimestamp);
     SmomoIntf* getSmomoInstance(const uint32_t layerStackId) const;
@@ -1639,6 +1640,7 @@ public:
     binder::Status setBootDisplayMode(const sp<IBinder>& display, int displayModeId) override;
     binder::Status clearBootDisplayMode(const sp<IBinder>& display) override;
     binder::Status getBootDisplayModeSupport(bool* outMode) override;
+    binder::Status getOverlaySupport(gui::OverlayProperties* outProperties) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;
     binder::Status captureDisplay(const DisplayCaptureArgs&,

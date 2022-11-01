@@ -35,11 +35,12 @@
 
 #include <ui/DisplayStatInfo.h>
 
-#include <DisplayDevice.h>
 #include <scheduler/Features.h>
 #include <scheduler/Time.h>
+#include <ui/DisplayId.h>
 
 #include "Display/DisplayMap.h"
+#include "DisplayDevice.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "LayerHistory.h"
@@ -111,19 +112,6 @@ protected:
     ~ISchedulerCallback() = default;
 };
 
-// Holds the total score of the FPS and
-// number of displays the FPS is found in.
-struct AggregatedFpsScore {
-    float totalScore;
-    size_t numDisplays;
-};
-
-// Represents the RefreshRateRankings and GlobalSignals for the selected RefreshRateRankings.
-struct RefreshRateRankingsAndSignals {
-    std::vector<RefreshRateRanking> refreshRateRankings;
-    GlobalSignals globalSignals;
-};
-
 class Scheduler : android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
@@ -134,6 +122,9 @@ public:
     void startTimers();
     void setRefreshRateConfigs(std::shared_ptr<RefreshRateConfigs>)
             EXCLUDES(mRefreshRateConfigsLock);
+
+    void registerDisplay(sp<const DisplayDevice>);
+    void unregisterDisplay(PhysicalDisplayId);
 
     void run();
 
@@ -264,9 +255,6 @@ public:
         return mLayerHistory.getLayerFramerate(now, id);
     }
 
-    void registerDisplay(const sp<const DisplayDevice>&);
-    void unregisterDisplay(PhysicalDisplayId);
-
     void setIdleState();
     void updateThermalFps(float fps);
 
@@ -302,10 +290,6 @@ private:
 
     // Returns the best display mode per display.
     std::vector<DisplayModeConfig> getBestDisplayModeConfigs() const REQUIRES(mPolicyLock);
-
-    // Returns the list of DisplayModeConfigs per display for the chosenFps.
-    std::vector<DisplayModeConfig> getDisplayModeConfigsForTheChosenFps(
-            Fps chosenFps, const std::vector<RefreshRateRankingsAndSignals>&) const;
 
     GlobalSignals makeGlobalSignals() const REQUIRES(mPolicyLock);
 
@@ -354,9 +338,7 @@ private:
 
     mutable std::mutex mPolicyLock;
 
-    // Holds the Physical displays registered through the SurfaceFlinger, used for making
-    // the refresh rate selections.
-    display::PhysicalDisplayMap<PhysicalDisplayId, const sp<const DisplayDevice>> mDisplays;
+    display::PhysicalDisplayMap<PhysicalDisplayId, sp<const DisplayDevice>> mDisplays;
 
     struct Policy {
         // Policy for choosing the display mode.

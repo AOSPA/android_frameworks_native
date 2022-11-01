@@ -996,6 +996,10 @@ public:
         return binder::Status::ok();
     }
 
+    binder::Status getOverlaySupport(gui::OverlayProperties* /*properties*/) override {
+        return binder::Status::ok();
+    }
+
 protected:
     IBinder* onAsBinder() override { return nullptr; }
 

@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <linux/ioctl.h>
 #include <memory.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,7 +29,6 @@
 #include <sys/epoll.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
-#include <sys/limits.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
@@ -192,8 +192,8 @@ static nsecs_t processEventTimestamp(const struct input_event& event) {
     // calls clock_gettime(CLOCK_MONOTONIC) which is implemented as a
     // system call that also queries ktime_get_ts().
 
-    const nsecs_t inputEventTime = seconds_to_nanoseconds(event.time.tv_sec) +
-            microseconds_to_nanoseconds(event.time.tv_usec);
+    const nsecs_t inputEventTime = seconds_to_nanoseconds(event.input_event_sec) +
+            microseconds_to_nanoseconds(event.input_event_usec);
     return inputEventTime;
 }
 
@@ -633,8 +633,8 @@ void EventHub::Device::setLedStateLocked(int32_t led, bool on) {
     int32_t sc;
     if (hasValidFd() && mapLed(led, &sc) != NAME_NOT_FOUND) {
         struct input_event ev;
-        ev.time.tv_sec = 0;
-        ev.time.tv_usec = 0;
+        ev.input_event_sec = 0;
+        ev.input_event_usec = 0;
         ev.type = EV_LED;
         ev.code = sc;
         ev.value = on ? 1 : 0;
@@ -1463,8 +1463,8 @@ void EventHub::vibrate(int32_t deviceId, const VibrationElement& element) {
         device->ffEffectId = effect.id;
 
         struct input_event ev;
-        ev.time.tv_sec = 0;
-        ev.time.tv_usec = 0;
+        ev.input_event_sec = 0;
+        ev.input_event_usec = 0;
         ev.type = EV_FF;
         ev.code = device->ffEffectId;
         ev.value = 1;
@@ -1485,8 +1485,8 @@ void EventHub::cancelVibrate(int32_t deviceId) {
             device->ffEffectPlaying = false;
 
             struct input_event ev;
-            ev.time.tv_sec = 0;
-            ev.time.tv_usec = 0;
+            ev.input_event_sec = 0;
+            ev.input_event_usec = 0;
             ev.type = EV_FF;
             ev.code = device->ffEffectId;
             ev.value = 0;
