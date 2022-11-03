@@ -273,8 +273,6 @@ interface ISurfaceComposer {
      */
     boolean isWideColorDisplay(IBinder token);
 
-    boolean isDeviceRCSupported(IBinder token);
-
     /**
      * Registers a listener to stream median luma updates from SurfaceFlinger.
      *

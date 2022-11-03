@@ -33,31 +33,11 @@
 
 #include "HWC2.h"
 
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposer.h>
-#else
-#include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
-#endif
-
-#ifdef QTI_DISPLAY_CONFIG_ENABLED
-#include <config/client_interface.h>
-namespace DisplayConfig {
-class ClientInterface;
-}
-#endif
-
 namespace android {
 
 using hardware::hidl_handle;
 using hardware::hidl_vec;
 using hardware::Return;
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposer;
-#else
-using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
-#endif
 
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
@@ -236,57 +216,7 @@ bool AidlComposer::isDeclared(const std::string& serviceName) {
     return AServiceManager_isDeclared(instance(serviceName).c_str());
 }
 
-void AidlComposer::AidlCommandWriter::setLayerType(uint32_t type)
-{
-    constexpr uint16_t kSetLayerTypeLength = 1;
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    //beginCommand(static_cast<V2_1::IComposerClient::Command>(
-    //                     IQtiComposerClient::Command::SET_LAYER_TYPE),
-    //             kSetLayerTypeLength);
-    //write(type);
-    //endCommand();
-}
-
-void AidlComposer::AidlCommandWriter::setDisplayElapseTime(uint64_t time)
-{
-    constexpr uint16_t kSetDisplayElapseTimeLength = 2;
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    /* beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                         IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
-                 kSetDisplayElapseTimeLength);
-    write64(time);
-    endCommand(); */
-}
-
-#ifdef QTI_UNIFIED_DRAW
-void AidlComposer::AidlCommandWriter::setClientTarget_3_1(
-        int32_t slot, int acquireFence, Dataspace dataspace)
-{
-    constexpr uint16_t  KSetClientTargetLength = 3;
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    /*   beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                 IQtiComposerClient::Command::SET_CLIENT_TARGET_3_1),
-                 KSetClientTargetLength);
-    write((unsigned int)slot);
-    writeFence(acquireFence);
-    writeSigned(static_cast<int32_t>(dataspace));
-    endCommand(); */
-
-}
-
-void AidlComposer::AidlCommandWriter::setLayerFlag(uint32_t type)
-{
-    constexpr uint16_t kSetLayerFlagLength = 1;
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    /*   beginCommand(static_cast<V2_1::IComposerClient::Command>(
-                 IQtiComposerClient::Command::SET_LAYER_FLAG_3_1),
-                 kSetLayerFlagLength);
-    write(type);
-    endCommand(); */
-}
-#endif
-
-AidlComposer::AidlComposer(const std::string& serviceName) : mWriter() {
+AidlComposer::AidlComposer(const std::string& serviceName) {
     // This only waits if the service is actually declared
     mAidlComposer = AidlIComposer::fromBinder(
             ndk::SpAIBinder(AServiceManager_waitForService(instance(serviceName).c_str())));
@@ -832,49 +762,6 @@ Error AidlComposer::setLayerZOrder(Display display, Layer layer, uint32_t z) {
     mWriter.setLayerZOrder(translate<int64_t>(display), translate<int64_t>(layer), z);
     return Error::NONE;
 }
-
-Error AidlComposer::setLayerType(Display display, Layer layer, uint32_t type) {
-    return Error::NONE;
-}
-
-Error AidlComposer::setDisplayElapseTime(Display display, uint64_t timeStamp) {
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    //selectDisplay is not available any more, replaced by setLayerPerFrameMetadata
-    //For example: mWriter.setLayerPerFrameMetadata(translate<int64_t>(display),
-    //translate<int64_t>(layer),translate<AidlPerFrameMetadata>(perFrameMetadatas));
-    //mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.setDisplayElapseTime(timeStamp);
-    return Error::NONE;
-}
-
-#ifdef QTI_UNIFIED_DRAW
-Error AidlComposer::tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod)
-{
-    // TODO(b/208884057) implement as necessary
-    return Error::NONE;
-}
-
-Error AidlComposer::setLayerFlag(Display display, Layer layer,
-        IQtiComposerClient::LayerFlag layerFlag)
-{
-    // TODO(b/208884057) implement as necessary
-    return Error::NONE;
-}
-
-Error AidlComposer::setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
-        Dataspace dataspace)
-{
-    //TODO(b/215740085): Refactoring in AidlComposerHal requires changes
-    //selectDisplay is not available any more, replaced by setLayerPerFrameMetadata
-    //For example: mWriter.setLayerPerFrameMetadata(translate<int64_t>(display),
-    //translate<int64_t>(layer),translate<AidlPerFrameMetadata>(perFrameMetadatas));
-    //mWriter.selectDisplay(translate<int64_t>(display));
-    mWriter.setClientTarget_3_1(slot, acquireFence, dataspace);
-    return Error::NONE;
-}
-#endif
-
-
 
 Error AidlComposer::execute() {
     const auto& commands = mWriter.getPendingCommands();

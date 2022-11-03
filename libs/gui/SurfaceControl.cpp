@@ -42,8 +42,6 @@
 #include <gui/SurfaceControl.h>
 #include <private/gui/ParcelUtils.h>
 
-#include "dlfcn.h"
-
 namespace android {
 
 // ============================================================================
@@ -61,8 +59,7 @@ SurfaceControl::SurfaceControl(const sp<SurfaceComposerClient>& client, const sp
         mWidth(w),
         mHeight(h),
         mFormat(format),
-        mCreateFlags(flags),
-        mExtension(mHandle) {}
+        mCreateFlags(flags) {}
 
 SurfaceControl::SurfaceControl(const sp<SurfaceControl>& other) {
     mClient = other->mClient;
@@ -146,7 +143,6 @@ sp<Surface> SurfaceControl::generateSurfaceLocked()
 
     // This surface is always consumed by SurfaceFlinger, so the
     // producerControlledByApp value doesn't matter; using false.
-    mExtension.init();
     mSurfaceData = mBbq->getSurface(true);
 
     return mSurfaceData;
@@ -299,51 +295,6 @@ uint64_t SurfaceControl::resolveFrameNumber(const std::optional<uint64_t>& frame
         return ret;
     } else {
         return mFallbackFrameNumber++;
-    }
-}
-
-typedef bool (*InitFunc_t)(const sp<IBinder>&);
-typedef void (*DeinitFunc_t)(const sp<IBinder>&);
-SurfaceControl::VpsExtension::VpsExtension()
-   : mIsEnable(false),
-     mLibHandler(nullptr),
-     mFuncInit(nullptr),
-     mFuncDeinit(nullptr) {
-}
-
-SurfaceControl::VpsExtension::VpsExtension(const sp<IBinder> handle)
-    : mIsEnable(false),
-      mHandle(handle),
-      mLibHandler(nullptr),
-      mFuncInit(nullptr),
-      mFuncDeinit(nullptr) {
-    // UID:10000 is AID_APP_START for 3rd party application.
-    // The system application will not enter this logic.
-    if (getuid() < 10000)
-        return;
-    mLibHandler = dlopen("libvpsextension.so", RTLD_NOW|RTLD_GLOBAL);
-    if (mLibHandler == nullptr)
-        return;
-    mFuncInit = dlsym(mLibHandler, "Init");
-    mFuncDeinit = dlsym(mLibHandler, "Deinit");
-    if (mFuncInit) {
-        mIsEnable = reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
-    }
-}
-
-SurfaceControl::VpsExtension::~VpsExtension() {
-    if (mIsEnable && mFuncDeinit) {
-        reinterpret_cast<DeinitFunc_t>(mFuncDeinit)(mHandle);
-    }
-    if (mLibHandler != nullptr) {
-        dlclose(mLibHandler);
-    }
-    mLibHandler = nullptr;
-}
-
-void SurfaceControl::VpsExtension::init() const {
-    if (mIsEnable && mFuncInit) {
-        reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
     }
 }
 

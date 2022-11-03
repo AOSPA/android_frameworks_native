@@ -164,7 +164,7 @@ EventThreadConnection::EventThreadConnection(EventThread* eventThread, uid_t cal
         mOwnerUid(callingUid),
         mEventRegistration(eventRegistration),
         mEventThread(eventThread),
-        mChannel(gui::BitTube(8 * 1024 /* default size is 4KB, double it */)) {}
+        mChannel(gui::BitTube::DefaultSize) {}
 
 EventThreadConnection::~EventThreadConnection() {
     // do nothing here -- clean-up will happen automatically
@@ -619,7 +619,6 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
-    const uint8_t num_attempts = 3;
     for (const auto& consumer : consumers) {
         DisplayEventReceiver::Event copy = event;
         if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
@@ -629,24 +628,19 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                   event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                   event.vsync.vsyncData.preferredDeadlineTimestamp());
         }
-        bool needs_retry = true;
-        for (uint8_t attempt = 0; needs_retry && (attempt < num_attempts); attempt++) {
-            switch (consumer->postEvent(copy)) {
-                case NO_ERROR:
-                    needs_retry = false;
-                    break;
+        switch (consumer->postEvent(copy)) {
+            case NO_ERROR:
+                break;
 
-                case -EAGAIN:
-                    ALOGW("Failed dispatching %s for %s. attempt %d", toString(event).c_str(),
-                          toString(*consumer).c_str(), attempt+1);
-                    needs_retry = true;
-                    break;
+            case -EAGAIN:
+                // TODO: Try again if pipe is full.
+                ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
+                      toString(*consumer).c_str());
+                break;
 
-                default:
-                    // Treat EPIPE and other errors as fatal.
-                    removeDisplayEventConnectionLocked(consumer);
-                    needs_retry = false;
-            }
+            default:
+                // Treat EPIPE and other errors as fatal.
+                removeDisplayEventConnectionLocked(consumer);
         }
     }
 }

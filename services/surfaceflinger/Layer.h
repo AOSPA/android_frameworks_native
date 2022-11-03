@@ -371,7 +371,6 @@ public:
     //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
     //  rate priority from its parent.
     virtual int32_t getFrameRateSelectionPriority() const;
-    int32_t getPriority();
     //
     virtual FrameRateCompatibility getDefaultFrameRateCompatibility() const;
     //
@@ -612,10 +611,6 @@ public:
      * application, being secure doesn't mean the surface has DRM contents.
      */
     bool isSecure() const;
-
-    bool isSecureCamera() const;
-    bool isSecureDisplay() const;
-    bool isScreenshot() const;
 
     /*
      * isHiddenByPolicy - true if this layer has been forced invisible.
@@ -870,8 +865,6 @@ public:
     void updateMetadataSnapshot(const LayerMetadata& parentMetadata);
     void updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMetadata,
                                         std::unordered_set<Layer*>& visited);
-    void setSmomoLayerStackId();
-    uint32_t getSmomoLayerStackId();
 
 protected:
     // For unit tests
@@ -917,10 +910,7 @@ protected:
     LayerVector makeTraversalList(LayerVector::StateSet, bool* outSkipRelativeZUsers);
     void addZOrderRelative(const wp<Layer>& relative);
     void removeZOrderRelative(const wp<Layer>& relative);
-// TODO(b/156774977): Restore protected visibility when fixed.
-public:
     compositionengine::OutputLayer* findOutputLayerForDisplay(const DisplayDevice*) const;
-protected:
     bool usingRelativeZ(LayerVector::StateSet) const;
 
     virtual ui::Transform getInputTransform() const;
@@ -957,8 +947,6 @@ protected:
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
-
-    uint32_t mLayerClass{0};
 
     // main thread
     sp<NativeHandle> mSidebandStream;
@@ -1139,8 +1127,6 @@ private:
     // Game mode for the layer. Set by WindowManagerShell and recorded by SurfaceFlingerStats.
     GameMode mGameMode = GameMode::Unsupported;
 
-    mutable int32_t mPriority = Layer::PRIORITY_UNSET;
-
     // A list of regions on this layer that should have blurs.
     const std::vector<BlurRegion> getBlurRegions() const;
 
@@ -1153,7 +1139,6 @@ private:
     bool mBorderEnabled = false;
     float mBorderWidth;
     half4 mBorderColor;
-    uint32_t smomoLayerStackId = UINT32_MAX;
 
     void setTransformHint(ui::Transform::RotationFlags);
 
@@ -1201,8 +1186,6 @@ private:
     std::unique_ptr<LayerSnapshot> mSnapshot = std::make_unique<LayerSnapshot>();
 
     friend class LayerSnapshotGuard;
-public:
-    nsecs_t getPreviousGfxInfo();
 };
 
 // LayerSnapshotGuard manages the movement of LayerSnapshot between a Layer and its corresponding

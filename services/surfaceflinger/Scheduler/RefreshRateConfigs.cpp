@@ -734,9 +734,7 @@ RefreshRateConfigs::UidToFrameRateOverride RefreshRateConfigs::getFrameRateOverr
 
     return frameRateOverrides;
 }
-const DisplayModes& RefreshRateConfigs::getAllRefreshRates() const {
-  return mDisplayModes;
-}
+
 std::optional<Fps> RefreshRateConfigs::onKernelTimerChanged(
         std::optional<DisplayModeId> desiredActiveModeId, bool timerExpired) const {
     std::lock_guard lock(mLock);

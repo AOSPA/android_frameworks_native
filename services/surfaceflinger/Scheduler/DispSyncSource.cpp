@@ -136,7 +136,7 @@ DispSyncSource::DispSyncSource(VSyncDispatch& vSyncDispatch, VSyncTracker& vSync
                                                std::chrono::steady_clock::now().time_since_epoch());
 }
 
-DispSyncSource::~DispSyncSource() {}
+DispSyncSource::~DispSyncSource() = default;
 
 void DispSyncSource::setVSyncEnabled(bool enable) {
     std::lock_guard lock(mVsyncMutex);

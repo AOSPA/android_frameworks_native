@@ -236,9 +236,6 @@ public:
 
     nsecs_t getVsyncPeriodFromHWC() const;
 
-    void setPowerModeOverrideConfig(bool supported);
-    bool getPowerModeOverrideConfig() const;
-
     // release HWC resources (if any) for removable displays
     void disconnect();
 
@@ -277,8 +274,6 @@ private:
     uint32_t mFlags = 0;
 
     std::vector<ui::Hdr> mOverrideHdrTypes;
-
-    bool mIsPowerModeOverride;
 
     std::shared_ptr<scheduler::RefreshRateConfigs> mRefreshRateConfigs;
     std::unique_ptr<RefreshRateOverlay> mRefreshRateOverlay;

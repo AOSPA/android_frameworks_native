@@ -380,11 +380,6 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
                                      ui::Dataspace dataspace) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
-    auto& displayData = mDisplayData[displayId];
-    if (displayData.validateWasSkipped) {
-      return NO_ERROR;
-    }
-
     ALOGV("%s for display %s", __FUNCTION__, to_string(displayId).c_str());
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
     auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
@@ -393,10 +388,9 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 }
 
 status_t HWComposer::getDeviceCompositionChanges(
-        HalDisplayId displayId, bool /*frameUsesClientComposition */,
-        std::chrono::steady_clock::time_point earliestPresentTime __attribute__((unused)),
-        const std::shared_ptr<FenceTime>& previousPresentFence __attribute__((unused)),
-        nsecs_t expectedPresentTime,
+        HalDisplayId displayId, bool frameUsesClientComposition,
+        std::chrono::steady_clock::time_point earliestPresentTime,
+        const std::shared_ptr<FenceTime>& previousPresentFence, nsecs_t expectedPresentTime,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
 
@@ -418,9 +412,25 @@ status_t HWComposer::getDeviceCompositionChanges(
     // earliest time to present. Otherwise, we may present a frame too early.
     // 2. There is no client composition. Otherwise, we first need to render the
     // client target buffer.
-    const bool canSkipValidate = true;
+    const bool canSkipValidate = [&] {
+        // We must call validate if we have client composition
+        if (frameUsesClientComposition) {
+            return false;
+        }
+
+        // If composer supports getting the expected present time, we can skip
+        // as composer will make sure to prevent early presentation
+        if (mComposer->isSupported(Hwc2::Composer::OptionalFeature::ExpectedPresentTime)) {
+            return true;
+        }
+
+        // composer doesn't support getting the expected present time. We can only
+        // skip validate if we know that we are not going to present early.
+        return std::chrono::steady_clock::now() >= earliestPresentTime ||
+                previousPresentFence->getSignalTime() == Fence::SIGNAL_TIME_PENDING;
+    }();
+
     displayData.validateWasSkipped = false;
-    bool acceptChanges = true;
     if (canSkipValidate) {
         sp<Fence> outPresentFence;
         uint32_t state = UINT32_MAX;
@@ -429,30 +439,19 @@ status_t HWComposer::getDeviceCompositionChanges(
         if (!hasChangesError(error)) {
             RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
         }
-        ALOGV("getDeviceCompositionChanges: state: %d", state);
-        // state = 0 --> Only Validate.
-        // state = 1 --> Validate and commit succeeded. Skip validate case. No comp changes.
-        // state = 2 --> Validate and commit succeeded. Query Comp changes.
-        if (state == 1 || state == 2) { //Present Succeeded.
+        if (state == 1) { //Present Succeeded.
             std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
             error = hwcDisplay->getReleaseFences(&releaseFences);
             displayData.releaseFences = std::move(releaseFences);
             displayData.lastPresentFence = outPresentFence;
             displayData.validateWasSkipped = true;
             displayData.presentError = error;
-            ALOGV("Retrieving fences");
-        }
-
-        if (state == 1) {
-            ALOGV("skip validate case present succeeded");
             return NO_ERROR;
         }
-
-        acceptChanges = (state != 2);
+        // Present failed but Validate ran.
     } else {
         error = hwcDisplay->validate(expectedPresentTime, &numTypes, &numRequests);
     }
-
     ALOGV("SkipValidate failed, Falling back to SLOW validate/present");
     if (!hasChangesError(error)) {
         RETURN_IF_HWC_ERROR_FOR("validate", error, displayId, BAD_INDEX);
@@ -475,10 +474,8 @@ status_t HWComposer::getDeviceCompositionChanges(
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
                                                std::move(clientTargetProperty)});
-    if (acceptChanges) {
-        error = hwcDisplay->acceptChanges();
-        RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
-    }
+    error = hwcDisplay->acceptChanges();
+    RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
 
     return NO_ERROR;
 }
@@ -515,7 +512,6 @@ status_t HWComposer::presentAndGetReleaseFences(
     auto& hwcDisplay = displayData.hwcDisplay;
 
     if (displayData.validateWasSkipped) {
-        displayData.validateWasSkipped = false;
         // explicitly flush all pending commands
         auto error = static_cast<hal::Error>(mComposer->executeCommands());
         RETURN_IF_HWC_ERROR_FOR("executeCommands", error, displayId, UNKNOWN_ERROR);
@@ -523,7 +519,6 @@ status_t HWComposer::presentAndGetReleaseFences(
         return NO_ERROR;
     }
 
-    displayData.lastPresentFence = Fence::NO_FENCE;
     const bool waitForEarliestPresent =
             !mComposer->isSupported(Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
             previousPresentFence->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
@@ -547,6 +542,11 @@ status_t HWComposer::presentAndGetReleaseFences(
 
 status_t HWComposer::setPowerMode(PhysicalDisplayId displayId, hal::PowerMode mode) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+
+    if (mode == hal::PowerMode::OFF) {
+        setVsyncEnabled(displayId, hal::Vsync::DISABLE);
+    }
+
     const auto& displayData = mDisplayData[displayId];
     auto& hwcDisplay = displayData.hwcDisplay;
     switch (mode) {
@@ -866,14 +866,6 @@ std::optional<hal::HWDisplayId> HWComposer::fromPhysicalDisplayId(
     return {};
 }
 
-std::optional<hal::HWDisplayId> HWComposer::fromVirtualDisplayId(
-        HalVirtualDisplayId displayId) const {
-    if (const auto it = mDisplayData.find(displayId); it != mDisplayData.end() ) {
-        return it->second.hwcDisplay->getId();
-    }
-    return {};
-}
-
 bool HWComposer::shouldIgnoreHotplugConnect(hal::HWDisplayId hwcDisplayId,
                                             bool hasDisplayIdentificationData) const {
     if (mHasMultiDisplaySupport && !hasDisplayIdentificationData) {
@@ -1026,38 +1018,6 @@ void HWComposer::loadLayerMetadataSupport() {
         mSupportedLayerGenericMetadata.emplace(name, mandatory);
     }
 }
-
-status_t HWComposer::setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) {
-    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    const auto& displayData = mDisplayData[displayId];
-
-    auto error = displayData.hwcDisplay->setDisplayElapseTime(timeStamp);
-    if (error == hal::Error::BAD_PARAMETER) RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
-    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
-    return NO_ERROR;
-}
-
-#ifdef QTI_UNIFIED_DRAW
-status_t HWComposer::setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
-         const sp<Fence>& acquireFence, ui::Dataspace dataspace) {
-    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    const auto& displayData = mDisplayData[displayId];
-
-    auto error = displayData.hwcDisplay->setClientTarget_3_1(slot, acquireFence, dataspace);
-    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
-    return NO_ERROR;
-}
-
-status_t HWComposer::tryDrawMethod(HalDisplayId displayId,
-         IQtiComposerClient::DrawMethod drawMethod) {
-    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    const auto& displayData = mDisplayData[displayId];
-
-    auto error = displayData.hwcDisplay->tryDrawMethod(drawMethod);
-    RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
-    return NO_ERROR;
-}
-#endif
 
 } // namespace impl
 } // namespace android

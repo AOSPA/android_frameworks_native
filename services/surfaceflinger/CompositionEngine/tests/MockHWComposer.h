@@ -25,9 +25,7 @@
 #pragma clang diagnostic ignored "-Wextra"
 
 #include "DisplayHardware/HWComposer.h"
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -35,9 +33,7 @@ namespace android {
 namespace mock {
 
 namespace hal = android::hardware::graphics::composer::hal;
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
+
 class HWComposer : public android::HWComposer {
 public:
     HWComposer();
@@ -72,11 +68,6 @@ public:
     MOCK_METHOD2(setActiveConfig, status_t(HalDisplayId, size_t));
     MOCK_METHOD2(setColorTransform, status_t(HalDisplayId, const mat4&));
     MOCK_METHOD1(disconnectDisplay, void(HalDisplayId));
-#ifdef QTI_UNIFIED_DRAW
-    MOCK_METHOD4(setClientTarget_3_1, status_t(HalDisplayId, int32_t, const sp<Fence>&,
-                                               ui::Dataspace));
-    MOCK_METHOD2(tryDrawMethod, status_t(HalDisplayId, IQtiComposerClient::DrawMethod));
-#endif
     MOCK_CONST_METHOD1(hasDeviceComposition, bool(const std::optional<DisplayId>&));
     MOCK_CONST_METHOD1(getPresentFence, sp<Fence>(HalDisplayId));
     MOCK_METHOD(nsecs_t, getPresentTimestamp, (PhysicalDisplayId), (const, override));
@@ -97,7 +88,6 @@ public:
     MOCK_METHOD(ftl::Future<status_t>, setDisplayBrightness,
                 (PhysicalDisplayId, float, float, const Hwc2::Composer::DisplayBrightnessOptions&),
                 (override));
-    MOCK_METHOD2(setDisplayElapseTime, status_t(HalDisplayId, uint64_t));
     MOCK_METHOD2(getDisplayBrightnessSupport, status_t(PhysicalDisplayId, bool*));
 
     MOCK_METHOD2(onHotplug,
@@ -131,6 +121,7 @@ public:
 
     MOCK_CONST_METHOD1(dump, void(std::string&));
     MOCK_CONST_METHOD0(getComposer, android::Hwc2::Composer*());
+
     MOCK_METHOD(hal::HWDisplayId, getPrimaryHwcDisplayId, (), (const, override));
     MOCK_METHOD(PhysicalDisplayId, getPrimaryDisplayId, (), (const, override));
     MOCK_METHOD(bool, isHeadless, (), (const, override));
@@ -150,7 +141,6 @@ public:
     MOCK_METHOD(bool, getValidateSkipped, (HalDisplayId), (const, override));
     MOCK_METHOD(status_t, getOverlaySupport,
                 (aidl::android::hardware::graphics::composer3::OverlayProperties*));
-    MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
 };
 
 } // namespace mock

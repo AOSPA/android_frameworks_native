@@ -174,14 +174,6 @@ void PowerAdvisor::notifyDisplayUpdateImminent() {
     }
 }
 
-bool PowerAdvisor::canNotifyDisplayUpdateImminent() {
-    bool canNotify = mSendUpdateImminent.load();
-    if (mScreenUpdateTimer) {
-        mScreenUpdateTimer.reset();
-    }
-    return canNotify;
-}
-
 // checks both if it supports and if it's enabled
 bool PowerAdvisor::usePowerHintSession() {
     // uses cached value since the underlying support and flag are unlikely to change at runtime

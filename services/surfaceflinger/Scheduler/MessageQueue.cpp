@@ -38,12 +38,6 @@ void MessageQueue::Handler::dispatchFrame(VsyncId vsyncId, TimePoint expectedVsy
     }
 }
 
-void MessageQueue::Handler::dispatchFrameImmed() {
-    if (!mFramePending.exchange(true)) {
-        mQueue.mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), Message());
-    }
-}
-
 bool MessageQueue::Handler::isFramePending() const {
     return mFramePending.load();
 }
@@ -154,11 +148,6 @@ void MessageQueue::scheduleFrame() {
             mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
                                            .readyDuration = 0,
                                            .earliestVsync = mVsync.lastCallbackTime.ns()});
-}
-
-void MessageQueue::scheduleFrameImmed() {
-    ATRACE_CALL();
-    mHandler->dispatchFrameImmed();
 }
 
 auto MessageQueue::getScheduledFrameTime() const -> std::optional<Clock::time_point> {

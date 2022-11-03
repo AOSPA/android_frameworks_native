@@ -218,39 +218,30 @@ ConnectionHandle Scheduler::createConnection(const char* connectionName,
     auto eventThread = std::make_unique<impl::EventThread>(std::move(vsyncSource), tokenManager,
                                                            std::move(throttleVsync),
                                                            std::move(getVsyncPeriod));
-    bool triggerRefresh = !strcmp(connectionName, "app");
-    return createConnection(std::move(eventThread), triggerRefresh);
+    return createConnection(std::move(eventThread));
 }
 
-ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread,
-                                             bool triggerRefresh) {
+ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread) {
     const ConnectionHandle handle = ConnectionHandle{mNextConnectionHandleId++};
     ALOGV("Creating a connection handle with ID %" PRIuPTR, handle.id);
 
-    auto connection = createConnectionInternal(eventThread.get(), triggerRefresh);
+    auto connection = createConnectionInternal(eventThread.get());
 
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     mConnections.emplace(handle, Connection{connection, std::move(eventThread)});
     return handle;
 }
 
-sp<EventThreadConnection> Scheduler::createConnectionInternal(EventThread* eventThread,
-                 bool triggerRefresh, EventRegistrationFlags eventRegistration) {
-    // Refresh need to be triggered from app thread alone.
-    // Triggering it from sf connection can result in infinite loop due to requestnextvsync.
-    if (triggerRefresh) {
-        return eventThread->createEventConnection([&] { resyncAndRefresh(); }, eventRegistration);
-    } else {
-        return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
-    }
+sp<EventThreadConnection> Scheduler::createConnectionInternal(
+        EventThread* eventThread, EventRegistrationFlags eventRegistration) {
+    return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
 }
 
-sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(ConnectionHandle handle,
-        bool triggerRefresh, EventRegistrationFlags eventRegistration) {
+sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(
+        ConnectionHandle handle, EventRegistrationFlags eventRegistration) {
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     RETURN_IF_INVALID_HANDLE(handle, nullptr);
-    return createConnectionInternal(mConnections[handle].thread.get(), triggerRefresh,
-                                    eventRegistration);
+    return createConnectionInternal(mConnections[handle].thread.get(), eventRegistration);
 }
 
 sp<EventThreadConnection> Scheduler::getEventConnection(ConnectionHandle handle) {
@@ -389,12 +380,6 @@ void Scheduler::setDuration(ConnectionHandle handle, std::chrono::nanoseconds wo
     thread->setDuration(workDuration, readyDuration);
 }
 
-DisplayStatInfo Scheduler::getDisplayStatInfo(nsecs_t now) {
-    const auto vsyncTime = mVsyncSchedule->getTracker().nextAnticipatedVSyncTimeFrom(now);
-    const auto vsyncPeriod = mVsyncSchedule->getTracker().currentPeriod();
-    return DisplayStatInfo{.vsyncTime = vsyncTime, .vsyncPeriod = vsyncPeriod};
-}
-
 void Scheduler::enableHardwareVsync() {
     std::lock_guard<std::mutex> lock(mHWVsyncLock);
     if (!mPrimaryHWVsyncEnabled && mHWVsyncAvailable) {
@@ -415,7 +400,7 @@ void Scheduler::disableHardwareVsync(bool makeUnavailable) {
     }
 }
 
-void Scheduler::resyncToHardwareVsync(bool makeAvailable, Fps refreshRate, bool force_resync) {
+void Scheduler::resyncToHardwareVsync(bool makeAvailable, Fps refreshRate) {
     {
         std::lock_guard<std::mutex> lock(mHWVsyncLock);
         if (makeAvailable) {
@@ -427,25 +412,7 @@ void Scheduler::resyncToHardwareVsync(bool makeAvailable, Fps refreshRate, bool 
         }
     }
 
-    setVsyncPeriod(refreshRate.getPeriodNsecs(), force_resync);
-}
-
-void Scheduler::resyncAndRefresh() {
-    resync();
-
-    if (!mDisplayIdle) {
-        return;
-    }
-
-    ATRACE_CALL();
-
-    const auto refreshRate = [&] {
-        std::scoped_lock lock(mRefreshRateConfigsLock);
-        return mRefreshRateConfigs->getActiveModePtr()->getFps();
-    }();
-    mLastVsyncPeriodChangeTimeline->refreshRequired = false;
-    resyncToHardwareVsync(true /* makeAvailable */, refreshRate, true);
-    mDisplayIdle = false;
+    setVsyncPeriod(refreshRate.getPeriodNsecs());
 }
 
 void Scheduler::resync() {
@@ -463,13 +430,13 @@ void Scheduler::resync() {
     }
 }
 
-void Scheduler::setVsyncPeriod(nsecs_t period, bool force_resync) {
+void Scheduler::setVsyncPeriod(nsecs_t period) {
     if (period <= 0) return;
 
     std::lock_guard<std::mutex> lock(mHWVsyncLock);
     mVsyncSchedule->getController().startPeriodTransition(period);
 
-    if (!mPrimaryHWVsyncEnabled || force_resync) {
+    if (!mPrimaryHWVsyncEnabled) {
         mVsyncSchedule->getTracker().resetModel();
         mSchedulerCallback.setVsyncEnabled(true);
         mPrimaryHWVsyncEnabled = true;
@@ -603,9 +570,7 @@ void Scheduler::kernelIdleTimerCallback(TimerState state) {
 }
 
 void Scheduler::idleTimerCallback(TimerState state) {
-    if (mHandleIdleTimeout) {
-        applyPolicy(&Policy::idleTimer, state);
-    }
+    applyPolicy(&Policy::idleTimer, state);
     ATRACE_INT("ExpiredIdleTimer", static_cast<int>(state));
 }
 
@@ -681,8 +646,6 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
         if (currentState == newState) return {};
         currentState = std::forward<T>(newState);
 
-        // TODO(b/226947083) QC value-adds were deleted here due to change in
-        // datatype
         displayModeConfigs = getBestDisplayModeConfigs();
 
         // mPolicy holds the current mode, using the current mode we find out
@@ -714,13 +677,10 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
             }
         } else {
             mPolicy.mode = newMode;
-
             refreshRateChanged = true;
         }
     }
     if (refreshRateChanged) {
-        // TODO(b/226947083) QC value-adds were deleted here due to change in
-        // datatype
         mSchedulerCallback.requestDisplayModes(std::move(displayModeConfigs));
     }
     if (frameRateOverridesChanged) {
@@ -877,15 +837,6 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     }
 
     mFrameRateOverrideMappings.setPreferredRefreshRateForUid(frameRateOverride);
-}
-
-void Scheduler::setIdleState() {
-    mDisplayIdle = true;
-}
-
-void Scheduler::updateThermalFps(float fps) {
-    mThermalFps = fps;
-    mLayerHistory.updateThermalFps(fps);
 }
 
 } // namespace android::scheduler

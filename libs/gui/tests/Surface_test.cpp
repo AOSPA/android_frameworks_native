@@ -889,11 +889,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status isDeviceRCSupported(const sp<IBinder>& /*token*/,
-                                      bool* /*outIsDeviceRCSupported*/) override {
-        return binder::Status::ok();
-    }
-
     binder::Status addRegionSamplingListener(
             const gui::ARect& /*samplingArea*/, const sp<IBinder>& /*stopLayerHandle*/,
             const sp<gui::IRegionSamplingListener>& /*listener*/) override {

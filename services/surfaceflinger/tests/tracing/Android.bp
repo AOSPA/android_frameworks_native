@@ -24,8 +24,6 @@ package {
 cc_test {
     name: "transactiontrace_testsuite",
     defaults: [
-        "libdisplayconfig_defaults",
-        "libdisplayconfigaidl_defaults",
         "libsurfaceflinger_mocks_defaults",
         "surfaceflinger_defaults",
         "skia_renderengine_deps",

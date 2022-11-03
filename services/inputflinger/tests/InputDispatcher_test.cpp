@@ -788,15 +788,12 @@ public:
     std::optional<uint32_t> receiveEvent(InputEvent** outEvent = nullptr) {
         uint32_t consumeSeq;
         InputEvent* event;
-        int motionEventType;
-        int touchMoveNumber;
-        bool flag;
 
         std::chrono::time_point start = std::chrono::steady_clock::now();
         status_t status = WOULD_BLOCK;
         while (status == WOULD_BLOCK) {
             status = mConsumer->consume(&mEventFactory, true /*consumeBatches*/, -1, &consumeSeq,
-                                        &event, &motionEventType, &touchMoveNumber, &flag);
+                                        &event);
             std::chrono::duration elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > 100ms) {
                 break;

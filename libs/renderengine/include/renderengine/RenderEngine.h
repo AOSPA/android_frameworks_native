@@ -136,8 +136,6 @@ public:
     // so that it can configure its internal caches accordingly.
     virtual void onActiveDisplaySizeChanged(ui::Size size) = 0;
 
-    virtual void setViewportAndProjection(Rect viewPort, Rect sourceCrop) =0;
-
     // Renders layers for a particular display via GPU composition. This method
     // should be called for every display that needs to be rendered via the GPU.
     // @param display The display-wide settings that should be applied prior to
@@ -193,7 +191,6 @@ public:
 
     static void validateInputBufferUsage(const sp<GraphicBuffer>&);
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
-    virtual int getRETid() = 0;
 
     // Allows flinger to get the render engine thread id for power management with ADPF
     // Returns the tid of the renderengine thread if it's threaded, and std::nullopt otherwise

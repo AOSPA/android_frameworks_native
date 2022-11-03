@@ -160,13 +160,8 @@ void TouchResamplingTest::consumeInputEventEntries(const std::vector<InputEventE
     uint32_t consumeSeq;
     InputEvent* event;
 
-    // Added for QC value-add compatibility
-    int motionEventType = 0;
-    int touchMoveNumber = 0;
-    bool flag = false;
-
     status_t status = mConsumer->consume(&mEventFactory, true /*consumeBatches*/, frameTime.count(),
-                                         &consumeSeq, &event, &motionEventType, &touchMoveNumber, &flag);
+                                         &consumeSeq, &event);
     ASSERT_EQ(OK, status);
     MotionEvent* motionEvent = static_cast<MotionEvent*>(event);
 

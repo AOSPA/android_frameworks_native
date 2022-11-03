@@ -97,14 +97,6 @@ const sp<Fence>& RenderSurface::getClientTargetAcquireFence() const {
     return mDisplaySurface->getClientTargetAcquireFence();
 }
 
-int RenderSurface::getClientTargetCurrentSlot() {
-    return mDisplaySurface->getClientTargetCurrentSlot();
-}
-
-ui::Dataspace RenderSurface::getClientTargetCurrentDataspace() {
-    return mDisplaySurface->getClientTargetCurrentDataspace();
-}
-
 void RenderSurface::setDisplaySize(const ui::Size& size) {
     mDisplaySurface->resizeBuffers(size);
     mSize = size;
@@ -209,8 +201,7 @@ std::shared_ptr<renderengine::ExternalTexture> RenderSurface::dequeueBuffer(
 void RenderSurface::queueBuffer(base::unique_fd readyFence) {
     auto& state = mDisplay.getState();
 
-
-    if (state.usesClientComposition || state.flipClientTarget || mFlipClientTarget) {
+    if (state.usesClientComposition || state.flipClientTarget) {
         // hasFlipClientTargetRequest could return true even if we haven't
         // dequeued a buffer before. Try dequeueing one if we don't have a
         // buffer ready.
@@ -229,10 +220,9 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence) {
         if (mTexture == nullptr) {
             ALOGE("No buffer is ready for display [%s]", mDisplay.getName().c_str());
         } else {
-            status_t result =
-                    mNativeWindow->queueBuffer(mNativeWindow.get(),
-                                               mTexture->getBuffer()->getNativeBuffer(),
-                                               mFlipClientTarget ? -1 : dup(readyFence));
+            status_t result = mNativeWindow->queueBuffer(mNativeWindow.get(),
+                                                         mTexture->getBuffer()->getNativeBuffer(),
+                                                         dup(readyFence));
             if (result != NO_ERROR) {
                 ALOGE("Error when queueing buffer for display [%s]: %d", mDisplay.getName().c_str(),
                       result);
@@ -243,7 +233,7 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence) {
                 } else {
                     mNativeWindow->cancelBuffer(mNativeWindow.get(),
                                                 mTexture->getBuffer()->getNativeBuffer(),
-                                                mFlipClientTarget ? -1 : dup(readyFence));
+                                                dup(readyFence));
                 }
             }
 
@@ -261,12 +251,6 @@ void RenderSurface::onPresentDisplayCompleted() {
     mDisplaySurface->onFrameCommitted();
 }
 
-void RenderSurface::setViewportAndProjection() {
-    Rect sourceCrop = Rect(mSize);
-    Rect viewPort = Rect(mSize.width,  mSize.height);
-    auto& renderEngine = mCompositionEngine.getRenderEngine();
-    renderEngine.setViewportAndProjection(viewPort, sourceCrop);
-}
 void RenderSurface::dump(std::string& out) const {
     using android::base::StringAppendF;
 
@@ -294,10 +278,6 @@ std::shared_ptr<renderengine::ExternalTexture>& RenderSurface::mutableTextureFor
 
 bool RenderSurface::supportsCompositionStrategyPrediction() const {
     return mDisplaySurface->supportsCompositionStrategyPrediction();
-}
-
-void RenderSurface::flipClientTarget(bool flip) {
-    mFlipClientTarget = flip;
 }
 
 } // namespace impl

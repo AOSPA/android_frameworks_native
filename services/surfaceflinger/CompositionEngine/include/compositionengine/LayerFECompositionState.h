@@ -210,13 +210,7 @@ struct LayerFECompositionState {
     // The dimming flag
     bool dimmingEnabled{true};
 
-    // layer classification
-    uint32_t layerClass;
-
     virtual ~LayerFECompositionState();
-    bool isSecureDisplay{false};
-    bool isSecureCamera{false};
-    bool isScreenshot{false};
 
     // Debugging
     virtual void dump(std::string& out) const;

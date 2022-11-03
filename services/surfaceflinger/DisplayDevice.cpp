@@ -69,7 +69,6 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
         mActiveModeFPSHwcTrace("ActiveModeFPS_HWC -" + to_string(getId())),
         mPhysicalOrientation(args.physicalOrientation),
         mIsPrimary(args.isPrimary),
-        mIsPowerModeOverride(false),
         mRefreshRateConfigs(std::move(args.refreshRateConfigs)) {
     mCompositionDisplay->editState().isSecure = args.isSecure;
     mCompositionDisplay->createRenderSurface(
@@ -236,14 +235,6 @@ nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
     }
 
     return refreshRateConfigs().getActiveModePtr()->getVsyncPeriod();
-}
-
-void DisplayDevice::setPowerModeOverrideConfig(bool supported) {
-    mIsPowerModeOverride = supported;
-}
-
-bool DisplayDevice::getPowerModeOverrideConfig() const {
-    return mIsPowerModeOverride;
 }
 
 ui::Dataspace DisplayDevice::getCompositionDataSpace() const {

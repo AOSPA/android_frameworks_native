@@ -80,7 +80,6 @@ public:
     virtual void postMessage(sp<MessageHandler>&&) = 0;
     virtual void scheduleConfigure() = 0;
     virtual void scheduleFrame() = 0;
-    virtual void scheduleFrameImmed() = 0;
 
     using Clock = std::chrono::steady_clock;
     virtual std::optional<Clock::time_point> getScheduledFrameTime() const = 0;
@@ -104,7 +103,6 @@ protected:
         bool isFramePending() const;
 
         virtual void dispatchFrame(VsyncId, TimePoint expectedVsyncTime);
-        virtual void dispatchFrameImmed();
     };
 
     friend class Handler;
@@ -147,7 +145,6 @@ public:
 
     void scheduleConfigure() override;
     void scheduleFrame() override;
-    void scheduleFrameImmed() override;
 
     std::optional<Clock::time_point> getScheduledFrameTime() const override;
 };

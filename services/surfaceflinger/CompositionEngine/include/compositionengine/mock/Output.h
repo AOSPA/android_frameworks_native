@@ -134,7 +134,6 @@ public:
     MOCK_METHOD1(setTreat170mAsSrgb, void(bool));
     MOCK_METHOD(void, setHintSessionGpuFence, (std::unique_ptr<FenceTime> && gpuFence));
     MOCK_METHOD(bool, isPowerHintSessionEnabled, ());
-    MOCK_CONST_METHOD2(getVisibleLayerInfo, void(std::vector<std::string>*, std::vector<int32_t>*));
 };
 
 } // namespace android::compositionengine::mock
