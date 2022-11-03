@@ -34,7 +34,7 @@ rust_library {
         "com.android.uwb",
         "com.android.virt",
     ],
-    min_sdk_version: "Tiramisu",
+    min_sdk_version: "33",
 }
 
 rust_library {
@@ -85,7 +85,7 @@ rust_library {
         "com.android.uwb",
         "com.android.virt",
     ],
-    min_sdk_version: "Tiramisu",
+    min_sdk_version: "33",
     lints: "none",
     clippy_lints: "none",
 }
@@ -144,7 +144,7 @@ rust_bindgen {
         "com.android.uwb",
         "com.android.virt",
     ],
-    min_sdk_version: "Tiramisu",
+    min_sdk_version: "33",
 }
 
 rust_test {
