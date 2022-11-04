@@ -93,6 +93,7 @@ status_t FramebufferSurface::advanceFrame() {
     sp<Fence> acquireFence(Fence::NO_FENCE);
     Dataspace dataspace = Dataspace::UNKNOWN;
     status_t result = nextBuffer(slot, buf, acquireFence, dataspace);
+    mDataSpace = dataspace;
     if (result != NO_ERROR) {
         ALOGE("error latching next FramebufferSurface buffer: %s (%d)",
                 strerror(-result), result);
@@ -141,8 +142,6 @@ status_t FramebufferSurface::nextBuffer(uint32_t& outSlot,
         ALOGE("error posting framebuffer: %d", result);
         return result;
     }
-
-    mDataSpace = outDataspace;
 
     return NO_ERROR;
 }
@@ -211,14 +210,6 @@ void FramebufferSurface::dumpLocked(String8& result, const char* prefix) const {
 
 const sp<Fence>& FramebufferSurface::getClientTargetAcquireFence() const {
     return mCurrentFence;
-}
-
-int FramebufferSurface::getClientTargetCurrentSlot(){
-    return mCurrentBufferSlot;
-}
-
-ui::Dataspace FramebufferSurface::getClientTargetCurrentDataspace(){
-    return mDataSpace;
 }
 
 } // namespace android

@@ -25,7 +25,7 @@ cc_binary {
     name: "layertracegenerator",
     defaults: [
         "libsurfaceflinger_mocks_defaults",
-        "libsurfaceflinger_defaults",
+        "surfaceflinger_defaults",
         "skia_renderengine_deps",
     ],
     srcs: [

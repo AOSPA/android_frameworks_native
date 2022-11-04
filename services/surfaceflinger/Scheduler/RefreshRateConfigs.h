@@ -215,9 +215,6 @@ public:
     std::pair<std::vector<RefreshRateRanking>, GlobalSignals> getRankedRefreshRates(
             const std::vector<LayerRequirement>&, GlobalSignals) const EXCLUDES(mLock);
 
-    // Returns all the refresh rates supported by the device. This won't change at runtime. 
-    const DisplayModes& getAllRefreshRates() const EXCLUDES(mLock);
-
     FpsRange getSupportedRefreshRateRange() const EXCLUDES(mLock) {
         std::lock_guard lock(mLock);
         return {mMinRefreshRateModeIt->second->getFps(), mMaxRefreshRateModeIt->second->getFps()};

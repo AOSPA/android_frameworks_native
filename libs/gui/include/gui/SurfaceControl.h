@@ -130,22 +130,6 @@ private:
     PixelFormat mFormat = PIXEL_FORMAT_NONE;
     uint32_t mCreateFlags = 0;
     uint64_t mFallbackFrameNumber = 100;
-
-    // VpsExtension
-    class VpsExtension {
-    public:
-        VpsExtension();
-        VpsExtension(const sp<IBinder> handle);
-        ~VpsExtension();
-        void init() const;
-    private:
-        bool mIsEnable;
-        sp<IBinder> mHandle;
-        void* mLibHandler;
-        void* mFuncInit;
-        void* mFuncDeinit;
-    };
-    VpsExtension mExtension;
 };
 
 }; // namespace android

@@ -269,7 +269,6 @@ public:
     Error setLayerVisibleRegion(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& visible) override;
     Error setLayerZOrder(Display display, Layer layer, uint32_t z) override;
-    Error setLayerType(Display display, Layer layer, uint32_t type) override;
 
     // Composer HAL 2.2
     Error setLayerPerFrameMetadata(
@@ -297,7 +296,6 @@ public:
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
     Error setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                const DisplayBrightnessOptions& options) override;
-    Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
     Error getDisplayCapabilities(
@@ -338,13 +336,6 @@ public:
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;
     Error setIdleTimerEnabled(Display displayId, std::chrono::milliseconds timeout) override;
-#ifdef QTI_UNIFIED_DRAW
-    Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
-    Error setLayerFlag(Display display, Layer layer,
-                       IQtiComposerClient::LayerFlag layerFlag) override;
-    Error setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
-                              Dataspace dataspace) override;
-#endif
 
     Error getPhysicalDisplayOrientation(Display displayId,
                                         AidlTransform* outDisplayOrientation) override;
@@ -354,13 +345,6 @@ private:
     public:
         explicit CommandWriter(uint32_t initialMaxSize) : CommandWriterBase(initialMaxSize) {}
         ~CommandWriter() override {}
-
-        void setDisplayElapseTime(uint64_t time);
-        void setLayerType(uint32_t type);
-#ifdef QTI_UNIFIED_DRAW
-        void setLayerFlag(uint32_t type);
-        void setClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
-#endif
     };
 
     void registerCallback(const sp<IComposerCallback>& callback);
@@ -376,9 +360,6 @@ private:
     sp<V2_2::IComposerClient> mClient_2_2;
     sp<V2_3::IComposerClient> mClient_2_3;
     sp<IComposerClient> mClient_2_4;
-#ifdef QTI_UNIFIED_DRAW
-    sp<IQtiComposerClient> mClient_3_1;
-#endif
 
     // 64KiB minus a small space for metadata such as read/write pointers
     static constexpr size_t kWriterInitialSize = 64 * 1024 / sizeof(uint32_t) - 16;

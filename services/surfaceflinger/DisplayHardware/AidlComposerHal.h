@@ -160,7 +160,6 @@ public:
     Error setLayerVisibleRegion(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& visible) override;
     Error setLayerZOrder(Display display, Layer layer, uint32_t z) override;
-    Error setLayerType(Display display, Layer layer, uint32_t type) override;
 
     // Composer HAL 2.2
     Error setLayerPerFrameMetadata(
@@ -188,7 +187,6 @@ public:
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
     Error setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                const DisplayBrightnessOptions& options) override;
-    Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
     Error getDisplayCapabilities(
@@ -227,32 +225,11 @@ public:
     Error getDisplayDecorationSupport(Display display,
                                       std::optional<DisplayDecorationSupport>* support) override;
     Error setIdleTimerEnabled(Display displayId, std::chrono::milliseconds timeout) override;
-#ifdef QTI_UNIFIED_DRAW
-    Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
-    Error setLayerFlag(Display display, Layer layer,
-                       IQtiComposerClient::LayerFlag layerFlag) override;
-    Error setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
-                              Dataspace dataspace) override;
-#endif
 
     Error getPhysicalDisplayOrientation(Display displayId,
                                         AidlTransform* outDisplayOrientation) override;
 
 private:
-    class AidlCommandWriter : public ComposerClientWriter {
-    public:
-        explicit AidlCommandWriter()
-              : ComposerClientWriter() {}
-        ~AidlCommandWriter() override {}
-
-        void setDisplayElapseTime(uint64_t time);
-        void setLayerType(uint32_t type);
-#ifdef QTI_UNIFIED_DRAW
-        void setLayerFlag(uint32_t type);
-        void setClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
-#endif
-    };
-
     // Many public functions above simply write a command into the command
     // queue to batch the calls.  validateDisplay and presentDisplay will call
     // this function to execute the command queue.
@@ -268,7 +245,7 @@ private:
     // 1. Tightly coupling this cache to the max size of BufferQueue
     // 2. Adding an additional slot for the layer caching feature in SurfaceFlinger (see: Planner.h)
     static const constexpr uint32_t kMaxLayerBufferCount = BufferQueue::NUM_BUFFER_SLOTS + 1;
-    AidlCommandWriter mWriter;
+    ComposerClientWriter mWriter;
     ComposerClientReader mReader;
 
     // Aidl interface

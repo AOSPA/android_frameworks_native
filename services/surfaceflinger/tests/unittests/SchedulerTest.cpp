@@ -107,8 +107,7 @@ SchedulerTest::SchedulerTest() {
 TEST_F(SchedulerTest, invalidConnectionHandle) {
     ConnectionHandle handle;
 
-    const sp<IDisplayEventConnection> connection = mScheduler->createDisplayEventConnection(handle,
-                                                                             false /*No Refresh*/);
+    const sp<IDisplayEventConnection> connection = mScheduler->createDisplayEventConnection(handle);
 
     EXPECT_FALSE(connection);
     EXPECT_FALSE(mScheduler->getEventConnection(handle));
@@ -134,7 +133,7 @@ TEST_F(SchedulerTest, invalidConnectionHandle) {
 
 TEST_F(SchedulerTest, validConnectionHandle) {
     const sp<IDisplayEventConnection> connection =
-            mScheduler->createDisplayEventConnection(mConnectionHandle, false /* No Refresh */);
+            mScheduler->createDisplayEventConnection(mConnectionHandle);
 
     ASSERT_EQ(mEventThreadConnection, connection);
     EXPECT_TRUE(mScheduler->getEventConnection(mConnectionHandle));

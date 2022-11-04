@@ -45,9 +45,6 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
 namespace android {
 
 class Fence;
@@ -65,9 +62,7 @@ namespace HWC2 {
 class Layer;
 
 namespace hal = android::hardware::graphics::composer::hal;
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
+
 // Implement this interface to receive hardware composer events.
 //
 // These callback functions will generally be called on a hwbinder thread, but
@@ -179,14 +174,6 @@ public:
     [[nodiscard]] virtual hal::Error setIdleTimerEnabled(std::chrono::milliseconds timeout) = 0;
     [[nodiscard]] virtual hal::Error getPhysicalDisplayOrientation(
             Hwc2::AidlTransform* outTransform) const = 0;
-    [[clang::warn_unused_result]] virtual hal::Error setDisplayElapseTime(uint64_t timeStamp) = 0;
-#ifdef QTI_UNIFIED_DRAW
-    [[clang::warn_unused_result]] virtual hal::Error setClientTarget_3_1(
-            int32_t slot, const android::sp<android::Fence>& acquireFence,
-            hal::Dataspace dataspace) = 0;
-    [[clang::warn_unused_result]] virtual hal::Error tryDrawMethod(
-            IQtiComposerClient::DrawMethod drawMethod) = 0;
-#endif
 };
 
 namespace impl {
@@ -269,12 +256,6 @@ public:
                     support) override;
     hal::Error setIdleTimerEnabled(std::chrono::milliseconds timeout) override;
 
-    hal::Error setDisplayElapseTime(uint64_t timeStamp) override;
-#ifdef QTI_UNIFIED_DRAW
-    hal::Error setClientTarget_3_1(int32_t slot, const android::sp<android::Fence>& acquireFence,
-            hal::Dataspace dataspace) override;
-    hal::Error tryDrawMethod(IQtiComposerClient::DrawMethod drawMethod) override;
-#endif
     // Other Display methods
     hal::HWDisplayId getId() const override { return mId; }
     bool isConnected() const override { return mIsConnected; }
@@ -346,7 +327,6 @@ public:
     [[nodiscard]] virtual hal::Error setTransform(hal::Transform transform) = 0;
     [[nodiscard]] virtual hal::Error setVisibleRegion(const android::Region& region) = 0;
     [[nodiscard]] virtual hal::Error setZOrder(uint32_t z) = 0;
-    [[nodiscard]] virtual hal::Error setType(uint32_t type) = 0;
 
     // Composer HAL 2.3
     [[nodiscard]] virtual hal::Error setColorTransform(const android::mat4& matrix) = 0;
@@ -359,10 +339,6 @@ public:
     // AIDL HAL
     [[nodiscard]] virtual hal::Error setBrightness(float brightness) = 0;
     [[nodiscard]] virtual hal::Error setBlockingRegion(const android::Region& region) = 0;
-#ifdef QTI_UNIFIED_DRAW
-    [[nodiscard]] virtual hal::Error setLayerFlag(
-            IQtiComposerClient::LayerFlag layerFlag) = 0;
-#endif
 };
 
 namespace impl {
@@ -400,7 +376,6 @@ public:
     hal::Error setTransform(hal::Transform transform) override;
     hal::Error setVisibleRegion(const android::Region& region) override;
     hal::Error setZOrder(uint32_t z) override;
-    hal::Error setType(uint32_t type) override;
 
     // Composer HAL 2.3
     hal::Error setColorTransform(const android::mat4& matrix) override;
@@ -412,9 +387,6 @@ public:
     // AIDL HAL
     hal::Error setBrightness(float brightness) override;
     hal::Error setBlockingRegion(const android::Region& region) override;
-#ifdef QTI_UNIFIED_DRAW
-    hal::Error setLayerFlag(IQtiComposerClient::LayerFlag layerFlag) override;
-#endif
 
 private:
     // These are references to data owned by HWComposer, which will outlive
@@ -436,10 +408,6 @@ private:
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;
     uint32_t mBufferSlot;
-    uint32_t mType{0};
-#ifdef QTI_UNIFIED_DRAW
-    IQtiComposerClient::LayerFlag mLayerFlag = IQtiComposerClient::LayerFlag::DEFAULT;
-#endif
 };
 
 } // namespace impl

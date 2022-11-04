@@ -43,10 +43,6 @@
 #include <aidl/android/hardware/graphics/common/Transform.h>
 #include <optional>
 
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
-
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
@@ -57,9 +53,6 @@ struct ComposerCallback;
 
 namespace Hwc2 {
 
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
 namespace types = hardware::graphics::common;
 
 namespace V2_1 = hardware::graphics::composer::V2_1;
@@ -208,7 +201,6 @@ public:
     virtual Error setLayerVisibleRegion(Display display, Layer layer,
                                         const std::vector<IComposerClient::Rect>& visible) = 0;
     virtual Error setLayerZOrder(Display display, Layer layer, uint32_t z) = 0;
-    virtual Error setLayerType(Display display, Layer layer, uint32_t type) = 0;
 
     // Composer HAL 2.2
     virtual Error setLayerPerFrameMetadata(
@@ -276,14 +268,6 @@ public:
     virtual Error getClientTargetProperty(
             Display display, V3_0::ClientTargetPropertyWithBrightness* outClientTargetProperty) = 0;
 
-    virtual Error setDisplayElapseTime(Display display, uint64_t timeStamp) = 0;
-#ifdef QTI_UNIFIED_DRAW
-    virtual Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) = 0;
-    virtual Error setLayerFlag(Display display, Layer layer,
-                               IQtiComposerClient::LayerFlag layerFlag) = 0;
-    virtual Error setClientTarget_3_1(Display display, int32_t slot,
-                                      int acquireFence, Dataspace dataspace) = 0;
-#endif
     // AIDL Composer
     virtual Error setLayerBrightness(Display display, Layer layer, float brightness) = 0;
     virtual Error setLayerBlockingRegion(Display display, Layer layer,

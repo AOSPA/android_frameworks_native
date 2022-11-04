@@ -30,8 +30,6 @@
 #include <gui/Surface.h>
 #include <gui/TraceUtils.h>
 #include <utils/Singleton.h>
-#include <string.h>
-
 #include <utils/Trace.h>
 
 #include <private/gui/ComposerService.h>
@@ -165,7 +163,6 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
     ComposerServiceAIDL::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
     mCurrentMaxAcquiredBufferCount = mMaxAcquiredBuffers;
-
     mNumAcquired = 0;
     mNumFrameAvailable = 0;
 
@@ -252,29 +249,6 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
     if (applyTransaction) {
         // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
         t.setApplyToken(mApplyToken).apply(false, true);
-    }
-    if(strstr(mName.c_str(),"ScreenDecorOverlay") != nullptr && mSurfaceControl != nullptr){
-       sp<SurfaceComposerClient> client = mSurfaceControl->getClient();
-       if (client != nullptr) {
-
-           const std::vector<PhysicalDisplayId> ids = client->getPhysicalDisplayIds();
-           LOG_ALWAYS_FATAL_IF(ids.empty(), "%s: No displays", __FUNCTION__);
-
-           const sp<IBinder> display = client->getPhysicalDisplayToken(ids.front());
-
-           if (display != nullptr) {
-               bool isDeviceRCSupported = false;
-               status_t err = client->isDeviceRCSupported(display, &isDeviceRCSupported);
-               if (!err && isDeviceRCSupported) {
-                   // retain original flags and append SW Flags
-                   uint64_t usage = GraphicBuffer::USAGE_HW_COMPOSER |
-                                    GraphicBuffer::USAGE_HW_TEXTURE |
-                                    GraphicBuffer::USAGE_SW_READ_RARELY |
-                                    GraphicBuffer::USAGE_SW_WRITE_RARELY;
-                   mConsumer->setConsumerUsageBits(usage);
-                }
-            }
-        }
     }
 }
 
@@ -767,7 +741,6 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
 void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::unique_lock _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
-    mNumUndequeued--;
 };
 
 void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {

@@ -237,9 +237,6 @@ public:
     // Queries whether a given display is wide color display.
     static status_t isWideColorDisplay(const sp<IBinder>& display, bool* outIsWideColorDisplay);
 
-    // Queries whether a given display has support of Hardware RC.
-    static status_t isDeviceRCSupported(const sp<IBinder>& display, bool* outDeviceRCSupported);
-
     /*
      * Returns whether brightness operations are supported on a display.
      *

@@ -312,21 +312,6 @@ bool RenderEngineThreaded::canSkipPostRenderCleanup() const {
     return mRenderEngine->canSkipPostRenderCleanup();
 }
 
-void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCrop) {
-    std::promise<void> resultPromise;
-    std::future<void> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise, viewPort, sourceCrop](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::setViewportAndProjection");
-            instance.setViewportAndProjection(viewPort, sourceCrop);
-            resultPromise.set_value();
-        });
-    }
-    mCondition.notify_one();
-    resultFuture.wait();
-}
-
 void RenderEngineThreaded::drawLayersInternal(
         const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
         const DisplaySettings& display, const std::vector<LayerSettings>& layers,
@@ -429,20 +414,6 @@ void RenderEngineThreaded::setEnableTracing(bool tracingEnabled) {
         });
     }
     mCondition.notify_one();
-}
-int RenderEngineThreaded::getRETid() {
-    std::promise<int> resultPromise;
-    std::future<int> resultFuture = resultPromise.get_future();
-    {
-        std::lock_guard lock(mThreadMutex);
-        mFunctionCalls.push([&resultPromise](renderengine::RenderEngine& instance) {
-            ATRACE_NAME("REThreaded::getRETid");
-            int tid = instance.getRETid();
-            resultPromise.set_value(tid);
-        });
-    }
-    mCondition.notify_one();
-    return resultFuture.get();
 }
 } // namespace threaded
 } // namespace renderengine

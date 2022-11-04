@@ -93,7 +93,6 @@ public:
     virtual void setDisplays(std::vector<DisplayId>& displayIds) = 0;
     // Sets the target duration for the entire pipeline including the gpu
     virtual void setTotalFrameTargetWorkDuration(Duration targetDuration) = 0;
-    virtual bool canNotifyDisplayUpdateImminent() = 0;
 };
 
 namespace impl {
@@ -152,7 +151,6 @@ public:
     void setCompositeEnd(TimePoint compositeEndTime) override;
     void setDisplays(std::vector<DisplayId>& displayIds) override;
     void setTotalFrameTargetWorkDuration(Duration targetDuration) override;
-    bool canNotifyDisplayUpdateImminent() override;
 
 private:
     friend class PowerAdvisorTest;

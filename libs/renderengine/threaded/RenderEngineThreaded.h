@@ -55,7 +55,6 @@ public:
     bool supportsProtectedContent() const override;
     void useProtectedContext(bool useProtectedContext) override;
     void cleanupPostRender() override;
-    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
 
     ftl::Future<FenceResult> drawLayers(const DisplaySettings& display,
                                         const std::vector<LayerSettings>& layers,
@@ -69,7 +68,6 @@ public:
     void onActiveDisplaySizeChanged(ui::Size size) override;
     std::optional<pid_t> getRenderEngineTid() const override;
     void setEnableTracing(bool tracingEnabled) override;
-    int getRETid() override;
 
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;

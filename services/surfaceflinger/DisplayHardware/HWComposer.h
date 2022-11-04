@@ -50,15 +50,10 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
 namespace android {
 
 namespace hal = hardware::graphics::composer::hal;
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
+
 struct DisplayedFrameStats;
 class GraphicBuffer;
 class TestableSurfaceFlinger;
@@ -291,15 +286,6 @@ public:
     virtual status_t setIdleTimerEnabled(PhysicalDisplayId, std::chrono::milliseconds timeout) = 0;
     virtual bool hasDisplayIdleTimerCapability(PhysicalDisplayId) const = 0;
     virtual Hwc2::AidlTransform getPhysicalDisplayOrientation(PhysicalDisplayId) const = 0;
-
-    virtual std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const = 0;
-    virtual status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
-#ifdef QTI_UNIFIED_DRAW
-    virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
-            const sp<Fence>& acquireFence, ui::Dataspace dataspace) = 0;
-    virtual status_t tryDrawMethod(HalDisplayId displayId,
-            IQtiComposerClient::DrawMethod drawMethod) = 0;
-#endif
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
@@ -412,7 +398,6 @@ public:
 
     bool onVsync(hal::HWDisplayId, nsecs_t timestamp) override;
     void setVsyncEnabled(PhysicalDisplayId, hal::Vsync enabled) override;
-    status_t setDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) override;
 
     bool isConnected(PhysicalDisplayId) const override;
 
@@ -473,14 +458,6 @@ public:
 
     std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const override;
     std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const override;
-    std::optional<hal::HWDisplayId> fromVirtualDisplayId(HalVirtualDisplayId) const override;
-#ifdef QTI_UNIFIED_DRAW
-    virtual status_t setClientTarget_3_1(HalDisplayId displayId, int32_t slot,
-                                         const sp<Fence>& acquireFence,
-                                         ui::Dataspace dataspace) override;
-    status_t tryDrawMethod(HalDisplayId displayId,
-                           IQtiComposerClient::DrawMethod drawMethod)  override;
-#endif
 
 private:
     // For unit tests

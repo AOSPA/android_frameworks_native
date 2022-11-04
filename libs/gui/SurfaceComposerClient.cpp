@@ -2634,14 +2634,6 @@ status_t SurfaceComposerClient::isWideColorDisplay(const sp<IBinder>& display,
     return statusTFromBinderStatus(status);
 }
 
-status_t SurfaceComposerClient::isDeviceRCSupported(const sp<IBinder>& display,
-                                                    bool* outDeviceRCSupported) {
-    binder::Status status =
-            ComposerServiceAIDL::getComposerService()->isDeviceRCSupported(display,
-                                                                          outDeviceRCSupported);
-    return statusTFromBinderStatus(status);
-}
-
 status_t SurfaceComposerClient::addRegionSamplingListener(
         const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
         const sp<IRegionSamplingListener>& listener) {

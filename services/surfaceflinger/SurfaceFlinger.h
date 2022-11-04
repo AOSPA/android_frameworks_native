@@ -93,31 +93,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <list>
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include "Client.h"
 
 using namespace android::surfaceflinger;
-
-namespace smomo {
-class SmomoIntf;
-} // namespace smomo
-
-namespace composer {
-class ComposerExtnIntf;
-class ComposerExtnLib;
-class FrameSchedulerIntf;
-class DisplayExtnIntf;
-} // namespace composer
-
-using smomo::SmomoIntf;
-
-namespace composer {
-class LayerExtnIntf;
-}
-
-using composer::LayerExtnIntf;
 
 namespace android {
 
@@ -189,46 +169,6 @@ enum class LatchUnsignaledConfig {
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
-class DolphinWrapper {
-public:
-    DolphinWrapper() { init(); }
-    ~DolphinWrapper();
-    bool init();
-
-    bool (*dolphinInit)() = nullptr;
-    void (*dolphinSetVsyncPeriod)(nsecs_t vsyncPeriod) = nullptr;
-    void (*dolphinTrackBufferIncrement)(const char* name, int counter) = nullptr;
-    void (*dolphinTrackBufferDecrement)(const char* name, int counter) = nullptr;
-    void (*dolphinTrackVsyncSignal)(nsecs_t frameTime, int64_t vsyncId,
-                                    nsecs_t expectedVsyncTime) = nullptr;
-
-private:
-    void *mDolphinHandle = nullptr;
-};
-
-class LayerExtWrapper {
-public:
-    LayerExtWrapper() {}
-    ~LayerExtWrapper();
-
-    bool init();
-
-    LayerExtnIntf* operator->() { return mInst; }
-    operator bool() { return mInst != nullptr; }
-
-    LayerExtWrapper(const LayerExtWrapper&) = delete;
-    LayerExtWrapper& operator=(const LayerExtWrapper&) = delete;
-
-private:
-    LayerExtnIntf *mInst = nullptr;
-    void *mLayerExtLibHandle = nullptr;
-
-    using CreateLayerExtnFuncPtr = std::add_pointer<bool(uint16_t, LayerExtnIntf**)>::type;
-    using DestroyLayerExtnFuncPtr = std::add_pointer<void(LayerExtnIntf*)>::type;
-    CreateLayerExtnFuncPtr mLayerExtCreateFunc;
-    DestroyLayerExtnFuncPtr mLayerExtDestroyFunc;
-};
-
 class SurfaceFlinger : public BnSurfaceComposer,
                        public PriorityDumper,
                        private IBinder::DeathRecipient,
@@ -276,8 +216,6 @@ public:
 
     static bool useContextPriority;
 
-    static bool sDirectStreaming;
-
     // The data space and pixel format that SurfaceFlinger expects hardware composer
     // to composite efficiently. Meaning under most scenarios, hardware composer
     // will accept layers with the data space and pixel format.
@@ -307,7 +245,6 @@ public:
     void scheduleCommit(FrameHint);
     // As above, but also force composite regardless if transactions were committed.
     void scheduleComposite(FrameHint);
-    void scheduleCompositeImmed();
     // As above, but also force dirty geometry to repaint.
     void scheduleRepaint();
     // Schedule sampling independently from commit or composite.
@@ -325,10 +262,6 @@ public:
     // utility function to delete a texture on the main thread
     void deleteTextureAsync(uint32_t texture);
 
-    // enable/disable h/w composer event
-    // TODO: this should be made accessible only to EventThread
-    // main thread function to enable/disable h/w composer event
-    void setVsyncEnabledInternal(bool enabled);
     renderengine::RenderEngine& getRenderEngine() const;
 
     void onLayerFirstRef(Layer*);
@@ -370,10 +303,6 @@ public:
     // SMPTE 170M as sRGB prior to color management being implemented, and now implementations rely
     // on this behavior to increase contrast for some media sources.
     bool mTreat170mAsSrgb = false;
-
-    nsecs_t mVsyncTimeStamp = -1;
-    void NotifyIdleStatus();
-    void NotifyResolutionSwitch(int displayId, int32_t width, int32_t height, int32_t vsyncPeriod);
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -477,18 +406,6 @@ private:
             auto it = mCounterByLayerHandle.find(layerHandle);
             if (it != mCounterByLayerHandle.end()) {
                 auto [name, pendingBuffers] = it->second;
-                if (mDolphinWrapper.dolphinTrackBufferIncrement) {
-                    const std::string transactionName(name);
-                    int newCount = (*pendingBuffers) + 1;
-                    mLock.unlock();
-                    mDolphinWrapper.dolphinTrackBufferIncrement(transactionName.c_str(),
-                            newCount);
-                    mLock.lock();
-                    it = mCounterByLayerHandle.find(layerHandle);
-                    if (it == mCounterByLayerHandle.end()) {
-                        return;
-                    }
-                }
                 int32_t count = ++(*pendingBuffers);
                 ATRACE_INT(name.c_str(), count);
             } else {
@@ -510,7 +427,6 @@ private:
         std::mutex mLock;
         std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
                 mCounterByLayerHandle GUARDED_BY(mLock);
-        DolphinWrapper mDolphinWrapper;
     };
 
     using ActiveModeInfo = DisplayDevice::ActiveModeInfo;
@@ -566,13 +482,6 @@ private:
     status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
     bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
             EXCLUDES(mStateLock);
-
-    // the following method are moved from ISurfaceComposer.h
-    // TODO(b/74619554): Remove this stopgap once the framework is display-agnostic.
-    std::optional<PhysicalDisplayId> getInternalDisplayId() const {
-        const auto displayIds = getPhysicalDisplayIds();
-        return displayIds.empty() ? std::nullopt : std::make_optional(displayIds.front());
-    }
 
     // Implements ISurfaceComposer
     sp<IBinder> createDisplay(const String8& displayName, bool secure);
@@ -637,8 +546,6 @@ private:
                                        uint64_t timestamp, DisplayedFrameStats* outStats) const;
     status_t getProtectedContentSupport(bool* outSupported) const;
     status_t isWideColorDisplay(const sp<IBinder>& displayToken, bool* outIsWideColorDisplay) const;
-    status_t isDeviceRCSupported(const sp<IBinder>& displayToken,
-                                 bool* outDeviceRCSupported) const;
     status_t addRegionSamplingListener(const Rect& samplingArea, const sp<IBinder>& stopLayerHandle,
                                        const sp<IRegionSamplingListener>& listener);
     status_t removeRegionSamplingListener(const sp<IRegionSamplingListener>& listener);
@@ -674,9 +581,6 @@ private:
                     outSupport) const;
     status_t setFrameRate(const sp<IGraphicBufferProducer>& surface, float frameRate,
                           int8_t compatibility, int8_t changeFrameRateStrategy);
-    status_t setDisplayElapseTime(const sp<DisplayDevice>& display,
-        std::chrono::steady_clock::time_point earliestPresentTime) const;
-    status_t isSupportedConfigSwitch(const sp<IBinder>& displayToken, int config);
 
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
                                   const gui::FrameTimelineInfo& frameTimelineInfo);
@@ -703,7 +607,6 @@ private:
                                                const hal::VsyncPeriodChangeTimeline&) override;
     void onComposerHalSeamlessPossible(hal::HWDisplayId) override;
     void onComposerHalVsyncIdle(hal::HWDisplayId) override;
-    void setPowerModeOnMainThread(const sp<IBinder>& displayToken, int mode);
 
     // ICompositor overrides:
 
@@ -725,7 +628,6 @@ private:
 
     // Toggles hardware VSYNC by calling into HWC.
     void setVsyncEnabled(bool) override;
-    void requestDisplayMode(DisplayModePtr, DisplayModeEvent);
     // Sets the desired display mode per display if allowed by policy .
     void requestDisplayModes(std::vector<scheduler::DisplayModeConfig>) override;
     // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
@@ -785,12 +687,6 @@ private:
     // Returns whether a new buffer has been latched.
     bool latchBuffers();
 
-    // Check if unified draw supported
-    void startUnifiedDraw();
-    void InitComposerExtn();
-    void createSmomoInstance(const DisplayDeviceState& state);
-    void destroySmomoInstance(const sp<DisplayDevice>& display);
-
     void updateLayerGeometry();
     void updateLayerMetadataSnapshot();
 
@@ -800,8 +696,6 @@ private:
                           std::vector<gui::DisplayInfo>& outDisplayInfos);
     void commitInputWindowCommands() REQUIRES(mStateLock);
     void updateCursorAsync();
-    void updateFrameScheduler();
-    void syncToDisplayHardware();
 
     void initScheduler(const sp<const DisplayDevice>&) REQUIRES(mStateLock);
     void updatePhaseConfiguration(const Fps&) REQUIRES(mStateLock);
@@ -854,7 +748,6 @@ private:
     bool applyTransactions(std::vector<TransactionState>& transactions, VsyncId)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
-    void checkVirtualDisplayHint(const Vector<DisplayState>& displays);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
     bool frameIsEarly(TimePoint expectedPresentTime, VsyncId) const;
@@ -907,10 +800,6 @@ private:
             const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
             bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
-
-
-    bool canAllocateHwcDisplayIdForVDS(uint64_t usage);
-    bool skipColorLayer(const char* layerType);
 
     // If the uid provided is not UNSET_UID, the traverse will skip any layers that don't have a
     // matching ownerUid
@@ -1028,8 +917,6 @@ private:
     /*
      * Compositing
      */
-    sp<DisplayDevice> getVsyncSource();
-    void updateVsyncSource();
     void postComposition() REQUIRES(kMainThreadContext);
 
     /*
@@ -1062,9 +949,6 @@ private:
                                const DisplayDeviceState& currentState,
                                const DisplayDeviceState& drawingState)
             REQUIRES(mStateLock, kMainThreadContext);
-    void setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
-                                      DisplayDeviceState& currentState,
-                                      const DisplayDeviceState& drawingState);
 
     void dispatchDisplayHotplugEvent(PhysicalDisplayId displayId, bool connected);
 
@@ -1079,17 +963,6 @@ private:
     }
 
     using FenceTimePtr = std::shared_ptr<FenceTime>;
-
-    void setRefreshRateTo(int32_t refreshRate);
-
-    struct FenceWithFenceTime {
-        sp<Fence> fence = Fence::NO_FENCE;
-        FenceTimePtr fenceTime = FenceTime::NO_FENCE;
-    };
-
-    // Gets the fence for the previous frame.
-    // Must be called on the main thread.
-    FenceWithFenceTime previousFrameFence();
 
     const FenceTimePtr& getPreviousPresentFence(TimePoint frameTime, Period)
             REQUIRES(kMainThreadContext);
@@ -1133,8 +1006,7 @@ private:
     void enableHalVirtualDisplays(bool);
 
     // Virtual display lifecycle for ID generation and HAL allocation.
-    VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat, bool canAllocateHwcForVDS)
-            REQUIRES(mStateLock);
+    VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat) REQUIRES(mStateLock);
     void releaseVirtualDisplay(VirtualDisplayId);
 
     void onActiveDisplayChangedLocked(const sp<DisplayDevice>& activeDisplay)
@@ -1148,7 +1020,6 @@ private:
     void dumpAllLocked(const DumpArgs& args, const std::string& compositionLayers,
                        std::string& result) const REQUIRES(mStateLock);
     void dumpHwcLayersMinidumpLocked(std::string& result) const REQUIRES(mStateLock);
-    void dumpMini(std::string& result) const REQUIRES(mStateLock);
 
     void appendSfConfigString(std::string& result) const;
     void listLayersLocked(std::string& result) const;
@@ -1180,56 +1051,11 @@ private:
 
     status_t doDump(int fd, const DumpArgs& args, bool asProto);
 
-    status_t doDumpContinuous(int fd, const DumpArgs& args);
-    void dumpDrawCycle(bool prePrepare);
-
-    struct {
-      Mutex lock;
-      const char *name = "/data/misc/wmtrace/dumpsys.txt";
-      bool running = false;
-      bool noLimit = false;
-      bool fullDump = false;
-      bool replaceAfterCommit = false;
-      long int position = 0;
-    } mFileDump;
-
     status_t dumpCritical(int fd, const DumpArgs&, bool asProto);
 
     status_t dumpAll(int fd, const DumpArgs& args, bool asProto) override {
         return doDump(fd, args, asProto);
     }
-
-    void setContentFps(uint32_t contentFps);
-
-    bool isInternalDisplay(const sp<DisplayDevice>& display);
-
-    bool getHwcDisplayId(const sp<DisplayDevice>& display, uint32_t *hwcDisplayId);
-
-    void updateDisplayExtension(uint32_t displayId, uint32_t configId, bool connected);
-
-    void setDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId);
-
-    void notifyAllDisplaysUpdateImminent();
-
-    void notifyDisplayUpdateImminent();
-
-    void handlePresentationDisplaysEarlyWakeup(size_t updatingDisplays, uint32_t layerStackId);
-
-    void updateInternalDisplaysPresentationMode();
-
-    void createPhaseOffsetExtn();
-
-    void setupDisplayExtnFeatures();
-
-    void setupIdleTimeoutHandling(uint32_t displayId);
-
-    bool isDisplayExtnEnabled() { return (mEarlyWakeUpEnabled || mDynamicSfIdleEnabled); }
-
-    void setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode);
-
-    bool IsDisplayExternalOrVirtual(const sp<DisplayDevice>& displayDevice);
-
-    void setDisplayAnimating();
 
     static mat4 calculateColorMatrix(float saturation);
 
@@ -1249,10 +1075,6 @@ private:
     static int calculateMaxAcquiredBufferCount(Fps refreshRate,
                                                std::chrono::nanoseconds presentLatency);
     int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
-    void setDesiredModeByThermalLevel(float newFpsRequest);
-    bool isFpsDeferNeeded(const ActiveModeInfo& info) REQUIRES(mStateLock);
-    virtual void getModeFromFps(float fps,DisplayModePtr& outMode);
-    void handleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
 
     void updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& activeDisplay)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -1269,7 +1091,6 @@ private:
 
     // access must be protected by mStateLock
     mutable Mutex mStateLock;
-    mutable Mutex mVsyncLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
     std::atomic<uint32_t> mUniqueTransactionId = 1;
@@ -1365,10 +1186,6 @@ private:
         std::optional<DisplayIdGenerator<HalVirtualDisplayId>> hal;
     } mVirtualDisplayIdGenerators;
 
-    // don't use a lock for these, we don't care
-    int mDebugRegion = 0;
-    bool mVsyncSourceReliableOnDoze = false;
-    bool mPluggableVsyncPrioritized = false;
     std::atomic_uint mDebugFlashDelay = 0;
     std::atomic_bool mDebugDisableHWC = false;
     std::atomic_bool mDebugDisableTransformHint = false;
@@ -1376,7 +1193,6 @@ private:
     std::atomic_bool mForceFullDamage = false;
 
     bool mLayerCachingEnabled = false;
-    bool mPropagateBackpressure = true;
     bool mPropagateBackpressureClientComposition = false;
 
     LayerTracing mLayerTracing{*this};
@@ -1395,9 +1211,6 @@ private:
     bool mSupportsBlur = false;
     // If blurs are considered expensive and should require high GPU frequency.
     bool mBlursAreExpensive = false;
-    bool mUseAdvanceSfOffset = false;
-    bool mUseFbScaling = false;
-    bool mAsyncVdsCreationSupported = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
@@ -1412,10 +1225,6 @@ private:
     std::vector<uint32_t> mTexturePool;
 
     std::atomic<size_t> mNumLayers = 0;
-    // Vsync Source
-    sp<DisplayDevice> mActiveVsyncSource = NULL;
-    sp<DisplayDevice> mNextVsyncSource = NULL;
-    std::list<sp<DisplayDevice>> mDisplaysList;
 
     // to linkToDeath
     sp<IBinder> mWindowManager;
@@ -1469,6 +1278,10 @@ private:
     std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
 
+    struct FenceWithFenceTime {
+        sp<Fence> fence = Fence::NO_FENCE;
+        FenceTimePtr fenceTime = FenceTime::NO_FENCE;
+    };
     std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
 
     TimePoint mScheduledPresentTime GUARDED_BY(kMainThreadContext);
@@ -1551,49 +1364,8 @@ private:
     }
 
     const sp<WindowInfosListenerInvoker> mWindowInfosListenerInvoker;
-    void setRefreshRates(const sp<DisplayDevice>& display);
-    void updateSmomoLayerInfo(TransactionState &ts,
-        int64_t desiredPresentTime, bool isAutoTimestamp);
-    SmomoIntf* getSmomoInstance(const uint32_t layerStackId) const;
-
-public:
-    nsecs_t mVsyncPeriod = -1;
-    DolphinWrapper mDolphinWrapper;
-    LayerExtWrapper mLayerExt;
-    struct SmomoInfo {
-      uint32_t displayId;
-      uint32_t layerStackId;
-      bool active = false;
-      SmomoIntf *smoMo = nullptr;
-    };
-    std::vector<SmomoInfo> mSmomoInstances;
-
-private:
-    bool mEarlyWakeUpEnabled = false;
-    bool mDynamicSfIdleEnabled = false;
-    bool wakeUpPresentationDisplays = false;
-    bool mInternalPresentationDisplays = false;
-
-    composer::ComposerExtnIntf *mComposerExtnIntf = nullptr;
-    composer::FrameSchedulerIntf *mFrameSchedulerExtnIntf = nullptr;
-    composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
-    bool mUseLayerExt = false;
-    bool mSplitLayerExt = false;
-    bool mHasScreenshot = false;
-    float mThermalLevelFps = 0;
-    float mLastCachedFps = 0;
-    bool mAllowThermalFpsChange = false;
-    std::unordered_map<float, int64_t> mAdvancedSfOffsets;
-    bool mLatchMediaContent = true;
 
     FlagManager mFlagManager;
-    int mRETid = 0;
-    int mSFTid = 0;
-    bool mTidSentSuccessfully = false;
-    bool mSendEarlyWakeUp = false;
-    bool mSentInitialFps = false;
-    std::mutex mEarlyWakeUpMutex;
-    int mUiLayerFrameCount = 0;
 
     // returns the framerate of the layer with the given sequence ID
     float getLayerFramerate(nsecs_t now, int32_t id) const {
@@ -1674,8 +1446,6 @@ public:
     binder::Status getProtectedContentSupport(bool* outSupporte) override;
     binder::Status isWideColorDisplay(const sp<IBinder>& token,
                                       bool* outIsWideColorDisplay) override;
-    binder::Status isDeviceRCSupported(const sp<IBinder>& token,
-                                       bool* outIsDeviceRCSupported) override;
     binder::Status addRegionSamplingListener(
             const gui::ARect& samplingArea, const sp<IBinder>& stopLayerHandle,
             const sp<gui::IRegionSamplingListener>& listener) override;

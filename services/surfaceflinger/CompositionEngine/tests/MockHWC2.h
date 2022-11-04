@@ -31,9 +31,6 @@
 
 #include <ui/GraphicTypes.h>
 #include "DisplayHardware/HWC2.h"
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 
@@ -45,9 +42,7 @@ namespace HWC2 {
 namespace mock {
 
 namespace hal = android::hardware::graphics::composer::hal;
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
+
 using Error = hal::Error;
 
 class Layer : public HWC2::Layer {
@@ -75,10 +70,7 @@ public:
     MOCK_METHOD1(setTransform, Error(hal::Transform));
     MOCK_METHOD1(setVisibleRegion, Error(const android::Region&));
     MOCK_METHOD1(setZOrder, Error(uint32_t));
-    MOCK_METHOD1(setType, Error(uint32_t));
-#ifdef QTI_UNIFIED_DRAW
-    MOCK_METHOD1(setLayerFlag, Error(IQtiComposerClient::LayerFlag));
-#endif
+
     MOCK_METHOD1(setColorTransform, Error(const android::mat4&));
     MOCK_METHOD3(setLayerGenericMetadata,
                  Error(const std::string&, bool, const std::vector<uint8_t>&));

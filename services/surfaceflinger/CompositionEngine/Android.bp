@@ -7,23 +7,15 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
-soong_config_module_type_import {
-    from: "frameworks/native/services/surfaceflinger/Android.bp",
-    module_types: ["libdisplayconfig_cc_defaults"],
-}
-
-libdisplayconfig_cc_defaults {
+cc_defaults {
     name: "libcompositionengine_defaults",
     defaults: [
         "android.hardware.graphics.composer3-ndk_shared",
         "surfaceflinger_defaults",
-        "libdisplayconfig_defaults",
-        "unfieddraw_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"CompositionEngine\"",
         "-DATRACE_TAG=ATRACE_TAG_GRAPHICS",
-        "-Wno-unused-private-field",
     ],
     shared_libs: [
         "android.hardware.graphics.allocator@2.0",
@@ -63,7 +55,6 @@ libdisplayconfig_cc_defaults {
         "android.hardware.graphics.composer@2.4-command-buffer",
         "android.hardware.graphics.composer3-command-buffer",
         "libsurfaceflinger_headers",
-        "display_intf_headers",
     ],
 }
 
