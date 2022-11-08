@@ -123,6 +123,8 @@
 #include "FpsReporter.h"
 #include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
+#include "FrontEnd/LayerCreationArgs.h"
+#include "FrontEnd/LayerHandle.h"
 #include "HdrLayerInfoReporter.h"
 #include "Layer.h"
 #include "LayerProtoHelper.h"
@@ -1063,30 +1065,28 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* ou
     return NO_ERROR;
 }
 
-void SurfaceFlinger::setDesiredActiveMode(const ActiveModeInfo& info) {
+void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request) {
     ATRACE_CALL();
 
-    if (!info.mode) {
-        ALOGW("requested display mode is null");
-        return;
-    }
-    auto display = getDisplayDeviceLocked(info.mode->getPhysicalDisplayId());
+    auto display = getDisplayDeviceLocked(request.modePtr->getPhysicalDisplayId());
     if (!display) {
         ALOGW("%s: display is no longer valid", __func__);
         return;
     }
 
-    if (display->setDesiredActiveMode(info)) {
+    const Fps refreshRate = request.modePtr->getFps();
+
+    if (display->setDesiredActiveMode(DisplayDevice::ActiveModeInfo(std::move(request)))) {
         scheduleComposite(FrameHint::kNone);
 
         // Start receiving vsync samples now, so that we can detect a period
         // switch.
-        mScheduler->resyncToHardwareVsync(true, info.mode->getFps());
+        mScheduler->resyncToHardwareVsync(true, refreshRate);
         // As we called to set period, we will call to onRefreshRateChangeCompleted once
         // VsyncController model is locked.
         modulateVsync(&VsyncModulator::onRefreshRateChangeInitiated);
 
-        updatePhaseConfiguration(info.mode->getFps());
+        updatePhaseConfiguration(refreshRate);
         mScheduler->setModeChangePending(true);
     }
 }
@@ -1178,7 +1178,7 @@ void SurfaceFlinger::updateInternalStateWithChangedMode() {
     mRefreshRateStats->setRefreshRate(refreshRate);
     updatePhaseConfiguration(refreshRate);
 
-    if (upcomingModeInfo.event != DisplayModeEvent::None) {
+    if (upcomingModeInfo.event != scheduler::DisplayModeEvent::None) {
         mScheduler->onPrimaryDisplayModeChanged(mAppConnectionHandle, upcomingModeInfo.mode);
     }
 }
@@ -1578,7 +1578,10 @@ status_t SurfaceFlinger::addRegionSamplingListener(const Rect& samplingArea,
         return BAD_VALUE;
     }
 
-    const wp<Layer> stopLayer = fromHandle(stopLayerHandle);
+    // LayerHandle::getLayer promotes the layer object in a binder thread but we will not destroy
+    // the layer here since the caller has a strong ref to the layer's handle.
+    // TODO (b/238781169): replace layer with layer id
+    const wp<Layer> stopLayer = LayerHandle::getLayer(stopLayerHandle);
     mRegionSamplingThread->addListener(samplingArea, stopLayer, listener);
     return NO_ERROR;
 }
@@ -2180,8 +2183,8 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
     std::vector<Layer*> layers;
 
     mDrawingState.traverseInZOrder([&refreshArgs, &layers](Layer* layer) {
-        layer->updateSnapshot(refreshArgs.updatingGeometryThisFrame);
         if (auto layerFE = layer->getCompositionEngineLayerFE()) {
+            layer->updateSnapshot(refreshArgs.updatingGeometryThisFrame);
             refreshArgs.layers.push_back(layerFE);
             layers.push_back(layer);
         }
@@ -3330,34 +3333,33 @@ void SurfaceFlinger::updateCursorAsync() {
     mCompositionEngine->updateCursorAsync(refreshArgs);
 }
 
-void SurfaceFlinger::requestDisplayModes(
-        std::vector<scheduler::DisplayModeConfig> displayModeConfigs) {
+void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest> modeRequests) {
     if (mBootStage != BootStage::FINISHED) {
         ALOGV("Currently in the boot stage, skipping display mode changes");
         return;
     }
 
     ATRACE_CALL();
+
     // If this is called from the main thread mStateLock must be locked before
     // Currently the only way to call this function from the main thread is from
     // Scheduler::chooseRefreshRateForContent
 
     ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
 
-    std::for_each(displayModeConfigs.begin(), displayModeConfigs.end(),
-                  [&](const auto& config) REQUIRES(mStateLock) {
-                      const auto& displayModePtr = config.displayModePtr;
-                      if (const auto display =
-                                  getDisplayDeviceLocked(displayModePtr->getPhysicalDisplayId());
-                          display->refreshRateConfigs().isModeAllowed(displayModePtr->getId())) {
-                          const auto event = config.signals.idle ? DisplayModeEvent::None
-                                                                 : DisplayModeEvent::Changed;
-                          setDesiredActiveMode({displayModePtr, event});
-                      } else {
-                          ALOGV("Skipping disallowed mode %d for display %" PRId64,
-                                displayModePtr->getId().value(), display->getPhysicalId().value);
-                      }
-                  });
+    for (auto& request : modeRequests) {
+        const auto& modePtr = request.modePtr;
+        const auto display = getDisplayDeviceLocked(modePtr->getPhysicalDisplayId());
+
+        if (!display) continue;
+
+        if (display->refreshRateConfigs().isModeAllowed(modePtr->getId())) {
+            setDesiredActiveMode(std::move(request));
+        } else {
+            ALOGV("%s: Mode %d is disallowed for display %s", __func__, modePtr->getId().value(),
+                  to_string(display->getId()).c_str());
+        }
+    }
 }
 
 void SurfaceFlinger::triggerOnFrameRateOverridesChanged() {
@@ -3602,9 +3604,9 @@ bool SurfaceFlinger::latchBuffers() {
     return !mLayersWithQueuedFrames.empty() && newDataLatched;
 }
 
-status_t SurfaceFlinger::addClientLayer(const sp<Client>& client, const sp<IBinder>& handle,
+status_t SurfaceFlinger::addClientLayer(const LayerCreationArgs& args, const sp<IBinder>& handle,
                                         const sp<Layer>& layer, const wp<Layer>& parent,
-                                        bool addToRoot, uint32_t* outTransformHint) {
+                                        uint32_t* outTransformHint) {
     if (mNumLayers >= MAX_LAYERS) {
         ALOGE("AddClientLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers.load(),
               MAX_LAYERS);
@@ -3635,12 +3637,12 @@ status_t SurfaceFlinger::addClientLayer(const sp<Client>& client, const sp<IBind
 
     {
         std::scoped_lock<std::mutex> lock(mCreatedLayersLock);
-        mCreatedLayers.emplace_back(layer, parent, addToRoot);
+        mCreatedLayers.emplace_back(layer, parent, args.addToRoot);
     }
 
     // attach this layer to the client
-    if (client != nullptr) {
-        client->attachLayer(handle, layer);
+    if (args.client != nullptr) {
+        args.client->attachLayer(handle, layer);
     }
 
     setTransactionFlags(eTransactionNeeded);
@@ -3700,7 +3702,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
     using TransactionReadiness = TransactionHandler::TransactionReadiness;
     auto ready = TransactionReadiness::Ready;
     flushState.transaction->traverseStatesWithBuffersWhileTrue([&](const layer_state_t& s) -> bool {
-        sp<Layer> layer = Layer::fromHandle(s.surface).promote();
+        sp<Layer> layer = LayerHandle::getLayer(s.surface);
         const auto& transaction = *flushState.transaction;
         // check for barrier frames
         if (s.bufferData->hasBarrier &&
@@ -3745,7 +3747,10 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                 if (listener &&
                     (flushState.queueProcessTime - transaction.postTime) >
                             std::chrono::nanoseconds(4s).count()) {
-                    mTransactionHandler.onTransactionQueueStalled(transaction, listener);
+                    mTransactionHandler
+                            .onTransactionQueueStalled(transaction.id, listener,
+                                                       "Buffer processing hung up due to stuck "
+                                                       "fence. Indicates GPU hang");
                 }
                 return false;
             }
@@ -3961,10 +3966,11 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
     uint32_t clientStateFlags = 0;
     for (int i = 0; i < states.size(); i++) {
         ComposerState& state = states.editItemAt(i);
-        clientStateFlags |= setClientStateLocked(frameTimelineInfo, state, desiredPresentTime,
-                                                 isAutoTimestamp, postTime, permissions);
+        clientStateFlags |=
+                setClientStateLocked(frameTimelineInfo, state, desiredPresentTime, isAutoTimestamp,
+                                     postTime, permissions, transactionId);
         if ((flags & eAnimation) && state.state.surface) {
-            if (const auto layer = fromHandle(state.state.surface).promote()) {
+            if (const auto layer = LayerHandle::getLayer(state.state.surface)) {
                 using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
                 mScheduler->recordLayerHistory(layer.get(),
                                                isAutoTimestamp ? 0 : desiredPresentTime,
@@ -4078,7 +4084,8 @@ bool SurfaceFlinger::callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermis
 uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTimelineInfo,
                                               ComposerState& composerState,
                                               int64_t desiredPresentTime, bool isAutoTimestamp,
-                                              int64_t postTime, uint32_t permissions) {
+                                              int64_t postTime, uint32_t permissions,
+                                              uint64_t transactionId) {
     layer_state_t& s = composerState.state;
     s.sanitize(permissions);
 
@@ -4104,7 +4111,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
     uint32_t flags = 0;
     sp<Layer> layer = nullptr;
     if (s.surface) {
-        layer = fromHandle(s.surface).promote();
+        layer = LayerHandle::getLayer(s.surface);
     } else {
         // The client may provide us a null handle. Treat it as if the layer was removed.
         ALOGW("Attempt to set client state with a null layer handle");
@@ -4117,7 +4124,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
         return 0;
     }
 
-    ui::LayerStack oldLayerStack = layer->getLayerStack();
+    ui::LayerStack oldLayerStack = layer->getLayerStack(LayerVector::StateSet::Current);
 
     // Only set by BLAST adapter layers
     if (what & layer_state_t::eProducerDisconnect) {
@@ -4371,7 +4378,8 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
 
     if (what & layer_state_t::eBufferChanged) {
         std::shared_ptr<renderengine::ExternalTexture> buffer =
-                getExternalTextureFromBufferData(*s.bufferData, layer->getDebugName());
+                getExternalTextureFromBufferData(*s.bufferData, layer->getDebugName(),
+                                                 transactionId);
         if (layer->setBuffer(buffer, *s.bufferData, postTime, desiredPresentTime, isAutoTimestamp,
                              dequeueBufferTimestamp, frameTimelineInfo)) {
             flags |= eTraversalNeeded;
@@ -4385,7 +4393,8 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
     // setTransactionCompletedListener
 
     // if the layer has been parented on to a new display, update its transform hint.
-    if (((flags & eTransformHintUpdateNeeded) == 0) && oldLayerStack != layer->getLayerStack()) {
+    if (((flags & eTransformHintUpdateNeeded) == 0) &&
+        oldLayerStack != layer->getLayerStack(LayerVector::StateSet::Current)) {
         flags |= eTransformHintUpdateNeeded;
     }
 
@@ -4406,14 +4415,16 @@ status_t SurfaceFlinger::mirrorLayer(const LayerCreationArgs& args,
 
     sp<Layer> mirrorLayer;
     sp<Layer> mirrorFrom;
+    LayerCreationArgs mirrorArgs(args);
     {
         Mutex::Autolock _l(mStateLock);
-        mirrorFrom = fromHandle(mirrorFromHandle).promote();
+        mirrorFrom = LayerHandle::getLayer(mirrorFromHandle);
         if (!mirrorFrom) {
             return NAME_NOT_FOUND;
         }
-        LayerCreationArgs mirrorArgs = args;
         mirrorArgs.flags |= ISurfaceComposerClient::eNoColorFill;
+        mirrorArgs.mirrorLayerHandle = mirrorFromHandle;
+        mirrorArgs.addToRoot = false;
         status_t result = createEffectLayer(mirrorArgs, &outResult.handle, &mirrorLayer);
         if (result != NO_ERROR) {
             return result;
@@ -4429,9 +4440,8 @@ status_t SurfaceFlinger::mirrorLayer(const LayerCreationArgs& args,
                                                 mirrorLayer->sequence, args.name,
                                                 mirrorFrom->sequence);
     }
-    return addClientLayer(args.client, outResult.handle, mirrorLayer /* layer */,
-                          nullptr /* parent */, false /* addToRoot */,
-                          nullptr /* outTransformHint */);
+    return addClientLayer(mirrorArgs, outResult.handle, mirrorLayer /* layer */,
+                          nullptr /* parent */, nullptr /* outTransformHint */);
 }
 
 status_t SurfaceFlinger::mirrorDisplay(DisplayId displayId, const LayerCreationArgs& args,
@@ -4456,14 +4466,14 @@ status_t SurfaceFlinger::mirrorDisplay(DisplayId displayId, const LayerCreationA
         }
 
         layerStack = display->getLayerStack();
-        LayerCreationArgs mirrorArgs = args;
+        LayerCreationArgs mirrorArgs(args);
         mirrorArgs.flags |= ISurfaceComposerClient::eNoColorFill;
+        mirrorArgs.addToRoot = true;
         result = createEffectLayer(mirrorArgs, &outResult.handle, &rootMirrorLayer);
         outResult.layerId = rootMirrorLayer->sequence;
         outResult.layerName = String16(rootMirrorLayer->getDebugName());
-        result |= addClientLayer(args.client, outResult.handle, rootMirrorLayer /* layer */,
-                                 nullptr /* parent */, true /* addToRoot */,
-                                 nullptr /* outTransformHint */);
+        result |= addClientLayer(mirrorArgs, outResult.handle, rootMirrorLayer /* layer */,
+                                 nullptr /* parent */, nullptr /* outTransformHint */);
     }
 
     if (result != NO_ERROR) {
@@ -4484,8 +4494,7 @@ status_t SurfaceFlinger::mirrorDisplay(DisplayId displayId, const LayerCreationA
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, const sp<IBinder>& parentHandle,
-                                     gui::CreateSurfaceResult& outResult) {
+status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurfaceResult& outResult) {
     status_t result = NO_ERROR;
 
     sp<Layer> layer;
@@ -4514,28 +4523,23 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, const sp<IBinder>&
         return result;
     }
 
-    bool addToRoot = args.addToRoot && callingThreadHasUnscopedSurfaceFlingerAccess();
-    wp<Layer> parent = fromHandle(parentHandle);
-    if (parentHandle != nullptr && parent == nullptr) {
-        ALOGE("Invalid parent handle %p.", parentHandle.get());
-        addToRoot = false;
+    args.addToRoot = args.addToRoot && callingThreadHasUnscopedSurfaceFlingerAccess();
+    // We can safely promote the parent layer in binder thread because we have a strong reference
+    // to the layer's handle inside this scope.
+    sp<Layer> parent = LayerHandle::getLayer(args.parentHandle.promote());
+    if (args.parentHandle != nullptr && parent == nullptr) {
+        ALOGE("Invalid parent handle %p", args.parentHandle.promote().get());
+        args.addToRoot = false;
     }
 
-    int parentId = -1;
-    // We can safely promote the layer in binder thread because we have a strong reference
-    // to the layer's handle inside this scope or we were passed in a sp reference to the layer.
-    sp<Layer> parentSp = parent.promote();
-    if (parentSp != nullptr) {
-        parentId = parentSp->getSequence();
-    }
+    const int parentId = parent ? parent->getSequence() : -1;
     if (mTransactionTracing) {
         mTransactionTracing->onLayerAdded(outResult.handle->localBinder(), layer->sequence,
                                           args.name, args.flags, parentId);
     }
 
     uint32_t outTransformHint;
-    result = addClientLayer(args.client, outResult.handle, layer, parent, addToRoot,
-                            &outTransformHint);
+    result = addClientLayer(args, outResult.handle, layer, parent, &outTransformHint);
     if (result != NO_ERROR) {
         return result;
     }
@@ -4567,7 +4571,7 @@ void SurfaceFlinger::markLayerPendingRemovalLocked(const sp<Layer>& layer) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer) {
+void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32_t /* layerId */) {
     Mutex::Autolock lock(mStateLock);
     markLayerPendingRemovalLocked(layer);
     mBufferCountTracker.remove(handle);
@@ -6172,7 +6176,7 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
     {
         Mutex::Autolock lock(mStateLock);
 
-        parent = fromHandle(args.layerHandle).promote();
+        parent = LayerHandle::getLayer(args.layerHandle);
         if (parent == nullptr) {
             ALOGE("captureLayers called with an invalid or removed parent");
             return NAME_NOT_FOUND;
@@ -6203,7 +6207,7 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
         reqSize = ui::Size(crop.width() * args.frameScaleX, crop.height() * args.frameScaleY);
 
         for (const auto& handle : args.excludeHandles) {
-            sp<Layer> excludeLayer = fromHandle(handle).promote();
+            sp<Layer> excludeLayer = LayerHandle::getLayer(handle);
             if (excludeLayer != nullptr) {
                 excludeLayers.emplace(excludeLayer);
             } else {
@@ -6457,6 +6461,10 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     std::vector<Layer*> renderedLayers;
     bool disableBlurs = false;
     traverseLayers([&](Layer* layer) FTL_FAKE_GUARD(kMainThreadContext) {
+        auto layerFE = layer->getCompositionEngineLayerFE();
+        if (!layerFE) {
+            return;
+        }
         // Layer::prepareClientComposition uses the layer's snapshot to populate the resulting
         // LayerSettings. Calling Layer::updateSnapshot ensures that LayerSettings are
         // generated with the layer's current buffer and geometry.
@@ -6482,11 +6490,6 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
                 isHdrLayer(layer) ? displayBrightnessNits : sdrWhitePointNits,
 
         };
-        auto layerFE = layer->getCompositionEngineLayerFE();
-        if (!layerFE) {
-            return;
-        }
-
         std::optional<compositionengine::LayerFE::LayerSettings> settings;
         {
             LayerSnapshotGuard layerSnapshotGuard(layer);
@@ -6578,18 +6581,19 @@ void SurfaceFlinger::traverseLayersInLayerStack(ui::LayerStack layerStack, const
     }
 }
 
-std::optional<DisplayModePtr> SurfaceFlinger::getPreferredDisplayMode(
+std::optional<ftl::NonNull<DisplayModePtr>> SurfaceFlinger::getPreferredDisplayMode(
         PhysicalDisplayId displayId, DisplayModeId defaultModeId) const {
     if (const auto schedulerMode = mScheduler->getPreferredDisplayMode();
         schedulerMode && schedulerMode->getPhysicalDisplayId() == displayId) {
-        return schedulerMode;
+        return ftl::as_non_null(schedulerMode);
     }
 
     return mPhysicalDisplays.get(displayId)
             .transform(&PhysicalDisplay::snapshotRef)
             .and_then([&](const display::DisplaySnapshot& snapshot) {
                 return snapshot.displayModes().get(defaultModeId);
-            });
+            })
+            .transform(&ftl::as_non_null<const DisplayModePtr&>);
 }
 
 status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
@@ -6645,7 +6649,7 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
         return INVALID_OPERATION;
     }
 
-    setDesiredActiveMode({std::move(preferredMode), DisplayModeEvent::Changed});
+    setDesiredActiveMode({std::move(preferredMode), .emitEvent = true});
     return NO_ERROR;
 }
 
@@ -6717,10 +6721,6 @@ status_t SurfaceFlinger::getDesiredDisplayModeSpecs(const sp<IBinder>& displayTo
     *outAppRequestRefreshRateMin = policy.appRequestRange.min.getValue();
     *outAppRequestRefreshRateMax = policy.appRequestRange.max.getValue();
     return NO_ERROR;
-}
-
-wp<Layer> SurfaceFlinger::fromHandle(const sp<IBinder>& handle) const {
-    return Layer::fromHandle(handle);
 }
 
 void SurfaceFlinger::onLayerFirstRef(Layer* layer) {
@@ -6887,7 +6887,7 @@ void SurfaceFlinger::handleLayerCreatedLocked(const LayerCreatedState& state, Vs
         parent->addChild(layer);
     }
 
-    ui::LayerStack layerStack = layer->getLayerStack();
+    ui::LayerStack layerStack = layer->getLayerStack(LayerVector::StateSet::Current);
     sp<const DisplayDevice> hintDisplay;
     // Find the display that includes the layer.
     for (const auto& [token, display] : mDisplays) {
@@ -6956,34 +6956,44 @@ status_t SurfaceFlinger::removeWindowInfosListener(
 }
 
 std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextureFromBufferData(
-        const BufferData& bufferData, const char* layerName) const {
-    bool cacheIdChanged = bufferData.flags.test(BufferData::BufferDataChange::cachedBufferChanged);
-    bool bufferSizeExceedsLimit = false;
-    std::shared_ptr<renderengine::ExternalTexture> buffer = nullptr;
-    if (cacheIdChanged && bufferData.buffer != nullptr) {
-        bufferSizeExceedsLimit = exceedsMaxRenderTargetSize(bufferData.buffer->getWidth(),
-                                                            bufferData.buffer->getHeight());
-        if (!bufferSizeExceedsLimit) {
-            ClientCache::getInstance().add(bufferData.cachedBuffer, bufferData.buffer);
-            buffer = ClientCache::getInstance().get(bufferData.cachedBuffer);
-        }
-    } else if (cacheIdChanged) {
-        buffer = ClientCache::getInstance().get(bufferData.cachedBuffer);
-    } else if (bufferData.buffer != nullptr) {
-        bufferSizeExceedsLimit = exceedsMaxRenderTargetSize(bufferData.buffer->getWidth(),
-                                                            bufferData.buffer->getHeight());
-        if (!bufferSizeExceedsLimit) {
-            buffer = std::make_shared<
-                    renderengine::impl::ExternalTexture>(bufferData.buffer, getRenderEngine(),
-                                                         renderengine::impl::ExternalTexture::
-                                                                 Usage::READABLE);
-        }
+        BufferData& bufferData, const char* layerName, uint64_t transactionId) {
+    if (bufferData.buffer &&
+        exceedsMaxRenderTargetSize(bufferData.buffer->getWidth(), bufferData.buffer->getHeight())) {
+        ALOGE("Attempted to create an ExternalTexture for layer %s that exceeds render target "
+              "size limit.",
+              layerName);
+        return nullptr;
     }
-    ALOGE_IF(bufferSizeExceedsLimit,
-             "Attempted to create an ExternalTexture for layer %s that exceeds render target size "
-             "limit.",
-             layerName);
-    return buffer;
+
+    bool cachedBufferChanged =
+            bufferData.flags.test(BufferData::BufferDataChange::cachedBufferChanged);
+    if (cachedBufferChanged && bufferData.buffer) {
+        auto result = ClientCache::getInstance().add(bufferData.cachedBuffer, bufferData.buffer);
+        if (result.ok()) {
+            return result.value();
+        }
+
+        if (result.error() == ClientCache::AddError::CacheFull) {
+            mTransactionHandler
+                    .onTransactionQueueStalled(transactionId, bufferData.releaseBufferListener,
+                                               "Buffer processing hung due to full buffer cache");
+        }
+
+        return nullptr;
+    }
+
+    if (cachedBufferChanged) {
+        return ClientCache::getInstance().get(bufferData.cachedBuffer);
+    }
+
+    if (bufferData.buffer) {
+        return std::make_shared<
+                renderengine::impl::ExternalTexture>(bufferData.buffer, getRenderEngine(),
+                                                     renderengine::impl::ExternalTexture::Usage::
+                                                             READABLE);
+    }
+
+    return nullptr;
 }
 
 bool SurfaceFlinger::commitMirrorDisplays(VsyncId vsyncId) {
@@ -7001,7 +7011,7 @@ bool SurfaceFlinger::commitMirrorDisplays(VsyncId vsyncId) {
     for (const auto& mirrorDisplay : mirrorDisplays) {
         // Set mirror layer's default layer stack to -1 so it doesn't end up rendered on a display
         // accidentally.
-        sp<Layer> rootMirrorLayer = Layer::fromHandle(mirrorDisplay.rootHandle).promote();
+        sp<Layer> rootMirrorLayer = LayerHandle::getLayer(mirrorDisplay.rootHandle);
         rootMirrorLayer->setLayerStack(ui::LayerStack::fromValue(-1));
         for (const auto& layer : mDrawingState.layersSortedByZ) {
             if (layer->getLayerStack() != mirrorDisplay.layerStack ||

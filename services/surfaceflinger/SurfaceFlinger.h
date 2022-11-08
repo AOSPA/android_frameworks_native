@@ -29,6 +29,7 @@
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
 #include <ftl/future.h>
+#include <ftl/non_null.h>
 #include <gui/BufferQueue.h>
 #include <gui/CompositorTiming.h>
 #include <gui/FrameTimestamps.h>
@@ -65,6 +66,7 @@
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
 #include "FlagManager.h"
+#include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
 #include "Scheduler/RefreshRateConfigs.h"
@@ -271,18 +273,17 @@ public:
     void removeHierarchyFromOffscreenLayers(Layer* layer);
     void removeFromOffscreenLayers(Layer* layer);
 
+    // Called when all clients have released all their references to
+    // this layer. The layer may still be kept alive by its parents but
+    // the client can no longer modify this layer directly.
+    void onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32_t layerId);
+
     // TODO: Remove atomic if move dtor to main thread CL lands
     std::atomic<uint32_t> mNumClones;
 
     TransactionCallbackInvoker& getTransactionCallbackInvoker() {
         return mTransactionCallbackInvoker;
     }
-
-    // Converts from a binder handle to a Layer
-    // Returns nullptr if the handle does not point to an existing layer.
-    // Otherwise, returns a weak reference so that callers off the main-thread
-    // won't accidentally hold onto the last strong reference.
-    wp<Layer> fromHandle(const sp<IBinder>& handle) const;
 
     // If set, disables reusing client composition buffers. This can be set by
     // debug.sf.disable_client_composition_cache
@@ -312,7 +313,7 @@ protected:
             REQUIRES(mStateLock);
 
     virtual std::shared_ptr<renderengine::ExternalTexture> getExternalTextureFromBufferData(
-            const BufferData& bufferData, const char* layerName) const;
+            BufferData& bufferData, const char* layerName, uint64_t transactionId);
 
     // Returns true if any display matches a `bool(const DisplayDevice&)` predicate.
     template <typename Predicate>
@@ -428,10 +429,6 @@ private:
         std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
                 mCounterByLayerHandle GUARDED_BY(mLock);
     };
-
-    using ActiveModeInfo = DisplayDevice::ActiveModeInfo;
-    using KernelIdleTimerController =
-            ::android::scheduler::RefreshRateConfigs::KernelIdleTimerController;
 
     enum class BootStage {
         BOOTLOADER,
@@ -627,16 +624,17 @@ private:
     // ISchedulerCallback overrides:
 
     // Toggles hardware VSYNC by calling into HWC.
+    // TODO(b/241286146): Rename for self-explanatory API.
     void setVsyncEnabled(bool) override;
-    // Sets the desired display mode per display if allowed by policy .
-    void requestDisplayModes(std::vector<scheduler::DisplayModeConfig>) override;
-    // Called when kernel idle timer has expired. Used to update the refresh rate overlay.
+    void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
-    // Called when the frame rate override list changed to trigger an event.
     void triggerOnFrameRateOverridesChanged() override;
 
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
+
+    using KernelIdleTimerController = scheduler::RefreshRateConfigs::KernelIdleTimerController;
+
     // Get the controller and timeout that will help decide how the kernel idle timer will be
     // configured and what value to use as the timeout.
     std::pair<std::optional<KernelIdleTimerController>, std::chrono::milliseconds>
@@ -651,8 +649,8 @@ private:
     // Show spinner with refresh rate overlay
     bool mRefreshRateOverlaySpinner = false;
 
-    // Sets the desired active mode bit. It obtains the lock, and sets mDesiredActiveMode.
-    void setDesiredActiveMode(const ActiveModeInfo& info) REQUIRES(mStateLock);
+    void setDesiredActiveMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId);
     // Sets the active mode and a new refresh rate in SF.
     void updateInternalStateWithChangedMode() REQUIRES(mStateLock, kMainThreadContext);
@@ -671,9 +669,8 @@ private:
 
     // Returns the preferred mode for PhysicalDisplayId if the Scheduler has selected one for that
     // display. Falls back to the display's defaultModeId otherwise.
-    std::optional<DisplayModePtr> getPreferredDisplayMode(PhysicalDisplayId,
-                                                          DisplayModeId defaultModeId) const
-            REQUIRES(mStateLock);
+    std::optional<ftl::NonNull<DisplayModePtr>> getPreferredDisplayMode(
+            PhysicalDisplayId, DisplayModeId defaultModeId) const REQUIRES(mStateLock);
 
     status_t setDesiredDisplayModeSpecsInternal(const sp<DisplayDevice>&,
                                                 const scheduler::RefreshRateConfigs::PolicyVariant&)
@@ -728,7 +725,8 @@ private:
 
     uint32_t setClientStateLocked(const FrameTimelineInfo&, ComposerState&,
                                   int64_t desiredPresentTime, bool isAutoTimestamp,
-                                  int64_t postTime, uint32_t permissions) REQUIRES(mStateLock);
+                                  int64_t postTime, uint32_t permissions, uint64_t transactionId)
+            REQUIRES(mStateLock);
 
     uint32_t getTransactionFlags() const;
 
@@ -755,8 +753,7 @@ private:
     /*
      * Layer management
      */
-    status_t createLayer(LayerCreationArgs& args, const sp<IBinder>& parentHandle,
-                         gui::CreateSurfaceResult& outResult);
+    status_t createLayer(LayerCreationArgs& args, gui::CreateSurfaceResult& outResult);
 
     status_t createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* outHandle,
                                     sp<Layer>* outLayer);
@@ -770,15 +767,11 @@ private:
     status_t mirrorDisplay(DisplayId displayId, const LayerCreationArgs& args,
                            gui::CreateSurfaceResult& outResult);
 
-    // called when all clients have released all their references to
-    // this layer meaning it is entirely safe to destroy all
-    // resources associated to this layer.
-    void onHandleDestroyed(BBinder* handle, sp<Layer>& layer);
     void markLayerPendingRemovalLocked(const sp<Layer>& layer);
 
     // add a layer to SurfaceFlinger
-    status_t addClientLayer(const sp<Client>& client, const sp<IBinder>& handle,
-                            const sp<Layer>& lbc, const wp<Layer>& parentLayer, bool addToRoot,
+    status_t addClientLayer(const LayerCreationArgs& args, const sp<IBinder>& handle,
+                            const sp<Layer>& layer, const wp<Layer>& parentLayer,
                             uint32_t* outTransformHint);
 
     // Traverse through all the layers and compute and cache its bounds.
