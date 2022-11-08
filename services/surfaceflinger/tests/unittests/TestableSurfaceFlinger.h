@@ -33,6 +33,8 @@
 #include "DisplayDevice.h"
 #include "FakeVsyncConfiguration.h"
 #include "FrameTracer/FrameTracer.h"
+#include "FrontEnd/LayerCreationArgs.h"
+#include "FrontEnd/LayerHandle.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "Scheduler/MessageQueue.h"
@@ -470,7 +472,8 @@ public:
 
     auto createLayer(LayerCreationArgs& args, const sp<IBinder>& parentHandle,
                      gui::CreateSurfaceResult& outResult) {
-        return mFlinger->createLayer(args, parentHandle, outResult);
+        args.parentHandle = parentHandle;
+        return mFlinger->createLayer(args, outResult);
     }
 
     auto mirrorLayer(const LayerCreationArgs& args, const sp<IBinder>& mirrorFromHandle,
@@ -528,9 +531,7 @@ public:
     auto& mutablePrimaryHwcDisplayId() { return getHwComposer().mPrimaryHwcDisplayId; }
     auto& mutableActiveDisplayId() { return mFlinger->mActiveDisplayId; }
 
-    auto fromHandle(const sp<IBinder>& handle) {
-        return mFlinger->fromHandle(handle);
-    }
+    auto fromHandle(const sp<IBinder>& handle) { return LayerHandle::getLayer(handle); }
 
     ~TestableSurfaceFlinger() {
         // All these pointer and container clears help ensure that GMock does

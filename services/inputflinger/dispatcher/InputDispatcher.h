@@ -239,7 +239,7 @@ private:
 
     sp<android::gui::WindowInfoHandle> findTouchedWindowAtLocked(
             int32_t displayId, int32_t x, int32_t y, TouchState* touchState, bool isStylus = false,
-            bool addOutsideTargets = false, bool ignoreDragWindow = false) REQUIRES(mLock);
+            bool addOutsideTargets = false, bool ignoreDragWindow = false) const REQUIRES(mLock);
 
     std::vector<sp<android::gui::WindowInfoHandle>> findTouchedSpyWindowsAtLocked(
             int32_t displayId, int32_t x, int32_t y, bool isStylus) const REQUIRES(mLock);
@@ -542,19 +542,20 @@ private:
     void resetNoFocusedWindowTimeoutLocked() REQUIRES(mLock);
 
     int32_t getTargetDisplayId(const EventEntry& entry);
-    android::os::InputEventInjectionResult findFocusedWindowTargetsLocked(
-            nsecs_t currentTime, const EventEntry& entry, std::vector<InputTarget>& inputTargets,
-            nsecs_t* nextWakeupTime) REQUIRES(mLock);
-    android::os::InputEventInjectionResult findTouchedWindowTargetsLocked(
-            nsecs_t currentTime, const MotionEntry& entry, std::vector<InputTarget>& inputTargets,
-            nsecs_t* nextWakeupTime, bool* outConflictingPointerActions) REQUIRES(mLock);
+    sp<android::gui::WindowInfoHandle> findFocusedWindowTargetLocked(
+            nsecs_t currentTime, const EventEntry& entry, nsecs_t* nextWakeupTime,
+            android::os::InputEventInjectionResult& outInjectionResult) REQUIRES(mLock);
+    std::vector<TouchedWindow> findTouchedWindowTargetsLocked(
+            nsecs_t currentTime, const MotionEntry& entry, nsecs_t* nextWakeupTime,
+            bool* outConflictingPointerActions,
+            android::os::InputEventInjectionResult& outInjectionResult) REQUIRES(mLock);
     std::vector<Monitor> selectResponsiveMonitorsLocked(
             const std::vector<Monitor>& gestureMonitors) const REQUIRES(mLock);
 
     void addWindowTargetLocked(const sp<android::gui::WindowInfoHandle>& windowHandle,
                                int32_t targetFlags, BitSet32 pointerIds,
                                std::optional<nsecs_t> firstDownTimeInTarget,
-                               std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
+                               std::vector<InputTarget>& inputTargets) const REQUIRES(mLock);
     void addGlobalMonitoringTargetsLocked(std::vector<InputTarget>& inputTargets, int32_t displayId)
             REQUIRES(mLock);
     void pokeUserActivityLocked(const EventEntry& eventEntry) REQUIRES(mLock);
@@ -601,6 +602,7 @@ private:
     void enqueueDispatchEntryLocked(const sp<Connection>& connection, std::shared_ptr<EventEntry>,
                                     const InputTarget& inputTarget, int32_t dispatchMode)
             REQUIRES(mLock);
+    status_t publishMotionEvent(Connection& connection, DispatchEntry& dispatchEntry) const;
     void startDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection)
             REQUIRES(mLock);
     void finishDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection,

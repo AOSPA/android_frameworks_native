@@ -69,6 +69,8 @@
 #include "DisplayHardware/HWComposer.h"
 #include "FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
+#include "FrontEnd/LayerCreationArgs.h"
+#include "FrontEnd/LayerHandle.h"
 #include "LayerProtoHelper.h"
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
@@ -132,10 +134,8 @@ using gui::WindowInfo;
 
 using PresentState = frametimeline::SurfaceFrame::PresentState;
 
-std::atomic<int32_t> Layer::sSequence{1};
-
 Layer::Layer(const LayerCreationArgs& args)
-      : sequence(args.sequence.value_or(sSequence++)),
+      : sequence(args.sequence),
         mFlinger(sp<SurfaceFlinger>::fromExisting(args.flinger)),
         mName(base::StringPrintf("%s#%d", args.name.c_str(), sequence)),
         mClientRef(args.client),
@@ -154,9 +154,6 @@ Layer::Layer(const LayerCreationArgs& args)
     if (args.flags & ISurfaceComposerClient::eSecure) layerFlags |= layer_state_t::eLayerSecure;
     if (args.flags & ISurfaceComposerClient::eSkipScreenshot)
         layerFlags |= layer_state_t::eLayerSkipScreenshot;
-    if (args.sequence) {
-        sSequence = *args.sequence + 1;
-    }
     mDrawingState.flags = layerFlags;
     mDrawingState.crop.makeInvalid();
     mDrawingState.z = 0;
@@ -201,18 +198,8 @@ Layer::Layer(const LayerCreationArgs& args)
     mFrameTracker.setDisplayRefreshPeriod(
             args.flinger->mScheduler->getVsyncPeriodFromRefreshRateConfigs());
 
-    mCallingPid = args.callingPid;
-    mCallingUid = args.callingUid;
-
-    if (mCallingUid == AID_GRAPHICS || mCallingUid == AID_SYSTEM) {
-        // If the system didn't send an ownerUid, use the callingUid for the ownerUid.
-        mOwnerUid = args.metadata.getInt32(gui::METADATA_OWNER_UID, mCallingUid);
-        mOwnerPid = args.metadata.getInt32(gui::METADATA_OWNER_PID, mCallingPid);
-    } else {
-        // A create layer request from a non system request cannot specify the owner uid
-        mOwnerUid = mCallingUid;
-        mOwnerPid = mCallingPid;
-    }
+    mOwnerUid = args.ownerUid;
+    mOwnerPid = args.ownerPid;
 
     mPremultipliedAlpha = !(args.flags & ISurfaceComposerClient::eNonPremultiplied);
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
@@ -267,18 +254,6 @@ Layer::~Layer() {
     if (mHadClonedChild) {
         mFlinger->mNumClones--;
     }
-}
-
-LayerCreationArgs::LayerCreationArgs(SurfaceFlinger* flinger, sp<Client> client, std::string name,
-                                     uint32_t flags, LayerMetadata metadata)
-      : flinger(flinger),
-        client(std::move(client)),
-        name(std::move(name)),
-        flags(flags),
-        metadata(std::move(metadata)) {
-    IPCThreadState* ipc = IPCThreadState::self();
-    callingPid = ipc->getCallingPid();
-    callingUid = ipc->getCallingUid();
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +333,7 @@ sp<IBinder> Layer::getHandle() {
         return nullptr;
     }
     mGetHandleCalled = true;
-    return sp<Handle>::make(mFlinger, sp<Layer>::fromExisting(this));
+    return sp<LayerHandle>::make(mFlinger, sp<Layer>::fromExisting(this));
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +775,7 @@ void Layer::setZOrderRelativeOf(const wp<Layer>& relativeOf) {
 }
 
 bool Layer::setRelativeLayer(const sp<IBinder>& relativeToHandle, int32_t relativeZ) {
-    sp<Layer> relative = fromHandle(relativeToHandle).promote();
+    sp<Layer> relative = LayerHandle::getLayer(relativeToHandle);
     if (relative == nullptr) {
         return false;
     }
@@ -1040,8 +1015,10 @@ bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
     return priority == PRIORITY_FOCUSED_WITH_MODE || priority == PRIORITY_FOCUSED_WITHOUT_MODE;
 };
 
-ui::LayerStack Layer::getLayerStack() const {
-    if (const auto parent = mDrawingParent.promote()) {
+ui::LayerStack Layer::getLayerStack(LayerVector::StateSet state) const {
+    bool useDrawing = state == LayerVector::StateSet::Drawing;
+    const auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
+    if (parent) {
         return parent->getLayerStack();
     }
     return getDrawingState().layerStack;
@@ -1502,8 +1479,8 @@ void Layer::getFrameStats(FrameStats* outStats) const {
 }
 
 void Layer::dumpCallingUidPid(std::string& result) const {
-    StringAppendF(&result, "Layer %s (%s) callingPid:%d callingUid:%d ownerUid:%d\n",
-                  getName().c_str(), getType(), mCallingPid, mCallingUid, mOwnerUid);
+    StringAppendF(&result, "Layer %s (%s) ownerPid:%d ownerUid:%d\n", getName().c_str(), getType(),
+                  mOwnerPid, mOwnerUid);
 }
 
 void Layer::onDisconnect() {
@@ -1563,15 +1540,13 @@ void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
                 newParent->canDrawShadows() ? 0.f : newParent->mEffectiveShadowRadius;
         child->computeBounds(newParent->mBounds, newParent->mEffectiveTransform,
                              parentShadowRadius);
-        child->updateSnapshot(true /* updateGeometry */);
-        child->updateChildrenSnapshots(true /* updateGeometry */);
     }
 }
 
 bool Layer::reparent(const sp<IBinder>& newParentHandle) {
     sp<Layer> newParent;
     if (newParentHandle != nullptr) {
-        newParent = fromHandle(newParentHandle).promote();
+        newParent = LayerHandle::getLayer(newParentHandle);
         if (newParent == nullptr) {
             ALOGE("Unable to promote Layer handle");
             return false;
@@ -1964,7 +1939,8 @@ void Layer::commitChildList() {
 
 void Layer::setInputInfo(const WindowInfo& info) {
     mDrawingState.inputInfo = info;
-    mDrawingState.touchableRegionCrop = fromHandle(info.touchableRegionCropHandle.promote());
+    mDrawingState.touchableRegionCrop =
+            LayerHandle::getLayer(info.touchableRegionCropHandle.promote());
     mDrawingState.modified = true;
     mFlinger->mUpdateInputInfo = true;
     setTransactionFlags(eTransactionNeeded);
@@ -2609,23 +2585,6 @@ void Layer::setClonedChild(const sp<Layer>& clonedChild) {
     mClonedChild = clonedChild;
     mHadClonedChild = true;
     mFlinger->mNumClones++;
-}
-
-const String16 Layer::Handle::kDescriptor = String16("android.Layer.Handle");
-
-wp<Layer> Layer::fromHandle(const sp<IBinder>& handleBinder) {
-    if (handleBinder == nullptr) {
-        return nullptr;
-    }
-
-    BBinder* b = handleBinder->localBinder();
-    if (b == nullptr || b->getInterfaceDescriptor() != Handle::kDescriptor) {
-        return nullptr;
-    }
-
-    // We can safely cast this binder since its local and we verified its interface descriptor.
-    sp<Handle> handle = sp<Handle>::cast(handleBinder);
-    return handle->owner;
 }
 
 bool Layer::setDropInputMode(gui::DropInputMode mode) {
