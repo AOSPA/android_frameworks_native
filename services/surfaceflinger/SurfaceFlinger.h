@@ -69,7 +69,7 @@
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
-#include "Scheduler/RefreshRateConfigs.h"
+#include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/RefreshRateStats.h"
 #include "Scheduler/Scheduler.h"
 #include "Scheduler/VsyncModulator.h"
@@ -464,7 +464,7 @@ private:
               typename Handler = VsyncModulator::VsyncConfigOpt (VsyncModulator::*)(Args...)>
     void modulateVsync(Handler handler, Args... args) {
         if (const auto config = (*mVsyncModulator.*handler)(args...)) {
-            const auto vsyncPeriod = mScheduler->getVsyncPeriodFromRefreshRateConfigs();
+            const auto vsyncPeriod = mScheduler->getVsyncPeriodFromRefreshRateSelector();
             setVsyncConfig(*config, vsyncPeriod);
         }
     }
@@ -551,17 +551,8 @@ private:
     status_t addTunnelModeEnabledListener(const sp<gui::ITunnelModeEnabledListener>& listener);
     status_t removeTunnelModeEnabledListener(const sp<gui::ITunnelModeEnabledListener>& listener);
     status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
-                                        ui::DisplayModeId displayModeId, bool allowGroupSwitching,
-                                        float primaryRefreshRateMin, float primaryRefreshRateMax,
-                                        float appRequestRefreshRateMin,
-                                        float appRequestRefreshRateMax);
-    status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
-                                        ui::DisplayModeId* outDefaultMode,
-                                        bool* outAllowGroupSwitching,
-                                        float* outPrimaryRefreshRateMin,
-                                        float* outPrimaryRefreshRateMax,
-                                        float* outAppRequestRefreshRateMin,
-                                        float* outAppRequestRefreshRateMax);
+                                        const gui::DisplayModeSpecs&);
+    status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, gui::DisplayModeSpecs*);
     status_t getDisplayBrightnessSupport(const sp<IBinder>& displayToken, bool* outSupport) const;
     status_t setDisplayBrightness(const sp<IBinder>& displayToken,
                                   const gui::DisplayBrightness& brightness);
@@ -633,7 +624,7 @@ private:
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
 
-    using KernelIdleTimerController = scheduler::RefreshRateConfigs::KernelIdleTimerController;
+    using KernelIdleTimerController = scheduler::RefreshRateSelector::KernelIdleTimerController;
 
     // Get the controller and timeout that will help decide how the kernel idle timer will be
     // configured and what value to use as the timeout.
@@ -672,8 +663,8 @@ private:
     std::optional<ftl::NonNull<DisplayModePtr>> getPreferredDisplayMode(
             PhysicalDisplayId, DisplayModeId defaultModeId) const REQUIRES(mStateLock);
 
-    status_t setDesiredDisplayModeSpecsInternal(const sp<DisplayDevice>&,
-                                                const scheduler::RefreshRateConfigs::PolicyVariant&)
+    status_t setDesiredDisplayModeSpecsInternal(
+            const sp<DisplayDevice>&, const scheduler::RefreshRateSelector::PolicyVariant&)
             EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
 
     void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
@@ -1109,7 +1100,6 @@ private:
 
     // constant members (no synchronization needed for access)
     const nsecs_t mBootTime = systemTime();
-    bool mGpuToCpuSupported = false;
     bool mIsUserBuild = true;
 
     // Can only accessed from the main thread, these members
@@ -1248,6 +1238,7 @@ private:
     ui::Dataspace mColorSpaceAgnosticDataspace;
     float mDimmingRatio = -1.f;
 
+    std::unique_ptr<renderengine::RenderEngine> mRenderEngine;
     std::unique_ptr<compositionengine::CompositionEngine> mCompositionEngine;
     // mMaxRenderTargetSize is only set once in init() so it doesn't need to be protected by
     // any mutex.
@@ -1450,11 +1441,8 @@ public:
             const sp<gui::ITunnelModeEnabledListener>& listener) override;
     binder::Status removeTunnelModeEnabledListener(
             const sp<gui::ITunnelModeEnabledListener>& listener) override;
-    binder::Status setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, int32_t defaultMode,
-                                              bool allowGroupSwitching, float primaryRefreshRateMin,
-                                              float primaryRefreshRateMax,
-                                              float appRequestRefreshRateMin,
-                                              float appRequestRefreshRateMax) override;
+    binder::Status setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                              const gui::DisplayModeSpecs&) override;
     binder::Status getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
                                               gui::DisplayModeSpecs* outSpecs) override;
     binder::Status getDisplayBrightnessSupport(const sp<IBinder>& displayToken,

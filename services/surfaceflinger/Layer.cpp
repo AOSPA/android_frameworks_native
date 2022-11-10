@@ -196,7 +196,7 @@ Layer::Layer(const LayerCreationArgs& args)
     }
 
     mFrameTracker.setDisplayRefreshPeriod(
-            args.flinger->mScheduler->getVsyncPeriodFromRefreshRateConfigs());
+            args.flinger->mScheduler->getVsyncPeriodFromRefreshRateSelector());
 
     mOwnerUid = args.ownerUid;
     mOwnerPid = args.ownerPid;
@@ -239,11 +239,6 @@ Layer::~Layer() {
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->onDestroy(layerId);
     mFlinger->mFrameTracer->onDestroy(layerId);
-
-    sp<Client> c(mClientRef.promote());
-    if (c != 0) {
-        c->detachLayer(this);
-    }
 
     mFrameTracker.logAndResetStats(mName);
     mFlinger->onLayerDestroyed(this);
@@ -477,7 +472,7 @@ void Layer::prepareBasicGeometryCompositionState() {
     snapshot->geomLayerTransform = getTransform();
     snapshot->geomInverseLayerTransform = snapshot->geomLayerTransform.inverse();
     snapshot->transparentRegionHint = getActiveTransparentRegion(drawingState);
-
+    snapshot->blurRegionTransform = getActiveTransform(drawingState).inverse();
     snapshot->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     snapshot->alpha = alpha;
     snapshot->backgroundBlurRadius = drawingState.backgroundBlurRadius;
@@ -1129,7 +1124,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
 
     // We return whether this layer ot its children has a vote. We ignore ExactOrMultiple votes for
     // the same reason we are allowing touch boost for those layers. See
-    // RefreshRateConfigs::getBestRefreshRate for more details.
+    // RefreshRateSelector::rankRefreshRates for details.
     const auto layerVotedWithDefaultCompatibility =
             frameRate.rate.isValid() && frameRate.type == FrameRateCompatibility::Default;
     const auto layerVotedWithNoVote = frameRate.type == FrameRateCompatibility::NoVote;
@@ -3598,7 +3593,7 @@ void Layer::onPostComposition(const DisplayDevice* display,
     }
 
     if (display) {
-        const Fps refreshRate = display->refreshRateConfigs().getActiveModePtr()->getFps();
+        const Fps refreshRate = display->refreshRateSelector().getActiveModePtr()->getFps();
         const std::optional<Fps> renderRate =
                 mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
 
