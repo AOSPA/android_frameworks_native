@@ -38,6 +38,26 @@ using android::base::StringPrintf;
 
 namespace android {
 
+/**
+ * Determines if the identifiers passed are a sub-devices. Sub-devices are physical devices
+ * that expose multiple input device paths such a keyboard that also has a touchpad input.
+ * These are separate devices with unique descriptors in EventHub, but InputReader should
+ * create a single InputDevice for them.
+ * Sub-devices are detected by the following criteria:
+ * 1. The vendor, product, bus, version, and unique id match
+ * 2. The location matches. The location is used to distinguish a single device with multiple
+ *    inputs versus the same device plugged into multiple ports.
+ */
+
+static bool isSubDevice(const InputDeviceIdentifier& identifier1,
+                        const InputDeviceIdentifier& identifier2) {
+    return (identifier1.vendor == identifier2.vendor &&
+            identifier1.product == identifier2.product && identifier1.bus == identifier2.bus &&
+            identifier1.version == identifier2.version &&
+            identifier1.uniqueId == identifier2.uniqueId &&
+            identifier1.location == identifier2.location);
+}
+
 // --- InputReader ---
 
 InputReader::InputReader(std::shared_ptr<EventHubInterface> eventHub,
@@ -196,9 +216,9 @@ void InputReader::addDeviceLocked(nsecs_t when, int32_t eventHubId) {
               "(ignored non-input device)",
               device->getId(), eventHubId, identifier.name.c_str(), identifier.descriptor.c_str());
     } else {
-        ALOGI("Device added: id=%d, eventHubId=%d, name='%s', descriptor='%s',sources=0x%08x",
+        ALOGI("Device added: id=%d, eventHubId=%d, name='%s', descriptor='%s',sources=%s",
               device->getId(), eventHubId, identifier.name.c_str(), identifier.descriptor.c_str(),
-              device->getSources());
+              inputEventSourceToString(device->getSources()).c_str());
     }
 
     mDevices.emplace(eventHubId, device);
@@ -250,9 +270,10 @@ void InputReader::removeDeviceLocked(nsecs_t when, int32_t eventHubId) {
               device->getId(), eventHubId, device->getName().c_str(),
               device->getDescriptor().c_str());
     } else {
-        ALOGI("Device removed: id=%d, eventHubId=%d, name='%s', descriptor='%s', sources=0x%08x",
+        ALOGI("Device removed: id=%d, eventHubId=%d, name='%s', descriptor='%s', sources=%s",
               device->getId(), eventHubId, device->getName().c_str(),
-              device->getDescriptor().c_str(), device->getSources());
+              device->getDescriptor().c_str(),
+              inputEventSourceToString(device->getSources()).c_str());
     }
 
     device->removeEventHubDevice(eventHubId);
@@ -270,8 +291,9 @@ void InputReader::removeDeviceLocked(nsecs_t when, int32_t eventHubId) {
 std::shared_ptr<InputDevice> InputReader::createDeviceLocked(
         int32_t eventHubId, const InputDeviceIdentifier& identifier) {
     auto deviceIt = std::find_if(mDevices.begin(), mDevices.end(), [identifier](auto& devicePair) {
-        return devicePair.second->getDescriptor().size() && identifier.descriptor.size() &&
-                devicePair.second->getDescriptor() == identifier.descriptor;
+        const InputDeviceIdentifier identifier2 =
+                devicePair.second->getDeviceInfo().getIdentifier();
+        return isSubDevice(identifier, identifier2);
     });
 
     std::shared_ptr<InputDevice> device;

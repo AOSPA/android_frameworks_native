@@ -515,7 +515,7 @@ protected:
     std::unique_ptr<InputDispatcher> mDispatcher;
 
     void SetUp() override {
-        mFakePolicy = new FakeInputDispatcherPolicy();
+        mFakePolicy = sp<FakeInputDispatcherPolicy>::make();
         mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy, STALE_EVENT_TIMEOUT);
         mDispatcher->setInputDispatchMode(/*enabled*/ true, /*frozen*/ false);
         // Start InputDispatcher thread
@@ -752,7 +752,7 @@ class FakeApplicationHandle : public InputApplicationHandle {
 public:
     FakeApplicationHandle() {
         mInfo.name = "Fake Application";
-        mInfo.token = new BBinder();
+        mInfo.token = sp<BBinder>::make();
         mInfo.dispatchingTimeoutMillis =
                 std::chrono::duration_cast<std::chrono::milliseconds>(DISPATCHING_TIMEOUT).count();
     }
@@ -1031,8 +1031,8 @@ public:
             const std::shared_ptr<InputApplicationHandle>& inputApplicationHandle,
             const std::unique_ptr<InputDispatcher>& dispatcher, int32_t displayId) {
         sp<FakeWindowHandle> handle =
-                new FakeWindowHandle(inputApplicationHandle, dispatcher, mInfo.name + "(Mirror)",
-                                     displayId, mInfo.token);
+                sp<FakeWindowHandle>::make(inputApplicationHandle, dispatcher,
+                                           mInfo.name + "(Mirror)", displayId, mInfo.token);
         return handle;
     }
 
@@ -1566,8 +1566,8 @@ static NotifyPointerCaptureChangedArgs generatePointerCaptureChangedArgs(
 TEST_F(InputDispatcherTest, WhenInputChannelBreaks_PolicyIsNotified) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Window that breaks its input channel",
-                                 ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher,
+                                       "Window that breaks its input channel", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
@@ -1578,8 +1578,8 @@ TEST_F(InputDispatcherTest, WhenInputChannelBreaks_PolicyIsNotified) {
 
 TEST_F(InputDispatcherTest, SetInputWindow_SingleWindowTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -1592,8 +1592,8 @@ TEST_F(InputDispatcherTest, SetInputWindow_SingleWindowTouch) {
 
 TEST_F(InputDispatcherTest, WhenDisplayNotSpecified_InjectMotionToDefaultDisplay) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     // Inject a MotionEvent to an unknown display.
@@ -1612,8 +1612,8 @@ TEST_F(InputDispatcherTest, WhenDisplayNotSpecified_InjectMotionToDefaultDisplay
  */
 TEST_F(InputDispatcherTest, SetInputWindowOnceWithSingleTouchWindow) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFrame(Rect(0, 0, 100, 100));
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -1631,8 +1631,8 @@ TEST_F(InputDispatcherTest, SetInputWindowOnceWithSingleTouchWindow) {
  */
 TEST_F(InputDispatcherTest, SetInputWindowTwice_SingleWindowTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFrame(Rect(0, 0, 100, 100));
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -1650,9 +1650,9 @@ TEST_F(InputDispatcherTest, SetInputWindowTwice_SingleWindowTouch) {
 TEST_F(InputDispatcherTest, SetInputWindow_MultiWindowsTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowTop =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> windowSecond =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {windowTop, windowSecond}}});
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -1674,10 +1674,10 @@ TEST_F(InputDispatcherTest, SetInputWindow_MultiWindowsTouch) {
 TEST_F(InputDispatcherTest, WhenForegroundWindowDisappears_WallpaperTouchIsCanceled) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> foregroundWindow =
-            new FakeWindowHandle(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
     foregroundWindow->setDupTouchToWallpaper(true);
     sp<FakeWindowHandle> wallpaperWindow =
-            new FakeWindowHandle(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
     wallpaperWindow->setIsWallpaper(true);
     constexpr int expectedWallpaperFlags =
             AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED | AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
@@ -1718,10 +1718,10 @@ TEST_F(InputDispatcherTest, WhenForegroundWindowDisappears_WallpaperTouchIsCance
 TEST_F(InputDispatcherTest, WhenWallpaperDisappears_NoCrash) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> foregroundWindow =
-            new FakeWindowHandle(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
     foregroundWindow->setDupTouchToWallpaper(true);
     sp<FakeWindowHandle> wallpaperWindow =
-            new FakeWindowHandle(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
     wallpaperWindow->setIsWallpaper(true);
     constexpr int expectedWallpaperFlags =
             AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED | AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
@@ -1762,11 +1762,11 @@ TEST_F(InputDispatcherTest, WhenWallpaperDisappears_NoCrash) {
 TEST_F(InputDispatcherTest, WallpaperWindow_ReceivesMultiTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     window->setDupTouchToWallpaper(true);
 
     sp<FakeWindowHandle> wallpaperWindow =
-            new FakeWindowHandle(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
     wallpaperWindow->setIsWallpaper(true);
     constexpr int expectedWallpaperFlags =
             AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED | AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
@@ -1817,17 +1817,17 @@ TEST_F(InputDispatcherTest, WallpaperWindow_ReceivesMultiTouch) {
 TEST_F(InputDispatcherTest, TwoWindows_SplitWallpaperTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> leftWindow =
-            new FakeWindowHandle(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
     leftWindow->setFrame(Rect(0, 0, 200, 200));
     leftWindow->setDupTouchToWallpaper(true);
 
     sp<FakeWindowHandle> rightWindow =
-            new FakeWindowHandle(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
     rightWindow->setFrame(Rect(200, 0, 400, 200));
     rightWindow->setDupTouchToWallpaper(true);
 
     sp<FakeWindowHandle> wallpaperWindow =
-            new FakeWindowHandle(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
     wallpaperWindow->setFrame(Rect(0, 0, 400, 200));
     wallpaperWindow->setIsWallpaper(true);
     constexpr int expectedWallpaperFlags =
@@ -1904,7 +1904,7 @@ TEST_F(InputDispatcherTest, TwoWindows_SplitWallpaperTouch) {
 TEST_F(InputDispatcherTest, SplitWorksWhenEmptyAreaIsTouched) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Window", DISPLAY_ID);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", DISPLAY_ID);
 
     mDispatcher->setInputWindows({{DISPLAY_ID, {window}}});
     NotifyMotionArgs args;
@@ -1928,11 +1928,11 @@ TEST_F(InputDispatcherTest, SplitWorksWhenEmptyAreaIsTouched) {
 TEST_F(InputDispatcherTest, SplitWorksWhenNonTouchableWindowIsTouched) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window1 =
-            new FakeWindowHandle(application, mDispatcher, "Window1", DISPLAY_ID);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
     window1->setTouchableRegion(Region{{0, 0, 100, 100}});
     window1->setTouchable(false);
     sp<FakeWindowHandle> window2 =
-            new FakeWindowHandle(application, mDispatcher, "Window2", DISPLAY_ID);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window2", DISPLAY_ID);
     window2->setTouchableRegion(Region{{100, 0, 200, 100}});
 
     mDispatcher->setInputWindows({{DISPLAY_ID, {window1, window2}}});
@@ -1958,10 +1958,10 @@ TEST_F(InputDispatcherTest, SplitWorksWhenNonTouchableWindowIsTouched) {
 TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window1 =
-            new FakeWindowHandle(application, mDispatcher, "Window1", DISPLAY_ID);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
     window1->setTouchableRegion(Region{{0, 0, 100, 100}});
     sp<FakeWindowHandle> window2 =
-            new FakeWindowHandle(application, mDispatcher, "Window2", DISPLAY_ID);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window2", DISPLAY_ID);
     window2->setTouchableRegion(Region{{100, 0, 200, 100}});
 
     mDispatcher->setInputWindows({{DISPLAY_ID, {window1, window2}}});
@@ -2025,10 +2025,10 @@ TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
 TEST_F(InputDispatcherTest, HoverMoveEnterMouseClickAndHoverMoveExit) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowLeft =
-            new FakeWindowHandle(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
     windowLeft->setFrame(Rect(0, 0, 600, 800));
     sp<FakeWindowHandle> windowRight =
-            new FakeWindowHandle(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
     windowRight->setFrame(Rect(600, 0, 1200, 800));
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -2134,7 +2134,7 @@ TEST_F(InputDispatcherTest, HoverMoveEnterMouseClickAndHoverMoveExit) {
 TEST_F(InputDispatcherTest, HoverEnterMouseClickAndHoverExit) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
     window->setFrame(Rect(0, 0, 1200, 800));
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -2215,10 +2215,10 @@ TEST_F(InputDispatcherTest, DispatchMouseEventsUnderCursor) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> windowLeft =
-            new FakeWindowHandle(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Left", ADISPLAY_ID_DEFAULT);
     windowLeft->setFrame(Rect(0, 0, 600, 800));
     sp<FakeWindowHandle> windowRight =
-            new FakeWindowHandle(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Right", ADISPLAY_ID_DEFAULT);
     windowRight->setFrame(Rect(600, 0, 1200, 800));
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -2236,8 +2236,8 @@ TEST_F(InputDispatcherTest, DispatchMouseEventsUnderCursor) {
 
 TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsKeyStream) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFocusable(true);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -2261,8 +2261,8 @@ TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsKeyStream) {
 
 TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsMotionStream) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
@@ -2284,8 +2284,8 @@ TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsMotionStream) {
 
 TEST_F(InputDispatcherTest, InterceptKeyByPolicy) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFocusable(true);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -2306,8 +2306,8 @@ TEST_F(InputDispatcherTest, InterceptKeyByPolicy) {
 
 TEST_F(InputDispatcherTest, InterceptKeyIfKeyUp) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFocusable(true);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -2334,15 +2334,17 @@ TEST_F(InputDispatcherTest, InterceptKeyIfKeyUp) {
 TEST_F(InputDispatcherTest, ActionOutsideSentOnlyWhenAWindowIsTouched) {
     // There are three windows that do not overlap. `window` wants to WATCH_OUTSIDE_TOUCH.
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "First Window", ADISPLAY_ID_DEFAULT);
     window->setWatchOutsideTouch(true);
     window->setFrame(Rect{0, 0, 100, 100});
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
     secondWindow->setFrame(Rect{100, 100, 200, 200});
     sp<FakeWindowHandle> thirdWindow =
-            new FakeWindowHandle(application, mDispatcher, "Third Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Third Window",
+                                       ADISPLAY_ID_DEFAULT);
     thirdWindow->setFrame(Rect{200, 200, 300, 300});
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window, secondWindow, thirdWindow}}});
 
@@ -2371,6 +2373,35 @@ TEST_F(InputDispatcherTest, ActionOutsideSentOnlyWhenAWindowIsTouched) {
     window->assertNoEvents();
     secondWindow->consumeMotionMove();
     thirdWindow->consumeMotionDown();
+}
+
+TEST_F(InputDispatcherTest, OnWindowInfosChanged_RemoveAllWindowsOnDisplay) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+    window->setFocusable(true);
+
+    mDispatcher->onWindowInfosChanged({*window->getInfo()}, {});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    NotifyKeyArgs keyDown = generateKeyArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT);
+    NotifyKeyArgs keyUp = generateKeyArgs(AKEY_EVENT_ACTION_UP, ADISPLAY_ID_DEFAULT);
+    mDispatcher->notifyKey(&keyDown);
+    mDispatcher->notifyKey(&keyUp);
+
+    window->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+    window->consumeKeyUp(ADISPLAY_ID_DEFAULT);
+
+    // All windows are removed from the display. Ensure that we can no longer dispatch to it.
+    mDispatcher->onWindowInfosChanged({}, {});
+
+    window->consumeFocusEvent(false);
+
+    mDispatcher->notifyKey(&keyDown);
+    mDispatcher->notifyKey(&keyUp);
+    window->assertNoEvents();
 }
 
 /**
@@ -2415,13 +2446,14 @@ public:
 
         // Add two windows to the display. Their frames are represented in the display space.
         sp<FakeWindowHandle> firstWindow =
-                new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                           ADISPLAY_ID_DEFAULT);
         firstWindow->setFrame(Rect(0, 0, 100, 200), displayTransform);
         addWindow(firstWindow);
 
         sp<FakeWindowHandle> secondWindow =
-                new FakeWindowHandle(application, mDispatcher, "Second Window",
-                                     ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                           ADISPLAY_ID_DEFAULT);
         secondWindow->setFrame(Rect(100, 200, 200, 400), displayTransform);
         addWindow(secondWindow);
         return {std::move(firstWindow), std::move(secondWindow)};
@@ -2522,9 +2554,11 @@ TEST_P(TransferTouchFixture, TransferTouch_OnePointer) {
 
     // Create a couple of windows
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                       ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
 
     // Add the windows to the dispatcher
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {firstWindow, secondWindow}}});
@@ -2573,13 +2607,13 @@ TEST_P(TransferTouchFixture, TransferTouch_MultipleWindowsWithSpy) {
 
     // Create a couple of windows + a spy window
     sp<FakeWindowHandle> spyWindow =
-            new FakeWindowHandle(application, mDispatcher, "Spy", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Spy", ADISPLAY_ID_DEFAULT);
     spyWindow->setTrustedOverlay(true);
     spyWindow->setSpy(true);
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
 
     // Add the windows to the dispatcher
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {spyWindow, firstWindow, secondWindow}}});
@@ -2620,10 +2654,12 @@ TEST_P(TransferTouchFixture, TransferTouch_TwoPointersNonSplitTouch) {
 
     // Create a couple of windows
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                       ADISPLAY_ID_DEFAULT);
     firstWindow->setPreventSplitting(true);
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
     secondWindow->setPreventSplitting(true);
 
     // Add the windows to the dispatcher
@@ -2695,11 +2731,13 @@ TEST_F(InputDispatcherTest, TransferTouchFocus_TwoPointersSplitTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                       ADISPLAY_ID_DEFAULT);
     firstWindow->setFrame(Rect(0, 0, 600, 400));
 
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
     secondWindow->setFrame(Rect(0, 400, 600, 800));
 
     // Add the windows to the dispatcher
@@ -2759,11 +2797,13 @@ TEST_F(InputDispatcherTest, TransferTouch_TwoPointersSplitTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                       ADISPLAY_ID_DEFAULT);
     firstWindow->setFrame(Rect(0, 0, 600, 400));
 
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
     secondWindow->setFrame(Rect(0, 400, 600, 800));
 
     // Add the windows to the dispatcher
@@ -2824,10 +2864,10 @@ TEST_F(InputDispatcherTest, TransferTouch_TwoPointersSplitTouch) {
 TEST_F(InputDispatcherTest, TransferTouchFocus_CloneSurface) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> firstWindowInPrimary =
-            new FakeWindowHandle(application, mDispatcher, "D_1_W1", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "D_1_W1", ADISPLAY_ID_DEFAULT);
     firstWindowInPrimary->setFrame(Rect(0, 0, 100, 100));
     sp<FakeWindowHandle> secondWindowInPrimary =
-            new FakeWindowHandle(application, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
     secondWindowInPrimary->setFrame(Rect(100, 0, 200, 100));
 
     sp<FakeWindowHandle> mirrorWindowInPrimary =
@@ -2883,10 +2923,10 @@ TEST_F(InputDispatcherTest, TransferTouchFocus_CloneSurface) {
 TEST_F(InputDispatcherTest, TransferTouch_CloneSurface) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> firstWindowInPrimary =
-            new FakeWindowHandle(application, mDispatcher, "D_1_W1", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "D_1_W1", ADISPLAY_ID_DEFAULT);
     firstWindowInPrimary->setFrame(Rect(0, 0, 100, 100));
     sp<FakeWindowHandle> secondWindowInPrimary =
-            new FakeWindowHandle(application, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
     secondWindowInPrimary->setFrame(Rect(100, 0, 200, 100));
 
     sp<FakeWindowHandle> mirrorWindowInPrimary =
@@ -2938,8 +2978,8 @@ TEST_F(InputDispatcherTest, TransferTouch_CloneSurface) {
 
 TEST_F(InputDispatcherTest, FocusedWindow_ReceivesFocusEventAndKeyEvent) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     window->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
@@ -2956,8 +2996,8 @@ TEST_F(InputDispatcherTest, FocusedWindow_ReceivesFocusEventAndKeyEvent) {
 
 TEST_F(InputDispatcherTest, UnfocusedWindow_DoesNotReceiveFocusEventOrKeyEvent) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
@@ -2971,8 +3011,8 @@ TEST_F(InputDispatcherTest, UnfocusedWindow_DoesNotReceiveFocusEventOrKeyEvent) 
 // If a window is touchable, but does not have focus, it should receive motion events, but not keys
 TEST_F(InputDispatcherTest, UnfocusedWindow_ReceivesMotionsButNotKeys) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
@@ -2994,11 +3034,13 @@ TEST_F(InputDispatcherTest, PointerCancel_SendCancelWhenSplitTouch) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> firstWindow =
-            new FakeWindowHandle(application, mDispatcher, "First Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "First Window",
+                                       ADISPLAY_ID_DEFAULT);
     firstWindow->setFrame(Rect(0, 0, 600, 400));
 
     sp<FakeWindowHandle> secondWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second Window",
+                                       ADISPLAY_ID_DEFAULT);
     secondWindow->setFrame(Rect(0, 400, 600, 800));
 
     // Add the windows to the dispatcher
@@ -3049,7 +3091,7 @@ TEST_F(InputDispatcherTest, SendTimeline_DoesNotCrashDispatcher) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     std::array<nsecs_t, GraphicsTimeline::SIZE> graphicsTimeline;
     graphicsTimeline[GraphicsTimeline::GPU_COMPLETED_TIME] = 2;
@@ -3139,7 +3181,7 @@ using InputDispatcherMonitorTest = InputDispatcherTest;
 TEST_F(InputDispatcherMonitorTest, MonitorTouchIsCanceledWhenForegroundWindowDisappears) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Foreground", ADISPLAY_ID_DEFAULT);
 
     FakeMonitorReceiver monitor = FakeMonitorReceiver(mDispatcher, "M_1", ADISPLAY_ID_DEFAULT);
 
@@ -3179,8 +3221,8 @@ TEST_F(InputDispatcherMonitorTest, MonitorTouchIsCanceledWhenForegroundWindowDis
 
 TEST_F(InputDispatcherMonitorTest, ReceivesMotionEvents) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
     FakeMonitorReceiver monitor = FakeMonitorReceiver(mDispatcher, "M_1", ADISPLAY_ID_DEFAULT);
@@ -3196,8 +3238,8 @@ TEST_F(InputDispatcherMonitorTest, MonitorCannotPilferPointers) {
     FakeMonitorReceiver monitor = FakeMonitorReceiver(mDispatcher, "M_1", ADISPLAY_ID_DEFAULT);
 
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -3221,8 +3263,8 @@ TEST_F(InputDispatcherMonitorTest, MonitorCannotPilferPointers) {
 
 TEST_F(InputDispatcherMonitorTest, NoWindowTransform) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
     window->setWindowOffset(20, 40);
     window->setWindowTransform(0, 1, -1, 0);
@@ -3250,8 +3292,8 @@ TEST_F(InputDispatcherMonitorTest, InjectionFailsWithNoWindow) {
 
 TEST_F(InputDispatcherTest, TestMoveEvent) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
 
@@ -3281,8 +3323,8 @@ TEST_F(InputDispatcherTest, TestMoveEvent) {
  */
 TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
     const WindowInfo& windowInfo = *window->getInfo();
 
     // Set focused application.
@@ -3327,8 +3369,8 @@ TEST_F(InputDispatcherTest, TouchModeState_IsSentToApps) {
 
 TEST_F(InputDispatcherTest, VerifyInputEvent_KeyEvent) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
     window->setFocusable(true);
@@ -3366,8 +3408,8 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_KeyEvent) {
 
 TEST_F(InputDispatcherTest, VerifyInputEvent_MotionEvent) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
 
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
@@ -3471,9 +3513,9 @@ TEST_F(InputDispatcherTest, GeneratedHmac_ChangesWhenFieldsChange) {
 TEST_F(InputDispatcherTest, SetFocusedWindow) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowTop =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> windowSecond =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     // Top window is also focusable but is not granted focus.
@@ -3494,7 +3536,7 @@ TEST_F(InputDispatcherTest, SetFocusedWindow) {
 TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestInvalidChannel) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     window->setFocusable(true);
@@ -3514,7 +3556,7 @@ TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestInvalidChannel) {
 TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestNoFocusableWindow) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
     window->setFocusable(false);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
@@ -3532,9 +3574,9 @@ TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestNoFocusableWindow) {
 TEST_F(InputDispatcherTest, SetFocusedWindow_CheckFocusedToken) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowTop =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> windowSecond =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     windowTop->setFocusable(true);
@@ -3557,9 +3599,9 @@ TEST_F(InputDispatcherTest, SetFocusedWindow_CheckFocusedToken) {
 TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestFocusTokenNotFocused) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowTop =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> windowSecond =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     windowTop->setFocusable(true);
@@ -3578,10 +3620,10 @@ TEST_F(InputDispatcherTest, SetFocusedWindow_DropRequestFocusTokenNotFocused) {
 TEST_F(InputDispatcherTest, SetFocusedWindow_DeferInvisibleWindow) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
     sp<FakeWindowHandle> previousFocusedWindow =
-            new FakeWindowHandle(application, mDispatcher, "previousFocusedWindow",
-                                 ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "previousFocusedWindow",
+                                       ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     window->setFocusable(true);
@@ -3616,7 +3658,7 @@ TEST_F(InputDispatcherTest, SetFocusedWindow_DeferInvisibleWindow) {
 TEST_F(InputDispatcherTest, DisplayRemoved) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "window", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "window", ADISPLAY_ID_DEFAULT);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     // window is granted focus.
@@ -3661,7 +3703,7 @@ TEST_F(InputDispatcherTest, SlipperyWindow_SetsFlagPartiallyObscured) {
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
 
     sp<FakeWindowHandle> slipperyExitWindow =
-            new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
     slipperyExitWindow->setSlippery(true);
     // Make sure this one overlaps the bottom window
     slipperyExitWindow->setFrame(Rect(25, 25, 75, 75));
@@ -3670,7 +3712,7 @@ TEST_F(InputDispatcherTest, SlipperyWindow_SetsFlagPartiallyObscured) {
     slipperyExitWindow->setOwnerInfo(SLIPPERY_PID, SLIPPERY_UID);
 
     sp<FakeWindowHandle> slipperyEnterWindow =
-            new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
     slipperyExitWindow->setFrame(Rect(0, 0, 100, 100));
 
     mDispatcher->setInputWindows(
@@ -3704,7 +3746,7 @@ protected:
     sp<FakeWindowHandle> mWindow;
 
     virtual void SetUp() override {
-        mFakePolicy = new FakeInputDispatcherPolicy();
+        mFakePolicy = sp<FakeInputDispatcherPolicy>::make();
         mFakePolicy->setKeyRepeatConfiguration(KEY_REPEAT_TIMEOUT, KEY_REPEAT_DELAY);
         mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy);
         mDispatcher->setInputDispatchMode(/*enabled*/ true, /*frozen*/ false);
@@ -3715,7 +3757,7 @@ protected:
 
     void setUpWindow() {
         mApp = std::make_shared<FakeApplicationHandle>();
-        mWindow = new FakeWindowHandle(mApp, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
 
         mWindow->setFocusable(true);
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow}}});
@@ -3852,7 +3894,7 @@ public:
 
         application1 = std::make_shared<FakeApplicationHandle>();
         windowInPrimary =
-                new FakeWindowHandle(application1, mDispatcher, "D_1", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application1, mDispatcher, "D_1", ADISPLAY_ID_DEFAULT);
 
         // Set focus window for primary display, but focused display would be second one.
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application1);
@@ -3863,7 +3905,7 @@ public:
 
         application2 = std::make_shared<FakeApplicationHandle>();
         windowInSecondary =
-                new FakeWindowHandle(application2, mDispatcher, "D_2", SECOND_DISPLAY_ID);
+                sp<FakeWindowHandle>::make(application2, mDispatcher, "D_2", SECOND_DISPLAY_ID);
         // Set focus to second display window.
         // Set focus display to second one.
         mDispatcher->setFocusedDisplay(SECOND_DISPLAY_ID);
@@ -3992,7 +4034,7 @@ TEST_F(InputDispatcherFocusOnTwoDisplaysTest, MonitorKeyEvent_MultiDisplay) {
 
 TEST_F(InputDispatcherFocusOnTwoDisplaysTest, CanFocusWindowOnUnfocusedDisplay) {
     sp<FakeWindowHandle> secondWindowInPrimary =
-            new FakeWindowHandle(application1, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(application1, mDispatcher, "D_1_W2", ADISPLAY_ID_DEFAULT);
     secondWindowInPrimary->setFocusable(true);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {windowInPrimary, secondWindowInPrimary}}});
     setFocusedWindow(secondWindowInPrimary);
@@ -4161,8 +4203,8 @@ protected:
 
         std::shared_ptr<InputApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
-        mWindow =
-                new FakeWindowHandle(application, mDispatcher, "Test Window", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "Test Window",
+                                             ADISPLAY_ID_DEFAULT);
 
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
         mWindow->setFocusable(true);
@@ -4266,11 +4308,11 @@ class InputDispatcherOnPointerDownOutsideFocus : public InputDispatcherTest {
         std::shared_ptr<FakeApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
         mUnfocusedWindow =
-                new FakeWindowHandle(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
         mUnfocusedWindow->setFrame(Rect(0, 0, 30, 30));
 
         mFocusedWindow =
-                new FakeWindowHandle(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "Second", ADISPLAY_ID_DEFAULT);
         mFocusedWindow->setFrame(Rect(50, 50, 100, 100));
 
         // Set focused application.
@@ -4376,12 +4418,12 @@ class InputDispatcherMultiWindowSameTokenTests : public InputDispatcherTest {
 
         std::shared_ptr<FakeApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
-        mWindow1 = new FakeWindowHandle(application, mDispatcher, "Fake Window 1",
-                                        ADISPLAY_ID_DEFAULT);
+        mWindow1 = sp<FakeWindowHandle>::make(application, mDispatcher, "Fake Window 1",
+                                              ADISPLAY_ID_DEFAULT);
         mWindow1->setFrame(Rect(0, 0, 100, 100));
 
-        mWindow2 = new FakeWindowHandle(application, mDispatcher, "Fake Window 2",
-                                        ADISPLAY_ID_DEFAULT, mWindow1->getToken());
+        mWindow2 = sp<FakeWindowHandle>::make(application, mDispatcher, "Fake Window 2",
+                                              ADISPLAY_ID_DEFAULT, mWindow1->getToken());
         mWindow2->setFrame(Rect(100, 100, 200, 200));
 
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow1, mWindow2}}});
@@ -4563,8 +4605,8 @@ class InputDispatcherSingleWindowAnr : public InputDispatcherTest {
 
         mApplication = std::make_shared<FakeApplicationHandle>();
         mApplication->setDispatchingTimeout(20ms);
-        mWindow =
-                new FakeWindowHandle(mApplication, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(mApplication, mDispatcher, "TestWindow",
+                                             ADISPLAY_ID_DEFAULT);
         mWindow->setFrame(Rect(0, 0, 30, 30));
         mWindow->setDispatchingTimeout(30ms);
         mWindow->setFocusable(true);
@@ -4598,7 +4640,7 @@ protected:
 
     sp<FakeWindowHandle> addSpyWindow() {
         sp<FakeWindowHandle> spy =
-                new FakeWindowHandle(mApplication, mDispatcher, "Spy", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(mApplication, mDispatcher, "Spy", ADISPLAY_ID_DEFAULT);
         spy->setTrustedOverlay(true);
         spy->setFocusable(false);
         spy->setSpy(true);
@@ -4679,6 +4721,36 @@ TEST_F(InputDispatcherSingleWindowAnr, OnKeyDown_BasicAnr) {
 
 // We have a focused application, but no focused window
 TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_NoFocusedWindow) {
+    FocusRequest request;
+    request.token = nullptr;
+    request.windowName = "";
+    request.timestamp = systemTime(SYSTEM_TIME_MONOTONIC);
+    request.displayId = mWindow->getInfo()->displayId;
+    mDispatcher->setFocusedWindow(request);
+    mWindow->consumeFocusEvent(false);
+
+    // taps on the window work as normal
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               WINDOW_LOCATION));
+    ASSERT_NO_FATAL_FAILURE(mWindow->consumeMotionDown());
+    mDispatcher->waitForIdle();
+    mFakePolicy->assertNotifyAnrWasNotCalled();
+
+    // Once a focused event arrives, we get an ANR for this application
+    // We specify the injection timeout to be smaller than the application timeout, to ensure that
+    // injection times out (instead of failing).
+    const InputEventInjectionResult result =
+            injectKey(mDispatcher, AKEY_EVENT_ACTION_DOWN, 0 /* repeatCount */, ADISPLAY_ID_DEFAULT,
+                      InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
+    ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
+    const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
+    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
+    ASSERT_TRUE(mDispatcher->waitForIdle());
+}
+
+// We have a focused application, but we are waiting on the requested window to become focusable
+TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_PendingFocusedRequest) {
     mWindow->setFocusable(false);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow}}});
     mWindow->consumeFocusEvent(false);
@@ -4699,7 +4771,7 @@ TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_NoFocusedWindow) {
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
     const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
+    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
     ASSERT_TRUE(mDispatcher->waitForIdle());
 }
 
@@ -4749,11 +4821,10 @@ TEST_F(InputDispatcherSingleWindowAnr, NoFocusedWindow_DoesNotSendDuplicateAnr) 
             injectKey(mDispatcher, AKEY_EVENT_ACTION_DOWN, 0 /* repeatCount */, ADISPLAY_ID_DEFAULT,
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
-    const std::chrono::duration appTimeout =
-            mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(appTimeout, mApplication);
+    const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
+    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
 
-    std::this_thread::sleep_for(appTimeout);
+    std::this_thread::sleep_for(timeout);
     // ANR should not be raised again. It is up to policy to do that if it desires.
     mFakePolicy->assertNotifyAnrWasNotCalled();
 
@@ -4774,8 +4845,8 @@ TEST_F(InputDispatcherSingleWindowAnr, NoFocusedWindow_DropsFocusedEvents) {
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
 
-    const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
+    const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
+    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
 
     // Future focused events get dropped right away
     ASSERT_EQ(InputEventInjectionResult::FAILED, injectKeyDown(mDispatcher));
@@ -5044,14 +5115,14 @@ class InputDispatcherMultiWindowAnr : public InputDispatcherTest {
 
         mApplication = std::make_shared<FakeApplicationHandle>();
         mApplication->setDispatchingTimeout(10ms);
-        mUnfocusedWindow =
-                new FakeWindowHandle(mApplication, mDispatcher, "Unfocused", ADISPLAY_ID_DEFAULT);
+        mUnfocusedWindow = sp<FakeWindowHandle>::make(mApplication, mDispatcher, "Unfocused",
+                                                      ADISPLAY_ID_DEFAULT);
         mUnfocusedWindow->setFrame(Rect(0, 0, 30, 30));
         // Adding FLAG_WATCH_OUTSIDE_TOUCH to receive ACTION_OUTSIDE when another window is tapped
         mUnfocusedWindow->setWatchOutsideTouch(true);
 
-        mFocusedWindow =
-                new FakeWindowHandle(mApplication, mDispatcher, "Focused", ADISPLAY_ID_DEFAULT);
+        mFocusedWindow = sp<FakeWindowHandle>::make(mApplication, mDispatcher, "Focused",
+                                                    ADISPLAY_ID_DEFAULT);
         mFocusedWindow->setDispatchingTimeout(30ms);
         mFocusedWindow->setFrame(Rect(50, 50, 100, 100));
 
@@ -5418,16 +5489,17 @@ class InputDispatcherMultiWindowOcclusionTests : public InputDispatcherTest {
         InputDispatcherTest::SetUp();
 
         mApplication = std::make_shared<FakeApplicationHandle>();
-        mNoInputWindow = new FakeWindowHandle(mApplication, mDispatcher,
-                                              "Window without input channel", ADISPLAY_ID_DEFAULT,
-                                              std::make_optional<sp<IBinder>>(nullptr) /*token*/);
+        mNoInputWindow =
+                sp<FakeWindowHandle>::make(mApplication, mDispatcher,
+                                           "Window without input channel", ADISPLAY_ID_DEFAULT,
+                                           std::make_optional<sp<IBinder>>(nullptr) /*token*/);
 
         mNoInputWindow->setNoInputChannel(true);
         mNoInputWindow->setFrame(Rect(0, 0, 100, 100));
         // It's perfectly valid for this window to not have an associated input channel
 
-        mBottomWindow = new FakeWindowHandle(mApplication, mDispatcher, "Bottom window",
-                                             ADISPLAY_ID_DEFAULT);
+        mBottomWindow = sp<FakeWindowHandle>::make(mApplication, mDispatcher, "Bottom window",
+                                                   ADISPLAY_ID_DEFAULT);
         mBottomWindow->setFrame(Rect(0, 0, 100, 100));
 
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mNoInputWindow, mBottomWindow}}});
@@ -5460,9 +5532,9 @@ TEST_F(InputDispatcherMultiWindowOcclusionTests, NoInputChannelFeature_DropsTouc
  */
 TEST_F(InputDispatcherMultiWindowOcclusionTests,
        NoInputChannelFeature_DropsTouchesWithValidChannel) {
-    mNoInputWindow = new FakeWindowHandle(mApplication, mDispatcher,
-                                          "Window with input channel and NO_INPUT_CHANNEL",
-                                          ADISPLAY_ID_DEFAULT);
+    mNoInputWindow = sp<FakeWindowHandle>::make(mApplication, mDispatcher,
+                                                "Window with input channel and NO_INPUT_CHANNEL",
+                                                ADISPLAY_ID_DEFAULT);
 
     mNoInputWindow->setNoInputChannel(true);
     mNoInputWindow->setFrame(Rect(0, 0, 100, 100));
@@ -5488,9 +5560,9 @@ protected:
     virtual void SetUp() override {
         InputDispatcherTest::SetUp();
         mApp = std::make_shared<FakeApplicationHandle>();
-        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
-        mMirror = new FakeWindowHandle(mApp, mDispatcher, "TestWindowMirror", ADISPLAY_ID_DEFAULT,
-                                       mWindow->getToken());
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mMirror = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindowMirror",
+                                             ADISPLAY_ID_DEFAULT, mWindow->getToken());
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
         mWindow->setFocusable(true);
         mMirror->setFocusable(true);
@@ -5632,9 +5704,10 @@ protected:
     void SetUp() override {
         InputDispatcherTest::SetUp();
         mApp = std::make_shared<FakeApplicationHandle>();
-        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
         mWindow->setFocusable(true);
-        mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
+        mSecondWindow =
+                sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
         mSecondWindow->setFocusable(true);
 
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
@@ -5815,7 +5888,7 @@ protected:
     sp<FakeWindowHandle> getWindow(int32_t uid, std::string name) {
         std::shared_ptr<FakeApplicationHandle> app = std::make_shared<FakeApplicationHandle>();
         sp<FakeWindowHandle> window =
-                new FakeWindowHandle(app, mDispatcher, name, ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(app, mDispatcher, name, ADISPLAY_ID_DEFAULT);
         // Generate an arbitrary PID based on the UID
         window->setOwnerInfo(1777 + (uid % 10000), uid);
         return window;
@@ -6176,17 +6249,21 @@ protected:
     sp<FakeWindowHandle> mSecondWindow;
     sp<FakeWindowHandle> mDragWindow;
     sp<FakeWindowHandle> mSpyWindow;
+    // Mouse would force no-split, set the id as non-zero to verify if drag state could track it.
+    static constexpr int32_t MOUSE_POINTER_ID = 1;
 
     void SetUp() override {
         InputDispatcherTest::SetUp();
         mApp = std::make_shared<FakeApplicationHandle>();
-        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
         mWindow->setFrame(Rect(0, 0, 100, 100));
 
-        mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
+        mSecondWindow =
+                sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
         mSecondWindow->setFrame(Rect(100, 0, 200, 100));
 
-        mSpyWindow = new FakeWindowHandle(mApp, mDispatcher, "SpyWindow", ADISPLAY_ID_DEFAULT);
+        mSpyWindow =
+                sp<FakeWindowHandle>::make(mApp, mDispatcher, "SpyWindow", ADISPLAY_ID_DEFAULT);
         mSpyWindow->setSpy(true);
         mSpyWindow->setTrustedOverlay(true);
         mSpyWindow->setFrame(Rect(0, 0, 200, 100));
@@ -6195,11 +6272,41 @@ protected:
         mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mSpyWindow, mWindow, mSecondWindow}}});
     }
 
-    void injectDown() {
-        ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-                  injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
-                                   {50, 50}))
-                << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    void injectDown(int fromSource = AINPUT_SOURCE_TOUCHSCREEN) {
+        switch (fromSource) {
+            case AINPUT_SOURCE_TOUCHSCREEN:
+                ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                          injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN,
+                                           ADISPLAY_ID_DEFAULT, {50, 50}))
+                        << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+                break;
+            case AINPUT_SOURCE_STYLUS:
+                ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                          injectMotionEvent(
+                                  mDispatcher,
+                                  MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
+                                                     AINPUT_SOURCE_STYLUS)
+                                          .buttonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY)
+                                          .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_STYLUS)
+                                                           .x(50)
+                                                           .y(50))
+                                          .build()));
+                break;
+            case AINPUT_SOURCE_MOUSE:
+                ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                          injectMotionEvent(
+                                  mDispatcher,
+                                  MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_MOUSE)
+                                          .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                          .pointer(PointerBuilder(MOUSE_POINTER_ID,
+                                                                  AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                           .x(50)
+                                                           .y(50))
+                                          .build()));
+                break;
+            default:
+                FAIL() << "Source " << fromSource << " doesn't support drag and drop";
+        }
 
         // Window should receive motion event.
         mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
@@ -6210,13 +6317,14 @@ protected:
     // Start performing drag, we will create a drag window and transfer touch to it.
     // @param sendDown : if true, send a motion down on first window before perform drag and drop.
     // Returns true on success.
-    bool performDrag(bool sendDown = true) {
+    bool startDrag(bool sendDown = true, int fromSource = AINPUT_SOURCE_TOUCHSCREEN) {
         if (sendDown) {
-            injectDown();
+            injectDown(fromSource);
         }
 
         // The drag window covers the entire display
-        mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
+        mDragWindow =
+                sp<FakeWindowHandle>::make(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
         mDragWindow->setTouchableRegion(Region{{0, 0, 0, 0}});
         mDispatcher->setInputWindows(
                 {{ADISPLAY_ID_DEFAULT, {mDragWindow, mSpyWindow, mWindow, mSecondWindow}}});
@@ -6231,36 +6339,10 @@ protected:
         }
         return transferred;
     }
-
-    // Start performing drag, we will create a drag window and transfer touch to it.
-    void performStylusDrag() {
-        ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-                  injectMotionEvent(mDispatcher,
-                                    MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
-                                                       AINPUT_SOURCE_STYLUS)
-                                            .buttonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY)
-                                            .pointer(PointerBuilder(0,
-                                                                    AMOTION_EVENT_TOOL_TYPE_STYLUS)
-                                                             .x(50)
-                                                             .y(50))
-                                            .build()));
-        mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
-
-        // The drag window covers the entire display
-        mDragWindow = new FakeWindowHandle(mApp, mDispatcher, "DragWindow", ADISPLAY_ID_DEFAULT);
-        mDispatcher->setInputWindows(
-                {{ADISPLAY_ID_DEFAULT, {mDragWindow, mWindow, mSecondWindow}}});
-
-        // Transfer touch focus to the drag window
-        mDispatcher->transferTouchFocus(mWindow->getToken(), mDragWindow->getToken(),
-                                        true /* isDragDrop */);
-        mWindow->consumeMotionCancel();
-        mDragWindow->consumeMotionDown();
-    }
 };
 
 TEST_F(InputDispatcherDragTests, DragEnterAndDragExit) {
-    performDrag();
+    startDrag();
 
     // Move on window.
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -6298,7 +6380,7 @@ TEST_F(InputDispatcherDragTests, DragEnterAndDragExit) {
 }
 
 TEST_F(InputDispatcherDragTests, DragEnterAndPointerDownPilfersPointers) {
-    performDrag();
+    startDrag();
 
     // No cancel event after drag start
     mSpyWindow->assertNoEvents();
@@ -6322,7 +6404,7 @@ TEST_F(InputDispatcherDragTests, DragEnterAndPointerDownPilfersPointers) {
 }
 
 TEST_F(InputDispatcherDragTests, DragAndDrop) {
-    performDrag();
+    startDrag();
 
     // Move on window.
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -6354,7 +6436,7 @@ TEST_F(InputDispatcherDragTests, DragAndDrop) {
 }
 
 TEST_F(InputDispatcherDragTests, StylusDragAndDrop) {
-    performStylusDrag();
+    startDrag(true, AINPUT_SOURCE_STYLUS);
 
     // Move on window and keep button pressed.
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
@@ -6401,7 +6483,7 @@ TEST_F(InputDispatcherDragTests, StylusDragAndDrop) {
 }
 
 TEST_F(InputDispatcherDragTests, DragAndDropOnInvalidWindow) {
-    performDrag();
+    startDrag();
 
     // Set second window invisible.
     mSecondWindow->setVisible(false);
@@ -6437,6 +6519,9 @@ TEST_F(InputDispatcherDragTests, DragAndDropOnInvalidWindow) {
 }
 
 TEST_F(InputDispatcherDragTests, NoDragAndDropWhenMultiFingers) {
+    // Ensure window could track pointerIds if it didn't support split touch.
+    mWindow->setPreventSplitting(true);
+
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
               injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
                                {50, 50}))
@@ -6457,7 +6542,7 @@ TEST_F(InputDispatcherDragTests, NoDragAndDropWhenMultiFingers) {
     mWindow->consumeMotionPointerDown(1 /* pointerIndex */);
 
     // Should not perform drag and drop when window has multi fingers.
-    ASSERT_FALSE(performDrag(false));
+    ASSERT_FALSE(startDrag(false));
 }
 
 TEST_F(InputDispatcherDragTests, DragAndDropWhenSplitTouch) {
@@ -6485,7 +6570,7 @@ TEST_F(InputDispatcherDragTests, DragAndDropWhenSplitTouch) {
     mWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT);
 
     // Perform drag and drop from first window.
-    ASSERT_TRUE(performDrag(false));
+    ASSERT_TRUE(startDrag(false));
 
     // Move on window.
     const MotionEvent secondFingerMoveEvent =
@@ -6520,11 +6605,11 @@ TEST_F(InputDispatcherDragTests, DragAndDropWhenSplitTouch) {
 }
 
 TEST_F(InputDispatcherDragTests, DragAndDropWhenMultiDisplays) {
-    performDrag();
+    startDrag();
 
     // Update window of second display.
     sp<FakeWindowHandle> windowInSecondary =
-            new FakeWindowHandle(mApp, mDispatcher, "D_2", SECOND_DISPLAY_ID);
+            sp<FakeWindowHandle>::make(mApp, mDispatcher, "D_2", SECOND_DISPLAY_ID);
     mDispatcher->setInputWindows({{SECOND_DISPLAY_ID, {windowInSecondary}}});
 
     // Let second display has a touch state.
@@ -6571,12 +6656,61 @@ TEST_F(InputDispatcherDragTests, DragAndDropWhenMultiDisplays) {
     mSecondWindow->assertNoEvents();
 }
 
+TEST_F(InputDispatcherDragTests, MouseDragAndDrop) {
+    startDrag(true, AINPUT_SOURCE_MOUSE);
+    // Move on window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(MOUSE_POINTER_ID,
+                                                                AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(50)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+
+    // Move to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                        .pointer(PointerBuilder(MOUSE_POINTER_ID,
+                                                                AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(150)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionMove(ADISPLAY_ID_DEFAULT);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->consumeDragEvent(false, 50, 50);
+
+    // drop to another window.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                                        .buttonState(0)
+                                        .pointer(PointerBuilder(MOUSE_POINTER_ID,
+                                                                AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(150)
+                                                         .y(50))
+                                        .build()))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    mDragWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    mFakePolicy->assertDropTargetEquals(mSecondWindow->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+}
+
 class InputDispatcherDropInputFeatureTest : public InputDispatcherTest {};
 
 TEST_F(InputDispatcherDropInputFeatureTest, WindowDropsInput) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
     window->setDropInput(true);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
     window->setFocusable(true);
@@ -6614,14 +6748,14 @@ TEST_F(InputDispatcherDropInputFeatureTest, ObscuredWindowDropsInput) {
     std::shared_ptr<FakeApplicationHandle> obscuringApplication =
             std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> obscuringWindow =
-            new FakeWindowHandle(obscuringApplication, mDispatcher, "obscuringWindow",
-                                 ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(obscuringApplication, mDispatcher, "obscuringWindow",
+                                       ADISPLAY_ID_DEFAULT);
     obscuringWindow->setFrame(Rect(0, 0, 50, 50));
     obscuringWindow->setOwnerInfo(111, 111);
     obscuringWindow->setTouchable(false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
     window->setDropInputIfObscured(true);
     window->setOwnerInfo(222, 222);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -6660,14 +6794,14 @@ TEST_F(InputDispatcherDropInputFeatureTest, UnobscuredWindowGetsInput) {
     std::shared_ptr<FakeApplicationHandle> obscuringApplication =
             std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> obscuringWindow =
-            new FakeWindowHandle(obscuringApplication, mDispatcher, "obscuringWindow",
-                                 ADISPLAY_ID_DEFAULT);
+            sp<FakeWindowHandle>::make(obscuringApplication, mDispatcher, "obscuringWindow",
+                                       ADISPLAY_ID_DEFAULT);
     obscuringWindow->setFrame(Rect(0, 0, 50, 50));
     obscuringWindow->setOwnerInfo(111, 111);
     obscuringWindow->setTouchable(false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
-    sp<FakeWindowHandle> window =
-            new FakeWindowHandle(application, mDispatcher, "Test window", ADISPLAY_ID_DEFAULT);
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Test window", ADISPLAY_ID_DEFAULT);
     window->setDropInputIfObscured(true);
     window->setOwnerInfo(222, 222);
     mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
@@ -6711,10 +6845,11 @@ protected:
         InputDispatcherTest::SetUp();
 
         mApp = std::make_shared<FakeApplicationHandle>();
-        mWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
         mWindow->setFocusable(true);
         setFocusedWindow(mWindow);
-        mSecondWindow = new FakeWindowHandle(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
+        mSecondWindow =
+                sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
         mSecondWindow->setFocusable(true);
 
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
@@ -6797,8 +6932,8 @@ public:
                 std::make_shared<FakeApplicationHandle>();
         std::string name = "Fake Spy ";
         name += std::to_string(mSpyCount++);
-        sp<FakeWindowHandle> spy =
-                new FakeWindowHandle(application, mDispatcher, name.c_str(), ADISPLAY_ID_DEFAULT);
+        sp<FakeWindowHandle> spy = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                              name.c_str(), ADISPLAY_ID_DEFAULT);
         spy->setSpy(true);
         spy->setTrustedOverlay(true);
         return spy;
@@ -6808,7 +6943,8 @@ public:
         std::shared_ptr<FakeApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
         sp<FakeWindowHandle> window =
-                new FakeWindowHandle(application, mDispatcher, "Fake Window", ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "Fake Window",
+                                           ADISPLAY_ID_DEFAULT);
         window->setFocusable(true);
         return window;
     }
@@ -7386,8 +7522,8 @@ public:
         std::shared_ptr<FakeApplicationHandle> overlayApplication =
                 std::make_shared<FakeApplicationHandle>();
         sp<FakeWindowHandle> overlay =
-                new FakeWindowHandle(overlayApplication, mDispatcher, "Stylus interceptor window",
-                                     ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(overlayApplication, mDispatcher,
+                                           "Stylus interceptor window", ADISPLAY_ID_DEFAULT);
         overlay->setFocusable(false);
         overlay->setOwnerInfo(111, 111);
         overlay->setTouchable(false);
@@ -7397,8 +7533,8 @@ public:
         std::shared_ptr<FakeApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
         sp<FakeWindowHandle> window =
-                new FakeWindowHandle(application, mDispatcher, "Application window",
-                                     ADISPLAY_ID_DEFAULT);
+                sp<FakeWindowHandle>::make(application, mDispatcher, "Application window",
+                                           ADISPLAY_ID_DEFAULT);
         window->setFocusable(true);
         window->setOwnerInfo(222, 222);
 
@@ -7538,8 +7674,9 @@ struct User {
     sp<FakeWindowHandle> createWindow() const {
         std::shared_ptr<FakeApplicationHandle> overlayApplication =
                 std::make_shared<FakeApplicationHandle>();
-        sp<FakeWindowHandle> window = new FakeWindowHandle(overlayApplication, mDispatcher,
-                                                           "Owned Window", ADISPLAY_ID_DEFAULT);
+        sp<FakeWindowHandle> window =
+                sp<FakeWindowHandle>::make(overlayApplication, mDispatcher, "Owned Window",
+                                           ADISPLAY_ID_DEFAULT);
         window->setOwnerInfo(mPid, mUid);
         return window;
     }

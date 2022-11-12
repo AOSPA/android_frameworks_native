@@ -85,3 +85,53 @@ cc_fuzz {
         "libgui_fuzzer_defaults",
     ],
 }
+
+cc_fuzz {
+    name: "libgui_surfaceComposerClient_fuzzer",
+    srcs: [
+        "libgui_surfaceComposerClient_fuzzer.cpp",
+    ],
+    defaults: [
+        "libgui_fuzzer_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "libgui_parcelable_fuzzer",
+    srcs: [
+        "libgui_parcelable_fuzzer.cpp",
+    ],
+    defaults: [
+        "libgui_fuzzer_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "libgui_bufferQueue_fuzzer",
+    srcs: [
+        "libgui_bufferQueue_fuzzer.cpp",
+    ],
+    defaults: [
+        "libgui_fuzzer_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "libgui_consumer_fuzzer",
+    srcs: [
+        "libgui_consumer_fuzzer.cpp",
+    ],
+    defaults: [
+        "libgui_fuzzer_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "libgui_displayEvent_fuzzer",
+    srcs: [
+        "libgui_displayEvent_fuzzer.cpp",
+    ],
+    defaults: [
+        "libgui_fuzzer_defaults",
+    ],
+}

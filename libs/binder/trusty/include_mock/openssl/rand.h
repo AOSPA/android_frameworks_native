@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,6 @@
  */
 #pragma once
 
-#include <future>
-
-namespace android::compositionengine {
-namespace {
-
-template <class T>
-std::future<T> futureOf(T obj) {
-    std::promise<T> resultPromise;
-    std::future<T> resultFuture = resultPromise.get_future();
-    resultPromise.set_value(std::move(obj));
-    return resultFuture;
+static inline int RAND_bytes(unsigned char*, int) {
+    return 0;
 }
-} // namespace
-} // namespace android::compositionengine

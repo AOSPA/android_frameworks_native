@@ -36,6 +36,7 @@
 #include <utils/Compat.h>
 #include <utils/String8.h>
 
+#include "BuildFlags.h"
 #include "FdTrigger.h"
 #include "OS.h"
 #include "RpcSocketAddress.h"
@@ -67,7 +68,7 @@ RpcSession::~RpcSession() {
 
 sp<RpcSession> RpcSession::make() {
     // Default is without TLS.
-    return make(RpcTransportCtxFactoryRaw::make());
+    return make(makeDefaultRpcTransportCtxFactory());
 }
 
 sp<RpcSession> RpcSession::make(std::unique_ptr<RpcTransportCtxFactory> rpcTransportCtxFactory) {
@@ -78,10 +79,8 @@ sp<RpcSession> RpcSession::make(std::unique_ptr<RpcTransportCtxFactory> rpcTrans
 
 void RpcSession::setMaxIncomingThreads(size_t threads) {
     RpcMutexLockGuard _l(mMutex);
-    LOG_ALWAYS_FATAL_IF(!mConnections.mOutgoing.empty() || !mConnections.mIncoming.empty(),
-                        "Must set max incoming threads before setting up connections, but has %zu "
-                        "client(s) and %zu server(s)",
-                        mConnections.mOutgoing.size(), mConnections.mIncoming.size());
+    LOG_ALWAYS_FATAL_IF(mStartedSetup,
+                        "Must set max incoming threads before setting up connections");
     mMaxIncomingThreads = threads;
 }
 
@@ -92,10 +91,8 @@ size_t RpcSession::getMaxIncomingThreads() {
 
 void RpcSession::setMaxOutgoingThreads(size_t threads) {
     RpcMutexLockGuard _l(mMutex);
-    LOG_ALWAYS_FATAL_IF(!mConnections.mOutgoing.empty() || !mConnections.mIncoming.empty(),
-                        "Must set max outgoing threads before setting up connections, but has %zu "
-                        "client(s) and %zu server(s)",
-                        mConnections.mOutgoing.size(), mConnections.mIncoming.size());
+    LOG_ALWAYS_FATAL_IF(mStartedSetup,
+                        "Must set max outgoing threads before setting up connections");
     mMaxOutgoingThreads = threads;
 }
 
@@ -104,7 +101,7 @@ size_t RpcSession::getMaxOutgoingThreads() {
     return mMaxOutgoingThreads;
 }
 
-bool RpcSession::setProtocolVersion(uint32_t version) {
+bool RpcSession::setProtocolVersionInternal(uint32_t version, bool checkStarted) {
     if (version >= RPC_WIRE_PROTOCOL_VERSION_NEXT &&
         version != RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL) {
         ALOGE("Cannot start RPC session with version %u which is unknown (current protocol version "
@@ -114,6 +111,8 @@ bool RpcSession::setProtocolVersion(uint32_t version) {
     }
 
     RpcMutexLockGuard _l(mMutex);
+    LOG_ALWAYS_FATAL_IF(checkStarted && mStartedSetup,
+                        "Must set protocol version before setting up connections");
     if (mProtocolVersion && version > *mProtocolVersion) {
         ALOGE("Cannot upgrade explicitly capped protocol version %u to newer version %u",
               *mProtocolVersion, version);
@@ -124,12 +123,19 @@ bool RpcSession::setProtocolVersion(uint32_t version) {
     return true;
 }
 
+bool RpcSession::setProtocolVersion(uint32_t version) {
+    return setProtocolVersionInternal(version, true);
+}
+
 std::optional<uint32_t> RpcSession::getProtocolVersion() {
     RpcMutexLockGuard _l(mMutex);
     return mProtocolVersion;
 }
 
 void RpcSession::setFileDescriptorTransportMode(FileDescriptorTransportMode mode) {
+    RpcMutexLockGuard _l(mMutex);
+    LOG_ALWAYS_FATAL_IF(mStartedSetup,
+                        "Must set file descriptor transport mode before setting up connections");
     mFileDescriptorTransportMode = mode;
 }
 
@@ -156,7 +162,8 @@ status_t RpcSession::setupInetClient(const char* addr, unsigned int port) {
     return NAME_NOT_FOUND;
 }
 
-status_t RpcSession::setupPreconnectedClient(unique_fd fd, std::function<unique_fd()>&& request) {
+status_t RpcSession::setupPreconnectedClient(base::unique_fd fd,
+                                             std::function<unique_fd()>&& request) {
     return setupClient([&](const std::vector<uint8_t>& sessionId, bool incoming) -> status_t {
         if (!fd.ok()) {
             fd = request();
@@ -166,7 +173,9 @@ status_t RpcSession::setupPreconnectedClient(unique_fd fd, std::function<unique_
             ALOGE("setupPreconnectedClient: %s", res.error().message().c_str());
             return res.error().code() == 0 ? UNKNOWN_ERROR : -res.error().code();
         }
-        status_t status = initAndAddConnection(std::move(fd), sessionId, incoming);
+
+        TransportFd transportFd(std::move(fd));
+        status_t status = initAndAddConnection(std::move(transportFd), sessionId, incoming);
         fd = unique_fd(); // Explicitly reset after move to avoid analyzer warning.
         return status;
     });
@@ -184,7 +193,8 @@ status_t RpcSession::addNullDebuggingClient() {
         return -savedErrno;
     }
 
-    auto server = mCtx->newTransport(std::move(serverFd), mShutdownTrigger.get());
+    TransportFd transportFd(std::move(serverFd));
+    auto server = mCtx->newTransport(std::move(transportFd), mShutdownTrigger.get());
     if (server == nullptr) {
         ALOGE("Unable to set up RpcTransport");
         return UNKNOWN_ERROR;
@@ -222,6 +232,11 @@ bool RpcSession::shutdownAndWait(bool wait) {
     }
 
     _l.unlock();
+
+    if (status_t res = state()->sendObituaries(sp<RpcSession>::fromExisting(this)); res != OK) {
+        ALOGE("Failed to send obituaries as the RpcSession is shutting down: %s",
+              statusToString(res).c_str());
+    }
 
     mRpcBinderState->clear();
 
@@ -440,9 +455,16 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
                                                               bool incoming)>& connectAndInit) {
     {
         RpcMutexLockGuard _l(mMutex);
-        LOG_ALWAYS_FATAL_IF(mConnections.mOutgoing.size() != 0,
-                            "Must only setup session once, but already has %zu clients",
-                            mConnections.mOutgoing.size());
+        LOG_ALWAYS_FATAL_IF(mStartedSetup, "Must only setup session once");
+        mStartedSetup = true;
+
+        if constexpr (!kEnableRpcThreads) {
+            LOG_ALWAYS_FATAL_IF(mMaxIncomingThreads > 0,
+                                "Incoming threads are not supported on single-threaded libbinder");
+            // mMaxIncomingThreads should not change from here to its use below,
+            // since we set mStartedSetup==true and setMaxIncomingThreads checks
+            // for that
+        }
     }
 
     if (auto status = initShutdownTrigger(); status != OK) return status;
@@ -466,6 +488,9 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
         mProtocolVersion = oldProtocolVersion;
 
         mConnections = {};
+
+        // clear mStartedSetup so that we can reuse this RpcSession
+        mStartedSetup = false;
     });
 
     if (status_t status = connectAndInit({}, false /*incoming*/); status != OK) return status;
@@ -483,7 +508,7 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
                                                     sp<RpcSession>::fromExisting(this), &version);
             status != OK)
             return status;
-        if (!setProtocolVersion(version)) return BAD_VALUE;
+        if (!setProtocolVersionInternal(version, false)) return BAD_VALUE;
     }
 
     // TODO(b/189955605): we should add additional sessions dynamically
@@ -501,11 +526,7 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
         return status;
     }
 
-#ifdef BINDER_RPC_SINGLE_THREADED
-    constexpr size_t outgoingThreads = 1;
-#else  // BINDER_RPC_SINGLE_THREADED
     size_t outgoingThreads = std::min(numThreadsAvailable, mMaxOutgoingThreads);
-#endif // BINDER_RPC_SINGLE_THREADED
     ALOGI_IF(outgoingThreads != numThreadsAvailable,
              "Server hints client to start %zu outgoing threads, but client will only start %zu "
              "because it is preconfigured to start at most %zu outgoing threads.",
@@ -555,12 +576,14 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
             return -savedErrno;
         }
 
-        if (0 != TEMP_FAILURE_RETRY(connect(serverFd.get(), addr.addr(), addr.addrSize()))) {
+        TransportFd transportFd(std::move(serverFd));
+
+        if (0 != TEMP_FAILURE_RETRY(connect(transportFd.fd.get(), addr.addr(), addr.addrSize()))) {
             int connErrno = errno;
             if (connErrno == EAGAIN || connErrno == EINPROGRESS) {
                 // For non-blocking sockets, connect() may return EAGAIN (for unix domain socket) or
                 // EINPROGRESS (for others). Call poll() and getsockopt() to get the error.
-                status_t pollStatus = mShutdownTrigger->triggerablePoll(serverFd, POLLOUT);
+                status_t pollStatus = mShutdownTrigger->triggerablePoll(transportFd, POLLOUT);
                 if (pollStatus != OK) {
                     ALOGE("Could not POLLOUT after connect() on non-blocking socket: %s",
                           statusToString(pollStatus).c_str());
@@ -568,8 +591,8 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
                 }
                 // Set connErrno to the errno that connect() would have set if the fd were blocking.
                 socklen_t connErrnoLen = sizeof(connErrno);
-                int ret =
-                        getsockopt(serverFd.get(), SOL_SOCKET, SO_ERROR, &connErrno, &connErrnoLen);
+                int ret = getsockopt(transportFd.fd.get(), SOL_SOCKET, SO_ERROR, &connErrno,
+                                     &connErrnoLen);
                 if (ret == -1) {
                     int savedErrno = errno;
                     ALOGE("Could not getsockopt() after connect() on non-blocking socket: %s. "
@@ -591,16 +614,17 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
                 return -connErrno;
             }
         }
-        LOG_RPC_DETAIL("Socket at %s client with fd %d", addr.toString().c_str(), serverFd.get());
+        LOG_RPC_DETAIL("Socket at %s client with fd %d", addr.toString().c_str(),
+                       transportFd.fd.get());
 
-        return initAndAddConnection(std::move(serverFd), sessionId, incoming);
+        return initAndAddConnection(std::move(transportFd), sessionId, incoming);
     }
 
     ALOGE("Ran out of retries to connect to %s", addr.toString().c_str());
     return UNKNOWN_ERROR;
 }
 
-status_t RpcSession::initAndAddConnection(unique_fd fd, const std::vector<uint8_t>& sessionId,
+status_t RpcSession::initAndAddConnection(TransportFd fd, const std::vector<uint8_t>& sessionId,
                                           bool incoming) {
     LOG_ALWAYS_FATAL_IF(mShutdownTrigger == nullptr);
     auto server = mCtx->newTransport(std::move(fd), mShutdownTrigger.get());

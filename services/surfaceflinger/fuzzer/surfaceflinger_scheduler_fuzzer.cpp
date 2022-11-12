@@ -19,6 +19,8 @@
 #include <fuzzer/FuzzedDataProvider.h>
 #include <processgroup/sched_policy.h>
 
+#include <scheduler/PresentLatencyTracker.h>
+
 #include "Scheduler/DispSyncSource.h"
 #include "Scheduler/OneShotTimer.h"
 #include "Scheduler/VSyncDispatchTimerQueue.h"
@@ -58,6 +60,7 @@ public:
 private:
     void fuzzRefreshRateSelection();
     void fuzzRefreshRateConfigs();
+    void fuzzPresentLatencyTracker();
     void fuzzVSyncModulator();
     void fuzzVSyncPredictor();
     void fuzzVSyncReactor();
@@ -93,8 +96,8 @@ void SchedulerFuzzer::fuzzEventThread() {
 
     thread->onHotplugReceived(getPhysicalDisplayId(), mFdp.ConsumeBool());
     sp<EventThreadConnection> connection =
-            new EventThreadConnection(thread.get(), mFdp.ConsumeIntegral<uint16_t>(), nullptr,
-                                      {} /*eventRegistration*/);
+            sp<EventThreadConnection>::make(thread.get(), mFdp.ConsumeIntegral<uint16_t>(),
+                                            nullptr);
     thread->requestNextVsync(connection);
     thread->setVsyncRate(mFdp.ConsumeIntegral<uint32_t>() /*rate*/, connection);
 
@@ -224,8 +227,8 @@ void SchedulerFuzzer::fuzzLayerHistory() {
     nsecs_t time2 = time1;
     uint8_t historySize = mFdp.ConsumeIntegral<uint8_t>();
 
-    sp<FuzzImplLayer> layer1 = new FuzzImplLayer(flinger.flinger());
-    sp<FuzzImplLayer> layer2 = new FuzzImplLayer(flinger.flinger());
+    sp<FuzzImplLayer> layer1 = sp<FuzzImplLayer>::make(flinger.flinger());
+    sp<FuzzImplLayer> layer2 = sp<FuzzImplLayer>::make(flinger.flinger());
 
     for (int i = 0; i < historySize; ++i) {
         historyV1.record(layer1.get(), time1, time1,
@@ -260,7 +263,7 @@ void SchedulerFuzzer::fuzzVSyncReactor() {
     reactor.addHwVsyncTimestamp(0, std::nullopt, &periodFlushed);
     reactor.addHwVsyncTimestamp(mFdp.ConsumeIntegral<nsecs_t>() /*newPeriod*/, std::nullopt,
                                 &periodFlushed);
-    sp<Fence> fence = new Fence(memfd_create("fd", MFD_ALLOW_SEALING));
+    sp<Fence> fence = sp<Fence>::make(memfd_create("fd", MFD_ALLOW_SEALING));
     std::shared_ptr<FenceTime> ft = std::make_shared<FenceTime>(fence);
     vSyncTracker->addVsyncTimestamp(mFdp.ConsumeIntegral<nsecs_t>());
     FenceTime::Snapshot snap(mFdp.ConsumeIntegral<nsecs_t>());
@@ -319,7 +322,7 @@ void SchedulerFuzzer::fuzzRefreshRateSelection() {
     LayerCreationArgs args(flinger.flinger(), client,
                            mFdp.ConsumeRandomLengthString(kRandomStringLength) /*name*/,
                            mFdp.ConsumeIntegral<uint16_t>() /*layerFlags*/, LayerMetadata());
-    sp<Layer> layer = new BufferStateLayer(args);
+    sp<Layer> layer = sp<BufferStateLayer>::make(args);
 
     layer->setFrameRateSelectionPriority(mFdp.ConsumeIntegral<int16_t>());
 }
@@ -376,15 +379,23 @@ void SchedulerFuzzer::fuzzRefreshRateConfigs() {
     RefreshRateStats refreshRateStats(timeStats, Fps::fromValue(mFdp.ConsumeFloatingPoint<float>()),
                                       PowerMode::OFF);
 
-    const auto fpsOpt = displayModes.get(modeId, [](const auto& mode) { return mode->getFps(); });
+    const auto fpsOpt = displayModes.get(modeId).transform(
+            [](const DisplayModePtr& mode) { return mode->getFps(); });
     refreshRateStats.setRefreshRate(*fpsOpt);
 
     refreshRateStats.setPowerMode(mFdp.PickValueInArray(kPowerModes));
 }
 
+void SchedulerFuzzer::fuzzPresentLatencyTracker() {
+    scheduler::PresentLatencyTracker tracker;
+    tracker.trackPendingFrame(TimePoint::fromNs(mFdp.ConsumeIntegral<nsecs_t>()),
+                              FenceTime::NO_FENCE);
+}
+
 void SchedulerFuzzer::process() {
     fuzzRefreshRateSelection();
     fuzzRefreshRateConfigs();
+    fuzzPresentLatencyTracker();
     fuzzVSyncModulator();
     fuzzVSyncPredictor();
     fuzzVSyncReactor();

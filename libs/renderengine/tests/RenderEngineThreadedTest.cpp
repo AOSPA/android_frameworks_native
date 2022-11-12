@@ -176,27 +176,24 @@ TEST_F(RenderEngineThreadedTest, drawLayers) {
     std::vector<renderengine::LayerSettings> layers;
     std::shared_ptr<renderengine::ExternalTexture> buffer = std::make_shared<
             renderengine::impl::
-                    ExternalTexture>(new GraphicBuffer(), *mRenderEngine,
+                    ExternalTexture>(sp<GraphicBuffer>::make(), *mRenderEngine,
                                      renderengine::impl::ExternalTexture::Usage::READABLE |
                                              renderengine::impl::ExternalTexture::Usage::WRITEABLE);
 
     base::unique_fd bufferFence;
 
     EXPECT_CALL(*mRenderEngine, drawLayersInternal)
-            .WillOnce([&](const std::shared_ptr<std::promise<renderengine::RenderEngineResult>>&&
-                                  resultPromise,
+            .WillOnce([&](const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
                           const renderengine::DisplaySettings&,
                           const std::vector<renderengine::LayerSettings>&,
                           const std::shared_ptr<renderengine::ExternalTexture>&, const bool,
-                          base::unique_fd&&) -> void {
-                resultPromise->set_value({NO_ERROR, base::unique_fd()});
-            });
+                          base::unique_fd&&) { resultPromise->set_value(Fence::NO_FENCE); });
 
-    std::future<renderengine::RenderEngineResult> result =
+    ftl::Future<FenceResult> future =
             mThreadedRE->drawLayers(settings, layers, buffer, false, std::move(bufferFence));
-    ASSERT_TRUE(result.valid());
-    auto [status, _] = result.get();
-    ASSERT_EQ(NO_ERROR, status);
+    ASSERT_TRUE(future.valid());
+    auto result = future.get();
+    ASSERT_TRUE(result.ok());
 }
 
 } // namespace android

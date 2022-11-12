@@ -46,7 +46,7 @@ void SurfaceInterceptor::addTransactionTraceListener(
 
     std::scoped_lock lock(mListenersMutex);
 
-    asBinder->linkToDeath(this);
+    asBinder->linkToDeath(sp<DeathRecipient>::fromExisting(this));
 
     listener->onToggled(mEnabled); // notifies of current state
 
@@ -115,8 +115,9 @@ void SurfaceInterceptor::saveExistingSurfacesLocked(const SortedVector<sp<Layer>
     ATRACE_CALL();
     for (const auto& l : layers) {
         l->traverseInZOrder(LayerVector::StateSet::Drawing, [this](Layer* layer) {
-            addSurfaceCreationLocked(createTraceIncrementLocked(), layer);
-            addInitialSurfaceStateLocked(createTraceIncrementLocked(), layer);
+            addSurfaceCreationLocked(createTraceIncrementLocked(), sp<Layer>::fromExisting(layer));
+            addInitialSurfaceStateLocked(createTraceIncrementLocked(),
+                                         sp<Layer>::fromExisting(layer));
         });
     }
 }
@@ -134,8 +135,6 @@ void SurfaceInterceptor::addInitialSurfaceStateLocked(Increment* increment,
                       layer->mDrawingState.transform.ty());
     addDepthLocked(transaction, layerId, layer->mDrawingState.z);
     addAlphaLocked(transaction, layerId, layer->mDrawingState.color.a);
-    addTransparentRegionLocked(transaction, layerId,
-                               layer->mDrawingState.activeTransparentRegion_legacy);
     addLayerStackLocked(transaction, layerId, layer->mDrawingState.layerStack);
     addCropLocked(transaction, layerId, layer->mDrawingState.crop);
     addCornerRadiusLocked(transaction, layerId, layer->mDrawingState.cornerRadius);
@@ -419,9 +418,6 @@ void SurfaceInterceptor::addSurfaceChangesLocked(Transaction* transaction,
     if (state.what & layer_state_t::eLayerChanged) {
         addDepthLocked(transaction, layerId, state.z);
     }
-    if (state.what & layer_state_t::eSizeChanged) {
-        addSizeLocked(transaction, layerId, state.w, state.h);
-    }
     if (state.what & layer_state_t::eAlphaChanged) {
         addAlphaLocked(transaction, layerId, state.alpha);
     }
@@ -521,8 +517,6 @@ void SurfaceInterceptor::addSurfaceCreationLocked(Increment* increment,
     SurfaceCreation* creation(increment->mutable_surface_creation());
     creation->set_id(getLayerId(layer));
     creation->set_name(layer->getName());
-    creation->set_w(layer->mDrawingState.active_legacy.w);
-    creation->set_h(layer->mDrawingState.active_legacy.h);
 }
 
 void SurfaceInterceptor::addSurfaceDeletionLocked(Increment* increment,

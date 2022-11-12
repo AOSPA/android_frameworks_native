@@ -60,7 +60,7 @@ public:
         sp<Client> client;
         LayerCreationArgs args(mFlinger.flinger(), client, "buffer-state-layer", 0,
                                LayerMetadata());
-        return new BufferStateLayer(args);
+        return sp<BufferStateLayer>::make(args);
     }
 
     void commitTransaction(Layer* layer) {
@@ -74,13 +74,15 @@ public:
 
         EXPECT_CALL(*eventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*eventThread, createEventConnection(_, _))
-                .WillOnce(Return(new EventThreadConnection(eventThread.get(), /*callingUid=*/0,
-                                                           ResyncCallback())));
+                .WillOnce(Return(sp<EventThreadConnection>::make(eventThread.get(),
+                                                                 mock::EventThread::kCallingUid,
+                                                                 ResyncCallback())));
 
         EXPECT_CALL(*sfEventThread, registerDisplayEventConnection(_));
         EXPECT_CALL(*sfEventThread, createEventConnection(_, _))
-                .WillOnce(Return(new EventThreadConnection(sfEventThread.get(), /*callingUid=*/0,
-                                                           ResyncCallback())));
+                .WillOnce(Return(sp<EventThreadConnection>::make(sfEventThread.get(),
+                                                                 mock::EventThread::kCallingUid,
+                                                                 ResyncCallback())));
 
         auto vsyncController = std::make_unique<mock::VsyncController>();
         auto vsyncTracker = std::make_unique<mock::VSyncTracker>();
@@ -101,7 +103,7 @@ public:
     void BLASTTransactionSendsFrameTracerEvents() {
         sp<BufferStateLayer> layer = createBufferStateLayer();
 
-        sp<Fence> fence(new Fence());
+        sp<Fence> fence(sp<Fence>::make());
         int32_t layerId = layer->getSequence();
         uint64_t bufferId = 42;
         uint64_t frameNumber = 5;
@@ -127,7 +129,6 @@ public:
                          dequeueTime, FrameTimelineInfo{});
 
         commitTransaction(layer.get());
-        bool computeVisisbleRegions;
         nsecs_t latchTime = 25;
         EXPECT_CALL(*mFlinger.getFrameTracer(),
                     traceFence(layerId, bufferId, frameNumber, _,
@@ -135,7 +136,7 @@ public:
         EXPECT_CALL(*mFlinger.getFrameTracer(),
                     traceTimestamp(layerId, bufferId, frameNumber, latchTime,
                                    FrameTracer::FrameEvent::LATCH, /*duration*/ 0));
-        layer->updateTexImage(computeVisisbleRegions, latchTime, /*expectedPresentTime*/ 0);
+        layer->updateTexImage(latchTime);
 
         auto glDoneFence = fenceFactory.createFenceTimeForTest(fence);
         auto presentFence = fenceFactory.createFenceTimeForTest(fence);

@@ -119,6 +119,7 @@ public:
     using Impl::getScheduledFrameTime;
     using Impl::setDuration;
 
+    using Impl::scheduleConfigure;
     using Impl::scheduleFrame;
     using Impl::scheduleFrameImmed;
 
@@ -200,7 +201,7 @@ public:
 
     // Returns true if a given vsync timestamp is considered valid vsync
     // for a given uid
-    bool isVsyncValid(nsecs_t expectedVsyncTimestamp, uid_t uid) const;
+    bool isVsyncValid(TimePoint expectedVsyncTimestamp, uid_t uid) const;
 
     void dump(std::string&) const;
     void dump(ConnectionHandle, std::string&) const;
@@ -253,6 +254,9 @@ private:
     enum class ContentDetectionState { Off, On };
     enum class TimerState { Reset, Expired };
     enum class TouchState { Inactive, Active };
+
+    // impl::MessageQueue overrides:
+    void onFrameSignal(ICompositor&, VsyncId, TimePoint expectedVsyncTime) override;
 
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);

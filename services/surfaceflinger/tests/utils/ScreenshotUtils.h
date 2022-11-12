@@ -18,6 +18,7 @@
 #include <gui/AidlStatusUtil.h>
 #include <gui/SyncScreenCaptureListener.h>
 #include <private/gui/ComposerServiceAIDL.h>
+#include <ui/FenceResult.h>
 #include <ui/Rect.h>
 #include <utils/String8.h>
 #include <functional>
@@ -39,14 +40,14 @@ public:
         SurfaceComposerClient::Transaction().apply(true);
 
         captureArgs.dataspace = ui::Dataspace::V0_SRGB;
-        const sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
+        const sp<SyncScreenCaptureListener> captureListener = sp<SyncScreenCaptureListener>::make();
         binder::Status status = sf->captureDisplay(captureArgs, captureListener);
         status_t err = statusTFromBinderStatus(status);
         if (err != NO_ERROR) {
             return err;
         }
         captureResults = captureListener->waitForResults();
-        return captureResults.result;
+        return fenceStatus(captureResults.fenceResult);
     }
 
     static void captureScreen(std::unique_ptr<ScreenCapture>* sc) {
@@ -73,14 +74,14 @@ public:
         SurfaceComposerClient::Transaction().apply(true);
 
         captureArgs.dataspace = ui::Dataspace::V0_SRGB;
-        const sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
+        const sp<SyncScreenCaptureListener> captureListener = sp<SyncScreenCaptureListener>::make();
         binder::Status status = sf->captureLayers(captureArgs, captureListener);
         status_t err = statusTFromBinderStatus(status);
         if (err != NO_ERROR) {
             return err;
         }
         captureResults = captureListener->waitForResults();
-        return captureResults.result;
+        return fenceStatus(captureResults.fenceResult);
     }
 
     static void captureLayers(std::unique_ptr<ScreenCapture>* sc, LayerCaptureArgs& captureArgs) {

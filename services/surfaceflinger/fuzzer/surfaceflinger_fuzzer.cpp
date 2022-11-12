@@ -103,7 +103,7 @@ static constexpr uint32_t kMaxCode = 1050;
 class SurfaceFlingerFuzzer {
 public:
     SurfaceFlingerFuzzer(const uint8_t *data, size_t size) : mFdp(data, size) {
-        mFlinger = mTestableFlinger.flinger();
+        mFlinger = sp<SurfaceFlinger>::fromExisting(mTestableFlinger.flinger());
     };
     void process(const uint8_t *data, size_t size);
 
@@ -244,7 +244,6 @@ void SurfaceFlingerFuzzer::process(const uint8_t *data, size_t size) {
     setDisplayStateLocked();
 
     setTransactionState();
-    mTestableFlinger.flushTransactionQueues();
 
     onTransact(data, size);
 }

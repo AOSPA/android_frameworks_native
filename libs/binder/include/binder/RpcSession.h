@@ -207,6 +207,10 @@ private:
     friend RpcState;
     explicit RpcSession(std::unique_ptr<RpcTransportCtx> ctx);
 
+    // internal version of setProtocolVersion that
+    // optionally skips the mStartedSetup check
+    [[nodiscard]] bool setProtocolVersionInternal(uint32_t version, bool checkStarted);
+
     // for 'target', see RpcState::sendDecStrongToTarget
     [[nodiscard]] status_t sendDecStrongToTarget(uint64_t address, size_t target);
 
@@ -265,7 +269,7 @@ private:
     [[nodiscard]] status_t setupOneSocketConnection(const RpcSocketAddress& address,
                                                     const std::vector<uint8_t>& sessionId,
                                                     bool incoming);
-    [[nodiscard]] status_t initAndAddConnection(base::unique_fd fd,
+    [[nodiscard]] status_t initAndAddConnection(TransportFd fd,
                                                 const std::vector<uint8_t>& sessionId,
                                                 bool incoming);
     [[nodiscard]] status_t addIncomingConnection(std::unique_ptr<RpcTransport> rpcTransport);
@@ -344,6 +348,7 @@ private:
 
     RpcMutex mMutex; // for all below
 
+    bool mStartedSetup = false;
     size_t mMaxIncomingThreads = 0;
     size_t mMaxOutgoingThreads = kDefaultMaxOutgoingThreads;
     std::optional<uint32_t> mProtocolVersion;
