@@ -38,7 +38,7 @@
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "Scheduler/MessageQueue.h"
-#include "Scheduler/RefreshRateConfigs.h"
+#include "Scheduler/RefreshRateSelector.h"
 #include "StartPropertySetThread.h"
 #include "SurfaceFlinger.h"
 #include "SurfaceFlingerDefaultFactory.h"
@@ -168,7 +168,8 @@ public:
     // functions.
 
     void setupRenderEngine(std::unique_ptr<renderengine::RenderEngine> renderEngine) {
-        mFlinger->mCompositionEngine->setRenderEngine(std::move(renderEngine));
+        mFlinger->mRenderEngine = std::move(renderEngine);
+        mFlinger->mCompositionEngine->setRenderEngine(mFlinger->mRenderEngine.get());
     }
 
     void setupComposer(std::unique_ptr<Hwc2::Composer> composer) {
@@ -192,10 +193,10 @@ public:
     static constexpr struct TwoDisplayModes {
     } kTwoDisplayModes;
 
-    using RefreshRateConfigsPtr = std::shared_ptr<scheduler::RefreshRateConfigs>;
+    using RefreshRateSelectorPtr = std::shared_ptr<scheduler::RefreshRateSelector>;
 
     using DisplayModesVariant =
-            std::variant<OneDisplayMode, TwoDisplayModes, RefreshRateConfigsPtr>;
+            std::variant<OneDisplayMode, TwoDisplayModes, RefreshRateSelectorPtr>;
 
     void setupScheduler(std::unique_ptr<scheduler::VsyncController> vsyncController,
                         std::unique_ptr<scheduler::VSyncTracker> vsyncTracker,
@@ -204,9 +205,9 @@ public:
                         SchedulerCallbackImpl callbackImpl = SchedulerCallbackImpl::kNoOp,
                         DisplayModesVariant modesVariant = kOneDisplayMode,
                         bool useNiceMock = false) {
-        RefreshRateConfigsPtr configs;
-        if (std::holds_alternative<RefreshRateConfigsPtr>(modesVariant)) {
-            configs = std::move(std::get<RefreshRateConfigsPtr>(modesVariant));
+        RefreshRateSelectorPtr selectorPtr;
+        if (std::holds_alternative<RefreshRateSelectorPtr>(modesVariant)) {
+            selectorPtr = std::move(std::get<RefreshRateSelectorPtr>(modesVariant));
         } else {
             constexpr DisplayModeId kModeId60{0};
             DisplayModes modes = makeModes(mock::createDisplayMode(kModeId60, 60_Hz));
@@ -216,10 +217,10 @@ public:
                 modes.try_emplace(kModeId90, mock::createDisplayMode(kModeId90, 90_Hz));
             }
 
-            configs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
+            selectorPtr = std::make_shared<scheduler::RefreshRateSelector>(modes, kModeId60);
         }
 
-        const auto fps = FTL_FAKE_GUARD(kMainThreadContext, configs->getActiveMode().getFps());
+        const auto fps = FTL_FAKE_GUARD(kMainThreadContext, selectorPtr->getActiveMode().getFps());
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
         mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
                 mFlinger->mVsyncConfiguration->getCurrentConfigs());
@@ -237,12 +238,12 @@ public:
             mScheduler =
                     new testing::NiceMock<scheduler::TestableScheduler>(std::move(vsyncController),
                                                                         std::move(vsyncTracker),
-                                                                        std::move(configs),
+                                                                        std::move(selectorPtr),
                                                                         callback);
         } else {
             mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
                                                           std::move(vsyncTracker),
-                                                          std::move(configs), callback);
+                                                          std::move(selectorPtr), callback);
         }
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
@@ -454,14 +455,9 @@ public:
         return SurfaceFlinger::calculateMaxAcquiredBufferCount(refreshRate, presentLatency);
     }
 
-    auto setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken, ui::DisplayModeId defaultMode,
-                                    bool allowGroupSwitching, float primaryRefreshRateMin,
-                                    float primaryRefreshRateMax, float appRequestRefreshRateMin,
-                                    float appRequestRefreshRateMax) {
-        return mFlinger->setDesiredDisplayModeSpecs(displayToken, defaultMode, allowGroupSwitching,
-                                                    primaryRefreshRateMin, primaryRefreshRateMax,
-                                                    appRequestRefreshRateMin,
-                                                    appRequestRefreshRateMax);
+    auto setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                    const gui::DisplayModeSpecs& specs) {
+        return mFlinger->setDesiredDisplayModeSpecs(displayToken, specs);
     }
 
     void onActiveDisplayChanged(const sp<DisplayDevice>& activeDisplay) {
@@ -543,8 +539,8 @@ public:
         mutableDrawingState().displays.clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
-        mFlinger->mCompositionEngine->setRenderEngine(
-                std::unique_ptr<renderengine::RenderEngine>());
+        mFlinger->mRenderEngine = std::unique_ptr<renderengine::RenderEngine>();
+        mFlinger->mCompositionEngine->setRenderEngine(mFlinger->mRenderEngine.get());
     }
 
     /* ------------------------------------------------------------------------
@@ -756,16 +752,17 @@ public:
             return mFlinger.mutableDisplays().get(mDisplayToken)->get();
         }
 
-        // If `configs` is nullptr, the injector creates RefreshRateConfigs from the `modes`.
-        // Otherwise, it uses `configs`, which the caller must create using the same `modes`.
+        // If `selectorPtr` is nullptr, the injector creates RefreshRateSelector from the `modes`.
+        // Otherwise, it uses `selectorPtr`, which the caller must create using the same `modes`.
         //
-        // TODO(b/182939859): Once `modes` can be retrieved from RefreshRateConfigs, remove
-        // the `configs` parameter in favor of an alternative setRefreshRateConfigs API.
-        auto& setDisplayModes(DisplayModes modes, DisplayModeId activeModeId,
-                              std::shared_ptr<scheduler::RefreshRateConfigs> configs = nullptr) {
+        // TODO(b/182939859): Once `modes` can be retrieved from RefreshRateSelector, remove
+        // the `selectorPtr` parameter in favor of an alternative setRefreshRateSelector API.
+        auto& setDisplayModes(
+                DisplayModes modes, DisplayModeId activeModeId,
+                std::shared_ptr<scheduler::RefreshRateSelector> selectorPtr = nullptr) {
             mDisplayModes = std::move(modes);
             mCreationArgs.activeModeId = activeModeId;
-            mCreationArgs.refreshRateConfigs = std::move(configs);
+            mCreationArgs.refreshRateSelector = std::move(selectorPtr);
             return *this;
         }
 
@@ -812,7 +809,7 @@ public:
             auto& modes = mDisplayModes;
             auto& activeModeId = mCreationArgs.activeModeId;
 
-            if (displayId && !mCreationArgs.refreshRateConfigs) {
+            if (displayId && !mCreationArgs.refreshRateSelector) {
                 if (const auto physicalId = PhysicalDisplayId::tryCast(*displayId)) {
                     if (modes.empty()) {
                         constexpr DisplayModeId kModeId{0};
@@ -832,15 +829,16 @@ public:
                         activeModeId = kModeId;
                     }
 
-                    mCreationArgs.refreshRateConfigs =
-                            std::make_shared<scheduler::RefreshRateConfigs>(modes, activeModeId);
+                    mCreationArgs.refreshRateSelector =
+                            std::make_shared<scheduler::RefreshRateSelector>(modes, activeModeId);
                 }
             }
 
             sp<DisplayDevice> display = sp<DisplayDevice>::make(mCreationArgs);
             mFlinger.mutableDisplays().emplace_or_replace(mDisplayToken, display);
             if (mFlinger.scheduler()) {
-                mFlinger.scheduler()->registerDisplay(display);
+                mFlinger.scheduler()->registerDisplay(display->getPhysicalId(),
+                                                      display->holdRefreshRateSelector());
             }
 
             DisplayDeviceState state;

@@ -39,6 +39,7 @@
 #include <gtest/gtest.h>
 #include <gui/constants.h>
 
+#include <thread>
 #include "android/hardware/input/InputDeviceCountryCode.h"
 #include "input/DisplayViewport.h"
 #include "input/Input.h"
@@ -139,6 +140,16 @@ static void assertAxisNotPresent(MultiTouchInputMapper& mapper, int axis) {
     const InputDeviceInfo::MotionRange* motionRange =
             info.getMotionRange(axis, AINPUT_SOURCE_TOUCHSCREEN);
     ASSERT_EQ(nullptr, motionRange);
+}
+
+[[maybe_unused]] static void dumpReader(InputReader& reader) {
+    std::string dump;
+    reader.dump(dump);
+    std::istringstream iss(dump);
+    for (std::string line; std::getline(iss, line);) {
+        ALOGE("%s", line.c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 // --- FakePointerController ---
@@ -758,7 +769,7 @@ private:
     status_t getAbsoluteAxisInfo(int32_t deviceId, int axis,
                                  RawAbsoluteAxisInfo* outAxisInfo) const override {
         Device* device = getDevice(deviceId);
-        if (device && device->enabled) {
+        if (device) {
             ssize_t index = device->absoluteAxes.indexOfKey(axis);
             if (index >= 0) {
                 *outAxisInfo = device->absoluteAxes.valueAt(index);
@@ -2391,18 +2402,11 @@ TEST_F(InputReaderIntegrationTest, AddNewDevice) {
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
     ASSERT_EQ(initialNumDevices + 1, mFakePolicy->getInputDevices().size());
 
-    // Find the test device by its name.
-    const std::vector<InputDeviceInfo> inputDevices = mFakePolicy->getInputDevices();
-    const auto& it =
-            std::find_if(inputDevices.begin(), inputDevices.end(),
-                         [&keyboard](const InputDeviceInfo& info) {
-                             return info.getIdentifier().name == keyboard->getName();
-                         });
-
-    ASSERT_NE(it, inputDevices.end());
-    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, it->getKeyboardType());
-    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, it->getSources());
-    ASSERT_EQ(0U, it->getMotionRanges().size());
+    const auto device = findDeviceByName(keyboard->getName());
+    ASSERT_TRUE(device.has_value());
+    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, device->getKeyboardType());
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, device->getSources());
+    ASSERT_EQ(0U, device->getMotionRanges().size());
 
     keyboard.reset();
     ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
@@ -2435,6 +2439,41 @@ TEST_F(InputReaderIntegrationTest, SendsEventsToInputListener) {
     ASSERT_NE(prevId, keyArgs.id);
     ASSERT_LE(prevTimestamp, keyArgs.eventTime);
     ASSERT_LE(keyArgs.eventTime, keyArgs.readTime);
+}
+
+TEST_F(InputReaderIntegrationTest, ExternalStylusesButtons) {
+    std::unique_ptr<UinputExternalStylus> stylus = createUinputDevice<UinputExternalStylus>();
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+
+    const auto device = findDeviceByName(stylus->getName());
+    ASSERT_TRUE(device.has_value());
+
+    // An external stylus with buttons should also be recognized as a keyboard.
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_STYLUS, device->getSources())
+            << "Unexpected source " << inputEventSourceToString(device->getSources()).c_str();
+    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, device->getKeyboardType());
+
+    const auto DOWN =
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD));
+    const auto UP = AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD));
+
+    stylus->pressAndReleaseKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(DOWN, WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(UP, WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+
+    stylus->pressAndReleaseKey(BTN_STYLUS2);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(DOWN, WithKeyCode(AKEYCODE_STYLUS_BUTTON_SECONDARY))));
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(UP, WithKeyCode(AKEYCODE_STYLUS_BUTTON_SECONDARY))));
+
+    stylus->pressAndReleaseKey(BTN_STYLUS3);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(DOWN, WithKeyCode(AKEYCODE_STYLUS_BUTTON_TERTIARY))));
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(UP, WithKeyCode(AKEYCODE_STYLUS_BUTTON_TERTIARY))));
 }
 
 /**
@@ -2770,6 +2809,20 @@ TEST_F(TouchIntegrationTest, NotifiesPolicyWhenStylusGestureStarted) {
                   WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
 
     ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertStylusGestureNotified(mDeviceInfo.getId()));
+}
+
+TEST_F(TouchIntegrationTest, StylusButtonsGenerateKeyEvents) {
+    mDevice->sendKey(BTN_STYLUS, 1);
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+
+    mDevice->sendKey(BTN_STYLUS, 0);
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
 }
 
 // --- InputDeviceTest ---
@@ -5613,7 +5666,7 @@ TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsNotSpecifiedAndNot
     prepareAxes(POSITION);
     SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
 
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, mapper.getSources());
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
 }
 
 TEST_F(SingleTouchInputMapperTest, GetSources_WhenDeviceTypeIsTouchScreen_ReturnsTouchScreen) {
@@ -7112,6 +7165,44 @@ TEST_F(SingleTouchInputMapperTest,
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasNotCalled());
 }
 
+TEST_F(SingleTouchInputMapperTest, ButtonIsReleasedOnTouchUp) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+
+    // Press a stylus button.
+    processKey(mapper, BTN_STYLUS, 1);
+    processSync(mapper);
+
+    // Start a touch gesture and ensure the BUTTON_PRESS event is generated.
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithCoords(toDisplayX(100), toDisplayY(200)),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithCoords(toDisplayX(100), toDisplayY(200)),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    // Release the touch gesture. Ensure that the BUTTON_RELEASE event is generated even though
+    // the button has not actually been released, since there will be no pointers through which the
+    // button state can be reported. The event is generated at the location of the pointer before
+    // it went up.
+    processUp(mapper);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                  WithCoords(toDisplayX(100), toDisplayY(200)), WithButtonState(0))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithCoords(toDisplayX(100), toDisplayY(200)), WithButtonState(0))));
+}
+
 // --- TouchDisplayProjectionTest ---
 
 class TouchDisplayProjectionTest : public SingleTouchInputMapperTest {
@@ -7296,6 +7387,7 @@ protected:
     void processSlot(MultiTouchInputMapper& mapper, int32_t slot);
     void processToolType(MultiTouchInputMapper& mapper, int32_t toolType);
     void processKey(MultiTouchInputMapper& mapper, int32_t code, int32_t value);
+    void processHidUsage(MultiTouchInputMapper& mapper, int32_t usageCode, int32_t value);
     void processMTSync(MultiTouchInputMapper& mapper);
     void processSync(MultiTouchInputMapper& mapper);
 };
@@ -7398,6 +7490,12 @@ void MultiTouchInputMapperTest::processToolType(MultiTouchInputMapper& mapper, i
 void MultiTouchInputMapperTest::processKey(MultiTouchInputMapper& mapper, int32_t code,
                                            int32_t value) {
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, code, value);
+}
+
+void MultiTouchInputMapperTest::processHidUsage(MultiTouchInputMapper& mapper, int32_t usageCode,
+                                                int32_t value) {
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_MSC, MSC_SCAN, usageCode);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_UNKNOWN, value);
 }
 
 void MultiTouchInputMapperTest::processMTSync(MultiTouchInputMapper& mapper) {
@@ -8515,6 +8613,63 @@ TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleAllButtons) {
     ASSERT_EQ(0, motionArgs.buttonState);
 }
 
+TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleMappedStylusButtons) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    prepareAxes(POSITION | ID | SLOT);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+
+    mFakeEventHub->addKey(EVENTHUB_ID, BTN_A, 0, AKEYCODE_STYLUS_BUTTON_PRIMARY, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, 0, 0xabcd, AKEYCODE_STYLUS_BUTTON_SECONDARY, 0);
+
+    // Touch down.
+    processId(mapper, 1);
+    processPosition(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN), WithButtonState(0))));
+
+    // Press and release button mapped to the primary stylus button.
+    processKey(mapper, BTN_A, 1);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    processKey(mapper, BTN_A, 0);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE), WithButtonState(0))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE), WithButtonState(0))));
+
+    // Press and release the HID usage mapped to the secondary stylus button.
+    processHidUsage(mapper, 0xabcd, 1);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_SECONDARY))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_SECONDARY))));
+
+    processHidUsage(mapper, 0xabcd, 0);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE), WithButtonState(0))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE), WithButtonState(0))));
+
+    // Release touch.
+    processId(mapper, -1);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithButtonState(0))));
+}
+
 TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleAllToolTypes) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     prepareDisplay(DISPLAY_ORIENTATION_0);
@@ -8883,8 +9038,8 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShouldHandleDisplayId) {
     prepareAxes(POSITION);
     MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
 
-    // Check source is mouse that would obtain the PointerController.
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, mapper.getSources());
+    // Check source is a touchpad that would obtain the PointerController.
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
 
     NotifyMotionArgs motionArgs;
     processPosition(mapper, 100, 100);
@@ -8927,6 +9082,7 @@ TEST_F(MultiTouchInputMapperTest, Process_SendsReadTime) {
  */
 TEST_F(MultiTouchInputMapperTest, WhenViewportIsNotActive_TouchesAreDropped) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
+    // Don't set touch.enableForInactiveViewport to verify the default behavior.
     mFakePolicy->addDisplayViewport(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                     DISPLAY_ORIENTATION_0, false /*isActive*/, UNIQUE_ID, NO_PORT,
                                     ViewportType::INTERNAL);
@@ -8941,8 +9097,31 @@ TEST_F(MultiTouchInputMapperTest, WhenViewportIsNotActive_TouchesAreDropped) {
     mFakeListener->assertNotifyMotionWasNotCalled();
 }
 
+/**
+ * When the viewport is not active (isActive=false) and touch.enableForInactiveViewport is true,
+ * the touch mapper can process the events and the events can be delivered to the listener.
+ */
+TEST_F(MultiTouchInputMapperTest, WhenViewportIsNotActive_TouchesAreProcessed) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    addConfigurationProperty("touch.enableForInactiveViewport", "1");
+    mFakePolicy->addDisplayViewport(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                    DISPLAY_ORIENTATION_0, false /*isActive*/, UNIQUE_ID, NO_PORT,
+                                    ViewportType::INTERNAL);
+    configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    prepareAxes(POSITION);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+
+    NotifyMotionArgs motionArgs;
+    processPosition(mapper, 100, 100);
+    processSync(mapper);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
+    EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+}
+
 TEST_F(MultiTouchInputMapperTest, Process_DeactivateViewport_AbortTouches) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
+    addConfigurationProperty("touch.enableForInactiveViewport", "0");
     mFakePolicy->addDisplayViewport(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                     DISPLAY_ORIENTATION_0, true /*isActive*/, UNIQUE_ID, NO_PORT,
                                     ViewportType::INTERNAL);
@@ -9887,11 +10066,11 @@ TEST_F(MultiTouchInputMapperTest, Process_TouchpadCapture) {
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
     ASSERT_EQ(AMOTION_EVENT_ACTION_UP, args.action);
 
-    // non captured touchpad should be a mouse source
+    // A non captured touchpad should have a mouse and touchpad source.
     mFakePolicy->setPointerCapture(false);
     configureDevice(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, mapper.getSources());
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
 }
 
 TEST_F(MultiTouchInputMapperTest, Process_UnCapturedTouchpadPointer) {
@@ -9950,10 +10129,10 @@ TEST_F(MultiTouchInputMapperTest, WhenCapturedAndNotCaptured_GetSources) {
     mFakePolicy->setPointerCapture(false);
     MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
 
-    // uncaptured touchpad should be a pointer device
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, mapper.getSources());
+    // An uncaptured touchpad should be a pointer device, with additional touchpad source.
+    ASSERT_EQ(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
 
-    // captured touchpad should be a touchpad device
+    // A captured touchpad should just have a touchpad source.
     mFakePolicy->setPointerCapture(true);
     configureDevice(InputReaderConfiguration::CHANGE_POINTER_CAPTURE);
     ASSERT_EQ(AINPUT_SOURCE_TOUCHPAD, mapper.getSources());
@@ -10263,6 +10442,46 @@ TEST_F(MultiTouchPointerModeTest, TwoFingerSwipeOffsets) {
     ASSERT_EQ(MotionClassification::TWO_FINGER_SWIPE, motionArgs.classification);
     ASSERT_LT(motionArgs.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_X_OFFSET), 0);
     ASSERT_GT(motionArgs.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_Y_OFFSET), 0);
+}
+
+TEST_F(MultiTouchPointerModeTest, WhenViewportActiveStatusChanged_PointerGestureIsReset) {
+    preparePointerMode(25 /*xResolution*/, 25 /*yResolution*/);
+    mFakeEventHub->addKey(EVENTHUB_ID, BTN_TOOL_PEN, 0, AKEYCODE_UNKNOWN, 0);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+
+    // Start a stylus gesture.
+    processKey(mapper, BTN_TOOL_PEN, 1);
+    processId(mapper, FIRST_TRACKING_ID);
+    processPosition(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithSource(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+    // TODO(b/257078296): Pointer mode generates extra event.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithSource(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+
+    // Make the viewport inactive. This will put the device in disabled mode, and the ongoing stylus
+    // gesture should be disabled.
+    auto viewport = mFakePolicy->getDisplayViewportByType(ViewportType::INTERNAL);
+    viewport->isActive = false;
+    mFakePolicy->updateViewport(*viewport);
+    configureDevice(InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_CANCEL),
+                  WithSource(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+    // TODO(b/257078296): Pointer mode generates extra event.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_CANCEL),
+                  WithSource(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
 }
 
 // --- JoystickInputMapperTest ---

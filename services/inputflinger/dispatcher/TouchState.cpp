@@ -31,10 +31,6 @@ void TouchState::reset() {
 
 void TouchState::addOrUpdateWindow(const sp<WindowInfoHandle>& windowHandle, int32_t targetFlags,
                                    BitSet32 pointerIds, std::optional<nsecs_t> eventTime) {
-    if (targetFlags & InputTarget::FLAG_SPLIT) {
-        split = true;
-    }
-
     for (size_t i = 0; i < windows.size(); i++) {
         TouchedWindow& touchedWindow = windows[i];
         if (touchedWindow.windowHandle == windowHandle) {
@@ -105,11 +101,6 @@ void TouchState::cancelPointersForNonPilferingWindows(const BitSet32 pointerIds)
     std::erase_if(windows, [](const TouchedWindow& w) { return w.pointerIds.isEmpty(); });
 }
 
-void TouchState::filterWindowsExcept(const sp<IBinder>& token) {
-    std::erase_if(windows,
-                  [&token](const TouchedWindow& w) { return w.windowHandle->getToken() != token; });
-}
-
 sp<WindowInfoHandle> TouchState::getFirstForegroundWindowHandle() const {
     for (size_t i = 0; i < windows.size(); i++) {
         const TouchedWindow& window = windows[i];
@@ -142,16 +133,6 @@ sp<WindowInfoHandle> TouchState::getWallpaperWindow() const {
         if (window.windowHandle->getInfo()->inputConfig.test(
                     gui::WindowInfo::InputConfig::IS_WALLPAPER)) {
             return window.windowHandle;
-        }
-    }
-    return nullptr;
-}
-
-sp<WindowInfoHandle> TouchState::getWindow(const sp<IBinder>& token) const {
-    for (const TouchedWindow& touchedWindow : windows) {
-        const auto& windowHandle = touchedWindow.windowHandle;
-        if (windowHandle->getToken() == token) {
-            return windowHandle;
         }
     }
     return nullptr;
