@@ -80,6 +80,10 @@ void QtiFeatureManager::qtiInit() {
     propName = qtiGetPropName(kSplitLayerExtension);
     mQtiUseSplitLayerExt = base::GetBoolProperty(propName, false);
     ALOGI_IF(mQtiUseSplitLayerExt, "Enable Split Layer Extension");
+
+    propName = qtiGetPropName(kSpecFence);
+    mQtiEnableSpecFence = base::GetBoolProperty(propName, false);
+    ALOGI_IF(mQtiEnableSpecFence, "Enable Spec Fence");
 }
 
 void QtiFeatureManager::qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl) {
@@ -128,6 +132,8 @@ bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
             return mQtiUseQsyncIdle;
         case kSmomo:
             return mQtiEnableSmomo;
+        case kSpecFence:
+            return mQtiEnableSpecFence;
         case kSplitLayerExtension:
             return mQtiUseSplitLayerExt;
         case QtiFeature::kVsyncSourceReliableOnDoze:
@@ -164,6 +170,8 @@ string QtiFeatureManager::qtiGetPropName(QtiFeature feature) {
             return "vendor.display.enable_qsync_idle";
         case kSmomo:
             return "vendor.display.use_smooth_motion";
+        case kSpecFence:
+            return "vendor.display.enable_spec_fence";
         case kSplitLayerExtension:
             return "vendor.display.split_layer_ext";
         case QtiFeature::kVsyncSourceReliableOnDoze:

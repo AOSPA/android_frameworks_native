@@ -128,4 +128,12 @@ void QtiOutputExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t type,
     }
 }
 
+bool QtiOutputExtension::qtiUseSpecFence(void) {
+    auto sfext = QtiExtensionContext::instance().getQtiSurfaceFlingerExtn();
+    if (sfext) {
+        return sfext->qtiIsExtensionFeatureEnabled(surfaceflingerextension::kSpecFence);
+    }
+    return false;
+}
+
 } // namespace android::compositionengineextension

@@ -1335,7 +1335,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // so, we can reuse the buffer and avoid client composition.
     if (mClientCompositionRequestCache
         /* QTI_BEGIN */
-        && mLayerRequestingBackgroundBlur != nullptr /* QTI_END */) {
+        && (!QtiOutputExtension::qtiUseSpecFence() || mLayerRequestingBackgroundBlur != nullptr)
+        /* QTI_END */) {
         if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
                                                    clientCompositionDisplay,
                                                    clientCompositionLayers)) {
