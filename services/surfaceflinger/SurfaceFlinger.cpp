@@ -487,7 +487,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
             {.late = base::GetBoolProperty("debug.sf.send_late_power_session_hint"s, true),
              .early = base::GetBoolProperty("debug.sf.send_early_power_session_hint"s, false)};
     /* QTI_BEGIN */
-    mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension();
+    mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension(this);
     mQtiSFExtnIntf->qtiInit(this);
     ALOGI("Created SF Extension %p", mQtiSFExtnIntf);
     /* QTI_END */
@@ -1203,7 +1203,7 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request)
     }
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetContentFps(mode.fps.getValue());
+    mQtiSFExtnIntf->qtiSetContentFps(request.mode.fps.getValue());
     /* QTI_END */
 }
 
@@ -3054,6 +3054,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                                          const DisplayDeviceState& state) {
     ui::Size resolution(0, 0);
     ui::PixelFormat pixelFormat = static_cast<ui::PixelFormat>(PIXEL_FORMAT_UNKNOWN);
+    /* QTI_BEGIN */
+    bool qtiCanAllocateHwcForVDS = false;
+    /* QTI_END */
+
     if (state.physical) {
         resolution = state.physical->activeMode->getResolution();
         pixelFormat = static_cast<ui::PixelFormat>(PIXEL_FORMAT_RGBA_8888);
@@ -3066,6 +3070,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         status = state.surface->query(NATIVE_WINDOW_FORMAT, &format);
         ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
         pixelFormat = static_cast<ui::PixelFormat>(format);
+        /* QTI_BEGIN */
+        qtiCanAllocateHwcForVDS = mQtiSFExtnIntf->qtiCanAllocateHwcDisplayIdForVDS(state);
+        /* QTI_END */
     } else {
         // Virtual displays without a surface are dormant:
         // they have external state (layer stack, projection,
@@ -3077,7 +3084,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     if (const auto& physical = state.physical) {
         builder.setId(physical->id);
     } else {
-        builder.setId(acquireVirtualDisplay(resolution, pixelFormat));
+        /* QTI_BEGIN */
+        builder.setId(mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat,
+                                                               qtiCanAllocateHwcForVDS));
+        /* QTI_END */
     }
 
     builder.setPixels(resolution);
@@ -3096,8 +3106,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     if (state.isVirtual()) {
         const auto displayId = VirtualDisplayId::tryCast(compositionDisplay->getId());
         LOG_FATAL_IF(!displayId);
-        auto surface = sp<VirtualDisplaySurface>::make(getHwComposer(), *displayId, state.surface,
-                                                       bqProducer, bqConsumer, state.displayName);
+        auto surface =
+                sp<VirtualDisplaySurface>::make(getHwComposer(), *displayId, state.surface,
+                                                bqProducer, bqConsumer, state.displayName,
+                                                /* QTI_BEGIN */ state.isSecure /* QTI_END */);
         displaySurface = surface;
         producer = std::move(surface);
     } else {
@@ -4098,6 +4110,10 @@ status_t SurfaceFlinger::setTransactionState(
     }
 
     const int64_t postTime = systemTime();
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    /* QTI_END */
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
@@ -6543,13 +6559,19 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
         auto future = mScheduler->schedule([=]() {
             bool protectedLayerFound = false;
             traverseLayers([&](Layer* layer) {
-                protectedLayerFound =
-                        protectedLayerFound || (layer->isVisible() && layer->isProtected());
+                protectedLayerFound = protectedLayerFound ||
+                        (layer->isVisible() && layer->isProtected() &&
+                         /* QTI_BEGIN */ !mQtiSFExtnIntf->qtiIsSecureCamera(layer->getBuffer()) &&
+                         !mQtiSFExtnIntf->qtiIsSecureDisplay(layer->getBuffer()) /* QTI_END */);
             });
             return protectedLayerFound;
         });
         hasProtectedLayer = future.get();
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiHasProtectedLayer(&hasProtectedLayer);
+    /* QTI_END */
 
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
             GRALLOC_USAGE_HW_TEXTURE |
@@ -6682,6 +6704,12 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     std::unordered_set<compositionengine::LayerFE*> filterForScreenshot;
     traverseLayers([&](Layer* layer) {
         captureResults.capturedHdrLayers |= isHdrLayer(layer);
+        /* QTI_BEGIN */
+        if (mQtiSFExtnIntf->qtiIsSecureDisplay(layer->getBuffer())) {
+            return;
+        }
+        /* QTI_END */
+
         // Layer::prepareClientComposition uses the layer's snapshot to populate the resulting
         // LayerSettings. Calling Layer::updateSnapshot ensures that LayerSettings are
         // generated with the layer's current buffer and geometry.

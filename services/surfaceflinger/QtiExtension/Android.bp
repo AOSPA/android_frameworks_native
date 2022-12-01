@@ -34,6 +34,7 @@ cc_library_static {
         "QtiPhaseOffsetsExtension.cpp",
         "QtiPowerAdvisorExtension.cpp",
         "QtiSurfaceFlingerExtension.cpp",
+        "QtiVirtualDisplaySurfaceExtension.cpp",
         "QtiWorkDurationsExtension.cpp",
     ],
     shared_libs: [

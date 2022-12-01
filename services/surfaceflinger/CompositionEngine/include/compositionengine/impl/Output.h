@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <compositionengine/CompositionEngine.h>
@@ -32,13 +38,21 @@
 #include <utility>
 #include <vector>
 
+/* QTI_BEGIN */
+#include "../../../QtiExtension/QtiOutputExtension.h"
+
+namespace android::compositionengineextension {
+class QtiOutputExtension;
+} // namespace android::compositionengineextension
+/* QTI_END */
+
 namespace android::compositionengine::impl {
 
 // The implementation class contains the common implementation, but does not
 // actually contain the final output state.
 class Output : public virtual compositionengine::Output {
 public:
-    Output() = default;
+    Output();
     ~Output() override;
 
     // compositionengine::Output overrides
@@ -158,6 +172,11 @@ protected:
     const std::string& getNamePlusId() const { return mNamePlusId; }
 
 private:
+    /* QTI_BEGIN */
+    friend class android::compositionengineextension::QtiOutputExtension;
+    android::compositionengineextension::QtiOutputExtension* mQtiOutputExtn = nullptr;
+    /* QTI_END */
+
     void dirtyEntireOutput();
     void updateCompositionStateForBorder(const compositionengine::CompositionRefreshArgs&);
     compositionengine::OutputLayer* findLayerRequestingBackgroundComposition() const;

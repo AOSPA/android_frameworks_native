@@ -2,9 +2,10 @@
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
-
 #include "QtiSurfaceFlingerExtension.h"
+#include "QtiGralloc.h"
 
+#include <Scheduler/VsyncConfiguration.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
 #include <android-base/properties.h>
@@ -14,9 +15,9 @@
 #include <config/client_interface.h>
 
 #include <Scheduler/VsyncConfiguration.h>
-#include "QtiSurfaceFlingerExtension.h"
 
 using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
+using android::hardware::graphics::common::V1_0::BufferUsage;
 using PerfHintType = composer::PerfHintType;
 using VsyncConfiguration = android::scheduler::VsyncConfiguration;
 using VsyncModulator = android::scheduler::VsyncModulator;
@@ -38,6 +39,8 @@ composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 
 namespace android::surfaceflingerextension {
 
+bool QtiSurfaceFlingerExtension::mQtiSDirectStreaming;
+
 #ifdef QTI_DISPLAY_AIDL_CONFIG
 std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
 #endif
@@ -46,7 +49,7 @@ std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
 ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
 #endif
 
-QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension() {
+QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger* flinger) {
 #ifdef QTI_DISPLAY_EXTENSION
     bool mQtiEnableDisplayExtn =
             base::GetBoolProperty("vendor.display.enable_display_extensions", false);
@@ -57,7 +60,7 @@ QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension() {
 #endif
 
     ALOGI("Enabling GSI in QSSI ...");
-    return new QtiNullExtension();
+    return new QtiNullExtension(flinger);
 }
 
 QtiSurfaceFlingerExtension::QtiSurfaceFlingerExtension() {}
@@ -96,7 +99,7 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
     if (!mQtiFeatureManager) {
         ALOGE("Failed to initialize QtiFeatureManager");
     } else {
-        mQtiFeatureManager->init();
+        mQtiFeatureManager->qtiInit();
     }
 
     if (mQtiComposerExtnIntf) {
@@ -110,6 +113,8 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
             }
         }
     }
+
+    mQtiFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
 }
 
 QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
@@ -152,6 +157,7 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
 #ifdef QTI_DISPLAY_HIDL_CONFIG
         mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigHidl);
 #endif
+        mQtiFeatureManager->qtiPostInit();
     }
 
     // When both IDisplayConfig AIDL and HIDL are not available, behave similar to GSI mode
@@ -650,6 +656,188 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
 #endif
 
     return NO_ERROR;
+}
+
+/*
+ * Methods for Virtual, WiFi, and Secure Displays
+ */
+VirtualDisplayId QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
+                                                                      ui::PixelFormat format,
+                                                                      bool canAllocateHwcForVDS) {
+    auto& generator = mQtiFlinger->mVirtualDisplayIdGenerators.hal;
+    if (canAllocateHwcForVDS && generator) {
+        if (const auto id = generator->generateId()) {
+            if (mQtiFlinger->getHwComposer().allocateVirtualDisplay(*id, resolution, &format)) {
+                return *id;
+            }
+
+            generator->releaseId(*id);
+        } else {
+            ALOGW("%s: Exhausted HAL virtual displays", __func__);
+        }
+
+        ALOGW("%s: Falling back to GPU virtual display", __func__);
+    }
+
+    const auto id = mQtiFlinger->mVirtualDisplayIdGenerators.gpu.generateId();
+    LOG_ALWAYS_FATAL_IF(!id, "Failed to generate ID for GPU virtual display");
+    return *id;
+}
+
+bool QtiSurfaceFlingerExtension::qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) {
+    uint64_t usage = 0;
+    int status = 0;
+    size_t maxVirtualDisplaySize = mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
+
+    ui::Size resolution(0, 0);
+    status = state.surface->query(NATIVE_WINDOW_WIDTH, &resolution.width);
+    if (status != NO_ERROR) {
+        ALOGE("Unable to query width (%d)", status);
+        goto cleanup;
+    }
+
+    status = state.surface->query(NATIVE_WINDOW_HEIGHT, &resolution.height);
+    if (status != NO_ERROR) {
+        ALOGE("Unable to query height (%d)", status);
+        goto cleanup;
+    }
+
+    // Replace with native_window_get_consumer_usage ?
+    status = state.surface->getConsumerUsage(&usage);
+    if (status != NO_ERROR) {
+        ALOGW("Unable to query usage (%d)", status);
+        goto cleanup;
+    }
+
+    if (maxVirtualDisplaySize == 0 ||
+        ((uint64_t)resolution.width <= maxVirtualDisplaySize &&
+         (uint64_t)resolution.height <= maxVirtualDisplaySize)) {
+        return qtiCanAllocateHwcDisplayIdForVDS(usage);
+    }
+
+cleanup:
+    return false;
+}
+
+bool QtiSurfaceFlingerExtension::qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) {
+    uint64_t flag_mask_pvt_wfd = static_cast<uint64_t>(~0);
+    uint64_t flag_mask_hw_video = static_cast<uint64_t>(~0);
+    bool mAllowHwcForVDS = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kHwcForVds);
+    bool mAllowHwcForWFD = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kHwcForWfd);
+
+    // Reserve hardware acceleration for WFD use-case
+    // GRALLOC_USAGE_PRIVATE_WFD + GRALLOC_USAGE_HW_VIDEO_ENCODER = WFD using HW composer.
+    flag_mask_pvt_wfd = GRALLOC_USAGE_PRIVATE_WFD;
+    flag_mask_hw_video = GRALLOC_USAGE_HW_VIDEO_ENCODER;
+    // GRALLOC_USAGE_PRIVATE_WFD + GRALLOC_USAGE_SW_READ_OFTEN
+    // WFD using GLES (directstreaming).
+    mQtiSDirectStreaming =
+            ((usage & GRALLOC_USAGE_PRIVATE_WFD) && (usage & GRALLOC_USAGE_SW_READ_OFTEN));
+    bool isWfd = (usage & flag_mask_pvt_wfd) && (usage & flag_mask_hw_video);
+
+    // Enabling only the vendor property would allow WFD to use HWC
+    // Enabling both the aosp and vendor properties would allow all other VDS to use HWC
+    // Disabling both would set all virtual displays to fall back to GPU
+    // In vendor frozen targets, allow WFD to use HWC without any property settings.
+    bool canAllocate = mAllowHwcForVDS || (isWfd && mAllowHwcForWFD) ||
+            (isWfd && mQtiFirstApiLevel < __ANDROID_API_T__);
+
+    if (canAllocate) {
+        mQtiFlinger->enableHalVirtualDisplays(true);
+    }
+
+    return canAllocate;
+}
+
+void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) {
+    bool asyncVdsCreationSupported =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kAsyncVdsCreationSupported);
+    if (!asyncVdsCreationSupported) {
+        return;
+    }
+
+    for (const DisplayState& s : displays) {
+        const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
+        if (index < 0) continue;
+
+        DisplayDeviceState& state =
+                mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
+        const uint32_t what = s.what;
+        if (what & DisplayState::eSurfaceChanged) {
+            if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
+                if (state.isVirtual() && s.surface != nullptr) {
+                    int width = 0;
+                    int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
+                    ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
+                    int height = 0;
+                    status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
+                    ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
+                    int format = 0;
+                    status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
+                    ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
+                    size_t maxVirtualDisplaySize =
+                            mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
+
+                    // Create VDS if IDisplayConfig AIDL/HIDL is present and if
+                    // the resolution is within the maximum allowed dimension for VDS
+                    if (mQtiEnabledIDC && (maxVirtualDisplaySize == 0 ||
+                         ((uint64_t)width <= maxVirtualDisplaySize &&
+                          (uint64_t)height <= maxVirtualDisplaySize))) {
+                        uint64_t usage = 0;
+                        // Replace with native_window_get_consumer_usage ?
+                        status = s.surface->getConsumerUsage(&usage);
+                        ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
+                        if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
+                            qtiCreateVirtualDisplay(width, height, format);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, int format) {
+    if (!mQtiEnabledIDC) {
+        ALOGV("IDisplayConfig AIDL and HIDL are not available.");
+        return;
+    }
+
+// Use either IDisplayConfig AIDL or HIDL
+#ifdef QTI_DISPLAY_AIDL_CONFIG
+    if (mQtiDisplayConfigAidl) {
+        mQtiDisplayConfigAidl->createVirtualDisplay(width, height, format);
+        return;
+    }
+#endif
+
+#ifdef QTI_DISPLAY_HIDL_CONFIG
+    if (mQtiDisplayConfigHidl) {
+        mQtiDisplayConfigHidl->CreateVirtualDisplay((uint32_t)width, (uint32_t)height, format);
+        return;
+    }
+#endif
+}
+
+void QtiSurfaceFlingerExtension::qtiHasProtectedLayer(bool* hasProtectedLayer) {
+    // Surface flinger captures individual screen shot for each display
+    // This will lead consumption of high GPU secure memory in case
+    // of secure video use cases and cause out of memory.
+    Mutex::Autolock lock(mQtiFlinger->mStateLock);
+    if (mQtiFlinger->mDisplays.size() > 1) {
+        *hasProtectedLayer = false;
+    }
+}
+
+bool QtiSurfaceFlingerExtension::qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) {
+    return buffer && (buffer->getUsage() & GRALLOC_USAGE_PRIVATE_SECURE_DISPLAY);
+}
+
+bool QtiSurfaceFlingerExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffer) {
+    bool protected_buffer = buffer && (buffer->getUsage() & BufferUsage::PROTECTED);
+    bool camera_output = buffer && (buffer->getUsage() & BufferUsage::CAMERA_OUTPUT);
+    return protected_buffer && camera_output;
 }
 
 /*

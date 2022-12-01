@@ -157,6 +157,7 @@ class RenderEngine;
 namespace surfaceflingerextension {
 class QtiSurfaceFlingerExtensionIntf;
 class QtiSurfaceFlingerExtension;
+class QtiNullExtension;
 } // namespace surfaceflingerextension
 /* QTI_END */
 
@@ -354,6 +355,7 @@ private:
 
     /* QTI_BEGIN */
     friend class ::android::surfaceflingerextension::QtiSurfaceFlingerExtension;
+    friend class ::android::surfaceflingerextension::QtiNullExtension;
     /* QTI_END */
 
     // For unit tests

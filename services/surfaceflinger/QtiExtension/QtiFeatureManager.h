@@ -27,7 +27,8 @@ public:
     QtiFeatureManager(QtiSurfaceFlingerExtension* extension);
     ~QtiFeatureManager() = default;
 
-    void init();
+    void qtiInit();
+    void qtiPostInit();
     void qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl);
     void qtiSetIDisplayConfig(::DisplayConfig::ClientInterface* hidl);
     bool qtiIsExtensionFeatureEnabled(QtiFeature feature);
@@ -42,6 +43,7 @@ private:
      */
     bool mQtiAllowHwcForVDS = false;
     bool mQtiAllowHwcForWFD = false;
+    bool mQtiAsyncVdsCreationSupported = false;
     bool mQtiEnableDynamicSfIdle = false;
     bool mQtiEnableEarlyWakeUp = false;
     bool mQtiLatchMediaContent = false;

@@ -90,6 +90,19 @@ public:
     status_t qtiGetDebugProperty(string prop, string* value) override;
     status_t qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) override;
 
+    /*
+     * Methods for Virtual, WiFi, and Secure Displays
+     */
+    VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                              bool canAllocateHwcForVDS) override;
+    bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) override;
+    bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
+    void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
+    void qtiCreateVirtualDisplay(int width, int height, int format) override;
+    void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
+    bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
+    bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
+
 private:
     bool qtiIsInternalDisplay(const sp<DisplayDevice>& display);
     void qtiSetupDisplayExtnFeatures();
@@ -111,9 +124,12 @@ private:
     bool mQtiSentInitialFps = false;
     bool mQtiTidSentSuccessfully = false;
     bool mQtiWakeUpPresentationDisplays = false;
+    int mQtiFirstApiLevel = 0;
     int mQtiRETid = 0;
     int mQtiSFTid = 0;
     uint32_t mQtiCurrentFps = 0;
+
+    static bool mQtiSDirectStreaming;
 
     std::list<sp<DisplayDevice>> mQtiDisplaysList = {};
     std::mutex mQtiEarlyWakeUpMutex;

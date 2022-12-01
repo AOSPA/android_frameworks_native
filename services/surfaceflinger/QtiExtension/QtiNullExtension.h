@@ -3,6 +3,7 @@
  */
 #pragma once
 
+#include "../SurfaceFlinger.h"
 #include "QtiSurfaceFlingerExtensionIntf.h"
 
 namespace android {
@@ -12,6 +13,7 @@ namespace surfaceflingerextension {
 class QtiNullExtension : public QtiSurfaceFlingerExtensionIntf {
 public:
     QtiNullExtension();
+    QtiNullExtension(SurfaceFlinger* flinger) : mQtiFlinger(flinger) {}
     ~QtiNullExtension() = default;
 
     void qtiInit(SurfaceFlinger* flinger) override;
@@ -66,6 +68,22 @@ public:
      */
     status_t qtiGetDebugProperty(string prop, string* value) override;
     status_t qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) override;
+
+    /*
+     * Methods for Virtual, WiFi, and Secure Displays
+     */
+    VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                              bool canAllocateHwcForVDS) override;
+    bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) override;
+    bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
+    void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
+    void qtiCreateVirtualDisplay(int width, int height, int format) override;
+    void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
+    bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
+    bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
+
+private:
+    SurfaceFlinger* mQtiFlinger = nullptr;
 };
 
 } // namespace surfaceflingerextension

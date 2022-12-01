@@ -85,6 +85,7 @@ cc_defaults {
         "libserviceutils",
         "libshaders",
         "libtonemap",
+        "libqticompositionengineextension",
         "libqtisurfaceflingerextension",
     ],
     header_libs: [

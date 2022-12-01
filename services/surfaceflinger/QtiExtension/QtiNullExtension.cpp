@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include "QtiNullExtension.h"
+#include <ui/DisplayId.h>
 
 namespace android::surfaceflingerextension {
 
@@ -82,4 +83,30 @@ status_t QtiNullExtension::qtiGetDebugProperty(string prop, string* value) {
 status_t QtiNullExtension::qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) {
     return OK;
 }
+
+/*
+ * Methods for Virtual, WiFi, and Secure Displays
+ */
+
+android::VirtualDisplayId QtiNullExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
+                                                                     ui::PixelFormat format,
+                                                                     bool canAllocateHwcForVDS) {
+    return mQtiFlinger->acquireVirtualDisplay(resolution, format);
+}
+bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) {
+    return false;
+}
+bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) {
+    return false;
+}
+void QtiNullExtension::qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) {}
+void QtiNullExtension::qtiCreateVirtualDisplay(int width, int height, int format) {}
+void QtiNullExtension::qtiHasProtectedLayer(bool* hasProtectedLayer) {}
+bool QtiNullExtension::qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) {
+    return false;
+}
+bool QtiNullExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffer) {
+    return false;
+}
+
 } // namespace android::surfaceflingerextension

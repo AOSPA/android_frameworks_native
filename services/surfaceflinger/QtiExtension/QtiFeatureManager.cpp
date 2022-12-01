@@ -15,7 +15,7 @@ QtiFeatureManager::QtiFeatureManager(QtiSurfaceFlingerExtension* extension) {
     mQtiSFExtension = extension;
 }
 
-void QtiFeatureManager::init() {
+void QtiFeatureManager::qtiInit() {
     ALOGV("Initializing QtiFeatureManager");
 
     string propName = "";
@@ -82,10 +82,24 @@ void QtiFeatureManager::qtiSetIDisplayConfig(::DisplayConfig::ClientInterface* h
     mQtiHidl = hidl;
 }
 
+void QtiFeatureManager::qtiPostInit() {
+    if (mQtiAidl) {
+        mQtiAidl->isAsyncVDSCreationSupported(&mQtiAsyncVdsCreationSupported);
+        ALOGV("AIDL IsAsyncVDSCreationSupported %d", mQtiAsyncVdsCreationSupported);
+    } else if (mQtiHidl) {
+        mQtiHidl->IsAsyncVDSCreationSupported(&mQtiAsyncVdsCreationSupported);
+        ALOGV("HIDL IsAsyncVDSCreationSupported %d", mQtiAsyncVdsCreationSupported);
+    } else {
+        ALOGW("IDisplayConfig AIDL and HIDL are unavailable.");
+    }
+}
+
 bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
     switch (feature) {
         case QtiFeature::kAdvanceSfOffset:
             return mQtiUseAdvanceSfOffset;
+        case QtiFeature::kAsyncVdsCreationSupported:
+            return mQtiAsyncVdsCreationSupported;
         case QtiFeature::kDynamicSfIdle:
             return mQtiEnableDynamicSfIdle;
         case QtiFeature::kEarlyWakeUp:

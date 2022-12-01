@@ -16,6 +16,7 @@ namespace surfaceflingerextension {
 
 enum QtiFeature {
     kAdvanceSfOffset = 0,
+    kAsyncVdsCreationSupported,
     kDynamicSfIdle,
     kEarlyWakeUp,
     kFbScaling,
@@ -86,9 +87,22 @@ public:
      */
     virtual status_t qtiGetDebugProperty(string prop, string* value) = 0;
     virtual status_t qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) = 0;
+
+    /*
+     * Methods for Virtual, WiFi, and Secure Displays
+     */
+    virtual VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                      bool canAllocateHwcForVDS) = 0;
+    virtual bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) = 0;
+    virtual bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) = 0;
+    virtual void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) = 0;
+    virtual void qtiCreateVirtualDisplay(int width, int height, int format) = 0;
+    virtual void qtiHasProtectedLayer(bool* hasProtectedLayer) = 0;
+    virtual bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) = 0;
+    virtual bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) = 0;
 };
 
-QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension();
+QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger* flinger);
 
 } // namespace surfaceflingerextension
 } // namespace android
