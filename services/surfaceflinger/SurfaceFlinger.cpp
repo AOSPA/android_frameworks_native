@@ -44,16 +44,19 @@
 #include <compositionengine/CompositionRefreshArgs.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplayColorProfile.h>
+#include <compositionengine/DisplayColorProfileCreationArgs.h>
 #include <compositionengine/DisplayCreationArgs.h>
 #include <compositionengine/LayerFECompositionState.h>
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/RenderSurface.h>
+#include <compositionengine/impl/DisplayColorProfile.h>
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <configstore/Utils.h>
 #include <cutils/compiler.h>
 #include <cutils/properties.h>
 #include <ftl/algorithm.h>
+#include <ftl/concat.h>
 #include <ftl/fake_guard.h>
 #include <ftl/future.h>
 #include <ftl/unit.h>
@@ -137,6 +140,7 @@
 #include "Scheduler/LayerHistory.h"
 #include "Scheduler/Scheduler.h"
 #include "Scheduler/VsyncConfiguration.h"
+#include "ScreenCaptureOutput.h"
 #include "StartPropertySetThread.h"
 #include "SurfaceFlingerProperties.h"
 #include "TimeStats/TimeStats.h"
@@ -160,6 +164,7 @@ namespace android {
 
 using namespace std::chrono_literals;
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 
 using namespace hardware::configstore;
 using namespace hardware::configstore::V1_0;
@@ -308,8 +313,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
         mCompositionEngine(mFactory.createCompositionEngine()),
         mHwcServiceName(base::GetProperty("debug.sf.hwc_service_name"s, "default"s)),
         mTunnelModeEnabledReporter(sp<TunnelModeEnabledReporter>::make()),
-        mInternalDisplayDensity(getDensityFromProperty("ro.sf.lcd_density", true)),
         mEmulatedDisplayDensity(getDensityFromProperty("qemu.sf.lcd_density", false)),
+        mInternalDisplayDensity(
+                getDensityFromProperty("ro.sf.lcd_density", !mEmulatedDisplayDensity)),
         mPowerAdvisor(std::make_unique<Hwc2::impl::PowerAdvisor>(*this)),
         mWindowInfosListenerInvoker(sp<WindowInfosListenerInvoker>::make()) {
     ALOGI("Using HWComposer service: %s", mHwcServiceName.c_str());
@@ -2179,13 +2185,14 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
 
     refreshArgs.updatingOutputGeometryThisFrame = mVisibleRegionsDirty;
     refreshArgs.updatingGeometryThisFrame = mGeometryDirty.exchange(false) || mVisibleRegionsDirty;
-    std::vector<Layer*> layers;
+    std::vector<sp<Layer>> layers;
 
     mDrawingState.traverseInZOrder([&refreshArgs, &layers](Layer* layer) {
+        auto strongLayer = sp<Layer>::fromExisting(layer);
         if (auto layerFE = layer->getCompositionEngineLayerFE()) {
             layer->updateSnapshot(refreshArgs.updatingGeometryThisFrame);
             refreshArgs.layers.push_back(layerFE);
-            layers.push_back(layer);
+            layers.push_back(std::move(strongLayer));
         }
     });
     refreshArgs.blursAreExpensive = mBlursAreExpensive;
@@ -2217,8 +2224,8 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
 
     {
         std::vector<LayerSnapshotGuard> layerSnapshotGuards;
-        for (Layer* layer : layers) {
-            layerSnapshotGuards.emplace_back(layer);
+        for (auto& layer : layers) {
+            layerSnapshotGuards.emplace_back(layer.get());
         }
         mCompositionEngine->present(refreshArgs);
     }
@@ -2951,6 +2958,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
         // Display modes are reloaded on hotplug reconnect.
         if (display->isPrimary()) {
+            // TODO(b/241285876): Annotate `processDisplayAdded` instead.
+            ftl::FakeGuard guard(kMainThreadContext);
             mScheduler->setRefreshRateSelector(selectorPtr);
         }
 
@@ -3272,7 +3281,7 @@ void SurfaceFlinger::persistDisplayBrightness(bool needsComposite) {
 
                 ALOGE_IF(error != NO_ERROR,
                          "Error setting display brightness for display %s: %d (%s)",
-                         display->getDebugName().c_str(), error, strerror(error));
+                         to_string(display->getId()).c_str(), error, strerror(error));
             }
             display->persistBrightness(needsComposite);
         }
@@ -3337,7 +3346,12 @@ void SurfaceFlinger::updateCursorAsync() {
 
     std::vector<LayerSnapshotGuard> layerSnapshotGuards;
     mDrawingState.traverse([&layerSnapshotGuards](Layer* layer) {
-        if (layer->getLayerSnapshot()->compositionType ==
+        auto strongLayer = sp<Layer>::fromExisting(layer);
+        const LayerSnapshot* snapshot = layer->getLayerSnapshot();
+        if (!snapshot) {
+            LOG_ALWAYS_FATAL("Layer snapshot unexpectedly null");
+        }
+        if (snapshot->compositionType ==
             aidl::android::hardware::graphics::composer3::Composition::CURSOR) {
             layer->updateSnapshot(false /* updateGeometry */);
             layerSnapshotGuards.emplace_back(layer);
@@ -3411,19 +3425,18 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
         features |= Feature::kPresentFences;
     }
 
+    auto selectorPtr = display->holdRefreshRateSelector();
+    if (selectorPtr->kernelIdleTimerController()) {
+        features |= Feature::kKernelIdleTimer;
+    }
+
     mScheduler = std::make_unique<scheduler::Scheduler>(static_cast<ICompositor&>(*this),
                                                         static_cast<ISchedulerCallback&>(*this),
                                                         features);
-    {
-        auto selectorPtr = display->holdRefreshRateSelector();
-        if (selectorPtr->kernelIdleTimerController()) {
-            features |= Feature::kKernelIdleTimer;
-        }
+    mScheduler->createVsyncSchedule(features);
+    mScheduler->setRefreshRateSelector(selectorPtr);
+    mScheduler->registerDisplay(display->getPhysicalId(), std::move(selectorPtr));
 
-        mScheduler->createVsyncSchedule(features);
-        mScheduler->setRefreshRateSelector(selectorPtr);
-        mScheduler->registerDisplay(display->getPhysicalId(), std::move(selectorPtr));
-    }
     setVsyncEnabled(false);
     mScheduler->startTimers();
 
@@ -4765,17 +4778,18 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                 {"--comp-displays"s, dumper(&SurfaceFlinger::dumpCompositionDisplays)},
                 {"--display-id"s, dumper(&SurfaceFlinger::dumpDisplayIdentificationData)},
                 {"--displays"s, dumper(&SurfaceFlinger::dumpDisplays)},
-                {"--dispsync"s, dumper([this](std::string& s) { mScheduler->dumpVsync(s); })},
                 {"--edid"s, argsDumper(&SurfaceFlinger::dumpRawDisplayIdentificationData)},
+                {"--events"s, dumper(&SurfaceFlinger::dumpEvents)},
+                {"--frametimeline"s, argsDumper(&SurfaceFlinger::dumpFrameTimeline)},
+                {"--hwclayers"s, dumper(&SurfaceFlinger::dumpHwcLayersMinidumpLocked)},
                 {"--latency"s, argsDumper(&SurfaceFlinger::dumpStatsLocked)},
                 {"--latency-clear"s, argsDumper(&SurfaceFlinger::clearStatsLocked)},
                 {"--list"s, dumper(&SurfaceFlinger::listLayersLocked)},
                 {"--planner"s, argsDumper(&SurfaceFlinger::dumpPlannerInfo)},
+                {"--scheduler"s, dumper(&SurfaceFlinger::dumpScheduler)},
                 {"--timestats"s, protoDumper(&SurfaceFlinger::dumpTimeStats)},
-                {"--vsync"s, dumper(&SurfaceFlinger::dumpVSync)},
+                {"--vsync"s, dumper(&SurfaceFlinger::dumpVsync)},
                 {"--wide-color"s, dumper(&SurfaceFlinger::dumpWideColorInfo)},
-                {"--frametimeline"s, argsDumper(&SurfaceFlinger::dumpFrameTimeline)},
-                {"--hwclayers"s, dumper(&SurfaceFlinger::dumpHwcLayersMinidumpLocked)},
         };
 
         const auto flag = args.empty() ? ""s : std::string(String8(args[0]));
@@ -4899,24 +4913,39 @@ void SurfaceFlinger::appendSfConfigString(std::string& result) const {
     result.append("]");
 }
 
-void SurfaceFlinger::dumpVSync(std::string& result) const {
-    mScheduler->dump(result);
+void SurfaceFlinger::dumpScheduler(std::string& result) const {
+    utils::Dumper dumper{result};
+
+    mScheduler->dump(dumper);
+
+    // TODO(b/241286146): Move to Scheduler.
+    {
+        utils::Dumper::Indent indent(dumper);
+        dumper.dump("lastHwcVsyncState"sv, mLastHWCVsyncState);
+        dumper.dump("pendingHwcVsyncState"sv, mHWCVsyncPendingState);
+    }
+    dumper.eol();
+
+    // TODO(b/241285876): Move to DisplayModeController.
+    dumper.dump("debugDisplayModeSetByBackdoor"sv, mDebugDisplayModeSetByBackdoor);
+    dumper.eol();
 
     mRefreshRateStats->dump(result);
-    result.append("\n");
+    dumper.eol();
 
     mVsyncConfiguration->dump(result);
     StringAppendF(&result,
-                  "      present offset: %9" PRId64 " ns\t     VSYNC period: %9" PRId64 " ns\n\n",
+                  "         present offset: %9" PRId64 " ns\t        VSYNC period: %9" PRId64
+                  " ns\n\n",
                   dispSyncPresentTimeOffset, getVsyncPeriodFromHWC());
+}
 
-    StringAppendF(&result, "(mode override by backdoor: %s)\n\n",
-                  mDebugDisplayModeSetByBackdoor ? "yes" : "no");
-
+void SurfaceFlinger::dumpEvents(std::string& result) const {
     mScheduler->dump(mAppConnectionHandle, result);
+}
+
+void SurfaceFlinger::dumpVsync(std::string& result) const {
     mScheduler->dumpVsync(result);
-    StringAppendF(&result, "mHWCVsyncPendingState=%s mLastHWCVsyncState=%s\n",
-                  to_string(mHWCVsyncPendingState).c_str(), to_string(mLastHWCVsyncState).c_str());
 }
 
 void SurfaceFlinger::dumpPlannerInfo(const DumpArgs& args, std::string& result) const {
@@ -4937,19 +4966,21 @@ void SurfaceFlinger::dumpDisplays(std::string& result) const {
     utils::Dumper dumper{result};
 
     for (const auto& [id, display] : mPhysicalDisplays) {
+        utils::Dumper::Section section(dumper, ftl::Concat("Display ", id.value).str());
+
+        display.snapshot().dump(dumper);
+
         if (const auto device = getDisplayDeviceLocked(id)) {
             device->dump(dumper);
         }
-
-        utils::Dumper::Indent indent(dumper);
-        display.snapshot().dump(dumper);
-        dumper.eol();
     }
 
     for (const auto& [token, display] : mDisplays) {
         if (display->isVirtual()) {
+            const auto displayId = display->getId();
+            utils::Dumper::Section section(dumper,
+                                           ftl::Concat("Virtual Display ", displayId.value).str());
             display->dump(dumper);
-            dumper.eol();
         }
     }
 }
@@ -5120,7 +5151,7 @@ void SurfaceFlinger::dumpHwcLayersMinidumpLocked(std::string& result) const {
         Layer::miniDumpHeader(result);
 
         const DisplayDevice& ref = *display;
-        mCurrentState.traverseInZOrder([&](Layer* layer) { layer->miniDump(result, ref); });
+        mDrawingState.traverseInZOrder([&](Layer* layer) { layer->miniDump(result, ref); });
         result.append("\n");
     }
 }
@@ -5160,7 +5191,9 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
     colorizer.bold(result);
     result.append("Scheduler:\n");
     colorizer.reset(result);
-    dumpVSync(result);
+    dumpScheduler(result);
+    dumpEvents(result);
+    dumpVsync(result);
     result.append("\n");
 
     StringAppendF(&result, "Total missed frame count: %u\n", mFrameMissedCount.load());
@@ -6250,7 +6283,8 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
         return BAD_VALUE;
     }
 
-    Rect layerStackSpaceRect(0, 0, reqSize.width, reqSize.height);
+    Rect layerStackSpaceRect(crop.left, crop.top, crop.left + reqSize.width,
+                             crop.top + reqSize.height);
     bool childrenOnly = args.childrenOnly;
     RenderAreaFuture renderAreaFuture = ftl::defer([=]() -> std::unique_ptr<RenderArea> {
         return std::make_unique<LayerRenderArea>(*this, parent, crop, reqSize, dataspace,
@@ -6370,7 +6404,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
 
                 ftl::SharedFuture<FenceResult> renderFuture;
                 renderArea->render([&]() FTL_FAKE_GUARD(kMainThreadContext) {
-                    renderFuture = renderScreenImpl(*renderArea, traverseLayers, buffer,
+                    renderFuture = renderScreenImpl(std::move(renderArea), traverseLayers, buffer,
                                                     canCaptureBlackoutContent, regionSampling,
                                                     grayscale, captureResults);
                 });
@@ -6398,18 +6432,18 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
 }
 
 ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
-        const RenderArea& renderArea, TraverseLayersFunction traverseLayers,
+        std::unique_ptr<RenderArea> renderArea, TraverseLayersFunction traverseLayers,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer,
         bool canCaptureBlackoutContent, bool regionSampling, bool grayscale,
         ScreenCaptureResults& captureResults) {
     ATRACE_CALL();
 
+    size_t layerCount = 0;
     traverseLayers([&](Layer* layer) {
+        layerCount++;
         captureResults.capturedSecureLayers =
                 captureResults.capturedSecureLayers || (layer->isVisible() && layer->isSecure());
     });
-
-    const bool useProtected = buffer->getUsage() & GRALLOC_USAGE_PROTECTED;
 
     // We allow the system server to take screenshots of secure layers for
     // use in situations like the Screen-rotation animation and place
@@ -6420,8 +6454,8 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     }
 
     captureResults.buffer = buffer->getBuffer();
-    auto dataspace = renderArea.getReqDataSpace();
-    auto parent = renderArea.getParentLayer();
+    auto dataspace = renderArea->getReqDataSpace();
+    auto parent = renderArea->getParentLayer();
     auto renderIntent = RenderIntent::TONE_MAP_COLORIMETRIC;
     auto sdrWhitePointNits = DisplayDevice::sDefaultMaxLumiance;
     auto displayBrightnessNits = DisplayDevice::sDefaultMaxLumiance;
@@ -6443,121 +6477,107 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     }
     captureResults.capturedDataspace = dataspace;
 
-    const auto reqWidth = renderArea.getReqWidth();
-    const auto reqHeight = renderArea.getReqHeight();
-    const auto sourceCrop = renderArea.getSourceCrop();
-    const auto transform = renderArea.getTransform();
-    const auto rotation = renderArea.getRotationFlags();
-    const auto& layerStackSpaceRect = renderArea.getLayerStackSpaceRect();
+    const auto transform = renderArea->getTransform();
+    const auto display = renderArea->getDisplayDevice();
 
-    renderengine::DisplaySettings clientCompositionDisplay;
-    std::vector<compositionengine::LayerFE::LayerSettings> clientCompositionLayers;
-
-    // assume that bounds are never offset, and that they are the same as the
-    // buffer bounds.
-    clientCompositionDisplay.physicalDisplay = Rect(reqWidth, reqHeight);
-    clientCompositionDisplay.clip = sourceCrop;
-    clientCompositionDisplay.orientation = rotation;
-
-    clientCompositionDisplay.outputDataspace = dataspace;
-    clientCompositionDisplay.currentLuminanceNits = displayBrightnessNits;
-    clientCompositionDisplay.maxLuminance = DisplayDevice::sDefaultMaxLumiance;
-    clientCompositionDisplay.renderIntent =
-            static_cast<aidl::android::hardware::graphics::composer3::RenderIntent>(renderIntent);
-
-    const float colorSaturation = grayscale ? 0 : 1;
-    clientCompositionDisplay.colorTransform = calculateColorMatrix(colorSaturation);
-
-    const float alpha = RenderArea::getCaptureFillValue(renderArea.getCaptureFill());
-
-    compositionengine::LayerFE::LayerSettings fillLayer;
-    fillLayer.source.buffer.buffer = nullptr;
-    fillLayer.source.solidColor = half3(0.0, 0.0, 0.0);
-    fillLayer.geometry.boundaries =
-            FloatRect(sourceCrop.left, sourceCrop.top, sourceCrop.right, sourceCrop.bottom);
-    fillLayer.alpha = half(alpha);
-    clientCompositionLayers.push_back(fillLayer);
-
-    const auto display = renderArea.getDisplayDevice();
-    std::vector<Layer*> renderedLayers;
-    bool disableBlurs = false;
-    traverseLayers([&](Layer* layer) FTL_FAKE_GUARD(kMainThreadContext) {
-        auto layerFE = layer->getCompositionEngineLayerFE();
-        if (!layerFE) {
-            return;
-        }
+    std::vector<std::pair<Layer*, sp<LayerFE>>> layers;
+    layers.reserve(layerCount);
+    std::unordered_set<compositionengine::LayerFE*> filterForScreenshot;
+    traverseLayers([&](Layer* layer) {
+        auto strongLayer = sp<Layer>::fromExisting(layer);
+        captureResults.capturedHdrLayers |= isHdrLayer(layer);
         // Layer::prepareClientComposition uses the layer's snapshot to populate the resulting
         // LayerSettings. Calling Layer::updateSnapshot ensures that LayerSettings are
         // generated with the layer's current buffer and geometry.
         layer->updateSnapshot(true /* updateGeometry */);
 
-        disableBlurs |= layer->getDrawingState().sidebandStream != nullptr;
+        layers.emplace_back(layer, layer->copyCompositionEngineLayerFE());
 
-        Region clip(renderArea.getBounds());
-        compositionengine::LayerFE::ClientCompositionTargetSettings targetSettings{
-                clip,
-                layer->needsFilteringForScreenshots(display.get(), transform) ||
-                        renderArea.needsFiltering(),
-                renderArea.isSecure(),
-                useProtected,
-                layerStackSpaceRect,
-                clientCompositionDisplay.outputDataspace,
-                true,  /* realContentIsVisible */
-                false, /* clearContent */
-                disableBlurs ? compositionengine::LayerFE::ClientCompositionTargetSettings::
-                                       BlurSetting::Disabled
-                             : compositionengine::LayerFE::ClientCompositionTargetSettings::
-                                       BlurSetting::Enabled,
-                isHdrLayer(layer) ? displayBrightnessNits : sdrWhitePointNits,
+        sp<LayerFE>& layerFE = layers.back().second;
 
-        };
-        std::optional<compositionengine::LayerFE::LayerSettings> settings;
-        {
-            LayerSnapshotGuard layerSnapshotGuard(layer);
-            settings = layerFE->prepareClientComposition(targetSettings);
+        layerFE->mSnapshot->geomLayerTransform =
+                renderArea->getTransform() * layerFE->mSnapshot->geomLayerTransform;
+
+        if (layer->needsFilteringForScreenshots(display.get(), transform)) {
+            filterForScreenshot.insert(layerFE.get());
         }
-
-        if (!settings) {
-            return;
-        }
-
-        settings->geometry.positionTransform =
-                transform.asMatrix4() * settings->geometry.positionTransform;
-        // There's no need to process blurs when we're executing region sampling,
-        // we're just trying to understand what we're drawing, and doing so without
-        // blurs is already a pretty good approximation.
-        if (regionSampling) {
-            settings->backgroundBlurRadius = 0;
-            settings->blurRegions.clear();
-        }
-        captureResults.capturedHdrLayers |= isHdrLayer(layer);
-
-        clientCompositionLayers.push_back(std::move(*settings));
-        renderedLayers.push_back(layer);
     });
 
-    std::vector<renderengine::LayerSettings> clientRenderEngineLayers;
-    clientRenderEngineLayers.reserve(clientCompositionLayers.size());
-    std::transform(clientCompositionLayers.begin(), clientCompositionLayers.end(),
-                   std::back_inserter(clientRenderEngineLayers),
-                   [](compositionengine::LayerFE::LayerSettings& settings)
-                           -> renderengine::LayerSettings { return settings; });
-
-    // Use an empty fence for the buffer fence, since we just created the buffer so
-    // there is no need for synchronization with the GPU.
-    base::unique_fd bufferFence;
-
-    constexpr bool kUseFramebufferCache = false;
-    const auto future = getRenderEngine()
-                                .drawLayers(clientCompositionDisplay, clientRenderEngineLayers,
-                                            buffer, kUseFramebufferCache, std::move(bufferFence))
-                                .share();
-
-    for (auto* layer : renderedLayers) {
-        layer->onLayerDisplayed(future);
+    ui::LayerStack layerStack{ui::DEFAULT_LAYER_STACK};
+    if (!layers.empty()) {
+        const sp<LayerFE>& layerFE = layers.back().second;
+        layerStack = layerFE->getCompositionState()->outputFilter.layerStack;
     }
 
-    return future;
+    auto copyLayerFEs = [&layers]() {
+        std::vector<sp<compositionengine::LayerFE>> layerFEs;
+        layerFEs.reserve(layers.size());
+        for (const auto& [_, layerFE] : layers) {
+            layerFEs.push_back(layerFE);
+        }
+        return layerFEs;
+    };
+
+    auto present = [this, buffer = std::move(buffer), dataspace, sdrWhitePointNits,
+                    displayBrightnessNits, filterForScreenshot = std::move(filterForScreenshot),
+                    grayscale, layerFEs = copyLayerFEs(), layerStack, regionSampling,
+                    renderArea = std::move(renderArea), renderIntent]() -> FenceResult {
+        std::unique_ptr<compositionengine::CompositionEngine> compositionEngine =
+                mFactory.createCompositionEngine();
+        compositionEngine->setRenderEngine(mRenderEngine.get());
+
+        compositionengine::Output::ColorProfile colorProfile{.dataspace = dataspace,
+                                                             .renderIntent = renderIntent};
+
+        std::shared_ptr<ScreenCaptureOutput> output = createScreenCaptureOutput(
+                ScreenCaptureOutputArgs{.compositionEngine = *compositionEngine,
+                                        .colorProfile = colorProfile,
+                                        .renderArea = *renderArea,
+                                        .layerStack = layerStack,
+                                        .buffer = std::move(buffer),
+                                        .sdrWhitePointNits = sdrWhitePointNits,
+                                        .displayBrightnessNits = displayBrightnessNits,
+                                        .filterForScreenshot = std::move(filterForScreenshot),
+                                        .regionSampling = regionSampling});
+
+        const float colorSaturation = grayscale ? 0 : 1;
+        compositionengine::CompositionRefreshArgs refreshArgs{
+                .outputs = {output},
+                .layers = std::move(layerFEs),
+                .updatingOutputGeometryThisFrame = true,
+                .updatingGeometryThisFrame = true,
+                .colorTransformMatrix = calculateColorMatrix(colorSaturation),
+        };
+        compositionEngine->present(refreshArgs);
+
+        return output->getRenderSurface()->getClientTargetAcquireFence();
+    };
+
+    // If RenderEngine is threaded, we can safely call CompositionEngine::present off the main
+    // thread as the RenderEngine::drawLayers call will run on RenderEngine's thread. Otherwise,
+    // we need RenderEngine to run on the main thread so we call CompositionEngine::present
+    // immediately.
+    //
+    // TODO(b/196334700) Once we use RenderEngineThreaded everywhere we can always defer the call
+    // to CompositionEngine::present.
+    const bool renderEngineIsThreaded = [&]() {
+        using Type = renderengine::RenderEngine::RenderEngineType;
+        const auto type = mRenderEngine->getRenderEngineType();
+        return type == Type::THREADED || type == Type::SKIA_GL_THREADED;
+    }();
+    auto presentFuture = renderEngineIsThreaded ? ftl::defer(std::move(present)).share()
+                                                : ftl::yield(present()).share();
+
+    for (auto& [layer, layerFE] : layers) {
+        layer->onLayerDisplayed(
+                ftl::Future(presentFuture)
+                        .then([layerFE = std::move(layerFE)](FenceResult) {
+                            return layerFE->stealCompositionResult().releaseFences.back().get();
+                        })
+                        .share());
+    }
+
+    return presentFuture;
 }
 
 // ---------------------------------------------------------------------------

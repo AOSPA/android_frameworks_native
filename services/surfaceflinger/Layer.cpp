@@ -3499,6 +3499,12 @@ const compositionengine::LayerFECompositionState* Layer::getCompositionState() c
     return mSnapshot.get();
 }
 
+sp<LayerFE> Layer::copyCompositionEngineLayerFE() const {
+    auto result = mFlinger->getFactory().createLayerFE(mLayerFE->getDebugName());
+    result->mSnapshot = std::make_unique<LayerSnapshot>(*mSnapshot);
+    return result;
+}
+
 void Layer::useSurfaceDamage() {
     if (mFlinger->mForceFullDamage) {
         surfaceDamageRegion = Region::INVALID_REGION;
@@ -3965,14 +3971,17 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
 }
 
 LayerSnapshotGuard::LayerSnapshotGuard(Layer* layer) : mLayer(layer) {
-    if (mLayer) {
-        mLayer->mLayerFE->mSnapshot = std::move(mLayer->mSnapshot);
-    }
+    LOG_ALWAYS_FATAL_IF(!mLayer, "LayerSnapshotGuard received a null layer.");
+    mLayer->mLayerFE->mSnapshot = std::move(mLayer->mSnapshot);
+    LOG_ALWAYS_FATAL_IF(!mLayer->mLayerFE->mSnapshot,
+                        "LayerFE snapshot null after taking ownership from layer");
 }
 
 LayerSnapshotGuard::~LayerSnapshotGuard() {
     if (mLayer) {
         mLayer->mSnapshot = std::move(mLayer->mLayerFE->mSnapshot);
+        LOG_ALWAYS_FATAL_IF(!mLayer->mSnapshot,
+                            "Layer snapshot null after taking ownership from LayerFE");
     }
 }
 
