@@ -147,6 +147,7 @@ public:
     MOCK_METHOD(Hwc2::AidlTransform, getPhysicalDisplayOrientation, (PhysicalDisplayId),
                 (const, override));
     MOCK_CONST_METHOD1(fromVirtualDisplayId, std::optional<hal::HWDisplayId>(HalVirtualDisplayId));
+    MOCK_METHOD(bool, getValidateSkipped, (HalDisplayId), (const, override));
 };
 
 } // namespace mock

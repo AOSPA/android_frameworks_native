@@ -591,8 +591,29 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     // Remove the transparent area from the visible region
     if (!layerFEState->isOpaque) {
         if (tr.preserveRects()) {
-            // transform the transparent region
-            transparentRegion = tr.transform(layerFEState->transparentRegionHint);
+            // Clip the transparent region to geomLayerBounds first
+            // The transparent region may be influenced by applications, for
+            // instance, by overriding ViewGroup#gatherTransparentRegion with a
+            // custom view. Once the layer stack -> display mapping is known, we
+            // must guard against very wrong inputs to prevent underflow or
+            // overflow errors. We do this here by constraining the transparent
+            // region to be within the pre-transform layer bounds, since the
+            // layer bounds are expected to play nicely with the full
+            // transform.
+            const Region clippedTransparentRegionHint =
+                    layerFEState->transparentRegionHint.intersect(
+                            Rect(layerFEState->geomLayerBounds));
+
+            if (clippedTransparentRegionHint.isEmpty()) {
+                if (!layerFEState->transparentRegionHint.isEmpty()) {
+                    ALOGD("Layer: %s had an out of bounds transparent region",
+                          layerFE->getDebugName());
+                    layerFEState->transparentRegionHint.dump("transparentRegionHint");
+                }
+                transparentRegion.clear();
+            } else {
+                transparentRegion = tr.transform(clippedTransparentRegionHint);
+            }
         } else {
             // transformation too complex, can't do the
             // transparent region optimization.
@@ -1164,6 +1185,10 @@ void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositi
         return;
     }
 
+    if (isPowerHintSessionEnabled()) {
+        // get fence end time to know when gpu is complete in display
+        setHintSessionGpuFence(std::make_unique<FenceTime>(new Fence(dup(optReadyFence->get()))));
+    }
     // swap buffers (presentation)
     mRenderSurface->queueBuffer(std::move(*optReadyFence));
 }
@@ -1479,6 +1504,14 @@ void Output::setExpensiveRenderingExpected(bool) {
     // The base class does nothing with this call.
 }
 
+void Output::setHintSessionGpuFence(std::unique_ptr<FenceTime>&&) {
+    // The base class does nothing with this call.
+}
+
+bool Output::isPowerHintSessionEnabled() {
+    return false;
+}
+
 void Output::postFramebuffer() {
     ATRACE_CALL();
     ALOGV(__FUNCTION__);
@@ -1536,7 +1569,8 @@ void Output::postFramebuffer() {
 
 void Output::renderCachedSets(const CompositionRefreshArgs& refreshArgs) {
     if (mPlanner) {
-        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime);
+        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime,
+                                   getState().usesDeviceComposition || getSkipColorTransform());
     }
 }
 
