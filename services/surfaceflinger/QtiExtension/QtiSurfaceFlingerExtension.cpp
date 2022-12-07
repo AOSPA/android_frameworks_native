@@ -3,28 +3,42 @@
  */
 // #define LOG_NDEBUG 0
 #include "QtiSurfaceFlingerExtension.h"
+#include "FrontEnd/LayerHandle.h"
+#include "Layer.h"
+#include "MutexUtils.h"
 #include "QtiGralloc.h"
+#include "vendor/qti/hardware/display/composer/3.1/IQtiComposer.h"
 
 #include <Scheduler/VsyncConfiguration.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+
 #include <android-base/properties.h>
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <composer_extn_intf.h>
 #include <config/client_interface.h>
+#include <ftl/non_null.h>
 
+#include <Scheduler/VSyncPredictor.h>
 #include <Scheduler/VsyncConfiguration.h>
+#include <ui/DisplayStatInfo.h>
+#include <vector>
 
 using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+
 using android::hardware::graphics::common::V1_0::BufferUsage;
 using PerfHintType = composer::PerfHintType;
 using VsyncConfiguration = android::scheduler::VsyncConfiguration;
 using VsyncModulator = android::scheduler::VsyncModulator;
+using VsyncTracker = android::scheduler::VsyncTracker;
+using DisplayStatInfo = android::DisplayStatInfo;
 
-namespace hal = android::hardware::graphics::composer::hal;
 
 namespace android::scheduler::impl {
+
 class VsyncConfiguration;
 } // namespace android::scheduler::impl
 
@@ -42,9 +56,6 @@ composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 namespace android::surfaceflingerextension {
 
 bool QtiSurfaceFlingerExtension::mQtiSDirectStreaming;
-
-std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
-::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
 
 
 QtiSurfaceFlingerExtension::QtiSurfaceFlingerExtension() {}
@@ -84,6 +95,13 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
         ALOGE("Failed to initialize QtiFeatureManager");
     } else {
         mQtiFeatureManager->qtiInit();
+        bool mUseLayerExt =
+                mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLayerExtension);
+        bool mSplitLayerExt =
+                mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kSplitLayerExtension);
+        if ((mUseLayerExt || mSplitLayerExt) && mQtiLayerExt.init()) {
+            ALOGI("Layer extension is enabled");
+        }
     }
 
     if (mQtiComposerExtnIntf) {
@@ -141,11 +159,10 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     // When both IDisplayConfig AIDL and HIDL are not available, behave similar to GSI mode
     if (!mQtiEnabledIDC) {
         ALOGW("DisplayConfig HIDL and AIDL are both unavailable - disabling composer extensions");
-        return new QtiNullExtension();
+        return new QtiNullExtension(mQtiFlinger);
     }
 
-    mQtiHWComposerExtnIntf =
-            android::surfaceflingerextension::qtiCreateHWComposerExtension(hwc, composerHal);
+    mQtiHWComposerExtnIntf = qtiCreateHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
 
     qtiSetVsyncConfiguration(vsyncConfig);
@@ -316,12 +333,21 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDi
                                                                   PhysicalDisplayId id) {
     bool qtiIsInternalDisplay = (mQtiFlinger->getHwComposer().getDisplayConnectionType(id) ==
                                  ui::DisplayConnectionType::Internal);
+    bool qtiIsConnected = (connection == hal::Connection::CONNECTED);
+    auto qtiActiveConfigId = mQtiFlinger->getHwComposer().getActiveMode(id);
+
+    if (!qtiIsConnected && mQtiInternalPresentationDisplays && qtiIsInternalDisplay) {
+        // Update mInternalPresentationDisplays flag
+        qtiUpdateInternalDisplaysPresentationMode();
+    }
 
     if (qtiIsInternalDisplay) {
-        bool qtiIsConnected = (connection == hal::Connection::CONNECTED);
-        auto qtiActiveConfigId = mQtiFlinger->getHwComposer().getActiveMode(id);
         LOG_ALWAYS_FATAL_IF(!qtiActiveConfigId, "HWC returned no active config");
         qtiUpdateDisplayExtension(hwcDisplayId, *qtiActiveConfigId, qtiIsConnected);
+    }
+
+    if (!qtiIsConnected && !qtiIsInternalDisplay) {
+        qtiEndUnifiedDraw(hwcDisplayId);
     }
 }
 
@@ -355,6 +381,30 @@ void QtiSurfaceFlingerExtension::qtiUpdateInternalDisplaysPresentationMode() {
             previousStackId = currentStackId;
             compareStack = true;
         }
+    }
+}
+
+QtiHWComposerExtensionIntf* QtiSurfaceFlingerExtension::qtiGetHWComposerExtensionIntf() {
+    return mQtiHWComposerExtnIntf;
+}
+
+bool QtiSurfaceFlingerExtension::qtiLatchMediaContent(sp<Layer> layer) {
+    uint64_t usage = layer->getBuffer() ? layer->getBuffer()->getUsage() : 0;
+    bool cameraOrVideo = ((usage & GRALLOC_USAGE_HW_CAMERA_WRITE) != 0) ||
+            ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0);
+
+    return mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLatchMediaContent) ||
+            cameraOrVideo;
+}
+
+void QtiSurfaceFlingerExtension::qtiUpdateBufferData(bool qtiLatchMediaContent,
+                                                     const layer_state_t& s) {
+    if (qtiLatchMediaContent && s.bufferData && s.bufferData->acquireFence &&
+        s.bufferData->acquireFence->get() != -1 &&
+        (s.bufferData->acquireFence->getStatus() == Fence::Status::Signaled) &&
+        (s.bufferData->acquireFence->getSignalTime() == Fence::SIGNAL_TIME_INVALID)) {
+        ATRACE_NAME("fence signaled with error. drop");
+        s.bufferData->qtiInvalid = true;
     }
 }
 
@@ -510,6 +560,10 @@ void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>
 
 void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 #ifdef PHASE_OFFSET_EXTN
+    if (!g_comp_ext_intf_.phaseOffsetExtnIntf || !mQtiFlinger || !mQtiFlinger->mVsyncModulator ||
+      !mQtiFlinger->mVsyncConfiguration) {
+        return;
+    }
     bool useAdvancedSfOffsets =
             mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kAdvanceSfOffset);
     bool useWorkDurations =
@@ -532,14 +586,14 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
             mQtiFlinger->mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
         }
 
-        if (useWorkDurations) {
+        if (useWorkDurations && mQtiWorkDurationsExtn) {
 #ifdef DYNAMIC_APP_DURATIONS
             // Update the Work Durations for the given refresh rates in mOffsets map
             g_comp_ext_intf_.phaseOffsetExtnIntf->GetWorkDurationConfigs(
                     &mQtiWorkDurationConfigsMap);
             mQtiWorkDurationsExtn->qtiUpdateWorkDurations(&mQtiWorkDurationConfigsMap);
 #endif
-        } else {
+        } else if (mQtiPhaseOffsetsExtn) {
             // Update the Advanced SF Offsets for the given refresh rates in mOffsets map
             g_comp_ext_intf_.phaseOffsetExtnIntf->GetAdvancedSfOffsets(&mQtiAdvancedSfOffsets);
             mQtiPhaseOffsetsExtn->qtiUpdateSfOffsets(&mQtiAdvancedSfOffsets);
@@ -591,14 +645,12 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
  * Methods that call the IDisplayConfig APIs.
  */
 status_t QtiSurfaceFlingerExtension::qtiGetDebugProperty(string prop, string* value) {
-#ifdef AIDL_DISPLAY_CONFIG_ENABLED
     auto ret = mQtiDisplayConfigAidl->getDebugProperty(prop, value);
     if (ret.isOk()) {
         ALOGV("GetDebugProperty \"%s\" value %s", prop.c_str(), *value->c_str());
     } else {
         ALOGW("Failed to get property %s", prop.c_str());
     }
-#endif
     return NO_ERROR;
 }
 
@@ -872,6 +924,19 @@ end:
     }
 }
 
+
+void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) {
+    if (mQtiDisplayConfigAidl) {
+        ALOGV("IDisplayConfig AIDL: Set layer %lu as mask for display %d", layerId, hwcDisplayId);
+        mQtiDisplayConfigAidl->setLayerAsMask(static_cast<int32_t>(hwcDisplayId),
+                                              static_cast<int32_t>(layerId));
+    } else if (mQtiDisplayConfigHidl) {
+        ALOGV("IDisplayConfig HIDL: Set layer %lu as mask for display %d", layerId, hwcDisplayId);
+        mQtiDisplayConfigHidl->SetLayerAsMask(hwcDisplayId, layerId);
+    }
+}
+
+
 /*
  * Methods for Virtual, WiFi, and Secure Displays
  */
@@ -1051,6 +1116,400 @@ bool QtiSurfaceFlingerExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffe
 }
 
 /*
+ * Methods for SmoMo Interface
+ */
+void QtiSurfaceFlingerExtension::qtiCreateSmomoInstance(const DisplayDeviceState& state) {
+    const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(state.physical->id);
+    const auto& displayObject = displayOpt->get();
+    const auto& snapshot = displayObject.snapshot();
+
+    if (state.isVirtual() || snapshot.connectionType() == ui::DisplayConnectionType::External) {
+        return;
+    }
+
+    if (!mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kSmomo)) {
+        ALOGI("Smomo is disabled through property");
+        return;
+    }
+
+    SmomoInfo smomoInfo;
+    smomoInfo.displayId = state.physical->hwcDisplayId;
+    smomoInfo.layerStackId = state.layerStack.id;
+    smomoInfo.active = true;
+    smomo::DisplayInfo displayInfo;
+    displayInfo.display_id = static_cast<int32_t>(state.physical->hwcDisplayId);
+    displayInfo.is_primary = state.physical->hwcDisplayId == 0;
+    displayInfo.type = smomo::kBuiltin;
+    bool ret = mQtiComposerExtnIntf->CreateSmomoExtn(&smomoInfo.smoMo, displayInfo);
+    if (!ret) {
+        ALOGI("Unable to create smomo extension for display: %d", displayInfo.display_id);
+        return;
+    }
+
+    mQtiSmomoInstances.push_back(smomoInfo);
+    // Set refresh rates for primary display's instance.
+    smomoInfo.smoMo->SetChangeRefreshRateCallback(
+            [this](int32_t refreshRate) { qtiSetRefreshRateTo(refreshRate); });
+
+    const auto display = mQtiFlinger->getDefaultDisplayDeviceLocked();
+    qtiSetRefreshRates(display);
+
+    if (mQtiSmomoInstances.size() > 1) {
+        // Disable DRC on all instances.
+        for (auto& instance : mQtiSmomoInstances) {
+            instance.smoMo->SetRefreshRateChangeStatus(false);
+        }
+    }
+
+    ALOGI("SmoMo is enabled for display: %d", displayInfo.display_id);
+}
+
+void QtiSurfaceFlingerExtension::qtiDestroySmomoInstance(const sp<DisplayDevice>& display) {
+    uint32_t hwcDisplayId = 0;
+    if (!qtiGetHwcDisplayId(display, &hwcDisplayId)) {
+        return;
+    }
+
+    mQtiSmomoInstances.erase(std::remove_if(mQtiSmomoInstances.begin(), mQtiSmomoInstances.end(),
+                                            [&](SmomoInfo const& smomoInfo) {
+                                                return smomoInfo.displayId == hwcDisplayId;
+                                            }),
+                             mQtiSmomoInstances.end());
+
+    // Enable DRC if only one instance is active.
+    if (mQtiSmomoInstances.size() == 1) {
+        // Disable DRC on all instances.
+        mQtiSmomoInstances.at(0).smoMo->SetRefreshRateChangeStatus(false);
+    }
+
+    ALOGI("SmoMo is destroyed for display: %s", to_string(display->getId()).c_str());
+}
+
+SmomoIntf* QtiSurfaceFlingerExtension::qtiGetSmomoInstance(const uint32_t layerStackId) const {
+    SmomoIntf* smoMo = nullptr;
+
+    if (mQtiSmomoInstances.size() == 1) {
+        smoMo = mQtiSmomoInstances.back().smoMo;
+        return smoMo;
+    }
+
+    for (auto& instance : mQtiSmomoInstances) {
+        if (instance.layerStackId == layerStackId) {
+            smoMo = instance.smoMo;
+            break;
+        }
+    }
+
+    return smoMo;
+}
+
+void QtiSurfaceFlingerExtension::qtiSetRefreshRates(PhysicalDisplayId displayId) {
+    auto display = mQtiFlinger->getDisplayDeviceLocked(displayId);
+    qtiSetRefreshRates(display);
+}
+
+void QtiSurfaceFlingerExtension::qtiSetRefreshRates(const sp<DisplayDevice>& display) {
+    // Get Primary Smomo Instance.
+    std::vector<float> refreshRates;
+    auto rankedRefreshRates = display->refreshRateSelector().getRankedFrameRates({}, {});
+    for (const auto& [frameRateMode, score] : rankedRefreshRates.ranking) {
+        if (display->refreshRateSelector().isModeAllowed(frameRateMode)) {
+            refreshRates.push_back(frameRateMode.fps.getValue());
+        }
+    }
+
+    SmomoIntf* smoMo = nullptr;
+    for (auto& instance : mQtiSmomoInstances) {
+        smoMo = instance.smoMo;
+        if (smoMo == nullptr) {
+            continue;
+        }
+        smoMo->SetDisplayRefreshRates(refreshRates);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
+    const auto defaultDisplay = [&]() {
+        ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+        return mQtiFlinger->getDefaultDisplayDeviceLocked();
+    }();
+
+    auto currentRefreshRate = defaultDisplay->refreshRateSelector().getActiveMode();
+    auto policy = defaultDisplay->refreshRateSelector().getCurrentPolicy();
+    auto setRefreshRate = Fps::fromValue(refreshRate);
+    if (!policy.primaryRanges.physical.includes(setRefreshRate)) {
+        return;
+    }
+
+    auto rankedRefreshRates = defaultDisplay->refreshRateSelector().getRankedFrameRates({}, {});
+    for (const auto& [frameRateMode, score] : rankedRefreshRates.ranking) {
+        if (isApproxEqual(frameRateMode.fps, setRefreshRate)) {
+            if (currentRefreshRate.modePtr->getId() != frameRateMode.modePtr->getId()) {
+                std::vector<display::DisplayModeRequest> modeRequests;
+
+                modeRequests.push_back(display::DisplayModeRequest{.mode = std::move(frameRateMode),
+                                                                   .emitEvent = true});
+                mQtiFlinger->requestDisplayModes(modeRequests);
+            }
+        }
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
+    ATRACE_CALL();
+
+    const uint32_t layerStackId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getLayerStack().id;
+    if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
+        nsecs_t timestamp = 0;
+        // Get the previous frame fence since AOSP deprecated the previousFrameFence() API
+        auto prevFrameFence = mQtiFlinger->mVsyncModulator->getVsyncConfig().sfOffset >= 0
+                ? mQtiFlinger->mPreviousPresentFences[0]
+                : mQtiFlinger->mPreviousPresentFences[1];
+        bool needResync = smoMo->SyncToDisplay(prevFrameFence.fence, &timestamp);
+        ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
+    ATRACE_NAME("SmoMoUpdateState");
+    Mutex::Autolock lock(mQtiFlinger->mStateLock);
+    // Check if smomo instances exist.
+    if (!mQtiSmomoInstances.size()) {
+        return;
+    }
+
+    if (mQtiSmomoInstances.size() > 1) {
+        mQtiFlinger->mDrawingState.traverse(
+                [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(); });
+    }
+
+    // Disable smomo if external or virtual is connected.
+    bool enableSmomo = mQtiSmomoInstances.size() == mQtiFlinger->mDisplays.size();
+    int fps = 0;
+    int content_fps = 0;
+    int numActiveDisplays = 0;
+    for (auto& instance : mQtiSmomoInstances) {
+        SmomoIntf* smoMo = instance.smoMo;
+        sp<DisplayDevice> device = nullptr;
+
+        for (const auto& [token, displayDevice] : mQtiFlinger->mDisplays) {
+            uint32_t hwcDisplayId;
+            if (!qtiGetHwcDisplayId(displayDevice, &hwcDisplayId)) {
+                continue;
+            }
+            if (hwcDisplayId == instance.displayId) {
+                device = displayDevice;
+                break;
+            }
+        }
+
+        instance.active = device->getPowerMode() != hal::PowerMode::OFF;
+        if (!instance.active) {
+            continue;
+        }
+
+        std::vector<smomo::SmomoLayerStats> layers;
+        if (enableSmomo) {
+            bool visibleLayersInfo = (mQtiFlinger->mLayersWithQueuedFrames.size() != 0);
+
+            if (visibleLayersInfo) {
+                for (const auto& layer : mQtiFlinger->mLayersWithQueuedFrames) {
+                    smomo::SmomoLayerStats layerStats;
+                    layerStats.name = layer->getDebugName();
+                    layerStats.id = layer->getSequence();
+                    layers.push_back(layerStats);
+                }
+            }
+
+            fps = device->getActiveMode().fps.getIntValue();
+        }
+
+        smoMo->UpdateSmomoState(layers, fps);
+
+        content_fps = smoMo->GetFrameRate();
+        numActiveDisplays++;
+    }
+
+    if (numActiveDisplays == 1) {
+        bool is_valid_content_fps = false;
+        if (mQtiSmomoInstances.size() == 1) {
+            if (content_fps > 0) {
+                if (mQtiFlinger->mLayersWithQueuedFrames.size() == 1 && !mQtiUiLayerFrameCount) {
+                    is_valid_content_fps = true;
+                }
+                if (mQtiFlinger->mLayersWithQueuedFrames.size() > 1) {
+                    mQtiUiLayerFrameCount = fps;
+                }
+                if (mQtiUiLayerFrameCount > 0) {
+                    mQtiUiLayerFrameCount--;
+                }
+            } else {
+                mQtiUiLayerFrameCount = fps;
+            }
+        }
+        qtiSetContentFps(is_valid_content_fps ? static_cast<uint32_t>(content_fps)
+                                              : static_cast<uint32_t>(fps));
+    }
+
+    // Disable DRC if active displays is more than 1.
+    for (auto& instance : mQtiSmomoInstances) {
+        instance.smoMo->SetRefreshRateChangeStatus((numActiveDisplays == 1));
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts,
+                                                         int64_t desiredPresentTime,
+                                                         bool isAutoTimestamp,
+                                                         uint64_t transactionId) {
+    ts.traverseStatesWithBuffers([&](const layer_state_t& state) {
+        sp<Layer> layer = LayerHandle::getLayer(state.surface);
+
+        SmomoIntf* smoMo = nullptr;
+        if (layer != nullptr) {
+            smoMo = qtiGetSmomoInstance(layer->qtiGetSmomoLayerStackId());
+        }
+
+        if (smoMo) {
+            smomo::SmomoBufferStats bufferStats;
+            bufferStats.id = layer->getSequence();
+            bufferStats.auto_timestamp = isAutoTimestamp;
+            bufferStats.timestamp = desiredPresentTime;
+            bufferStats.dequeue_latency = 0;
+            bufferStats.key = desiredPresentTime;
+#ifdef TIMED_RENDERING_METADATA_FEATURE
+            auto buffer = mQtiFlinger->getExternalTextureFromBufferData(*state.bufferData,
+                                                                        layer->getDebugName(),
+                                                                        transactionId);
+            if (buffer && buffer->getBuffer()) {
+                bufferStats.buffer_hnd = buffer->getBuffer()->handle;
+            }
+#endif
+            smoMo->CollectLayerStats(bufferStats);
+
+            const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+            auto vsyncTime =
+                    schedule.getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+
+            if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
+                qtiScheduleCompositeImmed();
+            }
+        }
+    });
+}
+
+void QtiSurfaceFlingerExtension::qtiScheduleCompositeImmed() {
+    mQtiFlinger->mMustComposite = true;
+    mQtiFlinger->mScheduler->resetIdleTimer();
+    qtiNotifyDisplayUpdateImminent();
+    mQtiFlinger->mScheduler->qtiScheduleFrameImmed();
+}
+
+void QtiSurfaceFlingerExtension::qtiSetPresentTime(uint32_t layerStackId, int sequence,
+                                                   nsecs_t desiredPresentTime) {
+    SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId);
+    if (smoMo) {
+        smoMo->SetPresentTime(sequence, desiredPresentTime);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiOnVsync(nsecs_t expectedVsyncTime) {
+    SmomoIntf* smoMo = nullptr;
+    for (auto& instance : mQtiSmomoInstances) {
+        smoMo = instance.smoMo;
+        if (smoMo) {
+            smoMo->OnVsync(expectedVsyncTime);
+        }
+    }
+}
+
+bool QtiSurfaceFlingerExtension::qtiIsFrameEarly(uint32_t layerStackId, int sequence,
+                                                 nsecs_t desiredPresentTime) {
+    SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId);
+    bool isEarly = false;
+    if (smoMo) {
+        isEarly = smoMo->FrameIsEarly(sequence, desiredPresentTime);
+    }
+
+    return isEarly;
+}
+
+void QtiSurfaceFlingerExtension::qtiUpdateLayerState(int numLayers) {
+    bool mSplitLayerExt = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kSplitLayerExtension);
+
+    if (mSplitLayerExt && mQtiLayerExt) {
+        if (mQtiVisibleLayerInfo.layerName.size() != 0) {
+            mQtiLayerExt->UpdateLayerState(mQtiVisibleLayerInfo.layerName, numLayers);
+        }
+    }
+    mQtiVisibleLayerInfo.layerName.clear();
+    mQtiVisibleLayerInfo.layerSequence.clear();
+}
+
+void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId,
+                                                            uint32_t curLayerStackId,
+                                                            uint32_t drawLayerStackId) {
+    for (auto& instance : mQtiSmomoInstances) {
+        if ((instance.displayId == hwcDisplayId) && instance.layerStackId == drawLayerStackId) {
+            instance.layerStackId = curLayerStackId;
+            break;
+        }
+    }
+}
+
+uint32_t QtiSurfaceFlingerExtension::qtiGetLayerClass(std::string mName) {
+    if (mQtiLayerExt) {
+        uint32_t layerClass = static_cast<uint32_t>(mQtiLayerExt->GetLayerClass(mName));
+        return layerClass;
+    }
+    ALOGV("%s: QtiLayerExtension is not enabled, setting layer class to 0");
+    return 0;
+}
+
+/*
+ * Methods for speculative fence
+ */
+void QtiSurfaceFlingerExtension::qtiStartUnifiedDraw() {
+    if (mQtiDisplayExtnIntf) {
+        // Displays hotplugged at this point.
+        for (const auto& display : mQtiDisplaysList) {
+            qtiTryDrawMethod(display);
+        }
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {
+    if (!mQtiHWComposerExtnIntf) {
+        return;
+    }
+
+    const auto id = HalDisplayId::tryCast(display->getId());
+    if (id) {
+        uint32_t hwcDisplayId;
+        if (!qtiGetHwcDisplayId(display, &hwcDisplayId)) {
+            return;
+        }
+        ALOGI("calling TryUnifiedDraw for display=%u", hwcDisplayId);
+        if (!mQtiDisplayExtnIntf
+                     ->TryUnifiedDraw(hwcDisplayId,
+                                      static_cast<int32_t>(
+                                              mQtiFlinger->maxFrameBufferAcquiredBuffers))) {
+            ALOGI("Calling tryDrawMethod for display=%u", hwcDisplayId);
+            mQtiHWComposerExtnIntf
+                    ->qtiTryDrawMethod(*id,
+                                       static_cast<uint32_t>(
+                                               IQtiComposerClient::DrawMethod::UNIFIED_DRAW));
+        }
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiEndUnifiedDraw(uint32_t hwcDisplayId) {
+    if (mQtiDisplayExtnIntf) {
+        mQtiDisplayExtnIntf->EndUnifiedDraw(hwcDisplayId);
+    }
+}
+
+/*
  * Methods internal to QtiSurfaceFlingerExtension
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
@@ -1090,6 +1549,46 @@ void QtiSurfaceFlingerExtension::qtiSetupDisplayExtnFeatures() {
                 }
             }
         }
+    }
+}
+
+/*
+ * LayerExtWrapper class
+ */
+bool LayerExtWrapper::init() {
+    mLayerExtLibHandle = dlopen(LAYER_EXTN_LIBRARY_NAME, RTLD_NOW);
+    if (!mLayerExtLibHandle) {
+        ALOGE("Unable to open layer ext lib: %s", dlerror());
+        return false;
+    }
+
+    mLayerExtCreateFunc = reinterpret_cast<CreateLayerExtnFuncPtr>(
+            dlsym(mLayerExtLibHandle, CREATE_LAYER_EXTN_INTERFACE));
+    mLayerExtDestroyFunc = reinterpret_cast<DestroyLayerExtnFuncPtr>(
+            dlsym(mLayerExtLibHandle, DESTROY_LAYER_EXTN_INTERFACE));
+
+    if (!mLayerExtCreateFunc || !mLayerExtDestroyFunc) {
+        ALOGE("Can't load layer ext symbols: %s", dlerror());
+        dlclose(mLayerExtLibHandle);
+        return false;
+    }
+
+    if (!mLayerExtCreateFunc(LAYER_EXTN_VERSION_TAG, &mInst)) {
+        ALOGE("Unable to create layer ext interface");
+        dlclose(mLayerExtLibHandle);
+        return false;
+    }
+
+    return true;
+}
+
+LayerExtWrapper::~LayerExtWrapper() {
+    if (mInst) {
+        mLayerExtDestroyFunc(mInst);
+    }
+
+    if (mLayerExtLibHandle) {
+        dlclose(mLayerExtLibHandle);
     }
 }
 

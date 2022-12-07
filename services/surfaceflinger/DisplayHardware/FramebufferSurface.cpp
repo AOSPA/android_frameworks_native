@@ -76,6 +76,14 @@ FramebufferSurface::FramebufferSurface(HWComposer& hwc, PhysicalDisplayId displa
     for (size_t i = 0; i < sizeof(mHwcBufferIds) / sizeof(mHwcBufferIds[0]); ++i) {
         mHwcBufferIds[i] = UINT64_MAX;
     }
+
+    /* QTI_BEGIN */
+    if (!mQtiDSExtnIntf) {
+        mQtiDSExtnIntf = surfaceflingerextension::
+                qtiCreateDisplaySurfaceExtension(/* isVirtual */ false, nullptr, false, 0,
+                                                 /* FramebufferSurface */ this);
+    }
+    /* QTI_ END */
 }
 
 void FramebufferSurface::resizeBuffers(const ui::Size& newSize) {

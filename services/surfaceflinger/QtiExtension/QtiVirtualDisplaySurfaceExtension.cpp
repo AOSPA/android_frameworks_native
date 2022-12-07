@@ -3,6 +3,7 @@
  */
 // #define LOG_NDEBUG 0
 #include "QtiVirtualDisplaySurfaceExtension.h"
+#include "QtiFramebufferSurfaceExtension.h"
 #include "QtiNullDisplaySurfaceExtension.h"
 
 #include <android-base/properties.h>
@@ -15,7 +16,7 @@ QtiVirtualDisplaySurfaceExtension::QtiVirtualDisplaySurfaceExtension(VirtualDisp
                                                                      uint64_t sinkUsage)
       : mQtiVDS(vds) {
     if (!mQtiVDS) {
-        ALOGW("Passed an invalid pointer to VirtualDisplaySurface");
+        ALOGW("Passed an invalid pointer to QtiVirtualDisplaySurfaceExtension");
     }
 
     mQtiSecure = secure;
@@ -56,6 +57,14 @@ uint64_t QtiVirtualDisplaySurfaceExtension::qtiExcludeVideoFromScratchBuffer(std
           usageFlag);
 
     return usageFlag;
+}
+
+int QtiVirtualDisplaySurfaceExtension::getClientTargetCurrentSlot() {
+    return mQtiVDS->mFbProducerSlot;
+}
+
+ui::Dataspace QtiVirtualDisplaySurfaceExtension::getClientTargetCurrentDataspace() {
+    return ui::Dataspace::UNKNOWN;
 }
 
 } // namespace android::surfaceflingerextension

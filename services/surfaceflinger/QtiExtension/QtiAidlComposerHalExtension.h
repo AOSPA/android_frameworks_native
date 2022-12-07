@@ -29,11 +29,11 @@ public:
 
     Error qtiSetDisplayElapseTime(Display display, uint64_t timeStamp) override;
     Error qtiSetLayerType(Display display, V2_1_Layer layer, uint32_t type) override;
-    Error qtiTryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
+    Error qtiTryDrawMethod(Display display, uint32_t drawMethod) override;
     Error qtiSetClientTarget_3_1(Display display, int32_t slot, int acquireFence,
-                                 ui::Dataspace dataspace) override;
+                                 uint32_t dataspace) override;
     Error qtiSetLayerFlag(Display display, V2_1_Layer layer,
-                          IQtiComposerClient::LayerFlag layerFlag) override;
+                          uint32_t layerFlag) override;
 private:
     Hwc2::AidlComposer* mQtiAidlComposer = nullptr;
 };

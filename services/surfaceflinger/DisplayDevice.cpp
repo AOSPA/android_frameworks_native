@@ -88,6 +88,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
                     .setDisplaySurface(std::move(args.displaySurface))
                     .setMaxTextureCacheSize(
                             static_cast<size_t>(SurfaceFlinger::maxFrameBufferAcquiredBuffers))
+                    .qtiSetDisplaySurfaceExtension(args.mQtiDSExtnIntf)
                     .build());
 
     if (!mFlinger->mDisableClientCompositionCache &&

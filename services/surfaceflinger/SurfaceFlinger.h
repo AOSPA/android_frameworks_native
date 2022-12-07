@@ -164,9 +164,9 @@ class RenderEngine;
 
 /* QTI_BEGIN */
 namespace surfaceflingerextension {
-class QtiSurfaceFlingerExtensionIntf;
 class QtiSurfaceFlingerExtension;
 class QtiNullExtension;
+class QtiSurfaceFlingerExtensionIntf;
 } // namespace surfaceflingerextension
 /* QTI_END */
 
@@ -999,7 +999,9 @@ private:
             std::shared_ptr<compositionengine::Display> compositionDisplay,
             const DisplayDeviceState& state,
             const sp<compositionengine::DisplaySurface>& displaySurface,
-            const sp<IGraphicBufferProducer>& producer) REQUIRES(mStateLock);
+            const sp<IGraphicBufferProducer>& producer,
+            surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr)
+            REQUIRES(mStateLock);
     void processDisplayChangesLocked() REQUIRES(mStateLock, kMainThreadContext);
     void processDisplayRemoved(const wp<IBinder>& displayToken)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -1439,13 +1441,12 @@ private:
         bool early = false;
     } mPowerHintSessionMode;
 
-    TransactionHandler mTransactionHandler;
-    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
-
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
     /* QTI_END */
 
+    TransactionHandler mTransactionHandler;
+    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
     bool mFrontEndDisplayInfosChanged = false;
 };
 

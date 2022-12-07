@@ -24,6 +24,10 @@
 
 struct ANativeWindow;
 
+namespace android::surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+}
+
 namespace android::compositionengine {
 
 /**
@@ -44,6 +48,8 @@ struct RenderSurfaceCreationArgs {
 
     // The maximum size of the renderengine::ExternalTexture cache
     size_t maxTextureCacheSize = 0;
+
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
 
 private:
     friend class RenderSurfaceCreationArgsBuilder;
@@ -75,6 +81,12 @@ public:
 
     RenderSurfaceCreationArgsBuilder& setMaxTextureCacheSize(size_t maxTextureCacheSize) {
         mArgs.maxTextureCacheSize = maxTextureCacheSize;
+        return *this;
+    }
+
+    RenderSurfaceCreationArgsBuilder& qtiSetDisplaySurfaceExtension(
+            android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf) {
+        mArgs.mQtiDSExtnIntf = mQtiDSExtnIntf;
         return *this;
     }
 

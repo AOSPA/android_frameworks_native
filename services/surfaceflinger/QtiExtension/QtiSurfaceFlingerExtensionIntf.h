@@ -1,17 +1,22 @@
 /* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
-#ifndef __SURFACEFLINGER_EXTN_INTF_H__
-#define __SURFACEFLINGER_EXTN_INTF_H__
+#pragma once
 
 #include <string>
 
 #include "../SurfaceFlinger.h"
+#include "../Scheduler/VsyncConfiguration.h"
 
 using std::string;
-namespace android {
 
-namespace surfaceflingerextension {
+namespace composer {
+class DisplayExtnIntf;
+} // namespace composer
+using android::scheduler::VsyncConfiguration;
+namespace android::surfaceflingerextension {
+
+class QtiHWComposerExtensionIntf;
 
 enum QtiFeature {
     kAdvanceSfOffset = 0,
@@ -25,6 +30,8 @@ enum QtiFeature {
     kLayerExtension,
     kPluggableVsyncPrioritized,
     kQsyncIdle,
+    kSmomo,
+    kSplitLayerExtension,
     kVsyncSourceReliableOnDoze,
     kWorkDurations,
 };
@@ -36,9 +43,9 @@ public:
     virtual void qtiInit(SurfaceFlinger* flinger) = 0;
     virtual QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
                                                         Hwc2::impl::PowerAdvisor* powerAdvisor,
-                                                        scheduler::VsyncConfiguration* vsyncConfig,
+                                                        VsyncConfiguration* vsyncConfig,
                                                         Hwc2::Composer* composerHal) = 0;
-    virtual void qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) = 0;
+    virtual void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) = 0;
     virtual void qtiSetTid() = 0;
     virtual bool qtiGetHwcDisplayId(const sp<DisplayDevice>& display, uint32_t* hwcDisplayId) = 0;
     virtual void qtiHandlePresentationDisplaysEarlyWakeup(size_t updatingDisplays,
@@ -56,6 +63,10 @@ public:
                                                hal::Connection connection,
                                                std::optional<DisplayIdentificationInfo> info) = 0;
     virtual void qtiUpdateInternalDisplaysPresentationMode() = 0;
+    virtual QtiHWComposerExtensionIntf* qtiGetHWComposerExtensionIntf() = 0;
+    virtual composer::DisplayExtnIntf* qtiGetDisplayExtn() = 0;
+    virtual bool qtiLatchMediaContent(sp<Layer> layer) = 0;
+    virtual void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) = 0;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -95,6 +106,7 @@ public:
     virtual status_t qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) = 0;
     virtual void qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) = 0;
     virtual void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) = 0;
+    virtual void qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) = 0;
 
     /*
      * Methods for Virtual, WiFi, and Secure Displays
@@ -108,9 +120,35 @@ public:
     virtual void qtiHasProtectedLayer(bool* hasProtectedLayer) = 0;
     virtual bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) = 0;
     virtual bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) = 0;
+
+    /*
+     * Methods for SmoMo Interface
+     */
+    virtual void qtiCreateSmomoInstance(const DisplayDeviceState& state) = 0;
+    virtual void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) = 0;
+    virtual void qtiSetRefreshRates(PhysicalDisplayId displayId) = 0;
+    virtual void qtiSetRefreshRates(const sp<DisplayDevice>& display) = 0;
+    virtual void qtiSetRefreshRateTo(int32_t refreshRate) = 0;
+    virtual void qtiSyncToDisplayHardware() = 0;
+    virtual void qtiUpdateSmomoState() = 0;
+    virtual void qtiUpdateSmomoLayerInfo(TransactionState& ts, int64_t desiredPresentTime,
+                                         bool isAutoTimestamp, uint64_t transactionId) = 0;
+    virtual void qtiScheduleCompositeImmed() = 0;
+    virtual void qtiSetPresentTime(uint32_t layerStackId, int sequence,
+                                   nsecs_t desiredPresentTime) = 0;
+    virtual void qtiOnVsync(nsecs_t expectedVsyncTime) = 0;
+    virtual bool qtiIsFrameEarly(uint32_t layerStackId, int sequence,
+                                 nsecs_t desiredPresentTime) = 0;
+    virtual void qtiUpdateLayerState(int numLayers) = 0;
+    virtual void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
+                                            uint32_t drawLayerStackId) = 0;
+    virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
+
+    /*
+     * Methods for speculative fence
+     */
+    virtual void qtiStartUnifiedDraw() = 0;
+    virtual void qtiTryDrawMethod(sp<DisplayDevice> display) = 0;
 };
 
-} // namespace surfaceflingerextension
-} // namespace android
-
-#endif
+} // namespace android::surfaceflingerextension

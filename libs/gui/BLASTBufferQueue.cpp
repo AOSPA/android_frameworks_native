@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #undef LOG_TAG
 #define LOG_TAG "BLASTBufferQueue"
 
@@ -184,11 +190,22 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
             this);
 
     BQA_LOGV("BLASTBufferQueue created");
+
+    /* QTI_BEGIN */
+    if (!mQtiBBQExtn) {
+        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this);
+    }
+    /* QTI_END */
 }
 
 BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface,
                                    int width, int height, int32_t format)
       : BLASTBufferQueue(name) {
+    /* QTI_BEGIN */
+    if (!mQtiBBQExtn) {
+        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this);
+    }
+    /* QTI_END */
     update(surface, width, height, format);
 }
 
@@ -257,6 +274,12 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
         // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
         t.setApplyToken(mApplyToken).apply(false, true);
     }
+
+    /* QTI_BEGIN */
+    if (mQtiBBQExtn) {
+        mQtiBBQExtn->qtiSetConsumerUsageBitsForRC(mName, mSurfaceControl);
+    }
+    /* QTI_END */
 }
 
 static std::optional<SurfaceControlStats> findMatchingStat(

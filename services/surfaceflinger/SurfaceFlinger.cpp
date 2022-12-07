@@ -147,6 +147,7 @@
 /* QTI_BEGIN */
 #include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
 #include "QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
+#include "QtiExtension/QtiExtensionContext.h"
 /* QTI_END */
 #include "RegionSamplingThread.h"
 #include "Scheduler/EventThread.h"
@@ -484,6 +485,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
              .early = base::GetBoolProperty("debug.sf.send_early_power_session_hint"s, false)};
     /* QTI_BEGIN */
     mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension(this);
+    surfaceflingerextension::QtiExtensionContext::instance().setQtiSurfaceFlingerExtn(mQtiSFExtnIntf);
     mQtiSFExtnIntf->qtiInit(this);
     ALOGI("Created SF Extension %p", mQtiSFExtnIntf);
     /* QTI_END */
@@ -752,6 +754,10 @@ void SurfaceFlinger::bootFinished() {
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
                                         mVsyncConfiguration.get(), getHwComposer().getComposer());
+    // TODO(naseer) set compeng object
+    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
+            &getCompositionEngine());
+    mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
 
@@ -923,6 +929,14 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
         ALOGE("Run StartPropertySetThread failed!");
     }
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf =
+            mQtiSFExtnIntf->qtiPostInit(static_cast<android::impl::HWComposer&>(
+                                                mCompositionEngine->getHwComposer()),
+                                        static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
+                                        mVsyncConfiguration.get(), getHwComposer().getComposer());
+    mQtiSFExtnIntf->qtiStartUnifiedDraw();
+    /* QTI_END */
     ALOGV("Done initializing");
 }
 
@@ -2278,6 +2292,11 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     // future relative to frameTime, but may not be for delayed frames. Adjust mExpectedPresentTime
     // accordingly, but not mScheduledPresentTime.
     const TimePoint lastScheduledPresentTime = mScheduledPresentTime;
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
+    /* QTI_END */
+
     mScheduledPresentTime = expectedVsyncTime;
 
     // Calculate the expected present time once and use the cached value throughout this frame to
@@ -2291,6 +2310,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiUpdateFrameScheduler();
+    mQtiSFExtnIntf->qtiSyncToDisplayHardware();
     // TODO(rmedel): Handle locking for early wake up
     mQtiSFExtnIntf->qtiResetEarlyWakeUp();
     /* QTI_END */
@@ -2881,6 +2901,10 @@ void SurfaceFlinger::postComposition(nsecs_t callTime) {
     const size_t appConnections = mScheduler->getEventThreadConnectionCount(mAppConnectionHandle);
     mTimeStats->recordDisplayEventConnectionCount(sfConnections + appConnections);
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateSmomoState();
+    /* QTI_END */
+
     if (isDisplayConnected && !defaultDisplay->isPoweredOn()) {
         getRenderEngine().cleanupPostRender();
         return;
@@ -2927,6 +2951,10 @@ void SurfaceFlinger::postComposition(nsecs_t callTime) {
                                                   nanoseconds_to_milliseconds(callTime), false);
         });
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateLayerState(mNumLayers);
+    /* QTI_END */
 
     // Even though ATRACE_INT64 already checks if tracing is enabled, it doesn't prevent the
     // side-effect of getTotalSize(), so we check that again here
@@ -3174,7 +3202,8 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
         std::shared_ptr<compositionengine::Display> compositionDisplay,
         const DisplayDeviceState& state,
         const sp<compositionengine::DisplaySurface>& displaySurface,
-        const sp<IGraphicBufferProducer>& producer) {
+        const sp<IGraphicBufferProducer>& producer,
+        surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf) {
     DisplayDeviceCreationArgs creationArgs(sp<SurfaceFlinger>::fromExisting(this), getHwComposer(),
                                            displayToken, compositionDisplay);
     creationArgs.sequenceId = state.sequenceId;
@@ -3182,6 +3211,7 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
     creationArgs.displaySurface = displaySurface;
     creationArgs.hasWideColorGamut = false;
     creationArgs.supportedPerFrameMetadata = 0;
+    creationArgs.mQtiDSExtnIntf = mQtiDSExtnIntf;
 
     if (const auto& physical = state.physical) {
         creationArgs.activeModeId = physical->activeMode->getId();
@@ -3353,6 +3383,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     sp<IGraphicBufferConsumer> bqConsumer;
     getFactory().createBufferQueue(&bqProducer, &bqConsumer, /*consumerIsSurfaceFlinger =*/false);
 
+    /* QTI_BEGIN */
+    surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* qtiDSExtnIntf = nullptr;
+    /* QTI_END */
+
     if (state.isVirtual()) {
         const auto displayId = VirtualDisplayId::tryCast(compositionDisplay->getId());
         LOG_FATAL_IF(!displayId);
@@ -3377,8 +3411,14 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     }
 
     LOG_FATAL_IF(!displaySurface);
+    /* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+    qtiDSExtnIntf = displaySurface->qtiGetDisplaySurfaceExtn();
+#endif
+    /* QTI_END */
+
     auto display = setupNewDisplayDeviceInternal(displayToken, std::move(compositionDisplay), state,
-                                                 displaySurface, producer);
+                                                 displaySurface, producer, qtiDSExtnIntf);
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
@@ -3386,7 +3426,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
     if (!display->isVirtual()) {
         /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ true);
+        mQtiSFExtnIntf->qtiTryDrawMethod(display);
+
         /* QTI_END */
 
         if (mScheduler) {
@@ -3409,6 +3452,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     }
 
     mDisplays.try_emplace(displayToken, std::move(display));
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiCreateSmomoInstance(state);
+    /* QTI_END */
 }
 
 void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
@@ -3422,6 +3468,9 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
             dispatchDisplayHotplugEvent(display->getPhysicalId(), false);
             mScheduler->unregisterDisplay(display->getPhysicalId());
         }
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
+        /* QTI_END */
     }
 
     mDisplays.erase(displayToken);
@@ -3488,6 +3537,11 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if (currentState.layerStack != drawingState.layerStack) {
             display->setLayerFilter(
                     makeLayerFilterForDisplay(display->getId(), currentState.layerStack));
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiUpdateSmomoLayerStackId(currentState.physical->hwcDisplayId,
+                                                       currentState.layerStack.id,
+                                                       drawingState.layerStack.id);
+            /* QTI_END */
         }
         if (currentState.flags != drawingState.flags) {
             display->setFlags(currentState.flags);
@@ -4219,6 +4273,15 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
             return TraverseBuffersReturnValues::STOP_TRAVERSAL;
         }
 
+        /* QTI_BEGIN */
+        TimePoint desiredPresentTime = TimePoint::fromNs(transaction.desiredPresentTime);
+        if (mQtiSFExtnIntf->qtiIsFrameEarly(layer->qtiGetSmomoLayerStackId(), layer->getSequence(),
+                                            desiredPresentTime.ns())) {
+            ready = TransactionReadiness::NotReady;
+            return false;
+        }
+        /* QTI_END */
+
         // check fence status
         const bool allowLatchUnsignaled = shouldLatchUnsignaled(layer, s, transaction.states.size(),
                                                                 flushState.firstTransaction);
@@ -4231,8 +4294,13 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         const bool fenceSignaled =
                 (!acquireFenceChanged ||
                  s.bufferData->acquireFence->getStatus() != Fence::Status::Unsignaled);
+
+        /* QTI_BEGIN */
+        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
+        /* QTI_END */
+
         if (!fenceSignaled) {
-            if (!allowLatchUnsignaled) {
+            if (!allowLatchUnsignaled /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */) {
                 ready = TransactionReadiness::NotReady;
                 auto& listener = s.bufferData->releaseBufferListener;
                 if (listener &&
@@ -4250,6 +4318,10 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                     ? TransactionReadiness::ReadyUnsignaledSingle
                     : TransactionReadiness::ReadyUnsignaled;
         }
+
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiUpdateBufferData(qtiLatchMediaContent, s);
+        /* QTI_END */
         return TraverseBuffersReturnValues::CONTINUE_TRAVERSAL;
     });
     ATRACE_INT("TransactionReadiness", static_cast<int>(ready));
@@ -4467,6 +4539,12 @@ status_t SurfaceFlinger::setTransactionState(
     }(state.flags);
 
     const auto frameHint = state.isFrameActive() ? FrameHint::kActive : FrameHint::kNone;
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(state, desiredPresentTime, isAutoTimestamp,
+                                            transactionId);
+    /* QTI_END */
+
     mTransactionHandler.queueTransaction(std::move(state));
     setTransactionFlags(eTransactionFlushNeeded, schedule, applyToken, frameHint);
     return NO_ERROR;
@@ -7486,6 +7564,11 @@ status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
     /* QTI_END */
 
     setDesiredActiveMode({std::move(preferredMode), .emitEvent = true}, force);
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetRefreshRates(displayId);
+    /* QTI_END */
+
     return NO_ERROR;
 }
 

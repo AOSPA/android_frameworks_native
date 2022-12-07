@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <binder/IPCThreadState.h>
@@ -46,6 +52,14 @@ void MessageQueue::Handler::handleMessage(const Message&) {
     mFramePending.store(false);
     mQueue.onFrameSignal(mQueue.mCompositor, mVsyncId, mExpectedVsyncTime);
 }
+
+/* QTI_BEGIN */
+void MessageQueue::Handler::qtiDispatchFrameImmed() {
+    if (!mFramePending.exchange(true)) {
+        mQueue.mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), Message());
+    }
+}
+/* QTI_END */
 
 MessageQueue::MessageQueue(ICompositor& compositor)
       : MessageQueue(compositor, sp<Handler>::make(*this)) {}
@@ -171,5 +185,12 @@ auto MessageQueue::getScheduledFrameTime() const -> std::optional<Clock::time_po
 
     return std::nullopt;
 }
+
+/* QTI_BEGIN */
+void MessageQueue::qtiScheduleFrameImmed() {
+    ATRACE_CALL();
+    mHandler->qtiDispatchFrameImmed();
+}
+/* QTI_END */
 
 } // namespace android::impl

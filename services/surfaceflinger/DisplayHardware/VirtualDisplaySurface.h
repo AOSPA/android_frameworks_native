@@ -42,6 +42,7 @@ namespace android {
 /* QTI_BEGIN */
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
+class QtiVirtualDisplaySurfaceExtension;
 } // namespace surfaceflingerextension
 /* QTI_END */
 
@@ -290,6 +291,7 @@ private:
     bool mForceHwcCopy;
 
     /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiVirtualDisplaySurfaceExtension;
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
     /* QTI_END */
 };

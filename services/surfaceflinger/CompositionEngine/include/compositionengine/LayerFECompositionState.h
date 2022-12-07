@@ -228,6 +228,7 @@ struct LayerFECompositionState {
     /* QTI_BEGIN */
     bool qtiIsSecureDisplay{false};
     bool qtiIsSecureCamera{false};
+    uint32_t qtiLayerClass; // Layer Classification
     /* QTI_END */
 };
 

@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <android/gui/DropInputMode.h>
@@ -844,6 +850,11 @@ public:
                                    const sp<GraphicBuffer>& buffer, uint64_t framenumber,
                                    const sp<Fence>& releaseFence);
 
+    /* QTI_BEGIN */
+    void qtiSetSmomoLayerStackId();
+    uint32_t qtiGetSmomoLayerStackId();
+    /* QTI_END */
+
 protected:
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -933,6 +944,10 @@ protected:
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
+
+    /* QTI_BEGIN */
+    uint32_t mQtiLayerClass{0};
+    /* QTI_END */
 
     // main thread
     sp<NativeHandle> mSidebandStream;
@@ -1164,10 +1179,15 @@ private:
     // not specify a destination frame.
     ui::Transform mRequestedTransform;
 
+    /* QTI_BEGIN */
+    uint32_t qtiSmomoLayerStackId = UINT32_MAX;
+    /* QTI_END */
+
     sp<LayerFE> mLegacyLayerFE;
     std::vector<std::pair<frontend::LayerHierarchy::TraversalPath, sp<LayerFE>>> mLayerFEs;
     std::unique_ptr<frontend::LayerSnapshot> mSnapshot =
             std::make_unique<frontend::LayerSnapshot>();
+
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

@@ -221,6 +221,10 @@ Layer::Layer(const LayerCreationArgs& args)
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
     mDrawingState.dataspace = ui::Dataspace::V0_SRGB;
 
+    /* QTI_BEGIN */
+    mQtiLayerClass = mFlinger->mQtiSFExtnIntf->qtiGetLayerClass(mName);
+    /* QTI_END */
+
     mSnapshot->sequence = sequence;
     mSnapshot->name = getDebugName();
     mSnapshot->textureName = mTextureName;
@@ -620,6 +624,7 @@ void Layer::prepareGeometryCompositionState() {
             static_cast<sp<const GraphicBuffer>>(getBuffer()));
     snapshot->qtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
             static_cast<sp<const GraphicBuffer>>(getBuffer()));
+    snapshot->qtiLayerClass = mQtiLayerClass;
     /* QTI_END */
 
     snapshot->metadata.clear();
@@ -1561,6 +1566,9 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
+    /* QTI_BEGIN */
+    result.append(" Layer Class |");
+    /* QTI_END */
     result.append(" Comp Type | ");
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
@@ -1598,6 +1606,9 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
         StringAppendF(&result, "  %10d | ", layerState.z);
     }
     StringAppendF(&result, "  %10d | ", mWindowType);
+    /* QTI_BEGIN */
+    StringAppendF(&result, "  %10d | ", mQtiLayerClass);
+    /* QTI_END */
     StringAppendF(&result, "%10s | ", toString(getCompositionType(display)).c_str());
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
     const Rect& frame = outputLayerState.displayFrame;
@@ -3012,6 +3023,14 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             frameNumberChanged ? bufferData.frameNumber : mDrawingState.frameNumber + 1;
     ATRACE_FORMAT_INSTANT("setBuffer %s - %" PRIu64, getDebugName(), frameNumber);
 
+    /* QTI_BEGIN */
+    if (bufferData.qtiInvalid) {
+        callReleaseBufferCallback(bufferData.releaseBufferListener, buffer->getBuffer(),
+                                  bufferData.frameNumber, bufferData.acquireFence);
+        return false;
+    }
+    /* QTI_END */
+
     if (mDrawingState.buffer) {
         mReleasePreviousBuffer = true;
         if (!mBufferInfo.mBuffer ||
@@ -3862,6 +3881,11 @@ bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
         recomputeVisibleRegions = true;
     }
 
+    /* QTI_BEGIN */
+    mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(getLayerStack().id, getSequence(),
+                                                mBufferInfo.mDesiredPresentTime);
+    /* QTI_END */
+
     return true;
 }
 
@@ -4083,6 +4107,16 @@ void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thre
         mFlinger->mNumTrustedPresentationListeners--;
     }
 }
+
+/* QTI_BEGIN */
+void Layer::qtiSetSmomoLayerStackId() {
+    qtiSmomoLayerStackId = getLayerStack().id;
+}
+
+uint32_t Layer::qtiGetSmomoLayerStackId() {
+    return qtiSmomoLayerStackId;
+}
+/* QTI_END */
 
 // ---------------------------------------------------------------------------
 

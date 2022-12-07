@@ -22,15 +22,48 @@
 #include "QtiPhaseOffsetsExtension.h"
 #include "QtiPowerAdvisorExtension.h"
 #include "QtiWorkDurationsExtension.h"
+#include "TransactionState.h"
+#include "layer_extn_intf.h"
 
 namespace composer {
 class ComposerExtnIntf;
 class ComposerExtnLib;
 class FrameSchedulerIntf;
 class DisplayExtnIntf;
+class LayerExtnIntf;
 } // namespace composer
 
+namespace smomo {
+class SmomoIntf;
+} // namespace smomo
+
+using composer::LayerExtnIntf;
+using smomo::SmomoIntf;
+
 namespace android::surfaceflingerextension {
+
+class LayerExtWrapper {
+public:
+    LayerExtWrapper() {}
+    ~LayerExtWrapper();
+
+    bool init();
+
+    LayerExtnIntf* operator->() { return mInst; }
+    operator bool() { return mInst != nullptr; }
+
+    LayerExtWrapper(const LayerExtWrapper&) = delete;
+    LayerExtWrapper& operator=(const LayerExtWrapper&) = delete;
+
+private:
+    LayerExtnIntf* mInst = nullptr;
+    void* mLayerExtLibHandle = nullptr;
+
+    using CreateLayerExtnFuncPtr = std::add_pointer<bool(uint16_t, LayerExtnIntf**)>::type;
+    using DestroyLayerExtnFuncPtr = std::add_pointer<void(LayerExtnIntf*)>::type;
+    CreateLayerExtnFuncPtr mLayerExtCreateFunc;
+    DestroyLayerExtnFuncPtr mLayerExtDestroyFunc;
+};
 
 class QtiSurfaceFlingerExtension : public QtiSurfaceFlingerExtensionIntf {
 public:
@@ -40,9 +73,9 @@ public:
     void qtiInit(SurfaceFlinger* flinger) override;
     QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
                                                 Hwc2::impl::PowerAdvisor* powerAdvisor,
-                                                scheduler::VsyncConfiguration* vsyncConfig,
+                                                VsyncConfiguration* vsyncConfig,
                                                 Hwc2::Composer* composerHal) override;
-    void qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) override;
+    void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) override;
     void qtiSetTid() override;
     bool qtiGetHwcDisplayId(const sp<DisplayDevice>& display, uint32_t* hwcDisplayId) override;
     void qtiHandlePresentationDisplaysEarlyWakeup(size_t updatingDisplays,
@@ -58,6 +91,10 @@ public:
     void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection,
                                        std::optional<DisplayIdentificationInfo> info) override;
     void qtiUpdateInternalDisplaysPresentationMode() override;
+    QtiHWComposerExtensionIntf* qtiGetHWComposerExtensionIntf() override;
+    composer::DisplayExtnIntf* qtiGetDisplayExtn() { return mQtiDisplayExtnIntf; }
+    bool qtiLatchMediaContent(sp<Layer> layer) override;
+    void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -97,6 +134,8 @@ public:
     status_t qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) override;
     void qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) override;
     void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) override;
+    void qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) override;
+
 
     /*
      * Methods for Virtual, WiFi, and Secure Displays
@@ -111,7 +150,37 @@ public:
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
 
+    /*
+     * Methods for SmoMo Interface
+     */
+    void qtiCreateSmomoInstance(const DisplayDeviceState& state) override;
+    void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
+    void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
+    void qtiSetRefreshRates(const sp<DisplayDevice>& display) override;
+    void qtiSetRefreshRateTo(int32_t refreshRate) override;
+    void qtiSyncToDisplayHardware() override;
+    void qtiUpdateSmomoState() override;
+    void qtiUpdateSmomoLayerInfo(TransactionState& ts, int64_t desiredPresentTime,
+                                 bool isAutoTimestamp, uint64_t transactionId) override;
+    void qtiScheduleCompositeImmed() override;
+    void qtiSetPresentTime(uint32_t layerStackId, int sequence,
+                           nsecs_t desiredPresentTime) override;
+    void qtiOnVsync(nsecs_t expectedVsyncTime) override;
+    bool qtiIsFrameEarly(uint32_t layerStackId, int sequence, nsecs_t desiredPresentTime) override;
+    void qtiUpdateLayerState(int numLayers) override;
+    void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
+                                    uint32_t drawLayerStackId) override;
+    uint32_t qtiGetLayerClass(std::string mName) override;
+
+    /*
+     * Methods for speculative fence
+     */
+    void qtiStartUnifiedDraw() override;
+    void qtiTryDrawMethod(sp<DisplayDevice> display) override;
+    void qtiEndUnifiedDraw(uint32_t hwcDisplayId);
+
 private:
+    SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
     bool qtiIsInternalDisplay(const sp<DisplayDevice>& display);
     void qtiSetupDisplayExtnFeatures();
 
@@ -136,14 +205,36 @@ private:
     int mQtiFirstApiLevel = 0;
     int mQtiRETid = 0;
     int mQtiSFTid = 0;
+    int mQtiUiLayerFrameCount = 180;
     uint32_t mQtiCurrentFps = 0;
+
+    std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
+    ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
 
     static bool mQtiSDirectStreaming;
 
     std::list<sp<DisplayDevice>> mQtiDisplaysList = {};
     std::mutex mQtiEarlyWakeUpMutex;
+    std::mutex mQtiSetDisplayElapseTimeMutex;
     std::unordered_map<float, int64_t> mQtiAdvancedSfOffsets;
     std::unordered_map<float, std::pair<int64_t, int64_t>> mQtiWorkDurationConfigsMap;
+
+    LayerExtWrapper mQtiLayerExt;
+
+    struct SmomoInfo {
+        uint64_t displayId;
+        uint32_t layerStackId;
+        bool active = false;
+        SmomoIntf* smoMo = nullptr;
+    };
+
+    struct VisibleLayerInfo {
+        std::vector<std::string> layerName;
+        std::vector<int32_t> layerSequence;
+    };
+    VisibleLayerInfo mQtiVisibleLayerInfo;
+
+    std::vector<SmomoInfo> mQtiSmomoInstances{};
 };
 
 } // namespace android::surfaceflingerextension

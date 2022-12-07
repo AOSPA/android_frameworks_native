@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <atomic>
@@ -123,6 +129,10 @@ public:
 
     using Impl::scheduleConfigure;
     using Impl::scheduleFrame;
+
+    /* QTI_BEGIN */
+    using Impl::qtiScheduleFrameImmed;
+    /* QTI_END */
 
     // Schedule an asynchronous or synchronous task on the main thread.
     template <typename F, typename T = std::invoke_result_t<F>>

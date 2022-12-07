@@ -41,7 +41,7 @@ public:
     }
 
     void qtiSetClientTarget_3_1(int64_t display, uint32_t slot, int acquireFence,
-                                Dataspace dataspace) {
+                                uint32_t dataspace) {
         ClientTarget clientTargetCommand;
         clientTargetCommand.buffer = qtiGetBuffer(slot, nullptr, acquireFence);
         clientTargetCommand.dataspace =
