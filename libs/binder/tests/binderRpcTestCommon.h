@@ -69,6 +69,7 @@ enum class SocketType {
     PRECONNECTED,
     UNIX,
     UNIX_BOOTSTRAP,
+    UNIX_RAW,
     VSOCK,
     INET,
 };
@@ -81,6 +82,8 @@ static inline std::string PrintToString(SocketType socketType) {
             return "unix_domain_socket";
         case SocketType::UNIX_BOOTSTRAP:
             return "unix_domain_socket_bootstrap";
+        case SocketType::UNIX_RAW:
+            return "raw_uds";
         case SocketType::VSOCK:
             return "vm_socket";
         case SocketType::INET:
@@ -89,6 +92,14 @@ static inline std::string PrintToString(SocketType socketType) {
             LOG_ALWAYS_FATAL("Unknown socket type");
             return "";
     }
+}
+
+static inline size_t epochMillis() {
+    using std::chrono::duration_cast;
+    using std::chrono::milliseconds;
+    using std::chrono::seconds;
+    using std::chrono::system_clock;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
 struct BinderRpcOptions {
