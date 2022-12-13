@@ -429,16 +429,22 @@ public:
         return mFlinger->mTransactionHandler.mPendingTransactionCount.load();
     }
 
-    auto setTransactionState(
-            const FrameTimelineInfo& frameTimelineInfo, const Vector<ComposerState>& states,
-            const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
-            const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
-            bool isAutoTimestamp, const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
-            std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) {
+    auto setTransactionState(const FrameTimelineInfo& frameTimelineInfo,
+                             Vector<ComposerState>& states, const Vector<DisplayState>& displays,
+                             uint32_t flags, const sp<IBinder>& applyToken,
+                             const InputWindowCommands& inputWindowCommands,
+                             int64_t desiredPresentTime, bool isAutoTimestamp,
+                             const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
+                             std::vector<ListenerCallbacks>& listenerCallbacks,
+                             uint64_t transactionId) {
         return mFlinger->setTransactionState(frameTimelineInfo, states, displays, flags, applyToken,
                                              inputWindowCommands, desiredPresentTime,
                                              isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,
                                              listenerCallbacks, transactionId);
+    }
+
+    auto setTransactionStateInternal(TransactionState& transaction) {
+        return mFlinger->mTransactionHandler.queueTransaction(std::move(transaction));
     }
 
     auto flushTransactionQueues() {
@@ -837,32 +843,35 @@ public:
 
             sp<DisplayDevice> display = sp<DisplayDevice>::make(mCreationArgs);
             mFlinger.mutableDisplays().emplace_or_replace(mDisplayToken, display);
-            if (mFlinger.scheduler()) {
-                mFlinger.scheduler()->registerDisplay(display->getPhysicalId(),
-                                                      display->holdRefreshRateSelector());
-            }
 
             DisplayDeviceState state;
             state.isSecure = mCreationArgs.isSecure;
 
             if (mConnectionType) {
                 LOG_ALWAYS_FATAL_IF(!displayId);
-                const auto physicalId = PhysicalDisplayId::tryCast(*displayId);
-                LOG_ALWAYS_FATAL_IF(!physicalId);
+                const auto physicalIdOpt = PhysicalDisplayId::tryCast(*displayId);
+                LOG_ALWAYS_FATAL_IF(!physicalIdOpt);
+                const auto physicalId = *physicalIdOpt;
+
                 LOG_ALWAYS_FATAL_IF(!mHwcDisplayId);
 
                 const auto activeMode = modes.get(activeModeId);
                 LOG_ALWAYS_FATAL_IF(!activeMode);
 
-                state.physical = {.id = *physicalId,
+                state.physical = {.id = physicalId,
                                   .hwcDisplayId = *mHwcDisplayId,
                                   .activeMode = activeMode->get()};
 
                 const auto it = mFlinger.mutablePhysicalDisplays()
-                                        .emplace_or_replace(*physicalId, mDisplayToken, *physicalId,
+                                        .emplace_or_replace(physicalId, mDisplayToken, physicalId,
                                                             *mConnectionType, std::move(modes),
                                                             ui::ColorModes(), std::nullopt)
                                         .first;
+
+                if (mFlinger.scheduler()) {
+                    mFlinger.scheduler()->registerDisplay(physicalId,
+                                                          display->holdRefreshRateSelector());
+                }
 
                 display->setActiveMode(activeModeId, it->second.snapshot());
             }

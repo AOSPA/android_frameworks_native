@@ -83,6 +83,7 @@ class SurfaceFrame;
 } // namespace frametimeline
 
 class Layer : public virtual RefBase {
+public:
     // The following constants represent priority of the window. SF uses this information when
     // deciding which window has a priority when deciding about the refresh rate of the screen.
     // Priority 0 is considered the highest priority. -1 means that the priority is unset.
@@ -94,7 +95,6 @@ class Layer : public virtual RefBase {
     // Windows that are not in focus, but voted for a specific mode ID.
     static constexpr int32_t PRIORITY_NOT_FOCUSED_WITH_MODE = 2;
 
-public:
     enum { // flags for doTransaction()
         eDontUpdateGeometryState = 0x00000001,
         eVisibleRegion = 0x00000002,
@@ -146,6 +146,7 @@ public:
         bool transformToDisplayInverse;
         Region transparentRegionHint;
         std::shared_ptr<renderengine::ExternalTexture> buffer;
+        int hwcBufferSlot;
         client_cache_t clientCacheId;
         sp<Fence> acquireFence;
         std::shared_ptr<FenceTime> acquireFenceTime;
@@ -297,7 +298,8 @@ public:
     bool setBuffer(std::shared_ptr<renderengine::ExternalTexture>& /* buffer */,
                    const BufferData& /* bufferData */, nsecs_t /* postTime */,
                    nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
-                   std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/);
+                   std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/,
+                   int /* hwcBufferSlot */);
     bool setDataspace(ui::Dataspace /*dataspace*/);
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
@@ -811,6 +813,7 @@ public:
     void updateMetadataSnapshot(const LayerMetadata& parentMetadata);
     void updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMetadata,
                                         std::unordered_set<Layer*>& visited);
+    int getHwcCacheSlot(const client_cache_t& clientCacheId);
 
 protected:
     // For unit tests

@@ -117,6 +117,10 @@ void CursorInputMapper::dump(std::string& dump) {
                          toString(mCursorScrollAccumulator.haveRelativeVWheel()));
     dump += StringPrintf(INDENT3 "HaveHWheel: %s\n",
                          toString(mCursorScrollAccumulator.haveRelativeHWheel()));
+    dump += StringPrintf(INDENT3 "WheelYVelocityControlParameters: %s",
+                         mWheelYVelocityControl.getParameters().dump().c_str());
+    dump += StringPrintf(INDENT3 "WheelXVelocityControlParameters: %s",
+                         mWheelXVelocityControl.getParameters().dump().c_str());
     dump += StringPrintf(INDENT3 "VWheelScale: %0.3f\n", mVWheelScale);
     dump += StringPrintf(INDENT3 "HWheelScale: %0.3f\n", mHWheelScale);
     dump += StringPrintf(INDENT3 "DisplayId: %s\n", toString(mDisplayId).c_str());
@@ -296,10 +300,11 @@ std::list<NotifyArgs> CursorInputMapper::process(const RawEvent* rawEvent) {
     mCursorScrollAccumulator.process(rawEvent);
 
     if (rawEvent->type == EV_SYN && rawEvent->code == SYN_REPORT) {
-        const nsecs_t eventTime =
+        const auto [eventTime, readTime] =
                 applyBluetoothTimestampSmoothening(getDeviceContext().getDeviceIdentifier(),
-                                                   rawEvent->when, mLastEventTime);
-        out += sync(eventTime, rawEvent->readTime);
+                                                   rawEvent->when, rawEvent->readTime,
+                                                   mLastEventTime);
+        out += sync(eventTime, readTime);
         mLastEventTime = eventTime;
     }
     return out;
