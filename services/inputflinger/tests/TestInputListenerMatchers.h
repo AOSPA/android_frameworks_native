@@ -46,13 +46,19 @@ MATCHER_P(WithKeyAction, action, "KeyEvent with specified action") {
 }
 
 MATCHER_P(WithSource, source, "InputEvent with specified source") {
-    *result_listener << "expected source " << source << ", but got " << arg.source;
+    *result_listener << "expected source " << inputEventSourceToString(source) << ", but got "
+                     << inputEventSourceToString(arg.source);
     return arg.source == source;
 }
 
 MATCHER_P(WithDisplayId, displayId, "InputEvent with specified displayId") {
     *result_listener << "expected displayId " << displayId << ", but got " << arg.displayId;
     return arg.displayId == displayId;
+}
+
+MATCHER_P(WithDeviceId, deviceId, "InputEvent with specified deviceId") {
+    *result_listener << "expected deviceId " << deviceId << ", but got " << arg.deviceId;
+    return arg.deviceId == deviceId;
 }
 
 MATCHER_P(WithKeyCode, keyCode, "KeyEvent with specified key code") {
@@ -70,8 +76,8 @@ MATCHER_P2(WithCoords, x, y, "InputEvent with specified coords") {
 
 MATCHER_P(WithPressure, pressure, "InputEvent with specified pressure") {
     const auto argPressure = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_PRESSURE);
-    *result_listener << "expected pressure " << pressure << ", but got " << pressure;
-    return argPressure;
+    *result_listener << "expected pressure " << pressure << ", but got " << argPressure;
+    return argPressure == pressure;
 }
 
 MATCHER_P(WithToolType, toolType, "InputEvent with specified tool type") {

@@ -66,6 +66,7 @@
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
 #include "FlagManager.h"
+#include "FrontEnd/DisplayInfo.h"
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
@@ -120,6 +121,7 @@ class FrameTracer;
 class ScreenCapturer;
 class WindowInfosListenerInvoker;
 
+using frontend::TransactionHandler;
 using gui::CaptureArgs;
 using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
@@ -464,8 +466,7 @@ private:
               typename Handler = VsyncModulator::VsyncConfigOpt (VsyncModulator::*)(Args...)>
     void modulateVsync(Handler handler, Args... args) {
         if (const auto config = (*mVsyncModulator.*handler)(args...)) {
-            const auto vsyncPeriod = mScheduler->getVsyncPeriodFromRefreshRateSelector();
-            setVsyncConfig(*config, vsyncPeriod);
+            setVsyncConfig(*config, mScheduler->getLeaderVsyncPeriod());
         }
     }
 
@@ -490,9 +491,8 @@ private:
 
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const;
     status_t setTransactionState(const FrameTimelineInfo& frameTimelineInfo,
-                                 const Vector<ComposerState>& state,
-                                 const Vector<DisplayState>& displays, uint32_t flags,
-                                 const sp<IBinder>& applyToken,
+                                 Vector<ComposerState>& state, const Vector<DisplayState>& displays,
+                                 uint32_t flags, const sp<IBinder>& applyToken,
                                  const InputWindowCommands& inputWindowCommands,
                                  int64_t desiredPresentTime, bool isAutoTimestamp,
                                  const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
@@ -693,7 +693,8 @@ private:
     /*
      * Transactions
      */
-    bool applyTransactionState(const FrameTimelineInfo& info, Vector<ComposerState>& state,
+    bool applyTransactionState(const FrameTimelineInfo& info,
+                               std::vector<ResolvedComposerState>& state,
                                const Vector<DisplayState>& displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime, bool isAutoTimestamp,
@@ -714,7 +715,7 @@ private:
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
 
-    uint32_t setClientStateLocked(const FrameTimelineInfo&, ComposerState&,
+    uint32_t setClientStateLocked(const FrameTimelineInfo&, ResolvedComposerState&,
                                   int64_t desiredPresentTime, bool isAutoTimestamp,
                                   int64_t postTime, uint32_t permissions, uint64_t transactionId)
             REQUIRES(mStateLock);
@@ -928,7 +929,8 @@ private:
             const sp<compositionengine::DisplaySurface>& displaySurface,
             const sp<IGraphicBufferProducer>& producer) REQUIRES(mStateLock);
     void processDisplayChangesLocked() REQUIRES(mStateLock, kMainThreadContext);
-    void processDisplayRemoved(const wp<IBinder>& displayToken) REQUIRES(mStateLock);
+    void processDisplayRemoved(const wp<IBinder>& displayToken)
+            REQUIRES(mStateLock, kMainThreadContext);
     void processDisplayChanged(const wp<IBinder>& displayToken,
                                const DisplayDeviceState& currentState,
                                const DisplayDeviceState& drawingState)
@@ -1366,6 +1368,7 @@ private:
     } mPowerHintSessionMode;
 
     TransactionHandler mTransactionHandler;
+    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
