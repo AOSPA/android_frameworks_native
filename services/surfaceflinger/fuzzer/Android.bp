@@ -41,6 +41,7 @@ cc_defaults {
         "perfetto_trace_protos",
         "libcompositionengine_mocks",
         "perfetto_trace_protos",
+        "libqtisurfaceflingerextension",
     ],
     shared_libs: [
         "libprotoutil",
@@ -59,6 +60,7 @@ cc_defaults {
     ],
     defaults: [
         "libsurfaceflinger_defaults",
+        "libqtisurfaceflingerextension_defaults",
     ],
     header_libs: [
         "libui_fuzzableDataspaces_headers",

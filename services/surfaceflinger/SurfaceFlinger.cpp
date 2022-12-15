@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -136,6 +142,9 @@
 #include "LayerVector.h"
 #include "MutexUtils.h"
 #include "NativeWindowSurface.h"
+/* QTI_BEGIN */
+#include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
+/* QTI_END */
 #include "RegionSamplingThread.h"
 #include "Scheduler/EventThread.h"
 #include "Scheduler/LayerHistory.h"
@@ -477,6 +486,11 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mPowerHintSessionMode =
             {.late = base::GetBoolProperty("debug.sf.send_late_power_session_hint"s, true),
              .early = base::GetBoolProperty("debug.sf.send_early_power_session_hint"s, false)};
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension();
+    mQtiSFExtnIntf->qtiInit(this);
+    ALOGI("Created SF Extension %p", mQtiSFExtnIntf);
+    /* QTI_END */
 }
 
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
@@ -729,6 +743,15 @@ void SurfaceFlinger::bootFinished() {
             enableRefreshRateOverlay(true);
         }
     }));
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf =
+            mQtiSFExtnIntf->qtiPostInit(static_cast<android::impl::HWComposer&>(
+                                                mCompositionEngine->getHwComposer()),
+                                        static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
+                                        mVsyncConfiguration.get());
+    mQtiSFExtnIntf->qtiSetTid();
+    /* QTI_END */
 }
 
 uint32_t SurfaceFlinger::getNewTexture() {
@@ -1178,6 +1201,10 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request)
         case DisplayDevice::DesiredActiveModeAction::None:
             break;
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetContentFps(mode.fps.getValue());
+    /* QTI_END */
 }
 
 status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToken>& displayToken,
@@ -1908,7 +1935,9 @@ void SurfaceFlinger::scheduleCommit(FrameHint hint) {
     if (hint == FrameHint::kActive) {
         mScheduler->resetIdleTimer();
     }
-    mPowerAdvisor->notifyDisplayUpdateImminentAndCpuReset();
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiNotifyDisplayUpdateImminent();
+    /* QTI_END */
     mScheduler->scheduleFrame();
 }
 
@@ -1971,6 +2000,10 @@ void SurfaceFlinger::onComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
         std::lock_guard<std::mutex> lock(mHotplugMutex);
         mPendingHotplugEvents.push_back(HotplugEvent{hwcDisplayId, connection});
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateOnComposerHalHotplug(hwcDisplayId, connection);
+    /* QTI_END */
 
     if (mScheduler) {
         mScheduler->scheduleConfigure();
@@ -2070,6 +2103,12 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     ATRACE_FORMAT("%s %" PRId64 " vsyncIn %.2fms%s", __func__, vsyncId.value,
                   ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
                   mExpectedPresentTime == expectedVsyncTime ? "" : " (adjusted)");
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateFrameScheduler();
+    // TODO(rmedel): Handle locking for early wake up
+    mQtiSFExtnIntf->qtiResetEarlyWakeUp();
+    /* QTI_END */
 
     const Period vsyncPeriod = mScheduler->getVsyncSchedule().period();
     const FenceTimePtr& previousPresentFence = getPreviousPresentFence(frameTime, vsyncPeriod);
@@ -2239,6 +2278,10 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     mLastCommittedVsyncId = vsyncId;
 
     persistDisplayBrightness(mustComposite);
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSendCompositorTid();
+    /* QTI_END */
 
     return mustComposite && CC_LIKELY(mBootStage != BootStage::BOOTLOADER);
 }
@@ -2649,6 +2692,10 @@ void SurfaceFlinger::postComposition() {
     }
 
     logFrameStats(presentTime);
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSendInitialFps(
+            display->refreshRateSelector().getActiveMode().fps.getValue());
+    /* QTI_END */
 }
 
 FloatRect SurfaceFlinger::getMaxDisplayBounds() {
@@ -2792,6 +2839,11 @@ bool SurfaceFlinger::configureLocked() {
                 ALOGI("%s display %s (HAL ID %" PRIu64 ")", log, to_string(displayId).c_str(),
                       hwcDisplayId);
             }
+
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiUpdateOnProcessDisplayHotplug(static_cast<uint32_t>(hwcDisplayId),
+                                                             connection, displayId);
+            /* QTI_END */
         }
     }
 
@@ -3077,6 +3129,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         }
 
         dispatchDisplayHotplugEvent(displayId, true);
+
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ true);
+        /* QTI_END */
     }
 
     mDisplays.try_emplace(displayToken, std::move(display));
@@ -3125,6 +3181,10 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         getRenderEngine().cleanFramebufferCache();
 
         if (const auto display = getDisplayDeviceLocked(displayToken)) {
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+            /* QTI_END */
+
             display->disconnect();
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
@@ -3184,6 +3244,10 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
     const Fps refreshRate = activeDisplay->getActiveMode().fps;
     updatePhaseConfiguration(refreshRate);
     mRefreshRateStats->setRefreshRate(refreshRate);
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
+    /* QTI_END */
 }
 
 void SurfaceFlinger::processDisplayChangesLocked() {
@@ -3469,6 +3533,13 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
         if (!display) continue;
 
         if (display->refreshRateSelector().isModeAllowed(request.mode)) {
+            /* QTI_BEGIN */
+            uint32_t qtiHwcDisplayId;
+            if (mQtiSFExtnIntf->qtiGetHwcDisplayId(display, &qtiHwcDisplayId)) {
+                mQtiSFExtnIntf->qtiSetDisplayExtnActiveConfig(qtiHwcDisplayId,
+                                                              modePtr->getId().value());
+            }
+            /* QTI_END */
             setDesiredActiveMode(std::move(request));
         } else {
             ALOGV("%s: Mode %d is disallowed for display %s", __func__, modePtr->getId().value(),
@@ -3636,6 +3707,16 @@ bool SurfaceFlinger::latchBuffers() {
     bool frameQueued = false;
     bool newDataLatched = false;
 
+    /* QTI_BEGIN */
+    std::set<uint32_t> qtiLayerStackIds;
+    uint32_t qtiLayerStackId = 0;
+    bool qtiWakeUpPresentationDisplays = false;
+
+    if (mQtiSFExtnIntf->qtiIsWakeUpPresentationDisplays()) {
+        qtiWakeUpPresentationDisplays = true;
+    }
+    /* QTI_END */
+
     // Store the set of layers that need updates. This set must not change as
     // buffers are being latched, as this could result in a deadlock.
     // Example: Two producers share the same command stream and:
@@ -3656,11 +3737,24 @@ bool SurfaceFlinger::latchBuffers() {
         if (layer->hasReadyFrame()) {
             frameQueued = true;
             mLayersWithQueuedFrames.emplace(sp<Layer>::fromExisting(layer));
+            /* QTI_BEGIN */
+            if (qtiWakeUpPresentationDisplays) {
+                qtiLayerStackId = layer->getLayerStack().id;
+                qtiLayerStackIds.insert(qtiLayerStackId);
+            }
+            /* QTI_END */
         } else {
             layer->useEmptyDamage();
         }
     });
     mForceTransactionDisplayChange = false;
+
+    /* QTI_BEGIN */
+    if (qtiWakeUpPresentationDisplays && !mLayersWithQueuedFrames.empty()) {
+        mQtiSFExtnIntf->qtiHandlePresentationDisplaysEarlyWakeup(qtiLayerStackIds.size(),
+                                                                 qtiLayerStackId);
+    }
+    /* QTI_END */
 
     // The client can continue submitting buffers for offscreen layers, but they will not
     // be shown on screen. Therefore, we need to latch and release buffers of offscreen
@@ -4831,6 +4925,10 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         mScheduler->setDisplayPowerMode(mode);
     }
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode);
+    /* QTI_END */
+
     ALOGD("Finished setting power mode %d on display %s", mode, to_string(displayId).c_str());
 }
 
@@ -5857,6 +5955,12 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     return nullptr;
                 }();
 
+                /* QTI_BEGIN */
+                if (mQtiSFExtnIntf->qtiIsSupportedConfigSwitch(display, modeId) != NO_ERROR) {
+                    return BAD_VALUE;
+                }
+                /* QTI_END */
+
                 mDebugDisplayModeSetByBackdoor = false;
                 const status_t result = setActiveModeFromBackdoor(display, DisplayModeId{modeId});
                 mDebugDisplayModeSetByBackdoor = result == NO_ERROR;
@@ -6782,6 +6886,14 @@ status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
         ALOGE("%s: Preferred mode %d is disallowed", __func__, preferredModeId.value());
         return INVALID_OPERATION;
     }
+
+    /* QTI_BEGIN */
+    auto qtiHwcDisplayId = getHwComposer().fromPhysicalDisplayId(displayId);
+    if (qtiHwcDisplayId) {
+        mQtiSFExtnIntf->qtiSetDisplayExtnActiveConfig(*qtiHwcDisplayId,
+                                                      preferredMode.modePtr->getId().value());
+    }
+    /* QTI_END */
 
     setDesiredActiveMode({std::move(preferredMode), .emitEvent = true});
     return NO_ERROR;

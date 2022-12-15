@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <cstdint>
@@ -50,7 +56,17 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiHWComposerExtension.h"
+/* QTI_END */
+
 namespace android {
+
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiHWComposerExtension;
+} // namespace surfaceflingerextension
+/* QTI_END */
 
 namespace hal = hardware::graphics::composer::hal;
 
@@ -462,6 +478,10 @@ public:
 private:
     // For unit tests
     friend TestableSurfaceFlinger;
+
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiHWComposerExtension;
+    /* QTI_END */
 
     struct DisplayData {
         std::unique_ptr<HWC2::Display> hwcDisplay;
