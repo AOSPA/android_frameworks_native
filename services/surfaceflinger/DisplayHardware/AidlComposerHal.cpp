@@ -29,6 +29,13 @@
 
 #include <aidl/android/hardware/graphics/composer3/BnComposerCallback.h>
 
+/* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+#include <aidl/vendor/qti/hardware/display/composer3/IQtiComposer3Client.h>
+#include "../QtiExtension/QtiAidlComposerHalExtension.h"
+#endif
+/* QTI_END */
+
 #include <algorithm>
 #include <cinttypes>
 
@@ -256,6 +263,23 @@ AidlComposer::AidlComposer(const std::string& serviceName) {
     }
 
     ALOGI("Loaded AIDL composer3 HAL service");
+    /* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+    ndk::SpAIBinder qtiComposer3ClientBinder;
+    AIBinder_getExtension(ndk::SpAIBinder(
+                                  AServiceManager_waitForService(instance(serviceName).c_str()))
+                                  .get(),
+                          qtiComposer3ClientBinder.getR());
+    if (qtiComposer3ClientBinder.get() != nullptr) {
+        qtiComposer3Client = IQtiComposer3Client::fromBinder(qtiComposer3ClientBinder);
+    }
+    if (!qtiComposer3Client) {
+        ALOGW("Failed to get QtiComposer3Client service");
+        return;
+    }
+    ALOGI("Loaded QtiComposer3Client HAL service");
+#endif
+    /* QTI_END */
 }
 
 AidlComposer::~AidlComposer() = default;
@@ -1047,8 +1071,13 @@ Error AidlComposer::execute(Display display) {
     if (!writer || !reader) {
         return Error::BAD_DISPLAY;
     }
-
     const auto& commands = writer->get().getPendingCommands();
+    /* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+    const auto& qtiCommands = writer->get().getPendingQtiCommands();
+#endif
+    /* QTI_END */
+
     if (commands.empty()) {
         writer->get().reset();
         return Error::NONE;
@@ -1056,7 +1085,18 @@ Error AidlComposer::execute(Display display) {
 
     { // scope for results
         std::vector<CommandResultPayload> results;
-        auto status = mAidlComposerClient->executeCommands(commands, &results);
+        ::ndk::ScopedAStatus status;
+        /* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+        if (qtiComposer3Client) {
+            status = qtiComposer3Client->qtiExecuteCommands(commands, qtiCommands, &results);
+        } else {
+            status = mAidlComposerClient->executeCommands(commands, &results);
+        }
+#else
+        status = mAidlComposerClient->executeCommands(commands, &results);
+#endif
+        /* QTI_END */
         if (!status.isOk()) {
             ALOGE("executeCommands failed %s", status.getDescription().c_str());
             return static_cast<Error>(status.getServiceSpecificError());
@@ -1083,6 +1123,11 @@ Error AidlComposer::execute(Display display) {
     }
 
     writer->get().reset();
+    /* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+    writer->get().qtiReset();
+#endif
+    /* QTI_END */
 
     return error;
 }
@@ -1496,8 +1541,8 @@ Error AidlComposer::getPhysicalDisplayOrientation(Display displayId,
     return Error::NONE;
 }
 
-ftl::Optional<std::reference_wrapper<ComposerClientWriter>> AidlComposer::getWriter(Display display)
-        REQUIRES_SHARED(mMutex) {
+ftl::Optional<std::reference_wrapper<QtiAidlCommandWriter>> AidlComposer::getWriter(
+        Display display) REQUIRES_SHARED(mMutex) {
     return mWriters.get(display);
 }
 

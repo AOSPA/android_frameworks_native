@@ -358,6 +358,9 @@ public:
     void onOwningDisplayDestroyed();
 
     hal::HWLayerId getId() const override { return mId; }
+    /* QTI_BEGIN */
+    hal::HWDisplayId qtiGetDisplayId() const { return mDisplay->getId(); }
+    /* QTI_END */
 
     hal::Error setCursorPosition(int32_t x, int32_t y) override;
     hal::Error setBuffer(uint32_t slot, const android::sp<android::GraphicBuffer>& buffer,

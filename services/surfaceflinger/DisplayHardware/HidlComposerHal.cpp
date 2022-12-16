@@ -43,12 +43,9 @@
 #include <cinttypes>
 
 /* QTI_BEGIN */
-#ifdef QTI_UNIFIED_DRAW
+#ifdef QTI_DISPLAY_EXTENSION
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#else
-#include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
-using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
 #endif
 /* QTI_END */
 
@@ -223,11 +220,13 @@ sp<GraphicBuffer> allocateClearSlotBuffer() {
 /* QTI_BEGIN */
 void HidlComposer::CommandWriter::qtiSetDisplayElapseTime(uint64_t time) {
     constexpr uint16_t kSetDisplayElapseTimeLength = 2;
+#ifdef QTI_DISPLAY_EXTENSION
     beginCommand(static_cast<V2_1::IComposerClient::Command>(
                          IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
                  kSetDisplayElapseTimeLength);
     write64(time);
     endCommand();
+#endif
 }
 /* QTI_END */
 

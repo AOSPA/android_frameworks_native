@@ -10,25 +10,6 @@
 
 namespace android::surfaceflingerextension {
 
-QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
-                                                                 VirtualDisplaySurface* vds,
-                                                                 bool secure, uint64_t sinkUsage) {
-#ifdef QTI_DISPLAY_EXTENSION
-    bool mQtiEnableDisplayExtn =
-            base::GetBoolProperty("vendor.display.enable_display_extensions", false);
-    if (mQtiEnableDisplayExtn) {
-        if (isVirtual) {
-            ALOGV("Enabling QtiVirtualDisplaySurfaceExtension ...");
-            return new QtiVirtualDisplaySurfaceExtension(vds, secure, sinkUsage);
-        }
-        // TODO(rmedel): else, createa QtiFramebufferSurfaceExtension for real displays
-    }
-#endif
-
-    ALOGI("Enabling QtiNullDisplaySurfaceExtension in QSSI ...");
-    return new QtiNullDisplaySurfaceExtension(vds, secure, sinkUsage);
-}
-
 QtiVirtualDisplaySurfaceExtension::QtiVirtualDisplaySurfaceExtension(VirtualDisplaySurface* vds,
                                                                      bool secure,
                                                                      uint64_t sinkUsage)

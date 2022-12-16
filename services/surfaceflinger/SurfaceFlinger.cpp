@@ -146,6 +146,7 @@
 #include "NativeWindowSurface.h"
 /* QTI_BEGIN */
 #include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
+#include "QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
 /* QTI_END */
 #include "RegionSamplingThread.h"
 #include "Scheduler/EventThread.h"

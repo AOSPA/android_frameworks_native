@@ -6,13 +6,13 @@
 
 namespace android::surfaceflingerextension {
 
-QtiHidlComposerHalExtension::QtiHidlComposerHalExtension(Hwc2::HidlComposer* composerHal) {
+QtiHidlComposerHalExtension::QtiHidlComposerHalExtension(Hwc2::Composer* composerHal) {
     if (!composerHal) {
         ALOGW("Passed an invalid pointer to composer hal");
         return;
     }
 
-    mQtiHidlComposer = composerHal;
+    mQtiHidlComposer = static_cast<Hwc2::HidlComposer*>(composerHal);
     ALOGV("Successfully created QtiHidlComposerHalExtension %p", mQtiHidlComposer);
 }
 

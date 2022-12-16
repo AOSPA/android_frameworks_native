@@ -9,7 +9,6 @@
 #include "../SurfaceFlinger.h"
 
 using std::string;
-
 namespace android {
 
 namespace surfaceflingerextension {
@@ -110,8 +109,6 @@ public:
     virtual bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) = 0;
     virtual bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) = 0;
 };
-
-QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger* flinger);
 
 } // namespace surfaceflingerextension
 } // namespace android

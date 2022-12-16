@@ -58,10 +58,6 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
-/* QTI_BEGIN */
-#include "../QtiExtension/QtiHWComposerExtension.h"
-/* QTI_END */
-
 namespace android {
 
 /* QTI_BEGIN */

@@ -42,6 +42,7 @@ cc_defaults {
         "libcompositionengine_mocks",
         "perfetto_trace_protos",
         "libqtisurfaceflingerextension",
+        "libqticompositionengineextension",
     ],
     shared_libs: [
         "libprotoutil",

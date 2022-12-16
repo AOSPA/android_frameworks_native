@@ -3,13 +3,19 @@
  */
 
 // #define LOG_NDEBUG 0
-#include "QtiHWComposerExtension.h"
-#include "QtiComposerHalExtension.h"
+#include "QtiAidlComposerHalExtension.h"
+#include "QtiHWComposerExtensionIntf.h"
+#include "QtiHidlComposerHalExtension.h"
 
 #define LOG_DISPLAY_ERROR(displayId, msg) \
     ALOGE("%s failed for display %s: %s", __FUNCTION__, to_string(displayId).c_str(), msg)
 
 namespace android::surfaceflingerextension {
+
+QtiHWComposerExtensionIntf* qtiCreateHWComposerExtension(android::impl::HWComposer& hwc,
+                                                         Hwc2::Composer* composerHal) {
+    return new QtiHWComposerExtension(hwc, composerHal);
+}
 
 QtiHWComposerExtension::QtiHWComposerExtension(android::impl::HWComposer& hwc)
       : mQtiHWComposer(hwc) {}
@@ -17,7 +23,14 @@ QtiHWComposerExtension::QtiHWComposerExtension(android::impl::HWComposer& hwc)
 QtiHWComposerExtension::QtiHWComposerExtension(android::impl::HWComposer& hwc,
                                                Hwc2::Composer* composerHal)
       : mQtiHWComposer(hwc) {
-    mQtiComposerHalExtn = new QtiComposerHalExtension(composerHal);
+    if (Hwc2::AidlComposer::isDeclared("default")) {
+        mQtiComposerHalExtn =
+                static_cast<QtiComposerHalExtension*>(new QtiAidlComposerHalExtension(composerHal));
+    } else {
+        mQtiComposerHalExtn =
+                static_cast<QtiComposerHalExtension*>(new QtiHidlComposerHalExtension(composerHal));
+        new QtiHidlComposerHalExtension(composerHal);
+    }
 }
 
 std::optional<hal::HWDisplayId> QtiHWComposerExtension::qtiFromVirtualDisplayId(
@@ -45,6 +58,83 @@ status_t QtiHWComposerExtension::qtiSetDisplayElapseTime(HalDisplayId displayId,
     const auto& displayData = mQtiHWComposer.mDisplayData[displayId];
     auto halHWDisplayId = displayData.hwcDisplay->getId();
     auto error = mQtiComposerHalExtn->qtiSetDisplayElapseTime(halHWDisplayId, timeStamp);
+    if (error != hal::Error::NONE) {
+        return BAD_VALUE;
+    }
+
+    return NO_ERROR;
+}
+
+status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t type) {
+    if (type == mQtiType) {
+        return NO_ERROR;
+    }
+
+    HWC2::impl::Layer* implLayer = static_cast<HWC2::impl::Layer*>(layer);
+    auto intError = mQtiComposerHalExtn->qtiSetLayerType(implLayer->qtiGetDisplayId(),
+                                                         implLayer->getId(), type);
+    Error error = static_cast<Error>(intError);
+    if (error != hal::Error::NONE) {
+        ALOGW("Failed to send SET_LAYER_TYPE command to HWC");
+        return BAD_VALUE;
+    }
+
+    mQtiType = type;
+    return NO_ERROR;
+}
+
+status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
+                                                 IQtiComposerClient::LayerFlag flags) {
+    HWC2::impl::Layer* implLayer = static_cast<HWC2::impl::Layer*>(layer);
+    auto error = mQtiComposerHalExtn->qtiSetLayerFlag(implLayer->qtiGetDisplayId(),
+                                                      implLayer->getId(), flags);
+    if (error != hal::Error::NONE) {
+        return BAD_VALUE;
+    }
+
+    return NO_ERROR;
+}
+
+status_t QtiHWComposerExtension::qtiSetClientTarget_3_1(HalDisplayId displayId, int32_t slot,
+                                                        const sp<Fence>& acquireFence,
+                                                        ui::Dataspace dataspace) {
+    if (mQtiHWComposer.mDisplayData.empty()) {
+        ALOGV("HWComposer's displayData is empty");
+        return BAD_VALUE;
+    }
+
+    if (mQtiHWComposer.mDisplayData.count(displayId) == 0) {
+        LOG_DISPLAY_ERROR(displayId, "Invalid display");
+        return UNKNOWN_ERROR;
+    }
+
+    const auto& displayData = mQtiHWComposer.mDisplayData[displayId];
+    auto halHWDisplayId = displayData.hwcDisplay->getId();
+    int32_t fenceFd = acquireFence->dup();
+    auto error =
+            mQtiComposerHalExtn->qtiSetClientTarget_3_1(halHWDisplayId, slot, fenceFd, dataspace);
+    if (error != hal::Error::NONE) {
+        return BAD_VALUE;
+    }
+
+    return NO_ERROR;
+}
+
+status_t QtiHWComposerExtension::qtiTryDrawMethod(HalDisplayId displayId,
+                                                  IQtiComposerClient::DrawMethod drawMethod) {
+    if (mQtiHWComposer.mDisplayData.empty()) {
+        ALOGV("HWComposer's displayData is empty");
+        return BAD_VALUE;
+    }
+
+    if (mQtiHWComposer.mDisplayData.count(displayId) == 0) {
+        LOG_DISPLAY_ERROR(displayId, "Invalid display");
+        return UNKNOWN_ERROR;
+    }
+
+    const auto& displayData = mQtiHWComposer.mDisplayData[displayId];
+    auto halHWDisplayId = displayData.hwcDisplay->getId();
+    auto error = mQtiComposerHalExtn->qtiTryDrawMethod(halHWDisplayId, drawMethod);
     if (error != hal::Error::NONE) {
         return BAD_VALUE;
     }

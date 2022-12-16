@@ -45,6 +45,19 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
+/* QTI_BEGIN */
+namespace android::surfaceflingerextension {
+class QtiAidlComposerHalExtension;
+}
+
+#include "../QtiExtension/QtiAidlCommandWriter.h"
+#ifdef QTI_COMPOSER3_EXTENSIONS
+#include <aidl/vendor/qti/hardware/display/composer3/IQtiComposer3Client.h>
+using aidl::vendor::qti::hardware::display::composer3::IQtiComposer3Client;
+#endif
+
+/* QTI_END */
+
 namespace android::Hwc2 {
 
 using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
@@ -241,6 +254,10 @@ public:
     Error setHdrConversionStrategy(HdrConversionStrategy) override;
 
 private:
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiAidlComposerHalExtension;
+    /* QTI_END */
+
     // Many public functions above simply write a command into the command
     // queue to batch the calls.  validateDisplay and presentDisplay will call
     // this function to execute the command queue.
@@ -249,8 +266,8 @@ private:
     // returns the default instance name for the given service
     static std::string instance(const std::string& serviceName);
 
-    ftl::Optional<std::reference_wrapper<ComposerClientWriter>> getWriter(Display)
-            REQUIRES_SHARED(mMutex);
+    ftl::Optional<std::reference_wrapper</* QTI_BEGIN */ QtiAidlCommandWriter /* QTI_END */>>
+            getWriter(Display) REQUIRES_SHARED(mMutex);
     ftl::Optional<std::reference_wrapper<ComposerClientReader>> getReader(Display)
             REQUIRES_SHARED(mMutex);
     void addDisplay(Display) EXCLUDES(mMutex);
@@ -276,7 +293,8 @@ private:
     static constexpr int64_t kSingleReaderKey = 0;
 
     // TODO (b/256881188): Use display::PhysicalDisplayMap instead of hard-coded `3`
-    ftl::SmallMap<Display, ComposerClientWriter, 3> mWriters GUARDED_BY(mMutex);
+    ftl::SmallMap<Display, /* QTI_BEGIN */ QtiAidlCommandWriter /* QTI_END */, 3> mWriters
+            GUARDED_BY(mMutex);
     ftl::SmallMap<Display, ComposerClientReader, 3> mReaders GUARDED_BY(mMutex);
     // Protect access to mWriters and mReaders with a shared_mutex. Adding and
     // removing a display require exclusive access, since the iterator or the
@@ -296,6 +314,11 @@ private:
     std::shared_ptr<AidlIComposer> mAidlComposer;
     std::shared_ptr<AidlIComposerClient> mAidlComposerClient;
     std::shared_ptr<AidlIComposerCallbackWrapper> mAidlComposerCallback;
+    /* QTI_BEGIN */
+#ifdef QTI_COMPOSER3_EXTENSIONS
+    std::shared_ptr<IQtiComposer3Client> qtiComposer3Client;
+#endif
+    /* QTI_END */
 };
 
 } // namespace android::Hwc2
