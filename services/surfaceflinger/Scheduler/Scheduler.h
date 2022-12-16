@@ -262,6 +262,7 @@ private:
     void kernelIdleTimerCallback(TimerState) EXCLUDES(mRefreshRateConfigsLock);
     void idleTimerCallback(TimerState);
     void touchTimerCallback(TimerState);
+    void heuristicIdleTimerCallback(TimerState);
     void displayPowerTimerCallback(TimerState);
 
     void setVsyncPeriod(nsecs_t period, bool force_resync = false);
@@ -322,6 +323,9 @@ private:
     std::optional<OneShotTimer> mTouchTimer;
     // Timer used to monitor display power mode.
     std::optional<OneShotTimer> mDisplayPowerTimer;
+    // Timer used to enter idle refresh rate in heuristic layers.
+    std::optional<OneShotTimer> mHeuristicIdleTimer;
+    static const int64_t HEURISTIC_TIMEOUT_MS = 3000;
 
     ISchedulerCallback& mSchedulerCallback;
 
@@ -331,6 +335,7 @@ private:
         // Policy for choosing the display mode.
         LayerHistory::Summary contentRequirements;
         TimerState idleTimer = TimerState::Reset;
+        TimerState heuristicIdleTimer = TimerState::Reset;
         TouchState touch = TouchState::Inactive;
         TimerState displayPowerTimer = TimerState::Expired;
         hal::PowerMode displayPowerMode = hal::PowerMode::ON;
