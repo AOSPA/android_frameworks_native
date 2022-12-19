@@ -660,12 +660,17 @@ private:
 
     // Returns the preferred mode for PhysicalDisplayId if the Scheduler has selected one for that
     // display. Falls back to the display's defaultModeId otherwise.
-    std::optional<ftl::NonNull<DisplayModePtr>> getPreferredDisplayMode(
+    ftl::Optional<scheduler::FrameRateMode> getPreferredDisplayMode(
             PhysicalDisplayId, DisplayModeId defaultModeId) const REQUIRES(mStateLock);
 
     status_t setDesiredDisplayModeSpecsInternal(
             const sp<DisplayDevice>&, const scheduler::RefreshRateSelector::PolicyVariant&)
             EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
+
+    // TODO(b/241285191): Look up RefreshRateSelector on Scheduler to remove redundant parameter.
+    status_t applyRefreshRateSelectorPolicy(PhysicalDisplayId,
+                                            const scheduler::RefreshRateSelector&)
+            REQUIRES(mStateLock, kMainThreadContext);
 
     void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
     void commitTransactionsLocked(uint32_t transactionFlags)
