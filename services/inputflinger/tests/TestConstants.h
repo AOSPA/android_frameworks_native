@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 
-//! API for RPC Binder services.
+#pragma once
 
-mod client;
-mod server;
+namespace android {
 
-pub use client::{
-    get_preconnected_rpc_interface, get_preconnected_rpc_service, get_unix_domain_rpc_interface,
-    get_unix_domain_rpc_service, get_vsock_rpc_interface, get_vsock_rpc_service,
-};
-pub use server::{run_vsock_rpc_server_with_factory, RpcServer, RpcServerRef};
+using std::chrono_literals::operator""ms;
+
+// Timeout for waiting for an expected event
+static constexpr std::chrono::duration WAIT_TIMEOUT = 100ms;
+
+// An arbitrary time value.
+static constexpr nsecs_t ARBITRARY_TIME = 1234;
+static constexpr nsecs_t READ_TIME = 4321;
+
+} // namespace android

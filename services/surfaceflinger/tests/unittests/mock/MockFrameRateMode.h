@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,10 @@
  * limitations under the License.
  */
 
-//! API for RPC Binder services.
+#pragma once
 
-mod client;
-mod server;
+#include <scheduler/FrameRateMode.h>
 
-pub use client::{
-    get_preconnected_rpc_interface, get_preconnected_rpc_service, get_unix_domain_rpc_interface,
-    get_unix_domain_rpc_service, get_vsock_rpc_interface, get_vsock_rpc_service,
-};
-pub use server::{run_vsock_rpc_server_with_factory, RpcServer, RpcServerRef};
+// Use a C style macro to keep the line numbers printed in gtest
+#define EXPECT_FRAME_RATE_MODE(modePtr, fps, mode) \
+    EXPECT_EQ((scheduler::FrameRateMode{(fps), (modePtr)}), (mode))

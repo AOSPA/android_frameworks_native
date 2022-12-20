@@ -34,7 +34,7 @@ public:
                              std::shared_ptr<IEventQueueCallback> callback)
           : mQueue(queue), mCallback(callback) {}
 
-    int handleEvent(__unused int fd, __unused int events, __unused void* data) {
+    int handleEvent(int /* fd */, int /* events */, void* /* data */) {
         ASensorEvent event;
         ssize_t actual;
 
@@ -66,7 +66,6 @@ EventQueue::EventQueue(std::shared_ptr<IEventQueueCallback> callback, sp<::andro
                    new EventQueueLooperCallback(internalQueue, callback), nullptr);
 }
 
-// FIXME why was this on onLastStrongRef instead of dtor?
 EventQueue::~EventQueue() {
     mLooper->removeFd(mInternalQueue->getFd());
 }

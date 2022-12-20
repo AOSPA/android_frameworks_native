@@ -1922,6 +1922,64 @@ TEST_F(InputDispatcherTest, TwoWindows_SplitWallpaperTouch) {
     wallpaperWindow->assertNoEvents();
 }
 
+TEST_F(InputDispatcherTest, WallpaperWindowReceivesMultiTouch) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top", ADISPLAY_ID_DEFAULT);
+    window->setDupTouchToWallpaper(true);
+
+    sp<FakeWindowHandle> wallpaperWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Wallpaper", ADISPLAY_ID_DEFAULT);
+    wallpaperWindow->setIsWallpaper(true);
+    constexpr int expectedWallpaperFlags =
+            AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED | AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
+    wallpaperWindow->setPreventSplitting(true);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window, wallpaperWindow}}});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+    wallpaperWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    window->consumeMotionPointerDown(1);
+    wallpaperWindow->consumeMotionPointerDown(1, ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+
+    const MotionEvent secondFingerUpEvent =
+            MotionEventBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER).x(10).y(10))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerUpEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionPointerUp(1);
+    wallpaperWindow->consumeMotionPointerUp(1, ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionUp(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT, {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionUp(ADISPLAY_ID_DEFAULT);
+    wallpaperWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT, expectedWallpaperFlags);
+}
+
 /**
  * On the display, have a single window, and also an area where there's no window.
  * First pointer touches the "no window" area of the screen. Second pointer touches the window.
@@ -2279,6 +2337,59 @@ TEST_F(InputDispatcherTest, MouseHoverAndTouchTap) {
                                              WithSource(AINPUT_SOURCE_TOUCHSCREEN))));
 }
 
+TEST_F(InputDispatcherTest, HoverEnterMoveRemoveWindowsInSecondDisplay) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> windowDefaultDisplay =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "DefaultDisplay",
+                                       ADISPLAY_ID_DEFAULT);
+    windowDefaultDisplay->setFrame(Rect(0, 0, 600, 800));
+    sp<FakeWindowHandle> windowSecondDisplay =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "SecondDisplay",
+                                       SECOND_DISPLAY_ID);
+    windowSecondDisplay->setFrame(Rect(0, 0, 600, 800));
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {windowDefaultDisplay}},
+                                  {SECOND_DISPLAY_ID, {windowSecondDisplay}}});
+
+    // Set cursor position in window in default display and check that hover enter and move
+    // events are generated.
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .displayId(ADISPLAY_ID_DEFAULT)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(300)
+                                                         .y(600))
+                                        .build()));
+    windowDefaultDisplay->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_ENTER,
+                                       ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowDefaultDisplay->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                       ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+
+    // Remove all windows in secondary display and check that no event happens on window in
+    // primary display.
+    mDispatcher->setInputWindows({{SECOND_DISPLAY_ID, {}}});
+    windowDefaultDisplay->assertNoEvents();
+
+    // Move cursor position in window in default display and check that only hover move
+    // event is generated and not hover enter event.
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {windowDefaultDisplay}},
+                                  {SECOND_DISPLAY_ID, {windowSecondDisplay}}});
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher,
+                                MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                                   AINPUT_SOURCE_MOUSE)
+                                        .displayId(ADISPLAY_ID_DEFAULT)
+                                        .pointer(PointerBuilder(0, AMOTION_EVENT_TOOL_TYPE_MOUSE)
+                                                         .x(400)
+                                                         .y(700))
+                                        .build()));
+    windowDefaultDisplay->consumeEvent(AINPUT_EVENT_TYPE_MOTION, AMOTION_EVENT_ACTION_HOVER_MOVE,
+                                       ADISPLAY_ID_DEFAULT, 0 /* expectedFlag */);
+    windowDefaultDisplay->assertNoEvents();
+}
+
 TEST_F(InputDispatcherTest, DispatchMouseEventsUnderCursor) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
@@ -2470,6 +2581,43 @@ TEST_F(InputDispatcherTest, OnWindowInfosChanged_RemoveAllWindowsOnDisplay) {
     mDispatcher->notifyKey(&keyDown);
     mDispatcher->notifyKey(&keyUp);
     window->assertNoEvents();
+}
+
+TEST_F(InputDispatcherTest, NonSplitTouchableWindowReceivesMultiTouch) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+    // Ensure window is non-split and have some transform.
+    window->setPreventSplitting(true);
+    window->setWindowOffset(20, 40);
+    mDispatcher->onWindowInfosChanged({*window->getInfo()}, {});
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                               {50, 50}))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+    window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
+
+    const MotionEvent secondFingerDownEvent =
+            MotionEventBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .displayId(ADISPLAY_ID_DEFAULT)
+                    .eventTime(systemTime(SYSTEM_TIME_MONOTONIC))
+                    .pointer(PointerBuilder(/* id */ 0, AMOTION_EVENT_TOOL_TYPE_FINGER).x(50).y(50))
+                    .pointer(PointerBuilder(/* id */ 1, AMOTION_EVENT_TOOL_TYPE_FINGER)
+                                     .x(-30)
+                                     .y(-50))
+                    .build();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectMotionEvent(mDispatcher, secondFingerDownEvent, INJECT_EVENT_TIMEOUT,
+                                InputEventInjectionSync::WAIT_FOR_RESULT))
+            << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
+
+    const MotionEvent* event = window->consumeMotion();
+    EXPECT_EQ(POINTER_1_DOWN, event->getAction());
+    EXPECT_EQ(70, event->getX(0));  // 50 + 20
+    EXPECT_EQ(90, event->getY(0));  // 50 + 40
+    EXPECT_EQ(-10, event->getX(1)); // -30 + 20
+    EXPECT_EQ(-10, event->getY(1)); // -50 + 40
 }
 
 /**

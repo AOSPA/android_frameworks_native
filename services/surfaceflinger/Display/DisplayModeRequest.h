@@ -18,19 +18,19 @@
 
 #include <ftl/non_null.h>
 
-#include "DisplayHardware/DisplayMode.h"
+#include <scheduler/FrameRateMode.h>
 
 namespace android::display {
 
 struct DisplayModeRequest {
-    ftl::NonNull<DisplayModePtr> modePtr;
+    scheduler::FrameRateMode mode;
 
     // Whether to emit DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE.
     bool emitEvent = false;
 };
 
 inline bool operator==(const DisplayModeRequest& lhs, const DisplayModeRequest& rhs) {
-    return lhs.modePtr == rhs.modePtr && lhs.emitEvent == rhs.emitEvent;
+    return lhs.mode == rhs.mode && lhs.emitEvent == rhs.emitEvent;
 }
 
 } // namespace android::display
