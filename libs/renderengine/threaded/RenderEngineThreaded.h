@@ -51,11 +51,8 @@ public:
     size_t getMaxTextureSize() const override;
     size_t getMaxViewportDims() const override;
 
-    bool isProtected() const override;
     bool supportsProtectedContent() const override;
-    void useProtectedContext(bool useProtectedContext) override;
     void cleanupPostRender() override;
-    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
 
     ftl::Future<FenceResult> drawLayers(const DisplaySettings& display,
                                         const std::vector<LayerSettings>& layers,
@@ -69,7 +66,6 @@ public:
     void onActiveDisplaySizeChanged(ui::Size size) override;
     std::optional<pid_t> getRenderEngineTid() const override;
     void setEnableTracing(bool tracingEnabled) override;
-    int getRETid() override;
 
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
@@ -85,6 +81,9 @@ private:
     void threadMain(CreateInstanceFactory factory);
     void waitUntilInitialized() const;
     static status_t setSchedFifo(bool enabled);
+
+    // No-op. This method is only called on leaf implementations of RenderEngine.
+    void useProtectedContext(bool) override {}
 
     /* ------------------------------------------------------------------------
      * Threading
@@ -109,7 +108,6 @@ private:
      * Render Engine
      */
     std::unique_ptr<renderengine::RenderEngine> mRenderEngine;
-    std::atomic<bool> mIsProtected = false;
 };
 } // namespace threaded
 } // namespace renderengine

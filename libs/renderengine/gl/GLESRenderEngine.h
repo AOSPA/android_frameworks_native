@@ -61,7 +61,7 @@ public:
     std::future<void> primeCache() override;
     void genTextures(size_t count, uint32_t* names) override;
     void deleteTextures(size_t count, uint32_t const* names) override;
-    bool isProtected() const override { return mInProtectedContext; }
+    bool isProtected() const { return mInProtectedContext; }
     bool supportsProtectedContent() const override;
     void useProtectedContext(bool useProtectedContext) override;
     void cleanupPostRender() override;
@@ -92,7 +92,6 @@ public:
     std::shared_ptr<ImageManager::Barrier> cacheExternalTextureBufferForTesting(
             const sp<GraphicBuffer>& buffer);
     std::shared_ptr<ImageManager::Barrier> unbindExternalTextureBufferForTesting(uint64_t bufferId);
-    int getRETid() { return gettid(); }
 
 protected:
     Framebuffer* getFramebufferForDrawing();

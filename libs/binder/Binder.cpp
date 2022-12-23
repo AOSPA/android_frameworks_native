@@ -21,6 +21,7 @@
 
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
+#include <binder/BinderRecordReplay.h>
 #include <binder/BpBinder.h>
 #include <binder/IInterface.h>
 #include <binder/IPCThreadState.h>
@@ -28,7 +29,9 @@
 #include <binder/IShellCallback.h>
 #include <binder/Parcel.h>
 #include <binder/RpcServer.h>
+#include <cutils/compiler.h>
 #include <private/android_filesystem_config.h>
+#include <pthread.h>
 #include <utils/misc.h>
 
 #include <inttypes.h>
@@ -58,6 +61,12 @@ static_assert(sizeof(BBinder) == 20);
 bool kEnableRpcDevServers = true;
 #else
 bool kEnableRpcDevServers = false;
+#endif
+
+#ifdef BINDER_ENABLE_RECORDING
+bool kEnableRecording = true;
+#else
+bool kEnableRecording = false;
 #endif
 
 // Log any reply transactions for which the data exceeds this size
@@ -223,7 +232,10 @@ public:
           : mRpcServer(rpcServer), mKeepAliveBinder(keepAliveBinder), mBinder(binder) {}
     virtual ~RpcServerLink();
     void binderDied(const wp<IBinder>&) override {
-        LOG_RPC_DETAIL("RpcServerLink: binder died, shutting down RpcServer");
+        auto promoted = mBinder.promote();
+        ALOGI("RpcBinder: binder died, shutting down RpcServer for %s",
+              promoted ? String8(promoted->getInterfaceDescriptor()).c_str() : "<NULL>");
+
         if (mRpcServer == nullptr) {
             ALOGW("RpcServerLink: Unable to shut down RpcServer because it does not exist.");
         } else {
@@ -232,11 +244,7 @@ public:
         }
         mRpcServer.clear();
 
-        auto promoted = mBinder.promote();
-        if (promoted == nullptr) {
-            ALOGW("RpcServerLink: Unable to remove link from parent binder object because parent "
-                  "binder object is gone.");
-        } else {
+        if (promoted) {
             promoted->removeRpcServerLink(sp<RpcServerLink>::fromExisting(this));
         }
         mBinder.clear();
@@ -265,11 +273,13 @@ public:
     Mutex mLock;
     std::set<sp<RpcServerLink>> mRpcServerLinks;
     BpBinder::ObjectManager mObjects;
+
+    android::base::unique_fd mRecordingFd;
 };
 
 // ---------------------------------------------------------------------------
 
-BBinder::BBinder() : mExtras(nullptr), mStability(0), mParceled(false) {}
+BBinder::BBinder() : mExtras(nullptr), mStability(0), mParceled(false), mRecordingOn(false) {}
 
 bool BBinder::isBinderAlive() const
 {
@@ -279,6 +289,63 @@ bool BBinder::isBinderAlive() const
 status_t BBinder::pingBinder()
 {
     return NO_ERROR;
+}
+
+status_t BBinder::startRecordingTransactions(const Parcel& data) {
+    if (!kEnableRecording) {
+        ALOGW("Binder recording disallowed because recording is not enabled");
+        return INVALID_OPERATION;
+    }
+    if (!kEnableKernelIpc) {
+        ALOGW("Binder recording disallowed because kernel binder is not enabled");
+        return INVALID_OPERATION;
+    }
+    uid_t uid = IPCThreadState::self()->getCallingUid();
+    if (uid != AID_ROOT) {
+        ALOGE("Binder recording not allowed because client %" PRIu32 " is not root", uid);
+        return PERMISSION_DENIED;
+    }
+    Extras* e = getOrCreateExtras();
+    AutoMutex lock(e->mLock);
+    if (mRecordingOn) {
+        LOG(INFO) << "Could not start Binder recording. Another is already in progress.";
+        return INVALID_OPERATION;
+    } else {
+        status_t readStatus = data.readUniqueFileDescriptor(&(e->mRecordingFd));
+        if (readStatus != OK) {
+            return readStatus;
+        }
+        mRecordingOn = true;
+        LOG(INFO) << "Started Binder recording.";
+        return NO_ERROR;
+    }
+}
+
+status_t BBinder::stopRecordingTransactions() {
+    if (!kEnableRecording) {
+        ALOGW("Binder recording disallowed because recording is not enabled");
+        return INVALID_OPERATION;
+    }
+    if (!kEnableKernelIpc) {
+        ALOGW("Binder recording disallowed because kernel binder is not enabled");
+        return INVALID_OPERATION;
+    }
+    uid_t uid = IPCThreadState::self()->getCallingUid();
+    if (uid != AID_ROOT) {
+        ALOGE("Binder recording not allowed because client %" PRIu32 " is not root", uid);
+        return PERMISSION_DENIED;
+    }
+    Extras* e = getOrCreateExtras();
+    AutoMutex lock(e->mLock);
+    if (mRecordingOn) {
+        e->mRecordingFd.reset();
+        mRecordingOn = false;
+        LOG(INFO) << "Stopped Binder recording.";
+        return NO_ERROR;
+    } else {
+        LOG(INFO) << "Could not stop Binder recording. One is not in progress.";
+        return INVALID_OPERATION;
+    }
 }
 
 const String16& BBinder::getInterfaceDescriptor() const
@@ -303,6 +370,12 @@ status_t BBinder::transact(
         case PING_TRANSACTION:
             err = pingBinder();
             break;
+        case START_RECORDING_TRANSACTION:
+            err = startRecordingTransactions(data);
+            break;
+        case STOP_RECORDING_TRANSACTION:
+            err = stopRecordingTransactions();
+            break;
         case EXTENSION_TRANSACTION:
             CHECK(reply != nullptr);
             err = reply->writeStrongBinder(getExtension());
@@ -326,6 +399,26 @@ status_t BBinder::transact(
         if (reply->dataSize() > LOG_REPLIES_OVER_SIZE) {
             ALOGW("Large reply transaction of %zu bytes, interface descriptor %s, code %d",
                   reply->dataSize(), String8(getInterfaceDescriptor()).c_str(), code);
+        }
+    }
+
+    if (CC_UNLIKELY(kEnableKernelIpc && mRecordingOn && code != START_RECORDING_TRANSACTION)) {
+        Extras* e = mExtras.load(std::memory_order_acquire);
+        AutoMutex lock(e->mLock);
+        if (mRecordingOn) {
+            Parcel emptyReply;
+            auto transaction =
+                    android::binder::debug::RecordedTransaction::fromDetails(code, flags, data,
+                                                                             reply ? *reply
+                                                                                   : emptyReply,
+                                                                             err);
+            if (transaction) {
+                if (status_t err = transaction->dumpToFile(e->mRecordingFd); err != NO_ERROR) {
+                    LOG(INFO) << "Failed to dump RecordedTransaction to file with error " << err;
+                }
+            } else {
+                LOG(INFO) << "Failed to create RecordedTransaction object.";
+            }
         }
     }
 
@@ -612,6 +705,7 @@ status_t BBinder::setRpcClientDebug(android::base::unique_fd socketFd,
         return status;
     }
     rpcServer->setMaxThreads(binderThreadPoolMaxCount);
+    LOG(INFO) << "RpcBinder: Started Binder debug on " << getInterfaceDescriptor();
     rpcServer->start();
     e->mRpcServerLinks.emplace(link);
     LOG_RPC_DETAIL("%s(fd=%d) successful", __PRETTY_FUNCTION__, socketFdForPrint);

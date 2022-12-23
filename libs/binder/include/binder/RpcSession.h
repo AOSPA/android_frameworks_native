@@ -100,6 +100,8 @@ public:
         NONE = 0,
         // Send file descriptors via unix domain socket ancillary data.
         UNIX = 1,
+        // Send file descriptors as Trusty IPC handles.
+        TRUSTY = 2,
     };
 
     /**
@@ -113,6 +115,11 @@ public:
      * process.
      */
     [[nodiscard]] status_t setupUnixDomainClient(const char* path);
+
+    /**
+     * Connects to an RPC server over a nameless Unix domain socket pair.
+     */
+    [[nodiscard]] status_t setupUnixDomainSocketBootstrapClient(base::unique_fd bootstrap);
 
     /**
      * Connects to an RPC server at the CVD & port.
@@ -189,6 +196,11 @@ public:
      */
     [[nodiscard]] status_t sendDecStrong(const BpBinder* binder);
 
+    /**
+     * Whether any requests are currently being processed.
+     */
+    bool hasActiveRequests();
+
     ~RpcSession();
 
     /**
@@ -228,6 +240,7 @@ private:
 
     private:
         RpcConditionVariable mCv;
+        std::atomic<size_t> mShutdownCount = 0;
     };
     friend WaitForShutdownListener;
 
@@ -269,7 +282,7 @@ private:
     [[nodiscard]] status_t setupOneSocketConnection(const RpcSocketAddress& address,
                                                     const std::vector<uint8_t>& sessionId,
                                                     bool incoming);
-    [[nodiscard]] status_t initAndAddConnection(TransportFd fd,
+    [[nodiscard]] status_t initAndAddConnection(RpcTransportFd fd,
                                                 const std::vector<uint8_t>& sessionId,
                                                 bool incoming);
     [[nodiscard]] status_t addIncomingConnection(std::unique_ptr<RpcTransport> rpcTransport);
@@ -285,6 +298,11 @@ private:
     void clearConnectionTid(const sp<RpcConnection>& connection);
 
     [[nodiscard]] status_t initShutdownTrigger();
+
+    /**
+     * Checks whether any connection is active (Not polling on fd)
+     */
+    bool hasActiveConnection(const std::vector<sp<RpcConnection>>& connections);
 
     enum class ConnectionUse {
         CLIENT,
@@ -356,11 +374,14 @@ private:
 
     RpcConditionVariable mAvailableConnectionCv; // for mWaitingThreads
 
+    std::unique_ptr<RpcTransport> mBootstrapTransport;
+
     struct ThreadState {
         size_t mWaitingThreads = 0;
         // hint index into clients, ++ when sending an async transaction
         size_t mOutgoingOffset = 0;
         std::vector<sp<RpcConnection>> mOutgoing;
+        // max size of mIncoming. Once any thread starts down, no more can be started.
         size_t mMaxIncoming = 0;
         std::vector<sp<RpcConnection>> mIncoming;
         std::map<RpcMaybeThread::id, RpcMaybeThread> mThreads;

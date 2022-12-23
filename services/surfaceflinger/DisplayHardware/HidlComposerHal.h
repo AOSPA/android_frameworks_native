@@ -177,10 +177,10 @@ public:
 
     // Reset all pending commands in the command buffer. Useful if you want to
     // skip a frame but have already queued some commands.
-    void resetCommands() override;
+    void resetCommands(Display) override;
 
     // Explicitly flush all pending commands in the command buffer.
-    Error executeCommands() override;
+    Error executeCommands(Display) override;
 
     uint32_t getMaxVirtualDisplayCount() override;
     Error createVirtualDisplay(uint32_t width, uint32_t height, PixelFormat* format,
@@ -211,6 +211,8 @@ public:
     Error hasDisplayIdleTimerCapability(Display display, bool* outSupport) override;
     Error getHdrCapabilities(Display display, std::vector<Hdr>* outTypes, float* outMaxLuminance,
                              float* outMaxAverageLuminance, float* outMinLuminance) override;
+    Error getOverlaySupport(aidl::android::hardware::graphics::composer3::OverlayProperties*
+                                    outProperties) override;
 
     Error getReleaseFences(Display display, std::vector<Layer>* outLayers,
                            std::vector<int>* outReleaseFences) override;
@@ -267,7 +269,6 @@ public:
     Error setLayerVisibleRegion(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& visible) override;
     Error setLayerZOrder(Display display, Layer layer, uint32_t z) override;
-    Error setLayerType(Display display, Layer layer, uint32_t type) override;
 
     // Composer HAL 2.2
     Error setLayerPerFrameMetadata(
@@ -295,7 +296,6 @@ public:
             const std::vector<IComposerClient::PerFrameMetadataBlob>& metadata) override;
     Error setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                const DisplayBrightnessOptions& options) override;
-    Error setDisplayElapseTime(Display display, uint64_t timeStamp) override;
 
     // Composer HAL 2.4
     Error getDisplayCapabilities(
@@ -336,29 +336,17 @@ public:
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;
     Error setIdleTimerEnabled(Display displayId, std::chrono::milliseconds timeout) override;
-#ifdef QTI_UNIFIED_DRAW
-    Error tryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) override;
-    Error setLayerFlag(Display display, Layer layer,
-                       IQtiComposerClient::LayerFlag layerFlag) override;
-    Error setClientTarget_3_1(Display display, int32_t slot, int acquireFence,
-                              Dataspace dataspace) override;
-#endif
 
     Error getPhysicalDisplayOrientation(Display displayId,
                                         AidlTransform* outDisplayOrientation) override;
+    void onHotplugConnect(Display) override;
+    void onHotplugDisconnect(Display) override;
 
 private:
     class CommandWriter : public CommandWriterBase {
     public:
         explicit CommandWriter(uint32_t initialMaxSize) : CommandWriterBase(initialMaxSize) {}
         ~CommandWriter() override {}
-
-        void setDisplayElapseTime(uint64_t time);
-        void setLayerType(uint32_t type);
-#ifdef QTI_UNIFIED_DRAW
-        void setLayerFlag(uint32_t type);
-        void setClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
-#endif
     };
 
     void registerCallback(const sp<IComposerCallback>& callback);
@@ -374,9 +362,6 @@ private:
     sp<V2_2::IComposerClient> mClient_2_2;
     sp<V2_3::IComposerClient> mClient_2_3;
     sp<IComposerClient> mClient_2_4;
-#ifdef QTI_UNIFIED_DRAW
-    sp<IQtiComposerClient> mClient_3_1;
-#endif
 
     // 64KiB minus a small space for metadata such as read/write pointers
     static constexpr size_t kWriterInitialSize = 64 * 1024 / sizeof(uint32_t) - 16;

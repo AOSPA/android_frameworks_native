@@ -152,12 +152,18 @@ LIBBINDER_NDK33 { # introduced=33
     AParcel_unmarshal;
 };
 
+LIBBINDER_NDK34 { # introduced=UpsideDownCake
+  global:
+    AServiceManager_getUpdatableApexName; # systemapi
+};
+
 LIBBINDER_NDK_PLATFORM {
   global:
     AParcel_getAllowFds;
     extern "C++" {
         AIBinder_fromPlatformBinder*;
         AIBinder_toPlatformBinder*;
+        AParcel_viewPlatformParcel*;
     };
   local:
     *;

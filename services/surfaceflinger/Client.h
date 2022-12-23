@@ -38,12 +38,6 @@ public:
 
     status_t initCheck() const;
 
-    // protected by SurfaceFlinger::mStateLock
-    void attachLayer(const sp<IBinder>& handle, const sp<Layer>& layer);
-    void detachLayer(const Layer* layer);
-
-    sp<Layer> getLayerUser(const sp<IBinder>& handle) const;
-
 private:
     // ISurfaceComposerClient interface
 
@@ -57,15 +51,12 @@ private:
                                       gui::FrameStats* outStats) override;
 
     binder::Status mirrorSurface(const sp<IBinder>& mirrorFromHandle,
-                                 gui::MirrorSurfaceResult* outResult) override;
+                                 gui::CreateSurfaceResult* outResult) override;
 
-    binder::Status mirrorDisplay(int64_t displayId, gui::MirrorSurfaceResult* outResult) override;
+    binder::Status mirrorDisplay(int64_t displayId, gui::CreateSurfaceResult* outResult) override;
 
     // constant
     sp<SurfaceFlinger> mFlinger;
-
-    // protected by mLock
-    DefaultKeyedVector< wp<IBinder>, wp<Layer> > mLayers;
 
     // thread-safe
     mutable Mutex mLock;

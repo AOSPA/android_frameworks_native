@@ -195,9 +195,10 @@ void KeyEntry::recycle() {
 
 // --- TouchModeEntry ---
 
-TouchModeEntry::TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode)
+TouchModeEntry::TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode, int displayId)
       : EventEntry(id, Type::TOUCH_MODE_CHANGED, eventTime, POLICY_FLAG_PASS_TO_USER),
-        inTouchMode(inTouchMode) {}
+        inTouchMode(inTouchMode),
+        displayId(displayId) {}
 
 TouchModeEntry::~TouchModeEntry() {}
 
@@ -307,7 +308,8 @@ std::string SensorEntry::getDescription() const {
 
 volatile int32_t DispatchEntry::sNextSeqAtomic;
 
-DispatchEntry::DispatchEntry(std::shared_ptr<EventEntry> eventEntry, int32_t targetFlags,
+DispatchEntry::DispatchEntry(std::shared_ptr<EventEntry> eventEntry,
+                             ftl::Flags<InputTarget::Flags> targetFlags,
                              const ui::Transform& transform, const ui::Transform& rawTransform,
                              float globalScaleFactor)
       : seq(nextSeq()),

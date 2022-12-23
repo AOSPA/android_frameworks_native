@@ -42,6 +42,7 @@
 #include <renderengine/mock/RenderEngine.h>
 #include <ui/DebugUtils.h>
 
+#include "FakeDisplayInjector.h"
 #include "TestableScheduler.h"
 #include "TestableSurfaceFlinger.h"
 #include "mock/DisplayHardware/MockComposer.h"
@@ -49,7 +50,6 @@
 #include "mock/DisplayHardware/MockPowerAdvisor.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockNativeWindowSurface.h"
-#include "mock/MockSurfaceInterceptor.h"
 #include "mock/MockVsyncController.h"
 #include "mock/system/window/MockNativeWindow.h"
 
@@ -89,8 +89,11 @@ public:
     void injectMockComposer(int virtualDisplayCount);
     void injectFakeBufferQueueFactory();
     void injectFakeNativeWindowSurfaceFactory();
+
     sp<DisplayDevice> injectDefaultInternalDisplay(
-            std::function<void(TestableSurfaceFlinger::FakeDisplayDeviceInjector&)>);
+            std::function<void(TestableSurfaceFlinger::FakeDisplayDeviceInjector&)> injectExtra) {
+        return mFakeDisplayInjector.injectInternalDisplay(injectExtra);
+    }
 
     // --------------------------------------------------------------------
     // Postcondition helpers
@@ -115,12 +118,13 @@ public:
     sp<GraphicBuffer> mBuffer = sp<GraphicBuffer>::make();
     Hwc2::mock::PowerAdvisor mPowerAdvisor;
 
+    FakeDisplayInjector mFakeDisplayInjector{mFlinger, mPowerAdvisor, mNativeWindow};
+
     // These mocks are created by the test, but are destroyed by SurfaceFlinger
     // by virtue of being stored into a std::unique_ptr. However we still need
     // to keep a reference to them for use in setting up call expectations.
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
     Hwc2::mock::Composer* mComposer = nullptr;
-    sp<mock::SurfaceInterceptor> mSurfaceInterceptor = sp<mock::SurfaceInterceptor>::make();
 
     mock::VsyncController* mVsyncController = new mock::VsyncController;
     mock::VSyncTracker* mVSyncTracker = new mock::VSyncTracker;
@@ -679,12 +683,10 @@ struct WideColorNotSupportedVariant {
     static constexpr bool WIDE_COLOR_SUPPORTED = false;
 
     static void injectConfigChange(DisplayTransactionTest* test) {
-        test->mFlinger.mutableHasWideColorDisplay() = true;
+        test->mFlinger.mutableSupportsWideColor() = true;
     }
 
     static void setupComposerCallExpectations(DisplayTransactionTest* test) {
-        EXPECT_CALL(*test->mComposer, getColorModes(Display::HWC_DISPLAY_ID, _))
-                .WillOnce(DoAll(SetArgPointee<1>(std::vector<ColorMode>()), Return(Error::NONE)));
         EXPECT_CALL(*test->mComposer, setColorMode(_, _, _)).Times(0);
     }
 };
@@ -696,12 +698,11 @@ struct WideColorSupportNotConfiguredVariant {
     static constexpr bool WIDE_COLOR_SUPPORTED = false;
 
     static void injectConfigChange(DisplayTransactionTest* test) {
-        test->mFlinger.mutableHasWideColorDisplay() = false;
+        test->mFlinger.mutableSupportsWideColor() = false;
         test->mFlinger.mutableDisplayColorSetting() = DisplayColorSetting::kUnmanaged;
     }
 
     static void setupComposerCallExpectations(DisplayTransactionTest* test) {
-        EXPECT_CALL(*test->mComposer, getColorModes(_, _)).Times(0);
         EXPECT_CALL(*test->mComposer, getRenderIntents(_, _, _)).Times(0);
         EXPECT_CALL(*test->mComposer, setColorMode(_, _, _)).Times(0);
     }

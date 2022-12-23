@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_READER_BASE_H
-#define _UI_INPUT_READER_BASE_H
+#pragma once
 
 #include <android/os/IInputConstants.h>
 #include <input/DisplayViewport.h>
@@ -114,6 +113,8 @@ public:
     virtual std::optional<int32_t> getBatteryCapacity(int32_t deviceId) = 0;
     /* Get battery status of a particular input device. */
     virtual std::optional<int32_t> getBatteryStatus(int32_t deviceId) = 0;
+    /* Get the device path for the battery of an input device. */
+    virtual std::optional<std::string> getBatteryDevicePath(int32_t deviceId) = 0;
 
     virtual std::vector<InputDeviceLightInfo> getLights(int32_t deviceId) = 0;
 
@@ -141,6 +142,9 @@ public:
     virtual std::optional<int32_t> getLightColor(int32_t deviceId, int32_t lightId) = 0;
     /* Get light player ID */
     virtual std::optional<int32_t> getLightPlayerId(int32_t deviceId, int32_t lightId) = 0;
+
+    /* Get the Bluetooth address of an input device, if known. */
+    virtual std::optional<std::string> getBluetoothAddress(int32_t deviceId) const = 0;
 };
 
 // --- InputReaderConfiguration ---
@@ -392,8 +396,8 @@ public:
     /* Gets the affine calibration associated with the specified device. */
     virtual TouchAffineTransformation getTouchAffineTransformation(
             const std::string& inputDeviceDescriptor, int32_t surfaceRotation) = 0;
+    /* Notifies the input reader policy that a stylus gesture has started. */
+    virtual void notifyStylusGestureStarted(int32_t deviceId, nsecs_t eventTime) = 0;
 };
 
 } // namespace android
-
-#endif // _UI_INPUT_READER_COMMON_H

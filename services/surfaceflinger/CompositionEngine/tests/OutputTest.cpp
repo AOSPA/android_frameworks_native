@@ -758,56 +758,6 @@ TEST_F(OutputSetReleasedLayersTest, setReleasedLayersTakesGivenLayers) {
 }
 
 /*
- * Output::updateLayerStateFromFE()
- */
-
-using OutputUpdateLayerStateFromFETest = OutputTest;
-
-TEST_F(OutputUpdateLayerStateFromFETest, handlesNoOutputLayerCase) {
-    CompositionRefreshArgs refreshArgs;
-
-    mOutput->updateLayerStateFromFE(refreshArgs);
-}
-
-TEST_F(OutputUpdateLayerStateFromFETest, preparesContentStateForAllContainedLayers) {
-    InjectedLayer layer1;
-    InjectedLayer layer2;
-    InjectedLayer layer3;
-
-    EXPECT_CALL(*layer1.layerFE.get(), prepareCompositionState(LayerFE::StateSubset::Content));
-    EXPECT_CALL(*layer2.layerFE.get(), prepareCompositionState(LayerFE::StateSubset::Content));
-    EXPECT_CALL(*layer3.layerFE.get(), prepareCompositionState(LayerFE::StateSubset::Content));
-
-    injectOutputLayer(layer1);
-    injectOutputLayer(layer2);
-    injectOutputLayer(layer3);
-
-    CompositionRefreshArgs refreshArgs;
-    refreshArgs.updatingGeometryThisFrame = false;
-
-    mOutput->updateLayerStateFromFE(refreshArgs);
-}
-
-TEST_F(OutputUpdateLayerStateFromFETest, preparesGeometryAndContentStateForAllContainedLayers) {
-    InjectedLayer layer1;
-    InjectedLayer layer2;
-    InjectedLayer layer3;
-
-    EXPECT_CALL(*layer1.layerFE, prepareCompositionState(LayerFE::StateSubset::GeometryAndContent));
-    EXPECT_CALL(*layer2.layerFE, prepareCompositionState(LayerFE::StateSubset::GeometryAndContent));
-    EXPECT_CALL(*layer3.layerFE, prepareCompositionState(LayerFE::StateSubset::GeometryAndContent));
-
-    injectOutputLayer(layer1);
-    injectOutputLayer(layer2);
-    injectOutputLayer(layer3);
-
-    CompositionRefreshArgs refreshArgs;
-    refreshArgs.updatingGeometryThisFrame = true;
-
-    mOutput->updateLayerStateFromFE(refreshArgs);
-}
-
-/*
  * Output::updateAndWriteCompositionState()
  */
 
@@ -1536,9 +1486,6 @@ const Region OutputEnsureOutputLayerIfVisibleTest::kTransparentRegionHintNegativ
 
 TEST_F(OutputEnsureOutputLayerIfVisibleTest, performsGeomLatchBeforeCheckingIfLayerIncluded) {
     EXPECT_CALL(mOutput, includesLayer(sp<LayerFE>(mLayer.layerFE))).WillOnce(Return(false));
-    EXPECT_CALL(*mLayer.layerFE,
-                prepareCompositionState(compositionengine::LayerFE::StateSubset::BasicGeometry));
-
     mGeomSnapshots.clear();
 
     ensureOutputLayerIfVisible();
@@ -2134,6 +2081,7 @@ struct OutputUpdateColorProfileTest : public testing::Test {
         mOutput.setDisplayColorProfileForTest(
                 std::unique_ptr<DisplayColorProfile>(mDisplayColorProfile));
         mOutput.setRenderSurfaceForTest(std::unique_ptr<RenderSurface>(mRenderSurface));
+        mOutput.editState().isEnabled = true;
 
         EXPECT_CALL(mOutput, getOutputLayerOrderedByZByIndex(0))
                 .WillRepeatedly(Return(&mLayer1.mOutputLayer));
@@ -3384,8 +3332,7 @@ struct OutputComposeSurfacesTest : public testing::Test {
 
         EXPECT_CALL(mOutput, getCompositionEngine()).WillRepeatedly(ReturnRef(mCompositionEngine));
         EXPECT_CALL(mCompositionEngine, getRenderEngine()).WillRepeatedly(ReturnRef(mRenderEngine));
-        EXPECT_CALL(mCompositionEngine, getTimeStats())
-                .WillRepeatedly(ReturnRef(*mTimeStats.get()));
+        EXPECT_CALL(mCompositionEngine, getTimeStats()).WillRepeatedly(Return(mTimeStats.get()));
         EXPECT_CALL(*mDisplayColorProfile, getHdrCapabilities())
                 .WillRepeatedly(ReturnRef(kHdrCapabilities));
     }
@@ -4062,39 +4009,11 @@ struct OutputComposeSurfacesTest_HandlesProtectedContent : public OutputComposeS
     Layer mLayer2;
 };
 
-TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifDisplayIsNotSecure) {
-    mOutput.mState.isSecure = false;
-    mLayer2.mLayerFEState.hasProtectedContent = true;
-    EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true));
-    EXPECT_CALL(mRenderEngine, useProtectedContext(false));
-
-    base::unique_fd fd;
-    std::shared_ptr<renderengine::ExternalTexture> tex;
-    mOutput.updateProtectedContentState();
-    mOutput.dequeueRenderBuffer(&fd, &tex);
-    mOutput.composeSurfaces(kDebugRegion, kDefaultRefreshArgs, tex, fd);
-}
-
-TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifRenderEngineDoesNotSupportIt) {
-    mOutput.mState.isSecure = true;
-    mLayer2.mLayerFEState.hasProtectedContent = true;
-    EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(false));
-
-    base::unique_fd fd;
-    std::shared_ptr<renderengine::ExternalTexture> tex;
-    mOutput.updateProtectedContentState();
-    mOutput.dequeueRenderBuffer(&fd, &tex);
-    mOutput.composeSurfaces(kDebugRegion, kDefaultRefreshArgs, tex, fd);
-}
-
 TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifNoProtectedContentLayers) {
     mOutput.mState.isSecure = true;
     mLayer2.mLayerFEState.hasProtectedContent = false;
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true)).WillOnce(Return(false));
     EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(true));
-    EXPECT_CALL(mRenderEngine, useProtectedContext(false));
     EXPECT_CALL(*mRenderSurface, setProtected(false));
 
     base::unique_fd fd;
@@ -4112,10 +4031,7 @@ TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifNotEnabled) {
     // For this test, we also check the call order of key functions.
     InSequence seq;
 
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(false));
-    EXPECT_CALL(mRenderEngine, useProtectedContext(true));
     EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(false));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true));
     EXPECT_CALL(*mRenderSurface, setProtected(true));
     // Must happen after setting the protected content state.
     EXPECT_CALL(*mRenderSurface, dequeueBuffer(_)).WillRepeatedly(Return(mOutputBuffer));
@@ -4133,38 +4049,7 @@ TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifAlreadyEnabledEveryw
     mOutput.mState.isSecure = true;
     mLayer2.mLayerFEState.hasProtectedContent = true;
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true));
     EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(true));
-
-    base::unique_fd fd;
-    std::shared_ptr<renderengine::ExternalTexture> tex;
-    mOutput.updateProtectedContentState();
-    mOutput.dequeueRenderBuffer(&fd, &tex);
-    mOutput.composeSurfaces(kDebugRegion, kDefaultRefreshArgs, tex, fd);
-}
-
-TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifFailsToEnableInRenderEngine) {
-    mOutput.mState.isSecure = true;
-    mLayer2.mLayerFEState.hasProtectedContent = true;
-    EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(false)).WillOnce(Return(false));
-    EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(false));
-    EXPECT_CALL(mRenderEngine, useProtectedContext(true));
-
-    base::unique_fd fd;
-    std::shared_ptr<renderengine::ExternalTexture> tex;
-    mOutput.updateProtectedContentState();
-    mOutput.dequeueRenderBuffer(&fd, &tex);
-    mOutput.composeSurfaces(kDebugRegion, kDefaultRefreshArgs, tex, fd);
-}
-
-TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifAlreadyEnabledInRenderEngine) {
-    mOutput.mState.isSecure = true;
-    mLayer2.mLayerFEState.hasProtectedContent = true;
-    EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(true)).WillOnce(Return(true));
-    EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(false));
-    EXPECT_CALL(*mRenderSurface, setProtected(true));
 
     base::unique_fd fd;
     std::shared_ptr<renderengine::ExternalTexture> tex;
@@ -4177,9 +4062,7 @@ TEST_F(OutputComposeSurfacesTest_HandlesProtectedContent, ifAlreadyEnabledInRend
     mOutput.mState.isSecure = true;
     mLayer2.mLayerFEState.hasProtectedContent = true;
     EXPECT_CALL(mRenderEngine, supportsProtectedContent()).WillRepeatedly(Return(true));
-    EXPECT_CALL(mRenderEngine, isProtected).WillOnce(Return(false));
     EXPECT_CALL(*mRenderSurface, isProtected).WillOnce(Return(true));
-    EXPECT_CALL(mRenderEngine, useProtectedContext(true));
 
     base::unique_fd fd;
     std::shared_ptr<renderengine::ExternalTexture> tex;
@@ -4517,6 +4400,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
             true /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4529,6 +4413,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers, clearsHWCLayersIfOpaqu
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     LayerFE::LayerSettings mBlackoutSettings = mLayers[1].mLayerSettings;
@@ -4569,6 +4454,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(Rect(0, 0, 30, 30)),
@@ -4581,6 +4467,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(Rect(0, 0, 40, 201)),
@@ -4593,6 +4480,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientComposition(Eq(ByRef(layer0TargetSettings))))
@@ -4623,6 +4511,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4635,6 +4524,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4647,6 +4537,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientComposition(Eq(ByRef(layer0TargetSettings))))
@@ -4677,6 +4568,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4689,6 +4581,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4701,6 +4594,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientComposition(Eq(ByRef(layer0TargetSettings))))
@@ -4730,6 +4624,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4742,6 +4637,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4754,6 +4650,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientComposition(Eq(ByRef(layer0TargetSettings))))
@@ -4781,6 +4678,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer1TargetSettings{
             Region(kDisplayFrame),
@@ -4793,6 +4691,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
     compositionengine::LayerFE::ClientCompositionTargetSettings layer2TargetSettings{
             Region(kDisplayFrame),
@@ -4805,6 +4704,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(*mLayers[0].mLayerFE, prepareClientComposition(Eq(ByRef(layer0TargetSettings))))
@@ -4989,6 +4889,7 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(leftLayer.mOutputLayer, requiresClientComposition()).WillRepeatedly(Return(true));
@@ -5007,6 +4908,7 @@ TEST_F(GenerateClientCompositionRequestsTest, handlesLandscapeModeSplitScreenReq
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(rightLayer.mOutputLayer, requiresClientComposition()).WillRepeatedly(Return(true));
@@ -5040,6 +4942,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     LayerFE::LayerSettings mShadowSettings;
@@ -5082,6 +4985,7 @@ TEST_F(GenerateClientCompositionRequestsTest_ThreeLayers,
             false /* clearContent */,
             compositionengine::LayerFE::ClientCompositionTargetSettings::BlurSetting::Enabled,
             kLayerWhitePointNits,
+            false /* treat170mAsSrgb */,
     };
 
     EXPECT_CALL(mLayers[0].mOutputLayer, requiresClientComposition()).WillOnce(Return(false));

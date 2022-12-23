@@ -47,8 +47,6 @@ public:
     MOCK_METHOD1(useProtectedContext, void(bool));
     MOCK_METHOD0(cleanupPostRender, void());
     MOCK_CONST_METHOD0(canSkipPostRenderCleanup, bool());
-    MOCK_METHOD2(setViewportAndProjection,
-                 void(Rect,  Rect));
     MOCK_METHOD5(drawLayers,
                  ftl::Future<FenceResult>(const DisplaySettings&, const std::vector<LayerSettings>&,
                                           const std::shared_ptr<ExternalTexture>&, const bool,
@@ -61,7 +59,6 @@ public:
     MOCK_METHOD0(getContextPriority, int());
     MOCK_METHOD0(supportsBackgroundBlur, bool());
     MOCK_METHOD1(onActiveDisplaySizeChanged, void(ui::Size));
-    MOCK_METHOD0(getRETid, int());
 
 protected:
     // mock renderengine still needs to implement these, but callers should never need to call them.

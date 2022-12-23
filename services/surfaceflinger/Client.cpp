@@ -24,6 +24,8 @@
 #include <gui/AidlStatusUtil.h>
 
 #include "Client.h"
+#include "FrontEnd/LayerCreationArgs.h"
+#include "FrontEnd/LayerHandle.h"
 #include "Layer.h"
 #include "SurfaceFlinger.h"
 
@@ -46,58 +48,21 @@ status_t Client::initCheck() const {
     return NO_ERROR;
 }
 
-void Client::attachLayer(const sp<IBinder>& handle, const sp<Layer>& layer)
-{
-    Mutex::Autolock _l(mLock);
-    mLayers.add(handle, layer);
-}
-
-void Client::detachLayer(const Layer* layer)
-{
-    Mutex::Autolock _l(mLock);
-    // we do a linear search here, because this doesn't happen often
-    const size_t count = mLayers.size();
-    for (size_t i=0 ; i<count ; i++) {
-        if (mLayers.valueAt(i) == layer) {
-            mLayers.removeItemsAt(i, 1);
-            break;
-        }
-    }
-}
-sp<Layer> Client::getLayerUser(const sp<IBinder>& handle) const
-{
-    Mutex::Autolock _l(mLock);
-    sp<Layer> lbc;
-    wp<Layer> layer(mLayers.valueFor(handle));
-    if (layer != 0) {
-        lbc = layer.promote();
-        ALOGE_IF(lbc==0, "getLayerUser(name=%p) is dead", handle.get());
-    }
-    return lbc;
-}
-
 binder::Status Client::createSurface(const std::string& name, int32_t flags,
                                      const sp<IBinder>& parent, const gui::LayerMetadata& metadata,
                                      gui::CreateSurfaceResult* outResult) {
     // We rely on createLayer to check permissions.
     sp<IBinder> handle;
-    int32_t layerId;
-    uint32_t transformHint;
     LayerCreationArgs args(mFlinger.get(), sp<Client>::fromExisting(this), name.c_str(),
                            static_cast<uint32_t>(flags), std::move(metadata));
-    const status_t status =
-            mFlinger->createLayer(args, &handle, parent, &layerId, nullptr, &transformHint);
-    if (status == NO_ERROR) {
-        outResult->handle = handle;
-        outResult->layerId = layerId;
-        outResult->transformHint = static_cast<int32_t>(transformHint);
-    }
+    args.parentHandle = parent;
+    const status_t status = mFlinger->createLayer(args, *outResult);
     return binderStatusFromStatusT(status);
 }
 
 binder::Status Client::clearLayerFrameStats(const sp<IBinder>& handle) {
     status_t status;
-    sp<Layer> layer = getLayerUser(handle);
+    sp<Layer> layer = LayerHandle::getLayer(handle);
     if (layer == nullptr) {
         status = NAME_NOT_FOUND;
     } else {
@@ -109,7 +74,7 @@ binder::Status Client::clearLayerFrameStats(const sp<IBinder>& handle) {
 
 binder::Status Client::getLayerFrameStats(const sp<IBinder>& handle, gui::FrameStats* outStats) {
     status_t status;
-    sp<Layer> layer = getLayerUser(handle);
+    sp<Layer> layer = LayerHandle::getLayer(handle);
     if (layer == nullptr) {
         status = NAME_NOT_FOUND;
     } else {
@@ -134,31 +99,21 @@ binder::Status Client::getLayerFrameStats(const sp<IBinder>& handle, gui::FrameS
 }
 
 binder::Status Client::mirrorSurface(const sp<IBinder>& mirrorFromHandle,
-                                     gui::MirrorSurfaceResult* outResult) {
+                                     gui::CreateSurfaceResult* outResult) {
     sp<IBinder> handle;
-    int32_t layerId;
     LayerCreationArgs args(mFlinger.get(), sp<Client>::fromExisting(this), "MirrorRoot",
                            0 /* flags */, gui::LayerMetadata());
-    status_t status = mFlinger->mirrorLayer(args, mirrorFromHandle, &handle, &layerId);
-    if (status == NO_ERROR) {
-        outResult->handle = handle;
-        outResult->layerId = layerId;
-    }
+    status_t status = mFlinger->mirrorLayer(args, mirrorFromHandle, *outResult);
     return binderStatusFromStatusT(status);
 }
 
-binder::Status Client::mirrorDisplay(int64_t displayId, gui::MirrorSurfaceResult* outResult) {
+binder::Status Client::mirrorDisplay(int64_t displayId, gui::CreateSurfaceResult* outResult) {
     sp<IBinder> handle;
-    int32_t layerId;
     LayerCreationArgs args(mFlinger.get(), sp<Client>::fromExisting(this),
                            "MirrorRoot-" + std::to_string(displayId), 0 /* flags */,
                            gui::LayerMetadata());
     std::optional<DisplayId> id = DisplayId::fromValue(static_cast<uint64_t>(displayId));
-    status_t status = mFlinger->mirrorDisplay(*id, args, &handle, &layerId);
-    if (status == NO_ERROR) {
-        outResult->handle = handle;
-        outResult->layerId = layerId;
-    }
+    status_t status = mFlinger->mirrorDisplay(*id, args, *outResult);
     return binderStatusFromStatusT(status);
 }
 

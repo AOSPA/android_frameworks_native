@@ -14,89 +14,20 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_MULTI_TOUCH_INPUT_MAPPER_H
-#define _UI_INPUTREADER_MULTI_TOUCH_INPUT_MAPPER_H
+#pragma once
 
 #include "TouchInputMapper.h"
+#include "accumulator/MultiTouchMotionAccumulator.h"
 
 namespace android {
-
-/* Keeps track of the state of multi-touch protocol. */
-class MultiTouchMotionAccumulator {
-public:
-    class Slot {
-    public:
-        inline bool isInUse() const { return mInUse; }
-        inline int32_t getX() const { return mAbsMTPositionX; }
-        inline int32_t getY() const { return mAbsMTPositionY; }
-        inline int32_t getTouchMajor() const { return mAbsMTTouchMajor; }
-        inline int32_t getTouchMinor() const {
-            return mHaveAbsMTTouchMinor ? mAbsMTTouchMinor : mAbsMTTouchMajor;
-        }
-        inline int32_t getToolMajor() const { return mAbsMTWidthMajor; }
-        inline int32_t getToolMinor() const {
-            return mHaveAbsMTWidthMinor ? mAbsMTWidthMinor : mAbsMTWidthMajor;
-        }
-        inline int32_t getOrientation() const { return mAbsMTOrientation; }
-        inline int32_t getTrackingId() const { return mAbsMTTrackingId; }
-        inline int32_t getPressure() const { return mAbsMTPressure; }
-        inline int32_t getDistance() const { return mAbsMTDistance; }
-        inline int32_t getToolType() const;
-
-    private:
-        friend class MultiTouchMotionAccumulator;
-
-        bool mInUse = false;
-        bool mHaveAbsMTTouchMinor = false;
-        bool mHaveAbsMTWidthMinor = false;
-        bool mHaveAbsMTToolType = false;
-
-        int32_t mAbsMTPositionX = 0;
-        int32_t mAbsMTPositionY = 0;
-        int32_t mAbsMTTouchMajor = 0;
-        int32_t mAbsMTTouchMinor = 0;
-        int32_t mAbsMTWidthMajor = 0;
-        int32_t mAbsMTWidthMinor = 0;
-        int32_t mAbsMTOrientation = 0;
-        int32_t mAbsMTTrackingId = -1;
-        int32_t mAbsMTPressure = 0;
-        int32_t mAbsMTDistance = 0;
-        int32_t mAbsMTToolType = 0;
-
-        void clear() { *this = Slot(); }
-    };
-
-    MultiTouchMotionAccumulator();
-
-    void configure(InputDeviceContext& deviceContext, size_t slotCount, bool usingSlotsProtocol);
-    void reset(InputDeviceContext& deviceContext);
-    void process(const RawEvent* rawEvent);
-    void finishSync();
-    bool hasStylus() const;
-
-    inline size_t getSlotCount() const { return mSlots.size(); }
-    inline const Slot& getSlot(size_t index) const {
-        LOG_ALWAYS_FATAL_IF(index < 0 || index >= mSlots.size(), "Invalid index: %zu", index);
-        return mSlots[index];
-    }
-
-private:
-    int32_t mCurrentSlot;
-    std::vector<Slot> mSlots;
-    bool mUsingSlotsProtocol;
-    bool mHaveStylus;
-
-    void clearSlots(int32_t initialSlot);
-    void warnIfNotInUse(const RawEvent& event, const Slot& slot);
-};
 
 class MultiTouchInputMapper : public TouchInputMapper {
 public:
     explicit MultiTouchInputMapper(InputDeviceContext& deviceContext);
     ~MultiTouchInputMapper() override;
 
-    void reset(nsecs_t when) override;
-    void process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
 protected:
     void syncTouch(nsecs_t when, RawState* outState) override;
@@ -122,5 +53,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _UI_INPUTREADER_MULTI_TOUCH_INPUT_MAPPER_H

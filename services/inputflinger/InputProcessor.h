@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_CLASSIFIER_H
-#define _UI_INPUT_CLASSIFIER_H
+#pragma once
 
 #include <android-base/thread_annotations.h>
 #include <future>
@@ -36,12 +35,12 @@ enum class ClassifierEventType : uint8_t {
 
 struct ClassifierEvent {
     ClassifierEventType type;
-    std::unique_ptr<NotifyArgs> args;
+    std::optional<NotifyArgs> args;
 
-    ClassifierEvent(ClassifierEventType type, std::unique_ptr<NotifyArgs> args);
-    ClassifierEvent(std::unique_ptr<NotifyMotionArgs> args);
-    ClassifierEvent(std::unique_ptr<NotifyDeviceResetArgs> args);
-    ClassifierEvent(ClassifierEvent&& other);
+    ClassifierEvent(ClassifierEventType type, std::optional<NotifyArgs> args);
+    ClassifierEvent(const NotifyMotionArgs& args);
+    ClassifierEvent(const NotifyDeviceResetArgs& args);
+    ClassifierEvent(ClassifierEvent&& other) = default;
     ClassifierEvent& operator=(ClassifierEvent&& other);
 
     // Convenience function to create a HAL_RESET event
@@ -288,4 +287,3 @@ private:
 };
 
 } // namespace android
-#endif

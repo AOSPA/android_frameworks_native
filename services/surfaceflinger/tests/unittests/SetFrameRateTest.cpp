@@ -24,8 +24,6 @@
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
-#include "BufferStateLayer.h"
-#include "EffectLayer.h"
 #include "Layer.h"
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
@@ -374,11 +372,6 @@ TEST_P(SetFrameRateTest, SetOnParentActivatesTree) {
     const auto& layerFactory = GetParam();
 
     auto parent = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
-    if (!parent->isVisible()) {
-        // This is a hack as all the test layers except EffectLayer are not visible,
-        // but since the logic is unified in Layer, it should be fine.
-        return;
-    }
 
     auto child = mLayers.emplace_back(layerFactory->createLayer(mFlinger));
     addChild(parent, child);
@@ -390,8 +383,8 @@ TEST_P(SetFrameRateTest, SetOnParentActivatesTree) {
     history.record(parent.get(), 0, 0, LayerHistory::LayerUpdateType::Buffer);
     history.record(child.get(), 0, 0, LayerHistory::LayerUpdateType::Buffer);
 
-    const auto configs = mFlinger.mutableScheduler().refreshRateConfigs();
-    const auto summary = history.summarize(*configs, 0);
+    const auto selectorPtr = mFlinger.mutableScheduler().refreshRateSelector();
+    const auto summary = history.summarize(*selectorPtr, 0);
 
     ASSERT_EQ(2u, summary.size());
     EXPECT_EQ(FRAME_RATE_VOTE1.rate, summary[0].desiredRefreshRate);

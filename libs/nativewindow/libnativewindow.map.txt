@@ -14,6 +14,8 @@ LIBNATIVEWINDOW {
     AHardwareBuffer_release;
     AHardwareBuffer_sendHandleToUnixSocket;
     AHardwareBuffer_unlock;
+    AHardwareBuffer_readFromParcel; # introduced=34
+    AHardwareBuffer_writeToParcel; # introduced=34
     ANativeWindowBuffer_getHardwareBuffer; # llndk
     ANativeWindow_OemStorageGet; # llndk
     ANativeWindow_OemStorageSet; # llndk
@@ -49,11 +51,14 @@ LIBNATIVEWINDOW {
     ANativeWindow_setDequeueTimeout; # systemapi # introduced=30
     ANativeWindow_setFrameRate; # introduced=30
     ANativeWindow_setFrameRateWithChangeStrategy; # introduced=31
+    ANativeWindow_clearFrameRate; # introduced=UpsideDownCake
     ANativeWindow_setSharedBufferMode; # llndk
     ANativeWindow_setSwapInterval; # llndk
     ANativeWindow_setUsage; # llndk
     ANativeWindow_tryAllocateBuffers; # introduced=30
     ANativeWindow_unlockAndPost;
+    ANativeWindow_readFromParcel; # introduced=UpsideDownCake
+    ANativeWindow_writeToParcel; # introduced=UpsideDownCake
   local:
     *;
 };

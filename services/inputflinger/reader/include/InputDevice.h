@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_INPUT_DEVICE_H
-#define _UI_INPUTREADER_INPUT_DEVICE_H
+#pragma once
 
 #include <ftl/flags.h>
 #include <input/DisplayViewport.h>
@@ -30,10 +29,9 @@
 #include "EventHub.h"
 #include "InputReaderBase.h"
 #include "InputReaderContext.h"
+#include "NotifyArgs.h"
 
 namespace android {
-// TODO b/180733860 support multiple battery in API and remove this.
-constexpr int32_t DEFAULT_BATTERY_ID = 1;
 
 class PeripheralController;
 class PeripheralControllerInterface;
@@ -53,6 +51,9 @@ public:
     inline int32_t getGeneration() const { return mGeneration; }
     inline const std::string getName() const { return mIdentifier.name; }
     inline const std::string getDescriptor() { return mIdentifier.descriptor; }
+    inline std::optional<std::string> getBluetoothAddress() const {
+        return mIdentifier.bluetoothAddress;
+    }
     inline ftl::Flags<InputDeviceClass> getClasses() const { return mClasses; }
     inline uint32_t getSources() const { return mSources; }
     inline bool hasEventHubDevices() const { return !mDevices.empty(); }
@@ -72,16 +73,18 @@ public:
     inline bool isIgnored() { return !getMapperCount(); }
 
     bool isEnabled();
-    void setEnabled(bool enabled, nsecs_t when);
+    [[nodiscard]] std::list<NotifyArgs> setEnabled(bool enabled, nsecs_t when);
 
     void dump(std::string& dump, const std::string& eventHubDevStr);
     void addEventHubDevice(int32_t eventHubId, bool populateMappers = true);
     void removeEventHubDevice(int32_t eventHubId);
-    void configure(nsecs_t when, const InputReaderConfiguration* config, uint32_t changes);
-    void reset(nsecs_t when);
-    void process(const RawEvent* rawEvents, size_t count);
-    void timeoutExpired(nsecs_t when);
-    void updateExternalStylusState(const StylusState& state);
+    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
+                                                  const InputReaderConfiguration* config,
+                                                  uint32_t changes);
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when);
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvents, size_t count);
+    [[nodiscard]] std::list<NotifyArgs> timeoutExpired(nsecs_t when);
+    [[nodiscard]] std::list<NotifyArgs> updateExternalStylusState(const StylusState& state);
 
     InputDeviceInfo getDeviceInfo();
     int32_t getKeyCodeState(uint32_t sourceMask, int32_t keyCode);
@@ -90,18 +93,18 @@ public:
     int32_t getKeyCodeForKeyLocation(int32_t locationKeyCode) const;
     bool markSupportedKeyCodes(uint32_t sourceMask, const std::vector<int32_t>& keyCodes,
                                uint8_t* outFlags);
-    void vibrate(const VibrationSequence& sequence, ssize_t repeat, int32_t token);
-    void cancelVibrate(int32_t token);
+    [[nodiscard]] std::list<NotifyArgs> vibrate(const VibrationSequence& sequence, ssize_t repeat,
+                                                int32_t token);
+    [[nodiscard]] std::list<NotifyArgs> cancelVibrate(int32_t token);
     bool isVibrating();
     std::vector<int32_t> getVibratorIds();
-    void cancelTouch(nsecs_t when, nsecs_t readTime);
+    [[nodiscard]] std::list<NotifyArgs> cancelTouch(nsecs_t when, nsecs_t readTime);
     bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
                       std::chrono::microseconds maxBatchReportLatency);
     void disableSensor(InputDeviceSensorType sensorType);
     void flushSensor(InputDeviceSensorType sensorType);
 
-    std::optional<int32_t> getBatteryCapacity();
-    std::optional<int32_t> getBatteryStatus();
+    std::optional<int32_t> getBatteryEventHubId() const;
 
     bool setLightColor(int32_t lightId, int32_t color);
     bool setLightPlayerId(int32_t lightId, int32_t playerId);
@@ -113,7 +116,7 @@ public:
 
     void bumpGeneration();
 
-    void notifyReset(nsecs_t when);
+    [[nodiscard]] NotifyDeviceResetArgs notifyReset(nsecs_t when);
 
     inline const PropertyMap& getConfiguration() { return mConfiguration; }
     inline EventHubInterface* getEventHub() { return mContext->getEventHub(); }
@@ -375,8 +378,11 @@ public:
         mEventHub->getAbsoluteAxisInfo(mId, code, &info);
         return info.valid;
     }
-    inline bool isKeyPressed(int32_t code) const {
-        return mEventHub->getScanCodeState(mId, code) == AKEY_STATE_DOWN;
+    inline bool isKeyPressed(int32_t scanCode) const {
+        return mEventHub->getScanCodeState(mId, scanCode) == AKEY_STATE_DOWN;
+    }
+    inline bool isKeyCodePressed(int32_t keyCode) const {
+        return mEventHub->getKeyCodeState(mId, keyCode) == AKEY_STATE_DOWN;
     }
     inline int32_t getAbsoluteAxisValue(int32_t code) const {
         int32_t value;
@@ -399,7 +405,9 @@ public:
     inline std::optional<DisplayViewport> getAssociatedViewport() const {
         return mDevice.getAssociatedViewport();
     }
-    inline void cancelTouch(nsecs_t when, nsecs_t readTime) { mDevice.cancelTouch(when, readTime); }
+    [[nodiscard]] inline std::list<NotifyArgs> cancelTouch(nsecs_t when, nsecs_t readTime) {
+        return mDevice.cancelTouch(when, readTime);
+    }
     inline void bumpGeneration() { mDevice.bumpGeneration(); }
     inline const PropertyMap& getConfiguration() { return mDevice.getConfiguration(); }
 
@@ -412,5 +420,3 @@ private:
 };
 
 } // namespace android
-
-#endif //_UI_INPUTREADER_INPUT_DEVICE_H

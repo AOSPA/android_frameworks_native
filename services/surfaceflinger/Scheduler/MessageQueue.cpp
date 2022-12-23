@@ -38,12 +38,6 @@ void MessageQueue::Handler::dispatchFrame(VsyncId vsyncId, TimePoint expectedVsy
     }
 }
 
-void MessageQueue::Handler::dispatchFrameImmed() {
-    if (!mFramePending.exchange(true)) {
-        mQueue.mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), Message());
-    }
-}
-
 bool MessageQueue::Handler::isFramePending() const {
     return mFramePending.load();
 }
@@ -62,37 +56,6 @@ MessageQueue::MessageQueue(ICompositor& compositor, sp<Handler> handler)
       : mCompositor(compositor),
         mLooper(sp<Looper>::make(kAllowNonCallbacks)),
         mHandler(std::move(handler)) {}
-
-// TODO(b/169865816): refactor VSyncInjections to use MessageQueue directly
-// and remove the EventThread from MessageQueue
-void MessageQueue::setInjector(sp<EventThreadConnection> connection) {
-    auto& tube = mInjector.tube;
-
-    if (const int fd = tube.getFd(); fd >= 0) {
-        mLooper->removeFd(fd);
-    }
-
-    if (connection) {
-        // The EventThreadConnection is retained when disabling injection, so avoid subsequently
-        // stealing invalid FDs. Note that the stolen FDs are kept open.
-        if (tube.getFd() < 0) {
-            connection->stealReceiveChannel(&tube);
-        } else {
-            ALOGW("Recycling channel for VSYNC injection.");
-        }
-
-        mLooper->addFd(
-                tube.getFd(), 0, Looper::EVENT_INPUT,
-                [](int, int, void* data) {
-                    reinterpret_cast<MessageQueue*>(data)->injectorCallback();
-                    return 1; // Keep registration.
-                },
-                this);
-    }
-
-    std::lock_guard lock(mInjector.mutex);
-    mInjector.connection = std::move(connection);
-}
 
 void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, nsecs_t readyTime) {
     ATRACE_CALL();
@@ -180,44 +143,11 @@ void MessageQueue::scheduleConfigure() {
 void MessageQueue::scheduleFrame() {
     ATRACE_CALL();
 
-    {
-        std::lock_guard lock(mInjector.mutex);
-        if (CC_UNLIKELY(mInjector.connection)) {
-            ALOGD("%s while injecting VSYNC", __func__);
-            mInjector.connection->requestNextVsync();
-            return;
-        }
-    }
-
     std::lock_guard lock(mVsync.mutex);
     mVsync.scheduledFrameTime =
             mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
                                            .readyDuration = 0,
                                            .earliestVsync = mVsync.lastCallbackTime.ns()});
-}
-
-void MessageQueue::scheduleFrameImmed() {
-    ATRACE_CALL();
-    mHandler->dispatchFrameImmed();
-}
-
-void MessageQueue::injectorCallback() {
-    ssize_t n;
-    DisplayEventReceiver::Event buffer[8];
-    while ((n = DisplayEventReceiver::getEvents(&mInjector.tube, buffer, 8)) > 0) {
-        for (int i = 0; i < n; i++) {
-            if (buffer[i].header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
-                // TODO(b/207525987) mFlinger removed upstream, re-add functionality as
-                // necessary.
-                // mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
-                auto& vsync = buffer[i].vsync.vsyncData;
-                mHandler->dispatchFrame(VsyncId{vsync.preferredVsyncId()},
-                                        TimePoint::fromNs(
-                                                vsync.preferredExpectedPresentationTime()));
-                break;
-            }
-        }
-    }
 }
 
 auto MessageQueue::getScheduledFrameTime() const -> std::optional<Clock::time_point> {

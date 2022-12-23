@@ -545,6 +545,8 @@ void ASurfaceTransaction_setFrameRate(ASurfaceTransaction* transaction,
  * You can register for changes in the refresh rate using
  * \a AChoreographer_registerRefreshRateCallback.
  *
+ * See ASurfaceTransaction_clearFrameRate().
+ *
  * \param frameRate is the intended frame rate of this surface, in frames per second. 0 is a special
  * value that indicates the app will accept the system's choice for the display frame rate, which is
  * the default behavior if this function isn't called. The frameRate param does <em>not</em> need to
@@ -566,6 +568,31 @@ void ASurfaceTransaction_setFrameRateWithChangeStrategy(ASurfaceTransaction* tra
                                       ASurfaceControl* surface_control, float frameRate,
                                       int8_t compatibility, int8_t changeFrameRateStrategy)
                                       __INTRODUCED_IN(31);
+
+/**
+ * Clears the frame rate which is set for \a surface_control.
+ *
+ * This is equivalent to calling
+ * ASurfaceTransaction_setFrameRateWithChangeStrategy(
+ * transaction, 0, compatibility, changeFrameRateStrategy).
+ *
+ * Usage of this API won't directly affect the application's frame production pipeline. However,
+ * because the system may change the display refresh rate, calls to this function may result in
+ * changes to Choreographer callback timings, and changes to the time interval at which the system
+ * releases buffers back to the application.
+ *
+ * See ASurfaceTransaction_setFrameRateWithChangeStrategy()
+ *
+ * You can register for changes in the refresh rate using
+ * \a AChoreographer_registerRefreshRateCallback.
+ *
+ * See ASurfaceTransaction_setFrameRateWithChangeStrategy().
+ *
+ * Available since API level 34.
+ */
+void ASurfaceTransaction_clearFrameRate(ASurfaceTransaction* transaction,
+                                        ASurfaceControl* surface_control)
+                                        __INTRODUCED_IN(__ANDROID_API_U__);
 
 /**
  * Indicate whether to enable backpressure for buffer submission to a given SurfaceControl.
@@ -597,20 +624,20 @@ void ASurfaceTransaction_setEnableBackPressure(ASurfaceTransaction* transaction,
                                                __INTRODUCED_IN(31);
 
 /**
- * Sets the frame timeline to use in Surface Flinger.
+ * Sets the frame timeline to use in SurfaceFlinger.
  *
- * A frame timeline should be chosen based on what frame deadline the application
- * can meet when rendering the frame and the application's desired present time.
- * By setting a frame timeline, Surface Flinger tries to present the frame at the corresponding
- * expected present time.
+ * A frame timeline should be chosen based on the frame deadline the application
+ * can meet when rendering the frame and the application's desired presentation time.
+ * By setting a frame timeline, SurfaceFlinger tries to present the frame at the corresponding
+ * expected presentation time.
  *
  * To receive frame timelines, a callback must be posted to Choreographer using
- * AChoreographer_postExtendedFrameCallback(). The \a vsnycId can then be extracted from the
+ * AChoreographer_postVsyncCallback(). The \c vsyncId can then be extracted from the
  * callback payload using AChoreographerFrameCallbackData_getFrameTimelineVsyncId().
  *
- * \param vsyncId The vsync ID received from AChoreographer, setting the frame's present target to
- * the corresponding expected present time and deadline from the frame to be rendered. A stale or
- * invalid value will be ignored.
+ * \param vsyncId The vsync ID received from AChoreographer, setting the frame's presentation target
+ * to the corresponding expected presentation time and deadline from the frame to be rendered. A
+ * stale or invalid value will be ignored.
  */
 void ASurfaceTransaction_setFrameTimeline(ASurfaceTransaction* transaction,
                                           AVsyncId vsyncId) __INTRODUCED_IN(33);

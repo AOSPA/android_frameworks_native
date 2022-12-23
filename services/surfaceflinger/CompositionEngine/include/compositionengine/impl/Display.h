@@ -72,6 +72,7 @@ public:
             const compositionengine::DisplayColorProfileCreationArgs&) override;
     void createRenderSurface(const compositionengine::RenderSurfaceCreationArgs&) override;
     void createClientCompositionCache(uint32_t cacheSize) override;
+    void applyDisplayBrightness(const bool applyImmediately) override;
 
     // Internal helpers used by chooseCompositionStrategy()
     using ChangedTypes = android::HWComposer::DeviceRequestedChanges::ChangedTypes;
@@ -93,15 +94,7 @@ private:
     void setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) override;
     DisplayId mId;
     bool mIsDisconnected = false;
-    bool mIsColorModeChanged = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
-    bool mHasScreenshot = false;
-    ui::DisplayConnectionType mConnectionType = ui::DisplayConnectionType::Internal;
-    composer::DisplayExtnIntf *mDisplayExtnIntf = nullptr;
-    void beginDraw();
-    void endDraw();
-    ColorProfile mColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
-                                  ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
 };
 
 // This template factory function standardizes the implementation details of the

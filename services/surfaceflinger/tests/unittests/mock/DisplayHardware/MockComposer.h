@@ -45,9 +45,6 @@ using android::hardware::graphics::composer::V2_4::IComposerClient;
 
 using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
 
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
 class Composer : public Hwc2::Composer {
 public:
     using Display = android::hardware::graphics::composer::V2_1::Display;
@@ -59,8 +56,8 @@ public:
                  std::vector<aidl::android::hardware::graphics::composer3::Capability>());
     MOCK_METHOD0(dumpDebugInfo, std::string());
     MOCK_METHOD1(registerCallback, void(HWC2::ComposerCallback&));
-    MOCK_METHOD0(resetCommands, void());
-    MOCK_METHOD0(executeCommands, Error());
+    MOCK_METHOD1(resetCommands, void(Display));
+    MOCK_METHOD1(executeCommands, Error(Display));
     MOCK_METHOD0(getMaxVirtualDisplayCount, uint32_t());
     MOCK_METHOD4(createVirtualDisplay, Error(uint32_t, uint32_t, PixelFormat*, Display*));
     MOCK_METHOD1(destroyVirtualDisplay, Error(Display));
@@ -120,7 +117,6 @@ public:
     MOCK_METHOD3(setLayerVisibleRegion,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerZOrder, Error(Display, Layer, uint32_t));
-    MOCK_METHOD3(setLayerType, Error(Display, Layer, uint32_t));
     MOCK_METHOD3(getRenderIntents, Error(Display, ColorMode, std::vector<RenderIntent>*));
     MOCK_METHOD3(setLayerColorTransform, Error(Display, Layer, const float*));
     MOCK_METHOD4(getDisplayedContentSamplingAttributes,
@@ -168,12 +164,10 @@ public:
     MOCK_METHOD2(setIdleTimerEnabled, Error(Display, std::chrono::milliseconds));
     MOCK_METHOD2(hasDisplayIdleTimerCapability, Error(Display, bool*));
     MOCK_METHOD2(getPhysicalDisplayOrientation, Error(Display, AidlTransform*));
-    MOCK_METHOD2(setDisplayElapseTime, Error(Display, uint64_t));
-#ifdef QTI_UNIFIED_DRAW
-    MOCK_METHOD4(setClientTarget_3_1, Error(Display, int32_t, int, Dataspace));
-    MOCK_METHOD2(tryDrawMethod,Error(Display, IQtiComposerClient::DrawMethod));
-    MOCK_METHOD3(setLayerFlag, Error(Display, Layer, IQtiComposerClient::LayerFlag));
-#endif
+    MOCK_METHOD1(getOverlaySupport,
+                 Error(aidl::android::hardware::graphics::composer3::OverlayProperties*));
+    MOCK_METHOD1(onHotplugConnect, void(Display));
+    MOCK_METHOD1(onHotplugDisconnect, void(Display));
 };
 
 } // namespace Hwc2::mock

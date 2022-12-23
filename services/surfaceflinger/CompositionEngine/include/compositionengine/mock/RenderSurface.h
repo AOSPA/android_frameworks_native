@@ -33,8 +33,6 @@ public:
     MOCK_CONST_METHOD0(getSize, const ui::Size&());
     MOCK_CONST_METHOD0(isProtected, bool());
     MOCK_CONST_METHOD0(getClientTargetAcquireFence, const sp<Fence>&());
-    MOCK_METHOD0(getClientTargetCurrentSlot, int());
-    MOCK_METHOD0(getClientTargetCurrentDataspace, ui::Dataspace());
     MOCK_METHOD1(setDisplaySize, void(const ui::Size&));
     MOCK_METHOD1(setProtected, void(bool));
     MOCK_METHOD1(setBufferDataspace, void(ui::Dataspace));
@@ -43,10 +41,8 @@ public:
     MOCK_METHOD2(prepareFrame, void(bool, bool));
     MOCK_METHOD1(dequeueBuffer, std::shared_ptr<renderengine::ExternalTexture>(base::unique_fd*));
     MOCK_METHOD1(queueBuffer, void(base::unique_fd));
-    MOCK_METHOD1(flipClientTarget, void(bool flip));
     MOCK_METHOD0(onPresentDisplayCompleted, void());
     MOCK_CONST_METHOD1(dump, void(std::string& result));
-    MOCK_METHOD0(setViewportAndProjection, void());
     MOCK_CONST_METHOD0(supportsCompositionStrategyPrediction, bool());
 };
 

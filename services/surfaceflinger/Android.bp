@@ -7,71 +7,6 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
-soong_config_module_type {
-      name: "libdisplayconfig_cc_defaults",
-      module_type: "cc_defaults",
-      config_namespace: "qtidisplaycommonsys",
-      bool_variables: [
-          "displayconfig_enabled",
-      ],
-      properties: [
-          "cflags",
-          "srcs",
-          "shared_libs",
-      ],
-  }
-
-  libdisplayconfig_cc_defaults {
-      name: "libdisplayconfig_defaults",
-      soong_config_variables: {
-          displayconfig_enabled : {
-              cflags: [
-              "-Wno-unused-parameter",
-              "-DQTI_DISPLAY_CONFIG_ENABLED"
-              ],
-              shared_libs : ["libdisplayconfig.system.qti"]
-          }
-      }
-  }
-
-
-soong_config_module_type {
-      name: "unifieddraw_cc_defaults",
-      module_type: "cc_defaults",
-      config_namespace: "qtiunifeddraw",
-       bool_variables: [
-           "qtiunifeddraw_enabled",
-       ],
-       properties: [
-           "cflags",
-           "srcs",
-           "shared_libs",
-       ],
-  }
-
-  unifieddraw_cc_defaults {
-      name: "unfieddraw_defaults",
-      soong_config_variables: {
-          qtiunifeddraw_enabled: {
-              cflags: [
-              "-Wno-unused-parameter",
-              "-DQTI_UNIFIED_DRAW"
-              ],
-              shared_libs : ["vendor.qti.hardware.display.composer@3.1"]
-          }
-      }
-  }
-
-cc_defaults {
-    name: "libdisplayconfigaidl_defaults",
-    cflags: [
-       "-DAIDL_DISPLAY_CONFIG_ENABLED"
-    ],
-    shared_libs: [
-       "libbinder_ndk",
-    ],
-}
-
 cc_defaults {
     name: "surfaceflinger_defaults",
     cflags: [
@@ -90,11 +25,9 @@ cc_defaults {
 cc_defaults {
     name: "libsurfaceflinger_defaults",
     defaults: [
+        "android.hardware.graphics.composer3-ndk_shared",
         "surfaceflinger_defaults",
         "skia_renderengine_deps",
-        "libdisplayconfig_defaults",
-        "unfieddraw_defaults",
-        "libdisplayconfigaidl_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
@@ -114,10 +47,9 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2",
         "android.hardware.graphics.composer@2.3",
         "android.hardware.graphics.composer@2.4",
-        "android.hardware.graphics.composer3-V1-ndk",
         "android.hardware.power@1.0",
         "android.hardware.power@1.3",
-        "android.hardware.power-V2-cpp",
+        "android.hardware.power-V4-cpp",
         "libbase",
         "libbinder",
         "libbinder_ndk",
@@ -139,8 +71,6 @@ cc_defaults {
         "libinput",
         "libutils",
         "libSurfaceFlingerProp",
-        "vendor.qti.hardware.display.composer@3.0",
-        "vendor.qti.hardware.display.config-V5-ndk",
         "server_configurable_flags",
     ],
     static_libs: [
@@ -154,7 +84,6 @@ cc_defaults {
         "libserviceutils",
         "libshaders",
         "libtonemap",
-        "libtrace_proto",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -162,7 +91,6 @@ cc_defaults {
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
         "android.hardware.graphics.composer3-command-buffer",
-        "display_intf_headers",
     ],
     export_static_lib_headers: [
         "libcompositionengine",
@@ -177,7 +105,6 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2",
         "android.hardware.graphics.composer@2.3",
         "android.hardware.graphics.composer@2.4",
-        "android.hardware.graphics.composer3-V1-ndk",
         "android.hardware.power@1.3",
         "libhidlbase",
         "libtimestats",
@@ -213,22 +140,24 @@ filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
         "BackgroundExecutor.cpp",
-        "BufferStateLayer.cpp",
-        "ClientCache.cpp",
         "Client.cpp",
-        "EffectLayer.cpp",
+        "ClientCache.cpp",
+        "Display/DisplaySnapshot.cpp",
         "DisplayDevice.cpp",
         "DisplayHardware/AidlComposerHal.cpp",
-        "DisplayHardware/HidlComposerHal.cpp",
         "DisplayHardware/ComposerHal.cpp",
         "DisplayHardware/FramebufferSurface.cpp",
         "DisplayHardware/HWC2.cpp",
         "DisplayHardware/HWComposer.cpp",
+        "DisplayHardware/HidlComposerHal.cpp",
         "DisplayHardware/PowerAdvisor.cpp",
         "DisplayHardware/VirtualDisplaySurface.cpp",
         "DisplayRenderArea.cpp",
         "Effects/Daltonizer.cpp",
         "EventLog/EventLog.cpp",
+        "FrontEnd/LayerCreationArgs.cpp",
+        "FrontEnd/LayerHandle.cpp",
+        "FrontEnd/TransactionHandler.cpp",
         "FlagManager.cpp",
         "FpsReporter.cpp",
         "FrameTracer/FrameTracer.cpp",
@@ -237,6 +166,7 @@ filegroup {
         "HwcSlotGenerator.cpp",
         "WindowInfosListenerInvoker.cpp",
         "Layer.cpp",
+        "LayerFE.cpp",
         "LayerProtoHelper.cpp",
         "LayerRenderArea.cpp",
         "LayerVector.cpp",
@@ -251,7 +181,7 @@ filegroup {
         "Scheduler/LayerHistory.cpp",
         "Scheduler/LayerInfo.cpp",
         "Scheduler/MessageQueue.cpp",
-        "Scheduler/RefreshRateConfigs.cpp",
+        "Scheduler/RefreshRateSelector.cpp",
         "Scheduler/Scheduler.cpp",
         "Scheduler/VSyncDispatchTimerQueue.cpp",
         "Scheduler/VSyncPredictor.cpp",
@@ -259,10 +189,10 @@ filegroup {
         "Scheduler/VsyncConfiguration.cpp",
         "Scheduler/VsyncModulator.cpp",
         "Scheduler/VsyncSchedule.cpp",
+        "ScreenCaptureOutput.cpp",
         "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
-        "SurfaceInterceptor.cpp",
         "Tracing/LayerTracing.cpp",
         "Tracing/TransactionTracing.cpp",
         "Tracing/TransactionProtoParser.cpp",
@@ -297,7 +227,6 @@ cc_defaults {
     ],
     static_libs: [
         "libserviceutils",
-        "libtrace_proto",
     ],
 }
 

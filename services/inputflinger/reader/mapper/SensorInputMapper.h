@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_SENSOR_INPUT_MAPPER_H
-#define _UI_INPUTREADER_SENSOR_INPUT_MAPPER_H
+#pragma once
 
 #include "InputMapper.h"
 
@@ -31,9 +30,11 @@ public:
     uint32_t getSources() const override;
     void populateDeviceInfo(InputDeviceInfo* deviceInfo) override;
     void dump(std::string& dump) override;
-    void configure(nsecs_t when, const InputReaderConfiguration* config, uint32_t changes) override;
-    void reset(nsecs_t when) override;
-    void process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
+                                                  const InputReaderConfiguration* config,
+                                                  uint32_t changes) override;
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
     bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
                       std::chrono::microseconds maxBatchReportLatency) override;
     void disableSensor(InputDeviceSensorType sensorType) override;
@@ -117,7 +118,7 @@ private:
     // Sensor list
     std::unordered_map<InputDeviceSensorType, Sensor> mSensors;
 
-    void sync(nsecs_t when, bool force);
+    [[nodiscard]] std::list<NotifyArgs> sync(nsecs_t when, bool force);
 
     template <typename T>
     bool tryGetProperty(std::string keyName, T& outValue);
@@ -133,5 +134,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _UI_INPUTREADER_SENSOR_INPUT_MAPPER_H

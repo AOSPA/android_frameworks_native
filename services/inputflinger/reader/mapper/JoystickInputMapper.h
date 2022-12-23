@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_JOYSTICK_INPUT_MAPPER_H
-#define _UI_INPUTREADER_JOYSTICK_INPUT_MAPPER_H
+#pragma once
 
 #include "InputMapper.h"
 
@@ -29,10 +28,11 @@ public:
     virtual uint32_t getSources() const override;
     virtual void populateDeviceInfo(InputDeviceInfo* deviceInfo) override;
     virtual void dump(std::string& dump) override;
-    virtual void configure(nsecs_t when, const InputReaderConfiguration* config,
-                           uint32_t changes) override;
-    virtual void reset(nsecs_t when) override;
-    virtual void process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
+                                                  const InputReaderConfiguration* config,
+                                                  uint32_t changes) override;
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
 private:
     struct Axis {
@@ -92,7 +92,7 @@ private:
     // Axes indexed by raw ABS_* axis index.
     std::unordered_map<int32_t, Axis> mAxes;
 
-    void sync(nsecs_t when, nsecs_t readTime, bool force);
+    [[nodiscard]] std::list<NotifyArgs> sync(nsecs_t when, nsecs_t readTime, bool force);
 
     bool haveAxis(int32_t axisId);
     void pruneAxes(bool ignoreExplicitlyMappedAxes);
@@ -111,5 +111,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _UI_INPUTREADER_JOYSTICK_INPUT_MAPPER_H

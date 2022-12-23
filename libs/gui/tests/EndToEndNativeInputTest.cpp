@@ -152,11 +152,7 @@ public:
 
         InputEvent *ev;
         uint32_t seqId;
-        int motionEventType;
-        int touchMoveNumber;
-        bool flag;
-        status_t consumed = mInputConsumer->consume(&mInputEventFactory, true, -1, &seqId, &ev,
-                                                    &motionEventType, &touchMoveNumber, &flag);
+        status_t consumed = mInputConsumer->consume(&mInputEventFactory, true, -1, &seqId, &ev);
         if (consumed != OK) {
             return nullptr;
         }
@@ -364,8 +360,10 @@ public:
     void SetUp() {
         mComposerClient = new SurfaceComposerClient;
         ASSERT_EQ(NO_ERROR, mComposerClient->initCheck());
-
-        const auto display = mComposerClient->getInternalDisplayToken();
+        const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        ASSERT_FALSE(ids.empty());
+        // display 0 is picked for now, can extend to support all displays if needed
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
         ASSERT_NE(display, nullptr);
 
         ui::DisplayMode mode;

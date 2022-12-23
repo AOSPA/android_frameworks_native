@@ -30,9 +30,6 @@
 
 #include <ui/DisplayIdentification.h>
 #include "DisplayHardware/ComposerHal.h"
-#ifdef QTI_UNIFIED_DRAW
-#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
-#endif
 
 #include "LayerFE.h"
 
@@ -55,9 +52,7 @@ class Output;
 namespace impl {
 struct OutputLayerCompositionState;
 } // namespace impl
-#ifdef QTI_UNIFIED_DRAW
-using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
-#endif
+
 /**
  * An output layer contains the output-dependent composition state for a layer
  */
@@ -109,10 +104,6 @@ public:
     // Updates the cursor position with the HWC
     virtual void writeCursorPositionToHWC() const = 0;
 
-#ifdef QTI_UNIFIED_DRAW
-    // set HWC layer flag
-    virtual void writeLayerFlagToHWC(IQtiComposerClient::LayerFlag) = 0;
-#endif
     // Returns the HWC2::Layer associated with this layer, if it exists
     virtual HWC2::Layer* getHwcLayer() const = 0;
 

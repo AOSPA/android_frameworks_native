@@ -65,7 +65,8 @@ bool InputDevice::isEnabled() {
     return enabled;
 }
 
-void InputDevice::setEnabled(bool enabled, nsecs_t when) {
+std::list<NotifyArgs> InputDevice::setEnabled(bool enabled, nsecs_t when) {
+    std::list<NotifyArgs> out;
     if (enabled && mAssociatedDisplayPort && !mAssociatedViewport) {
         ALOGW("Cannot enable input device %s because it is associated with port %" PRIu8 ", "
               "but the corresponding viewport is not found",
@@ -74,7 +75,7 @@ void InputDevice::setEnabled(bool enabled, nsecs_t when) {
     }
 
     if (isEnabled() == enabled) {
-        return;
+        return out;
     }
 
     // When resetting some devices, the driver needs to be queried to ensure that a proper reset is
@@ -82,13 +83,14 @@ void InputDevice::setEnabled(bool enabled, nsecs_t when) {
     // but before disabling the device. See MultiTouchMotionAccumulator::reset for more information.
     if (enabled) {
         for_each_subdevice([](auto& context) { context.enableDevice(); });
-        reset(when);
+        out += reset(when);
     } else {
-        reset(when);
+        out += reset(when);
         for_each_subdevice([](auto& context) { context.disableDevice(); });
     }
     // Must change generation to flag this device as changed
     bumpGeneration();
+    return out;
 }
 
 void InputDevice::dump(std::string& dump, const std::string& eventHubDevStr) {
@@ -234,11 +236,16 @@ void InputDevice::addEventHubDevice(int32_t eventHubId, bool populateMappers) {
 }
 
 void InputDevice::removeEventHubDevice(int32_t eventHubId) {
+    if (mController != nullptr && mController->getEventHubId() == eventHubId) {
+        // Delete mController, since the corresponding eventhub device is going away
+        mController = nullptr;
+    }
     mDevices.erase(eventHubId);
 }
 
-void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config,
-                            uint32_t changes) {
+std::list<NotifyArgs> InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config,
+                                             uint32_t changes) {
+    std::list<NotifyArgs> out;
     mSources = 0;
     mClasses = ftl::Flags<InputDeviceClass>(0);
     mControllerNumber = 0;
@@ -306,10 +313,13 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
             }
         }
 
-        if (!changes || (changes & InputReaderConfiguration::CHANGE_ENABLED_STATE)) {
+        if (changes & InputReaderConfiguration::CHANGE_ENABLED_STATE) {
+            // Do not execute this code on the first configure, because 'setEnabled' would call
+            // InputMapper::reset, and you can't reset a mapper before it has been configured.
+            // The mappers are configured for the first time at the bottom of this function.
             auto it = config->disabledDevices.find(mId);
             bool enabled = it == config->disabledDevices.end();
-            setEnabled(enabled, when);
+            out += setEnabled(enabled, when);
         }
 
         if (!changes || (changes & InputReaderConfiguration::CHANGE_DISPLAY_INFO)) {
@@ -362,37 +372,42 @@ void InputDevice::configure(nsecs_t when, const InputReaderConfiguration* config
                 // For first-time configuration, only allow device to be disabled after mappers have
                 // finished configuring. This is because we need to read some of the properties from
                 // the device's open fd.
-                setEnabled(enabled, when);
+                out += setEnabled(enabled, when);
             }
         }
 
-        for_each_mapper([this, when, config, changes](InputMapper& mapper) {
-            mapper.configure(when, config, changes);
+        for_each_mapper([this, when, &config, changes, &out](InputMapper& mapper) {
+            out += mapper.configure(when, config, changes);
             mSources |= mapper.getSources();
         });
 
         // If a device is just plugged but it might be disabled, we need to update some info like
         // axis range of touch from each InputMapper first, then disable it.
         if (!changes) {
-            setEnabled(config->disabledDevices.find(mId) == config->disabledDevices.end(), when);
+            out += setEnabled(config->disabledDevices.find(mId) == config->disabledDevices.end(),
+                              when);
         }
     }
+    return out;
 }
 
-void InputDevice::reset(nsecs_t when) {
-    for_each_mapper([when](InputMapper& mapper) { mapper.reset(when); });
+std::list<NotifyArgs> InputDevice::reset(nsecs_t when) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.reset(when); });
 
     mContext->updateGlobalMetaState();
 
-    notifyReset(when);
+    out.push_back(notifyReset(when));
+    return out;
 }
 
-void InputDevice::process(const RawEvent* rawEvents, size_t count) {
+std::list<NotifyArgs> InputDevice::process(const RawEvent* rawEvents, size_t count) {
     // Process all of the events in order for each mapper.
     // We cannot simply ask each mapper to process them in bulk because mappers may
     // have side-effects that must be interleaved.  For example, joystick movement events and
     // gamepad button presses are handled by different mappers but they should be dispatched
     // in the order received.
+    std::list<NotifyArgs> out;
     for (const RawEvent* rawEvent = rawEvents; count != 0; rawEvent++) {
         if (DEBUG_RAW_EVENTS) {
             ALOGD("Input event: device=%d type=0x%04x code=0x%04x value=0x%08x when=%" PRId64,
@@ -414,22 +429,27 @@ void InputDevice::process(const RawEvent* rawEvents, size_t count) {
         } else if (rawEvent->type == EV_SYN && rawEvent->code == SYN_DROPPED) {
             ALOGI("Detected input event buffer overrun for device %s.", getName().c_str());
             mDropUntilNextSync = true;
-            reset(rawEvent->when);
+            out += reset(rawEvent->when);
         } else {
-            for_each_mapper_in_subdevice(rawEvent->deviceId, [rawEvent](InputMapper& mapper) {
-                mapper.process(rawEvent);
+            for_each_mapper_in_subdevice(rawEvent->deviceId, [&](InputMapper& mapper) {
+                out += mapper.process(rawEvent);
             });
         }
         --count;
     }
+    return out;
 }
 
-void InputDevice::timeoutExpired(nsecs_t when) {
-    for_each_mapper([when](InputMapper& mapper) { mapper.timeoutExpired(when); });
+std::list<NotifyArgs> InputDevice::timeoutExpired(nsecs_t when) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.timeoutExpired(when); });
+    return out;
 }
 
-void InputDevice::updateExternalStylusState(const StylusState& state) {
-    for_each_mapper([state](InputMapper& mapper) { mapper.updateExternalStylusState(state); });
+std::list<NotifyArgs> InputDevice::updateExternalStylusState(const StylusState& state) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.updateExternalStylusState(state); });
+    return out;
 }
 
 InputDeviceInfo InputDevice::getDeviceInfo() {
@@ -507,14 +527,17 @@ int32_t InputDevice::getKeyCodeForKeyLocation(int32_t locationKeyCode) const {
     return *result;
 }
 
-void InputDevice::vibrate(const VibrationSequence& sequence, ssize_t repeat, int32_t token) {
-    for_each_mapper([sequence, repeat, token](InputMapper& mapper) {
-        mapper.vibrate(sequence, repeat, token);
-    });
+std::list<NotifyArgs> InputDevice::vibrate(const VibrationSequence& sequence, ssize_t repeat,
+                                           int32_t token) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.vibrate(sequence, repeat, token); });
+    return out;
 }
 
-void InputDevice::cancelVibrate(int32_t token) {
-    for_each_mapper([token](InputMapper& mapper) { mapper.cancelVibrate(token); });
+std::list<NotifyArgs> InputDevice::cancelVibrate(int32_t token) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.cancelVibrate(token); });
+    return out;
 }
 
 bool InputDevice::isVibrating() {
@@ -557,16 +580,10 @@ void InputDevice::flushSensor(InputDeviceSensorType sensorType) {
     for_each_mapper([sensorType](InputMapper& mapper) { mapper.flushSensor(sensorType); });
 }
 
-void InputDevice::cancelTouch(nsecs_t when, nsecs_t readTime) {
-    for_each_mapper([when, readTime](InputMapper& mapper) { mapper.cancelTouch(when, readTime); });
-}
-
-std::optional<int32_t> InputDevice::getBatteryCapacity() {
-    return mController ? mController->getBatteryCapacity(DEFAULT_BATTERY_ID) : std::nullopt;
-}
-
-std::optional<int32_t> InputDevice::getBatteryStatus() {
-    return mController ? mController->getBatteryStatus(DEFAULT_BATTERY_ID) : std::nullopt;
+std::list<NotifyArgs> InputDevice::cancelTouch(nsecs_t when, nsecs_t readTime) {
+    std::list<NotifyArgs> out;
+    for_each_mapper([&](InputMapper& mapper) { out += mapper.cancelTouch(when, readTime); });
+    return out;
 }
 
 bool InputDevice::setLightColor(int32_t lightId, int32_t color) {
@@ -605,9 +622,8 @@ void InputDevice::bumpGeneration() {
     mGeneration = mContext->bumpGeneration();
 }
 
-void InputDevice::notifyReset(nsecs_t when) {
-    NotifyDeviceResetArgs args(mContext->getNextId(), when, mId);
-    mContext->getListener().notifyDeviceReset(&args);
+NotifyDeviceResetArgs InputDevice::notifyReset(nsecs_t when) {
+    return NotifyDeviceResetArgs(mContext->getNextId(), when, mId);
 }
 
 std::optional<int32_t> InputDevice::getAssociatedDisplayId() {
@@ -634,6 +650,10 @@ size_t InputDevice::getMapperCount() {
 
 void InputDevice::updateLedState(bool reset) {
     for_each_mapper([reset](InputMapper& mapper) { mapper.updateLedState(reset); });
+}
+
+std::optional<int32_t> InputDevice::getBatteryEventHubId() const {
+    return mController ? std::make_optional(mController->getEventHubId()) : std::nullopt;
 }
 
 InputDeviceContext::InputDeviceContext(InputDevice& device, int32_t eventHubId)

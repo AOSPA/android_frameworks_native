@@ -164,7 +164,7 @@ void LayerHistory::setDefaultFrameRateCompatibility(Layer* layer, bool contentDe
             getVoteType(layer->getDefaultFrameRateCompatibility(), contentDetectionEnabled));
 }
 
-auto LayerHistory::summarize(const RefreshRateConfigs& configs, nsecs_t now) -> Summary {
+auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -> Summary {
     Summary summary;
 
     std::lock_guard lock(mLock);
@@ -178,7 +178,7 @@ auto LayerHistory::summarize(const RefreshRateConfigs& configs, nsecs_t now) -> 
         ALOGV("%s has priority: %d %s focused", info->getName().c_str(), frameRateSelectionPriority,
               layerFocused ? "" : "not");
 
-        auto vote = info->getRefreshRateVote(configs, now);
+        const auto vote = info->getRefreshRateVote(selector, now);
         // Skip NoVote layer as those don't have any requirements
         if (vote.type == LayerVoteType::NoVote) {
             continue;
@@ -192,11 +192,6 @@ auto LayerHistory::summarize(const RefreshRateConfigs& configs, nsecs_t now) -> 
 
         const float layerArea = transformed.getWidth() * transformed.getHeight();
         float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
-
-        if (mThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mThermalFps) {
-            vote.fps = Fps::fromValue(mThermalFps);
-        }
-
         summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
                            vote.seamlessness, weight, layerFocused});
 
@@ -280,7 +275,7 @@ void LayerHistory::clear() {
 
 std::string LayerHistory::dump() const {
     std::lock_guard lock(mLock);
-    return base::StringPrintf("LayerHistory{size=%zu, active=%zu}",
+    return base::StringPrintf("{size=%zu, active=%zu}",
                               mActiveLayerInfos.size() + mInactiveLayerInfos.size(),
                               mActiveLayerInfos.size());
 }

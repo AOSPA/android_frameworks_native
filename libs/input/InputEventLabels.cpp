@@ -23,6 +23,8 @@
 
 namespace android {
 
+// clang-format off
+
 // NOTE: If you add a new keycode here you must also add it to several other files.
 //       Refer to frameworks/base/core/java/android/view/KeyEvent.java for the full list.
 #define KEYCODES_SEQUENCE \
@@ -314,7 +316,30 @@ namespace android {
     DEFINE_KEYCODE(REFRESH), \
     DEFINE_KEYCODE(THUMBS_UP), \
     DEFINE_KEYCODE(THUMBS_DOWN), \
-    DEFINE_KEYCODE(PROFILE_SWITCH)
+    DEFINE_KEYCODE(PROFILE_SWITCH), \
+    DEFINE_KEYCODE(VIDEO_APP_1), \
+    DEFINE_KEYCODE(VIDEO_APP_2), \
+    DEFINE_KEYCODE(VIDEO_APP_3), \
+    DEFINE_KEYCODE(VIDEO_APP_4), \
+    DEFINE_KEYCODE(VIDEO_APP_5), \
+    DEFINE_KEYCODE(VIDEO_APP_6), \
+    DEFINE_KEYCODE(VIDEO_APP_7), \
+    DEFINE_KEYCODE(VIDEO_APP_8), \
+    DEFINE_KEYCODE(FEATURED_APP_1), \
+    DEFINE_KEYCODE(FEATURED_APP_2), \
+    DEFINE_KEYCODE(FEATURED_APP_3), \
+    DEFINE_KEYCODE(FEATURED_APP_4), \
+    DEFINE_KEYCODE(DEMO_APP_1), \
+    DEFINE_KEYCODE(DEMO_APP_2), \
+    DEFINE_KEYCODE(DEMO_APP_3), \
+    DEFINE_KEYCODE(DEMO_APP_4), \
+    DEFINE_KEYCODE(KEYBOARD_BACKLIGHT_DOWN), \
+    DEFINE_KEYCODE(KEYBOARD_BACKLIGHT_UP), \
+    DEFINE_KEYCODE(KEYBOARD_BACKLIGHT_TOGGLE), \
+    DEFINE_KEYCODE(STYLUS_BUTTON_PRIMARY), \
+    DEFINE_KEYCODE(STYLUS_BUTTON_SECONDARY), \
+    DEFINE_KEYCODE(STYLUS_BUTTON_TERTIARY), \
+    DEFINE_KEYCODE(STYLUS_BUTTON_TAIL)
 
 // NOTE: If you add a new axis here you must also add it to several other files.
 //       Refer to frameworks/base/core/java/android/view/MotionEvent.java for the full list.
@@ -366,8 +391,9 @@ namespace android {
     DEFINE_AXIS(GENERIC_13), \
     DEFINE_AXIS(GENERIC_14), \
     DEFINE_AXIS(GENERIC_15), \
-    DEFINE_AXIS(GENERIC_16)
-
+    DEFINE_AXIS(GENERIC_16), \
+    DEFINE_AXIS(GESTURE_X_OFFSET), \
+    DEFINE_AXIS(GESTURE_Y_OFFSET)
 
 // NOTE: If you add new LEDs here, you must also add them to Input.h
 #define LEDS_SEQUENCE \
@@ -392,6 +418,8 @@ namespace android {
     DEFINE_FLAG(FUNCTION), \
     DEFINE_FLAG(GESTURE), \
     DEFINE_FLAG(WAKE)
+
+// clang-format on
 
 // --- InputEventLookup ---
 const std::unordered_map<std::string, int> InputEventLookup::KEYCODES = {KEYCODES_SEQUENCE};

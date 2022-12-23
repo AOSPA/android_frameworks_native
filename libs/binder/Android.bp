@@ -76,6 +76,7 @@ cc_defaults {
 
     srcs: [
         "Binder.cpp",
+        "BinderRecordReplay.cpp",
         "BpBinder.cpp",
         "Debug.cpp",
         "FdTrigger.cpp",
@@ -89,6 +90,7 @@ cc_defaults {
         "Stability.cpp",
         "Status.cpp",
         "TextOutput.cpp",
+        "Trace.cpp",
         "Utils.cpp",
     ],
 
@@ -147,7 +149,10 @@ cc_defaults {
         },
 
         debuggable: {
-            cflags: ["-DBINDER_RPC_DEV_SERVERS"],
+            cflags: [
+                "-DBINDER_RPC_DEV_SERVERS",
+                "-DBINDER_ENABLE_RECORDING",
+            ],
         },
     },
 
@@ -156,7 +161,7 @@ cc_defaults {
     ],
 
     header_libs: [
-        "libandroid_runtime_vm_headers",
+        "jni_headers",
     ],
 
     export_header_lib_headers: [
@@ -310,7 +315,7 @@ cc_library {
         },
         recovery: {
             exclude_header_libs: [
-                "libandroid_runtime_vm_headers",
+                "jni_headers",
             ],
         },
     },
@@ -490,6 +495,7 @@ cc_library {
         "libbase",
         "libbinder",
         "libbinder_ndk",
+        "libcutils_sockets",
         "liblog",
         "libutils",
     ],

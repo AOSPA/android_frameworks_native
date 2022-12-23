@@ -58,7 +58,6 @@ public:
     ~SkiaGLRenderEngine() override;
 
     int getContextPriority() override;
-    int getRETid() { return gettid(); }
 
 protected:
     // Implementations of abstract SkiaRenderEngine functions specific to

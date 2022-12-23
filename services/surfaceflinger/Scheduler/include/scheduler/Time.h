@@ -17,7 +17,9 @@
 #pragma once
 
 #include <chrono>
+#include <string>
 
+#include <android-base/stringprintf.h>
 #include <utils/Timers.h>
 
 namespace android {
@@ -40,6 +42,8 @@ struct TimePoint : scheduler::SchedulerClock::time_point {
           : scheduler::SchedulerClock::time_point(p) {}
 
     static constexpr TimePoint fromNs(nsecs_t);
+
+    static TimePoint now() { return scheduler::SchedulerClock::now(); };
 
     nsecs_t ns() const;
 };
@@ -75,6 +79,10 @@ template <typename Period, typename Rep = Duration::rep>
 constexpr Rep ticks(Duration d) {
     using D = std::chrono::duration<Rep, Period>;
     return std::chrono::duration_cast<D>(d).count();
+}
+
+inline std::string to_string(Duration d) {
+    return base::StringPrintf("%.3f ms", ticks<std::milli, float>(d));
 }
 
 } // namespace android

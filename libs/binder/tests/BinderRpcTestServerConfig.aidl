@@ -21,5 +21,7 @@ parcelable BinderRpcTestServerConfig {
     int rpcSecurity;
     int serverVersion;
     int vsockPort;
+    int unixBootstrapFd; // Inherited from parent
+    int socketFd;
     @utf8InCpp String addr;
 }

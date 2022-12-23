@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_INPUTDISPATCHER_ENTRY_H
-#define _UI_INPUT_INPUTDISPATCHER_ENTRY_H
+#pragma once
 
 #include "InjectionState.h"
 #include "InputTarget.h"
@@ -211,8 +210,9 @@ struct SensorEntry : EventEntry {
 
 struct TouchModeEntry : EventEntry {
     bool inTouchMode;
+    int32_t displayId;
 
-    TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode);
+    TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode, int32_t displayId);
     std::string getDescription() const override;
 
     ~TouchModeEntry() override;
@@ -223,7 +223,7 @@ struct DispatchEntry {
     const uint32_t seq; // unique sequence number, never 0
 
     std::shared_ptr<EventEntry> eventEntry; // the event to dispatch
-    int32_t targetFlags;
+    ftl::Flags<InputTarget::Flags> targetFlags;
     ui::Transform transform;
     ui::Transform rawTransform;
     float globalScaleFactor;
@@ -238,13 +238,15 @@ struct DispatchEntry {
     int32_t resolvedAction;
     int32_t resolvedFlags;
 
-    DispatchEntry(std::shared_ptr<EventEntry> eventEntry, int32_t targetFlags,
-                  const ui::Transform& transform, const ui::Transform& rawTransform,
-                  float globalScaleFactor);
+    DispatchEntry(std::shared_ptr<EventEntry> eventEntry,
+                  ftl::Flags<InputTarget::Flags> targetFlags, const ui::Transform& transform,
+                  const ui::Transform& rawTransform, float globalScaleFactor);
 
-    inline bool hasForegroundTarget() const { return targetFlags & InputTarget::FLAG_FOREGROUND; }
+    inline bool hasForegroundTarget() const {
+        return targetFlags.test(InputTarget::Flags::FOREGROUND);
+    }
 
-    inline bool isSplit() const { return targetFlags & InputTarget::FLAG_SPLIT; }
+    inline bool isSplit() const { return targetFlags.test(InputTarget::Flags::SPLIT); }
 
 private:
     static volatile int32_t sNextSeqAtomic;
@@ -257,5 +259,3 @@ VerifiedMotionEvent verifiedMotionEventFromMotionEntry(const MotionEntry& entry,
                                                        const ui::Transform& rawTransform);
 
 } // namespace android::inputdispatcher
-
-#endif // _UI_INPUT_INPUTDISPATCHER_ENTRY_H

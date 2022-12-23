@@ -137,8 +137,8 @@ protected:
         postBufferQueueLayerBuffer(layer);
     }
 
-    virtual void fillBufferStateLayerColor(const sp<SurfaceControl>& layer, const Color& color,
-                                           int32_t bufferWidth, int32_t bufferHeight) {
+    virtual void fillBufferLayerColor(const sp<SurfaceControl>& layer, const Color& color,
+                                      int32_t bufferWidth, int32_t bufferHeight) {
         sp<GraphicBuffer> buffer =
                 sp<GraphicBuffer>::make(static_cast<uint32_t>(bufferWidth),
                                         static_cast<uint32_t>(bufferHeight), PIXEL_FORMAT_RGBA_8888,
@@ -159,7 +159,7 @@ protected:
                 fillBufferQueueLayerColor(layer, color, bufferWidth, bufferHeight);
                 break;
             case ISurfaceComposerClient::eFXSurfaceBufferState:
-                fillBufferStateLayerColor(layer, color, bufferWidth, bufferHeight);
+                fillBufferLayerColor(layer, color, bufferWidth, bufferHeight);
                 break;
             default:
                 ASSERT_TRUE(false) << "unsupported layer type: " << mLayerType;
@@ -289,7 +289,9 @@ protected:
 
 private:
     void SetUpDisplay() {
-        mDisplay = mClient->getInternalDisplayToken();
+        const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        ASSERT_FALSE(ids.empty());
+        mDisplay = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
         ASSERT_FALSE(mDisplay == nullptr) << "failed to get display";
 
         ui::DisplayMode mode;

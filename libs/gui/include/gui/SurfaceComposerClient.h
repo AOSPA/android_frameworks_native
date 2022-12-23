@@ -69,22 +69,25 @@ struct SurfaceControlStats {
     SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime,
                         std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence,
                         const sp<Fence>& presentFence, const sp<Fence>& prevReleaseFence,
-                        uint32_t hint, FrameEventHistoryStats eventStats)
+                        std::optional<uint32_t> hint, FrameEventHistoryStats eventStats,
+                        uint32_t currentMaxAcquiredBufferCount)
           : surfaceControl(sc),
             latchTime(latchTime),
             acquireTimeOrFence(std::move(acquireTimeOrFence)),
             presentFence(presentFence),
             previousReleaseFence(prevReleaseFence),
             transformHint(hint),
-            frameEventStats(eventStats) {}
+            frameEventStats(eventStats),
+            currentMaxAcquiredBufferCount(currentMaxAcquiredBufferCount) {}
 
     sp<SurfaceControl> surfaceControl;
     nsecs_t latchTime = -1;
     std::variant<nsecs_t, sp<Fence>> acquireTimeOrFence = -1;
     sp<Fence> presentFence;
     sp<Fence> previousReleaseFence;
-    uint32_t transformHint = 0;
+    std::optional<uint32_t> transformHint = 0;
     FrameEventHistoryStats frameEventStats;
+    uint32_t currentMaxAcquiredBufferCount = 0;
 };
 
 using TransactionCompletedCallbackTakesContext =
@@ -156,18 +159,11 @@ public:
     static status_t getActiveDisplayMode(const sp<IBinder>& display, ui::DisplayMode*);
 
     // Sets the refresh rate boundaries for the display.
-    static status_t setDesiredDisplayModeSpecs(
-            const sp<IBinder>& displayToken, ui::DisplayModeId defaultMode,
-            bool allowGroupSwitching, float primaryRefreshRateMin, float primaryRefreshRateMax,
-            float appRequestRefreshRateMin, float appRequestRefreshRateMax);
+    static status_t setDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
+                                               const gui::DisplayModeSpecs&);
     // Gets the refresh rate boundaries for the display.
     static status_t getDesiredDisplayModeSpecs(const sp<IBinder>& displayToken,
-                                               ui::DisplayModeId* outDefaultMode,
-                                               bool* outAllowGroupSwitching,
-                                               float* outPrimaryRefreshRateMin,
-                                               float* outPrimaryRefreshRateMax,
-                                               float* outAppRequestRefreshRateMin,
-                                               float* outAppRequestRefreshRateMax);
+                                               gui::DisplayModeSpecs*);
 
     // Get the coordinates of the display's native color primaries
     static status_t getDisplayNativePrimaries(const sp<IBinder>& display,
@@ -179,6 +175,10 @@ public:
 
     // Gets if boot display mode operations are supported on a device
     static status_t getBootDisplayModeSupport(bool* support);
+
+    // Gets the overlay properties of the device
+    static status_t getOverlaySupport(gui::OverlayProperties* outProperties);
+
     // Sets the user-preferred display mode that a device should boot in
     static status_t setBootDisplayMode(const sp<IBinder>& display, ui::DisplayModeId);
     // Clears the user-preferred display mode
@@ -229,9 +229,6 @@ public:
 
     // Queries whether a given display is wide color display.
     static status_t isWideColorDisplay(const sp<IBinder>& display, bool* outIsWideColorDisplay);
-
-    // Queries whether a given display has support of Hardware RC.
-    static status_t isDeviceRCSupported(const sp<IBinder>& display, bool* outDeviceRCSupported);
 
     /*
      * Returns whether brightness operations are supported on a display.
@@ -354,15 +351,9 @@ public:
 
     //! Get stable IDs for connected physical displays
     static std::vector<PhysicalDisplayId> getPhysicalDisplayIds();
-    static std::optional<PhysicalDisplayId> getInternalDisplayId();
 
     //! Get token for a physical display given its stable ID
     static sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId);
-    static sp<IBinder> getInternalDisplayToken();
-
-    static status_t enableVSyncInjections(bool enable);
-
-    static status_t injectVSync(nsecs_t when);
 
     struct SCHash {
         std::size_t operator()(const sp<SurfaceControl>& sc) const {
@@ -406,14 +397,15 @@ public:
 
         uint64_t mId;
 
-        uint32_t mForceSynchronous = 0;
         uint32_t mTransactionNestCount = 0;
         bool mAnimation = false;
         bool mEarlyWakeupStart = false;
         bool mEarlyWakeupEnd = false;
 
-        // Indicates that the Transaction contains a buffer that should be cached
-        bool mContainsBuffer = false;
+        // Indicates that the Transaction may contain buffers that should be cached. The reason this
+        // is only a guess is that buffers can be removed before cache is called. This is only a
+        // hint that at some point a buffer was added to this transaction before apply was called.
+        bool mMayContainBuffer = false;
 
         // mDesiredPresentTime is the time in nanoseconds that the client would like the transaction
         // to be presented. When it is not possible to present at exactly that time, it will be
@@ -787,7 +779,7 @@ protected:
     // This is protected by mSurfaceStatsListenerMutex, but GUARDED_BY isn't supported for
     // std::recursive_mutex
     std::multimap<int32_t, SurfaceStatsCallbackEntry> mSurfaceStatsListeners;
-    std::unordered_map<void*, std::function<void()>> mQueueStallListeners;
+    std::unordered_map<void*, std::function<void(const std::string&)>> mQueueStallListeners;
 
 public:
     static sp<TransactionCompletedListener> getInstance();
@@ -805,7 +797,7 @@ public:
             const sp<SurfaceControl>& surfaceControl,
             const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds);
 
-    void addQueueStallListener(std::function<void()> stallListener, void* id);
+    void addQueueStallListener(std::function<void(const std::string&)> stallListener, void* id);
     void removeQueueStallListener(void *id);
 
     /*
@@ -836,7 +828,7 @@ public:
     // For Testing Only
     static void setInstance(const sp<TransactionCompletedListener>&);
 
-    void onTransactionQueueStalled() override;
+    void onTransactionQueueStalled(const String8& reason) override;
 
 private:
     ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&);

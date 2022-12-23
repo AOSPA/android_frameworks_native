@@ -76,12 +76,10 @@ public:
     virtual void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                            std::chrono::nanoseconds workDuration) = 0;
     virtual void setDuration(std::chrono::nanoseconds workDuration) = 0;
-    virtual void setInjector(sp<EventThreadConnection>) = 0;
     virtual void waitMessage() = 0;
     virtual void postMessage(sp<MessageHandler>&&) = 0;
     virtual void scheduleConfigure() = 0;
     virtual void scheduleFrame() = 0;
-    virtual void scheduleFrameImmed() = 0;
 
     using Clock = std::chrono::steady_clock;
     virtual std::optional<Clock::time_point> getScheduledFrameTime() const = 0;
@@ -105,7 +103,6 @@ protected:
         bool isFramePending() const;
 
         virtual void dispatchFrame(VsyncId, TimePoint expectedVsyncTime);
-        virtual void dispatchFrameImmed();
     };
 
     friend class Handler;
@@ -134,16 +131,7 @@ private:
         TracedOrdinal<int> value = {"VSYNC-sf", 0};
     };
 
-    struct Injector {
-        gui::BitTube tube;
-        std::mutex mutex;
-        sp<EventThreadConnection> connection GUARDED_BY(mutex);
-    };
-
     Vsync mVsync;
-    Injector mInjector;
-
-    void injectorCallback();
 
 public:
     explicit MessageQueue(ICompositor&);
@@ -151,14 +139,12 @@ public:
     void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                    std::chrono::nanoseconds workDuration) override;
     void setDuration(std::chrono::nanoseconds workDuration) override;
-    void setInjector(sp<EventThreadConnection>) override;
 
     void waitMessage() override;
     void postMessage(sp<MessageHandler>&&) override;
 
     void scheduleConfigure() override;
     void scheduleFrame() override;
-    void scheduleFrameImmed() override;
 
     std::optional<Clock::time_point> getScheduledFrameTime() const override;
 };

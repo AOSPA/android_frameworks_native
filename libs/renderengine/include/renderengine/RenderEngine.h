@@ -126,17 +126,11 @@ public:
     // ----- BEGIN NEW INTERFACE -----
 
     // queries that are required to be thread safe
-    virtual bool isProtected() const = 0;
     virtual bool supportsProtectedContent() const = 0;
-
-    // Attempt to switch RenderEngine into and out of protectedContext mode
-    virtual void useProtectedContext(bool useProtectedContext) = 0;
 
     // Notify RenderEngine of changes to the dimensions of the active display
     // so that it can configure its internal caches accordingly.
     virtual void onActiveDisplaySizeChanged(ui::Size size) = 0;
-
-    virtual void setViewportAndProjection(Rect viewPort, Rect sourceCrop) =0;
 
     // Renders layers for a particular display via GPU composition. This method
     // should be called for every display that needs to be rendered via the GPU.
@@ -193,7 +187,6 @@ public:
 
     static void validateInputBufferUsage(const sp<GraphicBuffer>&);
     static void validateOutputBufferUsage(const sp<GraphicBuffer>&);
-    virtual int getRETid() = 0;
 
     // Allows flinger to get the render engine thread id for power management with ADPF
     // Returns the tid of the renderengine thread if it's threaded, and std::nullopt otherwise
@@ -240,6 +233,13 @@ protected:
     friend class threaded::RenderEngineThreaded;
     friend class RenderEngineTest_cleanupPostRender_cleansUpOnce_Test;
     const RenderEngineType mRenderEngineType;
+
+    // Update protectedContext mode depending on whether or not any layer has a protected buffer.
+    void updateProtectedContext(const std::vector<LayerSettings>&,
+                                const std::shared_ptr<ExternalTexture>&);
+
+    // Attempt to switch RenderEngine into and out of protectedContext mode
+    virtual void useProtectedContext(bool useProtectedContext) = 0;
 
     virtual void drawLayersInternal(
             const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,

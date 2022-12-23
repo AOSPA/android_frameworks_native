@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _INPUTFLINGER_POINTER_CONTROLLER_INTERFACE_H
-#define _INPUTFLINGER_POINTER_CONTROLLER_INTERFACE_H
+#pragma once
 
 #include <input/DisplayViewport.h>
 #include <input/Input.h>
@@ -80,6 +79,8 @@ public:
         POINTER,
         // Show spots and a spot anchor in place of the mouse pointer.
         SPOT,
+
+        ftl_last = SPOT,
     };
 
     /* Sets the mode of the pointer controller. */
@@ -108,5 +109,3 @@ public:
 };
 
 } // namespace android
-
-#endif // _INPUTFLINGER_POINTER_CONTROLLER_INTERFACE_H

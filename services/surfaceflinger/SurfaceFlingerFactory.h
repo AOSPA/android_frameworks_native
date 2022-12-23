@@ -31,22 +31,19 @@ namespace android {
 typedef int32_t PixelFormat;
 
 class BufferLayerConsumer;
-class BufferStateLayer;
 class DisplayDevice;
-class EffectLayer;
 class FrameTracer;
 class GraphicBuffer;
 class HWComposer;
 class IGraphicBufferConsumer;
 class IGraphicBufferProducer;
 class Layer;
+class LayerFE;
 class StartPropertySetThread;
 class SurfaceFlinger;
-class SurfaceInterceptor;
 class TimeStats;
 
 struct DisplayDeviceCreationArgs;
-struct LayerCreationArgs;
 
 namespace compositionengine {
 class CompositionEngine;
@@ -55,7 +52,6 @@ class CompositionEngine;
 namespace scheduler {
 class VsyncConfiguration;
 class VsyncController;
-class RefreshRateConfigs;
 } // namespace scheduler
 
 namespace frametimeline {
@@ -64,6 +60,7 @@ class FrameTimeline;
 
 namespace surfaceflinger {
 
+struct LayerCreationArgs;
 class NativeWindowSurface;
 
 // The interface that SurfaceFlinger uses to create all of the implementations
@@ -73,7 +70,6 @@ public:
     virtual std::unique_ptr<HWComposer> createHWComposer(const std::string& serviceName) = 0;
     virtual std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
             Fps currentRefreshRate) = 0;
-    virtual sp<SurfaceInterceptor> createSurfaceInterceptor() = 0;
 
     virtual sp<StartPropertySetThread> createStartPropertySetThread(
             bool timestampPropertyValue) = 0;
@@ -90,8 +86,9 @@ public:
 
     virtual std::unique_ptr<compositionengine::CompositionEngine> createCompositionEngine() = 0;
 
-    virtual sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs& args) = 0;
-    virtual sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) = 0;
+    virtual sp<Layer> createBufferStateLayer(const LayerCreationArgs& args) = 0;
+    virtual sp<Layer> createEffectLayer(const LayerCreationArgs& args) = 0;
+    virtual sp<LayerFE> createLayerFE(const std::string& layerName) = 0;
     virtual std::unique_ptr<FrameTracer> createFrameTracer() = 0;
     virtual std::unique_ptr<frametimeline::FrameTimeline> createFrameTimeline(
             std::shared_ptr<TimeStats> timeStats, pid_t surfaceFlingerPid) = 0;

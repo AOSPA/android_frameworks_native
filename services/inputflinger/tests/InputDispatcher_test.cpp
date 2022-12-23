@@ -63,9 +63,13 @@ static constexpr int32_t POINTER_3_DOWN =
 static constexpr int32_t POINTER_1_UP =
         AMOTION_EVENT_ACTION_POINTER_UP | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 
-// The default pid and uid for windows created by the test.
+// The default pid and uid for windows created on the primary display by the test.
 static constexpr int32_t WINDOW_PID = 999;
 static constexpr int32_t WINDOW_UID = 1001;
+
+// The default pid and uid for the windows created on the secondary display by the test.
+static constexpr int32_t SECONDARY_WINDOW_PID = 1010;
+static constexpr int32_t SECONDARY_WINDOW_UID = 1012;
 
 // The default policy flags to use for event injection by tests.
 static constexpr uint32_t DEFAULT_POLICY_FLAGS = POLICY_FLAG_FILTERED | POLICY_FLAG_PASS_TO_USER;
@@ -500,11 +504,6 @@ private:
         verify(*mFilteredEvent);
         mFilteredEvent = nullptr;
     }
-
-    bool isPerDisplayTouchModeEnabled() {
-        // TODO(b/198499018): Make this a regular property once per display touch mode is enabled
-        return false;
-    }
 };
 
 // --- InputDispatcherTest ---
@@ -789,15 +788,12 @@ public:
     std::optional<uint32_t> receiveEvent(InputEvent** outEvent = nullptr) {
         uint32_t consumeSeq;
         InputEvent* event;
-        int motionEventType;
-        int touchMoveNumber;
-        bool flag;
 
         std::chrono::time_point start = std::chrono::steady_clock::now();
         status_t status = WOULD_BLOCK;
         while (status == WOULD_BLOCK) {
             status = mConsumer->consume(&mEventFactory, true /*consumeBatches*/, -1, &consumeSeq,
-                                        &event, &motionEventType, &touchMoveNumber, &flag);
+                                        &event);
             std::chrono::duration elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > 100ms) {
                 break;
@@ -4721,36 +4717,6 @@ TEST_F(InputDispatcherSingleWindowAnr, OnKeyDown_BasicAnr) {
 
 // We have a focused application, but no focused window
 TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_NoFocusedWindow) {
-    FocusRequest request;
-    request.token = nullptr;
-    request.windowName = "";
-    request.timestamp = systemTime(SYSTEM_TIME_MONOTONIC);
-    request.displayId = mWindow->getInfo()->displayId;
-    mDispatcher->setFocusedWindow(request);
-    mWindow->consumeFocusEvent(false);
-
-    // taps on the window work as normal
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-              injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
-                               WINDOW_LOCATION));
-    ASSERT_NO_FATAL_FAILURE(mWindow->consumeMotionDown());
-    mDispatcher->waitForIdle();
-    mFakePolicy->assertNotifyAnrWasNotCalled();
-
-    // Once a focused event arrives, we get an ANR for this application
-    // We specify the injection timeout to be smaller than the application timeout, to ensure that
-    // injection times out (instead of failing).
-    const InputEventInjectionResult result =
-            injectKey(mDispatcher, AKEY_EVENT_ACTION_DOWN, 0 /* repeatCount */, ADISPLAY_ID_DEFAULT,
-                      InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
-    ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
-    const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
-    ASSERT_TRUE(mDispatcher->waitForIdle());
-}
-
-// We have a focused application, but we are waiting on the requested window to become focusable
-TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_PendingFocusedRequest) {
     mWindow->setFocusable(false);
     mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow}}});
     mWindow->consumeFocusEvent(false);
@@ -4771,7 +4737,7 @@ TEST_F(InputDispatcherSingleWindowAnr, FocusedApplication_PendingFocusedRequest)
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
     const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
+    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
     ASSERT_TRUE(mDispatcher->waitForIdle());
 }
 
@@ -4821,10 +4787,11 @@ TEST_F(InputDispatcherSingleWindowAnr, NoFocusedWindow_DoesNotSendDuplicateAnr) 
             injectKey(mDispatcher, AKEY_EVENT_ACTION_DOWN, 0 /* repeatCount */, ADISPLAY_ID_DEFAULT,
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms, false /* allowKeyRepeat */);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
-    const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
+    const std::chrono::duration appTimeout =
+            mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
+    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(appTimeout, mApplication);
 
-    std::this_thread::sleep_for(timeout);
+    std::this_thread::sleep_for(appTimeout);
     // ANR should not be raised again. It is up to policy to do that if it desires.
     mFakePolicy->assertNotifyAnrWasNotCalled();
 
@@ -4845,8 +4812,8 @@ TEST_F(InputDispatcherSingleWindowAnr, NoFocusedWindow_DropsFocusedEvents) {
                       InputEventInjectionSync::WAIT_FOR_RESULT, 10ms);
     ASSERT_EQ(InputEventInjectionResult::TIMED_OUT, result);
 
-    const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
-    mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
+    const std::chrono::duration timeout = mApplication->getDispatchingTimeout(DISPATCHING_TIMEOUT);
+    mFakePolicy->assertNotifyNoFocusedWindowAnrWasCalled(timeout, mApplication);
 
     // Future focused events get dropped right away
     ASSERT_EQ(InputEventInjectionResult::FAILED, injectKeyDown(mDispatcher));
@@ -5493,7 +5460,6 @@ class InputDispatcherMultiWindowOcclusionTests : public InputDispatcherTest {
                 sp<FakeWindowHandle>::make(mApplication, mDispatcher,
                                            "Window without input channel", ADISPLAY_ID_DEFAULT,
                                            std::make_optional<sp<IBinder>>(nullptr) /*token*/);
-
         mNoInputWindow->setNoInputChannel(true);
         mNoInputWindow->setFrame(Rect(0, 0, 100, 100));
         // It's perfectly valid for this window to not have an associated input channel
@@ -6838,44 +6804,67 @@ TEST_F(InputDispatcherDropInputFeatureTest, UnobscuredWindowGetsInput) {
 class InputDispatcherTouchModeChangedTests : public InputDispatcherTest {
 protected:
     std::shared_ptr<FakeApplicationHandle> mApp;
+    std::shared_ptr<FakeApplicationHandle> mSecondaryApp;
     sp<FakeWindowHandle> mWindow;
     sp<FakeWindowHandle> mSecondWindow;
+    sp<FakeWindowHandle> mThirdWindow;
 
     void SetUp() override {
         InputDispatcherTest::SetUp();
 
         mApp = std::make_shared<FakeApplicationHandle>();
+        mSecondaryApp = std::make_shared<FakeApplicationHandle>();
         mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow", ADISPLAY_ID_DEFAULT);
         mWindow->setFocusable(true);
         setFocusedWindow(mWindow);
         mSecondWindow =
                 sp<FakeWindowHandle>::make(mApp, mDispatcher, "TestWindow2", ADISPLAY_ID_DEFAULT);
         mSecondWindow->setFocusable(true);
+        mThirdWindow =
+                sp<FakeWindowHandle>::make(mSecondaryApp, mDispatcher,
+                                           "TestWindow3_SecondaryDisplay", SECOND_DISPLAY_ID);
+        mThirdWindow->setFocusable(true);
 
         mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, mApp);
-        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}}});
+        mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {mWindow, mSecondWindow}},
+                                      {SECOND_DISPLAY_ID, {mThirdWindow}}});
+        mThirdWindow->setOwnerInfo(SECONDARY_WINDOW_PID, SECONDARY_WINDOW_UID);
         mWindow->consumeFocusEvent(true);
 
-        // Set initial touch mode to InputDispatcher::kDefaultInTouchMode.
+        // Set main display initial touch mode to InputDispatcher::kDefaultInTouchMode.
         if (mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, WINDOW_PID,
-                                        WINDOW_UID, true /*hasPermission*/, ADISPLAY_ID_DEFAULT)) {
+                                        WINDOW_UID, true /* hasPermission */,
+                                        ADISPLAY_ID_DEFAULT)) {
             mWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
             mSecondWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
+            mThirdWindow->assertNoEvents();
+        }
+
+        // Set secondary display initial touch mode to InputDispatcher::kDefaultInTouchMode.
+        if (mDispatcher->setInTouchMode(InputDispatcher::kDefaultInTouchMode, SECONDARY_WINDOW_PID,
+                                        SECONDARY_WINDOW_UID, true /* hasPermission */,
+                                        SECOND_DISPLAY_ID)) {
+            mWindow->assertNoEvents();
+            mSecondWindow->assertNoEvents();
+            mThirdWindow->consumeTouchModeEvent(InputDispatcher::kDefaultInTouchMode);
         }
     }
 
-    void changeAndVerifyTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission) {
+    void changeAndVerifyTouchModeInMainDisplayOnly(bool inTouchMode, int32_t pid, int32_t uid,
+                                                   bool hasPermission) {
         ASSERT_TRUE(mDispatcher->setInTouchMode(inTouchMode, pid, uid, hasPermission,
                                                 ADISPLAY_ID_DEFAULT));
         mWindow->consumeTouchModeEvent(inTouchMode);
         mSecondWindow->consumeTouchModeEvent(inTouchMode);
+        mThirdWindow->assertNoEvents();
     }
 };
 
 TEST_F(InputDispatcherTouchModeChangedTests, FocusedWindowCanChangeTouchMode) {
     const WindowInfo& windowInfo = *mWindow->getInfo();
-    changeAndVerifyTouchMode(!InputDispatcher::kDefaultInTouchMode, windowInfo.ownerPid,
-                             windowInfo.ownerUid, false /*hasPermission*/);
+    changeAndVerifyTouchModeInMainDisplayOnly(!InputDispatcher::kDefaultInTouchMode,
+                                              windowInfo.ownerPid, windowInfo.ownerUid,
+                                              false /*  hasPermission */);
 }
 
 TEST_F(InputDispatcherTouchModeChangedTests, NonFocusedWindowOwnerCannotChangeTouchMode) {
@@ -6895,8 +6884,8 @@ TEST_F(InputDispatcherTouchModeChangedTests, NonWindowOwnerMayChangeTouchModeOnP
     int32_t ownerPid = windowInfo.ownerPid;
     int32_t ownerUid = windowInfo.ownerUid;
     mWindow->setOwnerInfo(/* pid */ -1, /* uid */ -1);
-    changeAndVerifyTouchMode(!InputDispatcher::kDefaultInTouchMode, ownerPid, ownerUid,
-                             true /*hasPermission*/);
+    changeAndVerifyTouchModeInMainDisplayOnly(!InputDispatcher::kDefaultInTouchMode, ownerPid,
+                                              ownerUid, true /*hasPermission*/);
 }
 
 TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTouchMode) {
@@ -6906,6 +6895,16 @@ TEST_F(InputDispatcherTouchModeChangedTests, EventIsNotGeneratedIfNotChangingTou
                                              true /*hasPermission*/, ADISPLAY_ID_DEFAULT));
     mWindow->assertNoEvents();
     mSecondWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherTouchModeChangedTests, ChangeTouchOnSecondaryDisplayOnly) {
+    const WindowInfo& windowInfo = *mThirdWindow->getInfo();
+    ASSERT_TRUE(mDispatcher->setInTouchMode(!InputDispatcher::kDefaultInTouchMode,
+                                            windowInfo.ownerPid, windowInfo.ownerUid,
+                                            true /*hasPermission*/, SECOND_DISPLAY_ID));
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+    mThirdWindow->consumeTouchModeEvent(!InputDispatcher::kDefaultInTouchMode);
 }
 
 TEST_F(InputDispatcherTouchModeChangedTests, CanChangeTouchModeWhenOwningLastInteractedWindow) {
@@ -7028,8 +7027,8 @@ TEST_F(InputDispatcherSpyWindowTest, ReceivesInputInOrder) {
             break; // epoll_wait timed out
         }
         for (int i = 0; i < nFds; i++) {
-            ASSERT_EQ(EPOLLIN, events[i].events);
-            eventOrder.push_back(events[i].data.u64);
+            ASSERT_EQ(static_cast<uint32_t>(EPOLLIN), events[i].events);
+            eventOrder.push_back(static_cast<size_t>(events[i].data.u64));
             channels[i]->consumeMotionDown();
         }
     }

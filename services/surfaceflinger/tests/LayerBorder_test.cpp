@@ -34,7 +34,9 @@ protected:
         toHalf3 = ColorTransformHelper::toHalf3;
         toHalf4 = ColorTransformHelper::toHalf4;
 
-        const auto display = SurfaceComposerClient::getInternalDisplayToken();
+        const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        ASSERT_FALSE(ids.empty());
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
         ASSERT_FALSE(display == nullptr);
         mColorOrange = toHalf4({255, 140, 0, 255});
         mParentLayer = createColorLayer("Parent layer", Color::RED);
@@ -215,13 +217,13 @@ TEST_F(LayerBorderTest, InvisibleLayers) {
     });
 }
 
-TEST_F(LayerBorderTest, BufferStateLayer) {
+TEST_F(LayerBorderTest, LayerWithBuffer) {
     asTransaction([&](Transaction& t) {
         t.hide(mEffectLayer1);
         t.hide(mEffectLayer2);
         t.show(mContainerLayer);
 
-        sp<SurfaceControl> bufferStateLayer =
+        sp<SurfaceControl> layer =
                 mClient->createSurface(String8("BufferState"), 0 /* width */, 0 /* height */,
                                        PIXEL_FORMAT_RGBA_8888,
                                        ISurfaceComposerClient::eFXSurfaceBufferState,
@@ -236,9 +238,9 @@ TEST_F(LayerBorderTest, BufferStateLayer) {
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(0, 0, 200, 200), Color::GREEN);
         TransactionUtils::fillGraphicBufferColor(buffer, Rect(200, 200, 400, 400), Color::BLUE);
 
-        t.setBuffer(bufferStateLayer, buffer);
-        t.setPosition(bufferStateLayer, 100, 100);
-        t.show(bufferStateLayer);
+        t.setBuffer(layer, buffer);
+        t.setPosition(layer, 100, 100);
+        t.show(layer);
         t.enableBorder(mContainerLayer, true, 20, mColorOrange);
     });
 }

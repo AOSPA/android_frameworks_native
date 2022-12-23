@@ -53,8 +53,6 @@ public:
     virtual void resizeBuffers(const ui::Size&) override;
 
     virtual const sp<Fence>& getClientTargetAcquireFence() const override;
-    virtual int getClientTargetCurrentSlot() override;
-    virtual ui::Dataspace getClientTargetCurrentDataspace() override;
 
 private:
     friend class FramebufferSurfaceTest;

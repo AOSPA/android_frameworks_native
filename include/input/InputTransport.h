@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _LIBINPUT_INPUT_TRANSPORT_H
-#define _LIBINPUT_INPUT_TRANSPORT_H
+#pragma once
 
 #pragma GCC system_header
 
@@ -488,8 +487,7 @@ public:
      * Other errors probably indicate that the channel is broken.
      */
     status_t consume(InputEventFactoryInterface* factory, bool consumeBatches, nsecs_t frameTime,
-                     uint32_t* outSeq, InputEvent** outEvent,
-                     int* motionEventType, int* touchMoveNumber, bool* flag);
+                     uint32_t* outSeq, InputEvent** outEvent);
 
     /* Sends a finished signal to the publisher to inform it that the message
      * with the specified sequence number has finished being process and whether
@@ -521,8 +519,6 @@ public:
     std::string dump() const;
 
 private:
-    int mTouchMoveCounter = 0;
-
     // True if touch resampling is enabled.
     const bool mResampleTouch;
 
@@ -646,9 +642,7 @@ private:
     std::unordered_map<uint32_t /*seq*/, nsecs_t /*consumeTime*/> mConsumeTimes;
 
     status_t consumeBatch(InputEventFactoryInterface* factory,
-            nsecs_t frameTime, uint32_t* outSeq, InputEvent** outEvent,
-            int* touchMoveNumber);
-
+            nsecs_t frameTime, uint32_t* outSeq, InputEvent** outEvent);
     status_t consumeSamples(InputEventFactoryInterface* factory,
             Batch& batch, size_t count, uint32_t* outSeq, InputEvent** outEvent);
 
@@ -679,5 +673,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _LIBINPUT_INPUT_TRANSPORT_H

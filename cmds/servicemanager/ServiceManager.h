@@ -49,6 +49,8 @@ public:
     binder::Status getDeclaredInstances(const std::string& interface, std::vector<std::string>* outReturn) override;
     binder::Status updatableViaApex(const std::string& name,
                                     std::optional<std::string>* outReturn) override;
+    binder::Status getUpdatableNames(const std::string& apexName,
+                                     std::vector<std::string>* outReturn) override;
     binder::Status getConnectionInfo(const std::string& name,
                                      std::optional<ConnectionInfo>* outReturn) override;
     binder::Status registerClientCallback(const std::string& name, const sp<IBinder>& service,
@@ -57,6 +59,12 @@ public:
     binder::Status getServiceDebugInfo(std::vector<ServiceDebugInfo>* outReturn) override;
     void binderDied(const wp<IBinder>& who) override;
     void handleClientCallbacks();
+
+    /**
+     *  This API is added for debug purposes. It clears members which hold service and callback
+     * information.
+     */
+    void clear();
 
 protected:
     virtual void tryStartService(const std::string& name);
@@ -68,7 +76,7 @@ private:
         int32_t dumpPriority;
         bool hasClients = false; // notifications sent on true -> false.
         bool guaranteeClient = false; // forces the client check to true
-        pid_t debugPid = 0; // the process in which this service runs
+        Access::CallingContext ctx;   // process that originally registers this
 
         // the number of clients of the service, including servicemanager itself
         ssize_t getNodeStrongRefCount();

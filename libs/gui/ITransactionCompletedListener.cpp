@@ -17,6 +17,9 @@
 #define LOG_TAG "ITransactionCompletedListener"
 //#define LOG_NDEBUG 0
 
+#include <cstdint>
+#include <optional>
+
 #include <gui/ISurfaceComposer.h>
 #include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerState.h>
@@ -30,7 +33,7 @@ enum class Tag : uint32_t {
     ON_TRANSACTION_COMPLETED = IBinder::FIRST_CALL_TRANSACTION,
     ON_RELEASE_BUFFER,
     ON_TRANSACTION_QUEUE_STALLED,
-    LAST = ON_RELEASE_BUFFER,
+    LAST = ON_TRANSACTION_QUEUE_STALLED,
 };
 
 } // Anonymous namespace
@@ -126,7 +129,12 @@ status_t SurfaceStats::writeToParcel(Parcel* output) const {
     } else {
         SAFE_PARCEL(output->writeBool, false);
     }
-    SAFE_PARCEL(output->writeUint32, transformHint);
+
+    SAFE_PARCEL(output->writeBool, transformHint.has_value());
+    if (transformHint.has_value()) {
+        output->writeUint32(transformHint.value());
+    }
+
     SAFE_PARCEL(output->writeUint32, currentMaxAcquiredBufferCount);
     SAFE_PARCEL(output->writeParcelable, eventStats);
     SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(jankData.size()));
@@ -156,7 +164,16 @@ status_t SurfaceStats::readFromParcel(const Parcel* input) {
         previousReleaseFence = new Fence();
         SAFE_PARCEL(input->read, *previousReleaseFence);
     }
-    SAFE_PARCEL(input->readUint32, &transformHint);
+    bool hasTransformHint = false;
+    SAFE_PARCEL(input->readBool, &hasTransformHint);
+    if (hasTransformHint) {
+        uint32_t tempTransformHint;
+        SAFE_PARCEL(input->readUint32, &tempTransformHint);
+        transformHint = std::make_optional(tempTransformHint);
+    } else {
+        transformHint = std::nullopt;
+    }
+
     SAFE_PARCEL(input->readUint32, &currentMaxAcquiredBufferCount);
     SAFE_PARCEL(input->readParcelable, &eventStats);
 
@@ -273,15 +290,17 @@ public:
 
     void onReleaseBuffer(ReleaseCallbackId callbackId, sp<Fence> releaseFence,
                          uint32_t currentMaxAcquiredBufferCount) override {
-        callRemoteAsync<decltype(
-                &ITransactionCompletedListener::onReleaseBuffer)>(Tag::ON_RELEASE_BUFFER,
-                                                                  callbackId, releaseFence,
-                                                                  currentMaxAcquiredBufferCount);
+        callRemoteAsync<decltype(&ITransactionCompletedListener::
+                                         onReleaseBuffer)>(Tag::ON_RELEASE_BUFFER, callbackId,
+                                                           releaseFence,
+                                                           currentMaxAcquiredBufferCount);
     }
 
-    void onTransactionQueueStalled() override {
-        callRemoteAsync<decltype(&ITransactionCompletedListener::onTransactionQueueStalled)>(
-            Tag::ON_TRANSACTION_QUEUE_STALLED);
+    void onTransactionQueueStalled(const String8& reason) override {
+        callRemoteAsync<
+                decltype(&ITransactionCompletedListener::
+                                 onTransactionQueueStalled)>(Tag::ON_TRANSACTION_QUEUE_STALLED,
+                                                             reason);
     }
 };
 

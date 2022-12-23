@@ -81,13 +81,6 @@ public:
     sp<Surface> getSurface(bool includeSurfaceControlHandle);
     bool isSameSurfaceControl(const sp<SurfaceControl>& surfaceControl) const;
 
-    void setUndequeuedBufferCount(int count) {
-        mNumUndequeued = count;
-    }
-    int getUndequeuedBufferCount() const {
-        return mNumUndequeued;
-    }
-
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
     void onFrameDequeued(const uint64_t) override;
@@ -99,9 +92,13 @@ public:
                                      const std::vector<SurfaceControlStats>& stats);
     void releaseBufferCallback(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
                                std::optional<uint32_t> currentMaxAcquiredBufferCount);
+    void releaseBufferCallbackLocked(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
+                                     std::optional<uint32_t> currentMaxAcquiredBufferCount,
+                                     bool fakeRelease);
     void syncNextTransaction(std::function<void(SurfaceComposerClient::Transaction*)> callback,
                              bool acquireSingleBuffer = true);
     void stopContinuousSyncTransaction();
+
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
     void applyPendingTransactions(uint64_t frameNumber);
     SurfaceComposerClient::Transaction* gatherPendingTransactions(uint64_t frameNumber);
@@ -115,15 +112,12 @@ public:
 
     uint32_t getLastTransformHint() const;
     uint64_t getLastAcquiredFrameNum();
-    void abandon();
 
     /**
-     * Set a callback to be invoked when we are hung. The boolean parameter
-     * indicates whether the hang is due to an unfired fence.
-     * TODO: The boolean is always true atm, unfired fence is
-     * the only case we detect.
+     * Set a callback to be invoked when we are hung. The string parameter
+     * indicates the reason for the hang.
      */
-    void setTransactionHangCallback(std::function<void(bool)> callback);
+    void setTransactionHangCallback(std::function<void(const std::string&)> callback);
 
     virtual ~BLASTBufferQueue();
 
@@ -167,7 +161,6 @@ private:
     // the max to be acquired
     int32_t mMaxAcquiredBuffers = 1;
 
-    int mNumUndequeued GUARDED_BY(mMutex) = 0;
     int32_t mNumFrameAvailable GUARDED_BY(mMutex) = 0;
     int32_t mNumAcquired GUARDED_BY(mMutex) = 0;
 
@@ -182,6 +175,12 @@ private:
     struct ReleasedBuffer {
         ReleaseCallbackId callbackId;
         sp<Fence> releaseFence;
+        bool operator==(const ReleasedBuffer& rhs) const {
+            // Only compare Id so if we somehow got two callbacks
+            // with different fences we don't decrement mNumAcquired
+            // too far.
+            return rhs.callbackId == callbackId;
+        }
     };
     std::deque<ReleasedBuffer> mPendingRelease GUARDED_BY(mMutex);
 
@@ -282,7 +281,7 @@ private:
     bool mAppliedLastTransaction = false;
     uint64_t mLastAppliedFrameNumber = 0;
 
-    std::function<void(bool)> mTransactionHangCallback;
+    std::function<void(const std::string&)> mTransactionHangCallback;
 
     std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 };

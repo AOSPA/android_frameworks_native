@@ -253,14 +253,16 @@ struct DisplayPowerCase {
     using DispSync = DispSyncVariant;
     using Transition = TransitionVariant;
 
-    static auto injectDisplayWithInitialPowerMode(DisplayTransactionTest* test, PowerMode mode) {
+    static sp<DisplayDevice> injectDisplayWithInitialPowerMode(DisplayTransactionTest* test,
+                                                               PowerMode mode) {
         Display::injectHwcDisplayWithNoDefaultCapabilities(test);
-        auto display = Display::makeFakeExistingDisplayInjector(test);
-        display.inject();
-        display.mutableDisplayDevice()->setPowerMode(mode);
-        if (display.mutableDisplayDevice()->isInternal()) {
-            test->mFlinger.mutableActiveDisplayToken() =
-                    display.mutableDisplayDevice()->getDisplayToken();
+        auto injector = Display::makeFakeExistingDisplayInjector(test);
+        const auto display = injector.inject();
+        display->setPowerMode(mode);
+        if (injector.physicalDisplay()
+                    .transform(&display::PhysicalDisplay::isInternal)
+                    .value_or(false)) {
+            test->mFlinger.mutableActiveDisplayId() = display->getPhysicalId();
         }
 
         return display;
@@ -272,13 +274,6 @@ struct DisplayPowerCase {
 
     static void setupRepaintEverythingCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mFlinger.scheduler(), scheduleFrame()).Times(1);
-    }
-
-    static void setupSurfaceInterceptorCallExpectations(DisplayTransactionTest* test,
-                                                        PowerMode mode) {
-        EXPECT_CALL(*test->mSurfaceInterceptor, isEnabled()).WillOnce(Return(true));
-        EXPECT_CALL(*test->mSurfaceInterceptor, savePowerModeUpdate(_, static_cast<int32_t>(mode)))
-                .Times(1);
     }
 
     static void setupComposerCallExpectations(DisplayTransactionTest* test, PowerMode mode) {
@@ -347,14 +342,12 @@ void SetPowerModeInternalTest::transitionDisplayCommon() {
     // --------------------------------------------------------------------
     // Call Expectations
 
-    Case::setupSurfaceInterceptorCallExpectations(this, Case::Transition::TARGET_POWER_MODE);
     Case::Transition::template setupCallExpectations<Case>(this);
 
     // --------------------------------------------------------------------
     // Invocation
 
-    mFlinger.setPowerModeInternal(display.mutableDisplayDevice(),
-                                  Case::Transition::TARGET_POWER_MODE);
+    mFlinger.setPowerModeInternal(display, Case::Transition::TARGET_POWER_MODE);
 
     // --------------------------------------------------------------------
     // Postconditions

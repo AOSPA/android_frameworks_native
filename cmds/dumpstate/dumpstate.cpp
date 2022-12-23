@@ -170,6 +170,7 @@ void add_mountinfo();
 #define RECOVERY_DIR "/cache/recovery"
 #define RECOVERY_DATA_DIR "/data/misc/recovery"
 #define UPDATE_ENGINE_LOG_DIR "/data/misc/update_engine_log"
+#define UPDATE_ENGINE_PREF_DIR "/data/misc/update_engine/prefs"
 #define LOGPERSIST_DATA_DIR "/data/misc/logd"
 #define PREREBOOT_DATA_DIR "/data/misc/prereboot"
 #define PROFILE_DATA_DIR_CUR "/data/misc/profiles/cur"
@@ -183,6 +184,7 @@ void add_mountinfo();
 #define PACKAGE_DEX_USE_LIST "/data/system/package-dex-usage.list"
 #define SYSTEM_TRACE_SNAPSHOT "/data/misc/perfetto-traces/bugreport/systrace.pftrace"
 #define CGROUPFS_DIR "/sys/fs/cgroup"
+#define SDK_EXT_INFO "/apex/com.android.sdkext/bin/derive_sdk"
 
 // TODO(narayan): Since this information has to be kept in sync
 // with tombstoned, we should just put it in a common header.
@@ -233,9 +235,11 @@ static const char* WAKE_LOCK_NAME = "dumpstate_wakelock";
 // task and the log title of the duration report.
 static const std::string DUMP_TRACES_TASK = "DUMP TRACES";
 static const std::string DUMP_INCIDENT_REPORT_TASK = "INCIDENT REPORT";
+static const std::string DUMP_NETSTATS_PROTO_TASK = "DUMP NETSTATS PROTO";
 static const std::string DUMP_HALS_TASK = "DUMP HALS";
 static const std::string DUMP_BOARD_TASK = "dumpstate_board()";
 static const std::string DUMP_CHECKINS_TASK = "DUMP CHECKINS";
+static const std::string POST_PROCESS_UI_TRACES_TASK = "POST-PROCESS UI TRACES";
 
 namespace android {
 namespace os {
@@ -765,7 +769,7 @@ uint64_t Dumpstate::ConsentCallback::getElapsedTimeMs() const {
 }
 
 void Dumpstate::PrintHeader() const {
-    std::string build, fingerprint, radio, bootloader, network;
+    std::string build, fingerprint, radio, bootloader, network, sdkversion;
     char date[80];
 
     build = android::base::GetProperty("ro.build.display.id", "(unknown)");
@@ -773,6 +777,7 @@ void Dumpstate::PrintHeader() const {
     radio = android::base::GetProperty("gsm.version.baseband", "(unknown)");
     bootloader = android::base::GetProperty("ro.bootloader", "(unknown)");
     network = android::base::GetProperty("gsm.operator.alpha", "(unknown)");
+    sdkversion = android::base::GetProperty("ro.build.version.sdk", "(unknown)");
     strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", localtime(&now_));
 
     printf("========================================================\n");
@@ -790,9 +795,10 @@ void Dumpstate::PrintHeader() const {
     if (module_metadata_version != 0) {
         printf("Module Metadata version: %" PRId64 "\n", module_metadata_version);
     }
-    printf("SDK extension versions [r=%s s=%s]\n",
-           android::base::GetProperty("build.version.extensions.r", "-").c_str(),
-           android::base::GetProperty("build.version.extensions.s", "-").c_str());
+    printf("Android SDK version: %s\n", sdkversion.c_str());
+    printf("SDK extensions: ");
+    RunCommandToFd(STDOUT_FILENO, "", {SDK_EXT_INFO, "--header"},
+                   CommandOptions::WithTimeout(1).Always().DropRoot().Build());
 
     printf("Kernel: ");
     DumpFileToFd(STDOUT_FILENO, "", "/proc/version");
@@ -1025,13 +1031,33 @@ static void DumpIncidentReport() {
         MYLOGE("Could not open %s to dump incident report.\n", path.c_str());
         return;
     }
-    RunCommandToFd(fd, "", {"incident", "-u"}, CommandOptions::WithTimeout(120).Build());
+    RunCommandToFd(fd, "", {"incident", "-u"}, CommandOptions::WithTimeout(20).Build());
     bool empty = 0 == lseek(fd, 0, SEEK_END);
     if (!empty) {
         // Use a different name from "incident.proto"
         // /proto/incident.proto is reserved for incident service dump
         // i.e. metadata for debugging.
         ds.EnqueueAddZipEntryAndCleanupIfNeeded(kProtoPath + "incident_report" + kProtoExt,
+                path);
+    } else {
+        unlink(path.c_str());
+    }
+}
+
+static void DumpNetstatsProto() {
+    const std::string path = ds.bugreport_internal_dir_ + "/tmp_netstats_proto";
+    auto fd = android::base::unique_fd(TEMP_FAILURE_RETRY(open(path.c_str(),
+                O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)));
+    if (fd < 0) {
+        MYLOGE("Could not open %s to dump netstats proto.\n", path.c_str());
+        return;
+    }
+    RunCommandToFd(fd, "", {"dumpsys", "netstats", "--proto"},
+            CommandOptions::WithTimeout(5).Build());
+    bool empty = 0 == lseek(fd, 0, SEEK_END);
+    if (!empty) {
+        ds.EnqueueAddZipEntryAndCleanupIfNeeded(kProtoPath + "netstats" + kProtoExt,
                 path);
     } else {
         unlink(path.c_str());
@@ -1063,7 +1089,7 @@ static void DumpVisibleWindowViews() {
         return;
     }
     RunCommandToFd(fd, "", {"cmd", "window", "dump-visible-window-views"},
-                   CommandOptions::WithTimeout(120).Build());
+                   CommandOptions::WithTimeout(10).Build());
     bool empty = 0 == lseek(fd, 0, SEEK_END);
     if (!empty) {
         ds.AddZipEntry("visible_windows.zip", path);
@@ -1402,7 +1428,9 @@ static void DumpHals(int out_fd = STDOUT_FILENO) {
 // Dump all of the files that make up the vendor interface.
 // See the files listed in dumpFileList() for the latest list of files.
 static void DumpVintf() {
-    const auto vintfFiles = android::vintf::details::dumpFileList();
+
+    const std::string sku = android::base::GetProperty("ro.boot.product.hardware.sku", "");
+    const auto vintfFiles = android::vintf::details::dumpFileList(sku);
     for (const auto vintfFile : vintfFiles) {
         struct stat st;
         if (stat(vintfFile.c_str(), &st) == 0) {
@@ -1567,22 +1595,27 @@ static void DumpAppInfos(int out_fd = STDOUT_FILENO) {
 // via the consent they are shown. Ignores other errors that occur while running various
 // commands. The consent checking is currently done around long running tasks, which happen to
 // be distributed fairly evenly throughout the function.
-static Dumpstate::RunStatus dumpstate() {
+Dumpstate::RunStatus Dumpstate::dumpstate() {
     DurationReporter duration_reporter("DUMPSTATE");
 
     // Enqueue slow functions into the thread pool, if the parallel run is enabled.
-    std::future<std::string> dump_hals, dump_incident_report, dump_board, dump_checkins;
+    std::future<std::string> dump_hals, dump_incident_report, dump_board, dump_checkins,
+            dump_netstats_report, post_process_ui_traces;
     if (ds.dump_pool_) {
         // Pool was shutdown in DumpstateDefaultAfterCritical method in order to
-        // drop root user. Restarts it with two threads for the parallel run.
-        ds.dump_pool_->start(/* thread_counts = */2);
+        // drop root user. Restarts it.
+        ds.dump_pool_->start(/* thread_counts = */3);
 
         dump_hals = ds.dump_pool_->enqueueTaskWithFd(DUMP_HALS_TASK, &DumpHals, _1);
         dump_incident_report = ds.dump_pool_->enqueueTask(
             DUMP_INCIDENT_REPORT_TASK, &DumpIncidentReport);
+        dump_netstats_report = ds.dump_pool_->enqueueTask(
+            DUMP_NETSTATS_PROTO_TASK, &DumpNetstatsProto);
         dump_board = ds.dump_pool_->enqueueTaskWithFd(
             DUMP_BOARD_TASK, &Dumpstate::DumpstateBoard, &ds, _1);
         dump_checkins = ds.dump_pool_->enqueueTaskWithFd(DUMP_CHECKINS_TASK, &DumpCheckins, _1);
+        post_process_ui_traces = ds.dump_pool_->enqueueTask(
+            POST_PROCESS_UI_TRACES_TASK, &Dumpstate::MaybePostProcessUiTraces, &ds);
     }
 
     // Dump various things. Note that anything that takes "long" (i.e. several seconds) should
@@ -1595,7 +1628,8 @@ static Dumpstate::RunStatus dumpstate() {
     RunCommand("CPU INFO", {"top", "-b", "-n", "1", "-H", "-s", "6", "-o",
                             "pid,tid,user,pr,ni,%cpu,s,virt,res,pcy,cmd,name"});
 
-    RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(RunCommand, "PROCRANK", {"procrank"}, AS_ROOT_20);
+    RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(RunCommand, "BUGREPORT_PROCDUMP", {"bugreport_procdump"},
+                                         CommandOptions::AS_ROOT);
 
     RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(DumpVisibleWindowViews);
 
@@ -1611,9 +1645,6 @@ static Dumpstate::RunStatus dumpstate() {
 
     RunCommand("PROCESSES AND THREADS",
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy,time"});
-
-    RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(RunCommand, "LIBRANK", {"librank"},
-                                         CommandOptions::AS_ROOT);
 
     if (ds.dump_pool_) {
         WAIT_TASK_WITH_CONSENT_CHECK(std::move(dump_hals));
@@ -1643,8 +1674,6 @@ static Dumpstate::RunStatus dumpstate() {
     DumpVintf();
 
     RunCommand("LIST OF OPEN FILES", {"lsof"}, CommandOptions::AS_ROOT);
-
-    RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK(for_each_pid, do_showmap, "SMAPS OF ALL PROCESSES");
 
     for_each_tid(show_wchan, "BLOCKED PROCESS WAIT-CHANNELS");
     for_each_pid(show_showtime, "PROCESS TIMES (pid cmd user system iowait+percentage)");
@@ -1706,11 +1735,6 @@ static Dumpstate::RunStatus dumpstate() {
     DumpFile("BINDER TRANSACTIONS", binder_logs_dir + "/transactions");
     DumpFile("BINDER STATS", binder_logs_dir + "/stats");
     DumpFile("BINDER STATE", binder_logs_dir + "/state");
-
-    /* Add window and surface trace files. */
-    if (!PropertiesHelper::IsUserBuild()) {
-        ds.AddDir(WMTRACE_DATA_DIR, false);
-    }
 
     ds.AddDir(SNAPSHOTCTL_LOG_DIR, false);
 
@@ -1778,11 +1802,26 @@ static Dumpstate::RunStatus dumpstate() {
     dump_frozen_cgroupfs();
 
     if (ds.dump_pool_) {
+        WAIT_TASK_WITH_CONSENT_CHECK(std::move(dump_netstats_report));
+    } else {
+        RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK_AND_LOG(DUMP_NETSTATS_PROTO_TASK,
+                DumpNetstatsProto);
+    }
+
+    if (ds.dump_pool_) {
         WAIT_TASK_WITH_CONSENT_CHECK(std::move(dump_incident_report));
     } else {
         RUN_SLOW_FUNCTION_WITH_CONSENT_CHECK_AND_LOG(DUMP_INCIDENT_REPORT_TASK,
                 DumpIncidentReport);
     }
+
+    if (ds.dump_pool_) {
+        WaitForTask(std::move(post_process_ui_traces));
+    } else {
+        RUN_SLOW_FUNCTION_AND_LOG(POST_PROCESS_UI_TRACES_TASK, MaybePostProcessUiTraces);
+    }
+
+    MaybeAddUiTracesToZip();
 
     return Dumpstate::RunStatus::OK;
 }
@@ -1827,6 +1866,7 @@ Dumpstate::RunStatus Dumpstate::DumpstateDefaultAfterCritical() {
     ds.AddDir(RECOVERY_DIR, true);
     ds.AddDir(RECOVERY_DATA_DIR, true);
     ds.AddDir(UPDATE_ENGINE_LOG_DIR, true);
+    ds.AddDir(UPDATE_ENGINE_PREF_DIR, true);
     ds.AddDir(LOGPERSIST_DATA_DIR, false);
     if (!PropertiesHelper::IsUserBuild()) {
         ds.AddDir(PROFILE_DATA_DIR_CUR, true);
@@ -1858,6 +1898,9 @@ Dumpstate::RunStatus Dumpstate::DumpstateDefaultAfterCritical() {
     DumpFile("PSI cpu", "/proc/pressure/cpu");
     DumpFile("PSI memory", "/proc/pressure/memory");
     DumpFile("PSI io", "/proc/pressure/io");
+
+    RunCommand("SDK EXTENSIONS", {SDK_EXT_INFO, "--dump"},
+               CommandOptions::WithTimeout(10).Always().DropRoot().Build());
 
     if (dump_pool_) {
         RETURN_IF_USER_DENIED_CONSENT();
@@ -2752,9 +2795,11 @@ static void LogDumpOptions(const Dumpstate::DumpOptions& options) {
 }
 
 void Dumpstate::DumpOptions::Initialize(BugreportMode bugreport_mode,
+                                        int bugreport_flags,
                                         const android::base::unique_fd& bugreport_fd_in,
                                         const android::base::unique_fd& screenshot_fd_in,
                                         bool is_screenshot_requested) {
+    this->use_predumped_ui_data = bugreport_flags & BugreportFlag::BUGREPORT_USE_PREDUMPED_UI_DATA;
     // Duplicate the fds because the passed in fds don't outlive the binder transaction.
     bugreport_fd.reset(fcntl(bugreport_fd_in.get(), F_DUPFD_CLOEXEC, 0));
     screenshot_fd.reset(fcntl(screenshot_fd_in.get(), F_DUPFD_CLOEXEC, 0));
@@ -2879,6 +2924,10 @@ void Dumpstate::Cancel() {
     if (zip_entry_tasks_) {
         zip_entry_tasks_->run(/*do_cancel =*/ true);
     }
+}
+
+void Dumpstate::PreDumpUiData() {
+    MaybeSnapshotUiTraces();
 }
 
 /*
@@ -3072,9 +3121,9 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
         // The trace file is added to the zip by MaybeAddSystemTraceToZip().
         MaybeSnapshotSystemTrace();
 
-        // If a winscope trace is running, snapshot it now. It will be pulled into bugreport later
-        // from WMTRACE_DATA_DIR.
-        MaybeSnapshotWinTrace();
+        // Snapshot the UI traces now (if running).
+        // The trace files will be added to bugreport later.
+        MaybeSnapshotUiTraces();
     }
     onUiIntensiveBugreportDumpsFinished(calling_uid);
     MaybeCheckUserConsent(calling_uid, calling_package);
@@ -3188,15 +3237,53 @@ void Dumpstate::MaybeSnapshotSystemTrace() {
     // file in the later stages.
 }
 
-void Dumpstate::MaybeSnapshotWinTrace() {
+void Dumpstate::MaybeSnapshotUiTraces() {
+    if (PropertiesHelper::IsUserBuild() || options_->use_predumped_ui_data) {
+        return;
+    }
+
     // Currently WindowManagerService and InputMethodManagerSerivice support WinScope protocol.
-    for (const auto& service : {"window", "input_method"}) {
+    for (const auto& service : {"input_method", "window"}) {
         RunCommand(
             // Empty name because it's not intended to be classified as a bugreport section.
             // Actual tracing files can be found in "/data/misc/wmtrace/" in the bugreport.
             "", {"cmd", service, "tracing", "save-for-bugreport"},
             CommandOptions::WithTimeout(10).Always().DropRoot().RedirectStderr().Build());
     }
+
+    static const auto SURFACEFLINGER_COMMAND_SAVE_ALL_TRACES = std::vector<std::string> {
+        "service", "call", "SurfaceFlinger", "1042"
+    };
+    // Empty name because it's not intended to be classified as a bugreport section.
+    // Actual tracing files can be found in "/data/misc/wmtrace/" in the bugreport.
+    RunCommand(
+        "", SURFACEFLINGER_COMMAND_SAVE_ALL_TRACES,
+        CommandOptions::WithTimeout(10).Always().AsRoot().RedirectStderr().Build());
+}
+
+void Dumpstate::MaybePostProcessUiTraces() {
+    if (PropertiesHelper::IsUserBuild()) {
+        return;
+    }
+
+    RunCommand(
+        // Empty name because it's not intended to be classified as a bugreport section.
+        // Actual tracing files can be found in "/data/misc/wmtrace/" in the bugreport.
+        "", {
+            "/system/xbin/su", "system",
+            "/system/bin/layertracegenerator",
+            "/data/misc/wmtrace/transactions_trace.winscope",
+            "/data/misc/wmtrace/layers_trace_from_transactions.winscope"
+        },
+        CommandOptions::WithTimeout(120).Always().RedirectStderr().Build());
+}
+
+void Dumpstate::MaybeAddUiTracesToZip() {
+    if (PropertiesHelper::IsUserBuild()) {
+        return;
+    }
+
+    ds.AddDir(WMTRACE_DATA_DIR, false);
 }
 
 void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
@@ -3881,15 +3968,6 @@ void do_dmesg() {
     printf("%s\n\n", buf);
     free(buf);
     return;
-}
-
-void do_showmap(int pid, const char *name) {
-    char title[255];
-    char arg[255];
-
-    snprintf(title, sizeof(title), "SHOW MAP %d (%s)", pid, name);
-    snprintf(arg, sizeof(arg), "%d", pid);
-    RunCommand(title, {"showmap", "-q", arg}, CommandOptions::AS_ROOT);
 }
 
 int Dumpstate::DumpFile(const std::string& title, const std::string& path) {

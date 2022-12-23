@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _LIBINPUT_INPUT_H
-#define _LIBINPUT_INPUT_H
+#pragma once
 
 #pragma GCC system_header
 
@@ -290,6 +289,10 @@ enum class MotionClassification : uint8_t {
      * The current gesture likely represents a user intentionally exerting force on the touchscreen.
      */
     DEEP_PRESS = AMOTION_EVENT_CLASSIFICATION_DEEP_PRESS,
+    /**
+     * The current gesture represents the user swiping with two fingers on a touchpad.
+     */
+    TWO_FINGER_SWIPE = AMOTION_EVENT_CLASSIFICATION_TWO_FINGER_SWIPE,
 };
 
 /**
@@ -363,7 +366,7 @@ struct PointerCoords {
 
     // Values of axes that are stored in this structure packed in order by axis id
     // for each axis that is present in the structure according to 'bits'.
-    float values[MAX_AXES];
+    std::array<float, MAX_AXES> values;
 
     inline void clear() {
         BitSet64::clear(bits);
@@ -403,7 +406,8 @@ struct PointerCoords {
         return !(*this == other);
     }
 
-    void copyFrom(const PointerCoords& other);
+    inline void copyFrom(const PointerCoords& other) { *this = other; }
+    PointerCoords& operator=(const PointerCoords&) = default;
 
 private:
     void tooManyAxes(int axis);
@@ -1104,5 +1108,3 @@ enum class PointerIconStyle : int32_t {
 };
 
 } // namespace android
-
-#endif // _LIBINPUT_INPUT_H

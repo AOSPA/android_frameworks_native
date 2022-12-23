@@ -41,12 +41,13 @@
 #include "OS.h"
 #include "RpcSocketAddress.h"
 #include "RpcState.h"
+#include "RpcTransportUtils.h"
 #include "RpcWireFormat.h"
 #include "Utils.h"
 
 #if defined(__ANDROID__) && !defined(__ANDROID_RECOVERY__)
-#include <android_runtime/vm.h>
 #include <jni.h>
+extern "C" JavaVM* AndroidRuntimeGetJavaVM();
 #endif
 
 namespace android {
@@ -147,6 +148,34 @@ status_t RpcSession::setupUnixDomainClient(const char* path) {
     return setupSocketClient(UnixSocketAddress(path));
 }
 
+status_t RpcSession::setupUnixDomainSocketBootstrapClient(unique_fd bootstrapFd) {
+    mBootstrapTransport =
+            mCtx->newTransport(RpcTransportFd(std::move(bootstrapFd)), mShutdownTrigger.get());
+    return setupClient([&](const std::vector<uint8_t>& sessionId, bool incoming) {
+        int socks[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, socks) < 0) {
+            int savedErrno = errno;
+            ALOGE("Failed socketpair: %s", strerror(savedErrno));
+            return -savedErrno;
+        }
+        unique_fd clientFd(socks[0]), serverFd(socks[1]);
+
+        int zero = 0;
+        iovec iov{&zero, sizeof(zero)};
+        std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
+        fds.push_back(std::move(serverFd));
+
+        status_t status = mBootstrapTransport->interruptableWriteFully(mShutdownTrigger.get(), &iov,
+                                                                       1, std::nullopt, &fds);
+        if (status != OK) {
+            ALOGE("Failed to send fd over bootstrap transport: %s", strerror(-status));
+            return status;
+        }
+
+        return initAndAddConnection(RpcTransportFd(std::move(clientFd)), sessionId, incoming);
+    });
+}
+
 status_t RpcSession::setupVsockClient(unsigned int cid, unsigned int port) {
     return setupSocketClient(VsockSocketAddress(cid, port));
 }
@@ -174,7 +203,7 @@ status_t RpcSession::setupPreconnectedClient(base::unique_fd fd,
             return res.error().code() == 0 ? UNKNOWN_ERROR : -res.error().code();
         }
 
-        TransportFd transportFd(std::move(fd));
+        RpcTransportFd transportFd(std::move(fd));
         status_t status = initAndAddConnection(std::move(transportFd), sessionId, incoming);
         fd = unique_fd(); // Explicitly reset after move to avoid analyzer warning.
         return status;
@@ -193,7 +222,7 @@ status_t RpcSession::addNullDebuggingClient() {
         return -savedErrno;
     }
 
-    TransportFd transportFd(std::move(serverFd));
+    RpcTransportFd transportFd(std::move(serverFd));
     auto server = mCtx->newTransport(std::move(transportFd), mShutdownTrigger.get());
     if (server == nullptr) {
         ALOGE("Unable to set up RpcTransport");
@@ -295,16 +324,18 @@ void RpcSession::WaitForShutdownListener::onSessionAllIncomingThreadsEnded(
 }
 
 void RpcSession::WaitForShutdownListener::onSessionIncomingThreadEnded() {
+    mShutdownCount += 1;
     mCv.notify_all();
 }
 
 void RpcSession::WaitForShutdownListener::waitForShutdown(RpcMutexUniqueLock& lock,
                                                           const sp<RpcSession>& session) {
-    while (session->mConnections.mIncoming.size() > 0) {
+    while (mShutdownCount < session->mConnections.mMaxIncoming) {
         if (std::cv_status::timeout == mCv.wait_for(lock, std::chrono::seconds(1))) {
             ALOGE("Waiting for RpcSession to shut down (1s w/o progress): %zu incoming connections "
-                  "still.",
-                  session->mConnections.mIncoming.size());
+                  "still %zu/%zu fully shutdown.",
+                  session->mConnections.mIncoming.size(), mShutdownCount.load(),
+                  session->mConnections.mMaxIncoming);
         }
     }
 }
@@ -377,10 +408,11 @@ public:
                             "Unable to detach thread. No JavaVM, but it was present before!");
 
         LOG_RPC_DETAIL("Detaching current thread from JVM");
-        if (vm->DetachCurrentThread() != JNI_OK) {
+        int ret = vm->DetachCurrentThread();
+        if (ret == JNI_OK) {
             mAttached = false;
         } else {
-            ALOGW("Unable to detach current thread from JVM");
+            ALOGW("Unable to detach current thread from JVM (%d)", ret);
         }
     }
 
@@ -576,7 +608,7 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
             return -savedErrno;
         }
 
-        TransportFd transportFd(std::move(serverFd));
+        RpcTransportFd transportFd(std::move(serverFd));
 
         if (0 != TEMP_FAILURE_RETRY(connect(transportFd.fd.get(), addr.addr(), addr.addrSize()))) {
             int connErrno = errno;
@@ -624,7 +656,7 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
     return UNKNOWN_ERROR;
 }
 
-status_t RpcSession::initAndAddConnection(TransportFd fd, const std::vector<uint8_t>& sessionId,
+status_t RpcSession::initAndAddConnection(RpcTransportFd fd, const std::vector<uint8_t>& sessionId,
                                           bool incoming) {
     LOG_ALWAYS_FATAL_IF(mShutdownTrigger == nullptr);
     auto server = mCtx->newTransport(std::move(fd), mShutdownTrigger.get());
@@ -950,6 +982,26 @@ RpcSession::ExclusiveConnection::~ExclusiveConnection() {
     if (!mReentrant && mConnection != nullptr) {
         mSession->clearConnectionTid(mConnection);
     }
+}
+
+bool RpcSession::hasActiveConnection(const std::vector<sp<RpcConnection>>& connections) {
+    for (const auto& connection : connections) {
+        if (connection->exclusiveTid != std::nullopt && !connection->rpcTransport->isWaiting()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RpcSession::hasActiveRequests() {
+    RpcMutexUniqueLock _l(mMutex);
+    if (hasActiveConnection(mConnections.mIncoming)) {
+        return true;
+    }
+    if (hasActiveConnection(mConnections.mOutgoing)) {
+        return true;
+    }
+    return mConnections.mWaitingThreads != 0;
 }
 
 } // namespace android

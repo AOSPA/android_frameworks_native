@@ -68,13 +68,11 @@ public:
     std::future<void> primeCache() override final;
     void cleanupPostRender() override final;
     void cleanFramebufferCache() override final{ }
-    bool isProtected() const override final{ return mInProtectedContext; }
     bool supportsBackgroundBlur() override final {
         return mBlurFilter != nullptr;
     }
     void onActiveDisplaySizeChanged(ui::Size size) override final;
     int reportShadersCompiled();
-    void setViewportAndProjection(Rect /*viewPort*/, Rect /*sourceCrop*/) override { }
 
     virtual void genTextures(size_t /*count*/, uint32_t* /*names*/) override final{};
     virtual void deleteTextures(size_t /*count*/, uint32_t const* /*names*/) override final{};
@@ -102,6 +100,8 @@ protected:
     size_t getMaxTextureSize() const override final;
     size_t getMaxViewportDims() const override final;
     GrDirectContext* getActiveGrContext();
+
+    bool isProtected() const { return mInProtectedContext; }
 
     // Implements PersistentCache as a way to monitor what SkSL shaders Skia has
     // cached.

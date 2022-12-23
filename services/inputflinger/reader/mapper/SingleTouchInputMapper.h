@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUTREADER_SINGLE_TOUCH_INPUT_MAPPER_H
-#define _UI_INPUTREADER_SINGLE_TOUCH_INPUT_MAPPER_H
+#pragma once
 
 #include "SingleTouchMotionAccumulator.h"
 #include "TouchInputMapper.h"
@@ -27,8 +26,8 @@ public:
     explicit SingleTouchInputMapper(InputDeviceContext& deviceContext);
     ~SingleTouchInputMapper() override;
 
-    void reset(nsecs_t when) override;
-    void process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
 protected:
     void syncTouch(nsecs_t when, RawState* outState) override;
@@ -40,5 +39,3 @@ private:
 };
 
 } // namespace android
-
-#endif // _UI_INPUTREADER_SINGLE_TOUCH_INPUT_MAPPER_H

@@ -33,13 +33,15 @@
 #include <binder/IResultReceiver.h>
 #include <binder/IServiceManager.h>
 #include <binder/IShellCallback.h>
-
 #include <sys/prctl.h>
+
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <thread>
+
 #include "android/binder_ibinder.h"
 
 using namespace android;
@@ -335,6 +337,16 @@ TEST(NdkBinder, GetLazyService) {
 TEST(NdkBinder, IsUpdatable) {
     bool isUpdatable = AServiceManager_isUpdatableViaApex("android.hardware.light.ILights/default");
     EXPECT_EQ(isUpdatable, false);
+}
+
+TEST(NdkBinder, GetUpdatableViaApex) {
+    std::optional<std::string> updatableViaApex;
+    AServiceManager_getUpdatableApexName(
+            "android.hardware.light.ILights/default", &updatableViaApex,
+            [](const char* apexName, void* context) {
+                *static_cast<std::optional<std::string>*>(context) = apexName;
+            });
+    EXPECT_EQ(updatableViaApex, std::nullopt) << *updatableViaApex;
 }
 
 // This is too slow
@@ -658,6 +670,35 @@ TEST(NdkBinder, ConvertToPlatformBinder) {
         // convert back
         ndk::SpAIBinder backBinder = ndk::SpAIBinder(AIBinder_fromPlatformBinder(platformBinder));
         EXPECT_EQ(backBinder.get(), binder.get());
+    }
+}
+
+TEST(NdkBinder, ConvertToPlatformParcel) {
+    ndk::ScopedAParcel parcel = ndk::ScopedAParcel(AParcel_create());
+    EXPECT_EQ(OK, AParcel_writeInt32(parcel.get(), 42));
+
+    android::Parcel* pparcel = AParcel_viewPlatformParcel(parcel.get());
+    pparcel->setDataPosition(0);
+    EXPECT_EQ(42, pparcel->readInt32());
+}
+
+TEST(NdkBinder, GetAndVerifyScopedAIBinder_Weak) {
+    for (const ndk::SpAIBinder& binder :
+         {// remote
+          ndk::SpAIBinder(AServiceManager_getService(kBinderNdkUnitTestService)),
+          // local
+          ndk::SharedRefBase::make<MyBinderNdkUnitTest>()->asBinder()}) {
+        // get a const ScopedAIBinder_Weak and verify promote
+        EXPECT_NE(binder.get(), nullptr);
+        const ndk::ScopedAIBinder_Weak wkAIBinder =
+                ndk::ScopedAIBinder_Weak(AIBinder_Weak_new(binder.get()));
+        EXPECT_EQ(wkAIBinder.promote().get(), binder.get());
+        // get another ScopedAIBinder_Weak and verify
+        ndk::ScopedAIBinder_Weak wkAIBinder2 =
+                ndk::ScopedAIBinder_Weak(AIBinder_Weak_new(binder.get()));
+        EXPECT_FALSE(AIBinder_Weak_lt(wkAIBinder.get(), wkAIBinder2.get()));
+        EXPECT_FALSE(AIBinder_Weak_lt(wkAIBinder2.get(), wkAIBinder.get()));
+        EXPECT_EQ(wkAIBinder2.promote(), wkAIBinder.promote());
     }
 }
 

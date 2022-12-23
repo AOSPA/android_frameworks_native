@@ -177,6 +177,10 @@ inline std::string to_string(hardware::graphics::composer::hal::Error error) {
     return to_string(static_cast<hardware::graphics::composer::hal::V2_4::Error>(error));
 }
 
+// For utils::Dumper ADL.
+namespace hardware::graphics::composer {
+namespace V2_2 {
+
 inline std::string to_string(hardware::graphics::composer::hal::PowerMode mode) {
     switch (mode) {
         case hardware::graphics::composer::hal::PowerMode::OFF:
@@ -194,6 +198,10 @@ inline std::string to_string(hardware::graphics::composer::hal::PowerMode mode) 
     }
 }
 
+} // namespace V2_2
+
+namespace V2_1 {
+
 inline std::string to_string(hardware::graphics::composer::hal::Vsync vsync) {
     switch (vsync) {
         case hardware::graphics::composer::hal::Vsync::ENABLE:
@@ -205,4 +213,6 @@ inline std::string to_string(hardware::graphics::composer::hal::Vsync vsync) {
     }
 }
 
+} // namespace V2_1
+} // namespace hardware::graphics::composer
 } // namespace android

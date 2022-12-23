@@ -47,10 +47,6 @@ public:
         return std::make_unique<scheduler::FakePhaseOffsets>();
     }
 
-    sp<SurfaceInterceptor> createSurfaceInterceptor() override {
-        return sp<android::impl::SurfaceInterceptor>::make();
-    }
-
     sp<StartPropertySetThread> createStartPropertySetThread(
             bool /* timestampPropertyValue */) override {
         return sp<StartPropertySetThread>();
@@ -80,13 +76,13 @@ public:
         return compositionengine::impl::createCompositionEngine();
     }
 
-    sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs& args) {
-        return sp<BufferStateLayer>::make(args);
+    sp<Layer> createBufferStateLayer(const LayerCreationArgs& args) {
+        return sp<Layer>::make(args);
     }
 
-    sp<EffectLayer> createEffectLayer(const LayerCreationArgs& args) {
-        return sp<EffectLayer>::make(args);
-    }
+    sp<Layer> createEffectLayer(const LayerCreationArgs& args) { return sp<Layer>::make(args); }
+
+    sp<LayerFE> createLayerFE(const std::string& layerName) { return sp<LayerFE>::make(layerName); }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
         return std::make_unique<testing::NiceMock<mock::FrameTracer>>();
@@ -104,7 +100,8 @@ public:
     MockSurfaceFlinger(Factory& factory)
           : SurfaceFlinger(factory, SurfaceFlinger::SkipInitialization) {}
     std::shared_ptr<renderengine::ExternalTexture> getExternalTextureFromBufferData(
-            const BufferData& bufferData, const char* /* layerName */) const override {
+            BufferData& bufferData, const char* /* layerName */,
+            uint64_t /* transactionId */) override {
         return std::make_shared<renderengine::mock::FakeExternalTexture>(bufferData.getWidth(),
                                                                          bufferData.getHeight(),
                                                                          bufferData.getId(),
@@ -215,11 +212,10 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
             TracingLayerCreationArgs tracingArgs;
             parser.fromProto(entry.added_layers(j), tracingArgs);
 
-            sp<IBinder> outHandle;
-            int32_t outLayerId;
+            gui::CreateSurfaceResult outResult;
             LayerCreationArgs args(mFlinger.flinger(), nullptr /* client */, tracingArgs.name,
-                                   tracingArgs.flags, LayerMetadata());
-            args.sequence = std::make_optional<int32_t>(tracingArgs.layerId);
+                                   tracingArgs.flags, LayerMetadata(),
+                                   std::make_optional<int32_t>(tracingArgs.layerId));
 
             if (tracingArgs.mirrorFromId == -1) {
                 sp<IBinder> parentHandle = nullptr;
@@ -230,16 +226,15 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
                 } else if (tracingArgs.parentId != -1) {
                     parentHandle = dataMapper->getLayerHandle(tracingArgs.parentId);
                 }
-                mFlinger.createLayer(args, &outHandle, parentHandle, &outLayerId,
-                                     nullptr /* parentLayer */, nullptr /* outTransformHint */);
+                mFlinger.createLayer(args, parentHandle, outResult);
             } else {
                 sp<IBinder> mirrorFromHandle = dataMapper->getLayerHandle(tracingArgs.mirrorFromId);
-                mFlinger.mirrorLayer(args, mirrorFromHandle, &outHandle, &outLayerId);
+                mFlinger.mirrorLayer(args, mirrorFromHandle, outResult);
             }
-            LOG_ALWAYS_FATAL_IF(outLayerId != tracingArgs.layerId,
+            LOG_ALWAYS_FATAL_IF(outResult.layerId != tracingArgs.layerId,
                                 "Could not create layer expected:%d actual:%d", tracingArgs.layerId,
-                                outLayerId);
-            dataMapper->mLayerHandles[tracingArgs.layerId] = outHandle;
+                                outResult.layerId);
+            dataMapper->mLayerHandles[tracingArgs.layerId] = outResult.handle;
         }
 
         for (int j = 0; j < entry.transactions_size(); j++) {

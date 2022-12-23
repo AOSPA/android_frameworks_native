@@ -18,6 +18,7 @@
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 #include <libgui_fuzzer_utils.h>
+#include "android-base/stringprintf.h"
 
 using namespace android;
 
@@ -122,9 +123,36 @@ private:
     sp<SurfaceControl> makeSurfaceControl();
     BlurRegion getBlurRegion();
     void fuzzOnPullAtom();
+    gui::DisplayModeSpecs getDisplayModeSpecs();
 
     FuzzedDataProvider mFdp;
 };
+
+gui::DisplayModeSpecs SurfaceComposerClientFuzzer::getDisplayModeSpecs() {
+    const auto getRefreshRateRange = [&] {
+        gui::DisplayModeSpecs::RefreshRateRanges::RefreshRateRange range;
+        range.min = mFdp.ConsumeFloatingPoint<float>();
+        range.max = mFdp.ConsumeFloatingPoint<float>();
+        return range;
+    };
+
+    const auto getRefreshRateRanges = [&] {
+        gui::DisplayModeSpecs::RefreshRateRanges ranges;
+        ranges.physical = getRefreshRateRange();
+        ranges.render = getRefreshRateRange();
+        return ranges;
+    };
+
+    String8 displayName((mFdp.ConsumeRandomLengthString(kRandomStringMaxBytes)).c_str());
+    sp<IBinder> displayToken =
+            SurfaceComposerClient::createDisplay(displayName, mFdp.ConsumeBool() /*secure*/);
+    gui::DisplayModeSpecs specs;
+    specs.defaultMode = mFdp.ConsumeIntegral<int32_t>();
+    specs.allowGroupSwitching = mFdp.ConsumeBool();
+    specs.primaryRanges = getRefreshRateRanges();
+    specs.appRequestRanges = getRefreshRateRanges();
+    return specs;
+}
 
 BlurRegion SurfaceComposerClientFuzzer::getBlurRegion() {
     int32_t left = mFdp.ConsumeIntegral<int32_t>();
@@ -175,7 +203,9 @@ sp<SurfaceControl> SurfaceComposerClientFuzzer::makeSurfaceControl() {
     uint32_t flags = mFdp.ConsumeIntegral<uint32_t>();
     int32_t format = mFdp.ConsumeIntegral<int32_t>();
     int32_t layerId = mFdp.ConsumeIntegral<int32_t>();
-    return new SurfaceControl(client, handle, layerId, width, height, format, transformHint, flags);
+    std::string layerName = base::StringPrintf("#%d", layerId);
+    return new SurfaceControl(client, handle, layerId, layerName, width, height, format,
+                              transformHint, flags);
 }
 
 void SurfaceComposerClientFuzzer::invokeSurfaceComposerTransaction() {
@@ -244,12 +274,7 @@ void SurfaceComposerClientFuzzer::invokeSurfaceComposerClient() {
     String8 displayName((mFdp.ConsumeRandomLengthString(kRandomStringMaxBytes)).c_str());
     sp<IBinder> displayToken =
             SurfaceComposerClient::createDisplay(displayName, mFdp.ConsumeBool() /*secure*/);
-    SurfaceComposerClient::setDesiredDisplayModeSpecs(displayToken, mFdp.ConsumeIntegral<int32_t>(),
-                                                      mFdp.ConsumeBool() /*allowGroupSwitching*/,
-                                                      mFdp.ConsumeFloatingPoint<float>(),
-                                                      mFdp.ConsumeFloatingPoint<float>(),
-                                                      mFdp.ConsumeFloatingPoint<float>(),
-                                                      mFdp.ConsumeFloatingPoint<float>());
+    SurfaceComposerClient::setDesiredDisplayModeSpecs(displayToken, getDisplayModeSpecs());
 
     ui::ColorMode colorMode = mFdp.PickValueInArray(kColormodes);
     SurfaceComposerClient::setActiveColorMode(displayToken, colorMode);
@@ -267,10 +292,6 @@ void SurfaceComposerClientFuzzer::invokeSurfaceComposerClient() {
     sp<BnGraphicBufferProducer> producer;
     sp<Surface> surfaceParent(
             new Surface(producer, mFdp.ConsumeBool() /*controlledByApp*/, handle));
-
-    SurfaceComposerClient::enableVSyncInjections(mFdp.ConsumeBool() /*secure*/);
-    nsecs_t when = mFdp.ConsumeIntegral<uint32_t>();
-    SurfaceComposerClient::injectVSync(when);
 
     fuzzOnPullAtom();
     SurfaceComposerClient::setDisplayContentSamplingEnabled(displayToken,

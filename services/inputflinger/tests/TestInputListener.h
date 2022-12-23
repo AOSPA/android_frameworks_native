@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_TEST_INPUT_LISTENER_H
-#define _UI_TEST_INPUT_LISTENER_H
+#pragma once
 
 #include <android-base/thread_annotations.h>
 #include <gmock/gmock.h>
@@ -45,6 +44,8 @@ public:
 
     void assertNotifyKeyWasCalled(NotifyKeyArgs* outEventArgs = nullptr);
 
+    void assertNotifyKeyWasCalled(const ::testing::Matcher<NotifyKeyArgs>& matcher);
+
     void assertNotifyKeyWasNotCalled();
 
     void assertNotifyMotionWasCalled(NotifyMotionArgs* outEventArgs = nullptr);
@@ -68,7 +69,7 @@ private:
     void assertNotCalled(std::string message);
 
     template <class NotifyArgsType>
-    void notify(const NotifyArgsType* args);
+    void addToQueue(const NotifyArgsType* args);
 
     virtual void notifyConfigurationChanged(const NotifyConfigurationChangedArgs* args) override;
 
@@ -103,4 +104,3 @@ private:
 };
 
 } // namespace android
-#endif

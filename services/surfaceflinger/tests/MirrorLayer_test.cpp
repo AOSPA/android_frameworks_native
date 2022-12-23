@@ -29,8 +29,10 @@ protected:
     virtual void SetUp() {
         LayerTransactionTest::SetUp();
         ASSERT_EQ(NO_ERROR, mClient->initCheck());
+        const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        ASSERT_FALSE(ids.empty());
 
-        const auto display = SurfaceComposerClient::getInternalDisplayToken();
+        const auto display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
         ASSERT_FALSE(display == nullptr);
 
         mParentLayer = createColorLayer("Parent layer", Color::RED);
@@ -193,14 +195,14 @@ TEST_F(MirrorLayerTest, MirrorBufferLayer) {
         shot->expectColor(Rect(750, 750, 950, 950), Color::GREEN);
     }
 
-    sp<SurfaceControl> bufferStateLayer =
-            createLayer("BufferStateLayer", 200, 200, ISurfaceComposerClient::eFXSurfaceBufferState,
+    sp<SurfaceControl> layer =
+            createLayer("Layer", 200, 200, ISurfaceComposerClient::eFXSurfaceBufferState,
                         mChildLayer.get());
-    fillBufferStateLayerColor(bufferStateLayer, Color::BLUE, 200, 200);
-    Transaction().show(bufferStateLayer).apply();
+    fillBufferLayerColor(layer, Color::BLUE, 200, 200);
+    Transaction().show(layer).apply();
 
     {
-        SCOPED_TRACE("Initial Mirror BufferStateLayer");
+        SCOPED_TRACE("Initial Mirror Layer");
         auto shot = screenshot();
         // Buffer mirror
         shot->expectColor(Rect(550, 550, 750, 750), Color::BLUE);
@@ -208,9 +210,9 @@ TEST_F(MirrorLayerTest, MirrorBufferLayer) {
         shot->expectColor(Rect(750, 750, 950, 950), Color::GREEN);
     }
 
-    fillBufferStateLayerColor(bufferStateLayer, Color::WHITE, 200, 200);
+    fillBufferLayerColor(layer, Color::WHITE, 200, 200);
     {
-        SCOPED_TRACE("Update BufferStateLayer");
+        SCOPED_TRACE("Update Layer");
         auto shot = screenshot();
         // Buffer mirror
         shot->expectColor(Rect(550, 550, 750, 750), Color::WHITE);
@@ -218,9 +220,9 @@ TEST_F(MirrorLayerTest, MirrorBufferLayer) {
         shot->expectColor(Rect(750, 750, 950, 950), Color::GREEN);
     }
 
-    Transaction().reparent(bufferStateLayer, nullptr).apply();
+    Transaction().reparent(layer, nullptr).apply();
     {
-        SCOPED_TRACE("Removed BufferStateLayer");
+        SCOPED_TRACE("Removed Layer");
         auto shot = screenshot();
         // Buffer mirror
         shot->expectColor(Rect(550, 550, 750, 750), Color::GREEN);
@@ -231,7 +233,10 @@ TEST_F(MirrorLayerTest, MirrorBufferLayer) {
 
 // Test that the mirror layer is initially offscreen.
 TEST_F(MirrorLayerTest, InitialMirrorState) {
-    const auto display = SurfaceComposerClient::getInternalDisplayToken();
+    const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+    ASSERT_FALSE(ids.empty());
+
+    const auto display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
     ui::DisplayMode mode;
     SurfaceComposerClient::getActiveDisplayMode(display, &mode);
     const ui::Size& size = mode.resolution;
@@ -275,7 +280,9 @@ TEST_F(MirrorLayerTest, InitialMirrorState) {
 
 // Test that a mirror layer can be screenshot when offscreen
 TEST_F(MirrorLayerTest, OffscreenMirrorScreenshot) {
-    const auto display = SurfaceComposerClient::getInternalDisplayToken();
+    const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+    ASSERT_FALSE(ids.empty());
+    const auto display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
     ui::DisplayMode mode;
     SurfaceComposerClient::getActiveDisplayMode(display, &mode);
     const ui::Size& size = mode.resolution;
@@ -283,7 +290,7 @@ TEST_F(MirrorLayerTest, OffscreenMirrorScreenshot) {
     sp<SurfaceControl> grandchild =
             createLayer("Grandchild layer", 50, 50, ISurfaceComposerClient::eFXSurfaceBufferState,
                         mChildLayer.get());
-    ASSERT_NO_FATAL_FAILURE(fillBufferStateLayerColor(grandchild, Color::BLUE, 50, 50));
+    ASSERT_NO_FATAL_FAILURE(fillBufferLayerColor(grandchild, Color::BLUE, 50, 50));
     Rect childBounds = Rect(50, 50, 450, 450);
 
     asTransaction([&](Transaction& t) {

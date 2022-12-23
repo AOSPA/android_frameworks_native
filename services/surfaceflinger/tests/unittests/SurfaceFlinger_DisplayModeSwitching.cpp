@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+#include "mock/MockDisplayModeSpecs.h"
 #include "mock/MockEventThread.h"
 #undef LOG_TAG
 #define LOG_TAG "LibSurfaceFlingerUnittests"
 
 #include "DisplayTransactionTestHelpers.h"
 
+#include <ftl/fake_guard.h>
 #include <scheduler/Fps.h>
 
 namespace android {
@@ -41,15 +43,15 @@ public:
         PrimaryDisplayVariant::setupHwcGetActiveConfigCallExpectations(this);
 
         DisplayModes modes = makeModes(kMode60, kMode90, kMode120, kMode90_4K);
-        auto configs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
+        auto selectorPtr = std::make_shared<scheduler::RefreshRateSelector>(modes, kModeId60);
 
-        setupScheduler(configs);
+        setupScheduler(selectorPtr);
 
         mFlinger.onComposerHalHotplug(PrimaryDisplayVariant::HWC_DISPLAY_ID, Connection::CONNECTED);
         mFlinger.configureAndCommit();
 
         mDisplay = PrimaryDisplayVariant::makeFakeExistingDisplayInjector(this)
-                           .setDisplayModes(std::move(modes), kModeId60, std::move(configs))
+                           .setDisplayModes(std::move(modes), kModeId60, std::move(selectorPtr))
                            .inject();
 
         // isVsyncPeriodSwitchSupported should return true, otherwise the SF's HWC proxy
@@ -59,7 +61,7 @@ public:
     }
 
 protected:
-    void setupScheduler(std::shared_ptr<scheduler::RefreshRateConfigs>);
+    void setupScheduler(std::shared_ptr<scheduler::RefreshRateSelector>);
 
     sp<DisplayDevice> mDisplay;
     mock::EventThread* mAppEventThread;
@@ -79,7 +81,7 @@ protected:
 };
 
 void DisplayModeSwitchingTest::setupScheduler(
-        std::shared_ptr<scheduler::RefreshRateConfigs> configs) {
+        std::shared_ptr<scheduler::RefreshRateSelector> selectorPtr) {
     auto eventThread = std::make_unique<mock::EventThread>();
     mAppEventThread = eventThread.get();
     auto sfEventThread = std::make_unique<mock::EventThread>();
@@ -107,21 +109,24 @@ void DisplayModeSwitchingTest::setupScheduler(
     mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
                             std::move(eventThread), std::move(sfEventThread),
                             TestableSurfaceFlinger::SchedulerCallbackImpl::kNoOp,
-                            std::move(configs));
+                            std::move(selectorPtr));
 }
 
 TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithRefreshRequired) {
+    ftl::FakeGuard guard(kMainThreadContext);
+
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     mFlinger.onActiveDisplayChanged(mDisplay);
 
-    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(), kModeId90.value(),
-                                        false, 0.f, 120.f, 0.f, 120.f);
+    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                        mock::createDisplayModeSpecs(kModeId90.value(), false, 0,
+                                                                     120));
 
     ASSERT_TRUE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getDesiredActiveMode()->mode->getId(), kModeId90);
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     // Verify that next commit will call setActiveConfigWithConstraints in HWC
     const VsyncPeriodChangeTimeline timeline{.refreshRequired = true};
@@ -134,7 +139,7 @@ TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithRefreshRe
 
     Mock::VerifyAndClearExpectations(mComposer);
     ASSERT_TRUE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     // Verify that the next commit will complete the mode change and send
     // a onModeChanged event to the framework.
@@ -144,20 +149,23 @@ TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithRefreshRe
     Mock::VerifyAndClearExpectations(mAppEventThread);
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId90);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId90);
 }
 
 TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithoutRefreshRequired) {
+    ftl::FakeGuard guard(kMainThreadContext);
+
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
 
     mFlinger.onActiveDisplayChanged(mDisplay);
 
-    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(), kModeId90.value(),
-                                        true, 0.f, 120.f, 0.f, 120.f);
+    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                        mock::createDisplayModeSpecs(kModeId90.value(), true, 0,
+                                                                     120));
 
     ASSERT_TRUE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getDesiredActiveMode()->mode->getId(), kModeId90);
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     // Verify that next commit will call setActiveConfigWithConstraints in HWC
     // and complete the mode change.
@@ -172,20 +180,23 @@ TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithoutRefres
     mFlinger.commit();
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId90);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId90);
 }
 
 TEST_F(DisplayModeSwitchingTest, twoConsecutiveSetDesiredDisplayModeSpecs) {
+    ftl::FakeGuard guard(kMainThreadContext);
+
     // Test that if we call setDesiredDisplayModeSpecs while a previous mode change
     // is still being processed the later call will be respected.
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     mFlinger.onActiveDisplayChanged(mDisplay);
 
-    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(), kModeId90.value(),
-                                        false, 0.f, 120.f, 0.f, 120.f);
+    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                        mock::createDisplayModeSpecs(kModeId90.value(), false, 0,
+                                                                     120));
 
     const VsyncPeriodChangeTimeline timeline{.refreshRequired = true};
     EXPECT_CALL(*mComposer,
@@ -195,8 +206,9 @@ TEST_F(DisplayModeSwitchingTest, twoConsecutiveSetDesiredDisplayModeSpecs) {
 
     mFlinger.commit();
 
-    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(), kModeId120.value(),
-                                        false, 0.f, 180.f, 0.f, 180.f);
+    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                        mock::createDisplayModeSpecs(kModeId120.value(), false, 0,
+                                                                     180));
 
     ASSERT_TRUE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getDesiredActiveMode()->mode->getId(), kModeId120);
@@ -214,21 +226,24 @@ TEST_F(DisplayModeSwitchingTest, twoConsecutiveSetDesiredDisplayModeSpecs) {
     mFlinger.commit();
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId120);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId120);
 }
 
 TEST_F(DisplayModeSwitchingTest, changeResolution_OnActiveDisplay_WithoutRefreshRequired) {
+    ftl::FakeGuard guard(kMainThreadContext);
+
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     mFlinger.onActiveDisplayChanged(mDisplay);
 
-    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(), kModeId90_4K.value(),
-                                        false, 0.f, 120.f, 0.f, 120.f);
+    mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                        mock::createDisplayModeSpecs(kModeId90_4K.value(), false, 0,
+                                                                     120));
 
     ASSERT_TRUE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getDesiredActiveMode()->mode->getId(), kModeId90_4K);
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId60);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId60);
 
     // Verify that next commit will call setActiveConfigWithConstraints in HWC
     // and complete the mode change.
@@ -263,7 +278,7 @@ TEST_F(DisplayModeSwitchingTest, changeResolution_OnActiveDisplay_WithoutRefresh
     mDisplay = mFlinger.getDisplay(displayToken);
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
-    ASSERT_EQ(mDisplay->getActiveMode()->getId(), kModeId90_4K);
+    ASSERT_EQ(mDisplay->getActiveMode().getId(), kModeId90_4K);
 }
 
 } // namespace

@@ -112,8 +112,6 @@ private:
 
     void notifyDropWindow(const sp<IBinder>&, float x, float y) override {}
 
-    bool isPerDisplayTouchModeEnabled() override { return false; }
-
     InputDispatcherConfiguration mConfig;
 };
 
@@ -143,11 +141,8 @@ public:
                 ALOGE("Waited too long for consumer to produce an event, giving up");
                 break;
             }
-            int motionEventType;
-            int touchMoveNumber;
-            bool flag;
             result = mConsumer->consume(&mEventFactory, true /*consumeBatches*/, -1, &consumeSeq,
-                                        &event, &motionEventType, &touchMoveNumber, &flag);
+                                        &event);
         }
         if (result != OK) {
             ALOGE("Received result = %d from consume()", result);

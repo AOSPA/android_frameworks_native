@@ -30,17 +30,16 @@
 #include <ui/DisplayStatInfo.h>
 #include <ui/DynamicDisplayInfo.h>
 
-#include "BufferStateLayer.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/ComposerHal.h"
-#include "EffectLayer.h"
 #include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
+#include "FrontEnd/LayerHandle.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "Scheduler/EventThread.h"
 #include "Scheduler/MessageQueue.h"
-#include "Scheduler/RefreshRateConfigs.h"
+#include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/VSyncTracker.h"
 #include "Scheduler/VsyncConfiguration.h"
 #include "Scheduler/VsyncController.h"
@@ -48,7 +47,6 @@
 #include "StartPropertySetThread.h"
 #include "SurfaceFlinger.h"
 #include "SurfaceFlingerDefaultFactory.h"
-#include "SurfaceInterceptor.h"
 #include "ThreadContext.h"
 #include "TimeStats/TimeStats.h"
 
@@ -62,7 +60,6 @@
 #include "tests/unittests/mock/MockFrameTimeline.h"
 #include "tests/unittests/mock/MockFrameTracer.h"
 #include "tests/unittests/mock/MockNativeWindowSurface.h"
-#include "tests/unittests/mock/MockSurfaceInterceptor.h"
 #include "tests/unittests/mock/MockTimeStats.h"
 #include "tests/unittests/mock/MockVSyncTracker.h"
 #include "tests/unittests/mock/MockVsyncController.h"
@@ -215,29 +212,29 @@ struct FakePhaseOffsets : scheduler::VsyncConfiguration {
     void reset() override {}
     void setRefreshRateFps(Fps) override {}
     void dump(std::string &) const override {}
-    void UpdateSfOffsets(std::unordered_map<float, int64_t>*) override {}
 };
 
 namespace scheduler {
 
 class TestableScheduler : public Scheduler, private ICompositor {
 public:
-    TestableScheduler(const std::shared_ptr<scheduler::RefreshRateConfigs> &refreshRateConfigs,
-                      ISchedulerCallback &callback)
+    TestableScheduler(const std::shared_ptr<scheduler::RefreshRateSelector>& selectorPtr,
+                      ISchedulerCallback& callback)
           : TestableScheduler(std::make_unique<android::mock::VsyncController>(),
-                              std::make_unique<android::mock::VSyncTracker>(), refreshRateConfigs,
+                              std::make_unique<android::mock::VSyncTracker>(), selectorPtr,
                               callback) {}
 
     TestableScheduler(std::unique_ptr<VsyncController> controller,
                       std::unique_ptr<VSyncTracker> tracker,
-                      std::shared_ptr<RefreshRateConfigs> configs, ISchedulerCallback &callback)
+                      std::shared_ptr<RefreshRateSelector> selectorPtr,
+                      ISchedulerCallback& callback)
           : Scheduler(*this, callback, Feature::kContentDetection) {
         mVsyncSchedule.emplace(VsyncSchedule(std::move(tracker), nullptr, std::move(controller)));
-        setRefreshRateConfigs(std::move(configs));
+        setRefreshRateSelector(std::move(selectorPtr));
     }
 
     ConnectionHandle createConnection(std::unique_ptr<EventThread> eventThread) {
-        return Scheduler::createConnection(std::move(eventThread), false);
+        return Scheduler::createConnection(std::move(eventThread));
     }
 
     auto &mutablePrimaryHWVsyncEnabled() { return mPrimaryHWVsyncEnabled; }
@@ -245,7 +242,7 @@ public:
 
     auto &mutableLayerHistory() { return mLayerHistory; }
 
-    auto refreshRateConfigs() { return holdRefreshRateConfigs(); }
+    auto refreshRateSelector() { return holdRefreshRateSelector(); }
 
     void replaceTouchTimer(int64_t millis) {
         if (mTouchTimer) {
@@ -314,13 +311,9 @@ public:
     }
 
     std::unique_ptr<scheduler::Scheduler> createScheduler(
-            const std::shared_ptr<scheduler::RefreshRateConfigs> &,
-            scheduler::ISchedulerCallback &) {
+            const std::shared_ptr<scheduler::RefreshRateSelector>&,
+            scheduler::ISchedulerCallback&) {
         return nullptr;
-    }
-
-    sp<SurfaceInterceptor> createSurfaceInterceptor() override {
-        return sp<android::impl::SurfaceInterceptor>::make();
     }
 
     sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
@@ -357,12 +350,14 @@ public:
         return compositionengine::impl::createCompositionEngine();
     }
 
-    sp<BufferStateLayer> createBufferStateLayer(const LayerCreationArgs &) override {
-        return nullptr;
+    sp<Layer> createBufferStateLayer(const LayerCreationArgs &) override { return nullptr; }
+
+    sp<Layer> createEffectLayer(const LayerCreationArgs &args) override {
+        return sp<Layer>::make(args);
     }
 
-    sp<EffectLayer> createEffectLayer(const LayerCreationArgs &args) override {
-        return sp<EffectLayer>::make(args);
+    sp<LayerFE> createLayerFE(const std::string &layerName) override {
+        return sp<LayerFE>::make(layerName);
     }
 
     std::unique_ptr<FrameTracer> createFrameTracer() override {
@@ -460,10 +455,6 @@ public:
         mFlinger->calculateColorMatrix(fdp->ConsumeFloatingPoint<float>());
         mFlinger->updateColorMatrixLocked();
         mFlinger->CheckTransactCodeCredentials(fdp->ConsumeIntegral<uint32_t>());
-
-        const CountDownLatch transactionCommittedSignal(fdp->ConsumeIntegral<uint32_t>());
-        mFlinger->waitForSynchronousTransaction(transactionCommittedSignal);
-        mFlinger->signalSynchronousTransactions(fdp->ConsumeIntegral<uint32_t>());
     }
 
     void getCompositionPreference() {
@@ -514,21 +505,20 @@ public:
     }
 
     void getDesiredDisplayModeSpecs(sp<IBinder> &display) {
-        ui::DisplayModeId outDefaultMode;
-        bool outAllowGroupSwitching;
-        float outPrimaryRefreshRateMin;
-        float outPrimaryRefreshRateMax;
-        float outAppRequestRefreshRateMin;
-        float outAppRequestRefreshRateMax;
-        mFlinger->getDesiredDisplayModeSpecs(display, &outDefaultMode, &outAllowGroupSwitching,
-                                             &outPrimaryRefreshRateMin, &outPrimaryRefreshRateMax,
-                                             &outAppRequestRefreshRateMin,
-                                             &outAppRequestRefreshRateMax);
+        gui::DisplayModeSpecs _;
+        mFlinger->getDesiredDisplayModeSpecs(display, &_);
     }
 
     void setVsyncConfig(FuzzedDataProvider *fdp) {
         const scheduler::VsyncModulator::VsyncConfig vsyncConfig{};
         mFlinger->setVsyncConfig(vsyncConfig, fdp->ConsumeIntegral<nsecs_t>());
+    }
+
+    // TODO(b/248317436): extend to cover all displays for multi-display devices
+    static std::optional<PhysicalDisplayId> getFirstDisplayId() {
+        std::vector<PhysicalDisplayId> ids = SurfaceComposerClient::getPhysicalDisplayIds();
+        if (ids.empty()) return {};
+        return ids.front();
     }
 
     sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
@@ -542,9 +532,8 @@ public:
         ui::PixelFormat pixelFormat{};
         mFlinger->getHwComposer().allocateVirtualDisplay(halVirtualDisplayId, uiSize, &pixelFormat);
 
-        PhysicalDisplayId physicalDisplayId =
-                SurfaceComposerClient::getInternalDisplayId().value_or(
-                        PhysicalDisplayId::fromPort(fdp->ConsumeIntegral<uint8_t>()));
+        PhysicalDisplayId physicalDisplayId = getFirstDisplayId().value_or(
+                PhysicalDisplayId::fromPort(fdp->ConsumeIntegral<uint8_t>()));
         mFlinger->getHwComposer().allocatePhysicalDisplay(kHwDisplayId, physicalDisplayId);
 
         sp<IBinder> display =
@@ -585,8 +574,6 @@ public:
 
         onPullAtom(&mFdp);
 
-        mFlinger->injectVSync(mFdp.ConsumeIntegral<nsecs_t>());
-
         getCompositionPreference();
         getDisplayedContentSample(display, &mFdp);
         getDesiredDisplayModeSpecs(display);
@@ -601,14 +588,18 @@ public:
         mFlinger->binderDied(display);
         mFlinger->onFirstRef();
 
-        mFlinger->commitTransactions();
         mFlinger->updateInputFlinger();
         mFlinger->updateCursorAsync();
 
         setVsyncConfig(&mFdp);
 
-        FTL_FAKE_GUARD(kMainThreadContext,
-                       mFlinger->flushTransactionQueues(getFuzzedVsyncId(mFdp)));
+        {
+            ftl::FakeGuard guard(kMainThreadContext);
+
+            mFlinger->commitTransactions();
+            mFlinger->flushTransactionQueues(getFuzzedVsyncId(mFdp));
+            mFlinger->postComposition();
+        }
 
         mFlinger->setTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
         mFlinger->clearTransactionFlags(mFdp.ConsumeIntegral<uint32_t>());
@@ -625,8 +616,6 @@ public:
 
         mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mFdp.ConsumeIntegral<uid_t>());
 
-        FTL_FAKE_GUARD(kMainThreadContext, mFlinger->postComposition());
-
         mFlinger->calculateExpectedPresentTime({});
 
         mFlinger->enableHalVirtualDisplays(mFdp.ConsumeBool());
@@ -637,7 +626,8 @@ public:
     }
 
     void setupRenderEngine(std::unique_ptr<renderengine::RenderEngine> renderEngine) {
-        mFlinger->mCompositionEngine->setRenderEngine(std::move(renderEngine));
+        mFlinger->mRenderEngine = std::move(renderEngine);
+        mFlinger->mCompositionEngine->setRenderEngine(mFlinger->mRenderEngine.get());
     }
 
     void setupComposer(std::unique_ptr<Hwc2::Composer> composer) {
@@ -664,8 +654,9 @@ public:
             modes.try_emplace(kModeId90, mock::createDisplayMode(kModeId90, 90_Hz));
         }
 
-        mRefreshRateConfigs = std::make_shared<scheduler::RefreshRateConfigs>(modes, kModeId60);
-        const auto fps = mRefreshRateConfigs->getActiveMode()->getFps();
+        mRefreshRateSelector = std::make_shared<scheduler::RefreshRateSelector>(modes, kModeId60);
+        const auto fps =
+                FTL_FAKE_GUARD(kMainThreadContext, mRefreshRateSelector->getActiveMode().getFps());
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
         mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
                 mFlinger->mVsyncConfiguration->getCurrentConfigs());
@@ -674,7 +665,7 @@ public:
                                                               hal::PowerMode::OFF);
 
         mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
-                                                      std::move(vsyncTracker), mRefreshRateConfigs,
+                                                      std::move(vsyncTracker), mRefreshRateSelector,
                                                       *(callback ?: this));
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
@@ -716,9 +707,9 @@ public:
 
     void enableHalVirtualDisplays(bool enable) { mFlinger->enableHalVirtualDisplays(enable); }
 
-    auto commitTransactionsLocked(uint32_t transactionFlags) {
+    void commitTransactionsLocked(uint32_t transactionFlags) FTL_FAKE_GUARD(kMainThreadContext) {
         Mutex::Autolock lock(mFlinger->mStateLock);
-        return mFlinger->commitTransactionsLocked(transactionFlags);
+        mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
     auto setDisplayStateLocked(const DisplayState &s) {
@@ -734,8 +725,10 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto &getTransactionQueue() { return mFlinger->mLocklessTransactionQueue; }
-    auto &getPendingTransactionQueue() { return mFlinger->mPendingTransactionQueues; }
+    auto &getTransactionQueue() { return mFlinger->mTransactionHandler.mLocklessTransactionQueue; }
+    auto &getPendingTransactionQueue() {
+        return mFlinger->mTransactionHandler.mPendingTransactionQueues;
+    }
 
     auto setTransactionState(
             const FrameTimelineInfo &frameTimelineInfo, const Vector<ComposerState> &states,
@@ -747,6 +740,11 @@ public:
                                              inputWindowCommands, desiredPresentTime,
                                              isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,
                                              listenerCallbacks, transactionId);
+    }
+
+    auto flushTransactionQueues() {
+        ftl::FakeGuard guard(kMainThreadContext);
+        return mFlinger->flushTransactionQueues(VsyncId{0});
     }
 
     auto onTransact(uint32_t code, const Parcel &data, Parcel *reply, uint32_t flags) {
@@ -763,28 +761,26 @@ public:
     /* Read-write access to private data to set up preconditions and assert
      * post-conditions.
      */
+    auto& mutableSupportsWideColor() { return mFlinger->mSupportsWideColor; }
+    auto& mutableCurrentState() { return mFlinger->mCurrentState; }
+    auto& mutableDisplays() { return mFlinger->mDisplays; }
+    auto& mutableDrawingState() { return mFlinger->mDrawingState; }
 
-    auto &mutableCurrentState() { return mFlinger->mCurrentState; }
-    auto &mutableDisplays() { return mFlinger->mDisplays; }
-    auto &mutableDrawingState() { return mFlinger->mDrawingState; }
-    auto &mutableInterceptor() { return mFlinger->mInterceptor; }
-
-    auto fromHandle(const sp<IBinder> &handle) { return mFlinger->fromHandle(handle); }
+    auto fromHandle(const sp<IBinder> &handle) { return LayerHandle::getLayer(handle); }
 
     ~TestableSurfaceFlinger() {
         mutableDisplays().clear();
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
-        mutableInterceptor().clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
-        mFlinger->mCompositionEngine->setRenderEngine(
-                std::unique_ptr<renderengine::RenderEngine>());
+        mFlinger->mRenderEngine = std::unique_ptr<renderengine::RenderEngine>();
+        mFlinger->mCompositionEngine->setRenderEngine(mFlinger->mRenderEngine.get());
     }
 
 private:
     void setVsyncEnabled(bool) override {}
-    void requestDisplayMode(DisplayModePtr, DisplayModeEvent) override {}
+    void requestDisplayModes(std::vector<display::DisplayModeRequest>) override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() override {}
 
@@ -792,7 +788,7 @@ private:
     sp<SurfaceFlinger> mFlinger =
             sp<SurfaceFlinger>::make(mFactory, SurfaceFlinger::SkipInitialization);
     scheduler::TestableScheduler *mScheduler = nullptr;
-    std::shared_ptr<scheduler::RefreshRateConfigs> mRefreshRateConfigs;
+    std::shared_ptr<scheduler::RefreshRateSelector> mRefreshRateSelector;
 };
 
 } // namespace android

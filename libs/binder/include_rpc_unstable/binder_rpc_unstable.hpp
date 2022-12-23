@@ -24,23 +24,37 @@ struct AIBinder;
 
 // Starts an RPC server on a given port and a given root IBinder object.
 // This function sets up the server and joins before returning.
-bool RunRpcServer(AIBinder* service, unsigned int port);
+bool RunVsockRpcServer(AIBinder* service, unsigned int port);
 
 // Starts an RPC server on a given port and a given root IBinder object.
 // This function sets up the server, calls readyCallback with a given param, and
 // then joins before returning.
-bool RunRpcServerCallback(AIBinder* service, unsigned int port, void (*readyCallback)(void* param),
-                          void* param);
+bool RunVsockRpcServerCallback(AIBinder* service, unsigned int port,
+                               void (*readyCallback)(void* param), void* param);
 
 // Starts an RPC server on a given port and a given root IBinder factory.
-// RunRpcServerWithFactory acts like RunRpcServerCallback, but instead of
+// RunVsockRpcServerWithFactory acts like RunVsockRpcServerCallback, but instead of
 // assigning single root IBinder object to all connections, factory is called
 // whenever a client connects, making it possible to assign unique IBinder
 // object to each client.
-bool RunRpcServerWithFactory(AIBinder* (*factory)(unsigned int cid, void* context),
-                          void* factoryContext, unsigned int port);
+bool RunVsockRpcServerWithFactory(AIBinder* (*factory)(unsigned int cid, void* context),
+                                  void* factoryContext, unsigned int port);
 
-AIBinder* RpcClient(unsigned int cid, unsigned int port);
+AIBinder* VsockRpcClient(unsigned int cid, unsigned int port);
+
+// Starts a Unix domain RPC server with a given init-managed Unix domain `name` and
+// a given root IBinder object.
+// The socket should be created in init.rc with the same `name`.
+//
+// This function sets up the server, calls readyCallback with a given param, and
+// then joins before returning.
+bool RunInitUnixDomainRpcServer(AIBinder* service, const char* name,
+                                void (*readyCallback)(void* param), void* param);
+
+// Gets the service via the RPC binder with Unix domain socket with the given
+// Unix socket `name`.
+// The final Unix domain socket path name is /dev/socket/`name`.
+AIBinder* UnixDomainRpcClient(const char* name);
 
 // Connect to an RPC server with preconnected file descriptors.
 //
@@ -50,5 +64,4 @@ AIBinder* RpcClient(unsigned int cid, unsigned int port);
 // param will be passed to requestFd. Callers can use param to pass contexts to
 // the requestFd function.
 AIBinder* RpcPreconnectedClient(int (*requestFd)(void* param), void* param);
-
 }

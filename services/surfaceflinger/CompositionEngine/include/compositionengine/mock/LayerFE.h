@@ -42,9 +42,8 @@ public:
 
     MOCK_CONST_METHOD0(getCompositionState, const LayerFECompositionState*());
 
-    MOCK_METHOD1(onPreComposition, bool(nsecs_t));
+    MOCK_METHOD2(onPreComposition, bool(nsecs_t, bool));
 
-    MOCK_METHOD1(prepareCompositionState, void(compositionengine::LayerFE::StateSubset));
     MOCK_CONST_METHOD1(prepareClientComposition,
                        std::optional<compositionengine::LayerFE::LayerSettings>(
                                compositionengine::LayerFE::ClientCompositionTargetSettings&));
@@ -54,6 +53,8 @@ public:
     MOCK_CONST_METHOD0(getDebugName, const char*());
     MOCK_CONST_METHOD0(getSequence, int32_t());
     MOCK_CONST_METHOD0(hasRoundedCorners, bool());
+    MOCK_CONST_METHOD0(getMetadata, gui::LayerMetadata*());
+    MOCK_CONST_METHOD0(getRelativeMetadata, gui::LayerMetadata*());
 };
 
 } // namespace android::compositionengine::mock

@@ -14,10 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_INPUTDISPATCHER_TOUCHSTATE_H
-#define _UI_INPUT_INPUTDISPATCHER_TOUCHSTATE_H
+#pragma once
 
-#include "Monitor.h"
 #include "TouchedWindow.h"
 
 namespace android {
@@ -29,15 +27,10 @@ class WindowInfoHandle;
 namespace inputdispatcher {
 
 struct TouchState {
-    bool down = false;
-    bool split = false;
-
     // id of the device that is currently down, others are rejected
     int32_t deviceId = -1;
     // source of the device that is current down, others are rejected
     uint32_t source = 0;
-    // id to the display that currently has a touch, others are rejected
-    int32_t displayId = ADISPLAY_ID_NONE;
 
     std::vector<TouchedWindow> windows;
 
@@ -47,11 +40,10 @@ struct TouchState {
 
     void reset();
     void addOrUpdateWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                           int32_t targetFlags, BitSet32 pointerIds,
+                           ftl::Flags<InputTarget::Flags> targetFlags, BitSet32 pointerIds,
                            std::optional<nsecs_t> eventTime = std::nullopt);
     void removeWindowByToken(const sp<IBinder>& token);
     void filterNonAsIsTouchWindows();
-    void filterWindowsExcept(const sp<IBinder>& token);
 
     // Cancel pointers for current set of windows except the window with particular binder token.
     void cancelPointersForWindowsExcept(const BitSet32 pointerIds, const sp<IBinder>& token);
@@ -62,10 +54,10 @@ struct TouchState {
     sp<android::gui::WindowInfoHandle> getFirstForegroundWindowHandle() const;
     bool isSlippery() const;
     sp<android::gui::WindowInfoHandle> getWallpaperWindow() const;
-    sp<android::gui::WindowInfoHandle> getWindow(const sp<IBinder>&) const;
+    // Whether any of the windows are currently being touched
+    bool isDown() const;
+    std::string dump() const;
 };
 
 } // namespace inputdispatcher
 } // namespace android
-
-#endif // _UI_INPUT_INPUTDISPATCHER_TOUCHSTATE_H

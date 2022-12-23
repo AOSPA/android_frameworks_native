@@ -66,8 +66,6 @@ private:
     // or used and allows us to keep track of the least-recently used buffer.
     static const constexpr size_t kMaxLayerBufferCount = BufferQueue::NUM_BUFFER_SLOTS + 1;
     wp<GraphicBuffer> mBuffers[kMaxLayerBufferCount];
-    uint32_t mNextSlot = 0;
-    bool mReduceSlotsForWideVideo = false;
 };
 
 } // namespace compositionengine::impl

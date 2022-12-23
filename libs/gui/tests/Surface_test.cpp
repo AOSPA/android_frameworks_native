@@ -263,7 +263,10 @@ TEST_F(SurfaceTest, ScreenshotsOfProtectedBuffersDontSucceed) {
     sp<ANativeWindow> anw(mSurface);
 
     // Verify the screenshot works with no protected buffers.
-    const sp<IBinder> display = ComposerServiceAIDL::getInstance().getInternalDisplayToken();
+    const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+    ASSERT_FALSE(ids.empty());
+    // display 0 is picked for now, can extend to support all displays if needed
+    const sp<IBinder> display = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
     ASSERT_FALSE(display == nullptr);
 
     DisplayCaptureArgs captureArgs;
@@ -848,10 +851,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status enableVSyncInjections(bool /*enable*/) override { return binder::Status::ok(); }
-
-    binder::Status injectVSync(int64_t /*when*/) override { return binder::Status::ok(); }
-
     binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* /*outLayers*/) override {
         return binder::Status::ok();
     }
@@ -890,11 +889,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status isDeviceRCSupported(const sp<IBinder>& /*token*/,
-                                      bool* /*outIsDeviceRCSupported*/) override {
-        return binder::Status::ok();
-    }
-
     binder::Status addRegionSamplingListener(
             const gui::ARect& /*samplingArea*/, const sp<IBinder>& /*stopLayerHandle*/,
             const sp<gui::IRegionSamplingListener>& /*listener*/) override {
@@ -926,16 +920,12 @@ public:
     }
 
     binder::Status setDesiredDisplayModeSpecs(const sp<IBinder>& /*displayToken*/,
-                                              int32_t /*defaultMode*/, bool /*allowGroupSwitching*/,
-                                              float /*primaryRefreshRateMin*/,
-                                              float /*primaryRefreshRateMax*/,
-                                              float /*appRequestRefreshRateMin*/,
-                                              float /*appRequestRefreshRateMax*/) override {
+                                              const gui::DisplayModeSpecs&) override {
         return binder::Status::ok();
     }
 
     binder::Status getDesiredDisplayModeSpecs(const sp<IBinder>& /*displayToken*/,
-                                              gui::DisplayModeSpecs* /*outSpecs*/) override {
+                                              gui::DisplayModeSpecs*) override {
         return binder::Status::ok();
     }
 
@@ -979,11 +969,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status addTransactionTraceListener(
-            const sp<gui::ITransactionTraceListener>& /*listener*/) override {
-        return binder::Status::ok();
-    }
-
     binder::Status getGpuContextPriority(int32_t* /*outPriority*/) override {
         return binder::Status::ok();
     }
@@ -999,6 +984,10 @@ public:
 
     binder::Status removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& /*windowInfosListener*/) override {
+        return binder::Status::ok();
+    }
+
+    binder::Status getOverlaySupport(gui::OverlayProperties* /*properties*/) override {
         return binder::Status::ok();
     }
 

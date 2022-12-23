@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 
-use binder::{unstable_api::AsNative, SpIBinder};
-use std::{os::raw, ptr::null_mut};
+use binder::{
+    unstable_api::{AIBinder, AsNative},
+    SpIBinder,
+};
+use std::{ffi::CString, os::raw, ptr::null_mut};
 
 /// Runs a binder RPC server, serving the supplied binder service implementation on the given vsock
 /// port.
@@ -27,12 +30,33 @@ use std::{os::raw, ptr::null_mut};
 /// The current thread is joined to the binder thread pool to handle incoming messages.
 ///
 /// Returns true if the server has shutdown normally, false if it failed in some way.
-pub fn run_rpc_server<F>(service: SpIBinder, port: u32, on_ready: F) -> bool
+pub fn run_vsock_rpc_server<F>(service: SpIBinder, port: u32, on_ready: F) -> bool
 where
     F: FnOnce(),
 {
     let mut ready_notifier = ReadyNotifier(Some(on_ready));
-    ready_notifier.run_server(service, port)
+    ready_notifier.run_vsock_server(service, port)
+}
+
+/// Runs a binder RPC server, serving the supplied binder service implementation on the given
+/// socket file name. The socket should be initialized in init.rc with the same name.
+///
+/// If and when the server is ready for connections, `on_ready` is called to allow appropriate
+/// action to be taken - e.g. to notify clients that they may now attempt to connect.
+///
+/// The current thread is joined to the binder thread pool to handle incoming messages.
+///
+/// Returns true if the server has shutdown normally, false if it failed in some way.
+pub fn run_init_unix_domain_rpc_server<F>(
+    service: SpIBinder,
+    socket_name: &str,
+    on_ready: F,
+) -> bool
+where
+    F: FnOnce(),
+{
+    let mut ready_notifier = ReadyNotifier(Some(on_ready));
+    ready_notifier.run_init_unix_domain_server(service, socket_name)
 }
 
 struct ReadyNotifier<F>(Option<F>)
@@ -43,18 +67,43 @@ impl<F> ReadyNotifier<F>
 where
     F: FnOnce(),
 {
-    fn run_server(&mut self, mut service: SpIBinder, port: u32) -> bool {
-        let service = service.as_native_mut() as *mut binder_rpc_unstable_bindgen::AIBinder;
+    fn run_vsock_server(&mut self, mut service: SpIBinder, port: u32) -> bool {
+        let service = service.as_native_mut();
         let param = self.as_void_ptr();
 
         // SAFETY: Service ownership is transferring to the server and won't be valid afterward.
         // Plus the binder objects are threadsafe.
-        // RunRpcServerCallback does not retain a reference to `ready_callback` or `param`; it only
+        // RunVsockRpcServerCallback does not retain a reference to `ready_callback` or `param`; it only
         // uses them before it returns, which is during the lifetime of `self`.
         unsafe {
-            binder_rpc_unstable_bindgen::RunRpcServerCallback(
+            binder_rpc_unstable_bindgen::RunVsockRpcServerCallback(
                 service,
                 port,
+                Some(Self::ready_callback),
+                param,
+            )
+        }
+    }
+
+    fn run_init_unix_domain_server(&mut self, mut service: SpIBinder, socket_name: &str) -> bool {
+        let socket_name = match CString::new(socket_name) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Cannot convert {} to CString. Error: {:?}", socket_name, e);
+                return false;
+            }
+        };
+        let service = service.as_native_mut();
+        let param = self.as_void_ptr();
+
+        // SAFETY: Service ownership is transferring to the server and won't be valid afterward.
+        // Plus the binder objects are threadsafe.
+        // RunInitUnixDomainRpcServer does not retain a reference to `ready_callback` or `param`;
+        // it only uses them before it returns, which is during the lifetime of `self`.
+        unsafe {
+            binder_rpc_unstable_bindgen::RunInitUnixDomainRpcServer(
+                service,
+                socket_name.as_ptr(),
                 Some(Self::ready_callback),
                 param,
             )
@@ -66,7 +115,7 @@ where
     }
 
     unsafe extern "C" fn ready_callback(param: *mut raw::c_void) {
-        // SAFETY: This is only ever called by `RunRpcServerCallback`, within the lifetime of the
+        // SAFETY: This is only ever called by `RunVsockRpcServerCallback`, within the lifetime of the
         // `ReadyNotifier`, with `param` taking the value returned by `as_void_ptr` (so a properly
         // aligned non-null pointer to an initialized instance).
         let ready_notifier = param as *mut Self;
@@ -88,7 +137,7 @@ type RpcServerFactoryRef<'a> = &'a mut (dyn FnMut(u32) -> Option<SpIBinder> + Se
 /// The current thread is joined to the binder thread pool to handle incoming messages.
 ///
 /// Returns true if the server has shutdown normally, false if it failed in some way.
-pub fn run_rpc_server_with_factory(
+pub fn run_vsock_rpc_server_with_factory(
     port: u32,
     mut factory: impl FnMut(u32) -> Option<SpIBinder> + Send + Sync,
 ) -> bool {
@@ -97,27 +146,28 @@ pub fn run_rpc_server_with_factory(
     let mut factory_ref: RpcServerFactoryRef = &mut factory;
     let context = &mut factory_ref as *mut RpcServerFactoryRef as *mut raw::c_void;
 
-    // SAFETY: `factory_wrapper` is only ever called by `RunRpcServerWithFactory`, with context
+    // SAFETY: `factory_wrapper` is only ever called by `RunVsockRpcServerWithFactory`, with context
     // taking the pointer value above (so a properly aligned non-null pointer to an initialized
     // `RpcServerFactoryRef`), within the lifetime of `factory_ref` (i.e. no more calls will be made
-    // after `RunRpcServerWithFactory` returns).
+    // after `RunVsockRpcServerWithFactory` returns).
     unsafe {
-        binder_rpc_unstable_bindgen::RunRpcServerWithFactory(Some(factory_wrapper), context, port)
+        binder_rpc_unstable_bindgen::RunVsockRpcServerWithFactory(
+            Some(factory_wrapper),
+            context,
+            port,
+        )
     }
 }
 
-unsafe extern "C" fn factory_wrapper(
-    cid: u32,
-    context: *mut raw::c_void,
-) -> *mut binder_rpc_unstable_bindgen::AIBinder {
+unsafe extern "C" fn factory_wrapper(cid: u32, context: *mut raw::c_void) -> *mut AIBinder {
     // SAFETY: `context` was created from an `&mut RpcServerFactoryRef` by
-    // `run_rpc_server_with_factory`, and we are still within the lifetime of the value it is
+    // `run_vsock_rpc_server_with_factory`, and we are still within the lifetime of the value it is
     // pointing to.
     let factory_ptr = context as *mut RpcServerFactoryRef;
     let factory = factory_ptr.as_mut().unwrap();
 
     if let Some(mut service) = factory(cid) {
-        service.as_native_mut() as *mut binder_rpc_unstable_bindgen::AIBinder
+        service.as_native_mut()
     } else {
         null_mut()
     }

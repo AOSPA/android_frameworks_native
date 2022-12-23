@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_INPUTDISPATCHER_INPUTDISPATCHERPOLICYINTERFACE_H
-#define _UI_INPUT_INPUTDISPATCHER_INPUTDISPATCHERPOLICYINTERFACE_H
+#pragma once
 
 #include "InputDispatcherConfiguration.h"
 
@@ -137,11 +136,6 @@ public:
 
     /* Notifies the policy that the drag window has moved over to another window */
     virtual void notifyDropWindow(const sp<IBinder>& token, float x, float y) = 0;
-
-    /* If touch mode is enabled per display or global */
-    virtual bool isPerDisplayTouchModeEnabled() = 0;
 };
 
 } // namespace android
-
-#endif // _UI_INPUT_INPUTDISPATCHER_INPUTDISPATCHERPOLICYINTERFACE_H

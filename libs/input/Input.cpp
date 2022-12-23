@@ -22,6 +22,7 @@
 #include <inttypes.h>
 #include <string.h>
 
+#include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/stringprintf.h>
 #include <cutils/compiler.h>
@@ -34,7 +35,7 @@
 #ifdef __linux__
 #include <binder/Parcel.h>
 #endif
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
 #include <sys/random.h>
 #endif
 
@@ -87,6 +88,8 @@ const char* motionClassificationToString(MotionClassification classification) {
             return "AMBIGUOUS_GESTURE";
         case MotionClassification::DEEP_PRESS:
             return "DEEP_PRESS";
+        case MotionClassification::TWO_FINGER_SWIPE:
+            return "TWO_FINGER_SWIPE";
     }
 }
 
@@ -110,15 +113,31 @@ const char* motionToolTypeToString(int32_t toolType) {
 }
 
 // --- IdGenerator ---
+#if defined(__ANDROID__)
+[[maybe_unused]]
+#endif
+static status_t
+getRandomBytes(uint8_t* data, size_t size) {
+    int ret = TEMP_FAILURE_RETRY(open("/dev/urandom", O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+    if (ret == -1) {
+        return -errno;
+    }
+
+    base::unique_fd fd(ret);
+    if (!base::ReadFully(fd, data, size)) {
+        return -errno;
+    }
+    return OK;
+}
+
 IdGenerator::IdGenerator(Source source) : mSource(source) {}
 
 int32_t IdGenerator::nextId() const {
     constexpr uint32_t SEQUENCE_NUMBER_MASK = ~SOURCE_MASK;
     int32_t id = 0;
 
-// Avoid building against syscall getrandom(2) on host, which will fail build on Mac. Host doesn't
-// use sequence number so just always return mSource.
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
+    // On device, prefer 'getrandom' to '/dev/urandom' because it's faster.
     constexpr size_t BUF_LEN = sizeof(id);
     size_t totalBytes = 0;
     while (totalBytes < BUF_LEN) {
@@ -130,8 +149,17 @@ int32_t IdGenerator::nextId() const {
         }
         totalBytes += bytes;
     }
+#else
+#if defined(__linux__)
+    // On host, <sys/random.h> / GRND_NONBLOCK is not available
+    while (true) {
+        status_t result = getRandomBytes(reinterpret_cast<uint8_t*>(&id), sizeof(id));
+        if (result == OK) {
+            break;
+        }
+    }
+#endif // __linux__
 #endif // __ANDROID__
-
     return (id & SEQUENCE_NUMBER_MASK) | static_cast<int32_t>(mSource);
 }
 
@@ -408,14 +436,6 @@ bool PointerCoords::operator==(const PointerCoords& other) const {
         }
     }
     return true;
-}
-
-void PointerCoords::copyFrom(const PointerCoords& other) {
-    bits = other.bits;
-    uint32_t count = BitSet64::count(bits);
-    for (uint32_t i = 0; i < count; i++) {
-        values[i] = other.values[i];
-    }
 }
 
 void PointerCoords::transform(const ui::Transform& transform) {
@@ -949,6 +969,8 @@ std::ostream& operator<<(std::ostream& out, const MotionEvent& event) {
         out << ", actionButton=" << std::to_string(event.getActionButton());
     }
     const size_t pointerCount = event.getPointerCount();
+    LOG_ALWAYS_FATAL_IF(pointerCount > MAX_POINTERS, "Too many pointers : pointerCount = %zu",
+                        pointerCount);
     for (size_t i = 0; i < pointerCount; i++) {
         out << ", id[" << i << "]=" << event.getPointerId(i);
         float x = event.getX(i);

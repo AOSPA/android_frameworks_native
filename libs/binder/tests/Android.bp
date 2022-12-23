@@ -232,6 +232,7 @@ cc_defaults {
     srcs: [
         "binderRpcTest.cpp",
         "binderRpcTestCommon.cpp",
+        "binderRpcUniversalTests.cpp",
     ],
 
     test_suites: ["general-tests"],
@@ -605,6 +606,7 @@ cc_test {
     shared_libs: [
         "libbinder",
         "liblog",
+        "libcutils",
         "libutils",
         "libutilscallstack",
         "libbase",

@@ -36,11 +36,11 @@ import android.gui.IHdrLayerInfoListener;
 import android.gui.IRegionSamplingListener;
 import android.gui.IScreenCaptureListener;
 import android.gui.ISurfaceComposerClient;
-import android.gui.ITransactionTraceListener;
 import android.gui.ITunnelModeEnabledListener;
 import android.gui.IWindowInfosListener;
 import android.gui.LayerCaptureArgs;
 import android.gui.LayerDebugInfo;
+import android.gui.OverlayProperties;
 import android.gui.PullAtomData;
 import android.gui.ARect;
 import android.gui.StaticDisplayInfo;
@@ -225,10 +225,6 @@ interface ISurfaceComposer {
      */
     PullAtomData onPullAtom(int atomId);
 
-    oneway void enableVSyncInjections(boolean enable);
-
-    oneway void injectVSync(long when);
-
     /**
      * Gets the list of active layers in Z order for debugging purposes
      *
@@ -276,8 +272,6 @@ interface ISurfaceComposer {
      * Requires the ACCESS_SURFACE_FLINGER permission.
      */
     boolean isWideColorDisplay(IBinder token);
-
-    boolean isDeviceRCSupported(IBinder token);
 
     /**
      * Registers a listener to stream median luma updates from SurfaceFlinger.
@@ -333,25 +327,9 @@ interface ISurfaceComposer {
     /**
      * Sets the refresh rate boundaries for the display.
      *
-     * The primary refresh rate range represents display manager's general guidance on the display
-     * modes we'll consider when switching refresh rates. Unless we get an explicit signal from an
-     * app, we should stay within this range.
-     *
-     * The app request refresh rate range allows us to consider more display modes when switching
-     * refresh rates. Although we should generally stay within the primary range, specific
-     * considerations, such as layer frame rate settings specified via the setFrameRate() api, may
-     * cause us to go outside the primary range. We never go outside the app request range. The app
-     * request range will be greater than or equal to the primary refresh rate range, never smaller.
-     *
-     * defaultMode is used to narrow the list of display modes SurfaceFlinger will consider
-     * switching between. Only modes with a mode group and resolution matching defaultMode
-     * will be considered for switching. The defaultMode corresponds to an ID of mode in the list
-     * of supported modes returned from getDynamicDisplayInfo().
+     * @see DisplayModeSpecs.aidl for details.
      */
-    void setDesiredDisplayModeSpecs(
-            IBinder displayToken, int defaultMode,
-            boolean allowGroupSwitching, float primaryRefreshRateMin, float primaryRefreshRateMax,
-            float appRequestRefreshRateMin, float appRequestRefreshRateMax);
+    void setDesiredDisplayModeSpecs(IBinder displayToken, in DisplayModeSpecs specs);
 
     DisplayModeSpecs getDesiredDisplayModeSpecs(IBinder displayToken);
 
@@ -455,11 +433,6 @@ interface ISurfaceComposer {
     void setOverrideFrameRate(int uid, float frameRate);
 
     /**
-     * Adds a TransactionTraceListener to listen for transaction tracing state updates.
-     */
-    void addTransactionTraceListener(ITransactionTraceListener listener);
-
-    /**
      * Gets priority of the RenderEngine in SurfaceFlinger.
      */
     int getGpuContextPriority();
@@ -484,4 +457,6 @@ interface ISurfaceComposer {
     void addWindowInfosListener(IWindowInfosListener windowInfosListener);
 
     void removeWindowInfosListener(IWindowInfosListener windowInfosListener);
+
+    OverlayProperties getOverlaySupport();
 }

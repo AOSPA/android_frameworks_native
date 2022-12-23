@@ -19,6 +19,8 @@
 #include <android/hardware/graphics/common/1.0/types.h>
 #include <grallocusage/GrallocUsageConversion.h>
 #include <graphicsenv/GraphicsEnv.h>
+#include <hardware/gralloc.h>
+#include <hardware/gralloc1.h>
 #include <log/log.h>
 #include <sync/sync.h>
 #include <system/window.h>
@@ -41,6 +43,26 @@ namespace vulkan {
 namespace driver {
 
 namespace {
+
+static uint64_t convertGralloc1ToBufferUsage(uint64_t producerUsage,
+                                             uint64_t consumerUsage) {
+    static_assert(uint64_t(GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN) ==
+                      uint64_t(GRALLOC1_PRODUCER_USAGE_CPU_READ_OFTEN),
+                  "expected ConsumerUsage and ProducerUsage CPU_READ_OFTEN "
+                  "bits to match");
+    uint64_t merged = producerUsage | consumerUsage;
+    if ((merged & (GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN)) ==
+        GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN) {
+        merged &= ~uint64_t(GRALLOC1_CONSUMER_USAGE_CPU_READ_OFTEN);
+        merged |= BufferUsage::CPU_READ_OFTEN;
+    }
+    if ((merged & (GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN)) ==
+        GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN) {
+        merged &= ~uint64_t(GRALLOC1_PRODUCER_USAGE_CPU_WRITE_OFTEN);
+        merged |= BufferUsage::CPU_WRITE_OFTEN;
+    }
+    return merged;
+}
 
 const VkSurfaceTransformFlagsKHR kSupportedTransforms =
     VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR |
@@ -646,10 +668,11 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
         // VkSurfaceProtectedCapabilitiesKHR::supportsProtected.  The following
         // four values cannot be known without a surface.  Default values will
         // be supplied anyway, but cannot be relied upon.
-        width = 1000;
-        height = 1000;
-        transform_hint = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-        max_buffer_count = 10;
+        width = 0xFFFFFFFF;
+        height = 0xFFFFFFFF;
+        transform_hint = VK_SURFACE_TRANSFORM_INHERIT_BIT_KHR;
+        capabilities->minImageCount = 0xFFFFFFFF;
+        capabilities->maxImageCount = 0xFFFFFFFF;
     } else {
         ANativeWindow* window = SurfaceFromHandle(surface)->window.get();
 
@@ -681,9 +704,9 @@ VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
                   strerror(-err), err);
             return VK_ERROR_SURFACE_LOST_KHR;
         }
+        capabilities->minImageCount = std::min(max_buffer_count, 3);
+        capabilities->maxImageCount = static_cast<uint32_t>(max_buffer_count);
     }
-    capabilities->minImageCount = std::min(max_buffer_count, 3);
-    capabilities->maxImageCount = static_cast<uint32_t>(max_buffer_count);
 
     capabilities->currentExtent =
         VkExtent2D{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
@@ -764,12 +787,13 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     std::vector<VkSurfaceFormatKHR> all_formats = {
         {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
         {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-        // Also allow to use PASS_THROUGH + HAL_DATASPACE_ARBITRARY
-        {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_PASS_THROUGH_EXT},
-        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_PASS_THROUGH_EXT},
     };
 
     if (colorspace_ext) {
+        all_formats.emplace_back(VkSurfaceFormatKHR{
+            VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        all_formats.emplace_back(VkSurfaceFormatKHR{
+            VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_PASS_THROUGH_EXT});
         all_formats.emplace_back(VkSurfaceFormatKHR{
             VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_BT709_LINEAR_EXT});
     }
@@ -789,16 +813,22 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
     if (AHardwareBuffer_isSupported(&desc)) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
             VK_FORMAT_R5G6B5_UNORM_PACK16, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
-        all_formats.emplace_back(VkSurfaceFormatKHR{
-            VK_FORMAT_R5G6B5_UNORM_PACK16, VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        if (colorspace_ext) {
+            all_formats.emplace_back(
+                VkSurfaceFormatKHR{VK_FORMAT_R5G6B5_UNORM_PACK16,
+                                   VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        }
     }
 
     desc.format = AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
     if (AHardwareBuffer_isSupported(&desc)) {
         all_formats.emplace_back(VkSurfaceFormatKHR{
             VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
-        all_formats.emplace_back(VkSurfaceFormatKHR{
-            VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        if (colorspace_ext) {
+            all_formats.emplace_back(
+                VkSurfaceFormatKHR{VK_FORMAT_R16G16B16A16_SFLOAT,
+                                   VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        }
         if (wide_color_support) {
             all_formats.emplace_back(
                 VkSurfaceFormatKHR{VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -814,9 +844,11 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
         all_formats.emplace_back(
             VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
                                VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
-        all_formats.emplace_back(
-            VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
-                               VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        if (colorspace_ext) {
+            all_formats.emplace_back(
+                VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+                                   VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        }
         if (wide_color_support) {
             all_formats.emplace_back(
                 VkSurfaceFormatKHR{VK_FORMAT_A2B10G10R10_UNORM_PACK32,
@@ -826,9 +858,10 @@ VkResult GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice pdev,
 
     desc.format = AHARDWAREBUFFER_FORMAT_R8_UNORM;
     if (AHardwareBuffer_isSupported(&desc)) {
-        all_formats.emplace_back(
-            VkSurfaceFormatKHR{VK_FORMAT_R8_UNORM,
-                               VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        if (colorspace_ext) {
+            all_formats.emplace_back(VkSurfaceFormatKHR{
+                VK_FORMAT_R8_UNORM, VK_COLOR_SPACE_PASS_THROUGH_EXT});
+        }
     }
 
     // NOTE: Any new formats that are added must be coordinated across different
@@ -1337,7 +1370,7 @@ VkResult CreateSwapchainKHR(VkDevice device,
         num_images = 1;
     }
 
-    int32_t legacy_usage = 0;
+    uint64_t native_usage = 0;
     if (dispatch.GetSwapchainGrallocUsage2ANDROID) {
         uint64_t consumer_usage, producer_usage;
         ATRACE_BEGIN("GetSwapchainGrallocUsage2ANDROID");
@@ -1349,10 +1382,11 @@ VkResult CreateSwapchainKHR(VkDevice device,
             ALOGE("vkGetSwapchainGrallocUsage2ANDROID failed: %d", result);
             return VK_ERROR_SURFACE_LOST_KHR;
         }
-        legacy_usage =
-            android_convertGralloc1To0Usage(producer_usage, consumer_usage);
+        native_usage =
+            convertGralloc1ToBufferUsage(consumer_usage, producer_usage);
     } else if (dispatch.GetSwapchainGrallocUsageANDROID) {
         ATRACE_BEGIN("GetSwapchainGrallocUsageANDROID");
+        int32_t legacy_usage = 0;
         result = dispatch.GetSwapchainGrallocUsageANDROID(
             device, create_info->imageFormat, create_info->imageUsage,
             &legacy_usage);
@@ -1361,8 +1395,9 @@ VkResult CreateSwapchainKHR(VkDevice device,
             ALOGE("vkGetSwapchainGrallocUsageANDROID failed: %d", result);
             return VK_ERROR_SURFACE_LOST_KHR;
         }
+        native_usage = static_cast<uint64_t>(legacy_usage);
     }
-    uint64_t native_usage = static_cast<uint64_t>(legacy_usage);
+    native_usage |= surface.consumer_usage;
 
     bool createProtectedSwapchain = false;
     if (create_info->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR) {

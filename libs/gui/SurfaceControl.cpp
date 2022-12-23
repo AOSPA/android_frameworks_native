@@ -42,8 +42,6 @@
 #include <gui/SurfaceControl.h>
 #include <private/gui/ParcelUtils.h>
 
-#include "dlfcn.h"
-
 namespace android {
 
 // ============================================================================
@@ -51,23 +49,24 @@ namespace android {
 // ============================================================================
 
 SurfaceControl::SurfaceControl(const sp<SurfaceComposerClient>& client, const sp<IBinder>& handle,
-                               int32_t layerId, uint32_t w, uint32_t h, PixelFormat format,
-                               uint32_t transform, uint32_t flags)
+                               int32_t layerId, const std::string& name, uint32_t w, uint32_t h,
+                               PixelFormat format, uint32_t transform, uint32_t flags)
       : mClient(client),
         mHandle(handle),
         mLayerId(layerId),
+        mName(name),
         mTransformHint(transform),
         mWidth(w),
         mHeight(h),
         mFormat(format),
-        mCreateFlags(flags),
-        mExtension(mHandle) {}
+        mCreateFlags(flags) {}
 
 SurfaceControl::SurfaceControl(const sp<SurfaceControl>& other) {
     mClient = other->mClient;
     mHandle = other->mHandle;
     mTransformHint = other->mTransformHint;
     mLayerId = other->mLayerId;
+    mName = other->mName;
     mWidth = other->mWidth;
     mHeight = other->mHeight;
     mFormat = other->mFormat;
@@ -144,7 +143,6 @@ sp<Surface> SurfaceControl::generateSurfaceLocked()
 
     // This surface is always consumed by SurfaceFlinger, so the
     // producerControlledByApp value doesn't matter; using false.
-    mExtension.init();
     mSurfaceData = mBbq->getSurface(true);
 
     return mSurfaceData;
@@ -189,6 +187,10 @@ int32_t SurfaceControl::getLayerId() const {
     return mLayerId;
 }
 
+const std::string& SurfaceControl::getName() const {
+    return mName;
+}
+
 sp<IGraphicBufferProducer> SurfaceControl::getIGraphicBufferProducer()
 {
     getSurface();
@@ -216,6 +218,7 @@ status_t SurfaceControl::writeToParcel(Parcel& parcel) {
     SAFE_PARCEL(parcel.writeStrongBinder, ISurfaceComposerClient::asBinder(mClient->getClient()));
     SAFE_PARCEL(parcel.writeStrongBinder, mHandle);
     SAFE_PARCEL(parcel.writeInt32, mLayerId);
+    SAFE_PARCEL(parcel.writeUtf8AsUtf16, mName);
     SAFE_PARCEL(parcel.writeUint32, mTransformHint);
     SAFE_PARCEL(parcel.writeUint32, mWidth);
     SAFE_PARCEL(parcel.writeUint32, mHeight);
@@ -229,6 +232,7 @@ status_t SurfaceControl::readFromParcel(const Parcel& parcel,
     sp<IBinder> client;
     sp<IBinder> handle;
     int32_t layerId;
+    std::string layerName;
     uint32_t transformHint;
     uint32_t width;
     uint32_t height;
@@ -237,16 +241,17 @@ status_t SurfaceControl::readFromParcel(const Parcel& parcel,
     SAFE_PARCEL(parcel.readStrongBinder, &client);
     SAFE_PARCEL(parcel.readStrongBinder, &handle);
     SAFE_PARCEL(parcel.readInt32, &layerId);
+    SAFE_PARCEL(parcel.readUtf8FromUtf16, &layerName);
     SAFE_PARCEL(parcel.readUint32, &transformHint);
     SAFE_PARCEL(parcel.readUint32, &width);
     SAFE_PARCEL(parcel.readUint32, &height);
     SAFE_PARCEL(parcel.readUint32, &format);
 
     // We aren't the original owner of the surface.
-    *outSurfaceControl =
-            new SurfaceControl(new SurfaceComposerClient(
-                                       interface_cast<ISurfaceComposerClient>(client)),
-                               handle.get(), layerId, width, height, format, transformHint);
+    *outSurfaceControl = new SurfaceControl(new SurfaceComposerClient(
+                                                    interface_cast<ISurfaceComposerClient>(client)),
+                                            handle.get(), layerId, layerName, width, height, format,
+                                            transformHint);
 
     return NO_ERROR;
 }
@@ -290,51 +295,6 @@ uint64_t SurfaceControl::resolveFrameNumber(const std::optional<uint64_t>& frame
         return ret;
     } else {
         return mFallbackFrameNumber++;
-    }
-}
-
-typedef bool (*InitFunc_t)(const sp<IBinder>&);
-typedef void (*DeinitFunc_t)(const sp<IBinder>&);
-SurfaceControl::VpsExtension::VpsExtension()
-   : mIsEnable(false),
-     mLibHandler(nullptr),
-     mFuncInit(nullptr),
-     mFuncDeinit(nullptr) {
-}
-
-SurfaceControl::VpsExtension::VpsExtension(const sp<IBinder> handle)
-    : mIsEnable(false),
-      mHandle(handle),
-      mLibHandler(nullptr),
-      mFuncInit(nullptr),
-      mFuncDeinit(nullptr) {
-    // UID:10000 is AID_APP_START for 3rd party application.
-    // The system application will not enter this logic.
-    if (getuid() < 10000)
-        return;
-    mLibHandler = dlopen("libvpsextension.so", RTLD_NOW|RTLD_GLOBAL);
-    if (mLibHandler == nullptr)
-        return;
-    mFuncInit = dlsym(mLibHandler, "Init");
-    mFuncDeinit = dlsym(mLibHandler, "Deinit");
-    if (mFuncInit) {
-        mIsEnable = reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
-    }
-}
-
-SurfaceControl::VpsExtension::~VpsExtension() {
-    if (mIsEnable && mFuncDeinit) {
-        reinterpret_cast<DeinitFunc_t>(mFuncDeinit)(mHandle);
-    }
-    if (mLibHandler != nullptr) {
-        dlclose(mLibHandler);
-    }
-    mLibHandler = nullptr;
-}
-
-void SurfaceControl::VpsExtension::init() const {
-    if (mIsEnable && mFuncInit) {
-        reinterpret_cast<InitFunc_t>(mFuncInit)(mHandle);
     }
 }
 

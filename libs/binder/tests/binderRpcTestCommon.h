@@ -49,6 +49,7 @@
 
 #include "../BuildFlags.h"
 #include "../FdTrigger.h"
+#include "../OS.h"               // for testing UnixBootstrap clients
 #include "../RpcSocketAddress.h" // for testing preconnected clients
 #include "../RpcState.h"         // for debugging
 #include "../vm_sockets.h"       // for VMADDR_*
@@ -67,15 +68,22 @@ static inline std::vector<RpcSecurity> RpcSecurityValues() {
 enum class SocketType {
     PRECONNECTED,
     UNIX,
+    UNIX_BOOTSTRAP,
+    UNIX_RAW,
     VSOCK,
     INET,
 };
+
 static inline std::string PrintToString(SocketType socketType) {
     switch (socketType) {
         case SocketType::PRECONNECTED:
             return "preconnected_uds";
         case SocketType::UNIX:
             return "unix_domain_socket";
+        case SocketType::UNIX_BOOTSTRAP:
+            return "unix_domain_socket_bootstrap";
+        case SocketType::UNIX_RAW:
+            return "raw_uds";
         case SocketType::VSOCK:
             return "vm_socket";
         case SocketType::INET:
@@ -84,6 +92,14 @@ static inline std::string PrintToString(SocketType socketType) {
             LOG_ALWAYS_FATAL("Unknown socket type");
             return "";
     }
+}
+
+static inline size_t epochMillis() {
+    using std::chrono::duration_cast;
+    using std::chrono::milliseconds;
+    using std::chrono::seconds;
+    using std::chrono::system_clock;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
 struct BinderRpcOptions {
@@ -166,6 +182,42 @@ static inline base::unique_fd mockFileDescriptor(std::string contents) {
     }).detach();
     return readFd;
 }
+
+// A threadsafe channel where writes block until the value is read.
+template <typename T>
+class HandoffChannel {
+public:
+    void write(T v) {
+        {
+            RpcMutexUniqueLock lock(mMutex);
+            // Wait for space to send.
+            mCvEmpty.wait(lock, [&]() { return !mValue.has_value(); });
+            mValue.emplace(std::move(v));
+        }
+        mCvFull.notify_all();
+        RpcMutexUniqueLock lock(mMutex);
+        // Wait for it to be taken.
+        mCvEmpty.wait(lock, [&]() { return !mValue.has_value(); });
+    }
+
+    T read() {
+        RpcMutexUniqueLock lock(mMutex);
+        if (!mValue.has_value()) {
+            mCvFull.wait(lock, [&]() { return mValue.has_value(); });
+        }
+        T v = std::move(mValue.value());
+        mValue.reset();
+        lock.unlock();
+        mCvEmpty.notify_all();
+        return std::move(v);
+    }
+
+private:
+    RpcMutex mMutex;
+    RpcConditionVariable mCvEmpty;
+    RpcConditionVariable mCvFull;
+    std::optional<T> mValue;
+};
 
 using android::binder::Status;
 
@@ -372,6 +424,18 @@ public:
             acc.append(result);
         }
         out->reset(mockFileDescriptor(acc));
+        return Status::ok();
+    }
+
+    HandoffChannel<android::base::unique_fd> mFdChannel;
+
+    Status blockingSendFdOneway(const android::os::ParcelFileDescriptor& fd) override {
+        mFdChannel.write(android::base::unique_fd(fcntl(fd.get(), F_DUPFD_CLOEXEC, 0)));
+        return Status::ok();
+    }
+
+    Status blockingRecvFd(android::os::ParcelFileDescriptor* fd) override {
+        fd->reset(mFdChannel.read());
         return Status::ok();
     }
 };

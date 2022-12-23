@@ -22,18 +22,16 @@
 #include <cutils/properties.h>
 #include <ui/GraphicBuffer.h>
 
-#include "BufferStateLayer.h"
 #include "DisplayDevice.h"
-#include "EffectLayer.h"
 #include "FrameTracer/FrameTracer.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
 #include "StartPropertySetThread.h"
 #include "SurfaceFlingerDefaultFactory.h"
 #include "SurfaceFlingerProperties.h"
-#include "SurfaceInterceptor.h"
 
 #include "DisplayHardware/ComposerHal.h"
+#include "FrameTimeline/FrameTimeline.h"
 #include "Scheduler/Scheduler.h"
 #include "Scheduler/VsyncConfiguration.h"
 #include "Scheduler/VsyncController.h"
@@ -49,16 +47,10 @@ std::unique_ptr<HWComposer> DefaultFactory::createHWComposer(const std::string& 
 std::unique_ptr<scheduler::VsyncConfiguration> DefaultFactory::createVsyncConfiguration(
         Fps currentRefreshRate) {
     if (property_get_bool("debug.sf.use_phase_offsets_as_durations", false)) {
-        ALOGI("%s: create WorkDuration", __func__);
         return std::make_unique<scheduler::impl::WorkDuration>(currentRefreshRate);
     } else {
-        ALOGI("%s: create PhaseOffsets", __func__);
         return std::make_unique<scheduler::impl::PhaseOffsets>(currentRefreshRate);
     }
-}
-
-sp<SurfaceInterceptor> DefaultFactory::createSurfaceInterceptor() {
-    return sp<android::impl::SurfaceInterceptor>::make();
 }
 
 sp<StartPropertySetThread> DefaultFactory::createStartPropertySetThread(
@@ -91,12 +83,16 @@ std::unique_ptr<compositionengine::CompositionEngine> DefaultFactory::createComp
     return compositionengine::impl::createCompositionEngine();
 }
 
-sp<BufferStateLayer> DefaultFactory::createBufferStateLayer(const LayerCreationArgs& args) {
-    return sp<BufferStateLayer>::make(args);
+sp<Layer> DefaultFactory::createBufferStateLayer(const LayerCreationArgs& args) {
+    return sp<Layer>::make(args);
 }
 
-sp<EffectLayer> DefaultFactory::createEffectLayer(const LayerCreationArgs& args) {
-    return sp<EffectLayer>::make(args);
+sp<Layer> DefaultFactory::createEffectLayer(const LayerCreationArgs& args) {
+    return sp<Layer>::make(args);
+}
+
+sp<LayerFE> DefaultFactory::createLayerFE(const std::string& layerName) {
+    return sp<LayerFE>::make(layerName);
 }
 
 std::unique_ptr<FrameTracer> DefaultFactory::createFrameTracer() {

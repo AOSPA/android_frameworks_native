@@ -24,18 +24,16 @@ namespace android::scheduler::mock {
 
 struct SchedulerCallback final : ISchedulerCallback {
     MOCK_METHOD(void, setVsyncEnabled, (bool), (override));
-    MOCK_METHOD(void, requestDisplayMode, (DisplayModePtr, DisplayModeEvent), (override));
+    MOCK_METHOD(void, requestDisplayModes, (std::vector<display::DisplayModeRequest>), (override));
     MOCK_METHOD(void, kernelTimerChanged, (bool), (override));
     MOCK_METHOD(void, triggerOnFrameRateOverridesChanged, (), (override));
-    MOCK_METHOD2(getModeFromFps, void(float, DisplayModePtr&));
 };
 
 struct NoOpSchedulerCallback final : ISchedulerCallback {
     void setVsyncEnabled(bool) override {}
-    void requestDisplayMode(DisplayModePtr, DisplayModeEvent) override {}
+    void requestDisplayModes(std::vector<display::DisplayModeRequest>) override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() override {}
-    void getModeFromFps(float, DisplayModePtr&) override {}
 };
 
 } // namespace android::scheduler::mock

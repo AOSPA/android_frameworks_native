@@ -18,8 +18,6 @@
 
 #include <gmock/gmock.h>
 
-#include "Layer.h"
-
 namespace android::mock {
 
 class MockLayer : public Layer {

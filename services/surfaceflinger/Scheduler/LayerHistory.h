@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "RefreshRateConfigs.h"
+#include "RefreshRateSelector.h"
 
 namespace android {
 
@@ -39,7 +39,7 @@ class LayerInfo;
 
 class LayerHistory {
 public:
-    using LayerVoteType = RefreshRateConfigs::LayerVoteType;
+    using LayerVoteType = RefreshRateSelector::LayerVoteType;
 
     LayerHistory();
     ~LayerHistory();
@@ -67,16 +67,15 @@ public:
     // does not set a preference for refresh rate.
     void setDefaultFrameRateCompatibility(Layer*, bool contentDetectionEnabled);
 
-    using Summary = std::vector<RefreshRateConfigs::LayerRequirement>;
+    using Summary = std::vector<RefreshRateSelector::LayerRequirement>;
 
     // Rebuilds sets of active/inactive layers, and accumulates stats for active layers.
-    Summary summarize(const RefreshRateConfigs&, nsecs_t now);
+    Summary summarize(const RefreshRateSelector&, nsecs_t now);
 
     void clear();
 
     void deregisterLayer(Layer*);
     std::string dump() const;
-    void updateThermalFps(float fps) { mThermalFps = fps; }
 
     // return the frames per second of the layer with the given sequence id.
     float getLayerFramerate(nsecs_t now, int32_t id) const;
@@ -128,9 +127,6 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
-
-    // If Thermal mitigation enabled, limit to thermal Fps
-    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler
