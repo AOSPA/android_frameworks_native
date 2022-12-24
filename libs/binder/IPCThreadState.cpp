@@ -693,7 +693,10 @@ void IPCThreadState::processPendingDerefs()
             while (mPendingWeakDerefs.size() > 0) {
                 RefBase::weakref_type* refs = mPendingWeakDerefs[0];
                 mPendingWeakDerefs.removeAt(0);
-                refs->decWeak(mProcess.get());
+                // MIUI MOD: workaround to improve robustness
+                if (refs)
+                    refs->decWeak(mProcess.get());
+                // END
             }
 
             if (mPendingStrongDerefs.size() > 0) {
@@ -703,7 +706,10 @@ void IPCThreadState::processPendingDerefs()
                 // the decWeak() first.
                 BBinder* obj = mPendingStrongDerefs[0];
                 mPendingStrongDerefs.removeAt(0);
-                obj->decStrong(mProcess.get());
+                // MIUI MOD: workaround to improve robustness
+                if (obj)
+                    obj->decStrong(mProcess.get());
+                // END
             }
         }
     }
