@@ -3695,7 +3695,8 @@ void SurfaceFlinger::updateVsyncSource()
         mScheduler->onScreenReleased(mAppConnectionHandle);
     } else if (mNextVsyncSource && (mActiveVsyncSource == NULL)) {
         mScheduler->onScreenAcquired(mAppConnectionHandle);
-        nsecs_t vsync = getVsyncPeriodFromHWC();
+        bool isPrimary = mNextVsyncSource->isPrimary();
+        nsecs_t vsync = (isPrimary && (mVsyncPeriod > 0)) ? mVsyncPeriod : getVsyncPeriodFromHWC();
         mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(vsync));
     } else if ((mNextVsyncSource != NULL) &&
         (mActiveVsyncSource != NULL)) {
