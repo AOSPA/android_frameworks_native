@@ -2326,6 +2326,13 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     }
 
     if (isHoverAction) {
+        if (wasDown) {
+            // Started hovering, but the device is already down: reject the hover event
+            LOG(ERROR) << "Got hover event " << entry.getDescription()
+                       << " but the device is already down " << oldState->dump();
+            outInjectionResult = InputEventInjectionResult::FAILED;
+            return {};
+        }
         // For hover actions, we will treat 'tempTouchState' as a new state, so let's erase
         // all of the existing hovering pointers and recompute.
         tempTouchState.clearHoveringPointers(entry.deviceId);
@@ -2721,15 +2728,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     }
 
     // Update final pieces of touch state if the injector had permission.
-    if (isHoverAction) {
-        if (oldState && oldState->isDown(entry.deviceId)) {
-            // Started hovering, but the device is already down: reject the hover event
-            LOG(ERROR) << "Got hover event " << entry.getDescription()
-                       << " but the device is already down " << oldState->dump();
-            outInjectionResult = InputEventInjectionResult::FAILED;
-            return {};
-        }
-    } else if (maskedAction == AMOTION_EVENT_ACTION_UP) {
+    if (maskedAction == AMOTION_EVENT_ACTION_UP) {
         // Pointer went up.
         tempTouchState.removeTouchingPointer(entry.deviceId, entry.pointerProperties[0].id);
     } else if (maskedAction == AMOTION_EVENT_ACTION_CANCEL) {
@@ -4054,16 +4053,6 @@ void InputDispatcher::synthesizeCancelationEventsForInputChannelLocked(
 
 void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
         const std::shared_ptr<Connection>& connection, const CancelationOptions& options) {
-    if ((options.mode == CancelationOptions::Mode::CANCEL_POINTER_EVENTS ||
-         options.mode == CancelationOptions::Mode::CANCEL_ALL_EVENTS) &&
-        mDragState && mDragState->dragWindow->getToken() == connection->inputChannel->getToken()) {
-        LOG(INFO) << __func__
-                  << ": Canceling drag and drop because the pointers for the drag window are being "
-                     "canceled.";
-        sendDropWindowCommandLocked(nullptr, /*x=*/0, /*y=*/0);
-        mDragState.reset();
-    }
-
     if (connection->status == Connection::Status::BROKEN) {
         return;
     }
@@ -4076,6 +4065,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
     if (cancelationEvents.empty()) {
         return;
     }
+
     if (DEBUG_OUTBOUND_EVENT_DETAILS) {
         ALOGD("channel '%s' ~ Synthesized %zu cancelation events to bring channel back in sync "
               "with reality: %s, mode=%s.",
@@ -4123,6 +4113,14 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
                     for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.getPointerCount();
                          pointerIndex++) {
                         pointerIds.set(motionEntry.pointerProperties[pointerIndex].id);
+                    }
+                    if (mDragState && mDragState->dragWindow->getToken() == token &&
+                        pointerIds.test(mDragState->pointerId)) {
+                        LOG(INFO) << __func__
+                                  << ": Canceling drag and drop because the pointers for the drag "
+                                     "window are being canceled.";
+                        sendDropWindowCommandLocked(nullptr, /*x=*/0, /*y=*/0);
+                        mDragState.reset();
                     }
                     addPointerWindowTargetLocked(window, InputTarget::Flags::DISPATCH_AS_IS,
                                                  pointerIds, motionEntry.downTime, targets);
@@ -5970,7 +5968,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
     { // acquire lock
         std::scoped_lock _l(mLock);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
-        int fd = serverChannel->getFd();
+        auto&& fd = serverChannel->getFd();
         std::shared_ptr<Connection> connection =
                 std::make_shared<Connection>(std::move(serverChannel), /*monitor=*/false,
                                              mIdGenerator);
@@ -5983,7 +5981,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
         std::function<int(int events)> callback = std::bind(&InputDispatcher::handleReceiveCallback,
                                                             this, std::placeholders::_1, token);
 
-        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
+        mLooper->addFd(fd.get(), 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
                        nullptr);
     } // release lock
 
@@ -6013,7 +6011,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
         std::shared_ptr<Connection> connection =
                 std::make_shared<Connection>(serverChannel, /*monitor=*/true, mIdGenerator);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
-        const int fd = serverChannel->getFd();
+        auto&& fd = serverChannel->getFd();
 
         if (mConnectionsByToken.find(token) != mConnectionsByToken.end()) {
             ALOGE("Created a new connection, but the token %p is already known", token.get());
@@ -6024,7 +6022,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
 
         mGlobalMonitorsByDisplay[displayId].emplace_back(serverChannel, pid);
 
-        mLooper->addFd(fd, 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
+        mLooper->addFd(fd.get(), 0, ALOOPER_EVENT_INPUT, sp<LooperEventCallback>::make(callback),
                        nullptr);
     }
 
@@ -6063,7 +6061,7 @@ status_t InputDispatcher::removeInputChannelLocked(const sp<IBinder>& connection
         removeMonitorChannelLocked(connectionToken);
     }
 
-    mLooper->removeFd(connection->inputChannel->getFd());
+    mLooper->removeFd(connection->inputChannel->getFd().get());
 
     nsecs_t currentTime = now();
     abortBrokenDispatchCycleLocked(currentTime, connection, notify);

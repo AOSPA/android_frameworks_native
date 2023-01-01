@@ -306,6 +306,9 @@ public:
         EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
         EXPECT_CALL(*vsyncTracker, currentPeriod())
                 .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD));
+        EXPECT_CALL(*vsyncTracker, minFramePeriod())
+                .WillRepeatedly(
+                        Return(Period::fromNs(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD)));
         EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
         setupScheduler(std::move(vsyncController), std::move(vsyncTracker), std::move(eventThread),
                        std::move(sfEventThread), DefaultDisplayMode{options.displayId},
@@ -463,8 +466,8 @@ public:
         mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
-    void onComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection) {
-        mFlinger->onComposerHalHotplug(hwcDisplayId, connection);
+    void onComposerHalHotplugEvent(hal::HWDisplayId hwcDisplayId, DisplayHotplugEvent event) {
+        mFlinger->onComposerHalHotplugEvent(hwcDisplayId, event);
     }
 
     auto setDisplayStateLocked(const DisplayState& s) {

@@ -27,7 +27,7 @@
 #include <gtest/gtest.h>
 #include <log/log.h>
 
-#include "FlagUtils.h"
+#include <common/test/FlagUtils.h>
 #include "FpsOps.h"
 #include "Scheduler/LayerHistory.h"
 #include "Scheduler/LayerInfo.h"
@@ -1173,6 +1173,8 @@ TEST_F(LayerHistoryTest, heuristicLayer60_30Hz) {
 }
 
 TEST_F(LayerHistoryTest, heuristicLayerNotOscillating) {
+    SET_FLAG_FOR_TEST(flags::use_known_refresh_rate_for_fps_consistency, false);
+
     const auto layer = createLayer();
     EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
     EXPECT_CALL(*layer, getFrameRateForLayerTree()).WillRepeatedly(Return(Layer::FrameRate()));
@@ -1183,6 +1185,23 @@ TEST_F(LayerHistoryTest, heuristicLayerNotOscillating) {
     recordFramesAndExpect(layer, time, 26.9_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 26_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 26.9_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+}
+
+TEST_F(LayerHistoryTest, heuristicLayerNotOscillating_useKnownRefreshRate) {
+    SET_FLAG_FOR_TEST(flags::use_known_refresh_rate_for_fps_consistency, true);
+
+    const auto layer = createLayer();
+    EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*layer, getFrameRateForLayerTree()).WillRepeatedly(Return(Layer::FrameRate()));
+
+    nsecs_t time = systemTime();
+
+    recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26.9_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26.9_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 27.1_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
 }
 

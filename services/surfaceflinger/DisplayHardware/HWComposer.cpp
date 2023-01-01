@@ -558,6 +558,7 @@ status_t HWComposer::getDeviceCompositionChanges(
     }
     bool acceptChanges = true;
 
+    ATRACE_FORMAT("NextFrameInterval %d_Hz", frameInterval.getIntValue());
     if (canSkipValidate) {
         sp<Fence> outPresentFence = Fence::NO_FENCE;
         uint32_t state = UINT32_MAX;
@@ -971,6 +972,10 @@ status_t HWComposer::notifyExpectedPresentIfRequired(PhysicalDisplayId displayId
                                                      std::optional<Period> timeoutOpt) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
     auto& displayData = mDisplayData[displayId];
+    if (!displayData.hwcDisplay) {
+        // Display setup has not completed yet
+        return BAD_INDEX;
+    }
     {
         std::scoped_lock lock{displayData.expectedPresentLock};
         const auto lastExpectedPresentTimestamp = displayData.lastExpectedPresentTimestamp;
