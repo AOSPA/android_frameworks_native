@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "0c056f68_ab58f472",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 8
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2023-01-01T04:52:02Z",
+      "side": 1,
+      "message": "not sure using this variable really buys us anything but oh well",
+      "revId": "33424452abe6bd11eb8248ab2898d68ad1aa1ba5",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
