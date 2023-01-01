@@ -24,6 +24,7 @@
 #include <android-base/file.h>
 #include <android/binder_ibinder_platform.h>
 #include <android/binder_manager.h>
+#include <common/FlagManager.h>
 #include <gui/TraceUtils.h>
 #include <log/log.h>
 #include <utils/Trace.h>
@@ -305,7 +306,7 @@ bool AidlComposer::isSupported(OptionalFeature feature) const {
 }
 
 bool AidlComposer::getDisplayConfigurationsSupported() const {
-    return mComposerInterfaceVersion >= 3;
+    return mComposerInterfaceVersion >= 3 && FlagManager::getInstance().vrr_config();
 }
 
 std::vector<Capability> AidlComposer::getCapabilities() {

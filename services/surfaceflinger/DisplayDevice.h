@@ -291,6 +291,11 @@ public:
     /* QTI_END */
 
 private:
+    template <size_t N>
+    inline std::string concatId(const char (&str)[N]) const {
+        return std::string(ftl::Concat(str, ' ', getId().value).str());
+    }
+
     const sp<SurfaceFlinger> mFlinger;
     HWComposer& mHwComposer;
     const wp<IBinder> mDisplayToken;
@@ -338,8 +343,7 @@ private:
 
     mutable std::mutex mActiveModeLock;
     ActiveModeInfo mDesiredActiveMode GUARDED_BY(mActiveModeLock);
-    TracedOrdinal<bool> mDesiredActiveModeChanged GUARDED_BY(mActiveModeLock) =
-            {ftl::Concat("DesiredActiveModeChanged-", getId().value).c_str(), false};
+    TracedOrdinal<bool> mDesiredActiveModeChanged GUARDED_BY(mActiveModeLock);
 
     ActiveModeInfo mUpcomingActiveMode GUARDED_BY(kMainThreadContext);
 
