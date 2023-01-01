@@ -16,6 +16,7 @@
 
 #include "../dispatcher/InputDispatcher.h"
 #include "../BlockingQueue.h"
+#include "FakeApplicationHandle.h"
 #include "TestEventMatchers.h"
 
 #include <NotifyArgsBuilders.h>
@@ -335,7 +336,7 @@ public:
         std::optional<sp<IBinder>> receivedToken =
                 getItemFromStorageLockedInterruptible(100ms, mBrokenInputChannels, lock,
                                                       mNotifyInputChannelBroken);
-        ASSERT_TRUE(receivedToken.has_value());
+        ASSERT_TRUE(receivedToken.has_value()) << "Did not receive the broken channel token";
         ASSERT_EQ(token, *receivedToken);
     }
 
@@ -366,6 +367,30 @@ public:
         ASSERT_FALSE(mNotifiedInteractions.popWithTimeout(10ms));
     }
 
+    void setUnhandledKeyHandler(std::function<std::optional<KeyEvent>(const KeyEvent&)> handler) {
+        std::scoped_lock lock(mLock);
+        mUnhandledKeyHandler = handler;
+    }
+
+    void assertUnhandledKeyReported(int32_t keycode) {
+        std::unique_lock lock(mLock);
+        base::ScopedLockAssertion assumeLocked(mLock);
+        std::optional<int32_t> unhandledKeycode =
+                getItemFromStorageLockedInterruptible(100ms, mReportedUnhandledKeycodes, lock,
+                                                      mNotifyUnhandledKey);
+        ASSERT_TRUE(unhandledKeycode) << "Expected unhandled key to be reported";
+        ASSERT_EQ(unhandledKeycode, keycode);
+    }
+
+    void assertUnhandledKeyNotReported() {
+        std::unique_lock lock(mLock);
+        base::ScopedLockAssertion assumeLocked(mLock);
+        std::optional<int32_t> unhandledKeycode =
+                getItemFromStorageLockedInterruptible(10ms, mReportedUnhandledKeycodes, lock,
+                                                      mNotifyUnhandledKey);
+        ASSERT_FALSE(unhandledKeycode) << "Expected unhandled key NOT to be reported";
+    }
+
 private:
     std::mutex mLock;
     std::unique_ptr<InputEvent> mFilteredEvent GUARDED_BY(mLock);
@@ -394,6 +419,10 @@ private:
     std::chrono::nanoseconds mStaleEventTimeout = 1000ms;
 
     BlockingQueue<std::pair<int32_t /*deviceId*/, std::set<gui::Uid>>> mNotifiedInteractions;
+
+    std::condition_variable mNotifyUnhandledKey;
+    std::queue<int32_t> mReportedUnhandledKeycodes GUARDED_BY(mLock);
+    std::function<std::optional<KeyEvent>(const KeyEvent&)> mUnhandledKeyHandler GUARDED_BY(mLock);
 
     // All three ANR-related callbacks behave the same way, so we use this generic function to wait
     // for a specific container to become non-empty. When the container is non-empty, return the
@@ -437,7 +466,6 @@ private:
         condition.wait_for(lock, timeout,
                            [&storage]() REQUIRES(mLock) { return !storage.empty(); });
         if (storage.empty()) {
-            ADD_FAILURE() << "Did not receive the expected callback";
             return std::nullopt;
         }
         T item = storage.front();
@@ -528,9 +556,12 @@ private:
         return delay;
     }
 
-    std::optional<KeyEvent> dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent&,
+    std::optional<KeyEvent> dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent& event,
                                                  uint32_t) override {
-        return {};
+        std::scoped_lock lock(mLock);
+        mReportedUnhandledKeycodes.emplace(event.getKeyCode());
+        mNotifyUnhandledKey.notify_all();
+        return mUnhandledKeyHandler != nullptr ? mUnhandledKeyHandler(event) : std::nullopt;
     }
 
     void notifySwitch(nsecs_t when, uint32_t switchValues, uint32_t switchMask,
@@ -821,37 +852,18 @@ static const std::chrono::duration DISPATCHING_TIMEOUT = std::chrono::millisecon
         android::os::IInputConstants::UNMULTIPLIED_DEFAULT_DISPATCHING_TIMEOUT_MILLIS *
         android::base::HwTimeoutMultiplier());
 
-class FakeApplicationHandle : public InputApplicationHandle {
-public:
-    FakeApplicationHandle() {
-        mInfo.name = "Fake Application";
-        mInfo.token = sp<BBinder>::make();
-        mInfo.dispatchingTimeoutMillis =
-                std::chrono::duration_cast<std::chrono::milliseconds>(DISPATCHING_TIMEOUT).count();
-    }
-    virtual ~FakeApplicationHandle() {}
-
-    virtual bool updateInfo() override { return true; }
-
-    void setDispatchingTimeout(std::chrono::milliseconds timeout) {
-        mInfo.dispatchingTimeoutMillis = timeout.count();
-    }
-};
-
 class FakeInputReceiver {
 public:
     explicit FakeInputReceiver(std::unique_ptr<InputChannel> clientChannel, const std::string name)
-          : mName(name) {
-        mConsumer = std::make_unique<InputConsumer>(std::move(clientChannel));
-    }
+          : mConsumer(std::move(clientChannel)), mName(name) {}
 
-    InputEvent* consume(std::chrono::milliseconds timeout) {
+    InputEvent* consume(std::chrono::milliseconds timeout, bool handled = false) {
         InputEvent* event;
         std::optional<uint32_t> consumeSeq = receiveEvent(timeout, &event);
         if (!consumeSeq) {
             return nullptr;
         }
-        finishEvent(*consumeSeq);
+        finishEvent(*consumeSeq, handled);
         return event;
     }
 
@@ -867,8 +879,8 @@ public:
         std::chrono::time_point start = std::chrono::steady_clock::now();
         status_t status = WOULD_BLOCK;
         while (status == WOULD_BLOCK) {
-            status = mConsumer->consume(&mEventFactory, /*consumeBatches=*/true, -1, &consumeSeq,
-                                        &event);
+            status = mConsumer.consume(&mEventFactory, /*consumeBatches=*/true, -1, &consumeSeq,
+                                       &event);
             std::chrono::duration elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > timeout) {
                 break;
@@ -897,13 +909,13 @@ public:
     /**
      * To be used together with "receiveEvent" to complete the consumption of an event.
      */
-    void finishEvent(uint32_t consumeSeq) {
-        const status_t status = mConsumer->sendFinishedSignal(consumeSeq, true);
+    void finishEvent(uint32_t consumeSeq, bool handled = true) {
+        const status_t status = mConsumer.sendFinishedSignal(consumeSeq, handled);
         ASSERT_EQ(OK, status) << mName.c_str() << ": consumer sendFinishedSignal should return OK.";
     }
 
     void sendTimeline(int32_t inputEventId, std::array<nsecs_t, GraphicsTimeline::SIZE> timeline) {
-        const status_t status = mConsumer->sendTimeline(inputEventId, timeline);
+        const status_t status = mConsumer.sendTimeline(inputEventId, timeline);
         ASSERT_EQ(OK, status);
     }
 
@@ -1061,12 +1073,12 @@ public:
                << ": should not have received any events, so consume() should return NULL";
     }
 
-    sp<IBinder> getToken() { return mConsumer->getChannel()->getConnectionToken(); }
+    sp<IBinder> getToken() { return mConsumer.getChannel()->getConnectionToken(); }
 
-    int getChannelFd() { return mConsumer->getChannel()->getFd().get(); }
+    int getChannelFd() { return mConsumer.getChannel()->getFd().get(); }
 
-protected:
-    std::unique_ptr<InputConsumer> mConsumer;
+private:
+    InputConsumer mConsumer;
     PreallocatedInputEventFactory mEventFactory;
 
     std::string mName;
@@ -1209,8 +1221,8 @@ public:
 
     void setWindowOffset(float offsetX, float offsetY) { mInfo.transform.set(offsetX, offsetY); }
 
-    KeyEvent* consumeKey() {
-        InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+    KeyEvent* consumeKey(bool handled = true) {
+        InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED, handled);
         if (event == nullptr) {
             ADD_FAILURE() << "Consume failed : no event";
             return nullptr;
@@ -1349,11 +1361,11 @@ public:
         mInputReceiver->sendTimeline(inputEventId, timeline);
     }
 
-    InputEvent* consume(std::chrono::milliseconds timeout) {
+    InputEvent* consume(std::chrono::milliseconds timeout, bool handled = true) {
         if (mInputReceiver == nullptr) {
             return nullptr;
         }
-        return mInputReceiver->consume(timeout);
+        return mInputReceiver->consume(timeout, handled);
     }
 
     MotionEvent* consumeMotion() {
@@ -1406,42 +1418,39 @@ std::atomic<int32_t> FakeWindowHandle::sId{1};
 
 class FakeMonitorReceiver {
 public:
-    FakeMonitorReceiver(InputDispatcher& dispatcher, const std::string name, int32_t displayId) {
-        base::Result<std::unique_ptr<InputChannel>> channel =
-                dispatcher.createInputMonitor(displayId, name, MONITOR_PID);
-        mInputReceiver = std::make_unique<FakeInputReceiver>(std::move(*channel), name);
-    }
+    FakeMonitorReceiver(InputDispatcher& dispatcher, const std::string name, int32_t displayId)
+          : mInputReceiver(*dispatcher.createInputMonitor(displayId, name, MONITOR_PID), name) {}
 
-    sp<IBinder> getToken() { return mInputReceiver->getToken(); }
+    sp<IBinder> getToken() { return mInputReceiver.getToken(); }
 
     void consumeKeyDown(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
-        mInputReceiver->consumeEvent(InputEventType::KEY, AKEY_EVENT_ACTION_DOWN, expectedDisplayId,
-                                     expectedFlags);
+        mInputReceiver.consumeEvent(InputEventType::KEY, AKEY_EVENT_ACTION_DOWN, expectedDisplayId,
+                                    expectedFlags);
     }
 
     std::optional<int32_t> receiveEvent() {
-        return mInputReceiver->receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        return mInputReceiver.receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED);
     }
 
-    void finishEvent(uint32_t consumeSeq) { return mInputReceiver->finishEvent(consumeSeq); }
+    void finishEvent(uint32_t consumeSeq) { return mInputReceiver.finishEvent(consumeSeq); }
 
     void consumeMotionDown(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
-        mInputReceiver->consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_DOWN,
-                                     expectedDisplayId, expectedFlags);
+        mInputReceiver.consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_DOWN,
+                                    expectedDisplayId, expectedFlags);
     }
 
     void consumeMotionMove(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
-        mInputReceiver->consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_MOVE,
-                                     expectedDisplayId, expectedFlags);
+        mInputReceiver.consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_MOVE,
+                                    expectedDisplayId, expectedFlags);
     }
 
     void consumeMotionUp(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
-        mInputReceiver->consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_UP,
-                                     expectedDisplayId, expectedFlags);
+        mInputReceiver.consumeEvent(InputEventType::MOTION, AMOTION_EVENT_ACTION_UP,
+                                    expectedDisplayId, expectedFlags);
     }
 
     void consumeMotionCancel(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
-        mInputReceiver->consumeMotionEvent(
+        mInputReceiver.consumeMotionEvent(
                 AllOf(WithMotionAction(AMOTION_EVENT_ACTION_CANCEL),
                       WithDisplayId(expectedDisplayId),
                       WithFlags(expectedFlags | AMOTION_EVENT_FLAG_CANCELED)));
@@ -1450,20 +1459,20 @@ public:
     void consumeMotionPointerDown(int32_t pointerIdx) {
         int32_t action = AMOTION_EVENT_ACTION_POINTER_DOWN |
                 (pointerIdx << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
-        mInputReceiver->consumeEvent(InputEventType::MOTION, action, ADISPLAY_ID_DEFAULT,
-                                     /*expectedFlags=*/0);
+        mInputReceiver.consumeEvent(InputEventType::MOTION, action, ADISPLAY_ID_DEFAULT,
+                                    /*expectedFlags=*/0);
     }
 
     void consumeMotionEvent(const ::testing::Matcher<MotionEvent>& matcher) {
-        mInputReceiver->consumeMotionEvent(matcher);
+        mInputReceiver.consumeMotionEvent(matcher);
     }
 
-    MotionEvent* consumeMotion() { return mInputReceiver->consumeMotion(); }
+    MotionEvent* consumeMotion() { return mInputReceiver.consumeMotion(); }
 
-    void assertNoEvents() { mInputReceiver->assertNoEvents(); }
+    void assertNoEvents() { mInputReceiver.assertNoEvents(); }
 
 private:
-    std::unique_ptr<FakeInputReceiver> mInputReceiver;
+    FakeInputReceiver mInputReceiver;
 };
 
 static InputEventInjectionResult injectKey(
@@ -6532,6 +6541,213 @@ TEST_F(InputDispatcherTest, NotifiesDeviceInteractionsWithKeys) {
     ASSERT_NO_FATAL_FAILURE(window->consumeKeyUp(ADISPLAY_ID_DEFAULT));
     mDispatcher->waitForIdle();
     ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertNotifyDeviceInteractionWasNotCalled());
+}
+
+class InputDispatcherFallbackKeyTest : public InputDispatcherTest {
+protected:
+    std::shared_ptr<FakeApplicationHandle> mApp;
+    sp<FakeWindowHandle> mWindow;
+
+    virtual void SetUp() override {
+        InputDispatcherTest::SetUp();
+
+        mApp = std::make_shared<FakeApplicationHandle>();
+
+        mWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+        mWindow->setFrame(Rect(0, 0, 100, 100));
+
+        mDispatcher->onWindowInfosChanged({{*mWindow->getInfo()}, {}, 0, 0});
+        setFocusedWindow(mWindow);
+        ASSERT_NO_FATAL_FAILURE(mWindow->consumeFocusEvent(/*hasFocus=*/true));
+    }
+
+    void setFallback(int32_t keycode) {
+        mFakePolicy->setUnhandledKeyHandler([keycode](const KeyEvent& event) {
+            return KeyEventBuilder(event).keyCode(keycode).build();
+        });
+    }
+
+    void consumeKey(bool handled, const ::testing::Matcher<KeyEvent>& matcher) {
+        KeyEvent* event = mWindow->consumeKey(handled);
+        ASSERT_NE(event, nullptr) << "Did not receive key event";
+        ASSERT_THAT(*event, matcher);
+    }
+};
+
+TEST_F(InputDispatcherFallbackKeyTest, PolicyNotNotifiedForHandledKey) {
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    consumeKey(/*handled=*/true, AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, PolicyNotifiedForUnhandledKey) {
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    consumeKey(/*handled=*/false, AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, NoFallbackRequestedByPolicy) {
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+
+    // Since the policy did not request any fallback to be generated, ensure there are no events.
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, FallbackDispatchForUnhandledKey) {
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+
+    // Since the key was not handled, ensure the fallback event was dispatched instead.
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    // Release the original key, and ensure the fallback key is also released.
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_UP, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+    mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, AppHandlesPreviouslyUnhandledKey) {
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event, but handle the fallback.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    // Release the original key, and ensure the fallback key is also released.
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_UP, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    // But this time, the app handles the original key.
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    // Ensure the fallback key is canceled.
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK | AKEY_EVENT_FLAG_CANCELED)));
+
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+    mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, AppDoesNotHandleFallback) {
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    // App does not handle the fallback either, so ensure another fallback is not generated.
+    setFallback(AKEYCODE_C);
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    // Release the original key, and ensure the fallback key is also released.
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_UP, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+    mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, InconsistentPolicyCancelsFallback) {
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event, so fallback is generated.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    // Release the original key, but assume the policy is misbehaving and it
+    // generates an inconsistent fallback to the one from the DOWN event.
+    setFallback(AKEYCODE_C);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_UP, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    // Ensure the fallback key reported before as DOWN is canceled due to the inconsistency.
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK | AKEY_EVENT_FLAG_CANCELED)));
+
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+    mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherFallbackKeyTest, CanceledKeyCancelsFallback) {
+    setFallback(AKEYCODE_B);
+    mDispatcher->notifyKey(
+            KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
+
+    // Do not handle this key event, so fallback is generated.
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_A), WithFlags(0)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
+
+    // The original key is canceled.
+    mDispatcher->notifyKey(KeyArgsBuilder(ACTION_UP, AINPUT_SOURCE_KEYBOARD)
+                                   .keyCode(AKEYCODE_A)
+                                   .addFlag(AKEY_EVENT_FLAG_CANCELED)
+                                   .build());
+    consumeKey(/*handled=*/false,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_A),
+                     WithFlags(AKEY_EVENT_FLAG_CANCELED)));
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyReported(AKEYCODE_A));
+    // Ensure the fallback key is also canceled due to the original key being canceled.
+    consumeKey(/*handled=*/true,
+               AllOf(WithKeyAction(ACTION_UP), WithKeyCode(AKEYCODE_B),
+                     WithFlags(AKEY_EVENT_FLAG_FALLBACK | AKEY_EVENT_FLAG_CANCELED)));
+
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertUnhandledKeyNotReported());
+    mWindow->assertNoEvents();
 }
 
 class InputDispatcherKeyRepeatTest : public InputDispatcherTest {

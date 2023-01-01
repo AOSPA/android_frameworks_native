@@ -209,7 +209,8 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private HWC2::ComposerCallback,
                        private ICompositor,
                        private scheduler::ISchedulerCallback,
-                       private compositionengine::ICEPowerCallback {
+                       private compositionengine::ICEPowerCallback,
+                       private scheduler::IVsyncTrackerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -675,6 +676,10 @@ private:
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
 
+    // IVsyncTrackerCallback overrides
+    void onVsyncGenerated(PhysicalDisplayId, TimePoint expectedPresentTime,
+                          const scheduler::DisplayModeData&, Period vsyncPeriod) override;
+
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
 
@@ -1001,8 +1006,8 @@ private:
     /*
      * Compositing
      */
-    void postComposition(PhysicalDisplayId pacesetterId, const scheduler::FrameTargeters&,
-                         nsecs_t presentStartTime) REQUIRES(kMainThreadContext);
+    void onCompositionPresented(PhysicalDisplayId pacesetterId, const scheduler::FrameTargeters&,
+                                nsecs_t presentStartTime) REQUIRES(kMainThreadContext);
 
     /*
      * Display management

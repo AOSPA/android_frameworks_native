@@ -144,7 +144,9 @@ protected:
 
     mock::SchedulerCallback mSchedulerCallback;
 
-    TestableScheduler* mScheduler = new TestableScheduler(mSelector, mSchedulerCallback);
+    mock::VsyncTrackerCallback mVsyncTrackerCallback;
+    TestableScheduler* mScheduler =
+            new TestableScheduler(mSelector, mSchedulerCallback, mVsyncTrackerCallback);
 
     TestableSurfaceFlinger mFlinger;
 };
@@ -561,7 +563,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVoteWithCategory) {
 
 TEST_F(LayerHistoryTest, oneLayerExplicitVoteWithCategoryNotVisibleDoesNotVote) {
     // TODO(b/304338314): uncomment the below line once the bug is fixed
-    // SET_FLAG_FOR_TEST(flags::misc1, true);
+    SET_FLAG_FOR_TEST(flags::misc1, true);
 
     auto layer = createLayer();
     EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(false));
@@ -813,7 +815,7 @@ TEST_F(LayerHistoryTest, inactiveLayers) {
 
 TEST_F(LayerHistoryTest, invisibleExplicitLayer) {
     // TODO(b/304338314): uncomment the below line once the bug is fixed
-    // SET_FLAG_FOR_TEST(flags::misc1, false);
+    SET_FLAG_FOR_TEST(flags::misc1, false);
 
     auto explicitVisiblelayer = createLayer();
     auto explicitInvisiblelayer = createLayer();
@@ -847,7 +849,7 @@ TEST_F(LayerHistoryTest, invisibleExplicitLayer) {
 
 TEST_F(LayerHistoryTest, invisibleExplicitLayerDoesNotVote) {
     // TODO(b/304338314): uncomment the below line once the bug is fixed
-    // SET_FLAG_FOR_TEST(flags::misc1, true);
+    SET_FLAG_FOR_TEST(flags::misc1, true);
 
     auto explicitVisiblelayer = createLayer();
     auto explicitInvisiblelayer = createLayer();
@@ -926,6 +928,44 @@ TEST_F(LayerHistoryTest, infrequentAnimatingLayer) {
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(0, frequentLayerCount(time));
     EXPECT_EQ(1, animatingLayerCount(time));
+}
+
+TEST_F(LayerHistoryTest, frontBufferedLayerVotesMax) {
+    // TODO(b/304338314): uncomment the below line once the bug is fixed
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+    auto layer = createLayer();
+
+    EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*layer, getFrameRateForLayerTree()).WillRepeatedly(Return(Layer::FrameRate()));
+    EXPECT_CALL(*layer, isFrontBuffered()).WillRepeatedly(Return(true));
+
+    nsecs_t time = systemTime();
+
+    EXPECT_EQ(1, layerCount());
+    EXPECT_EQ(0, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(0, animatingLayerCount(time));
+
+    // layer is active but infrequent.
+    for (int i = 0; i < PRESENT_TIME_HISTORY_SIZE; i++) {
+        history().record(layer->getSequence(), layer->getLayerProps(), time, time,
+                         LayerHistory::LayerUpdateType::Buffer);
+        time += MAX_FREQUENT_LAYER_PERIOD_NS.count();
+    }
+
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(0, animatingLayerCount(time));
+
+    // layer became inactive
+    time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(0, animatingLayerCount(time));
 }
 
 TEST_F(LayerHistoryTest, frequentLayerBecomingInfrequentAndBack) {

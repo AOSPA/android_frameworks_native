@@ -464,7 +464,7 @@ void Output::present(const compositionengine::CompositionRefreshArgs& refreshArg
 
     devOptRepaintFlash(refreshArgs);
     finishFrame(std::move(result));
-    postFramebuffer();
+    presentFrameAndReleaseLayers();
     renderCachedSets(refreshArgs);
 }
 
@@ -871,6 +871,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
     editState().earliestPresentTime = refreshArgs.earliestPresentTime;
     editState().expectedPresentTime = refreshArgs.expectedPresentTime;
+    editState().frameInterval = refreshArgs.frameInterval;
     editState().powerCallback = refreshArgs.powerCallback;
 
     compositionengine::OutputLayer* peekThroughLayer = nullptr;
@@ -1202,7 +1203,7 @@ void Output::devOptRepaintFlash(const compositionengine::CompositionRefreshArgs&
         }
     }
 
-    postFramebuffer();
+    presentFrameAndReleaseLayers();
 
     std::this_thread::sleep_for(*refreshArgs.devOptFlashDirtyRegionsDelay);
 
@@ -1570,7 +1571,7 @@ bool Output::isPowerHintSessionEnabled() {
     return false;
 }
 
-void Output::postFramebuffer() {
+void Output::presentFrameAndReleaseLayers() {
     ATRACE_FORMAT("%s for %s", __func__, mNamePlusId.c_str());
     ALOGV(__FUNCTION__);
 
@@ -1581,7 +1582,7 @@ void Output::postFramebuffer() {
     auto& outputState = editState();
     outputState.dirtyRegion.clear();
 
-    auto frame = presentAndGetFrameFences();
+    auto frame = presentFrame();
 
     mRenderSurface->onPresentDisplayCompleted();
 
@@ -1651,7 +1652,7 @@ bool Output::getSkipColorTransform() const {
     return true;
 }
 
-compositionengine::Output::FrameFences Output::presentAndGetFrameFences() {
+compositionengine::Output::FrameFences Output::presentFrame() {
     compositionengine::Output::FrameFences result;
     if (getState().usesClientComposition) {
         result.clientTargetAcquireFence = mRenderSurface->getClientTargetAcquireFence();

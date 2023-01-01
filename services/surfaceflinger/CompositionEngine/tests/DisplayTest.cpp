@@ -582,7 +582,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutIfGpuDisplay) {
 TEST_F(DisplayChooseCompositionStrategyTest, takesEarlyOutOnHwcError) {
     EXPECT_CALL(*mDisplay, anyLayersRequireClientComposition()).WillOnce(Return(false));
     EXPECT_CALL(mHwComposer,
-                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), false, _, _, _))
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), false, _, _, _, _))
             .WillOnce(Return(INVALID_OPERATION));
 
     chooseCompositionStrategy(mDisplay.get());
@@ -606,8 +606,8 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperation) {
             .WillOnce(Return(false));
 
     EXPECT_CALL(mHwComposer,
-                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _, _))
-            .WillOnce(testing::DoAll(testing::SetArgPointee<4>(mDeviceRequestedChanges),
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _, _, _))
+            .WillOnce(testing::DoAll(testing::SetArgPointee<5>(mDeviceRequestedChanges),
                                      Return(NO_ERROR)));
     EXPECT_CALL(*mDisplay, applyChangedTypesToLayers(mDeviceRequestedChanges.changedTypes))
             .Times(1);
@@ -659,8 +659,8 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperationWithChanges) {
             .WillOnce(Return(false));
 
     EXPECT_CALL(mHwComposer,
-                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _, _))
-            .WillOnce(DoAll(SetArgPointee<4>(mDeviceRequestedChanges), Return(NO_ERROR)));
+                getDeviceCompositionChanges(HalDisplayId(DEFAULT_DISPLAY_ID), true, _, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<5>(mDeviceRequestedChanges), Return(NO_ERROR)));
     EXPECT_CALL(*mDisplay, applyChangedTypesToLayers(mDeviceRequestedChanges.changedTypes))
             .Times(1);
     EXPECT_CALL(*mDisplay, applyDisplayRequests(mDeviceRequestedChanges.displayRequests)).Times(1);
@@ -867,7 +867,7 @@ TEST_F(DisplayApplyLayerRequestsToLayersTest, applyClientTargetRequests) {
 }
 
 /*
- * Display::presentAndGetFrameFences()
+ * Display::presentFrame()
  */
 
 using DisplayPresentAndGetFrameFencesTest = DisplayWithLayersTestCommon;
@@ -876,7 +876,7 @@ TEST_F(DisplayPresentAndGetFrameFencesTest, returnsNoFencesOnGpuDisplay) {
     auto args = getDisplayCreationArgsForGpuVirtualDisplay();
     auto gpuDisplay{impl::createDisplay(mCompositionEngine, args)};
 
-    auto result = gpuDisplay->presentAndGetFrameFences();
+    auto result = gpuDisplay->presentFrame();
 
     ASSERT_TRUE(result.presentFence.get());
     EXPECT_FALSE(result.presentFence->isValid());
@@ -900,7 +900,7 @@ TEST_F(DisplayPresentAndGetFrameFencesTest, returnsPresentAndLayerFences) {
             .WillOnce(Return(layer2Fence));
     EXPECT_CALL(mHwComposer, clearReleaseFences(HalDisplayId(DEFAULT_DISPLAY_ID))).Times(1);
 
-    auto result = mDisplay->presentAndGetFrameFences();
+    auto result = mDisplay->presentFrame();
 
     EXPECT_EQ(presentFence, result.presentFence);
 
@@ -1060,7 +1060,7 @@ struct DisplayFunctionalTest : public testing::Test {
     }
 };
 
-TEST_F(DisplayFunctionalTest, postFramebufferCriticalCallsAreOrdered) {
+TEST_F(DisplayFunctionalTest, presentFrameAndReleaseLayersCriticalCallsAreOrdered) {
     InSequence seq;
 
     mDisplay->editState().isEnabled = true;
@@ -1068,7 +1068,7 @@ TEST_F(DisplayFunctionalTest, postFramebufferCriticalCallsAreOrdered) {
     EXPECT_CALL(mHwComposer, presentAndGetReleaseFences(_, _));
     EXPECT_CALL(*mDisplaySurface, onFrameCommitted());
 
-    mDisplay->postFramebuffer();
+    mDisplay->presentFrameAndReleaseLayers();
 }
 
 } // namespace

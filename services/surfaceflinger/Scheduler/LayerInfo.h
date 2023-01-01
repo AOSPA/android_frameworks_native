@@ -182,6 +182,8 @@ public:
     // layer can go back to whatever vote it had before the app voted for it.
     void setDefaultLayerVote(LayerHistory::LayerVoteType type) { mDefaultVote = type; }
 
+    void setProperties(const LayerProps&);
+
     // Resets the layer vote to its default.
     void resetLayerVote() {
         mLayerVote = {mDefaultVote, Fps(), Seamlessness::Default, FrameRateCategory::Default};
@@ -200,6 +202,7 @@ public:
     FrameRate getSetFrameRateVote() const;
     bool isVisible() const;
     int32_t getFrameRateSelectionPriority() const;
+    bool isFrontBuffered() const;
     FloatRect getBounds() const;
     ui::Transform getTransform() const;
 
@@ -360,6 +363,7 @@ struct LayerProps {
     LayerInfo::FrameRate setFrameRateVote;
     int32_t frameRateSelectionPriority = -1;
     bool isSmallDirty = false;
+    bool isFrontBuffered = false;
 };
 
 } // namespace scheduler

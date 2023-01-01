@@ -110,14 +110,14 @@ TEST_F(FlagManagerTest, returnsValue) {
 
     {
         // TODO(b/304338314): Set the flag value instead of skipping the test
-        // SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, true);
+        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, true);
         if (com::android::graphics::surfaceflinger::flags::late_boot_misc2()) GTEST_SKIP();
         EXPECT_EQ(true, mFlagManager.late_boot_misc2());
     }
 
     {
         // TODO(b/304338314): Set the flag value instead of skipping the test
-        // SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, false);
+        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, false);
         if (com::android::graphics::surfaceflinger::flags::late_boot_misc2()) GTEST_SKIP();
         EXPECT_EQ(false, mFlagManager.late_boot_misc2());
     }
@@ -144,14 +144,14 @@ TEST_F(FlagManagerTest, readonlyReturnsValue) {
 
     {
         // TODO(b/304338314): Set the flag value instead of skipping the test
-        // SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, true);
+        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, true);
         if (com::android::graphics::surfaceflinger::flags::misc1()) GTEST_SKIP();
         EXPECT_EQ(true, mFlagManager.misc1());
     }
 
     {
         // TODO(b/304338314): Set the flag value instead of skipping the test
-        // SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, false);
+        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, false);
         if (com::android::graphics::surfaceflinger::flags::misc1()) GTEST_SKIP();
         EXPECT_EQ(false, mFlagManager.misc1());
     }

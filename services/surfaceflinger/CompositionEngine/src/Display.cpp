@@ -305,10 +305,10 @@ bool Display::chooseCompositionStrategy(
 
     const TimePoint hwcValidateStartTime = TimePoint::now();
 
-    if (status_t result =
-                hwc.getDeviceCompositionChanges(*halDisplayId, requiresClientComposition,
-                                                getState().earliestPresentTime,
-                                                getState().expectedPresentTime, outChanges);
+    if (status_t result = hwc.getDeviceCompositionChanges(*halDisplayId, requiresClientComposition,
+                                                          getState().earliestPresentTime,
+                                                          getState().expectedPresentTime,
+                                                          getState().frameInterval, outChanges);
         result != NO_ERROR) {
         ALOGE("chooseCompositionStrategy failed for %s: %d (%s)", getName().c_str(), result,
               strerror(-result));
@@ -412,8 +412,8 @@ void Display::applyClientTargetRequests(const ClientTargetProperty& clientTarget
             static_cast<ui::PixelFormat>(clientTargetProperty.clientTargetProperty.pixelFormat));
 }
 
-compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
-    auto fences = impl::Output::presentAndGetFrameFences();
+compositionengine::Output::FrameFences Display::presentFrame() {
+    auto fences = impl::Output::presentFrame();
 
     const auto halDisplayIdOpt = HalDisplayId::tryCast(mId);
     if (mIsDisconnected || !halDisplayIdOpt) {
