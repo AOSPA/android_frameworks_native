@@ -770,19 +770,14 @@ private:
     void setVirtualDisplayPowerMode(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    // Returns whether to optimize globally for performance instead of power.
-    bool shouldOptimizeForPerformance() REQUIRES(mStateLock);
-
-    // Turns on power optimizations, for example when there are no displays to be optimized for
-    // performance.
-    static void enablePowerOptimizations(const char* whence);
-
-    // Turns off power optimizations.
-    static void disablePowerOptimizations(const char* whence);
+    // Adjusts thread scheduling according to the optimization policy
+    static void optimizeThreadScheduling(
+            const char* whence, gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy);
 
     // Enables or disables power optimizations depending on whether there are displays that should
     // be optimized for performance.
-    void applyOptimizationPolicy(const char* whence) REQUIRES(mStateLock);
+    void applyOptimizationPolicy(const char* whence) REQUIRES(kMainThreadContext)
+            REQUIRES(mStateLock);
 
     // Returns the preferred mode for PhysicalDisplayId if the Scheduler has selected one for that
     // display. Falls back to the display's defaultModeId otherwise.

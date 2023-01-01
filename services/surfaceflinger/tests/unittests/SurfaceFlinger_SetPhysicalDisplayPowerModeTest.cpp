@@ -17,6 +17,7 @@
 #undef LOG_TAG
 #define LOG_TAG "LibSurfaceFlingerUnittests"
 
+#include <android_companion_virtualdevice_flags.h>
 #include <com_android_graphics_surfaceflinger_flags.h>
 #include <common/test/FlagUtils.h>
 #include "DisplayTransactionTestHelpers.h"
@@ -78,11 +79,19 @@ struct EventThreadBaseSupportedVariant {
 struct EventThreadNotSupportedVariant : public EventThreadBaseSupportedVariant {
     static void setupEnableVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(test->mFlinger.scheduler()->mockRequestHardwareVsync, Call(_, true)).Times(1);
+        setupDisableSyntheticVsyncCallExpectations(test);
+    }
+
+    static void setupDisableSyntheticVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mEventThread, enableSyntheticVsync(_)).Times(0);
     }
 
     static void setupDisableVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(test->mFlinger.scheduler()->mockRequestHardwareVsync, Call(_, false)).Times(1);
+        setupEnableSyntheticVsyncCallExpectations(test);
+    }
+
+    static void setupEnableSyntheticVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mEventThread, enableSyntheticVsync(_)).Times(0);
     }
 };
@@ -91,12 +100,20 @@ struct EventThreadIsSupportedVariant : public EventThreadBaseSupportedVariant {
     static void setupEnableVsyncCallExpectations(DisplayTransactionTest* test) {
         // Expect to enable hardware VSYNC and disable synthetic VSYNC.
         EXPECT_CALL(test->mFlinger.scheduler()->mockRequestHardwareVsync, Call(_, true)).Times(1);
+        setupDisableSyntheticVsyncCallExpectations(test);
+    }
+
+    static void setupDisableSyntheticVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mEventThread, enableSyntheticVsync(false)).Times(1);
     }
 
     static void setupDisableVsyncCallExpectations(DisplayTransactionTest* test) {
         // Expect to disable hardware VSYNC and enable synthetic VSYNC.
         EXPECT_CALL(test->mFlinger.scheduler()->mockRequestHardwareVsync, Call(_, false)).Times(1);
+        setupEnableSyntheticVsyncCallExpectations(test);
+    }
+
+    static void setupEnableSyntheticVsyncCallExpectations(DisplayTransactionTest* test) {
         EXPECT_CALL(*test->mEventThread, enableSyntheticVsync(true)).Times(1);
     }
 };
@@ -151,7 +168,7 @@ struct TransitionOffToDozeSuspendVariant
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE_SUSPEND);
-        Case::EventThread::setupVsyncNoCallExpectations(test);
+        Case::EventThread::setupEnableSyntheticVsyncCallExpectations(test);
         Case::setupRepaintEverythingCallExpectations(test);
     }
 
@@ -176,7 +193,7 @@ struct TransitionDozeSuspendToOffVariant
       : public TransitionVariantCommon<PowerMode::DOZE_SUSPEND, PowerMode::OFF> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupVsyncNoCallExpectations(test);
+        Case::EventThread::setupEnableSyntheticVsyncCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::OFF);
     }
 
@@ -188,7 +205,7 @@ struct TransitionDozeSuspendToOffVariant
 struct TransitionOnToDozeVariant : public TransitionVariantCommon<PowerMode::ON, PowerMode::DOZE> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupVsyncNoCallExpectations(test);
+        Case::EventThread::setupDisableSyntheticVsyncCallExpectations(test);
         Case::setupComposerCallExpectations(test, Case::Doze::ACTUAL_POWER_MODE_FOR_DOZE);
     }
 };
@@ -206,7 +223,7 @@ struct TransitionDozeSuspendToDozeVariant
 struct TransitionDozeToOnVariant : public TransitionVariantCommon<PowerMode::DOZE, PowerMode::ON> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupVsyncNoCallExpectations(test);
+        Case::EventThread::setupDisableSyntheticVsyncCallExpectations(test);
         Case::setupComposerCallExpectations(test, IComposerClient::PowerMode::ON);
     }
 };
@@ -234,7 +251,7 @@ struct TransitionOnToUnknownVariant
       : public TransitionVariantCommon<PowerMode::ON, static_cast<PowerMode>(POWER_MODE_LEET)> {
     template <typename Case>
     static void setupCallExpectations(DisplayTransactionTest* test) {
-        Case::EventThread::setupVsyncNoCallExpectations(test);
+        Case::EventThread::setupDisableSyntheticVsyncCallExpectations(test);
         Case::setupNoComposerPowerModeCallExpectations(test);
     }
 };
@@ -334,6 +351,10 @@ template <typename Case>
 void SetPhysicalDisplayPowerModeTest::transitionDisplayCommon() {
     // --------------------------------------------------------------------
     // Preconditions
+
+    SET_FLAG_FOR_TEST(android::companion::virtualdevice::flags::correct_virtual_display_power_state,
+                      true);
+    SET_FLAG_FOR_TEST(flags::disable_synthetic_vsync_for_performance, true);
 
     Case::Doze::setupComposerCallExpectations(this);
     auto display =
