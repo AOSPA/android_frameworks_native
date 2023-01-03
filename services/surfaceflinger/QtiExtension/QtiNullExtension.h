@@ -68,6 +68,13 @@ public:
      */
     status_t qtiGetDebugProperty(string prop, string* value) override;
     status_t qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) override;
+    status_t qtiBinderSetPowerMode(uint64_t displayId, int32_t mode, int32_t tile_h_loc,
+                                   int32_t tile_v_loc) override;
+    status_t qtiBinderSetPanelBrightnessTiled(uint64_t displayId, int32_t level, int32_t tile_h_loc,
+                                              int32_t tile_v_loc) override;
+    status_t qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) override;
+    void qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) override;
+    void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) override;
 
     /*
      * Methods for Virtual, WiFi, and Secure Displays

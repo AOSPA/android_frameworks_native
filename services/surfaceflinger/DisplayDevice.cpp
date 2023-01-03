@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -499,6 +505,22 @@ void DisplayDevice::clearDesiredActiveModeState() {
     mDesiredActiveMode.event = scheduler::DisplayModeEvent::None;
     mDesiredActiveModeChanged = false;
 }
+
+/* QTI_BEGIN */
+void DisplayDevice::qtiResetVsyncPeriod() {
+    std::scoped_lock<std::mutex> lock(mQtiModeLock);
+    mQtiVsyncPeriodUpdated = true;
+    mQtiVsyncPeriod = 0;
+}
+
+void DisplayDevice::qtiSetPowerModeOverrideConfig(bool supported) {
+    mQtiIsPowerModeOverride = supported;
+}
+
+bool DisplayDevice::qtiGetPowerModeOverrideConfig() const {
+    return mQtiIsPowerModeOverride;
+}
+/* QTI_END */
 
 std::atomic<int32_t> DisplayDeviceState::sNextSequenceId(1);
 

@@ -3130,6 +3130,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     auto display = setupNewDisplayDeviceInternal(displayToken, std::move(compositionDisplay), state,
                                                  displaySurface, producer);
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
+    /* QTI_END */
+
     if (mScheduler && !display->isVirtual()) {
         const auto displayId = display->getPhysicalId();
         {
@@ -4796,6 +4800,14 @@ void SurfaceFlinger::markLayerPendingRemovalLocked(const sp<Layer>& layer) {
 
 void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32_t /* layerId */) {
     Mutex::Autolock lock(mStateLock);
+
+    /* QTI_BEGIN */
+    if (!layer) {
+        ALOGW("Attempted to destroy an invalid layer");
+        return;
+    }
+    /* QTI_END */
+
     markLayerPendingRemovalLocked(layer);
     mBufferCountTracker.remove(handle);
     layer.clear();
@@ -5648,9 +5660,10 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         code == IBinder::SYSPROPS_TRANSACTION) {
         return OK;
     }
-    // Numbers from 1000 to 1042 are currently used for backdoors. The code
+    // Numbers from 1000 to 1042 and 20000 to 20002 are currently used for backdoors. The code
     // in onTransact verifies that the user is root, and has access to use SF.
-    if (code >= 1000 && code <= 1042) {
+    if ((code >= 1000 && code <= 1042) /* QTI_BEGIN */ ||
+        (code >= 20000 && code <= 20002) /* QTI_END */) {
         ALOGV("Accessing SurfaceFlinger through backdoor code: %u", code);
         return OK;
     }
@@ -5979,6 +5992,13 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
 
                 mDebugDisplayModeSetByBackdoor = false;
                 const status_t result = setActiveModeFromBackdoor(display, DisplayModeId{modeId});
+                if (result == NO_ERROR) {
+                    mDebugDisplayModeSetByBackdoor = true;
+                    /* QTI_BEGIN */
+                    ATRACE_NAME(std::string("ModeSwitch " + std::to_string(modeId)).c_str());
+                    /* QTI_END */
+                }
+
                 mDebugDisplayModeSetByBackdoor = result == NO_ERROR;
                 return result;
             }
@@ -6113,6 +6133,71 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 reply->writeInt32(NO_ERROR);
                 return NO_ERROR;
             }
+            /* QTI_BEGIN */
+            case 20000: {
+                uint64_t disp = 0;
+                hal::PowerMode power_mode = hal::PowerMode::ON;
+                int32_t tile_h_loc = -1;
+                int32_t tile_v_loc = -1;
+                if (data.readUint64(&disp) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 64-bit unsigned-int display id parameter.");
+                    break;
+                }
+                int32_t mode = 0;
+                if (data.readInt32(&mode) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 32-bit signed-int power mode parameter.");
+                    break;
+                }
+                if (data.readInt32(&tile_h_loc) != NO_ERROR) {
+                    tile_h_loc = -1;
+                }
+                if (data.readInt32(&tile_v_loc) != NO_ERROR) {
+                    tile_v_loc = 0;
+                }
+                return mQtiSFExtnIntf->qtiBinderSetPowerMode(disp, mode, tile_h_loc, tile_v_loc);
+            }
+            case 20001: {
+                uint64_t disp = 0;
+                int32_t level = 0;
+                int32_t tile_h_loc = -1;
+                int32_t tile_v_loc = -1;
+                if (data.readUint64(&disp) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 64-bit unsigned-int display id parameter.");
+                    break;
+                }
+                if (data.readInt32(&level) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 32-bit signed-int brightess parameter.");
+                    break;
+                }
+                if (data.readInt32(&tile_h_loc) != NO_ERROR) {
+                    tile_h_loc = -1;
+                }
+                if (data.readInt32(&tile_v_loc) != NO_ERROR) {
+                    tile_v_loc = 0;
+                }
+                return mQtiSFExtnIntf->qtiBinderSetPanelBrightnessTiled(disp, level, tile_h_loc,
+                                                                        tile_v_loc);
+            }
+            case 20002: {
+                uint64_t disp = 0;
+                int32_t pref = 0;
+                if (data.readUint64(&disp) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 64-bit unsigned-int display id parameter.");
+                    break;
+                }
+                if (data.readInt32(&pref) != NO_ERROR) {
+                    err = BAD_TYPE;
+                    ALOGE("Invalid 32-bit signed-int wider-mode preference parameter.");
+                    break;
+                }
+                return mQtiSFExtnIntf->qtiBinderSetWideModePreference(disp, pref);
+            }
+                /* QTI_END */
         }
     }
     return err;
@@ -7460,7 +7545,9 @@ binder::Status SurfaceComposerAIDL::setPowerMode(const sp<IBinder>& display, int
     if (status != OK) {
         return binderStatusFromStatusT(status);
     }
-    mFlinger->setPowerMode(display, mode);
+    /* QTI_BEGIN */
+    mFlinger->mQtiSFExtnIntf->qtiSetPowerMode(display, mode);
+    /* QTI_END */
     return binder::Status::ok();
 }
 

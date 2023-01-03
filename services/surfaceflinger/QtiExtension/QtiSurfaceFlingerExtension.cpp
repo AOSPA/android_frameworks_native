@@ -22,6 +22,8 @@ using PerfHintType = composer::PerfHintType;
 using VsyncConfiguration = android::scheduler::VsyncConfiguration;
 using VsyncModulator = android::scheduler::VsyncModulator;
 
+namespace hal = android::hardware::graphics::composer::hal;
+
 namespace android::scheduler::impl {
 class VsyncConfiguration;
 } // namespace android::scheduler::impl
@@ -115,6 +117,18 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
     }
 
     mQtiFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
+
+#ifdef QTI_DISPLAY_HIDL_CONFIG
+    int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
+                                                       nullptr, &mQtiDisplayConfigHidl);
+    if (ret || !mQtiDisplayConfigHidl) {
+        ALOGE("DisplayConfig HIDL not present");
+        mQtiDisplayConfigHidl = nullptr;
+    } else {
+        ALOGI("Initialized DisplayConfig HIDL %p successfully", mQtiDisplayConfigHidl);
+        mQtiEnabledIDC = true;
+    }
+#endif
 }
 
 QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
@@ -134,18 +148,6 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
             ALOGI("Initialized DisplayConfig AIDL %p successfully", mQtiDisplayConfigAidl.get());
             mQtiEnabledIDC = true;
         }
-    }
-#endif
-
-#ifdef QTI_DISPLAY_HIDL_CONFIG
-    int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
-                                                       nullptr, &mQtiDisplayConfigHidl);
-    if (ret || !mQtiDisplayConfigHidl) {
-        ALOGE("DisplayConfig HIDL not present");
-        mQtiDisplayConfigHidl = nullptr;
-    } else {
-        ALOGI("Initialized DisplayConfig HIDL %p successfully", mQtiDisplayConfigHidl);
-        mQtiEnabledIDC = true;
     }
 #endif
 
@@ -656,6 +658,242 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
 #endif
 
     return NO_ERROR;
+}
+
+status_t QtiSurfaceFlingerExtension::qtiBinderSetPowerMode(uint64_t displayId, int32_t mode,
+                                                           int32_t tile_h_loc, int32_t tile_v_loc) {
+    uint32_t num_h_tiles = 1;
+    uint32_t num_v_tiles = 1;
+    status_t err = NO_ERROR;
+
+    hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
+
+    if (tile_h_loc < 0) {
+        ALOGI("Debug: Set display = %llu, power mode = %d", (unsigned long long)displayId, mode);
+        if (const auto dispId = DisplayId::fromValue<PhysicalDisplayId>(displayId); dispId) {
+            qtiSetPowerMode(mQtiFlinger->getPhysicalDisplayToken(dispId.value()), mode);
+        }
+    } else {
+#if defined(QTI_DISPLAY_HIDL_CONFIG) && defined(DISPLAY_CONFIG_TILE_DISPLAY_APIS_1_0)
+        if (mQtiDisplayConfigHidl) {
+            ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
+            switch (power_mode) {
+                case hal::PowerMode::DOZE:
+                    hwcMode = ::DisplayConfig::PowerMode::kDoze;
+                    break;
+                case hal::PowerMode::ON:
+                    hwcMode = ::DisplayConfig::PowerMode::kOn;
+                    break;
+                case hal::PowerMode::DOZE_SUSPEND:
+                    hwcMode = ::DisplayConfig::PowerMode::kDozeSuspend;
+                    break;
+                default:
+                    break;
+            }
+
+            // A regular display has one h tile and one v tile.
+            mQtiDisplayConfigHidl->GetDisplayTileCount(displayId, &num_h_tiles, &num_v_tiles);
+            if (((num_h_tiles * num_v_tiles) < 2) ||
+                static_cast<uint32_t>(tile_h_loc) >= num_h_tiles ||
+                static_cast<uint32_t>(tile_v_loc) >= num_v_tiles) {
+                ALOGE("Debug: Display %llu has only %u h tiles and %u v tiles. Not a true "
+                      "tile display or invalid tile h or v locations given.",
+                      (unsigned long long)displayId, num_h_tiles, num_v_tiles);
+            } else {
+                err = mQtiDisplayConfigHidl->SetPowerModeTiled(displayId, hwcMode,
+                                                               static_cast<uint32_t>(tile_h_loc),
+                                                               static_cast<uint32_t>(tile_v_loc));
+                if (NO_ERROR != err) {
+                    ALOGE("Debug: DisplayConfig::SetPowerModeTiled() returned error %d", err);
+                }
+            }
+            ALOGI("Debug: Set display = %llu, power mode = %d at tile h loc = %d, tile v "
+                  "loc = %d (Has %u h tiles and %u v tiles)",
+                  (unsigned long long)displayId, mode, tile_h_loc, tile_v_loc, num_h_tiles,
+                  num_v_tiles);
+        }
+#endif
+    }
+    return err;
+}
+
+status_t QtiSurfaceFlingerExtension::qtiBinderSetPanelBrightnessTiled(uint64_t displayId,
+                                                                      int32_t level,
+                                                                      int32_t tile_h_loc,
+                                                                      int32_t tile_v_loc) {
+    uint32_t num_h_tiles = 1;
+    uint32_t num_v_tiles = 1;
+    status_t err = NO_ERROR;
+
+    float levelf = static_cast<float>(level) / 255.0f;
+    gui::DisplayBrightness brightness;
+    brightness.displayBrightness = levelf;
+
+    if (tile_h_loc < 0) {
+        ALOGI("Debug: Set display = %llu, brightness level = %d/255 (%0.2ff)",
+              (unsigned long long)displayId, level, levelf);
+        if (const auto dispId = DisplayId::fromValue<PhysicalDisplayId>(displayId); dispId) {
+            mQtiFlinger->setDisplayBrightness(mQtiFlinger->getPhysicalDisplayToken(dispId.value()),
+                                              brightness);
+        }
+    } else {
+#if defined(QTI_DISPLAY_HIDL_CONFIG) && defined(DISPLAY_CONFIG_TILE_DISPLAY_APIS_1_0)
+        // A regular display has one h tile and one v tile.
+        mQtiDisplayConfigHidl->GetDisplayTileCount(displayId, &num_h_tiles, &num_v_tiles);
+        if (((num_h_tiles * num_v_tiles) < 2) || static_cast<uint32_t>(tile_h_loc) >= num_h_tiles ||
+            static_cast<uint32_t>(tile_v_loc) >= num_v_tiles) {
+            ALOGE("Debug: Display %llu has only %u h tiles and %u v tiles. Not a true "
+                  "tile display or invalid tile h or v locations given.",
+                  (unsigned long long)displayId, num_h_tiles, num_v_tiles);
+        } else {
+            err = mQtiDisplayConfigHidl->SetPanelBrightnessTiled(displayId,
+                                                                 static_cast<uint32_t>(level),
+                                                                 static_cast<uint32_t>(tile_h_loc),
+                                                                 static_cast<uint32_t>(tile_v_loc));
+            if (NO_ERROR != err) {
+                ALOGE("Debug: DisplayConfig::SetPanelBrightnessTiled() returned error "
+                      "%d",
+                      err);
+            }
+        }
+#endif
+        ALOGI("Debug: Set display = %llu, brightness level = %d/255 (%0.2ff) at tile h "
+              "loc = %d, tile v loc = %d (Has %u h tiles and %u v tiles)",
+              (unsigned long long)displayId, level, levelf, tile_h_loc, tile_v_loc, num_h_tiles,
+              num_v_tiles);
+    }
+    return err;
+}
+
+status_t QtiSurfaceFlingerExtension::qtiBinderSetWideModePreference(uint64_t displayId,
+                                                                    int32_t pref) {
+    status_t err = NO_ERROR;
+#ifdef QTI_DISPLAY_HIDL_CONFIG
+    ALOGI("Debug: Set display = %llu, wider-mode preference = %d", (unsigned long long)displayId,
+          pref);
+    ::DisplayConfig::WiderModePref wider_mode_pref = ::DisplayConfig::WiderModePref::kNoPreference;
+    switch (pref) {
+        case 1:
+            wider_mode_pref = ::DisplayConfig::WiderModePref::kWiderAsyncMode;
+            break;
+        case 2:
+            wider_mode_pref = ::DisplayConfig::WiderModePref::kWiderSyncMode;
+            break;
+        default:
+            // Use default DisplayConfig::WiderModePref::kNoPreference.
+            break;
+    }
+    err = mQtiDisplayConfigHidl->SetWiderModePreference(displayId, wider_mode_pref);
+    if (NO_ERROR != err) {
+        ALOGE("Debug: DisplayConfig::SetWiderModePreference() returned error %d", err);
+    }
+#endif
+    return err;
+}
+
+void QtiSurfaceFlingerExtension::qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) {
+    sp<DisplayDevice> display = nullptr;
+    {
+        Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        display = (mQtiFlinger->getDisplayDeviceLocked(displayToken));
+    }
+
+    if (!display) {
+        ALOGE("Attempt to set power mode %d for invalid display token %p", mode,
+              displayToken.get());
+        return;
+    } else if (display->isVirtual()) {
+        ALOGW("Attempt to set power mode %d for virtual display", mode);
+        return;
+    }
+
+    if (mode < 0 || mode > (int)hal::PowerMode::DOZE_SUSPEND) {
+        ALOGW("Attempt to set invalid power mode %d", mode);
+        return;
+    }
+
+    if (!mQtiEnabledIDC) {
+        ALOGV("IDisplayConfig AIDL and HIDL are unavaibale, fall back to default setPowerMode");
+        mQtiFlinger->setPowerMode(displayToken, mode);
+        return;
+    }
+
+    hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
+    const auto displayId = display->getId();
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+    if (!physicalDisplayId) {
+        ALOGW("Attempt to set invalid displayId");
+        return;
+    }
+#ifdef QTI_DISPLAY_HIDL_CONFIG
+    const auto hwcDisplayId =
+            mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
+    const auto currentDisplayPowerMode = display->getPowerMode();
+    const hal::PowerMode newDisplayPowerMode = static_cast<hal::PowerMode>(mode);
+    // Fallback to default power state behavior as HWC does not support power mode override.
+    if (!display->qtiGetPowerModeOverrideConfig() ||
+        !((currentDisplayPowerMode == hal::PowerMode::OFF &&
+           newDisplayPowerMode == hal::PowerMode::ON) ||
+          (currentDisplayPowerMode == hal::PowerMode::ON &&
+           newDisplayPowerMode == hal::PowerMode::OFF))) {
+        ALOGV("HWC does not support power mode override, fall back to default setPowerMode");
+        mQtiFlinger->setPowerMode(displayToken, mode);
+        return;
+    }
+
+    ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
+    if (power_mode == hal::PowerMode::ON) {
+        hwcMode = ::DisplayConfig::PowerMode::kOn;
+    }
+
+    bool step_up = false;
+    if (currentDisplayPowerMode == hal::PowerMode::OFF &&
+        newDisplayPowerMode == hal::PowerMode::ON) {
+        step_up = true;
+    }
+    // Change hardware state first while stepping up.
+    if (step_up) {
+        mQtiDisplayConfigHidl->SetPowerMode(static_cast<uint32_t>(*hwcDisplayId), hwcMode);
+    }
+    // Change SF state now.
+    mQtiFlinger->setPowerMode(displayToken, mode);
+    // Change hardware state now while stepping down.
+
+    if (!step_up) {
+        mQtiDisplayConfigHidl->SetPowerMode(static_cast<uint32_t>(*hwcDisplayId), hwcMode);
+    }
+#endif
+}
+
+void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) {
+    bool supported = false;
+    const auto physicalDisplayId = PhysicalDisplayId::tryCast(display->getId());
+    if (physicalDisplayId) {
+        const auto hwcDisplayId =
+                mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
+
+#ifdef QTI_DISPLAY_AIDL_CONFIG
+        if (mQtiDisplayConfigAidl) {
+            mQtiDisplayConfigAidl->isPowerModeOverrideSupported(static_cast<int32_t>(*hwcDisplayId),
+                                                                &supported);
+            goto end;
+        }
+#endif
+
+#ifdef QTI_DISPLAY_HIDL_CONFIG
+        if (mQtiDisplayConfigHidl) {
+            mQtiDisplayConfigHidl->IsPowerModeOverrideSupported(static_cast<uint32_t>(
+                                                                        *hwcDisplayId),
+                                                                &supported);
+            goto end;
+        }
+#endif
+    }
+
+end:
+    if (supported) {
+        display->qtiSetPowerModeOverrideConfig(true);
+    }
 }
 
 /*

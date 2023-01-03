@@ -83,7 +83,18 @@ status_t QtiNullExtension::qtiGetDebugProperty(string prop, string* value) {
 status_t QtiNullExtension::qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) {
     return OK;
 }
-
+status_t QtiNullExtension::qtiBinderSetPowerMode(uint64_t displayId, int32_t mode,
+                                                 int32_t tile_h_loc, int32_t tile_v_loc) {
+    return OK;
+}
+status_t QtiNullExtension::qtiBinderSetPanelBrightnessTiled(uint64_t displayId, int32_t level,
+                                                            int32_t tile_h_loc,
+                                                            int32_t tile_v_loc) {
+    return OK;
+}
+status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) {
+    return OK;
+}
 /*
  * Methods for Virtual, WiFi, and Secure Displays
  */
@@ -108,5 +119,10 @@ bool QtiNullExtension::qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) {
 bool QtiNullExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffer) {
     return false;
 }
+
+void QtiNullExtension::qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) {
+    mQtiFlinger->setPowerMode(displayToken, mode);
+}
+void QtiNullExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) {}
 
 } // namespace android::surfaceflingerextension

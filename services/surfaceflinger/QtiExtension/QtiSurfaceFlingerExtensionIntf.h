@@ -87,6 +87,13 @@ public:
      */
     virtual status_t qtiGetDebugProperty(string prop, string* value) = 0;
     virtual status_t qtiIsSupportedConfigSwitch(const sp<IBinder>& displayToken, int config) = 0;
+    virtual status_t qtiBinderSetPowerMode(uint64_t displayId, int32_t mode, int32_t tile_h_loc,
+                                           int32_t tile_v_loc) = 0;
+    virtual status_t qtiBinderSetPanelBrightnessTiled(uint64_t displayId, int32_t level,
+                                                      int32_t tile_h_loc, int32_t tile_v_loc) = 0;
+    virtual status_t qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) = 0;
+    virtual void qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) = 0;
+    virtual void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) = 0;
 
     /*
      * Methods for Virtual, WiFi, and Secure Displays
