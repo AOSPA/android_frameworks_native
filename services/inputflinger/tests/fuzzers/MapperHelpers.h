@@ -211,6 +211,7 @@ public:
     int32_t getSwitchState(int32_t deviceId, int32_t sw) const override {
         return mFdp->ConsumeIntegral<int32_t>();
     }
+    void addKeyRemapping(int32_t deviceId, int32_t fromKeyCode, int32_t toKeyCode) const override {}
     int32_t getKeyCodeForKeyLocation(int32_t deviceId, int32_t locationKeyCode) const override {
         return mFdp->ConsumeIntegral<int32_t>();
     }
@@ -311,7 +312,7 @@ public:
         return mFdp->ConsumeRandomLengthString(32);
     }
     TouchAffineTransformation getTouchAffineTransformation(const std::string& inputDeviceDescriptor,
-                                                           int32_t surfaceRotation) override {
+                                                           ui::Rotation surfaceRotation) override {
         return mTransform;
     }
     void setTouchAffineTransformation(const TouchAffineTransformation t) { mTransform = t; }

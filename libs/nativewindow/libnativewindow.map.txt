@@ -51,7 +51,6 @@ LIBNATIVEWINDOW {
     ANativeWindow_setDequeueTimeout; # systemapi # introduced=30
     ANativeWindow_setFrameRate; # introduced=30
     ANativeWindow_setFrameRateWithChangeStrategy; # introduced=31
-    ANativeWindow_clearFrameRate; # introduced=UpsideDownCake
     ANativeWindow_setSharedBufferMode; # llndk
     ANativeWindow_setSwapInterval; # llndk
     ANativeWindow_setUsage; # llndk
@@ -71,6 +70,7 @@ LIBNATIVEWINDOW_PLATFORM {
       android::AHardwareBuffer_convertToPixelFormat*;
       android::AHardwareBuffer_convertFromGrallocUsageBits*;
       android::AHardwareBuffer_convertToGrallocUsageBits*;
+      android::AHardwareBuffer_getDataSpace*;
       android::AHardwareBuffer_to_GraphicBuffer*;
       android::AHardwareBuffer_to_ANativeWindowBuffer*;
       android::AHardwareBuffer_from_GraphicBuffer*;

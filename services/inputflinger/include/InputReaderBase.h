@@ -23,6 +23,7 @@
 #include <input/VelocityControl.h>
 #include <input/VelocityTracker.h>
 #include <stddef.h>
+#include <ui/Rotation.h>
 #include <unistd.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
@@ -86,6 +87,9 @@ public:
             int32_t keyCode) = 0;
     virtual int32_t getSwitchState(int32_t deviceId, uint32_t sourceMask,
             int32_t sw) = 0;
+
+    virtual void addKeyRemapping(int32_t deviceId, int32_t fromKeyCode,
+                                 int32_t toKeyCode) const = 0;
 
     virtual int32_t getKeyCodeForKeyLocation(int32_t deviceId, int32_t locationKeyCode) const = 0;
 
@@ -395,7 +399,7 @@ public:
 
     /* Gets the affine calibration associated with the specified device. */
     virtual TouchAffineTransformation getTouchAffineTransformation(
-            const std::string& inputDeviceDescriptor, int32_t surfaceRotation) = 0;
+            const std::string& inputDeviceDescriptor, ui::Rotation surfaceRotation) = 0;
     /* Notifies the input reader policy that a stylus gesture has started. */
     virtual void notifyStylusGestureStarted(int32_t deviceId, nsecs_t eventTime) = 0;
 };
