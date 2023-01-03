@@ -94,7 +94,7 @@ enum class InputDeviceClass : uint32_t {
     /* The input device is a cursor device such as a trackball or mouse. */
     CURSOR = 0x00000008,
 
-    /* The input device is a multi-touch touchscreen. */
+    /* The input device is a multi-touch touchscreen or touchpad. */
     TOUCH_MT = 0x00000010,
 
     /* The input device is a directional pad (implies keyboard, has DPAD keys). */
@@ -129,6 +129,9 @@ enum class InputDeviceClass : uint32_t {
 
     /* The input device has sysfs controllable lights */
     LIGHT = 0x00008000,
+
+    /* The input device is a touchpad, requiring an on-screen cursor. */
+    TOUCHPAD = 0x00010000,
 
     /* The input device is virtual (not a real device, not part of UI configuration). */
     VIRTUAL = 0x40000000,
@@ -258,6 +261,9 @@ public:
     virtual bool hasInputProperty(int32_t deviceId, int property) const = 0;
 
     virtual bool hasMscEvent(int32_t deviceId, int mscEvent) const = 0;
+
+    virtual void addKeyRemapping(int32_t deviceId, int32_t fromKeyCode,
+                                 int32_t toKeyCode) const = 0;
 
     virtual status_t mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode,
                             int32_t metaState, int32_t* outKeycode, int32_t* outMetaState,
@@ -456,6 +462,9 @@ public:
     bool hasInputProperty(int32_t deviceId, int property) const override final;
 
     bool hasMscEvent(int32_t deviceId, int mscEvent) const override final;
+
+    void addKeyRemapping(int32_t deviceId, int32_t fromKeyCode,
+                         int32_t toKeyCode) const override final;
 
     status_t mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode, int32_t metaState,
                     int32_t* outKeycode, int32_t* outMetaState,

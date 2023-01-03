@@ -17,6 +17,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <ui/Rotation.h>
 
 #include "CursorButtonAccumulator.h"
 #include "CursorScrollAccumulator.h"
@@ -218,15 +219,7 @@ protected:
         bool associatedDisplayIsExternal;
         bool orientationAware;
 
-        enum class Orientation : int32_t {
-            ORIENTATION_0 = DISPLAY_ORIENTATION_0,
-            ORIENTATION_90 = DISPLAY_ORIENTATION_90,
-            ORIENTATION_180 = DISPLAY_ORIENTATION_180,
-            ORIENTATION_270 = DISPLAY_ORIENTATION_270,
-
-            ftl_last = ORIENTATION_270
-        };
-        Orientation orientation;
+        ui::Rotation orientation;
 
         bool hasButtonUnderPad;
         std::string uniqueDisplayId;
@@ -412,22 +405,19 @@ private:
     // The components of the viewport are specified in the display's rotated orientation.
     DisplayViewport mViewport;
 
-    // The width and height are obtained from the viewport and are specified
-    // in the natural orientation.
-    int32_t mDisplayWidth;
-    int32_t mDisplayHeight;
+    // We refer to the display as being in the "natural orientation" when there is no rotation
+    // applied. The display size obtained from the viewport in the natural orientation.
+    // Always starts at (0, 0).
+    ui::Size mDisplayBounds{ui::kInvalidSize};
 
-    // The physical frame is the rectangle in the display's coordinate space that maps to the
+    // The physical frame is the rectangle in the natural display's coordinate space that maps to
     // the logical display frame.
-    int32_t mPhysicalWidth;
-    int32_t mPhysicalHeight;
-    int32_t mPhysicalLeft;
-    int32_t mPhysicalTop;
+    Rect mPhysicalFrameInDisplay{Rect::INVALID_RECT};
 
     // The orientation of the input device relative to that of the display panel. It specifies
     // the rotation of the input device coordinates required to produce the display panel
     // orientation, so it will depend on whether the device is orientation aware.
-    int32_t mInputDeviceOrientation;
+    ui::Rotation mInputDeviceOrientation;
 
     // Translation and scaling factors, orientation-independent.
     float mXScale;
