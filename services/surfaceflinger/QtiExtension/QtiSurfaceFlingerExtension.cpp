@@ -133,7 +133,7 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
 
 QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
-        scheduler::VsyncConfiguration* vsyncConfig) {
+        scheduler::VsyncConfiguration* vsyncConfig, Hwc2::Composer* composerHal) {
 #ifdef QTI_DISPLAY_AIDL_CONFIG
     ndk::SpAIBinder binder(AServiceManager_checkService(
             "vendor.qti.hardware.display.config.IDisplayConfig/default"));
@@ -168,12 +168,13 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         return new QtiNullExtension();
     }
 
-    mQtiHWComposerExtn = new QtiHWComposerExtension(hwc);
+    mQtiHWComposerExtn = new QtiHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
 
     qtiSetVsyncConfiguration(vsyncConfig);
     qtiSetupDisplayExtnFeatures();
     qtiUpdateVsyncConfiguration();
+    mQtiSFExtnBootComplete = true;
     return this;
 }
 
@@ -390,6 +391,10 @@ bool QtiSurfaceFlingerExtension::qtiIsExtensionFeatureEnabled(QtiFeature feature
  */
 status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
         std::chrono::steady_clock::time_point earliestPresentTime) const {
+    if (!mQtiFlinger->mBootFinished || !mQtiSFExtnBootComplete || !mQtiHWComposerExtn) {
+        return OK;
+    }
+
     nsecs_t sfOffset = mQtiFlinger->mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
     if (!mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kAdvanceSfOffset) ||
         (sfOffset >= 0)) {
@@ -414,12 +419,10 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
             return BAD_VALUE;
         }
 
-        /* TODO(rmedel): Enable setDisplayElapseTime
-                return mQtiFlinger->getHwComposer()
-                        .qtiSetDisplayElapseTime(*id,
-                                                 static_cast<uint64_t>(
-                                                         timeStamp.time_since_epoch().count()));
-        */
+        return mQtiHWComposerExtn
+                ->qtiSetDisplayElapseTime(*id,
+                                          static_cast<uint64_t>(
+                                                  timeStamp.time_since_epoch().count()));
     }
     return OK;
 }

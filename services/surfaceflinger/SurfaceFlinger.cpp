@@ -749,7 +749,7 @@ void SurfaceFlinger::bootFinished() {
             mQtiSFExtnIntf->qtiPostInit(static_cast<android::impl::HWComposer&>(
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
-                                        mVsyncConfiguration.get());
+                                        mVsyncConfiguration.get(), getHwComposer().getComposer());
     mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
@@ -2372,6 +2372,10 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
     // the scheduler.
     const auto presentTime = systemTime();
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayElapseTime(refreshArgs.earliestPresentTime);
+    /* QTI_END */
+
     {
         std::vector<LayerSnapshotGuard> layerSnapshotGuards;
         for (Layer* layer : layers) {
@@ -3134,23 +3138,25 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
     /* QTI_END */
 
-    if (mScheduler && !display->isVirtual()) {
-        const auto displayId = display->getPhysicalId();
-        {
-            // TODO(b/241285876): Annotate `processDisplayAdded` instead.
-            ftl::FakeGuard guard(kMainThreadContext);
-
-            // For hotplug reconnect, renew the registration since display modes have been reloaded.
-            mScheduler->registerDisplay(displayId, display->holdRefreshRateSelector());
-        }
-
-        dispatchDisplayHotplugEvent(displayId, true);
-
+    if (!display->isVirtual()) {
         /* QTI_BEGIN */
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ true);
         /* QTI_END */
-    }
 
+        if (mScheduler) {
+            const auto displayId = display->getPhysicalId();
+            {
+                // TODO(b/241285876): Annotate `processDisplayAdded` instead.
+                ftl::FakeGuard guard(kMainThreadContext);
+
+                // For hotplug reconnect, renew the registration since display modes have been
+                // reloaded.
+                mScheduler->registerDisplay(displayId, display->holdRefreshRateSelector());
+            }
+
+            dispatchDisplayHotplugEvent(displayId, true);
+        }
+    }
     mDisplays.try_emplace(displayToken, std::move(display));
 }
 

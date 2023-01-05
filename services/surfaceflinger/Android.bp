@@ -73,6 +73,7 @@ cc_defaults {
         "libutils",
         "libSurfaceFlingerProp",
         "server_configurable_flags",
+        "vendor.qti.hardware.display.composer@3.0",
     ],
     static_libs: [
         "libaidlcommonsupport",

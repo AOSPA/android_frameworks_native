@@ -35,9 +35,10 @@ public:
     virtual ~QtiSurfaceFlingerExtensionIntf() {}
 
     virtual void qtiInit(SurfaceFlinger* flinger) = 0;
-    virtual QtiSurfaceFlingerExtensionIntf* qtiPostInit(
-            android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
-            scheduler::VsyncConfiguration* vsyncConfig) = 0;
+    virtual QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
+                                                        Hwc2::impl::PowerAdvisor* powerAdvisor,
+                                                        scheduler::VsyncConfiguration* vsyncConfig,
+                                                        Hwc2::Composer* composerHal) = 0;
     virtual void qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) = 0;
     virtual void qtiSetTid() = 0;
     virtual bool qtiGetHwcDisplayId(const sp<DisplayDevice>& display, uint32_t* hwcDisplayId) = 0;

@@ -17,9 +17,10 @@ public:
     ~QtiNullExtension() = default;
 
     void qtiInit(SurfaceFlinger* flinger) override;
-    QtiSurfaceFlingerExtensionIntf* qtiPostInit(
-            android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
-            scheduler::VsyncConfiguration* vsyncConfig) override;
+    QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
+                                                Hwc2::impl::PowerAdvisor* powerAdvisor,
+                                                scheduler::VsyncConfiguration* vsyncConfig,
+                                                Hwc2::Composer* composerHal) override;
     void qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) override;
     void qtiSetTid() override;
     bool qtiGetHwcDisplayId(const sp<DisplayDevice>& display, uint32_t* hwcDisplayId) override;

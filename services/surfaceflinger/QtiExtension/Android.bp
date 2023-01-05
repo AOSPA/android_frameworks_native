@@ -4,6 +4,9 @@ cc_defaults {
     cflags: [
         "-DQTI_DISPLAY_EXTENSION",
     ],
+    shared_libs: [
+        "vendor.qti.hardware.display.composer@3.0",
+    ],
     defaults: [
         "qti_libdisplayconfigaidl_defaults",
         "qti_libdisplayconfighidl_defaults",
@@ -28,7 +31,9 @@ cc_library_static {
         "-DQTI_DISPLAY_EXTENSION",
     ],
     srcs: [
+        "QtiComposerHalExtension.cpp",
         "QtiFeatureManager.cpp",
+        "QtiHidlComposerHalExtension.cpp",
         "QtiHWComposerExtension.cpp",
         "QtiNullExtension.cpp",
         "QtiPhaseOffsetsExtension.cpp",
@@ -54,6 +59,7 @@ cc_library_static {
         "libui",
         "libutils",
         "libSurfaceFlingerProp",
+        "vendor.qti.hardware.display.composer@3.0",
     ],
     static_libs: [
         "libcompositionengine",

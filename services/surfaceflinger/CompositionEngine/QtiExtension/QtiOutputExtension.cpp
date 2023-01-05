@@ -4,6 +4,7 @@
 // #define LOG_NDEBUG 0
 #include "QtiOutputExtension.h"
 
+#define LOG_TAG "QtiCompositionEngineExtension"
 #include <log/log.h>
 
 namespace android::compositionengineextension {
