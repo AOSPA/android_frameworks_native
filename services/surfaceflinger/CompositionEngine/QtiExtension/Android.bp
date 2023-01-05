@@ -1,0 +1,17 @@
+cc_library_static {
+    name: "libqticompositionengineextension",
+    defaults: [
+        "android.hardware.graphics.composer3-ndk_shared",
+        "libcompositionengine_defaults",
+    ],
+    srcs: [
+        "QtiOutputExtension.cpp",
+    ],
+    shared_libs: [
+        "vendor.qti.hardware.display.composer@3.0",
+    ],
+    cflags: [
+        "-Wno-macro-redefined"
+    ],
+    include_dirs: ["frameworks/native/services/surfaceflinger/CompositionEngine/include"],
+}
