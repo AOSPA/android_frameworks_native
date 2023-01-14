@@ -70,6 +70,7 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId d
         mFbProducerSlot(BufferQueue::INVALID_BUFFER_SLOT),
         mOutputProducerSlot(BufferQueue::INVALID_BUFFER_SLOT),
         mSecure(secure),
+        mSinkUsage(0),
         mForceHwcCopy(SurfaceFlinger::useHwcForRgbToYuv) {
     mSource[SOURCE_SINK] = sink;
     mSource[SOURCE_SCRATCH] = bqProducer;
