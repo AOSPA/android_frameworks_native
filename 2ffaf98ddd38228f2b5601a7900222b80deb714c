@@ -16,6 +16,24 @@
       "message": "Touch boost already takes care of this",
       "revId": "2ffaf98ddd38228f2b5601a7900222b80deb714c",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "12937c60_60462b9f",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 8
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000062
+      },
+      "writtenOn": "2023-01-16T03:35:53Z",
+      "side": 1,
+      "message": "Touch isn\u0027t the only way of accessing the notification panel.",
+      "parentUuid": "805932d0_6ef6f4f9",
+      "revId": "2ffaf98ddd38228f2b5601a7900222b80deb714c",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
