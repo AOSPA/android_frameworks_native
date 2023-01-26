@@ -230,7 +230,9 @@ public:
                       ISchedulerCallback& callback)
           : Scheduler(*this, callback, Feature::kContentDetection) {
         mVsyncSchedule.emplace(VsyncSchedule(std::move(tracker), nullptr, std::move(controller)));
-        setRefreshRateSelector(std::move(selectorPtr));
+
+        const auto displayId = selectorPtr->getActiveMode().modePtr->getPhysicalDisplayId();
+        registerDisplay(displayId, std::move(selectorPtr));
     }
 
     ConnectionHandle createConnection(std::unique_ptr<EventThread> eventThread) {
@@ -242,7 +244,7 @@ public:
 
     auto &mutableLayerHistory() { return mLayerHistory; }
 
-    auto refreshRateSelector() { return holdRefreshRateSelector(); }
+    auto refreshRateSelector() { return leaderSelectorPtr(); }
 
     void replaceTouchTimer(int64_t millis) {
         if (mTouchTimer) {
@@ -270,7 +272,7 @@ public:
         mPolicy.cachedModeChangedParams.reset();
     }
 
-    void onNonPrimaryDisplayModeChanged(ConnectionHandle handle, DisplayModePtr mode) {
+    void onNonPrimaryDisplayModeChanged(ConnectionHandle handle, const FrameRateMode &mode) {
         return Scheduler::onNonPrimaryDisplayModeChanged(handle, mode);
     }
 
@@ -655,8 +657,7 @@ public:
         }
 
         mRefreshRateSelector = std::make_shared<scheduler::RefreshRateSelector>(modes, kModeId60);
-        const auto fps =
-                FTL_FAKE_GUARD(kMainThreadContext, mRefreshRateSelector->getActiveMode().getFps());
+        const auto fps = mRefreshRateSelector->getActiveMode().modePtr->getFps();
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
         mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
                 mFlinger->mVsyncConfiguration->getCurrentConfigs());
@@ -730,12 +731,14 @@ public:
         return mFlinger->mTransactionHandler.mPendingTransactionQueues;
     }
 
-    auto setTransactionState(
-            const FrameTimelineInfo &frameTimelineInfo, const Vector<ComposerState> &states,
-            const Vector<DisplayState> &displays, uint32_t flags, const sp<IBinder> &applyToken,
-            const InputWindowCommands &inputWindowCommands, int64_t desiredPresentTime,
-            bool isAutoTimestamp, const client_cache_t &uncacheBuffer, bool hasListenerCallbacks,
-            std::vector<ListenerCallbacks> &listenerCallbacks, uint64_t transactionId) {
+    auto setTransactionState(const FrameTimelineInfo &frameTimelineInfo,
+                             Vector<ComposerState> &states, const Vector<DisplayState> &displays,
+                             uint32_t flags, const sp<IBinder> &applyToken,
+                             const InputWindowCommands &inputWindowCommands,
+                             int64_t desiredPresentTime, bool isAutoTimestamp,
+                             const client_cache_t &uncacheBuffer, bool hasListenerCallbacks,
+                             std::vector<ListenerCallbacks> &listenerCallbacks,
+                             uint64_t transactionId) {
         return mFlinger->setTransactionState(frameTimelineInfo, states, displays, flags, applyToken,
                                              inputWindowCommands, desiredPresentTime,
                                              isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,

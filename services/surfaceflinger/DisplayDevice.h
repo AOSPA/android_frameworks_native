@@ -45,11 +45,11 @@
 #include "DisplayHardware/DisplayMode.h"
 #include "DisplayHardware/Hal.h"
 #include "DisplayHardware/PowerAdvisor.h"
+#include "FrontEnd/DisplayInfo.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "ThreadContext.h"
 #include "TracedOrdinal.h"
 #include "Utils/Dumper.h"
-
 namespace android {
 
 class Fence;
@@ -167,14 +167,7 @@ public:
     void setDisplayName(const std::string& displayName);
     const std::string& getDisplayName() const { return mDisplayName; }
 
-    struct InputInfo {
-        gui::DisplayInfo info;
-        ui::Transform transform;
-        bool receivesInput;
-        bool isSecure;
-    };
-
-    InputInfo getInputInfo() const;
+    surfaceflinger::frontend::DisplayInfo getFrontEndInfo() const;
 
     /* ------------------------------------------------------------------------
      * Display power mode management.
@@ -197,33 +190,38 @@ public:
         using Event = scheduler::DisplayModeEvent;
 
         ActiveModeInfo() = default;
-        ActiveModeInfo(DisplayModePtr mode, Event event) : mode(std::move(mode)), event(event) {}
+        ActiveModeInfo(scheduler::FrameRateMode mode, Event event)
+              : modeOpt(std::move(mode)), event(event) {}
 
         explicit ActiveModeInfo(display::DisplayModeRequest&& request)
-              : ActiveModeInfo(std::move(request.modePtr).take(),
+              : ActiveModeInfo(std::move(request.mode),
                                request.emitEvent ? Event::Changed : Event::None) {}
 
-        DisplayModePtr mode;
+        ftl::Optional<scheduler::FrameRateMode> modeOpt;
         Event event = Event::None;
 
         bool operator!=(const ActiveModeInfo& other) const {
-            return mode != other.mode || event != other.event;
+            return modeOpt != other.modeOpt || event != other.event;
         }
     };
 
-    bool setDesiredActiveMode(const ActiveModeInfo&) EXCLUDES(mActiveModeLock);
+    enum class DesiredActiveModeAction {
+        None,
+        InitiateDisplayModeSwitch,
+        InitiateRenderRateSwitch
+    };
+    DesiredActiveModeAction setDesiredActiveMode(const ActiveModeInfo&) EXCLUDES(mActiveModeLock);
     std::optional<ActiveModeInfo> getDesiredActiveMode() const EXCLUDES(mActiveModeLock);
     void clearDesiredActiveModeState() EXCLUDES(mActiveModeLock);
     ActiveModeInfo getUpcomingActiveMode() const REQUIRES(kMainThreadContext) {
         return mUpcomingActiveMode;
     }
 
-    const DisplayMode& getActiveMode() const REQUIRES(kMainThreadContext) {
+    scheduler::FrameRateMode getActiveMode() const REQUIRES(kMainThreadContext) {
         return mRefreshRateSelector->getActiveMode();
     }
 
-    // Precondition: DisplaySnapshot must contain a mode with DisplayModeId.
-    void setActiveMode(DisplayModeId, const display::DisplaySnapshot&) REQUIRES(kMainThreadContext);
+    void setActiveMode(DisplayModeId, Fps displayFps, Fps renderFps);
 
     status_t initiateModeChange(const ActiveModeInfo&,
                                 const hal::VsyncPeriodChangeConstraints& constraints,
@@ -261,6 +259,7 @@ private:
     std::string mDisplayName;
     std::string mActiveModeFPSTrace;
     std::string mActiveModeFPSHwcTrace;
+    std::string mRenderFrameRateFPSTrace;
 
     const ui::Rotation mPhysicalOrientation;
     ui::Rotation mOrientation = ui::ROTATION_0;

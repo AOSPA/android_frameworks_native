@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
-package android.gui;
+#include <aidl/android/hardware/sensors/Event.h>
+#include <sensor/Sensor.h>
 
-/** @hide */
-parcelable SupportedBufferCombinations {
-    int[] pixelFormats;
-    int[] dataspaces;
-}
+namespace android {
+namespace frameworks {
+namespace sensorservice {
+namespace implementation {
+
+::ndk::ScopedAStatus convertResult(status_t status);
+::aidl::android::hardware::sensors::Event convertEvent(const ::ASensorEvent& event);
+
+} // namespace implementation
+} // namespace sensorservice
+} // namespace frameworks
+} // namespace android

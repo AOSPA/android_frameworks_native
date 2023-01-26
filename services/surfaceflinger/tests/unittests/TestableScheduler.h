@@ -43,7 +43,9 @@ public:
                       ISchedulerCallback& callback)
           : Scheduler(*this, callback, Feature::kContentDetection) {
         mVsyncSchedule.emplace(VsyncSchedule(std::move(tracker), nullptr, std::move(controller)));
-        setRefreshRateSelector(std::move(selectorPtr));
+
+        const auto displayId = selectorPtr->getActiveMode().modePtr->getPhysicalDisplayId();
+        registerDisplay(displayId, std::move(selectorPtr));
 
         ON_CALL(*this, postMessage).WillByDefault([](sp<MessageHandler>&& handler) {
             // Execute task to prevent broken promise exception on destruction.
@@ -67,12 +69,27 @@ public:
     auto& mutablePrimaryHWVsyncEnabled() { return mPrimaryHWVsyncEnabled; }
     auto& mutableHWVsyncAvailable() { return mHWVsyncAvailable; }
 
-    auto refreshRateSelector() { return holdRefreshRateSelector(); }
-    bool hasRefreshRateSelectors() const { return !mRefreshRateSelectors.empty(); }
+    auto refreshRateSelector() { return leaderSelectorPtr(); }
 
-    void setRefreshRateSelector(RefreshRateSelectorPtr selectorPtr) {
+    const auto& refreshRateSelectors() const NO_THREAD_SAFETY_ANALYSIS {
+        return mRefreshRateSelectors;
+    }
+
+    bool hasRefreshRateSelectors() const { return !refreshRateSelectors().empty(); }
+
+    void registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr) {
         ftl::FakeGuard guard(kMainThreadContext);
-        return Scheduler::setRefreshRateSelector(std::move(selectorPtr));
+        Scheduler::registerDisplay(displayId, std::move(selectorPtr));
+    }
+
+    void unregisterDisplay(PhysicalDisplayId displayId) {
+        ftl::FakeGuard guard(kMainThreadContext);
+        Scheduler::unregisterDisplay(displayId);
+    }
+
+    void setLeaderDisplay(PhysicalDisplayId displayId) {
+        ftl::FakeGuard guard(kMainThreadContext);
+        Scheduler::setLeaderDisplay(displayId);
     }
 
     auto& mutableLayerHistory() { return mLayerHistory; }
@@ -115,14 +132,13 @@ public:
     using Scheduler::DisplayModeChoice;
     using Scheduler::DisplayModeChoiceMap;
 
-    DisplayModeChoiceMap chooseDisplayModes() {
-        std::lock_guard<std::mutex> lock(mPolicyLock);
+    DisplayModeChoiceMap chooseDisplayModes() NO_THREAD_SAFETY_ANALYSIS {
         return Scheduler::chooseDisplayModes();
     }
 
     void dispatchCachedReportedMode() {
         std::lock_guard<std::mutex> lock(mPolicyLock);
-        return Scheduler::dispatchCachedReportedMode();
+        Scheduler::dispatchCachedReportedMode();
     }
 
     void clearCachedReportedMode() {
@@ -130,8 +146,8 @@ public:
         mPolicy.cachedModeChangedParams.reset();
     }
 
-    void onNonPrimaryDisplayModeChanged(ConnectionHandle handle, DisplayModePtr mode) {
-        return Scheduler::onNonPrimaryDisplayModeChanged(handle, mode);
+    void onNonPrimaryDisplayModeChanged(ConnectionHandle handle, const FrameRateMode& mode) {
+        Scheduler::onNonPrimaryDisplayModeChanged(handle, mode);
     }
 
 private:

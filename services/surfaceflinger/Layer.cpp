@@ -195,8 +195,7 @@ Layer::Layer(const LayerCreationArgs& args)
         mDrawingState.color.b = -1.0_hf;
     }
 
-    mFrameTracker.setDisplayRefreshPeriod(
-            args.flinger->mScheduler->getVsyncPeriodFromRefreshRateSelector());
+    mFrameTracker.setDisplayRefreshPeriod(args.flinger->mScheduler->getLeaderVsyncPeriod());
 
     mOwnerUid = args.ownerUid;
     mOwnerPid = args.ownerPid;
@@ -1124,7 +1123,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
 
     // We return whether this layer ot its children has a vote. We ignore ExactOrMultiple votes for
     // the same reason we are allowing touch boost for those layers. See
-    // RefreshRateSelector::rankRefreshRates for details.
+    // RefreshRateSelector::rankFrameRates for details.
     const auto layerVotedWithDefaultCompatibility =
             frameRate.rate.isValid() && frameRate.type == FrameRateCompatibility::Default;
     const auto layerVotedWithNoVote = frameRate.type == FrameRateCompatibility::NoVote;
@@ -2841,7 +2840,7 @@ bool Layer::setPosition(float x, float y) {
 bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                       const BufferData& bufferData, nsecs_t postTime, nsecs_t desiredPresentTime,
                       bool isAutoTimestamp, std::optional<nsecs_t> dequeueTime,
-                      const FrameTimelineInfo& info) {
+                      const FrameTimelineInfo& info, int hwcBufferSlot) {
     ATRACE_FORMAT("setBuffer %s - hasBuffer=%s", getDebugName(), (buffer ? "true" : "false"));
     if (!buffer) {
         return false;
@@ -2887,7 +2886,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
     mDrawingState.buffer = std::move(buffer);
     mDrawingState.clientCacheId = bufferData.cachedBuffer;
-
+    mDrawingState.hwcBufferSlot = hwcBufferSlot;
     mDrawingState.acquireFence = bufferData.flags.test(BufferData::BufferDataChange::fenceChanged)
             ? bufferData.acquireFence
             : Fence::NO_FENCE;
@@ -3186,7 +3185,7 @@ void Layer::gatherBufferInfo() {
     mBufferInfo.mHdrMetadata = mDrawingState.hdrMetadata;
     mBufferInfo.mApi = mDrawingState.api;
     mBufferInfo.mTransformToDisplayInverse = mDrawingState.transformToDisplayInverse;
-    mBufferInfo.mBufferSlot = mHwcSlotGenerator->getHwcCacheSlot(mDrawingState.clientCacheId);
+    mBufferInfo.mBufferSlot = mDrawingState.hwcBufferSlot;
 }
 
 Rect Layer::computeBufferCrop(const State& s) {
@@ -3205,7 +3204,6 @@ sp<Layer> Layer::createClone() {
     LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
     args.textureName = mTextureName;
     sp<Layer> layer = mFlinger->getFactory().createBufferStateLayer(args);
-    layer->mHwcSlotGenerator = mHwcSlotGenerator;
     layer->setInitialValuesForClone(sp<Layer>::fromExisting(this));
     return layer;
 }
@@ -3599,7 +3597,7 @@ void Layer::onPostComposition(const DisplayDevice* display,
     }
 
     if (display) {
-        const Fps refreshRate = display->refreshRateSelector().getActiveModePtr()->getFps();
+        const Fps refreshRate = display->refreshRateSelector().getActiveMode().fps;
         const std::optional<Fps> renderRate =
                 mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
 
@@ -3970,18 +3968,19 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
     }
 }
 
+int Layer::getHwcCacheSlot(const client_cache_t& clientCacheId) {
+    return mHwcSlotGenerator->getHwcCacheSlot(clientCacheId);
+}
+
 LayerSnapshotGuard::LayerSnapshotGuard(Layer* layer) : mLayer(layer) {
-    LOG_ALWAYS_FATAL_IF(!mLayer, "LayerSnapshotGuard received a null layer.");
-    mLayer->mLayerFE->mSnapshot = std::move(mLayer->mSnapshot);
-    LOG_ALWAYS_FATAL_IF(!mLayer->mLayerFE->mSnapshot,
-                        "LayerFE snapshot null after taking ownership from layer");
+    if (mLayer) {
+        mLayer->mLayerFE->mSnapshot = std::move(mLayer->mSnapshot);
+    }
 }
 
 LayerSnapshotGuard::~LayerSnapshotGuard() {
     if (mLayer) {
         mLayer->mSnapshot = std::move(mLayer->mLayerFE->mSnapshot);
-        LOG_ALWAYS_FATAL_IF(!mLayer->mSnapshot,
-                            "Layer snapshot null after taking ownership from LayerFE");
     }
 }
 

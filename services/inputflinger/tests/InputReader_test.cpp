@@ -40,6 +40,8 @@
 #include <gui/constants.h>
 
 #include <thread>
+#include "FakeEventHub.h"
+#include "TestConstants.h"
 #include "android/hardware/input/InputDeviceCountryCode.h"
 #include "input/DisplayViewport.h"
 #include "input/Input.h"
@@ -51,13 +53,6 @@ namespace android {
 using namespace ftl::flag_operators;
 using testing::AllOf;
 using std::chrono_literals::operator""ms;
-
-// Timeout for waiting for an expected event
-static constexpr std::chrono::duration WAIT_TIMEOUT = 100ms;
-
-// An arbitrary time value.
-static constexpr nsecs_t ARBITRARY_TIME = 1234;
-static constexpr nsecs_t READ_TIME = 4321;
 
 // Arbitrary display properties.
 static constexpr int32_t DISPLAY_ID = 0;
@@ -79,10 +74,6 @@ static constexpr int32_t INVALID_TRACKING_ID = -1;
 static constexpr int32_t FIRST_TRACKING_ID = 0;
 static constexpr int32_t SECOND_TRACKING_ID = 1;
 static constexpr int32_t THIRD_TRACKING_ID = 2;
-static constexpr int32_t DEFAULT_BATTERY = 1;
-static constexpr int32_t BATTERY_STATUS = 4;
-static constexpr int32_t BATTERY_CAPACITY = 66;
-static const std::string BATTERY_DEVPATH = "/sys/devices/mydevice/power_supply/mybattery";
 static constexpr int32_t LIGHT_BRIGHTNESS = 0x55000000;
 static constexpr int32_t LIGHT_COLOR = 0x7F448866;
 static constexpr int32_t LIGHT_PLAYER_ID = 2;
@@ -464,653 +455,6 @@ private:
     }
 };
 
-// --- FakeEventHub ---
-
-class FakeEventHub : public EventHubInterface {
-    struct KeyInfo {
-        int32_t keyCode;
-        uint32_t flags;
-    };
-
-    struct SensorInfo {
-        InputDeviceSensorType sensorType;
-        int32_t sensorDataIndex;
-    };
-
-    struct Device {
-        InputDeviceIdentifier identifier;
-        ftl::Flags<InputDeviceClass> classes;
-        PropertyMap configuration;
-        KeyedVector<int, RawAbsoluteAxisInfo> absoluteAxes;
-        KeyedVector<int, bool> relativeAxes;
-        KeyedVector<int32_t, int32_t> keyCodeStates;
-        KeyedVector<int32_t, int32_t> scanCodeStates;
-        KeyedVector<int32_t, int32_t> switchStates;
-        KeyedVector<int32_t, int32_t> absoluteAxisValue;
-        KeyedVector<int32_t, KeyInfo> keysByScanCode;
-        KeyedVector<int32_t, KeyInfo> keysByUsageCode;
-        KeyedVector<int32_t, bool> leds;
-        // fake mapping which would normally come from keyCharacterMap
-        std::unordered_map<int32_t, int32_t> keyCodeMapping;
-        std::unordered_map<int32_t, SensorInfo> sensorsByAbsCode;
-        BitArray<MSC_MAX> mscBitmask;
-        std::vector<VirtualKeyDefinition> virtualKeys;
-        bool enabled;
-        InputDeviceCountryCode countryCode;
-
-        status_t enable() {
-            enabled = true;
-            return OK;
-        }
-
-        status_t disable() {
-            enabled = false;
-            return OK;
-        }
-
-        explicit Device(ftl::Flags<InputDeviceClass> classes) : classes(classes), enabled(true) {}
-    };
-
-    std::mutex mLock;
-    std::condition_variable mEventsCondition;
-
-    KeyedVector<int32_t, Device*> mDevices;
-    std::vector<std::string> mExcludedDevices;
-    std::vector<RawEvent> mEvents GUARDED_BY(mLock);
-    std::unordered_map<int32_t /*deviceId*/, std::vector<TouchVideoFrame>> mVideoFrames;
-    std::vector<int32_t> mVibrators = {0, 1};
-    std::unordered_map<int32_t, RawLightInfo> mRawLightInfos;
-    // Simulates a device light brightness, from light id to light brightness.
-    std::unordered_map<int32_t /* lightId */, int32_t /* brightness*/> mLightBrightness;
-    // Simulates a device light intensities, from light id to light intensities map.
-    std::unordered_map<int32_t /* lightId */, std::unordered_map<LightColor, int32_t>>
-            mLightIntensities;
-
-public:
-    virtual ~FakeEventHub() {
-        for (size_t i = 0; i < mDevices.size(); i++) {
-            delete mDevices.valueAt(i);
-        }
-    }
-
-    FakeEventHub() { }
-
-    void addDevice(int32_t deviceId, const std::string& name, ftl::Flags<InputDeviceClass> classes,
-                   int bus = 0) {
-        Device* device = new Device(classes);
-        device->identifier.name = name;
-        device->identifier.bus = bus;
-        mDevices.add(deviceId, device);
-
-        enqueueEvent(ARBITRARY_TIME, READ_TIME, deviceId, EventHubInterface::DEVICE_ADDED, 0, 0);
-    }
-
-    void removeDevice(int32_t deviceId) {
-        delete mDevices.valueFor(deviceId);
-        mDevices.removeItem(deviceId);
-
-        enqueueEvent(ARBITRARY_TIME, READ_TIME, deviceId, EventHubInterface::DEVICE_REMOVED, 0, 0);
-    }
-
-    bool isDeviceEnabled(int32_t deviceId) const override {
-        Device* device = getDevice(deviceId);
-        if (device == nullptr) {
-            ALOGE("Incorrect device id=%" PRId32 " provided to %s", deviceId, __func__);
-            return false;
-        }
-        return device->enabled;
-    }
-
-    status_t enableDevice(int32_t deviceId) override {
-        status_t result;
-        Device* device = getDevice(deviceId);
-        if (device == nullptr) {
-            ALOGE("Incorrect device id=%" PRId32 " provided to %s", deviceId, __func__);
-            return BAD_VALUE;
-        }
-        if (device->enabled) {
-            ALOGW("Duplicate call to %s, device %" PRId32 " already enabled", __func__, deviceId);
-            return OK;
-        }
-        result = device->enable();
-        return result;
-    }
-
-    status_t disableDevice(int32_t deviceId) override {
-        Device* device = getDevice(deviceId);
-        if (device == nullptr) {
-            ALOGE("Incorrect device id=%" PRId32 " provided to %s", deviceId, __func__);
-            return BAD_VALUE;
-        }
-        if (!device->enabled) {
-            ALOGW("Duplicate call to %s, device %" PRId32 " already disabled", __func__, deviceId);
-            return OK;
-        }
-        return device->disable();
-    }
-
-    void finishDeviceScan() {
-        enqueueEvent(ARBITRARY_TIME, READ_TIME, 0, EventHubInterface::FINISHED_DEVICE_SCAN, 0, 0);
-    }
-
-    void addConfigurationProperty(int32_t deviceId, const char* key, const char* value) {
-        Device* device = getDevice(deviceId);
-        device->configuration.addProperty(key, value);
-    }
-
-    void addConfigurationMap(int32_t deviceId, const PropertyMap* configuration) {
-        Device* device = getDevice(deviceId);
-        device->configuration.addAll(configuration);
-    }
-
-    void addAbsoluteAxis(int32_t deviceId, int axis,
-            int32_t minValue, int32_t maxValue, int flat, int fuzz, int resolution = 0) {
-        Device* device = getDevice(deviceId);
-
-        RawAbsoluteAxisInfo info;
-        info.valid = true;
-        info.minValue = minValue;
-        info.maxValue = maxValue;
-        info.flat = flat;
-        info.fuzz = fuzz;
-        info.resolution = resolution;
-        device->absoluteAxes.add(axis, info);
-    }
-
-    void addRelativeAxis(int32_t deviceId, int32_t axis) {
-        Device* device = getDevice(deviceId);
-        device->relativeAxes.add(axis, true);
-    }
-
-    void setKeyCodeState(int32_t deviceId, int32_t keyCode, int32_t state) {
-        Device* device = getDevice(deviceId);
-        device->keyCodeStates.replaceValueFor(keyCode, state);
-    }
-
-    void setCountryCode(int32_t deviceId, InputDeviceCountryCode countryCode) {
-        Device* device = getDevice(deviceId);
-        device->countryCode = countryCode;
-    }
-
-    void setScanCodeState(int32_t deviceId, int32_t scanCode, int32_t state) {
-        Device* device = getDevice(deviceId);
-        device->scanCodeStates.replaceValueFor(scanCode, state);
-    }
-
-    void setSwitchState(int32_t deviceId, int32_t switchCode, int32_t state) {
-        Device* device = getDevice(deviceId);
-        device->switchStates.replaceValueFor(switchCode, state);
-    }
-
-    void setAbsoluteAxisValue(int32_t deviceId, int32_t axis, int32_t value) {
-        Device* device = getDevice(deviceId);
-        device->absoluteAxisValue.replaceValueFor(axis, value);
-    }
-
-    void addKey(int32_t deviceId, int32_t scanCode, int32_t usageCode,
-            int32_t keyCode, uint32_t flags) {
-        Device* device = getDevice(deviceId);
-        KeyInfo info;
-        info.keyCode = keyCode;
-        info.flags = flags;
-        if (scanCode) {
-            device->keysByScanCode.add(scanCode, info);
-        }
-        if (usageCode) {
-            device->keysByUsageCode.add(usageCode, info);
-        }
-    }
-
-    void addKeyCodeMapping(int32_t deviceId, int32_t fromKeyCode, int32_t toKeyCode) {
-        Device* device = getDevice(deviceId);
-        device->keyCodeMapping.insert_or_assign(fromKeyCode, toKeyCode);
-    }
-
-    void addLed(int32_t deviceId, int32_t led, bool initialState) {
-        Device* device = getDevice(deviceId);
-        device->leds.add(led, initialState);
-    }
-
-    void addSensorAxis(int32_t deviceId, int32_t absCode, InputDeviceSensorType sensorType,
-                       int32_t sensorDataIndex) {
-        Device* device = getDevice(deviceId);
-        SensorInfo info;
-        info.sensorType = sensorType;
-        info.sensorDataIndex = sensorDataIndex;
-        device->sensorsByAbsCode.emplace(absCode, info);
-    }
-
-    void setMscEvent(int32_t deviceId, int32_t mscEvent) {
-        Device* device = getDevice(deviceId);
-        typename BitArray<MSC_MAX>::Buffer buffer;
-        buffer[mscEvent / 32] = 1 << mscEvent % 32;
-        device->mscBitmask.loadFromBuffer(buffer);
-    }
-
-    void addRawLightInfo(int32_t rawId, RawLightInfo&& info) {
-        mRawLightInfos.emplace(rawId, std::move(info));
-    }
-
-    void fakeLightBrightness(int32_t rawId, int32_t brightness) {
-        mLightBrightness.emplace(rawId, brightness);
-    }
-
-    void fakeLightIntensities(int32_t rawId,
-                              const std::unordered_map<LightColor, int32_t> intensities) {
-        mLightIntensities.emplace(rawId, std::move(intensities));
-    }
-
-    bool getLedState(int32_t deviceId, int32_t led) {
-        Device* device = getDevice(deviceId);
-        return device->leds.valueFor(led);
-    }
-
-    std::vector<std::string>& getExcludedDevices() {
-        return mExcludedDevices;
-    }
-
-    void addVirtualKeyDefinition(int32_t deviceId, const VirtualKeyDefinition& definition) {
-        Device* device = getDevice(deviceId);
-        device->virtualKeys.push_back(definition);
-    }
-
-    void enqueueEvent(nsecs_t when, nsecs_t readTime, int32_t deviceId, int32_t type, int32_t code,
-                      int32_t value) {
-        std::scoped_lock<std::mutex> lock(mLock);
-        RawEvent event;
-        event.when = when;
-        event.readTime = readTime;
-        event.deviceId = deviceId;
-        event.type = type;
-        event.code = code;
-        event.value = value;
-        mEvents.push_back(event);
-
-        if (type == EV_ABS) {
-            setAbsoluteAxisValue(deviceId, code, value);
-        }
-    }
-
-    void setVideoFrames(std::unordered_map<int32_t /*deviceId*/,
-            std::vector<TouchVideoFrame>> videoFrames) {
-        mVideoFrames = std::move(videoFrames);
-    }
-
-    void assertQueueIsEmpty() {
-        std::unique_lock<std::mutex> lock(mLock);
-        base::ScopedLockAssertion assumeLocked(mLock);
-        const bool queueIsEmpty =
-                mEventsCondition.wait_for(lock, WAIT_TIMEOUT,
-                                          [this]() REQUIRES(mLock) { return mEvents.size() == 0; });
-        if (!queueIsEmpty) {
-            FAIL() << "Timed out waiting for EventHub queue to be emptied.";
-        }
-    }
-
-private:
-    Device* getDevice(int32_t deviceId) const {
-        ssize_t index = mDevices.indexOfKey(deviceId);
-        return index >= 0 ? mDevices.valueAt(index) : nullptr;
-    }
-
-    ftl::Flags<InputDeviceClass> getDeviceClasses(int32_t deviceId) const override {
-        Device* device = getDevice(deviceId);
-        return device ? device->classes : ftl::Flags<InputDeviceClass>(0);
-    }
-
-    InputDeviceIdentifier getDeviceIdentifier(int32_t deviceId) const override {
-        Device* device = getDevice(deviceId);
-        return device ? device->identifier : InputDeviceIdentifier();
-    }
-
-    int32_t getDeviceControllerNumber(int32_t) const override { return 0; }
-
-    void getConfiguration(int32_t deviceId, PropertyMap* outConfiguration) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            *outConfiguration = device->configuration;
-        }
-    }
-
-    status_t getAbsoluteAxisInfo(int32_t deviceId, int axis,
-                                 RawAbsoluteAxisInfo* outAxisInfo) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->absoluteAxes.indexOfKey(axis);
-            if (index >= 0) {
-                *outAxisInfo = device->absoluteAxes.valueAt(index);
-                return OK;
-            }
-        }
-        outAxisInfo->clear();
-        return -1;
-    }
-
-    bool hasRelativeAxis(int32_t deviceId, int axis) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            return device->relativeAxes.indexOfKey(axis) >= 0;
-        }
-        return false;
-    }
-
-    bool hasInputProperty(int32_t, int) const override { return false; }
-
-    bool hasMscEvent(int32_t deviceId, int mscEvent) const override final {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            return mscEvent >= 0 && mscEvent <= MSC_MAX ? device->mscBitmask.test(mscEvent) : false;
-        }
-        return false;
-    }
-
-    status_t mapKey(int32_t deviceId, int32_t scanCode, int32_t usageCode, int32_t metaState,
-                    int32_t* outKeycode, int32_t* outMetaState, uint32_t* outFlags) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            const KeyInfo* key = getKey(device, scanCode, usageCode);
-            if (key) {
-                if (outKeycode) {
-                    *outKeycode = key->keyCode;
-                }
-                if (outFlags) {
-                    *outFlags = key->flags;
-                }
-                if (outMetaState) {
-                    *outMetaState = metaState;
-                }
-                return OK;
-            }
-        }
-        return NAME_NOT_FOUND;
-    }
-
-    const KeyInfo* getKey(Device* device, int32_t scanCode, int32_t usageCode) const {
-        if (usageCode) {
-            ssize_t index = device->keysByUsageCode.indexOfKey(usageCode);
-            if (index >= 0) {
-                return &device->keysByUsageCode.valueAt(index);
-            }
-        }
-        if (scanCode) {
-            ssize_t index = device->keysByScanCode.indexOfKey(scanCode);
-            if (index >= 0) {
-                return &device->keysByScanCode.valueAt(index);
-            }
-        }
-        return nullptr;
-    }
-
-    status_t mapAxis(int32_t, int32_t, AxisInfo*) const override { return NAME_NOT_FOUND; }
-
-    base::Result<std::pair<InputDeviceSensorType, int32_t>> mapSensor(
-            int32_t deviceId, int32_t absCode) const override {
-        Device* device = getDevice(deviceId);
-        if (!device) {
-            return Errorf("Sensor device not found.");
-        }
-        auto it = device->sensorsByAbsCode.find(absCode);
-        if (it == device->sensorsByAbsCode.end()) {
-            return Errorf("Sensor map not found.");
-        }
-        const SensorInfo& info = it->second;
-        return std::make_pair(info.sensorType, info.sensorDataIndex);
-    }
-
-    void setExcludedDevices(const std::vector<std::string>& devices) override {
-        mExcludedDevices = devices;
-    }
-
-    std::vector<RawEvent> getEvents(int) override {
-        std::scoped_lock lock(mLock);
-
-        std::vector<RawEvent> buffer;
-        std::swap(buffer, mEvents);
-
-        mEventsCondition.notify_all();
-        return buffer;
-    }
-
-    std::vector<TouchVideoFrame> getVideoFrames(int32_t deviceId) override {
-        auto it = mVideoFrames.find(deviceId);
-        if (it != mVideoFrames.end()) {
-            std::vector<TouchVideoFrame> frames = std::move(it->second);
-            mVideoFrames.erase(deviceId);
-            return frames;
-        }
-        return {};
-    }
-
-    int32_t getScanCodeState(int32_t deviceId, int32_t scanCode) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->scanCodeStates.indexOfKey(scanCode);
-            if (index >= 0) {
-                return device->scanCodeStates.valueAt(index);
-            }
-        }
-        return AKEY_STATE_UNKNOWN;
-    }
-
-    InputDeviceCountryCode getCountryCode(int32_t deviceId) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            return device->countryCode;
-        }
-        return InputDeviceCountryCode::INVALID;
-    }
-
-    int32_t getKeyCodeState(int32_t deviceId, int32_t keyCode) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->keyCodeStates.indexOfKey(keyCode);
-            if (index >= 0) {
-                return device->keyCodeStates.valueAt(index);
-            }
-        }
-        return AKEY_STATE_UNKNOWN;
-    }
-
-    int32_t getSwitchState(int32_t deviceId, int32_t sw) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->switchStates.indexOfKey(sw);
-            if (index >= 0) {
-                return device->switchStates.valueAt(index);
-            }
-        }
-        return AKEY_STATE_UNKNOWN;
-    }
-
-    status_t getAbsoluteAxisValue(int32_t deviceId, int32_t axis,
-                                  int32_t* outValue) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->absoluteAxisValue.indexOfKey(axis);
-            if (index >= 0) {
-                *outValue = device->absoluteAxisValue.valueAt(index);
-                return OK;
-            }
-        }
-        *outValue = 0;
-        return -1;
-    }
-
-    int32_t getKeyCodeForKeyLocation(int32_t deviceId, int32_t locationKeyCode) const override {
-        Device* device = getDevice(deviceId);
-        if (!device) {
-            return AKEYCODE_UNKNOWN;
-        }
-        auto it = device->keyCodeMapping.find(locationKeyCode);
-        return it != device->keyCodeMapping.end() ? it->second : locationKeyCode;
-    }
-
-    // Return true if the device has non-empty key layout.
-    bool markSupportedKeyCodes(int32_t deviceId, const std::vector<int32_t>& keyCodes,
-                               uint8_t* outFlags) const override {
-        bool result = false;
-        Device* device = getDevice(deviceId);
-        if (device) {
-            result = device->keysByScanCode.size() > 0 || device->keysByUsageCode.size() > 0;
-            for (size_t i = 0; i < keyCodes.size(); i++) {
-                for (size_t j = 0; j < device->keysByScanCode.size(); j++) {
-                    if (keyCodes[i] == device->keysByScanCode.valueAt(j).keyCode) {
-                        outFlags[i] = 1;
-                    }
-                }
-                for (size_t j = 0; j < device->keysByUsageCode.size(); j++) {
-                    if (keyCodes[i] == device->keysByUsageCode.valueAt(j).keyCode) {
-                        outFlags[i] = 1;
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    bool hasScanCode(int32_t deviceId, int32_t scanCode) const override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->keysByScanCode.indexOfKey(scanCode);
-            return index >= 0;
-        }
-        return false;
-    }
-
-    bool hasKeyCode(int32_t deviceId, int32_t keyCode) const override {
-        Device* device = getDevice(deviceId);
-        if (!device) {
-            return false;
-        }
-        for (size_t i = 0; i < device->keysByScanCode.size(); i++) {
-            if (keyCode == device->keysByScanCode.valueAt(i).keyCode) {
-                return true;
-            }
-        }
-        for (size_t j = 0; j < device->keysByUsageCode.size(); j++) {
-            if (keyCode == device->keysByUsageCode.valueAt(j).keyCode) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool hasLed(int32_t deviceId, int32_t led) const override {
-        Device* device = getDevice(deviceId);
-        return device && device->leds.indexOfKey(led) >= 0;
-    }
-
-    void setLedState(int32_t deviceId, int32_t led, bool on) override {
-        Device* device = getDevice(deviceId);
-        if (device) {
-            ssize_t index = device->leds.indexOfKey(led);
-            if (index >= 0) {
-                device->leds.replaceValueAt(led, on);
-            } else {
-                ADD_FAILURE()
-                        << "Attempted to set the state of an LED that the EventHub declared "
-                        "was not present.  led=" << led;
-            }
-        }
-    }
-
-    void getVirtualKeyDefinitions(
-            int32_t deviceId, std::vector<VirtualKeyDefinition>& outVirtualKeys) const override {
-        outVirtualKeys.clear();
-
-        Device* device = getDevice(deviceId);
-        if (device) {
-            outVirtualKeys = device->virtualKeys;
-        }
-    }
-
-    const std::shared_ptr<KeyCharacterMap> getKeyCharacterMap(int32_t) const override {
-        return nullptr;
-    }
-
-    bool setKeyboardLayoutOverlay(int32_t, std::shared_ptr<KeyCharacterMap>) override {
-        return false;
-    }
-
-    void vibrate(int32_t, const VibrationElement&) override {}
-
-    void cancelVibrate(int32_t) override {}
-
-    std::vector<int32_t> getVibratorIds(int32_t deviceId) const override { return mVibrators; };
-
-    std::optional<int32_t> getBatteryCapacity(int32_t, int32_t) const override {
-        return BATTERY_CAPACITY;
-    }
-
-    std::optional<int32_t> getBatteryStatus(int32_t, int32_t) const override {
-        return BATTERY_STATUS;
-    }
-
-    std::vector<int32_t> getRawBatteryIds(int32_t deviceId) const override {
-        return {DEFAULT_BATTERY};
-    }
-
-    std::optional<RawBatteryInfo> getRawBatteryInfo(int32_t deviceId,
-                                                    int32_t batteryId) const override {
-        if (batteryId != DEFAULT_BATTERY) return {};
-        static const auto BATTERY_INFO = RawBatteryInfo{.id = DEFAULT_BATTERY,
-                                                        .name = "default battery",
-                                                        .flags = InputBatteryClass::CAPACITY,
-                                                        .path = BATTERY_DEVPATH};
-        return BATTERY_INFO;
-    }
-
-    std::vector<int32_t> getRawLightIds(int32_t deviceId) const override {
-        std::vector<int32_t> ids;
-        for (const auto& [rawId, info] : mRawLightInfos) {
-            ids.push_back(rawId);
-        }
-        return ids;
-    }
-
-    std::optional<RawLightInfo> getRawLightInfo(int32_t deviceId, int32_t lightId) const override {
-        auto it = mRawLightInfos.find(lightId);
-        if (it == mRawLightInfos.end()) {
-            return std::nullopt;
-        }
-        return it->second;
-    }
-
-    void setLightBrightness(int32_t deviceId, int32_t lightId, int32_t brightness) override {
-        mLightBrightness.emplace(lightId, brightness);
-    }
-
-    void setLightIntensities(int32_t deviceId, int32_t lightId,
-                             std::unordered_map<LightColor, int32_t> intensities) override {
-        mLightIntensities.emplace(lightId, intensities);
-    };
-
-    std::optional<int32_t> getLightBrightness(int32_t deviceId, int32_t lightId) const override {
-        auto lightIt = mLightBrightness.find(lightId);
-        if (lightIt == mLightBrightness.end()) {
-            return std::nullopt;
-        }
-        return lightIt->second;
-    }
-
-    std::optional<std::unordered_map<LightColor, int32_t>> getLightIntensities(
-            int32_t deviceId, int32_t lightId) const override {
-        auto lightIt = mLightIntensities.find(lightId);
-        if (lightIt == mLightIntensities.end()) {
-            return std::nullopt;
-        }
-        return lightIt->second;
-    };
-
-    void dump(std::string&) const override {}
-
-    void monitor() const override {}
-
-    void requestReopenDevices() override {}
-
-    void wake() override {}
-};
-
 // --- FakeInputMapper ---
 
 class FakeInputMapper : public InputMapper {
@@ -1349,6 +693,8 @@ protected:
         int32_t mGlobalMetaState;
         bool mUpdateGlobalMetaStateWasCalled;
         int32_t mGeneration;
+        std::optional<nsecs_t> mRequestedTimeout;
+        std::vector<InputDeviceInfo> mExternalStylusDevices;
 
     public:
         FakeInputReaderContext(InputReader* reader)
@@ -1381,6 +727,29 @@ protected:
         int32_t bumpGeneration() override {
             mGeneration = ContextImpl::bumpGeneration();
             return mGeneration;
+        }
+
+        void requestTimeoutAtTime(nsecs_t when) override { mRequestedTimeout = when; }
+
+        void assertTimeoutWasRequested(nsecs_t when) {
+            ASSERT_TRUE(mRequestedTimeout) << "Expected timeout at time " << when
+                                           << " but there was no timeout requested.";
+            ASSERT_EQ(when, *mRequestedTimeout);
+            mRequestedTimeout.reset();
+        }
+
+        void assertTimeoutWasNotRequested() {
+            ASSERT_FALSE(mRequestedTimeout) << "Expected no timeout to have been requested,"
+                                               " but one was requested at time "
+                                            << *mRequestedTimeout;
+        }
+
+        void getExternalStylusDevices(std::vector<InputDeviceInfo>& outDevices) override {
+            outDevices = mExternalStylusDevices;
+        }
+
+        void setExternalStylusDevices(std::vector<InputDeviceInfo>&& devices) {
+            mExternalStylusDevices = devices;
         }
     } mFakeContext;
 
@@ -2258,8 +1627,9 @@ TEST_F(InputReaderTest, BatteryGetCapacity) {
 
     ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
 
-    ASSERT_EQ(controller.getBatteryCapacity(DEFAULT_BATTERY), BATTERY_CAPACITY);
-    ASSERT_EQ(mReader->getBatteryCapacity(deviceId), BATTERY_CAPACITY);
+    ASSERT_EQ(controller.getBatteryCapacity(FakeEventHub::DEFAULT_BATTERY),
+              FakeEventHub::BATTERY_CAPACITY);
+    ASSERT_EQ(mReader->getBatteryCapacity(deviceId), FakeEventHub::BATTERY_CAPACITY);
 }
 
 TEST_F(InputReaderTest, BatteryGetStatus) {
@@ -2275,8 +1645,9 @@ TEST_F(InputReaderTest, BatteryGetStatus) {
 
     ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
 
-    ASSERT_EQ(controller.getBatteryStatus(DEFAULT_BATTERY), BATTERY_STATUS);
-    ASSERT_EQ(mReader->getBatteryStatus(deviceId), BATTERY_STATUS);
+    ASSERT_EQ(controller.getBatteryStatus(FakeEventHub::DEFAULT_BATTERY),
+              FakeEventHub::BATTERY_STATUS);
+    ASSERT_EQ(mReader->getBatteryStatus(deviceId), FakeEventHub::BATTERY_STATUS);
 }
 
 TEST_F(InputReaderTest, BatteryGetDevicePath) {
@@ -2291,7 +1662,7 @@ TEST_F(InputReaderTest, BatteryGetDevicePath) {
 
     ASSERT_NO_FATAL_FAILURE(addDevice(eventHubId, "fake", deviceClass, nullptr));
 
-    ASSERT_EQ(mReader->getBatteryDevicePath(deviceId), BATTERY_DEVPATH);
+    ASSERT_EQ(mReader->getBatteryDevicePath(deviceId), FakeEventHub::BATTERY_DEVPATH);
 }
 
 TEST_F(InputReaderTest, LightGetColor) {
@@ -2504,7 +1875,8 @@ TEST_F(InputReaderIntegrationTest, SendsGearDownAndUpToInputListener) {
     ASSERT_EQ(BTN_GEAR_UP, keyArgs.scanCode);
 }
 
-// --- TouchProcessTest ---
+// --- TouchIntegrationTest ---
+
 class TouchIntegrationTest : public InputReaderIntegrationTest {
 protected:
     const std::string UNIQUE_ID = "local:0";
@@ -2550,6 +1922,14 @@ protected:
     std::unique_ptr<UinputTouchScreen> mDevice;
     InputDeviceInfo mDeviceInfo;
 };
+
+TEST_F(TouchIntegrationTest, MultiTouchDeviceSource) {
+    // The UinputTouchScreen is an MT device that supports MT_TOOL_TYPE and also supports stylus
+    // buttons. It should show up as a touchscreen, stylus, and keyboard (for reporting button
+    // presses).
+    ASSERT_EQ(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS | AINPUT_SOURCE_KEYBOARD,
+              mDeviceInfo.getSources());
+}
 
 TEST_F(TouchIntegrationTest, InputEvent_ProcessSingleTouch) {
     NotifyMotionArgs args;
@@ -2817,108 +2197,412 @@ TEST_F(TouchIntegrationTest, NotifiesPolicyWhenStylusGestureStarted) {
     ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertStylusGestureNotified(mDeviceInfo.getId()));
 }
 
-TEST_F(TouchIntegrationTest, StylusButtonsGenerateKeyEvents) {
-    mDevice->sendKey(BTN_STYLUS, 1);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
-            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+// --- StylusButtonIntegrationTest ---
 
-    mDevice->sendKey(BTN_STYLUS, 0);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+// Verify the behavior of button presses reported by various kinds of styluses, including buttons
+// reported by the touchscreen's device, by a fused external stylus, and by an un-fused external
+// stylus.
+template <typename UinputStylusDevice>
+class StylusButtonIntegrationTest : public TouchIntegrationTest {
+protected:
+    void SetUp() override {
+#if !defined(__ANDROID__)
+        GTEST_SKIP();
+#endif
+        TouchIntegrationTest::SetUp();
+        mTouchscreen = mDevice.get();
+        mTouchscreenInfo = mDeviceInfo;
+
+        setUpStylusDevice();
+    }
+
+    UinputStylusDevice* mStylus{nullptr};
+    InputDeviceInfo mStylusInfo{};
+
+    UinputTouchScreen* mTouchscreen{nullptr};
+    InputDeviceInfo mTouchscreenInfo{};
+
+private:
+    // When we are attempting to test stylus button events that are sent from the touchscreen,
+    // use the same Uinput device for the touchscreen and the stylus.
+    template <typename T = UinputStylusDevice>
+    std::enable_if_t<std::is_same_v<UinputTouchScreen, T>, void> setUpStylusDevice() {
+        mStylus = mDevice.get();
+        mStylusInfo = mDeviceInfo;
+    }
+
+    // When we are attempting to stylus buttons from an external stylus being merged with touches
+    // from a touchscreen, create a new Uinput device through which stylus buttons can be injected.
+    template <typename T = UinputStylusDevice>
+    std::enable_if_t<!std::is_same_v<UinputTouchScreen, T>, void> setUpStylusDevice() {
+        mStylusDeviceLifecycleTracker = createUinputDevice<T>();
+        mStylus = mStylusDeviceLifecycleTracker.get();
+        ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+        ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
+        const auto info = findDeviceByName(mStylus->getName());
+        ASSERT_TRUE(info);
+        mStylusInfo = *info;
+    }
+
+    std::unique_ptr<UinputStylusDevice> mStylusDeviceLifecycleTracker{};
+
+    // Hide the base class's device to expose it with a different name for readability.
+    using TouchIntegrationTest::mDevice;
+    using TouchIntegrationTest::mDeviceInfo;
+};
+
+using StylusButtonIntegrationTestTypes =
+        ::testing::Types<UinputTouchScreen, UinputExternalStylus, UinputExternalStylusWithPressure>;
+TYPED_TEST_SUITE(StylusButtonIntegrationTest, StylusButtonIntegrationTestTypes);
+
+TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsGenerateKeyEvents) {
+    const auto stylusId = TestFixture::mStylusInfo.getId();
+
+    TestFixture::mStylus->pressKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
+
+    TestFixture::mStylus->releaseKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
             AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 }
 
-TEST_F(TouchIntegrationTest, StylusButtonsSurroundingTouchGesture) {
-    const Point centerPoint = mDevice->getCenterPoint();
+TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingTouchGesture) {
+    const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
+    const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
+    const auto stylusId = TestFixture::mStylusInfo.getId();
 
     // Press the stylus button.
-    mDevice->sendKey(BTN_STYLUS, 1);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+    TestFixture::mStylus->pressKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
             AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 
     // Start and finish a stylus gesture.
-    mDevice->sendSlot(FIRST_SLOT);
-    mDevice->sendTrackingId(FIRST_TRACKING_ID);
-    mDevice->sendToolType(MT_TOOL_PEN);
-    mDevice->sendDown(centerPoint);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+    TestFixture::mTouchscreen->sendSlot(FIRST_SLOT);
+    TestFixture::mTouchscreen->sendTrackingId(FIRST_TRACKING_ID);
+    TestFixture::mTouchscreen->sendToolType(MT_TOOL_PEN);
+    TestFixture::mTouchscreen->sendDown(centerPoint);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
                   WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
-                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY),
+                  WithDeviceId(touchscreenId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
                   WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
-                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY),
+                  WithDeviceId(touchscreenId))));
 
-    mDevice->sendTrackingId(INVALID_TRACKING_ID);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+    TestFixture::mTouchscreen->sendTrackingId(INVALID_TRACKING_ID);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
 
     // Release the stylus button.
-    mDevice->sendKey(BTN_STYLUS, 0);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
+    TestFixture::mStylus->releaseKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
             AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 }
 
-TEST_F(TouchIntegrationTest, StylusButtonsWithinTouchGesture) {
-    const Point centerPoint = mDevice->getCenterPoint();
+TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingHoveringTouchGesture) {
+    const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
+    const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
+    const auto stylusId = TestFixture::mStylusInfo.getId();
+    auto toolTypeDevice =
+            AllOf(WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithDeviceId(touchscreenId));
+
+    // Press the stylus button.
+    TestFixture::mStylus->pressKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
+
+    // Start hovering with the stylus.
+    TestFixture::mTouchscreen->sendSlot(FIRST_SLOT);
+    TestFixture::mTouchscreen->sendTrackingId(FIRST_TRACKING_ID);
+    TestFixture::mTouchscreen->sendToolType(MT_TOOL_PEN);
+    TestFixture::mTouchscreen->sendMove(centerPoint);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    // Touch down with the stylus.
+    TestFixture::mTouchscreen->sendTrackingId(FIRST_TRACKING_ID);
+    TestFixture::mTouchscreen->sendToolType(MT_TOOL_PEN);
+    TestFixture::mTouchscreen->sendDown(centerPoint);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_EXIT),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    // Stop touching with the stylus, and start hovering.
+    TestFixture::mTouchscreen->sendUp();
+    TestFixture::mTouchscreen->sendTrackingId(FIRST_TRACKING_ID);
+    TestFixture::mTouchscreen->sendToolType(MT_TOOL_PEN);
+    TestFixture::mTouchscreen->sendMove(centerPoint);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    // Stop hovering.
+    TestFixture::mTouchscreen->sendTrackingId(INVALID_TRACKING_ID);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                  WithButtonState(0))));
+    // TODO(b/257971675): Fix inconsistent button state when exiting hover.
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeDevice, WithMotionAction(AMOTION_EVENT_ACTION_HOVER_EXIT),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+
+    // Release the stylus button.
+    TestFixture::mStylus->releaseKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
+}
+
+TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsWithinTouchGesture) {
+    const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
+    const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
+    const auto stylusId = TestFixture::mStylusInfo.getId();
 
     // Start a stylus gesture.
+    TestFixture::mTouchscreen->sendSlot(FIRST_SLOT);
+    TestFixture::mTouchscreen->sendTrackingId(FIRST_TRACKING_ID);
+    TestFixture::mTouchscreen->sendToolType(MT_TOOL_PEN);
+    TestFixture::mTouchscreen->sendDown(centerPoint);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
+
+    // Press and release a stylus button. Each change in button state also generates a MOVE event.
+    TestFixture::mStylus->pressKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY),
+                  WithDeviceId(touchscreenId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY),
+                  WithDeviceId(touchscreenId))));
+
+    TestFixture::mStylus->releaseKey(BTN_STYLUS);
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyKeyWasCalled(
+            AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
+                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
+
+    // Finish the stylus gesture.
+    TestFixture::mTouchscreen->sendTrackingId(INVALID_TRACKING_ID);
+    TestFixture::mTouchscreen->sendSync();
+    ASSERT_NO_FATAL_FAILURE(TestFixture::mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId))));
+}
+
+// --- ExternalStylusIntegrationTest ---
+
+// Verify the behavior of an external stylus. An external stylus can report pressure or button
+// data independently of the touchscreen, which is then sent as a MotionEvent as part of an
+// ongoing stylus gesture that is being emitted by the touchscreen.
+using ExternalStylusIntegrationTest = TouchIntegrationTest;
+
+TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureReported) {
+    const Point centerPoint = mDevice->getCenterPoint();
+
+    // Create an external stylus capable of reporting pressure data that
+    // should be fused with a touch pointer.
+    std::unique_ptr<UinputExternalStylusWithPressure> stylus =
+            createUinputDevice<UinputExternalStylusWithPressure>();
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
+    const auto stylusInfo = findDeviceByName(stylus->getName());
+    ASSERT_TRUE(stylusInfo);
+
+    ASSERT_EQ(AINPUT_SOURCE_STYLUS | AINPUT_SOURCE_KEYBOARD, stylusInfo->getSources());
+
+    const auto touchscreenId = mDeviceInfo.getId();
+
+    // Set a pressure value on the stylus. It doesn't generate any events.
+    const auto& RAW_PRESSURE_MAX = UinputExternalStylusWithPressure::RAW_PRESSURE_MAX;
+    stylus->setPressure(100);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+
+    // Start a finger gesture, and ensure it shows up as stylus gesture
+    // with the pressure set by the external stylus.
     mDevice->sendSlot(FIRST_SLOT);
     mDevice->sendTrackingId(FIRST_TRACKING_ID);
-    mDevice->sendToolType(MT_TOOL_PEN);
+    mDevice->sendToolType(MT_TOOL_FINGER);
     mDevice->sendDown(centerPoint);
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId), WithPressure(100.f / RAW_PRESSURE_MAX))));
 
-    // Press and release a stylus button. Each change in button state also generates a MOVE event.
-    mDevice->sendKey(BTN_STYLUS, 1);
-    mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
-            AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
+    // Change the pressure on the external stylus, and ensure the touchscreen generates a MOVE
+    // event with the updated pressure.
+    stylus->setPressure(200);
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
-                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS),
-                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId), WithPressure(200.f / RAW_PRESSURE_MAX))));
 
-    mDevice->sendKey(BTN_STYLUS, 0);
+    // The external stylus did not generate any events.
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasNotCalled());
+}
+
+TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
+    const Point centerPoint = mDevice->getCenterPoint();
+
+    // Create an external stylus capable of reporting pressure data that
+    // should be fused with a touch pointer.
+    std::unique_ptr<UinputExternalStylusWithPressure> stylus =
+            createUinputDevice<UinputExternalStylusWithPressure>();
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
+    const auto stylusInfo = findDeviceByName(stylus->getName());
+    ASSERT_TRUE(stylusInfo);
+
+    ASSERT_EQ(AINPUT_SOURCE_STYLUS | AINPUT_SOURCE_KEYBOARD, stylusInfo->getSources());
+
+    const auto touchscreenId = mDeviceInfo.getId();
+
+    // Set a pressure value of 0 on the stylus. It doesn't generate any events.
+    const auto& RAW_PRESSURE_MAX = UinputExternalStylusWithPressure::RAW_PRESSURE_MAX;
+    // Send a non-zero value first to prevent the kernel from consuming the zero event.
+    stylus->setPressure(100);
+    stylus->setPressure(0);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+
+    // Start a finger gesture. The touch device will withhold generating any touches for
+    // up to 72 milliseconds while waiting for pressure data from the external stylus.
+    mDevice->sendSlot(FIRST_SLOT);
+    mDevice->sendTrackingId(FIRST_TRACKING_ID);
+    mDevice->sendToolType(MT_TOOL_FINGER);
+    mDevice->sendDown(centerPoint);
+    auto waitUntil = std::chrono::system_clock::now() +
+            std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT));
     mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasCalled(
-            AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP), WithSource(AINPUT_SOURCE_KEYBOARD),
-                  WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY))));
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled(waitUntil));
 
-    // Finish the stylus gesture.
+    // Since the external stylus did not report a pressure value within the timeout,
+    // it shows up as a finger pointer.
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_FINGER), WithDeviceId(touchscreenId),
+                  WithPressure(1.f))));
+
+    // Change the pressure on the external stylus. Since the pressure was not present at the start
+    // of the gesture, it is ignored for now.
+    stylus->setPressure(200);
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+
+    // Finish the finger gesture.
     mDevice->sendTrackingId(INVALID_TRACKING_ID);
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
-                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0))));
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_FINGER))));
+
+    // Start a new gesture. Since we have a valid pressure value, it shows up as a stylus.
+    mDevice->sendTrackingId(FIRST_TRACKING_ID);
+    mDevice->sendToolType(MT_TOOL_FINGER);
+    mDevice->sendDown(centerPoint);
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS), WithButtonState(0),
+                  WithDeviceId(touchscreenId), WithPressure(200.f / RAW_PRESSURE_MAX))));
+
+    // The external stylus did not generate any events.
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasNotCalled());
+}
+
+TEST_F(ExternalStylusIntegrationTest, UnfusedExternalStylus) {
+    const Point centerPoint = mDevice->getCenterPoint();
+
+    // Create an external stylus device that does not support pressure. It should not affect any
+    // touch pointers.
+    std::unique_ptr<UinputExternalStylus> stylus = createUinputDevice<UinputExternalStylus>();
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
+    const auto stylusInfo = findDeviceByName(stylus->getName());
+    ASSERT_TRUE(stylusInfo);
+
+    ASSERT_EQ(AINPUT_SOURCE_STYLUS | AINPUT_SOURCE_KEYBOARD, stylusInfo->getSources());
+
+    const auto touchscreenId = mDeviceInfo.getId();
+
+    // Start a finger gesture and ensure a finger pointer is generated for it, without waiting for
+    // pressure data from the external stylus.
+    mDevice->sendSlot(FIRST_SLOT);
+    mDevice->sendTrackingId(FIRST_TRACKING_ID);
+    mDevice->sendToolType(MT_TOOL_FINGER);
+    mDevice->sendDown(centerPoint);
+    auto waitUntil = std::chrono::system_clock::now() +
+            std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT));
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(
+            mTestListener
+                    ->assertNotifyMotionWasCalled(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                                                        WithToolType(
+                                                                AMOTION_EVENT_TOOL_TYPE_FINGER),
+                                                        WithButtonState(0),
+                                                        WithDeviceId(touchscreenId),
+                                                        WithPressure(1.f)),
+                                                  waitUntil));
+
+    // The external stylus did not generate any events.
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasNotCalled());
 }
 
 // --- InputDeviceTest ---
@@ -3370,6 +3054,16 @@ protected:
         }
         // Loop the reader to flush the input listener queue.
         mReader->loopOnce();
+    }
+
+    std::list<NotifyArgs> handleTimeout(InputMapper& mapper, nsecs_t when) {
+        std::list<NotifyArgs> generatedArgs = mapper.timeoutExpired(when);
+        for (const NotifyArgs& args : generatedArgs) {
+            mFakeListener->notify(args);
+        }
+        // Loop the reader to flush the input listener queue.
+        mReader->loopOnce();
+        return generatedArgs;
     }
 
     static void assertMotionRange(const InputDeviceInfo& info,
@@ -7566,6 +7260,360 @@ TEST_F(TouchDisplayProjectionTest, EmitsTouchDownAfterEnteringPhysicalDisplay) {
     }
 }
 
+// --- ExternalStylusFusionTest ---
+
+class ExternalStylusFusionTest : public SingleTouchInputMapperTest {
+public:
+    SingleTouchInputMapper& initializeInputMapperWithExternalStylus() {
+        addConfigurationProperty("touch.deviceType", "touchScreen");
+        prepareDisplay(DISPLAY_ORIENTATION_0);
+        prepareButtons();
+        prepareAxes(POSITION);
+        auto& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+
+        mStylusState.when = ARBITRARY_TIME;
+        mStylusState.pressure = 0.f;
+        mStylusState.toolType = AMOTION_EVENT_TOOL_TYPE_STYLUS;
+        mReader->getContext()->setExternalStylusDevices({mExternalStylusDeviceInfo});
+        configureDevice(InputReaderConfiguration::CHANGE_EXTERNAL_STYLUS_PRESENCE);
+        processExternalStylusState(mapper);
+        return mapper;
+    }
+
+    std::list<NotifyArgs> processExternalStylusState(InputMapper& mapper) {
+        std::list<NotifyArgs> generatedArgs = mapper.updateExternalStylusState(mStylusState);
+        for (const NotifyArgs& args : generatedArgs) {
+            mFakeListener->notify(args);
+        }
+        // Loop the reader to flush the input listener queue.
+        mReader->loopOnce();
+        return generatedArgs;
+    }
+
+protected:
+    StylusState mStylusState{};
+    static constexpr uint32_t EXPECTED_SOURCE =
+            AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_BLUETOOTH_STYLUS;
+
+    void testStartFusedStylusGesture(SingleTouchInputMapper& mapper) {
+        auto toolTypeSource =
+                AllOf(WithSource(EXPECTED_SOURCE), WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS));
+
+        // The first pointer is withheld.
+        processDown(mapper, 100, 200);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasRequested(
+                ARBITRARY_TIME + EXTERNAL_STYLUS_DATA_TIMEOUT));
+
+        // The external stylus reports pressure. The withheld finger pointer is released as a
+        // stylus.
+        mStylusState.pressure = 1.f;
+        processExternalStylusState(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_DOWN))));
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+        // Subsequent pointer events are not withheld.
+        processMove(mapper, 101, 201);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE))));
+
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    }
+
+    void testSuccessfulFusionGesture(SingleTouchInputMapper& mapper) {
+        ASSERT_NO_FATAL_FAILURE(testStartFusedStylusGesture(mapper));
+
+        // Releasing the touch pointer ends the gesture.
+        processUp(mapper);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(EXPECTED_SOURCE),
+                      WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+
+        mStylusState.pressure = 0.f;
+        processExternalStylusState(mapper);
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    }
+
+    void testUnsuccessfulFusionGesture(SingleTouchInputMapper& mapper) {
+        auto toolTypeSource =
+                AllOf(WithSource(EXPECTED_SOURCE), WithToolType(AMOTION_EVENT_TOOL_TYPE_FINGER));
+
+        // The first pointer is withheld when an external stylus is connected,
+        // and a timeout is requested.
+        processDown(mapper, 100, 200);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasRequested(
+                ARBITRARY_TIME + EXTERNAL_STYLUS_DATA_TIMEOUT));
+
+        // If the timeout expires early, it is requested again.
+        handleTimeout(mapper, ARBITRARY_TIME + 1);
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasRequested(
+                ARBITRARY_TIME + EXTERNAL_STYLUS_DATA_TIMEOUT));
+
+        // When the timeout expires, the withheld touch is released as a finger pointer.
+        handleTimeout(mapper, ARBITRARY_TIME + EXTERNAL_STYLUS_DATA_TIMEOUT);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_DOWN))));
+
+        // Subsequent pointer events are not withheld.
+        processMove(mapper, 101, 201);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE))));
+        processUp(mapper);
+        processSync(mapper);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+                AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_UP))));
+
+        ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    }
+
+private:
+    InputDeviceInfo mExternalStylusDeviceInfo{};
+};
+
+TEST_F(ExternalStylusFusionTest, UsesBluetoothStylusSource) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    ASSERT_EQ(EXPECTED_SOURCE, mapper.getSources());
+}
+
+TEST_F(ExternalStylusFusionTest, UnsuccessfulFusion) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    ASSERT_NO_FATAL_FAILURE(testUnsuccessfulFusionGesture(mapper));
+}
+
+TEST_F(ExternalStylusFusionTest, SuccessfulFusion_TouchFirst) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    ASSERT_NO_FATAL_FAILURE(testSuccessfulFusionGesture(mapper));
+}
+
+// Test a successful stylus fusion gesture where the pressure is reported by the external
+// before the touch is reported by the touchscreen.
+TEST_F(ExternalStylusFusionTest, SuccessfulFusion_PressureFirst) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    auto toolTypeSource =
+            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS));
+
+    // The external stylus reports pressure first. It is ignored for now.
+    mStylusState.pressure = 1.f;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // When the touch goes down afterwards, it is reported as a stylus pointer.
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_DOWN))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    processMove(mapper, 101, 201);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE))));
+    processUp(mapper);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_UP))));
+
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+}
+
+TEST_F(ExternalStylusFusionTest, FusionIsRepeatedForEachNewGesture) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+
+    ASSERT_NO_FATAL_FAILURE(testSuccessfulFusionGesture(mapper));
+    ASSERT_NO_FATAL_FAILURE(testUnsuccessfulFusionGesture(mapper));
+
+    ASSERT_NO_FATAL_FAILURE(testSuccessfulFusionGesture(mapper));
+    ASSERT_NO_FATAL_FAILURE(testSuccessfulFusionGesture(mapper));
+    ASSERT_NO_FATAL_FAILURE(testUnsuccessfulFusionGesture(mapper));
+    ASSERT_NO_FATAL_FAILURE(testUnsuccessfulFusionGesture(mapper));
+}
+
+TEST_F(ExternalStylusFusionTest, FusedPointerReportsPressureChanges) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    auto toolTypeSource =
+            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS));
+
+    mStylusState.pressure = 0.8f;
+    processExternalStylusState(mapper);
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithPressure(0.8f))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // The external stylus reports a pressure change. We wait for some time for a touch event.
+    mStylusState.pressure = 0.6f;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is reported within the timeout, it reports the updated pressure.
+    processMove(mapper, 101, 201);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithPressure(0.6f))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // There is another pressure change.
+    mStylusState.pressure = 0.5f;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is not reported within the timeout, a move event is generated to report
+    // the new pressure.
+    handleTimeout(mapper, ARBITRARY_TIME + TOUCH_DATA_TIMEOUT);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithPressure(0.5f))));
+
+    // If a zero pressure is reported before the touch goes up, the previous pressure value is
+    // repeated indefinitely.
+    mStylusState.pressure = 0.0f;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+    processMove(mapper, 102, 202);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithPressure(0.5f))));
+    processMove(mapper, 103, 203);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithPressure(0.5f))));
+
+    processUp(mapper);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(EXPECTED_SOURCE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+}
+
+TEST_F(ExternalStylusFusionTest, FusedPointerReportsToolTypeChanges) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    auto source = WithSource(EXPECTED_SOURCE);
+
+    mStylusState.pressure = 1.f;
+    mStylusState.toolType = AMOTION_EVENT_TOOL_TYPE_ERASER;
+    processExternalStylusState(mapper);
+    processDown(mapper, 100, 200);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(source, WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_ERASER))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // The external stylus reports a tool change. We wait for some time for a touch event.
+    mStylusState.toolType = AMOTION_EVENT_TOOL_TYPE_STYLUS;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is reported within the timeout, it reports the updated pressure.
+    processMove(mapper, 101, 201);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(source, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // There is another tool type change.
+    mStylusState.toolType = AMOTION_EVENT_TOOL_TYPE_FINGER;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is not reported within the timeout, a move event is generated to report
+    // the new tool type.
+    handleTimeout(mapper, ARBITRARY_TIME + TOUCH_DATA_TIMEOUT);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(source, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_FINGER))));
+
+    processUp(mapper);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(source, WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_FINGER))));
+
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+}
+
+TEST_F(ExternalStylusFusionTest, FusedPointerReportsButtons) {
+    SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
+    auto toolTypeSource =
+            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS));
+
+    ASSERT_NO_FATAL_FAILURE(testStartFusedStylusGesture(mapper));
+
+    // The external stylus reports a button change. We wait for some time for a touch event.
+    mStylusState.buttons = AMOTION_EVENT_BUTTON_STYLUS_PRIMARY;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is reported within the timeout, it reports the updated button state.
+    processMove(mapper, 101, 201);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                  WithButtonState(AMOTION_EVENT_BUTTON_STYLUS_PRIMARY))));
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+
+    // The button is now released.
+    mStylusState.buttons = 0;
+    processExternalStylusState(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+    ASSERT_NO_FATAL_FAILURE(
+            mReader->getContext()->assertTimeoutWasRequested(ARBITRARY_TIME + TOUCH_DATA_TIMEOUT));
+
+    // If a touch is not reported within the timeout, a move event is generated to report
+    // the new button state.
+    handleTimeout(mapper, ARBITRARY_TIME + TOUCH_DATA_TIMEOUT);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                  WithButtonState(0))));
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                  WithButtonState(0))));
+
+    processUp(mapper);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(toolTypeSource, WithMotionAction(AMOTION_EVENT_ACTION_UP), WithButtonState(0))));
+
+    ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+}
+
 // --- MultiTouchInputMapperTest ---
 
 class MultiTouchInputMapperTest : public TouchInputMapperTest {
@@ -10086,6 +10134,54 @@ TEST_F(MultiTouchInputMapperTest, Reset_PreservesLastTouchState_NoPointersDown) 
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
 }
 
+TEST_F(MultiTouchInputMapperTest, StylusSourceIsAddedDynamicallyFromToolType) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(DISPLAY_ORIENTATION_0);
+    prepareAxes(POSITION | ID | SLOT | PRESSURE | TOOL_TYPE);
+    MultiTouchInputMapper& mapper = addMapperAndConfigure<MultiTouchInputMapper>();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+
+    // Even if the device supports reporting the ABS_MT_TOOL_TYPE axis, which could give it the
+    // ability to report MT_TOOL_PEN, we do not report the device as coming from a stylus source.
+    // Due to limitations in the evdev protocol, we cannot say for certain that a device is capable
+    // of reporting stylus events just because it supports ABS_MT_TOOL_TYPE.
+    ASSERT_EQ(AINPUT_SOURCE_TOUCHSCREEN, mapper.getSources());
+
+    // However, if the device ever ends up reporting an event with MT_TOOL_PEN, it should be
+    // reported with the stylus source.
+    processId(mapper, FIRST_TRACKING_ID);
+    processToolType(mapper, MT_TOOL_PEN);
+    processPosition(mapper, 100, 200);
+    processPressure(mapper, RAW_PRESSURE_MAX);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                  WithSource(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+
+    // Now that we know the device supports styluses, ensure that the device is re-configured with
+    // the stylus source.
+    ASSERT_EQ(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS, mapper.getSources());
+    {
+        const auto& devices = mReader->getInputDevices();
+        auto deviceInfo =
+                std::find_if(devices.begin(), devices.end(),
+                             [](const InputDeviceInfo& info) { return info.getId() == DEVICE_ID; });
+        LOG_ALWAYS_FATAL_IF(deviceInfo == devices.end(), "Cannot find InputDevice");
+        ASSERT_EQ(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS, deviceInfo->getSources());
+    }
+
+    // Ensure the device was not reset to prevent interruptions of any ongoing gestures.
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasNotCalled());
+
+    processId(mapper, INVALID_TRACKING_ID);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithSource(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS),
+                  WithToolType(AMOTION_EVENT_TOOL_TYPE_STYLUS))));
+}
+
 // --- MultiTouchInputMapperTest_ExternalDevice ---
 
 class MultiTouchInputMapperTest_ExternalDevice : public MultiTouchInputMapperTest {
@@ -10879,15 +10975,17 @@ protected:
 TEST_F(BatteryControllerTest, GetBatteryCapacity) {
     PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
 
-    ASSERT_TRUE(controller.getBatteryCapacity(DEFAULT_BATTERY));
-    ASSERT_EQ(controller.getBatteryCapacity(DEFAULT_BATTERY).value_or(-1), BATTERY_CAPACITY);
+    ASSERT_TRUE(controller.getBatteryCapacity(FakeEventHub::DEFAULT_BATTERY));
+    ASSERT_EQ(controller.getBatteryCapacity(FakeEventHub::DEFAULT_BATTERY).value_or(-1),
+              FakeEventHub::BATTERY_CAPACITY);
 }
 
 TEST_F(BatteryControllerTest, GetBatteryStatus) {
     PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
 
-    ASSERT_TRUE(controller.getBatteryStatus(DEFAULT_BATTERY));
-    ASSERT_EQ(controller.getBatteryStatus(DEFAULT_BATTERY).value_or(-1), BATTERY_STATUS);
+    ASSERT_TRUE(controller.getBatteryStatus(FakeEventHub::DEFAULT_BATTERY));
+    ASSERT_EQ(controller.getBatteryStatus(FakeEventHub::DEFAULT_BATTERY).value_or(-1),
+              FakeEventHub::BATTERY_STATUS);
 }
 
 // --- LightControllerTest ---
