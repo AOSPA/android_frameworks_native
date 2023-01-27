@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -47,8 +53,10 @@ std::unique_ptr<HWComposer> DefaultFactory::createHWComposer(const std::string& 
 std::unique_ptr<scheduler::VsyncConfiguration> DefaultFactory::createVsyncConfiguration(
         Fps currentRefreshRate) {
     if (property_get_bool("debug.sf.use_phase_offsets_as_durations", false)) {
+        ALOGI("%s: create WorkDuration", __func__);
         return std::make_unique<scheduler::impl::WorkDuration>(currentRefreshRate);
     } else {
+        ALOGI("%s: create PhaseOffsets", __func__);
         return std::make_unique<scheduler::impl::PhaseOffsets>(currentRefreshRate);
     }
 }

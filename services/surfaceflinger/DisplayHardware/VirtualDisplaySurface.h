@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <optional>
@@ -27,7 +33,17 @@
 
 #include <ui/DisplayIdentification.h>
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
+/* QTI_END */
+
 namespace android {
+
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+} // namespace surfaceflingerextension
+/* QTI_END */
 
 class HWComposer;
 class IProducerListener;
@@ -77,8 +93,8 @@ class VirtualDisplaySurface : public compositionengine::DisplaySurface,
 public:
     VirtualDisplaySurface(HWComposer&, VirtualDisplayId, const sp<IGraphicBufferProducer>& sink,
                           const sp<IGraphicBufferProducer>& bqProducer,
-                          const sp<IGraphicBufferConsumer>& bqConsumer, const std::string& name);
-
+                          const sp<IGraphicBufferConsumer>& bqConsumer, const std::string& name,
+                          bool qtiSecure = false);
     //
     // DisplaySurface interface
     //
@@ -92,6 +108,13 @@ public:
     // Virtual display surface needs to prepare the frame based on composition type. Skip
     // any client composition prediction.
     virtual bool supportsCompositionStrategyPrediction() const override { return false; };
+
+    /* QTI_BEGIN */
+    virtual android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
+    qtiGetDisplaySurfaceExtn() {
+        return mQtiDSExtnIntf;
+    }
+    /* QTI_END */
 
 private:
     enum Source : size_t {
@@ -263,6 +286,10 @@ private:
     compositionengine::impl::HwcBufferCache mHwcBufferCache;
 
     bool mForceHwcCopy;
+
+    /* QTI_BEGIN */
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    /* QTI_END */
 };
 
 } // namespace android

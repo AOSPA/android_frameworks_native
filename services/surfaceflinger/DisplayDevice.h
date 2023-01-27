@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <memory>
@@ -249,6 +255,12 @@ public:
 
     void dump(utils::Dumper&) const;
 
+    /* QTI_BEGIN */
+    void qtiResetVsyncPeriod();
+    void qtiSetPowerModeOverrideConfig(bool supported);
+    bool qtiGetPowerModeOverrideConfig() const;
+    /* QTI_END */
+
 private:
     const sp<SurfaceFlinger> mFlinger;
     HWComposer& mHwComposer;
@@ -288,6 +300,13 @@ private:
     TracedOrdinal<bool> mDesiredActiveModeChanged
             GUARDED_BY(mActiveModeLock) = {"DesiredActiveModeChanged", false};
     ActiveModeInfo mUpcomingActiveMode GUARDED_BY(kMainThreadContext);
+
+    /* QTI_BEGIN */
+    mutable std::mutex mQtiModeLock;
+    mutable bool mQtiVsyncPeriodUpdated = true;
+    mutable nsecs_t mQtiVsyncPeriod = 0;
+    bool mQtiIsPowerModeOverride = false;
+    /* QTI_END */
 };
 
 struct DisplayDeviceState {

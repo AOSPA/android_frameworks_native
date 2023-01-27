@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <mutex>
@@ -26,6 +32,21 @@
 #include <scheduler/Fps.h>
 
 #include "VsyncModulator.h"
+
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiPhaseOffsetsExtension.h"
+#include "../QtiExtension/QtiWorkDurationsExtension.h"
+/* QTI_END */
+
+using std::pair;
+using std::unordered_map;
+
+/* QTI_BEGIN */
+namespace android::surfaceflingerextension {
+class QtiPhaseOffsetsExtension;
+class QtiWorkDurationsExtension;
+} // namespace android::surfaceflingerextension
+/* QTI_END */
 
 namespace android::scheduler {
 
@@ -85,6 +106,11 @@ public:
     void dump(std::string& result) const override;
 
 protected:
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiPhaseOffsetsExtension;
+    friend class android::surfaceflingerextension::QtiWorkDurationsExtension;
+    /* QTI_END */
+
     virtual VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const = 0;
 
     VsyncConfigSet getConfigsForRefreshRateLocked(Fps fps) const REQUIRES(mLock);
@@ -115,6 +141,10 @@ protected:
                  nsecs_t hwcMinWorkDuration);
 
 private:
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiPhaseOffsetsExtension;
+    /* QTI_END */
+
     VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
 
     VsyncConfigSet getDefaultOffsets(nsecs_t vsyncPeriod) const;
@@ -154,6 +184,10 @@ protected:
                  nsecs_t hwcMinWorkDuration);
 
 private:
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiWorkDurationsExtension;
+    /* QTI_END */
+
     VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
 
     const nsecs_t mSfDuration;

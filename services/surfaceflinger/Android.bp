@@ -28,6 +28,7 @@ cc_defaults {
         "android.hardware.graphics.composer3-ndk_shared",
         "surfaceflinger_defaults",
         "skia_renderengine_deps",
+        "libqtisurfaceflingerextension_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
@@ -84,6 +85,8 @@ cc_defaults {
         "libserviceutils",
         "libshaders",
         "libtonemap",
+        "libqticompositionengineextension",
+        "libqtisurfaceflingerextension",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -91,6 +94,7 @@ cc_defaults {
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
         "android.hardware.graphics.composer3-command-buffer",
+        "display_intf_headers",
     ],
     export_static_lib_headers: [
         "libcompositionengine",

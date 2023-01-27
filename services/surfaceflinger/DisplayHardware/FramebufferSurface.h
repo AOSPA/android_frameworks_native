@@ -54,6 +54,12 @@ public:
 
     virtual const sp<Fence>& getClientTargetAcquireFence() const override;
 
+    /* QTI_BEGIN */
+    virtual surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* qtiGetDisplaySurfaceExtn() {
+        return nullptr;
+    }
+    /* QTI_END */
+
 private:
     friend class FramebufferSurfaceTest;
 

@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <sys/types.h>
@@ -146,6 +152,14 @@ struct CompositionRefreshArgs;
 namespace renderengine {
 class RenderEngine;
 } // namespace renderengine
+
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiSurfaceFlingerExtensionIntf;
+class QtiSurfaceFlingerExtension;
+class QtiNullExtension;
+} // namespace surfaceflingerextension
+/* QTI_END */
 
 enum {
     eTransactionNeeded = 0x01,
@@ -338,6 +352,11 @@ private:
     friend class LayerRenderArea;
     friend class LayerTracing;
     friend class SurfaceComposerAIDL;
+
+    /* QTI_BEGIN */
+    friend class ::android::surfaceflingerextension::QtiSurfaceFlingerExtension;
+    friend class ::android::surfaceflingerextension::QtiNullExtension;
+    /* QTI_END */
 
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -1382,6 +1401,10 @@ private:
 
     TransactionHandler mTransactionHandler;
     display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
+
+    /* QTI_BEGIN */
+    surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
+    /* QTI_END */
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
