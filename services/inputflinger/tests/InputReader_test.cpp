@@ -2763,7 +2763,7 @@ TEST_F(SensorInputMapperTest, ProcessGyroscopeSensor) {
 class KeyboardInputMapperTest : public InputMapperTest {
 protected:
     const std::string UNIQUE_ID = "local:0";
-
+    const KeyboardLayoutInfo DEVICE_KEYBOARD_LAYOUT_INFO = KeyboardLayoutInfo("en-US", "qwerty");
     void prepareDisplay(ui::Rotation orientation);
 
     void testDPadKeyRotation(KeyboardInputMapper& mapper, int32_t originalScanCode,
@@ -3582,6 +3582,24 @@ TEST_F(KeyboardInputMapperTest, Process_DisabledDevice) {
     ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_CANCELED, args.flags);
 }
 
+TEST_F(KeyboardInputMapperTest, Configure_AssignKeyboardLayoutInfo) {
+    mDevice->addMapper<KeyboardInputMapper>(EVENTHUB_ID, AINPUT_SOURCE_KEYBOARD,
+                                            AINPUT_KEYBOARD_TYPE_ALPHABETIC);
+    std::list<NotifyArgs> unused =
+            mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(), 0);
+
+    mFakePolicy->addKeyboardLayoutAssociation(DEVICE_LOCATION, DEVICE_KEYBOARD_LAYOUT_INFO);
+
+    unused += mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                                 InputReaderConfiguration::CHANGE_KEYBOARD_LAYOUT_ASSOCIATION);
+
+    InputDeviceInfo deviceInfo = mDevice->getDeviceInfo();
+    ASSERT_EQ(DEVICE_KEYBOARD_LAYOUT_INFO.languageTag,
+              deviceInfo.getKeyboardLayoutInfo()->languageTag);
+    ASSERT_EQ(DEVICE_KEYBOARD_LAYOUT_INFO.layoutType,
+              deviceInfo.getKeyboardLayoutInfo()->layoutType);
+}
+
 // --- KeyboardInputMapperTest_ExternalDevice ---
 
 class KeyboardInputMapperTest_ExternalDevice : public InputMapperTest {
@@ -4344,7 +4362,7 @@ TEST_F(CursorInputMapperTest, Process_WhenModeIsPointer_ShouldMoveThePointerArou
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, args.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
             110.0f, 220.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 110.0f, 220.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
 }
 
 TEST_F(CursorInputMapperTest, Process_PointerCapture) {
@@ -4372,7 +4390,7 @@ TEST_F(CursorInputMapperTest, Process_PointerCapture) {
     ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
             10.0f, 20.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 100.0f, 200.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(100.0f, 200.0f));
 
     // Button press.
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, BTN_MOUSE, 1);
@@ -4411,7 +4429,7 @@ TEST_F(CursorInputMapperTest, Process_PointerCapture) {
     ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
             30.0f, 40.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 100.0f, 200.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(100.0f, 200.0f));
 
     // Disable pointer capture and check that the device generation got bumped
     // and events are generated the usual way.
@@ -4431,7 +4449,7 @@ TEST_F(CursorInputMapperTest, Process_PointerCapture) {
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, args.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
             110.0f, 220.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 110.0f, 220.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
 }
 
 /**
@@ -4548,7 +4566,7 @@ TEST_F(CursorInputMapperTest, ConfigureDisplayId_NoAssociatedViewport) {
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
                   WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
                   WithCoords(110.0f, 220.0f))));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 110.0f, 220.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
 }
 
 TEST_F(CursorInputMapperTest, ConfigureDisplayId_WithAssociatedViewport) {
@@ -4575,7 +4593,7 @@ TEST_F(CursorInputMapperTest, ConfigureDisplayId_WithAssociatedViewport) {
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
                   WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
                   WithCoords(110.0f, 220.0f))));
-    ASSERT_NO_FATAL_FAILURE(assertPosition(*mFakePointerController, 110.0f, 220.0f));
+    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
 }
 
 TEST_F(CursorInputMapperTest, ConfigureDisplayId_IgnoresEventsForMismatchedPointerDisplay) {
@@ -6503,6 +6521,17 @@ TEST_F(SingleTouchInputMapperTest, ButtonIsReleasedOnTouchUp) {
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
                   WithCoords(toDisplayX(100), toDisplayY(200)), WithButtonState(0))));
+}
+
+TEST_F(SingleTouchInputMapperTest, WhenDeviceTypeIsSetToTouchNavigation_setsCorrectType) {
+    mFakePolicy->addDeviceTypeAssociation(DEVICE_LOCATION, "touchNavigation");
+    prepareDisplay(ui::ROTATION_0);
+    prepareButtons();
+    prepareAxes(POSITION);
+    SingleTouchInputMapper& mapper = addMapperAndConfigure<SingleTouchInputMapper>();
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled());
+
+    ASSERT_EQ(AINPUT_SOURCE_TOUCH_NAVIGATION, mapper.getSources());
 }
 
 // --- TouchDisplayProjectionTest ---

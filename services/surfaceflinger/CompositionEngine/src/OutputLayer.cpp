@@ -610,6 +610,29 @@ void OutputLayer::writeSidebandStateToHWC(HWC2::Layer* hwcLayer,
     }
 }
 
+void OutputLayer::uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache) {
+    auto& state = editState();
+    // Skip doing this if there is no HWC interface
+    if (!state.hwc) {
+        return;
+    }
+
+    std::vector<uint32_t> slotsToClear;
+    for (uint64_t bufferId : bufferIdsToUncache) {
+        uint32_t slot = state.hwc->hwcBufferCache.uncache(bufferId);
+        if (slot != UINT32_MAX) {
+            slotsToClear.push_back(slot);
+        }
+    }
+
+    hal::Error error =
+            state.hwc->hwcLayer->setBufferSlotsToClear(slotsToClear, state.hwc->activeBufferSlot);
+    if (error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to clear buffer slots: %s (%d)", getLayerFE().getDebugName(),
+              to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+}
+
 void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
                                         const LayerFECompositionState& outputIndependentState,
                                         bool skipLayer) {
@@ -622,27 +645,34 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
               to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
-    sp<GraphicBuffer> buffer = outputIndependentState.buffer;
-    sp<Fence> acquireFence = outputIndependentState.acquireFence;
-    int slot = outputIndependentState.bufferSlot;
-    if (getState().overrideInfo.buffer != nullptr && !skipLayer) {
-        buffer = getState().overrideInfo.buffer->getBuffer();
-        acquireFence = getState().overrideInfo.acquireFence;
-        slot = HwcBufferCache::FLATTENER_CACHING_SLOT;
+    HwcSlotAndBuffer hwcSlotAndBuffer;
+    sp<Fence> hwcFence;
+    {
+        // Editing the state only because we update the HWC buffer cache and active buffer.
+        auto& state = editState();
+        // Override buffers use a special cache slot so that they don't evict client buffers.
+        if (state.overrideInfo.buffer != nullptr && !skipLayer) {
+            hwcSlotAndBuffer = state.hwc->hwcBufferCache.getOverrideHwcSlotAndBuffer(
+                    state.overrideInfo.buffer->getBuffer());
+            hwcFence = state.overrideInfo.acquireFence;
+        } else {
+            hwcSlotAndBuffer =
+                    state.hwc->hwcBufferCache.getHwcSlotAndBuffer(outputIndependentState.buffer);
+            hwcFence = outputIndependentState.acquireFence;
+        }
+
+        // Keep track of the active buffer slot, so we can restore it after clearing other buffer
+        // slots.
+        if (hwcSlotAndBuffer.buffer) {
+            state.hwc->activeBufferSlot = hwcSlotAndBuffer.slot;
+        }
     }
 
-    ALOGV("Writing buffer %p", buffer.get());
-
-    uint32_t hwcSlot = 0;
-    sp<GraphicBuffer> hwcBuffer;
-    // We need access to the output-dependent state for the buffer cache there,
-    // though otherwise the buffer is not output-dependent.
-    editState().hwc->hwcBufferCache.getHwcBuffer(slot, buffer, &hwcSlot, &hwcBuffer);
-
-    if (auto error = hwcLayer->setBuffer(hwcSlot, hwcBuffer, acquireFence);
+    if (auto error = hwcLayer->setBuffer(hwcSlotAndBuffer.slot, hwcSlotAndBuffer.buffer, hwcFence);
         error != hal::Error::NONE) {
-        ALOGE("[%s] Failed to set buffer %p: %s (%d)", getLayerFE().getDebugName(), buffer->handle,
-              to_string(error).c_str(), static_cast<int32_t>(error));
+        ALOGE("[%s] Failed to set buffer %p: %s (%d)", getLayerFE().getDebugName(),
+              hwcSlotAndBuffer.buffer->handle, to_string(error).c_str(),
+              static_cast<int32_t>(error));
     }
 }
 
