@@ -42,10 +42,13 @@
 
 #include <android/gui/ISurfaceComposerClient.h>
 
+#include <android/gui/BnTransactionCompletedListener.h>
+
 #include <gui/CpuConsumer.h>
 #include <gui/ISurfaceComposer.h>
-#include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerState.h>
+#include <gui/ListenerStats.h>
+#include <gui/ReleaseCallbackId.h>
 #include <gui/SurfaceControl.h>
 #include <gui/WindowInfosListenerReporter.h>
 #include <math/vec3.h>
@@ -59,11 +62,21 @@ class IGraphicBufferProducer;
 class ITunnelModeEnabledListener;
 class Region;
 
+using gui::BnTransactionCompletedListener;
+using gui::CallbackId;
+using gui::CallbackIdHash;
 using gui::DisplayCaptureArgs;
+using gui::FrameEventHistoryStats;
 using gui::IRegionSamplingListener;
 using gui::ISurfaceComposerClient;
+using gui::ITransactionCompletedListener;
+using gui::JankData;
 using gui::LayerCaptureArgs;
 using gui::LayerMetadata;
+using gui::ListenerStats;
+using gui::ReleaseBufferCallbackIdHash;
+using gui::ReleaseCallbackId;
+using gui::SurfaceStats;
 
 struct SurfaceControlStats {
     SurfaceControlStats(const sp<SurfaceControl>& sc, nsecs_t latchTime,
@@ -144,6 +157,9 @@ public:
     // callback when the composer is dies
     status_t linkToComposerDeath(const sp<IBinder::DeathRecipient>& recipient,
             void* cookie = nullptr, uint32_t flags = 0);
+
+    // Notify the SurfaceComposerClient that the boot procedure has completed
+    static status_t bootFinished();
 
     // Get transactional state of given display.
     static status_t getDisplayState(const sp<IBinder>& display, ui::DisplayState*);
@@ -825,16 +841,16 @@ public:
     void setReleaseBufferCallback(const ReleaseCallbackId&, ReleaseBufferCallback);
 
     // BnTransactionCompletedListener overrides
-    void onTransactionCompleted(ListenerStats stats) override;
-    void onReleaseBuffer(ReleaseCallbackId, sp<Fence> releaseFence,
-                         uint32_t currentMaxAcquiredBufferCount) override;
+    binder::Status onTransactionCompleted(const ListenerStats& stats) override;
+    binder::Status onReleaseBuffer(const ReleaseCallbackId& callbackId,
+                                   const std::optional<os::ParcelFileDescriptor>& releaseFenceFd,
+                                   int32_t currentMaxAcquiredBufferCount) override;
+    binder::Status onTransactionQueueStalled(const std::string& reason) override;
 
     void removeReleaseBufferCallback(const ReleaseCallbackId& callbackId);
 
     // For Testing Only
     static void setInstance(const sp<TransactionCompletedListener>&);
-
-    void onTransactionQueueStalled(const String8& reason) override;
 
 private:
     ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&);

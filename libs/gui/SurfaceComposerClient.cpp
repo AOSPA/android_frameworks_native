@@ -314,7 +314,8 @@ void TransactionCompletedListener::addSurfaceControlToCallbacks(
     }
 }
 
-void TransactionCompletedListener::onTransactionCompleted(ListenerStats listenerStats) {
+binder::Status TransactionCompletedListener::onTransactionCompleted(
+        const ListenerStats& listenerStats) {
     std::unordered_map<CallbackId, CallbackTranslation, CallbackIdHash> callbacksMap;
     std::multimap<int32_t, sp<JankDataListener>> jankListenersMap;
     {
@@ -454,9 +455,10 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
             }
         }
     }
+    return binder::Status::ok();
 }
 
-void TransactionCompletedListener::onTransactionQueueStalled(const String8& reason) {
+binder::Status TransactionCompletedListener::onTransactionQueueStalled(const std::string& reason) {
     std::unordered_map<void*, std::function<void(const std::string&)>> callbackCopy;
     {
         std::scoped_lock<std::mutex> lock(mMutex);
@@ -465,6 +467,7 @@ void TransactionCompletedListener::onTransactionQueueStalled(const String8& reas
     for (auto const& it : callbackCopy) {
         it.second(reason.c_str());
     }
+    return binder::Status::ok();
 }
 
 void TransactionCompletedListener::addQueueStallListener(
@@ -478,9 +481,12 @@ void TransactionCompletedListener::removeQueueStallListener(void* id) {
     mQueueStallListeners.erase(id);
 }
 
-void TransactionCompletedListener::onReleaseBuffer(ReleaseCallbackId callbackId,
-                                                   sp<Fence> releaseFence,
-                                                   uint32_t currentMaxAcquiredBufferCount) {
+binder::Status TransactionCompletedListener::onReleaseBuffer(
+        const ReleaseCallbackId& callbackId,
+        const std::optional<os::ParcelFileDescriptor>& releaseFenceFd,
+        int32_t currentMaxAcquiredBufferCount) {
+    sp<Fence> releaseFence(releaseFenceFd ? new Fence(::dup(releaseFenceFd->get()))
+                                          : Fence::NO_FENCE);
     ReleaseBufferCallback callback;
     {
         std::scoped_lock<std::mutex> lock(mMutex);
@@ -489,13 +495,14 @@ void TransactionCompletedListener::onReleaseBuffer(ReleaseCallbackId callbackId,
     if (!callback) {
         ALOGE("Could not call release buffer callback, buffer not found %s",
               callbackId.to_string().c_str());
-        return;
+        return binder::Status::fromExceptionCode(binder::Status::EX_ILLEGAL_ARGUMENT);
     }
     std::optional<uint32_t> optionalMaxAcquiredBufferCount =
-            currentMaxAcquiredBufferCount == UINT_MAX
+            static_cast<uint32_t>(currentMaxAcquiredBufferCount) == UINT_MAX
             ? std::nullopt
             : std::make_optional<uint32_t>(currentMaxAcquiredBufferCount);
     callback(callbackId, releaseFence, optionalMaxAcquiredBufferCount);
+    return binder::Status::ok();
 }
 
 ReleaseBufferCallback TransactionCompletedListener::popReleaseBufferCallbackLocked(
@@ -825,7 +832,11 @@ void SurfaceComposerClient::Transaction::releaseBufferIfOverwriting(const layer_
                 ->mReleaseCallbackThread
                 .addReleaseCallback(state.bufferData->generateReleaseCallbackId(), fence);
     } else {
-        listener->onReleaseBuffer(state.bufferData->generateReleaseCallbackId(), fence, UINT_MAX);
+        std::optional<os::ParcelFileDescriptor> fenceFd;
+        if (fence != Fence::NO_FENCE) {
+            fenceFd = os::ParcelFileDescriptor(base::unique_fd(::dup(fence->get())));
+        }
+        listener->onReleaseBuffer(state.bufferData->generateReleaseCallbackId(), fenceFd, UINT_MAX);
     }
 }
 
@@ -971,14 +982,16 @@ void SurfaceComposerClient::Transaction::cacheBuffers() {
 
 class SyncCallback {
 public:
-    static void function(void* callbackContext, nsecs_t /* latchTime */,
-                         const sp<Fence>& /* presentFence */,
-                         const std::vector<SurfaceControlStats>& /* stats */) {
-        if (!callbackContext) {
-            ALOGE("failed to get callback context for SyncCallback");
-        }
-        SyncCallback* helper = static_cast<SyncCallback*>(callbackContext);
-        LOG_ALWAYS_FATAL_IF(sem_post(&helper->mSemaphore), "sem_post failed");
+    static auto getCallback(std::shared_ptr<SyncCallback>& callbackContext) {
+        return [callbackContext](void* /* unused context */, nsecs_t /* latchTime */,
+                                 const sp<Fence>& /* presentFence */,
+                                 const std::vector<SurfaceControlStats>& /* stats */) {
+            if (!callbackContext) {
+                ALOGE("failed to get callback context for SyncCallback");
+                return;
+            }
+            LOG_ALWAYS_FATAL_IF(sem_post(&callbackContext->mSemaphore), "sem_post failed");
+        };
     }
     ~SyncCallback() {
         if (mInitialized) {
@@ -1013,10 +1026,11 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
         return mStatus;
     }
 
-    SyncCallback syncCallback;
+    std::shared_ptr<SyncCallback> syncCallback = std::make_shared<SyncCallback>();
     if (synchronous) {
-        syncCallback.init();
-        addTransactionCommittedCallback(syncCallback.function, syncCallback.getContext());
+        syncCallback->init();
+        addTransactionCommittedCallback(SyncCallback::getCallback(syncCallback),
+                                        /*callbackContext=*/nullptr);
     }
 
     bool hasListenerCallbacks = !mListenerCallbacks.empty();
@@ -1092,7 +1106,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     clear();
 
     if (synchronous) {
-        syncCallback.wait();
+        syncCallback->wait();
     }
 
     mStatus = NO_ERROR;
@@ -2144,6 +2158,12 @@ void SurfaceComposerClient::dispose() {
     mStatus = NO_INIT;
 }
 
+status_t SurfaceComposerClient::bootFinished() {
+    sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
+    binder::Status status = sf->bootFinished();
+    return statusTFromBinderStatus(status);
+}
+
 sp<SurfaceControl> SurfaceComposerClient::createSurface(const String8& name, uint32_t w, uint32_t h,
                                                         PixelFormat format, int32_t flags,
                                                         const sp<IBinder>& parentHandle,
@@ -2846,7 +2866,11 @@ void ReleaseCallbackThread::threadMain() {
 
         while (!callbackInfos.empty()) {
             auto [callbackId, releaseFence] = callbackInfos.front();
-            listener->onReleaseBuffer(callbackId, std::move(releaseFence), UINT_MAX);
+            std::optional<os::ParcelFileDescriptor> fenceFd;
+            if (releaseFence != Fence::NO_FENCE) {
+                fenceFd = os::ParcelFileDescriptor(base::unique_fd(::dup(releaseFence->get())));
+            }
+            listener->onReleaseBuffer(callbackId, fenceFd, UINT_MAX);
             callbackInfos.pop();
         }
 

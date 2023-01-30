@@ -23,11 +23,11 @@
 #include <android/gui/IHdrLayerInfoListener.h>
 #include <android/gui/IRegionSamplingListener.h>
 #include <android/gui/IScreenCaptureListener.h>
+#include <android/gui/ITransactionCompletedListener.h>
 #include <android/gui/ITunnelModeEnabledListener.h>
 #include <android/gui/IWindowInfosListener.h>
 #include <binder/IBinder.h>
 #include <binder/IInterface.h>
-#include <gui/ITransactionCompletedListener.h>
 #include <gui/SpHash.h>
 #include <math/vec4.h>
 #include <stdint.h>
@@ -66,6 +66,7 @@ using gui::FrameTimelineInfo;
 using gui::IDisplayEventConnection;
 using gui::IRegionSamplingListener;
 using gui::IScreenCaptureListener;
+using gui::ListenerCallbacks;
 using gui::SpHash;
 
 namespace gui {
@@ -102,7 +103,7 @@ public:
         // (sf vsync offset - debug.sf.early_phase_offset_ns). SurfaceFlinger will continue to be
         // in the early configuration until it receives eEarlyWakeupEnd. These flags are
         // expected to be used by WindowManager only and are guarded by
-        // android.permission.ACCESS_SURFACE_FLINGER
+        // android.permission.WAKEUP_SURFACE_FLINGER
         eEarlyWakeupStart = 0x08,
         eEarlyWakeupEnd = 0x10,
         eOneWay = 0x20

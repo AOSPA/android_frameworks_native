@@ -159,7 +159,6 @@ Layer::Layer(const LayerCreationArgs& args)
         mLayerCreationFlags(args.flags),
         mBorderEnabled(false),
         mTextureName(args.textureName),
-        mHwcSlotGenerator(sp<HwcSlotGenerator>::make()),
         mLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
     ALOGV("Creating Layer %s", getDebugName());
 
@@ -232,6 +231,9 @@ void Layer::onFirstRef() {
 }
 
 Layer::~Layer() {
+    LOG_ALWAYS_FATAL_IF(std::this_thread::get_id() != mFlinger->mMainThreadId,
+                        "Layer destructor called off the main thread.");
+
     // The original layer and the clone layer share the same texture and buffer. Therefore, only
     // one of the layers, in this case the original layer, needs to handle the deletion. The
     // original layer and the clone should be removed at the same time so there shouldn't be any
@@ -595,9 +597,6 @@ void Layer::preparePerFrameBufferCompositionState() {
     }
 
     snapshot->buffer = getBuffer();
-    snapshot->bufferSlot = (mBufferInfo.mBufferSlot == BufferQueue::INVALID_BUFFER_SLOT)
-            ? 0
-            : mBufferInfo.mBufferSlot;
     snapshot->acquireFence = mBufferInfo.mFence;
     snapshot->frameNumber = mBufferInfo.mFrameNumber;
     snapshot->sidebandStreamHasFrame = false;
@@ -1494,8 +1493,9 @@ void Layer::getFrameStats(FrameStats* outStats) const {
     mFrameTracker.getStats(outStats);
 }
 
-void Layer::dumpCallingUidPid(std::string& result) const {
-    StringAppendF(&result, "Layer %s (%s) ownerPid:%d ownerUid:%d\n", getName().c_str(), getType(),
+void Layer::dumpOffscreenDebugInfo(std::string& result) const {
+    std::string hasBuffer = hasBufferOrSidebandStream() ? " (contains buffer)" : "";
+    StringAppendF(&result, "Layer %s%s pid:%d uid:%d\n", getName().c_str(), hasBuffer.c_str(),
                   mOwnerPid, mOwnerUid);
 }
 
@@ -2626,9 +2626,12 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
         return;
     }
     ATRACE_FORMAT_INSTANT("callReleaseBufferCallback %s - %" PRIu64, getDebugName(), framenumber);
-    listener->onReleaseBuffer({buffer->getId(), framenumber},
-                              releaseFence ? releaseFence : Fence::NO_FENCE,
-                              currentMaxAcquiredBufferCount);
+    std::optional<os::ParcelFileDescriptor> fenceFd;
+    if (releaseFence) {
+        fenceFd = os::ParcelFileDescriptor(base::unique_fd(::dup(releaseFence->get())));
+    }
+    listener->onReleaseBuffer({buffer->getId(), framenumber}, fenceFd,
+                              static_cast<int32_t>(currentMaxAcquiredBufferCount));
 }
 
 void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult) {
@@ -2862,7 +2865,7 @@ bool Layer::setPosition(float x, float y) {
 bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                       const BufferData& bufferData, nsecs_t postTime, nsecs_t desiredPresentTime,
                       bool isAutoTimestamp, std::optional<nsecs_t> dequeueTime,
-                      const FrameTimelineInfo& info, int hwcBufferSlot) {
+                      const FrameTimelineInfo& info) {
     ATRACE_FORMAT("setBuffer %s - hasBuffer=%s", getDebugName(), (buffer ? "true" : "false"));
     if (!buffer) {
         return false;
@@ -2908,7 +2911,6 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
     mDrawingState.buffer = std::move(buffer);
     mDrawingState.clientCacheId = bufferData.cachedBuffer;
-    mDrawingState.hwcBufferSlot = hwcBufferSlot;
     mDrawingState.acquireFence = bufferData.flags.test(BufferData::BufferDataChange::fenceChanged)
             ? bufferData.acquireFence
             : Fence::NO_FENCE;
@@ -3207,7 +3209,6 @@ void Layer::gatherBufferInfo() {
     mBufferInfo.mHdrMetadata = mDrawingState.hdrMetadata;
     mBufferInfo.mApi = mDrawingState.api;
     mBufferInfo.mTransformToDisplayInverse = mDrawingState.transformToDisplayInverse;
-    mBufferInfo.mBufferSlot = mDrawingState.hwcBufferSlot;
 }
 
 Rect Layer::computeBufferCrop(const State& s) {
@@ -3988,10 +3989,6 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
         }
         relative->updateRelativeMetadataSnapshot(childRelativeLayerMetadata, visited);
     }
-}
-
-int Layer::getHwcCacheSlot(const client_cache_t& clientCacheId) {
-    return mHwcSlotGenerator->getHwcCacheSlot(clientCacheId);
 }
 
 LayerSnapshotGuard::LayerSnapshotGuard(Layer* layer) : mLayer(layer) {

@@ -21,7 +21,6 @@
 #include <jpegrecoverymap/recoverymaputils.h>
 
 #include <image_io/jpeg/jpeg_marker.h>
-#include <image_io/xml/xml_writer.h>
 #include <image_io/jpeg/jpeg_info.h>
 #include <image_io/jpeg/jpeg_scanner.h>
 #include <image_io/jpeg/jpeg_info_builder.h>
@@ -65,19 +64,6 @@ static const st2086_metadata kSt2086Metadata = {
 };
 
 /*
- * Helper function used for generating XMP metadata.
- *
- * @param prefix The prefix part of the name.
- * @param suffix The suffix part of the name.
- * @return A name of the form "prefix:suffix".
- */
-string Name(const string &prefix, const string &suffix) {
-  std::stringstream ss;
-  ss << prefix << ":" << suffix;
-  return ss.str();
-}
-
-/*
  * Helper function used for writing data to destination.
  *
  * @param destination destination of the data to be written.
@@ -96,6 +82,59 @@ status_t Write(jr_compressed_ptr destination, const void* source, size_t length,
   return NO_ERROR;
 }
 
+/* Encode API-0 */
+status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
+                                  jpegr_transfer_function hdr_tf,
+                                  jr_compressed_ptr dest,
+                                  int quality,
+                                  jr_exif_ptr /* exif */) {
+  if (uncompressed_p010_image == nullptr || dest == nullptr) {
+    return ERROR_JPEGR_INVALID_NULL_PTR;
+  }
+
+  if (quality < 0 || quality > 100) {
+    return ERROR_JPEGR_INVALID_INPUT_TYPE;
+  }
+
+  jpegr_metadata metadata;
+  metadata.version = kJpegrVersion;
+  metadata.transferFunction = hdr_tf;
+  if (hdr_tf == JPEGR_TF_PQ) {
+    metadata.hdr10Metadata.st2086Metadata = kSt2086Metadata;
+  }
+
+  jpegr_uncompressed_struct uncompressed_yuv_420_image;
+  JPEGR_CHECK(toneMap(uncompressed_p010_image, &uncompressed_yuv_420_image));
+
+  jpegr_uncompressed_struct map;
+  JPEGR_CHECK(generateRecoveryMap(
+      &uncompressed_yuv_420_image, uncompressed_p010_image, &metadata, &map));
+  std::unique_ptr<uint8_t[]> map_data;
+  map_data.reset(reinterpret_cast<uint8_t*>(map.data));
+
+  jpegr_compressed_struct compressed_map;
+  compressed_map.maxLength = map.width * map.height;
+  unique_ptr<uint8_t[]> compressed_map_data = make_unique<uint8_t[]>(compressed_map.maxLength);
+  compressed_map.data = compressed_map_data.get();
+  JPEGR_CHECK(compressRecoveryMap(&map, &compressed_map));
+
+  JpegEncoder jpeg_encoder;
+  // TODO: determine ICC data based on color gamut information
+  if (!jpeg_encoder.compressImage(uncompressed_yuv_420_image.data,
+                                  uncompressed_yuv_420_image.width,
+                                  uncompressed_yuv_420_image.height, quality, nullptr, 0)) {
+    return ERROR_JPEGR_ENCODE_ERROR;
+  }
+  jpegr_compressed_struct jpeg;
+  jpeg.data = jpeg_encoder.getCompressedImagePtr();
+  jpeg.length = jpeg_encoder.getCompressedImageSize();
+
+  JPEGR_CHECK(appendRecoveryMap(&jpeg, &compressed_map, &metadata, dest));
+
+  return NO_ERROR;
+}
+
+/* Encode API-1 */
 status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
                                   jr_uncompressed_ptr uncompressed_yuv_420_image,
                                   jpegr_transfer_function hdr_tf,
@@ -152,6 +191,7 @@ status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
   return NO_ERROR;
 }
 
+/* Encode API-2 */
 status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
                                   jr_uncompressed_ptr uncompressed_yuv_420_image,
                                   jr_compressed_ptr compressed_jpeg_image,
@@ -193,6 +233,7 @@ status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
   return NO_ERROR;
 }
 
+/* Encode API-3 */
 status_t RecoveryMap::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
                                   jr_compressed_ptr compressed_jpeg_image,
                                   jpegr_transfer_function hdr_tf,
@@ -262,7 +303,7 @@ status_t RecoveryMap::getJPEGRInfo(jr_compressed_ptr compressed_jpegr_image,
   return NO_ERROR;
 }
 
-
+/* Decode API */
 status_t RecoveryMap::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
                                   jr_uncompressed_ptr dest,
                                   jr_exif_ptr exif,
@@ -278,13 +319,23 @@ status_t RecoveryMap::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
   jpegr_metadata metadata;
   JPEGR_CHECK(extractRecoveryMap(compressed_jpegr_image, &compressed_map));
 
-  jpegr_uncompressed_struct map;
-  JPEGR_CHECK(decompressRecoveryMap(&compressed_map, &map));
 
   JpegDecoder jpeg_decoder;
   if (!jpeg_decoder.decompressImage(compressed_jpegr_image->data, compressed_jpegr_image->length)) {
     return ERROR_JPEGR_DECODE_ERROR;
   }
+
+  JpegDecoder recovery_map_decoder;
+  if (!recovery_map_decoder.decompressImage(compressed_map.data,
+                                    compressed_map.length)) {
+    return ERROR_JPEGR_DECODE_ERROR;
+  }
+
+  jpegr_uncompressed_struct map;
+  map.data = recovery_map_decoder.getDecompressedImagePtr();
+  map.width = recovery_map_decoder.getDecompressedImageWidth();
+  map.height = recovery_map_decoder.getDecompressedImageHeight();
+
 
   jpegr_uncompressed_struct uncompressed_yuv_420_image;
   uncompressed_yuv_420_image.data = jpeg_decoder.getDecompressedImagePtr();
@@ -304,25 +355,6 @@ status_t RecoveryMap::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
   } else {
     JPEGR_CHECK(applyRecoveryMap(&uncompressed_yuv_420_image, &map, &metadata, dest));
   }
-
-  return NO_ERROR;
-}
-
-status_t RecoveryMap::decompressRecoveryMap(jr_compressed_ptr compressed_recovery_map,
-                                            jr_uncompressed_ptr dest) {
-  if (compressed_recovery_map == nullptr || dest == nullptr) {
-    return ERROR_JPEGR_INVALID_NULL_PTR;
-  }
-
-  JpegDecoder jpeg_decoder;
-  if (!jpeg_decoder.decompressImage(compressed_recovery_map->data,
-                                    compressed_recovery_map->length)) {
-    return ERROR_JPEGR_DECODE_ERROR;
-  }
-
-  dest->data = jpeg_decoder.getDecompressedImagePtr();
-  dest->width = jpeg_decoder.getDecompressedImageWidth();
-  dest->height = jpeg_decoder.getDecompressedImageHeight();
 
   return NO_ERROR;
 }
@@ -392,6 +424,9 @@ status_t RecoveryMap::generateRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_4
   ColorTransformFn hdrInvOetf = nullptr;
   float hdr_white_nits = 0.0f;
   switch (metadata->transferFunction) {
+    case JPEGR_TF_LINEAR:
+      hdrInvOetf = identityConversion;
+      break;
     case JPEGR_TF_HLG:
       hdrInvOetf = hlgInvOetf;
       hdr_white_nits = kHlgMaxNits;
@@ -489,6 +524,9 @@ status_t RecoveryMap::applyRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_420_
 
   ColorTransformFn hdrOetf = nullptr;
   switch (metadata->transferFunction) {
+    case JPEGR_TF_LINEAR:
+      hdrOetf = identityConversion;
+      break;
     case JPEGR_TF_HLG:
       hdrOetf = hlgOetf;
       break;
@@ -507,7 +545,7 @@ status_t RecoveryMap::applyRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_420_
       float recovery = sampleMap(uncompressed_recovery_map, kMapDimensionScaleFactor, x, y);
       Color rgb_hdr = applyRecovery(rgb_sdr, recovery, metadata->rangeScalingFactor);
 
-      Color rgb_gamma_hdr = hdrOetf(rgb_hdr);
+      Color rgb_gamma_hdr = hdrOetf(rgb_hdr / metadata->rangeScalingFactor);
       uint32_t rgba1010102 = colorToRgba1010102(rgb_gamma_hdr);
 
       size_t pixel_idx =  x + y * width;
@@ -625,55 +663,20 @@ status_t RecoveryMap::appendRecoveryMap(jr_compressed_ptr compressed_jpeg_image,
   return NO_ERROR;
 }
 
-string RecoveryMap::generateXmp(int secondary_image_length, jpegr_metadata& metadata) {
-  const string kContainerPrefix = "GContainer";
-  const string kContainerUri    = "http://ns.google.com/photos/1.0/container/";
-  const string kItemPrefix      = "Item";
-  const string kRecoveryMap     = "RecoveryMap";
-  const string kDirectory       = "Directory";
-  const string kImageJpeg       = "image/jpeg";
-  const string kItem            = "Item";
-  const string kLength          = "Length";
-  const string kMime            = "Mime";
-  const string kPrimary         = "Primary";
-  const string kSemantic        = "Semantic";
-  const string kVersion         = "Version";
+status_t RecoveryMap::toneMap(jr_uncompressed_ptr uncompressed_p010_image,
+                              jr_uncompressed_ptr dest) {
+  if (uncompressed_p010_image == nullptr || dest == nullptr) {
+    return ERROR_JPEGR_INVALID_NULL_PTR;
+  }
 
-  const string kConDir          = Name(kContainerPrefix, kDirectory);
-  const string kContainerItem   = Name(kContainerPrefix, kItem);
-  const string kItemLength      = Name(kItemPrefix, kLength);
-  const string kItemMime        = Name(kItemPrefix, kMime);
-  const string kItemSemantic    = Name(kItemPrefix, kSemantic);
+  dest->width = uncompressed_p010_image->width;
+  dest->height = uncompressed_p010_image->height;
+  unique_ptr<uint8_t[]> dest_data = make_unique<uint8_t[]>(dest->width * dest->height * 3 / 2);
+  dest->data = dest_data.get();
 
-  const vector<string> kConDirSeq({kConDir, string("rdf:Seq")});
-  const vector<string> kLiItem({string("rdf:li"), kContainerItem});
+  // TODO: Tone map algorighm here.
 
-  std::stringstream ss;
-  photos_editing_formats::image_io::XmlWriter writer(ss);
-  writer.StartWritingElement("x:xmpmeta");
-  writer.WriteXmlns("x", "adobe:ns:meta/");
-  writer.WriteAttributeNameAndValue("x:xmptk", "Adobe XMP Core 5.1.2");
-  writer.StartWritingElement("rdf:RDF");
-  writer.WriteXmlns("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-  writer.StartWritingElement("rdf:Description");
-  writer.WriteXmlns(kContainerPrefix, kContainerUri);
-  writer.WriteElementAndContent(Name(kContainerPrefix, kVersion), metadata.version);
-  writer.WriteElementAndContent(Name(kContainerPrefix, "rangeScalingFactor"),
-                                metadata.rangeScalingFactor);
-  // TODO: determine structure for hdr10 metadata
-  // TODO: write rest of metadata
-  writer.StartWritingElements(kConDirSeq);
-  size_t item_depth = writer.StartWritingElements(kLiItem);
-  writer.WriteAttributeNameAndValue(kItemSemantic, kPrimary);
-  writer.WriteAttributeNameAndValue(kItemMime, kImageJpeg);
-  writer.FinishWritingElementsToDepth(item_depth);
-  writer.StartWritingElements(kLiItem);
-  writer.WriteAttributeNameAndValue(kItemSemantic, kRecoveryMap);
-  writer.WriteAttributeNameAndValue(kItemMime, kImageJpeg);
-  writer.WriteAttributeNameAndValue(kItemLength, secondary_image_length);
-  writer.FinishWriting();
-
-  return ss.str();
+  return NO_ERROR;
 }
 
 } // namespace android::recoverymap

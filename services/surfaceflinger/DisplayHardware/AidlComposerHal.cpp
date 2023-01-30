@@ -23,6 +23,7 @@
 #include <android-base/file.h>
 #include <android/binder_ibinder_platform.h>
 #include <android/binder_manager.h>
+#include <gui/TraceUtils.h>
 #include <log/log.h>
 #include <utils/Trace.h>
 
@@ -231,6 +232,17 @@ AidlComposer::AidlComposer(const std::string& serviceName) {
     }
 
     addReader(translate<Display>(kSingleReaderKey));
+
+    // TODO(b/262041682): When using new API to clear buffer slots, don't allocate this buffer.
+    mClearSlotBuffer = sp<GraphicBuffer>::make(1, 1, PIXEL_FORMAT_RGBX_8888,
+                                               GraphicBuffer::USAGE_HW_COMPOSER |
+                                                       GraphicBuffer::USAGE_SW_READ_OFTEN |
+                                                       GraphicBuffer::USAGE_SW_WRITE_OFTEN,
+                                               "AidlComposer");
+    if (!mClearSlotBuffer || mClearSlotBuffer->initCheck() != ::android::OK) {
+        LOG_ALWAYS_FATAL("Failed to allocate a buffer for clearing layer buffer slots");
+        return;
+    }
 
     ALOGI("Loaded AIDL composer3 HAL service");
 }
@@ -578,13 +590,15 @@ Error AidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
 }
 
 Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
-    ATRACE_NAME("HwcPresentDisplay");
+    const auto displayId = translate<int64_t>(display);
+    ATRACE_FORMAT("HwcPresentDisplay %" PRId64, displayId);
+
     Error error = Error::NONE;
     mMutex.lock_shared();
     auto writer = getWriter(display);
     auto reader = getReader(display);
     if (writer && reader) {
-        writer->get().presentDisplay(translate<int64_t>(display));
+        writer->get().presentDisplay(displayId);
         error = execute(display);
     } else {
         error = Error::BAD_DISPLAY;
@@ -595,7 +609,7 @@ Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
         return error;
     }
 
-    auto fence = reader->get().takePresentFence(translate<int64_t>(display));
+    auto fence = reader->get().takePresentFence(displayId);
     mMutex.unlock_shared();
     // take ownership
     *outPresentFence = fence.get();
@@ -707,8 +721,9 @@ Error AidlComposer::setClientTargetSlotCount(Display display) {
 
 Error AidlComposer::validateDisplay(Display display, nsecs_t expectedPresentTime,
                                     uint32_t* outNumTypes, uint32_t* outNumRequests) {
-    ATRACE_NAME("HwcValidateDisplay");
     const auto displayId = translate<int64_t>(display);
+    ATRACE_FORMAT("HwcValidateDisplay %" PRId64, displayId);
+
     Error error = Error::NONE;
     mMutex.lock_shared();
     auto writer = getWriter(display);
@@ -734,8 +749,9 @@ Error AidlComposer::validateDisplay(Display display, nsecs_t expectedPresentTime
 Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
                                              uint32_t* outNumTypes, uint32_t* outNumRequests,
                                              int* outPresentFence, uint32_t* state) {
-    ATRACE_NAME("HwcPresentOrValidateDisplay");
     const auto displayId = translate<int64_t>(display);
+    ATRACE_FORMAT("HwcPresentOrValidateDisplay %" PRId64, displayId);
+
     Error error = Error::NONE;
     mMutex.lock_shared();
     auto writer = getWriter(display);
@@ -802,6 +818,42 @@ Error AidlComposer::setLayerBuffer(Display display, Layer layer, uint32_t slot,
     if (auto writer = getWriter(display)) {
         writer->get().setLayerBuffer(translate<int64_t>(display), translate<int64_t>(layer), slot,
                                      handle, acquireFence);
+    } else {
+        error = Error::BAD_DISPLAY;
+    }
+    mMutex.unlock_shared();
+    return error;
+}
+
+Error AidlComposer::setLayerBufferSlotsToClear(Display display, Layer layer,
+                                               const std::vector<uint32_t>& slotsToClear,
+                                               uint32_t activeBufferSlot) {
+    if (slotsToClear.empty()) {
+        return Error::NONE;
+    }
+
+    Error error = Error::NONE;
+    mMutex.lock_shared();
+    if (auto writer = getWriter(display)) {
+        // Backwards compatible way of clearing buffer slots is tricky...
+        for (uint32_t slot : slotsToClear) {
+            // Don't clear the active buffer slot because we need to restore the active buffer
+            // after clearing the requested buffer slots with a placeholder buffer.
+            if (slot != activeBufferSlot) {
+                writer->get().setLayerBufferWithNewCommand(translate<int64_t>(display),
+                                                           translate<int64_t>(layer), slot,
+                                                           mClearSlotBuffer->handle, /*fence*/ -1);
+            }
+        }
+        // Since we clear buffers by setting them to a placeholder buffer, we want to make
+        // sure that the last setLayerBuffer command is sent with the currently active
+        // buffer, not the placeholder buffer, so that there is no perceptual change when
+        // buffers are discarded.
+        writer->get().setLayerBufferWithNewCommand(translate<int64_t>(display),
+                                                   translate<int64_t>(layer), activeBufferSlot,
+                                                   // The active buffer is still cached in
+                                                   // its slot and doesn't need a fence.
+                                                   /*buffer*/ nullptr, /*fence*/ -1);
     } else {
         error = Error::BAD_DISPLAY;
     }
