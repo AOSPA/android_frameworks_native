@@ -32,6 +32,7 @@
 #include <android/gui/DisplayStatInfo.h>
 #include <android/gui/DisplayState.h>
 #include <android/gui/ISurfaceComposerClient.h>
+#include <android/gui/ITransactionCompletedListener.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
 #include <ftl/future.h>
@@ -40,8 +41,8 @@
 #include <gui/CompositorTiming.h>
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
-#include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerDebugInfo.h>
+
 #include <gui/LayerState.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/mat4.h>
@@ -102,6 +103,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include "Client.h"
@@ -131,7 +133,9 @@ using frontend::TransactionHandler;
 using gui::CaptureArgs;
 using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
+using gui::ITransactionCompletedListener;
 using gui::LayerCaptureArgs;
+
 using gui::ScreenCaptureResults;
 
 namespace frametimeline {
@@ -664,7 +668,8 @@ private:
     // Show render rate with refresh rate overlay
     bool mRefreshRateOverlayRenderRate = false;
 
-    void setDesiredActiveMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+    void setDesiredActiveMode(display::DisplayModeRequest&&, bool force = false)
+            REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId);
     // Sets the active mode and a new refresh rate in SF.
@@ -693,7 +698,8 @@ private:
 
     // TODO(b/241285191): Look up RefreshRateSelector on Scheduler to remove redundant parameter.
     status_t applyRefreshRateSelectorPolicy(PhysicalDisplayId,
-                                            const scheduler::RefreshRateSelector&)
+                                            const scheduler::RefreshRateSelector&,
+                                            bool force = false)
             REQUIRES(mStateLock, kMainThreadContext);
 
     void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
@@ -1116,6 +1122,10 @@ private:
     std::atomic<uint32_t> mUniqueTransactionId = 1;
     SortedVector<sp<Layer>> mLayersPendingRemoval;
 
+    // Buffers that have been discarded by clients and need to be evicted from per-layer caches so
+    // the graphics memory can be immediately freed.
+    std::vector<uint64_t> mBufferIdsToUncache;
+
     // global color transform states
     Daltonizer mDaltonizer;
     float mGlobalSaturationFactor = 1.0f;
@@ -1198,7 +1208,9 @@ private:
     display::PhysicalDisplays mPhysicalDisplays GUARDED_BY(mStateLock);
 
     // The inner or outer display for foldables, assuming they have mutually exclusive power states.
-    PhysicalDisplayId mActiveDisplayId GUARDED_BY(mStateLock);
+    // Atomic because writes from onActiveDisplayChangedLocked are not always under mStateLock, but
+    // reads from ISchedulerCallback::requestDisplayModes may happen concurrently.
+    std::atomic<PhysicalDisplayId> mActiveDisplayId GUARDED_BY(mStateLock);
 
     struct {
         DisplayIdGenerator<GpuVirtualDisplayId> gpu;
@@ -1228,8 +1240,6 @@ private:
 
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
-    // If blurs are considered expensive and should require high GPU frequency.
-    bool mBlursAreExpensive = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;

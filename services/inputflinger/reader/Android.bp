@@ -29,6 +29,7 @@ cc_library_headers {
         "include",
         "mapper",
         "mapper/accumulator",
+        "mapper/gestures",
     ],
 }
 
@@ -60,7 +61,9 @@ filegroup {
         "mapper/accumulator/MultiTouchMotionAccumulator.cpp",
         "mapper/accumulator/SingleTouchMotionAccumulator.cpp",
         "mapper/accumulator/TouchButtonAccumulator.cpp",
+        "mapper/gestures/GestureConverter.cpp",
         "mapper/gestures/GesturesLogging.cpp",
+        "mapper/gestures/HardwareStateConverter.cpp",
     ],
 }
 
@@ -74,6 +77,7 @@ cc_defaults {
         "libcutils",
         "libjsoncpp",
         "liblog",
+        "libPlatformProperties",
         "libstatslog",
         "libutils",
     ],
@@ -90,7 +94,6 @@ cc_defaults {
     target: {
         android: {
             shared_libs: [
-                "libPlatformProperties",
                 "libinput",
             ],
         },

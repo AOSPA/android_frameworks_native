@@ -118,6 +118,7 @@
 #include <ui/DisplayIdentification.h>
 #include "BackgroundExecutor.h"
 #include "Client.h"
+#include "ClientCache.h"
 #include "Colorizer.h"
 #include "Display/DisplayMap.h"
 #include "DisplayDevice.h"
@@ -307,6 +308,7 @@ const String16 sControlDisplayBrightness("android.permission.CONTROL_DISPLAY_BRI
 const String16 sDump("android.permission.DUMP");
 const String16 sCaptureBlackoutContent("android.permission.CAPTURE_BLACKOUT_CONTENT");
 const String16 sInternalSystemWindow("android.permission.INTERNAL_SYSTEM_WINDOW");
+const String16 sWakeupSurfaceFlinger("android.permission.WAKEUP_SURFACE_FLINGER");
 
 const char* KERNEL_IDLE_TIMER_PROP = "graphics.display.kernel_idle_timer.enabled";
 
@@ -340,20 +342,12 @@ std::string decodeDisplayColorSetting(DisplayColorSetting displayColorSetting) {
     }
 }
 
-bool callingThreadHasRotateSurfaceFlingerAccess() {
+bool callingThreadHasPermission(const String16& permission) {
     IPCThreadState* ipc = IPCThreadState::self();
     const int pid = ipc->getCallingPid();
     const int uid = ipc->getCallingUid();
     return uid == AID_GRAPHICS || uid == AID_SYSTEM ||
-            PermissionCache::checkPermission(sRotateSurfaceFlinger, pid, uid);
-}
-
-bool callingThreadHasInternalSystemWindowAccess() {
-    IPCThreadState* ipc = IPCThreadState::self();
-    const int pid = ipc->getCallingPid();
-    const int uid = ipc->getCallingUid();
-    return uid == AID_GRAPHICS || uid == AID_SYSTEM ||
-        PermissionCache::checkPermission(sInternalSystemWindow, pid, uid);
+            PermissionCache::checkPermission(permission, pid, uid);
 }
 
 SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
@@ -434,8 +428,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     bool supportsBlurs = atoi(value);
     mSupportsBlur = supportsBlurs;
     ALOGI_IF(!mSupportsBlur, "Disabling blur effects, they are not supported.");
-    property_get("ro.sf.blurs_are_expensive", value, "0");
-    mBlursAreExpensive = atoi(value);
 
     const size_t defaultListSize = MAX_LAYERS;
     auto listSize = property_get_int32("debug.sf.max_igbp_list_size", int32_t(defaultListSize));
@@ -1163,7 +1155,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>&, DisplayStatInfo* ou
     return NO_ERROR;
 }
 
-void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request) {
+void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request, bool force) {
     ATRACE_CALL();
 
     auto display = getDisplayDeviceLocked(request.mode.modePtr->getPhysicalDisplayId());
@@ -1175,7 +1167,8 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request)
     const auto mode = request.mode;
     const bool emitEvent = request.emitEvent;
 
-    switch (display->setDesiredActiveMode(DisplayDevice::ActiveModeInfo(std::move(request)))) {
+    switch (display->setDesiredActiveMode(DisplayDevice::ActiveModeInfo(std::move(request)),
+                                          force)) {
         case DisplayDevice::DesiredActiveModeAction::InitiateDisplayModeSwitch:
             scheduleComposite(FrameHint::kNone);
 
@@ -2322,6 +2315,8 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         });
     }
 
+    refreshArgs.bufferIdsToUncache = std::move(mBufferIdsToUncache);
+
     refreshArgs.layersWithQueuedFrames.reserve(mLayersWithQueuedFrames.size());
     for (auto layer : mLayersWithQueuedFrames) {
         if (auto layerFE = layer->getCompositionEngineLayerFE())
@@ -2345,7 +2340,6 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
             layers.push_back(layer);
         }
     });
-    refreshArgs.blursAreExpensive = mBlursAreExpensive;
     refreshArgs.internalDisplayRotationFlags = DisplayDevice::getPrimaryDisplayRotationFlags();
 
     if (CC_UNLIKELY(mDrawingState.colorMatrixChanged)) {
@@ -3544,9 +3538,20 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
 
     for (auto& request : modeRequests) {
         const auto& modePtr = request.mode.modePtr;
-        const auto display = getDisplayDeviceLocked(modePtr->getPhysicalDisplayId());
+
+        const auto displayId = modePtr->getPhysicalDisplayId();
+        const auto display = getDisplayDeviceLocked(displayId);
 
         if (!display) continue;
+
+        const bool isInternalDisplay = mPhysicalDisplays.get(displayId)
+                                               .transform(&PhysicalDisplay::isInternal)
+                                               .value_or(false);
+
+        if (isInternalDisplay && displayId != mActiveDisplayId) {
+            ALOGV("%s(%s): Inactive display", __func__, to_string(displayId).c_str());
+            continue;
+        }
 
         if (display->refreshRateSelector().isModeAllowed(request.mode)) {
             /* QTI_BEGIN */
@@ -4099,18 +4104,23 @@ status_t SurfaceFlinger::setTransactionState(
     // Avoid checking for rotation permissions if the caller already has ACCESS_SURFACE_FLINGER
     // permissions.
     if ((permissions & layer_state_t::Permission::ACCESS_SURFACE_FLINGER) ||
-        callingThreadHasRotateSurfaceFlingerAccess()) {
+        callingThreadHasPermission(sRotateSurfaceFlinger)) {
         permissions |= layer_state_t::Permission::ROTATE_SURFACE_FLINGER;
     }
 
-    if (callingThreadHasInternalSystemWindowAccess()) {
+    if (callingThreadHasPermission(sInternalSystemWindow)) {
         permissions |= layer_state_t::Permission::INTERNAL_SYSTEM_WINDOW;
     }
 
-    if (!(permissions & layer_state_t::Permission::ACCESS_SURFACE_FLINGER) &&
-        (flags & (eEarlyWakeupStart | eEarlyWakeupEnd))) {
-        ALOGE("Only WindowManager is allowed to use eEarlyWakeup[Start|End] flags");
-        flags &= ~(eEarlyWakeupStart | eEarlyWakeupEnd);
+    if (flags & (eEarlyWakeupStart | eEarlyWakeupEnd)) {
+        const bool hasPermission =
+                (permissions & layer_state_t::Permission::ACCESS_SURFACE_FLINGER) ||
+                callingThreadHasPermission(sWakeupSurfaceFlinger);
+        if (!hasPermission) {
+            ALOGE("Caller needs permission android.permission.WAKEUP_SURFACE_FLINGER to use "
+                  "eEarlyWakeup[Start|End] flags");
+            flags &= ~(eEarlyWakeupStart | eEarlyWakeupEnd);
+        }
     }
 
     const int64_t postTime = systemTime();
@@ -4137,10 +4147,6 @@ status_t SurfaceFlinger::setTransactionState(
                     getExternalTextureFromBufferData(*resolvedState.state.bufferData,
                                                      layerName.c_str(), transactionId);
             mBufferCountTracker.increment(resolvedState.state.surface->localBinder());
-            if (layer) {
-                resolvedState.hwcBufferSlot =
-                        layer->getHwcCacheSlot(resolvedState.state.bufferData->cachedBuffer);
-            }
         }
     }
 
@@ -4217,7 +4223,10 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
     }
 
     if (uncacheBuffer.isValid()) {
-        ClientCache::getInstance().erase(uncacheBuffer);
+        sp<GraphicBuffer> buffer = ClientCache::getInstance().erase(uncacheBuffer);
+        if (buffer != nullptr) {
+            mBufferIdsToUncache.push_back(buffer->getId());
+        }
     }
 
     // If a synchronous transaction is explicitly requested without any changes, force a transaction
@@ -4608,7 +4617,7 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
     if (what & layer_state_t::eBufferChanged) {
         if (layer->setBuffer(composerState.externalTexture, *s.bufferData, postTime,
                              desiredPresentTime, isAutoTimestamp, dequeueBufferTimestamp,
-                             frameTimelineInfo, composerState.hwcBufferSlot)) {
+                             frameTimelineInfo)) {
             flags |= eTraversalNeeded;
         }
     } else if (frameTimelineInfo.vsyncId != FrameTimelineInfo::INVALID_VSYNC_ID) {
@@ -4876,9 +4885,9 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
                                            .value_or(false);
 
     const auto activeDisplay = getDisplayDeviceLocked(mActiveDisplayId);
-    const bool isActiveDisplayPoweredOn = activeDisplay && activeDisplay->isPoweredOn();
 
-    ALOGW_IF(display != activeDisplay && isInternalDisplay && isActiveDisplayPoweredOn,
+    ALOGW_IF(display != activeDisplay && isInternalDisplay && activeDisplay &&
+                     activeDisplay->isPoweredOn(),
              "Trying to change power mode on inactive display without powering off active display");
 
     display->setPowerMode(mode);
@@ -4886,9 +4895,24 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     const auto refreshRate = display->refreshRateSelector().getActiveMode().modePtr->getFps();
     if (!currentModeOpt || *currentModeOpt == hal::PowerMode::OFF) {
         // Turn on the display
-        if (isInternalDisplay && !isActiveDisplayPoweredOn) {
+
+        // Activate the display (which involves a modeset to the active mode):
+        //     1) When the first (a.k.a. primary) display is powered on during boot.
+        //     2) When the inner or outer display of a foldable is powered on. This condition relies
+        //        on the above DisplayDevice::setPowerMode. If `display` and `activeDisplay` are the
+        //        same display, then the `activeDisplay->isPoweredOn()` below is true, such that the
+        //        display is not activated every time it is powered on.
+        //
+        // TODO(b/255635821): Remove the concept of active display.
+        const bool activeDisplayChanged =
+                isInternalDisplay && (!activeDisplay || !activeDisplay->isPoweredOn());
+
+        static bool sPrimaryDisplay = true;
+        if (sPrimaryDisplay || activeDisplayChanged) {
             onActiveDisplayChangedLocked(activeDisplay, display);
+            sPrimaryDisplay = false;
         }
+
         // Keep uclamp in a separate syscall and set it before changing to RT due to b/190237315.
         // We can merge the syscall later.
         if (SurfaceFlinger::setSchedAttr(true) != NO_ERROR) {
@@ -5345,7 +5369,7 @@ void SurfaceFlinger::dumpOffscreenLayers(std::string& result) {
         std::string result;
         for (Layer* offscreenLayer : mOffscreenLayers) {
             offscreenLayer->traverse(LayerVector::StateSet::Drawing,
-                                     [&](Layer* layer) { layer->dumpCallingUidPid(result); });
+                                     [&](Layer* layer) { layer->dumpOffscreenDebugInfo(result); });
         }
         return result;
     });
@@ -6930,7 +6954,7 @@ void SurfaceFlinger::traverseLayersInLayerStack(ui::LayerStack layerStack, const
 ftl::Optional<scheduler::FrameRateMode> SurfaceFlinger::getPreferredDisplayMode(
         PhysicalDisplayId displayId, DisplayModeId defaultModeId) const {
     if (const auto schedulerMode = mScheduler->getPreferredDisplayMode();
-        schedulerMode && schedulerMode->modePtr->getPhysicalDisplayId() == displayId) {
+        schedulerMode.modePtr->getPhysicalDisplayId() == displayId) {
         return schedulerMode;
     }
 
@@ -6965,12 +6989,24 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
         case SetPolicyResult::Unchanged:
             return NO_ERROR;
         case SetPolicyResult::Changed:
-            return applyRefreshRateSelectorPolicy(displayId, selector);
+            break;
     }
+
+    const bool isInternalDisplay = mPhysicalDisplays.get(displayId)
+                                           .transform(&PhysicalDisplay::isInternal)
+                                           .value_or(false);
+
+    if (isInternalDisplay && displayId != mActiveDisplayId) {
+        // The policy will be be applied when the display becomes active.
+        ALOGV("%s(%s): Inactive display", __func__, to_string(displayId).c_str());
+        return NO_ERROR;
+    }
+
+    return applyRefreshRateSelectorPolicy(displayId, selector);
 }
 
 status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
-        PhysicalDisplayId displayId, const scheduler::RefreshRateSelector& selector) {
+        PhysicalDisplayId displayId, const scheduler::RefreshRateSelector& selector, bool force) {
     const scheduler::RefreshRateSelector::Policy currentPolicy = selector.getCurrentPolicy();
     ALOGV("Setting desired display mode specs: %s", currentPolicy.toString().c_str());
 
@@ -7008,7 +7044,7 @@ status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
     }
     /* QTI_END */
 
-    setDesiredActiveMode({std::move(preferredMode), .emitEvent = true});
+    setDesiredActiveMode({std::move(preferredMode), .emitEvent = true}, force);
     return NO_ERROR;
 }
 
@@ -7312,7 +7348,8 @@ void SurfaceFlinger::onActiveDisplayChangedLocked(const sp<DisplayDevice>& inact
     // case, its preferred mode has not been propagated to HWC (via setDesiredActiveMode). In either
     // case, the Scheduler's cachedModeChangedParams must be initialized to the newly active mode,
     // and the kernel idle timer of the newly active display must be toggled.
-    applyRefreshRateSelectorPolicy(mActiveDisplayId, activeDisplay->refreshRateSelector());
+    constexpr bool kForce = true;
+    applyRefreshRateSelectorPolicy(mActiveDisplayId, activeDisplay->refreshRateSelector(), kForce);
 }
 
 status_t SurfaceFlinger::addWindowInfosListener(
@@ -7338,8 +7375,7 @@ std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextur
                                    layerName, static_cast<uint32_t>(mMaxRenderTargetSize));
         ALOGD("%s", errorMessage.c_str());
         if (bufferData.releaseBufferListener) {
-            bufferData.releaseBufferListener->onTransactionQueueStalled(
-                    String8(errorMessage.c_str()));
+            bufferData.releaseBufferListener->onTransactionQueueStalled(errorMessage);
         }
         return nullptr;
     }
@@ -7357,7 +7393,7 @@ std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextur
 
             if (bufferData.releaseBufferListener) {
                 bufferData.releaseBufferListener->onTransactionQueueStalled(
-                        String8("Buffer processing hung due to full buffer cache"));
+                        "Buffer processing hung due to full buffer cache");
             }
         }
 
