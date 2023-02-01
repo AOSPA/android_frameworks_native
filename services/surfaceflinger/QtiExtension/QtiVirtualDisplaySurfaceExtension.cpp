@@ -3,7 +3,9 @@
  */
 // #define LOG_NDEBUG 0
 #include "QtiVirtualDisplaySurfaceExtension.h"
+#include "QtiNullDisplaySurfaceExtension.h"
 
+#include <android-base/properties.h>
 #include <log/log.h>
 
 namespace android::surfaceflingerextension {
@@ -11,14 +13,20 @@ namespace android::surfaceflingerextension {
 QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
                                                                  VirtualDisplaySurface* vds,
                                                                  bool secure, uint64_t sinkUsage) {
-    if (isVirtual) {
-        ALOGV("Creating a new QtiVirtualDisplaySurfaceExtension");
-        return new QtiVirtualDisplaySurfaceExtension(vds, secure, sinkUsage);
+#ifdef QTI_DISPLAY_EXTENSION
+    bool mQtiEnableDisplayExtn =
+            base::GetBoolProperty("vendor.display.enable_display_extensions", false);
+    if (mQtiEnableDisplayExtn) {
+        if (isVirtual) {
+            ALOGV("Enabling QtiVirtualDisplaySurfaceExtension ...");
+            return new QtiVirtualDisplaySurfaceExtension(vds, secure, sinkUsage);
+        }
+        // TODO(rmedel): else, createa QtiFramebufferSurfaceExtension for real displays
     }
+#endif
 
-    // Create a QtiFramebufferSurfaceExtension for real displays
-    ALOGV("Creating a dummy QtiVirtualDisplaySurfaceExtension");
-    return new QtiVirtualDisplaySurfaceExtension();
+    ALOGI("Enabling QtiNullDisplaySurfaceExtension in QSSI ...");
+    return new QtiNullDisplaySurfaceExtension(vds, secure, sinkUsage);
 }
 
 QtiVirtualDisplaySurfaceExtension::QtiVirtualDisplaySurfaceExtension(VirtualDisplaySurface* vds,

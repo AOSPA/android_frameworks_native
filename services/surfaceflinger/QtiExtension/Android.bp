@@ -36,6 +36,7 @@ cc_library_static {
         "QtiHidlComposerHalExtension.cpp",
         "QtiHWComposerExtension.cpp",
         "QtiNullExtension.cpp",
+        "QtiNullDisplaySurfaceExtension.cpp",
         "QtiPhaseOffsetsExtension.cpp",
         "QtiPowerAdvisorExtension.cpp",
         "QtiSurfaceFlingerExtension.cpp",

@@ -9,10 +9,10 @@ namespace android {
 
 namespace compositionengineextension {
 
-class QtiOutputExtension : public QtiOutputExtensionIntf {
+class QtiNullOutputExtension : public QtiOutputExtensionIntf {
 public:
-    QtiOutputExtension(compositionengine::impl::Output* output);
-    ~QtiOutputExtension() = default;
+    QtiNullOutputExtension(compositionengine::impl::Output* output);
+    ~QtiNullOutputExtension() = default;
 
     bool qtiHasSecureContent() override;
     bool qtiHasSecureDisplay() override;
