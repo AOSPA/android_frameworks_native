@@ -39,9 +39,10 @@
 #include <vector>
 
 /* QTI_BEGIN */
-#include "../../../QtiExtension/QtiOutputExtension.h"
+#include "../../../QtiExtension/QtiOutputExtensionIntf.h"
 
 namespace android::compositionengineextension {
+class QtiOutputExtensionIntf;
 class QtiOutputExtension;
 } // namespace android::compositionengineextension
 /* QTI_END */
@@ -174,7 +175,7 @@ protected:
 private:
     /* QTI_BEGIN */
     friend class android::compositionengineextension::QtiOutputExtension;
-    android::compositionengineextension::QtiOutputExtension* mQtiOutputExtn = nullptr;
+    android::compositionengineextension::QtiOutputExtensionIntf* mQtiOutputExtnIntf = nullptr;
     /* QTI_END */
 
     void dirtyEntireOutput();
