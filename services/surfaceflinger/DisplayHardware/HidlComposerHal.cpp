@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -35,6 +41,18 @@
 
 #include <algorithm>
 #include <cinttypes>
+
+/* QTI_BEGIN */
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#else
+#include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
+using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
+#endif
+/* QTI_END */
+
+
 
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
@@ -199,6 +217,17 @@ sp<GraphicBuffer> allocateClearSlotBuffer() {
 }
 
 } // anonymous namespace
+
+/* QTI_BEGIN */
+void HidlComposer::CommandWriter::qtiSetDisplayElapseTime(uint64_t time) {
+    constexpr uint16_t kSetDisplayElapseTimeLength = 2;
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
+                 kSetDisplayElapseTimeLength);
+    write64(time);
+    endCommand();
+}
+/* QTI_END */
 
 HidlComposer::HidlComposer(const std::string& serviceName)
       : mClearSlotBuffer(allocateClearSlotBuffer()), mWriter(kWriterInitialSize) {

@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include "ComposerHal.h"
@@ -41,6 +47,12 @@
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
+
+/* QTI_BEGIN */
+namespace android::surfaceflingerextension {
+class QtiHidlComposerHalExtension;
+}
+/* QTI_END */
 
 namespace android::Hwc2 {
 
@@ -345,10 +357,18 @@ public:
     void onHotplugDisconnect(Display) override;
 
 private:
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiHidlComposerHalExtension;
+    /* QTI_END */
+
     class CommandWriter : public CommandWriterBase {
     public:
         explicit CommandWriter(uint32_t initialMaxSize) : CommandWriterBase(initialMaxSize) {}
         ~CommandWriter() override {}
+
+        /* QTI_BEGIN */
+        void qtiSetDisplayElapseTime(uint64_t time);
+        /* QTI_END */
     };
 
     void registerCallback(const sp<IComposerCallback>& callback);

@@ -13,7 +13,7 @@ QtiNullExtension::QtiNullExtension() {
 void QtiNullExtension::qtiInit(SurfaceFlinger* flinger) {}
 QtiSurfaceFlingerExtensionIntf* QtiNullExtension::qtiPostInit(
         android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
-        scheduler::VsyncConfiguration* vsyncConfig) {
+        scheduler::VsyncConfiguration* vsyncConfig, Hwc2::Composer* composerHal) {
     return this;
 }
 void QtiNullExtension::qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) {}

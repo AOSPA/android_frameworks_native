@@ -6,6 +6,7 @@
 #include <ui/DisplayId.h>
 #include "../DisplayHardware/HWC2.h"
 #include "../DisplayHardware/HWComposer.h"
+#include "QtiComposerHalExtension.h"
 
 namespace android {
 
@@ -18,12 +19,15 @@ namespace surfaceflingerextension {
 class QtiHWComposerExtension {
 public:
     QtiHWComposerExtension(android::impl::HWComposer& hwc);
+    QtiHWComposerExtension(android::impl::HWComposer& hwc, Hwc2::Composer* composerHal);
     ~QtiHWComposerExtension() = default;
 
     std::optional<hal::HWDisplayId> qtiFromVirtualDisplayId(HalVirtualDisplayId) const;
+    status_t qtiSetDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp);
 
 private:
     android::impl::HWComposer& mQtiHWComposer;
+    QtiComposerHalExtension* mQtiComposerHalExtn = nullptr;
 };
 
 } // namespace surfaceflingerextension
