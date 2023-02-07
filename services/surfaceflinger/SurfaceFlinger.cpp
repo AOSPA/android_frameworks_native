@@ -2575,7 +2575,9 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         CompositionResult compositionResult{layerFE->stealCompositionResult()};
         layer->onPreComposition(compositionResult.refreshStartTime);
         for (auto releaseFence : compositionResult.releaseFences) {
-            layer->onLayerDisplayed(releaseFence);
+            Layer* clonedFrom = layer->getClonedFrom().get();
+            auto owningLayer = clonedFrom ? clonedFrom : layer;
+            owningLayer->onLayerDisplayed(releaseFence);
         }
         if (compositionResult.lastClientCompositionFence) {
             layer->setWasClientComposed(compositionResult.lastClientCompositionFence);
