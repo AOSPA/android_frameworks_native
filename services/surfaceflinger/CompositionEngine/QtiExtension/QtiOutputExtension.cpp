@@ -2,12 +2,30 @@
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
+
 #include "QtiOutputExtension.h"
+#include "QtiNullOutputExtension.h"
 
 #define LOG_TAG "QtiCompositionEngineExtension"
+
+#include <android-base/properties.h>
 #include <log/log.h>
 
 namespace android::compositionengineextension {
+
+QtiOutputExtensionIntf* qtiCreateOutputExtension(compositionengine::impl::Output* output) {
+#ifdef QTI_DISPLAY_EXTENSION
+    bool mQtiEnableDisplayExtn =
+            base::GetBoolProperty("vendor.display.enable_display_extensions", false);
+    if (mQtiEnableDisplayExtn) {
+        ALOGV("Enabling QtiOutputExtension ...");
+        return new QtiOutputExtension(output);
+    }
+#endif
+
+    ALOGV("Enabling QtiNullOutputExtension in QSSI ...");
+    return new QtiNullOutputExtension(output);
+}
 
 QtiOutputExtension::QtiOutputExtension(compositionengine::impl::Output* output)
       : mQtiOutput(output) {
@@ -47,10 +65,19 @@ bool QtiOutputExtension::qtiHasSecureDisplay() {
     if (!mQtiOutput) {
         return false;
     }
-    auto layers = mQtiOutput->getOutputLayersOrderedByZ();
-    bool hasSecureDisplay = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-        return layer->getLayerFE().getCompositionState()->qtiIsSecureDisplay;
-    });
+
+    bool hasSecureDisplay = false;
+    for (auto* outputLayer : mQtiOutput->getOutputLayersOrderedByZ()) {
+        if (!outputLayer || !outputLayer->getLayerFE().getCompositionState()) {
+            ALOGV("Avoid isSecureDisplay check - outputlayer or layer.compositionState is null");
+            continue;
+        }
+
+        if (outputLayer->getLayerFE().getCompositionState()->qtiIsSecureDisplay) {
+            hasSecureDisplay = true;
+            break;
+        }
+    }
 
     return hasSecureDisplay;
 }

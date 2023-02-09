@@ -56,12 +56,12 @@ QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger*
     bool mQtiEnableDisplayExtn =
             base::GetBoolProperty("vendor.display.enable_display_extensions", false);
     if (mQtiEnableDisplayExtn) {
-        ALOGI("Enabling QTI extensions ...");
+        ALOGI("Enabling QtiSurfaceFlingerExtension ...");
         return new QtiSurfaceFlingerExtension();
     }
 #endif
 
-    ALOGI("Enabling GSI in QSSI ...");
+    ALOGI("Enabling QtiNullSurfaceFlingerExtension in QSSI ...");
     return new QtiNullExtension(flinger);
 }
 

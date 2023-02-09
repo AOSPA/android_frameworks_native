@@ -6,6 +6,7 @@ cc_library_static {
     ],
     srcs: [
         "QtiOutputExtension.cpp",
+        "QtiNullOutputExtension.cpp",
     ],
     shared_libs: [
         "vendor.qti.hardware.display.composer@3.0",

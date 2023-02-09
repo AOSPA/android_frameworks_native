@@ -108,7 +108,7 @@ std::shared_ptr<Output> createOutput(
 
 Output::Output() {
     /* QTI_BEGIN */
-    mQtiOutputExtn = new android::compositionengineextension::QtiOutputExtension(this);
+    mQtiOutputExtnIntf = android::compositionengineextension::qtiCreateOutputExtension(this);
     /* QTI_END */
 }
 
@@ -1001,7 +1001,7 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     }
 
     /* QTI_BEGIN */
-    if (mQtiOutputExtn && mQtiOutputExtn->qtiHasSecureDisplay()) {
+    if (mQtiOutputExtnIntf && mQtiOutputExtnIntf->qtiHasSecureDisplay()) {
         bestDataSpace = ui::Dataspace::V0_SRGB;
         isHdr = false;
     }
@@ -1205,9 +1205,9 @@ void Output::updateProtectedContentState() {
     bool supportsProtectedContent = renderEngine.supportsProtectedContent();
 
     /* QTI_BEGIN */
-    if (mQtiOutputExtn) {
+    if (mQtiOutputExtnIntf) {
         supportsProtectedContent = supportsProtectedContent && outputState.isSecure &&
-                mQtiOutputExtn->qtiHasSecureContent();
+                mQtiOutputExtnIntf->qtiHasSecureContent();
     }
     /* QTI_END */
 
