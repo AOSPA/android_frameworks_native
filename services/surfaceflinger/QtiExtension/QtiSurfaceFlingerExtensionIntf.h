@@ -54,7 +54,8 @@ public:
     virtual void qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId, hal::Connection connection,
                                                   PhysicalDisplayId id) = 0;
     virtual void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
-                                               hal::Connection connection) = 0;
+                                               hal::Connection connection,
+                                               std::optional<DisplayIdentificationInfo> info) = 0;
     virtual void qtiUpdateInternalDisplaysPresentationMode() = 0;
 
     /*

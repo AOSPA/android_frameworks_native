@@ -2001,10 +2001,6 @@ void SurfaceFlinger::onComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
         mPendingHotplugEvents.push_back(HotplugEvent{hwcDisplayId, connection});
     }
 
-    /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiUpdateOnComposerHalHotplug(hwcDisplayId, connection);
-    /* QTI_END */
-
     if (mScheduler) {
         mScheduler->scheduleConfigure();
     }
@@ -2835,6 +2831,10 @@ bool SurfaceFlinger::configureLocked() {
 
     for (const auto [hwcDisplayId, connection] : events) {
         if (auto info = getHwComposer().onHotplug(hwcDisplayId, connection)) {
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiUpdateOnComposerHalHotplug(hwcDisplayId, connection, info);
+            /* QTI_END */
+
             const auto displayId = info->id;
             const bool connected = connection == hal::Connection::CONNECTED;
 
