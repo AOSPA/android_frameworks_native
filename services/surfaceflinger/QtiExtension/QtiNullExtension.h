@@ -34,8 +34,8 @@ public:
     void qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) override;
     void qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId, hal::Connection connection,
                                           PhysicalDisplayId id) override;
-    void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
-                                       hal::Connection connection) override;
+    void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection,
+                                       std::optional<DisplayIdentificationInfo> info) override;
     void qtiUpdateInternalDisplaysPresentationMode() override;
 
     /*
