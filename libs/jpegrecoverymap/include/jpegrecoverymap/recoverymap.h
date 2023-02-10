@@ -244,7 +244,8 @@ public:
     *
     * The output is filled jpegr_info structure
     * @param compressed_jpegr_image compressed JPEGR image
-    * @param jpegr_info pointer to output JPEGR info
+    * @param jpegr_info pointer to output JPEGR info. Members of jpegr_info
+    *         are owned by the caller
     * @return NO_ERROR if JPEGR parsing succeeds, error code otherwise
     */
     status_t getJPEGRInfo(jr_compressed_ptr compressed_jpegr_image,
@@ -325,23 +326,25 @@ private:
      *
      * @param compressed_jpeg_image compressed 8-bit JPEG image
      * @param compress_recovery_map compressed recover map
+     * @param exif EXIF package
      * @param metadata JPEG/R metadata to encode in XMP of the jpeg
      * @param dest compressed JPEGR image
      * @return NO_ERROR if calculation succeeds, error code if error occurs.
      */
     status_t appendRecoveryMap(jr_compressed_ptr compressed_jpeg_image,
                                jr_compressed_ptr compressed_recovery_map,
+                               jr_exif_ptr exif,
                                jr_metadata_ptr metadata,
                                jr_compressed_ptr dest);
 
     /*
      * This method will tone map a HDR image to an SDR image.
      *
-     * @param uncompressed_p010_image (input) uncompressed P010 image
+     * @param src (input) uncompressed P010 image
      * @param dest (output) tone mapping result as a YUV_420 image
      * @return NO_ERROR if calculation succeeds, error code if error occurs.
      */
-    status_t toneMap(jr_uncompressed_ptr uncompressed_p010_image,
+    status_t toneMap(jr_uncompressed_ptr src,
                      jr_uncompressed_ptr dest);
 };
 

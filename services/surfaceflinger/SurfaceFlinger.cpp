@@ -449,6 +449,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.treat_170m_as_sRGB", value, "0");
     mTreat170mAsSrgb = atoi(value);
 
+    mIgnoreHwcPhysicalDisplayOrientation =
+            base::GetBoolProperty("debug.sf.ignore_hwc_physical_display_orientation"s, false);
+
     // We should be reading 'persist.sys.sf.color_saturation' here
     // but since /data may be encrypted, we need to wait until after vold
     // comes online to attempt to read the property. The property is
@@ -1516,6 +1519,7 @@ status_t SurfaceFlinger::getOverlaySupport(gui::OverlayProperties* outProperties
         outCombination.dataspaces = std::move(dataspaces);
         outProperties->combinations.emplace_back(outCombination);
     }
+    outProperties->supportMixedColorSpaces = aidlProperties.supportMixedColorSpaces;
     return NO_ERROR;
 }
 
@@ -2489,7 +2493,8 @@ ui::Rotation SurfaceFlinger::getPhysicalDisplayOrientation(DisplayId displayId,
     if (!id) {
         return ui::ROTATION_0;
     }
-    if (getHwComposer().getComposer()->isSupported(
+    if (!mIgnoreHwcPhysicalDisplayOrientation &&
+        getHwComposer().getComposer()->isSupported(
                 Hwc2::Composer::OptionalFeature::PhysicalDisplayOrientation)) {
         switch (getHwComposer().getPhysicalDisplayOrientation(*id)) {
             case Hwc2::AidlTransform::ROT_90:
@@ -2556,7 +2561,9 @@ void SurfaceFlinger::postComposition() {
     const TimePoint compositeTime =
             TimePoint::fromNs(mCompositionEngine->getLastFrameRefreshTimestamp());
     const Duration presentLatency =
-            mPresentLatencyTracker.trackPendingFrame(compositeTime, presentFenceTime);
+            !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)
+            ? mPresentLatencyTracker.trackPendingFrame(compositeTime, presentFenceTime)
+            : Duration::zero();
 
     const auto& schedule = mScheduler->getVsyncSchedule();
     const TimePoint vsyncDeadline = schedule.vsyncDeadlineAfter(presentTime);
@@ -2940,15 +2947,15 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
 
         const auto enableFrameRateOverride = [&] {
             using Config = scheduler::RefreshRateSelector::Config;
-            if (!sysprop::enable_frame_rate_override(false)) {
+            if (!sysprop::enable_frame_rate_override(true)) {
                 return Config::FrameRateOverride::Disabled;
             }
 
-            if (sysprop::frame_rate_override_for_native_rates(true)) {
+            if (sysprop::frame_rate_override_for_native_rates(false)) {
                 return Config::FrameRateOverride::AppOverrideNativeRefreshRates;
             }
 
-            if (!sysprop::frame_rate_override_global(false)) {
+            if (!sysprop::frame_rate_override_global(true)) {
                 return Config::FrameRateOverride::AppOverride;
             }
 
@@ -6726,7 +6733,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
             [=, renderAreaFuture = std::move(renderAreaFuture)]() FTL_FAKE_GUARD(
                     kMainThreadContext) mutable -> ftl::SharedFuture<FenceResult> {
                 ScreenCaptureResults captureResults;
-                std::unique_ptr<RenderArea> renderArea = renderAreaFuture.get();
+                std::shared_ptr<RenderArea> renderArea = renderAreaFuture.get();
                 if (!renderArea) {
                     ALOGW("Skipping screen capture because of invalid render area.");
                     if (captureListener) {
@@ -6738,7 +6745,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
 
                 ftl::SharedFuture<FenceResult> renderFuture;
                 renderArea->render([&]() FTL_FAKE_GUARD(kMainThreadContext) {
-                    renderFuture = renderScreenImpl(std::move(renderArea), traverseLayers, buffer,
+                    renderFuture = renderScreenImpl(renderArea, traverseLayers, buffer,
                                                     canCaptureBlackoutContent, regionSampling,
                                                     grayscale, captureResults);
                 });
@@ -6766,7 +6773,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenCommon(
 }
 
 ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
-        std::unique_ptr<RenderArea> renderArea, TraverseLayersFunction traverseLayers,
+        std::shared_ptr<const RenderArea> renderArea, TraverseLayersFunction traverseLayers,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer,
         bool canCaptureBlackoutContent, bool regionSampling, bool grayscale,
         ScreenCaptureResults& captureResults) {
