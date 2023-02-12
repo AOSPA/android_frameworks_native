@@ -229,6 +229,11 @@ void AIBinder_Class_setOnDump(AIBinder_Class* clazz, AIBinder_onDump onDump) __I
  *
  * Available since API level 33.
  *
+ * WARNING: this API interacts badly with linkernamespaces. For correct behavior, you must
+ * use it on all instances of a class in the same process which share the same interface
+ * descriptor. In general, it is recommended you do not use this API, because it is disabling
+ * type safety.
+ *
  * \param clazz class to disable interface header on.
  */
 void AIBinder_Class_disableInterfaceTokenHeader(AIBinder_Class* clazz) __INTRODUCED_IN(33);
@@ -589,6 +594,9 @@ typedef void (*AIBinder_DeathRecipient_onBinderDied)(void* cookie) __INTRODUCED_
  *
  * See also AIBinder_linkToDeath/AIBinder_unlinkToDeath.
  *
+ * WARNING: Make sure the lifetime of this cookie is long enough. If it is dynamically
+ * allocated, it should be deleted with AIBinder_DeathRecipient_setOnUnlinked.
+ *
  * Available since API level 33.
  *
  * \param cookie the cookie passed to AIBinder_linkToDeath.
@@ -599,6 +607,9 @@ typedef void (*AIBinder_DeathRecipient_onBinderUnlinked)(void* cookie) __INTRODU
  * Creates a new binder death recipient. This can be attached to multiple different binder objects.
  *
  * Available since API level 29.
+ *
+ * WARNING: Make sure the lifetime of this cookie is long enough. If it is dynamically
+ * allocated, it should be deleted with AIBinder_DeathRecipient_setOnUnlinked.
  *
  * \param onBinderDied the callback to call when this death recipient is invoked.
  *

@@ -345,12 +345,11 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDi
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
-                                                               hal::Connection connection) {
+void QtiSurfaceFlingerExtension::qtiUpdateOnComposerHalHotplug(
+        hal::HWDisplayId hwcDisplayId, hal::Connection connection,
+        std::optional<DisplayIdentificationInfo> info) {
     // QTI: Update QTI Extension's displays list when a display is disconnected
     if (connection != hal::Connection::CONNECTED) {
-        const std::optional<DisplayIdentificationInfo> info =
-                mQtiFlinger->getHwComposer().onHotplug(hwcDisplayId, connection);
         if (info) {
             qtiUpdateDisplaysList(mQtiFlinger->getDisplayDeviceLocked(info->id), /*add*/ false);
         }
