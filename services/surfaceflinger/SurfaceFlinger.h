@@ -32,7 +32,6 @@
 #include <android/gui/DisplayStatInfo.h>
 #include <android/gui/DisplayState.h>
 #include <android/gui/ISurfaceComposerClient.h>
-#include <android/gui/ITransactionCompletedListener.h>
 #include <cutils/atomic.h>
 #include <cutils/compiler.h>
 #include <ftl/future.h>
@@ -41,8 +40,8 @@
 #include <gui/CompositorTiming.h>
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
+#include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerDebugInfo.h>
-
 #include <gui/LayerState.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/mat4.h>
@@ -133,9 +132,7 @@ using frontend::TransactionHandler;
 using gui::CaptureArgs;
 using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
-using gui::ITransactionCompletedListener;
 using gui::LayerCaptureArgs;
-
 using gui::ScreenCaptureResults;
 
 namespace frametimeline {
@@ -553,6 +550,10 @@ private:
     status_t setBootDisplayMode(const sp<display::DisplayToken>&, DisplayModeId);
     status_t getOverlaySupport(gui::OverlayProperties* outProperties) const;
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken);
+    status_t getHdrConversionCapabilities(
+            std::vector<gui::HdrConversionCapability>* hdrConversionCapaabilities) const;
+    status_t setHdrConversionStrategy(const gui::HdrConversionStrategy& hdrConversionStrategy);
+    status_t getHdrOutputConversionSupport(bool* outSupport) const;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
     void setPowerMode(const sp<IBinder>& displayToken, int mode);
@@ -672,6 +673,8 @@ private:
     bool mRefreshRateOverlaySpinner = false;
     // Show render rate with refresh rate overlay
     bool mRefreshRateOverlayRenderRate = false;
+    // Show render rate overlay offseted to the middle of the screen (e.g. for circular displays)
+    bool mRefreshRateOverlayShowInMiddle = false;
 
     void setDesiredActiveMode(display::DisplayModeRequest&&, bool force = false)
             REQUIRES(mStateLock);
@@ -1455,6 +1458,11 @@ public:
     binder::Status clearBootDisplayMode(const sp<IBinder>& display) override;
     binder::Status getBootDisplayModeSupport(bool* outMode) override;
     binder::Status getOverlaySupport(gui::OverlayProperties* outProperties) override;
+    binder::Status getHdrConversionCapabilities(
+            std::vector<gui::HdrConversionCapability>*) override;
+    binder::Status setHdrConversionStrategy(
+            const gui::HdrConversionStrategy& hdrConversionStrategy) override;
+    binder::Status getHdrOutputConversionSupport(bool* outSupport) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;
     binder::Status captureDisplay(const DisplayCaptureArgs&,

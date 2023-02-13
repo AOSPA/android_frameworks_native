@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,12 @@
  * limitations under the License.
  */
 
-package android.gui;
+#include "mock/MockVSyncDispatch.h"
 
-import android.gui.ListenerStats;
-import android.gui.ReleaseCallbackId;
+namespace android::mock {
 
-/** @hide */
-oneway interface ITransactionCompletedListener {
-   void onTransactionCompleted(in ListenerStats stats);
+// Explicit default instantiation is recommended.
+VSyncDispatch::VSyncDispatch() = default;
+VSyncDispatch::~VSyncDispatch() = default;
 
-   void onReleaseBuffer(in ReleaseCallbackId callbackId,
-                        in @nullable ParcelFileDescriptor releaseFenceFd,
-                        int currentMaxAcquiredBufferCount);
-
-   void onTransactionQueueStalled(@utf8InCpp String name);
-}
+} // namespace android::mock

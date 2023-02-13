@@ -84,6 +84,8 @@ struct Position {
     float x;
     float y;
 
+    bool isResampled = false;
+
     /**
      * If both values are NAN, then this is considered to be an empty entry (no pointer data).
      * If only one of the values is NAN, this is still a valid entry,
@@ -203,10 +205,11 @@ static std::vector<MotionEvent> createTouchMotionEventStream(
 
             coords[pointerIndex].clear();
             // We are treating column positions as pointerId
-            EXPECT_TRUE(entry.positions[pointerId].isValid()) <<
-                    "The entry at pointerId must be valid";
-            coords[pointerIndex].setAxisValue(AMOTION_EVENT_AXIS_X, entry.positions[pointerId].x);
-            coords[pointerIndex].setAxisValue(AMOTION_EVENT_AXIS_Y, entry.positions[pointerId].y);
+            const Position& position = entry.positions[pointerId];
+            EXPECT_TRUE(position.isValid()) << "The entry at " << pointerId << " must be valid";
+            coords[pointerIndex].setAxisValue(AMOTION_EVENT_AXIS_X, position.x);
+            coords[pointerIndex].setAxisValue(AMOTION_EVENT_AXIS_Y, position.y);
+            coords[pointerIndex].isResampled = position.isResampled;
 
             properties[pointerIndex].id = pointerId;
             properties[pointerIndex].toolType = AMOTION_EVENT_TOOL_TYPE_FINGER;
@@ -288,13 +291,13 @@ static void computeAndCheckQuadraticEstimate(const std::vector<PlanarMotionEvent
     for (MotionEvent event : events) {
         vt.addMovement(&event);
     }
-    VelocityTracker::Estimator estimatorX;
-    VelocityTracker::Estimator estimatorY;
-    EXPECT_TRUE(vt.getEstimator(AMOTION_EVENT_AXIS_X, 0, &estimatorX));
-    EXPECT_TRUE(vt.getEstimator(AMOTION_EVENT_AXIS_Y, 0, &estimatorY));
+    std::optional<VelocityTracker::Estimator> estimatorX = vt.getEstimator(AMOTION_EVENT_AXIS_X, 0);
+    std::optional<VelocityTracker::Estimator> estimatorY = vt.getEstimator(AMOTION_EVENT_AXIS_Y, 0);
+    EXPECT_TRUE(estimatorX);
+    EXPECT_TRUE(estimatorY);
     for (size_t i = 0; i< coefficients.size(); i++) {
-        checkCoefficient(estimatorX.coeff[i], coefficients[i]);
-        checkCoefficient(estimatorY.coeff[i], coefficients[i]);
+        checkCoefficient((*estimatorX).coeff[i], coefficients[i]);
+        checkCoefficient((*estimatorY).coeff[i], coefficients[i]);
     }
 }
 
@@ -375,6 +378,44 @@ TEST_F(VelocityTrackerTest, TestComputedVelocity) {
     EXPECT_FALSE(computedVelocity.getVelocity(AMOTION_EVENT_AXIS_X, MAX_POINTER_ID + 1));
 }
 
+/**
+ * For a single pointer, the resampled data is ignored.
+ */
+TEST_F(VelocityTrackerTest, SinglePointerResampledData) {
+    std::vector<PlanarMotionEventEntry> motions = {{10ms, {{1, 2}}},
+                                                   {20ms, {{2, 4}}},
+                                                   {30ms, {{3, 6}}},
+                                                   {35ms, {{30, 60, .isResampled = true}}},
+                                                   {40ms, {{4, 8}}}};
+
+    computeAndCheckVelocity(VelocityTracker::Strategy::DEFAULT, motions, AMOTION_EVENT_AXIS_X, 100);
+    computeAndCheckVelocity(VelocityTracker::Strategy::DEFAULT, motions, AMOTION_EVENT_AXIS_Y, 200);
+}
+
+/**
+ * For multiple pointers, the resampled data is ignored on a per-pointer basis. If a certain pointer
+ * does not have a resampled value, all of the points are used.
+ */
+TEST_F(VelocityTrackerTest, MultiPointerResampledData) {
+    std::vector<PlanarMotionEventEntry> motions = {
+            {0ms, {{0, 0}}},
+            {10ms, {{1, 0}, {1, 0}}},
+            {20ms, {{2, 0}, {2, 0}}},
+            {30ms, {{3, 0}, {3, 0}}},
+            {35ms, {{30, 0, .isResampled = true}, {30, 0}}},
+            {40ms, {{4, 0}, {4, 0}}},
+            {45ms, {{5, 0}}}, // ACTION_UP
+    };
+
+    // Sample at t=35ms breaks trend. It's marked as resampled for the first pointer, so it should
+    // be ignored, and the resulting velocity should be linear. For the second pointer, it's not
+    // resampled, so it should cause the velocity to be non-linear.
+    computeAndCheckVelocity(VelocityTracker::Strategy::DEFAULT, motions, AMOTION_EVENT_AXIS_X, 100,
+                            /*pointerId=*/0);
+    computeAndCheckVelocity(VelocityTracker::Strategy::DEFAULT, motions, AMOTION_EVENT_AXIS_X, 3455,
+                            /*pointerId=*/1);
+}
+
 TEST_F(VelocityTrackerTest, TestGetComputedVelocity) {
     std::vector<PlanarMotionEventEntry> motions = {
             {235089067457000ns, {{528.00, 0}}}, {235089084684000ns, {{527.00, 0}}},
@@ -420,8 +461,7 @@ TEST_F(VelocityTrackerTest, TestApiInteractionsWithNoMotionEvents) {
 
     EXPECT_FALSE(vt.getVelocity(AMOTION_EVENT_AXIS_X, DEFAULT_POINTER_ID));
 
-    VelocityTracker::Estimator estimator;
-    EXPECT_FALSE(vt.getEstimator(AMOTION_EVENT_AXIS_X, DEFAULT_POINTER_ID, &estimator));
+    EXPECT_FALSE(vt.getEstimator(AMOTION_EVENT_AXIS_X, DEFAULT_POINTER_ID));
 
     VelocityTracker::ComputedVelocity computedVelocity = vt.getComputedVelocity(1000, 1000);
     for (uint32_t id = 0; id <= MAX_POINTER_ID; id++) {
@@ -432,7 +472,7 @@ TEST_F(VelocityTrackerTest, TestApiInteractionsWithNoMotionEvents) {
     EXPECT_EQ(-1, vt.getActivePointerId());
 
     // Make sure that the clearing functions execute without an issue.
-    vt.clearPointers(BitSet32(7U));
+    vt.clearPointer(7U);
     vt.clear();
 }
 

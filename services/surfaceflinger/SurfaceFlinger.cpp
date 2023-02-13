@@ -470,6 +470,8 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mRefreshRateOverlaySpinner = property_get_bool("debug.sf.show_refresh_rate_overlay_spinner", 0);
     mRefreshRateOverlayRenderRate =
             property_get_bool("debug.sf.show_refresh_rate_overlay_render_rate", 0);
+    mRefreshRateOverlayShowInMiddle =
+            property_get_bool("debug.sf.show_refresh_rate_overlay_in_middle", 0);
 
     if (!mIsUserBuild && base::GetBoolProperty("debug.sf.enable_transaction_tracing"s, true)) {
         mTransactionTracing.emplace();
@@ -1563,6 +1565,80 @@ status_t SurfaceFlinger::clearBootDisplayMode(const sp<IBinder>& displayToken) {
         }
     });
     return future.get();
+}
+
+status_t SurfaceFlinger::getHdrConversionCapabilities(
+        std::vector<gui::HdrConversionCapability>* hdrConversionCapabilities) const {
+    bool hdrOutputConversionSupport;
+    getHdrOutputConversionSupport(&hdrOutputConversionSupport);
+    if (hdrOutputConversionSupport == false) {
+        ALOGE("hdrOutputConversion is not supported by this device.");
+        return INVALID_OPERATION;
+    }
+    const auto aidlConversionCapability = getHwComposer().getHdrConversionCapabilities();
+    for (auto capability : aidlConversionCapability) {
+        gui::HdrConversionCapability tempCapability;
+        tempCapability.sourceType = static_cast<int>(capability.sourceType.hdr);
+        tempCapability.outputType = static_cast<int>(capability.outputType->hdr);
+        tempCapability.addsLatency = capability.addsLatency;
+        hdrConversionCapabilities->push_back(tempCapability);
+    }
+    return NO_ERROR;
+}
+
+status_t SurfaceFlinger::setHdrConversionStrategy(
+        const gui::HdrConversionStrategy& hdrConversionStrategy) {
+    bool hdrOutputConversionSupport;
+    getHdrOutputConversionSupport(&hdrOutputConversionSupport);
+    if (hdrOutputConversionSupport == false) {
+        ALOGE("hdrOutputConversion is not supported by this device.");
+        return INVALID_OPERATION;
+    }
+    auto future = mScheduler->schedule([=]() FTL_FAKE_GUARD(mStateLock) mutable -> status_t {
+        using AidlHdrConversionStrategy =
+                aidl::android::hardware::graphics::common::HdrConversionStrategy;
+        using GuiHdrConversionStrategyTag = gui::HdrConversionStrategy::Tag;
+        AidlHdrConversionStrategy aidlConversionStrategy;
+        switch (hdrConversionStrategy.getTag()) {
+            case GuiHdrConversionStrategyTag::passthrough: {
+                aidlConversionStrategy.set<AidlHdrConversionStrategy::Tag::passthrough>(
+                        hdrConversionStrategy.get<GuiHdrConversionStrategyTag::passthrough>());
+                return getHwComposer().setHdrConversionStrategy(aidlConversionStrategy);
+            }
+            case GuiHdrConversionStrategyTag::autoAllowedHdrTypes: {
+                auto autoHdrTypes =
+                        hdrConversionStrategy
+                                .get<GuiHdrConversionStrategyTag::autoAllowedHdrTypes>();
+                std::vector<aidl::android::hardware::graphics::common::Hdr> aidlAutoHdrTypes;
+                for (auto type : autoHdrTypes) {
+                    aidlAutoHdrTypes.push_back(
+                            static_cast<aidl::android::hardware::graphics::common::Hdr>(type));
+                }
+                aidlConversionStrategy.set<AidlHdrConversionStrategy::Tag::autoAllowedHdrTypes>(
+                        aidlAutoHdrTypes);
+                return getHwComposer().setHdrConversionStrategy(aidlConversionStrategy);
+            }
+            case GuiHdrConversionStrategyTag::forceHdrConversion: {
+                auto forceHdrConversion =
+                        hdrConversionStrategy
+                                .get<GuiHdrConversionStrategyTag::forceHdrConversion>();
+                aidlConversionStrategy.set<AidlHdrConversionStrategy::Tag::forceHdrConversion>(
+                        static_cast<aidl::android::hardware::graphics::common::Hdr>(
+                                forceHdrConversion));
+                return getHwComposer().setHdrConversionStrategy(aidlConversionStrategy);
+            }
+        }
+    });
+    return future.get();
+}
+
+status_t SurfaceFlinger::getHdrOutputConversionSupport(bool* outSupport) const {
+    auto future = mScheduler->schedule([this] {
+        return getHwComposer().hasCapability(Capability::HDR_OUTPUT_CONVERSION_CONFIG);
+    });
+
+    *outSupport = future.get();
+    return NO_ERROR;
 }
 
 void SurfaceFlinger::setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on) {
@@ -7226,7 +7302,8 @@ void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
         if (display.snapshot().connectionType() == ui::DisplayConnectionType::Internal) {
             if (const auto device = getDisplayDeviceLocked(id)) {
                 device->enableRefreshRateOverlay(enable, mRefreshRateOverlaySpinner,
-                                                 mRefreshRateOverlayRenderRate);
+                                                 mRefreshRateOverlayRenderRate,
+                                                 mRefreshRateOverlayShowInMiddle);
             }
         }
     }
@@ -7388,7 +7465,8 @@ std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextur
                                    layerName, static_cast<uint32_t>(mMaxRenderTargetSize));
         ALOGD("%s", errorMessage.c_str());
         if (bufferData.releaseBufferListener) {
-            bufferData.releaseBufferListener->onTransactionQueueStalled(errorMessage);
+            bufferData.releaseBufferListener->onTransactionQueueStalled(
+                    String8(errorMessage.c_str()));
         }
         return nullptr;
     }
@@ -7406,7 +7484,7 @@ std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextur
 
             if (bufferData.releaseBufferListener) {
                 bufferData.releaseBufferListener->onTransactionQueueStalled(
-                        "Buffer processing hung due to full buffer cache");
+                        String8("Buffer processing hung due to full buffer cache"));
             }
         }
 
@@ -7810,6 +7888,32 @@ binder::Status SurfaceComposerAIDL::getBootDisplayModeSupport(bool* outMode) {
     status_t status = checkAccessPermission();
     if (status == OK) {
         status = mFlinger->getBootDisplayModeSupport(outMode);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getHdrConversionCapabilities(
+        std::vector<gui::HdrConversionCapability>* hdrConversionCapabilities) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->getHdrConversionCapabilities(hdrConversionCapabilities);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setHdrConversionStrategy(
+        const gui::HdrConversionStrategy& hdrConversionStrategy) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->setHdrConversionStrategy(hdrConversionStrategy);
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getHdrOutputConversionSupport(bool* outMode) {
+    status_t status = checkAccessPermission();
+    if (status == OK) {
+        status = mFlinger->getHdrOutputConversionSupport(outMode);
     }
     return binderStatusFromStatusT(status);
 }
