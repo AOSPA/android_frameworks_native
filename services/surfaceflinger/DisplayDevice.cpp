@@ -177,7 +177,7 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
     if (mode == hal::PowerMode::OFF || mode == hal::PowerMode::ON) {
-        if (mStagedBrightness && mBrightness != *mStagedBrightness) {
+        if (mStagedBrightness && mBrightness != mStagedBrightness) {
             getCompositionDisplay()->setNextBrightness(*mStagedBrightness);
             mBrightness = *mStagedBrightness;
         }
@@ -304,7 +304,7 @@ void DisplayDevice::stageBrightness(float brightness) {
 }
 
 void DisplayDevice::persistBrightness(bool needsComposite) {
-    if (mStagedBrightness && mBrightness != *mStagedBrightness) {
+    if (mStagedBrightness && mBrightness != mStagedBrightness) {
         if (needsComposite) {
             getCompositionDisplay()->setNextBrightness(*mStagedBrightness);
         }
@@ -416,7 +416,8 @@ HdrCapabilities DisplayDevice::getHdrCapabilities() const {
                            capabilities.getDesiredMinLuminance());
 }
 
-void DisplayDevice::enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate) {
+void DisplayDevice::enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate,
+                                             bool showInMiddle) {
     if (!enable) {
         mRefreshRateOverlay.reset();
         return;
@@ -429,6 +430,10 @@ void DisplayDevice::enableRefreshRateOverlay(bool enable, bool showSpinner, bool
 
     if (showRenderRate) {
         features |= RefreshRateOverlay::Features::RenderRate;
+    }
+
+    if (showInMiddle) {
+        features |= RefreshRateOverlay::Features::ShowInMiddle;
     }
 
     const auto fpsRange = mRefreshRateSelector->getSupportedRefreshRateRange();
