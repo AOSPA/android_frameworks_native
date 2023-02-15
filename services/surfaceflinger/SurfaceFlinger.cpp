@@ -747,7 +747,6 @@ void SurfaceFlinger::bootFinished() {
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
                                         mVsyncConfiguration.get(), getHwComposer().getComposer());
-    mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
 
