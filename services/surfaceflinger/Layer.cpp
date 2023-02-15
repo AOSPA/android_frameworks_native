@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -72,6 +78,9 @@
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/LayerHandle.h"
 #include "LayerProtoHelper.h"
+/* QTI_BEGIN */
+#include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
+/* QTI_END */
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
@@ -124,6 +133,12 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
 }
 
 } // namespace
+
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiSurfaceFlingerExtensionIntf;
+} // namespace surfaceflingerextension
+/* QTI_END */
 
 using namespace ftl::flag_operators;
 
@@ -490,6 +505,13 @@ void Layer::prepareGeometryCompositionState() {
     snapshot->geomBufferUsesDisplayInverseTransform = getTransformToDisplayInverse();
     snapshot->geomUsesSourceCrop = usesSourceCrop();
     snapshot->isSecure = isSecure();
+
+    /* QTI_BEGIN */
+    snapshot->qtiIsSecureDisplay = mFlinger->mQtiSFExtnIntf->qtiIsSecureDisplay(
+            static_cast<sp<const GraphicBuffer>>(getBuffer()));
+    snapshot->qtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
+            static_cast<sp<const GraphicBuffer>>(getBuffer()));
+    /* QTI_END */
 
     snapshot->metadata.clear();
     const auto& supportedMetadata = mFlinger->getHwComposer().getSupportedLayerGenericMetadata();

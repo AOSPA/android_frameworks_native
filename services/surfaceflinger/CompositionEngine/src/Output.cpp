@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #include <SurfaceFlingerProperties.sysprop.h>
 #include <android-base/stringprintf.h>
 #include <compositionengine/CompositionEngine.h>
@@ -98,6 +104,12 @@ ScaleVector getScale(const Rect& from, const Rect& to) {
 std::shared_ptr<Output> createOutput(
         const compositionengine::CompositionEngine& compositionEngine) {
     return createOutputTemplated<Output>(compositionEngine);
+}
+
+Output::Output() {
+    /* QTI_BEGIN */
+    mQtiOutputExtnIntf = android::compositionengineextension::qtiCreateOutputExtension(this);
+    /* QTI_END */
 }
 
 Output::~Output() = default;
@@ -972,11 +984,18 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     }
 
     // respect hdrDataSpace only when there is no legacy HDR support
-    const bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
+    bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
             !mDisplayColorProfile->hasLegacyHdrSupport(hdrDataSpace) && !isHdrClientComposition;
     if (isHdr) {
         bestDataSpace = hdrDataSpace;
     }
+
+    /* QTI_BEGIN */
+    if (mQtiOutputExtnIntf && mQtiOutputExtnIntf->qtiHasSecureDisplay()) {
+        bestDataSpace = ui::Dataspace::V0_SRGB;
+        isHdr = false;
+    }
+    /* QTI_END */
 
     ui::RenderIntent intent;
     switch (refreshArgs.outputColorSetting) {
@@ -1172,7 +1191,15 @@ void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositi
 void Output::updateProtectedContentState() {
     const auto& outputState = getState();
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+
+    bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+
+    /* QTI_BEGIN */
+    if (mQtiOutputExtnIntf) {
+        supportsProtectedContent = supportsProtectedContent && outputState.isSecure &&
+                mQtiOutputExtnIntf->qtiHasSecureContent();
+    }
+    /* QTI_END */
 
     // If we the display is secure, protected content support is enabled, and at
     // least one layer has protected content, we need to use a secure back

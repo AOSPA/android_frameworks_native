@@ -30,6 +30,7 @@
 #include <ftl/fake_guard.h>
 #include <gui/ScreenCaptureResults.h>
 
+#include <ui/DynamicDisplayInfo.h>
 #include "DisplayDevice.h"
 #include "FakeVsyncConfiguration.h"
 #include "FrameTracer/FrameTracer.h"
@@ -470,7 +471,7 @@ public:
     void onActiveDisplayChanged(const sp<DisplayDevice>& activeDisplay) {
         Mutex::Autolock lock(mFlinger->mStateLock);
         ftl::FakeGuard guard(kMainThreadContext);
-        mFlinger->onActiveDisplayChangedLocked(activeDisplay);
+        mFlinger->onActiveDisplayChangedLocked(nullptr, activeDisplay);
     }
 
     auto createLayer(LayerCreationArgs& args, const sp<IBinder>& parentHandle,
@@ -485,6 +486,11 @@ public:
     }
 
     void updateLayerMetadataSnapshot() { mFlinger->updateLayerMetadataSnapshot(); }
+
+    void getDynamicDisplayInfoFromToken(const sp<IBinder>& displayToken,
+                                        ui::DynamicDisplayInfo* dynamicDisplayInfo) {
+        mFlinger->getDynamicDisplayInfoFromToken(displayToken, dynamicDisplayInfo);
+    }
 
     /* ------------------------------------------------------------------------
      * Read-only access to private data to assert post-conditions.
@@ -621,7 +627,7 @@ public:
             return *this;
         }
 
-        auto& setPowerMode(hal::PowerMode mode) {
+        auto& setPowerMode(std::optional<hal::PowerMode> mode) {
             mPowerMode = mode;
             return *this;
         }
@@ -643,16 +649,18 @@ public:
             // is much longer lived.
             auto display = std::make_unique<HWC2Display>(*composer, *mCapabilities, mHwcDisplayId,
                                                          mHwcDisplayType);
-
             display->mutableIsConnected() = true;
-            display->setPowerMode(mPowerMode);
+
+            if (mPowerMode) {
+                display->setPowerMode(*mPowerMode);
+            }
+
             flinger->mutableHwcDisplayData()[mDisplayId].hwcDisplay = std::move(display);
 
             EXPECT_CALL(*composer, getDisplayConfigs(mHwcDisplayId, _))
                     .WillRepeatedly(
                             DoAll(SetArgPointee<1>(std::vector<hal::HWConfigId>{mActiveConfig}),
                                   Return(hal::Error::NONE)));
-
             EXPECT_CALL(*composer,
                         getDisplayAttribute(mHwcDisplayId, mActiveConfig, hal::Attribute::WIDTH, _))
                     .WillRepeatedly(DoAll(SetArgPointee<3>(mResolution.getWidth()),
@@ -711,7 +719,7 @@ public:
         int32_t mDpiY = DEFAULT_DPI;
         int32_t mConfigGroup = DEFAULT_CONFIG_GROUP;
         hal::HWConfigId mActiveConfig = DEFAULT_ACTIVE_CONFIG;
-        hal::PowerMode mPowerMode = DEFAULT_POWER_MODE;
+        std::optional<hal::PowerMode> mPowerMode = DEFAULT_POWER_MODE;
         const std::unordered_set<aidl::android::hardware::graphics::composer3::Capability>*
                 mCapabilities = nullptr;
     };
@@ -788,7 +796,7 @@ public:
             return *this;
         }
 
-        auto& setPowerMode(hal::PowerMode mode) {
+        auto& setPowerMode(std::optional<hal::PowerMode> mode) {
             mCreationArgs.initialPowerMode = mode;
             return *this;
         }
@@ -852,6 +860,10 @@ public:
                 const auto physicalIdOpt = PhysicalDisplayId::tryCast(*displayId);
                 LOG_ALWAYS_FATAL_IF(!physicalIdOpt);
                 const auto physicalId = *physicalIdOpt;
+
+                if (mCreationArgs.isPrimary) {
+                    mFlinger.mutableActiveDisplayId() = physicalId;
+                }
 
                 LOG_ALWAYS_FATAL_IF(!mHwcDisplayId);
 

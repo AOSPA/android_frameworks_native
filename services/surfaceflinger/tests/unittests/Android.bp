@@ -47,6 +47,7 @@ cc_test {
         "libsurfaceflinger_mocks_defaults",
         "skia_renderengine_deps",
         "surfaceflinger_defaults",
+        "libqtisurfaceflingerextension_defaults",
     ],
     test_suites: ["device-tests"],
     sanitize: {
@@ -93,6 +94,7 @@ cc_test {
         "LayerHistoryTest.cpp",
         "LayerInfoTest.cpp",
         "LayerMetadataTest.cpp",
+        "LayerHierarchyTest.cpp",
         "LayerLifecycleManagerTest.cpp",
         "LayerTest.cpp",
         "LayerTestUtils.cpp",
@@ -111,6 +113,7 @@ cc_test {
         "SurfaceFlinger_SetPowerModeInternalTest.cpp",
         "SurfaceFlinger_SetupNewDisplayDeviceInternalTest.cpp",
         "SurfaceFlinger_UpdateLayerMetadataSnapshotTest.cpp",
+        "SurfaceFlinger_ExcludeDolbyVisionTest.cpp",
         "SchedulerTest.cpp",
         "SetFrameRateTest.cpp",
         "RefreshRateSelectorTest.cpp",
@@ -169,6 +172,8 @@ cc_defaults {
         "libtimestats_proto",
         "libtonemap",
         "perfetto_trace_protos",
+        "libqticompositionengineextension",
+        "libqtisurfaceflingerextension",
     ],
     shared_libs: [
         "android.hardware.configstore-utils",
@@ -197,6 +202,7 @@ cc_defaults {
         "libui",
         "libutils",
         "server_configurable_flags",
+        "vendor.qti.hardware.display.composer@3.0",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer",

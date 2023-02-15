@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -35,6 +41,18 @@
 
 #include <algorithm>
 #include <cinttypes>
+
+/* QTI_BEGIN */
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#else
+#include <vendor/qti/hardware/display/composer/3.0/IQtiComposerClient.h>
+using vendor::qti::hardware::display::composer::V3_0::IQtiComposerClient;
+#endif
+/* QTI_END */
+
+
 
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
@@ -188,7 +206,19 @@ std::vector<To> translate(const hidl_vec<From>& in) {
 
 } // anonymous namespace
 
+/* QTI_BEGIN */
+void HidlComposer::CommandWriter::qtiSetDisplayElapseTime(uint64_t time) {
+    constexpr uint16_t kSetDisplayElapseTimeLength = 2;
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
+                 kSetDisplayElapseTimeLength);
+    write64(time);
+    endCommand();
+}
+/* QTI_END */
 HidlComposer::HidlComposer(const std::string& serviceName) : mWriter(kWriterInitialSize) {
+//HidlComposer::HidlComposer(const std::string& serviceName)
+  //    : mClearSlotBuffer(allocateClearSlotBuffer()), mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);
 
     if (mComposer == nullptr) {
@@ -496,13 +526,13 @@ Error HidlComposer::hasDisplayIdleTimerCapability(Display, bool*) {
                      "OptionalFeature::KernelIdleTimer is not supported on HIDL");
 }
 
-Error HidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outTypes,
+Error HidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outHdrTypes,
                                        float* outMaxLuminance, float* outMaxAverageLuminance,
                                        float* outMinLuminance) {
     Error error = kDefaultError;
     if (mClient_2_3) {
         mClient_2_3->getHdrCapabilities_2_3(display,
-                                            [&](const auto& tmpError, const auto& tmpTypes,
+                                            [&](const auto& tmpError, const auto& tmpHdrTypes,
                                                 const auto& tmpMaxLuminance,
                                                 const auto& tmpMaxAverageLuminance,
                                                 const auto& tmpMinLuminance) {
@@ -510,15 +540,15 @@ Error HidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outTyp
                                                 if (error != Error::NONE) {
                                                     return;
                                                 }
+                                                *outHdrTypes = translate<ui::Hdr>(tmpHdrTypes);
 
-                                                *outTypes = tmpTypes;
                                                 *outMaxLuminance = tmpMaxLuminance;
                                                 *outMaxAverageLuminance = tmpMaxAverageLuminance;
                                                 *outMinLuminance = tmpMinLuminance;
                                             });
     } else {
         mClient->getHdrCapabilities(display,
-                                    [&](const auto& tmpError, const auto& tmpTypes,
+                                    [&](const auto& tmpError, const auto& tmpHdrTypes,
                                         const auto& tmpMaxLuminance,
                                         const auto& tmpMaxAverageLuminance,
                                         const auto& tmpMinLuminance) {
@@ -526,11 +556,7 @@ Error HidlComposer::getHdrCapabilities(Display display, std::vector<Hdr>* outTyp
                                         if (error != Error::NONE) {
                                             return;
                                         }
-
-                                        outTypes->clear();
-                                        for (auto type : tmpTypes) {
-                                            outTypes->push_back(static_cast<Hdr>(type));
-                                        }
+                                        *outHdrTypes = translate<ui::Hdr>(tmpHdrTypes);
 
                                         *outMaxLuminance = tmpMaxLuminance;
                                         *outMaxAverageLuminance = tmpMaxAverageLuminance;

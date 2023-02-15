@@ -20,6 +20,9 @@
 
 #include <algorithm>
 
+#if defined(__ANDROID__)
+#include <android/sysprop/InputProperties.sysprop.h>
+#endif
 #include <ftl/flags.h>
 
 #include "CursorInputMapper.h"
@@ -33,6 +36,7 @@
 #include "SensorInputMapper.h"
 #include "SingleTouchInputMapper.h"
 #include "SwitchInputMapper.h"
+#include "TouchpadInputMapper.h"
 #include "VibratorInputMapper.h"
 
 using android::hardware::input::InputDeviceCountryCode;
@@ -208,7 +212,16 @@ void InputDevice::addEventHubDevice(int32_t eventHubId, bool populateMappers) {
     }
 
     // Touchscreens and touchpad devices.
-    if (classes.test(InputDeviceClass::TOUCH_MT)) {
+    static const bool ENABLE_TOUCHPAD_GESTURES_LIBRARY =
+#if defined(__ANDROID__)
+            sysprop::InputProperties::enable_touchpad_gestures_library().value_or(false);
+#else
+            false;
+#endif
+    if (ENABLE_TOUCHPAD_GESTURES_LIBRARY && classes.test(InputDeviceClass::TOUCHPAD) &&
+        classes.test(InputDeviceClass::TOUCH_MT)) {
+        mappers.push_back(std::make_unique<TouchpadInputMapper>(*contextPtr));
+    } else if (classes.test(InputDeviceClass::TOUCH_MT)) {
         mappers.push_back(std::make_unique<MultiTouchInputMapper>(*contextPtr));
     } else if (classes.test(InputDeviceClass::TOUCH)) {
         mappers.push_back(std::make_unique<SingleTouchInputMapper>(*contextPtr));
@@ -615,6 +628,12 @@ void InputDevice::updateMetaState(int32_t keyCode) {
             return std::make_optional(true);
         }
         return std::optional<bool>();
+    });
+}
+
+void InputDevice::addKeyRemapping(int32_t fromKeyCode, int32_t toKeyCode) {
+    for_each_subdevice([fromKeyCode, toKeyCode](auto& context) {
+        context.addKeyRemapping(fromKeyCode, toKeyCode);
     });
 }
 

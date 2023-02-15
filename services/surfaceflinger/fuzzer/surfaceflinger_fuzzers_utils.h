@@ -81,7 +81,6 @@ using types::V1_0::Transform;
 using types::V1_1::RenderIntent;
 using types::V1_2::ColorMode;
 using types::V1_2::Dataspace;
-using types::V1_2::Hdr;
 using types::V1_2::PixelFormat;
 
 using V2_1::Config;
@@ -420,7 +419,7 @@ public:
 
     void onPullAtom(FuzzedDataProvider *fdp) {
         const int32_t atomId = fdp->ConsumeIntegral<uint8_t>();
-        std::string pulledData = fdp->ConsumeRandomLengthString().c_str();
+        std::vector<uint8_t> pulledData = fdp->ConsumeRemainingBytes<uint8_t>();
         bool success = fdp->ConsumeBool();
         mFlinger->onPullAtom(atomId, &pulledData, &success);
     }
@@ -492,14 +491,14 @@ public:
         mFlinger->getDisplayState(display, &displayState);
     }
 
-    void getStaticDisplayInfo(sp<IBinder> &display) {
+    void getStaticDisplayInfo(int64_t displayId) {
         ui::StaticDisplayInfo staticDisplayInfo;
-        mFlinger->getStaticDisplayInfo(display, &staticDisplayInfo);
+        mFlinger->getStaticDisplayInfo(displayId, &staticDisplayInfo);
     }
 
-    void getDynamicDisplayInfo(sp<IBinder> &display) {
+    void getDynamicDisplayInfo(int64_t displayId) {
         android::ui::DynamicDisplayInfo dynamicDisplayInfo;
-        mFlinger->getDynamicDisplayInfo(display, &dynamicDisplayInfo);
+        mFlinger->getDynamicDisplayInfoFromId(displayId, &dynamicDisplayInfo);
     }
     void getDisplayNativePrimaries(sp<IBinder> &display) {
         android::ui::DisplayPrimaries displayPrimaries;
@@ -523,7 +522,7 @@ public:
         return ids.front();
     }
 
-    sp<IBinder> fuzzBoot(FuzzedDataProvider *fdp) {
+    std::pair<sp<IBinder>, int64_t> fuzzBoot(FuzzedDataProvider *fdp) {
         mFlinger->callingThreadHasUnscopedSurfaceFlingerAccess(fdp->ConsumeBool());
         const sp<Client> client = sp<Client>::make(mFlinger);
 
@@ -550,13 +549,13 @@ public:
 
         mFlinger->bootFinished();
 
-        return display;
+        return {display, physicalDisplayId.value};
     }
 
     void fuzzSurfaceFlinger(const uint8_t *data, size_t size) {
         FuzzedDataProvider mFdp(data, size);
 
-        sp<IBinder> display = fuzzBoot(&mFdp);
+        auto [display, displayId] = fuzzBoot(&mFdp);
 
         sp<IGraphicBufferProducer> bufferProducer = sp<mock::GraphicBufferProducer>::make();
 
@@ -564,8 +563,8 @@ public:
 
         getDisplayStats(display);
         getDisplayState(display);
-        getStaticDisplayInfo(display);
-        getDynamicDisplayInfo(display);
+        getStaticDisplayInfo(displayId);
+        getDynamicDisplayInfo(displayId);
         getDisplayNativePrimaries(display);
 
         mFlinger->setAutoLowLatencyMode(display, mFdp.ConsumeBool());

@@ -83,6 +83,9 @@ cc_library {
         "src/OutputLayerCompositionState.cpp",
         "src/RenderSurface.cpp",
     ],
+    static_libs: [
+        "libqticompositionengineextension",
+    ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
 }
@@ -105,6 +108,7 @@ cc_library {
         "libgtest",
         "libgmock",
         "libcompositionengine",
+        "libqticompositionengineextension",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -139,6 +143,7 @@ cc_test {
         "librenderengine_mocks",
         "libgmock",
         "libgtest",
+        "libqticompositionengineextension",
     ],
     // For some reason, libvulkan isn't picked up from librenderengine
     // Probably ASAN related?
@@ -161,3 +166,4 @@ cc_test {
         address: true,
     },
 }
+
