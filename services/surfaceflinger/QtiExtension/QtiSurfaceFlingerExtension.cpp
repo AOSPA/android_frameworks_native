@@ -289,6 +289,8 @@ void QtiSurfaceFlingerExtension::qtiSetTid() {
     if (re.has_value()) {
         mQtiRETid = *re;
     }
+
+    ALOGI("SF tid %d R tid %d", mQtiSFTid, mQtiRETid);
 }
 
 void QtiSurfaceFlingerExtension::qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId,
@@ -431,7 +433,15 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
  */
 void QtiSurfaceFlingerExtension::qtiSendCompositorTid() {
 #ifdef PASS_COMPOSITOR_TID
-    if (!mQtiTidSentSuccessfully && mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf) {
+    if (!mQtiFlinger->mBootFinished) {
+        return;
+    }
+
+    if (!mQtiSFTid || !mQtiRETid) {
+        qtiSetTid();
+    }
+
+    if (!mQtiTidSentSuccessfully && mQtiDisplayExtnIntf) {
         bool sfTid = mQtiDisplayExtnIntf->SendCompositorTid(PerfHintType::kSurfaceFlinger,
                                                             mQtiSFTid) == 0;
         bool reTid =
