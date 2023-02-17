@@ -21,13 +21,13 @@
 
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
-#include <binder/BinderRecordReplay.h>
 #include <binder/BpBinder.h>
 #include <binder/IInterface.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IResultReceiver.h>
 #include <binder/IShellCallback.h>
 #include <binder/Parcel.h>
+#include <binder/RecordedTransaction.h>
 #include <binder/RpcServer.h>
 #include <cutils/compiler.h>
 #include <private/android_filesystem_config.h>
@@ -407,11 +407,11 @@ status_t BBinder::transact(
         AutoMutex lock(e->mLock);
         if (mRecordingOn) {
             Parcel emptyReply;
-            auto transaction =
-                    android::binder::debug::RecordedTransaction::fromDetails(code, flags, data,
-                                                                             reply ? *reply
-                                                                                   : emptyReply,
-                                                                             err);
+            timespec ts;
+            timespec_get(&ts, TIME_UTC);
+            auto transaction = android::binder::debug::RecordedTransaction::
+                    fromDetails(getInterfaceDescriptor(), code, flags, ts, data,
+                                reply ? *reply : emptyReply, err);
             if (transaction) {
                 if (status_t err = transaction->dumpToFile(e->mRecordingFd); err != NO_ERROR) {
                     LOG(INFO) << "Failed to dump RecordedTransaction to file with error " << err;

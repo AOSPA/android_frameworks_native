@@ -255,6 +255,13 @@ void KeyCharacterMap::combine(const KeyCharacterMap& overlay) {
     mLayoutOverlayApplied = true;
 }
 
+void KeyCharacterMap::clearLayoutOverlay() {
+    if (mLayoutOverlayApplied) {
+        reloadBaseFromFile();
+        mLayoutOverlayApplied = false;
+    }
+}
+
 KeyCharacterMap::KeyboardType KeyCharacterMap::getKeyboardType() const {
     return mType;
 }
@@ -992,7 +999,7 @@ status_t KeyCharacterMap::Parser::parseMapKey() {
 
     mTokenizer->skipDelimiters(WHITESPACE);
     String8 keyCodeToken = mTokenizer->nextToken(WHITESPACE);
-    int32_t keyCode = InputEventLookup::getKeyCodeByLabel(keyCodeToken.string());
+    std::optional<int> keyCode = InputEventLookup::getKeyCodeByLabel(keyCodeToken.string());
     if (!keyCode) {
         ALOGE("%s: Expected key code label, got '%s'.", mTokenizer->getLocation().string(),
                 keyCodeToken.string());
@@ -1003,19 +1010,19 @@ status_t KeyCharacterMap::Parser::parseMapKey() {
     ALOGD("Parsed map key %s: code=%d, keyCode=%d.",
             mapUsage ? "usage" : "scan code", code, keyCode);
 #endif
-    map.insert_or_assign(code, keyCode);
+    map.insert_or_assign(code, *keyCode);
     return NO_ERROR;
 }
 
 status_t KeyCharacterMap::Parser::parseKey() {
     String8 keyCodeToken = mTokenizer->nextToken(WHITESPACE);
-    int32_t keyCode = InputEventLookup::getKeyCodeByLabel(keyCodeToken.string());
+    std::optional<int> keyCode = InputEventLookup::getKeyCodeByLabel(keyCodeToken.string());
     if (!keyCode) {
         ALOGE("%s: Expected key code label, got '%s'.", mTokenizer->getLocation().string(),
                 keyCodeToken.string());
         return BAD_VALUE;
     }
-    if (mMap->mKeys.indexOfKey(keyCode) >= 0) {
+    if (mMap->mKeys.indexOfKey(*keyCode) >= 0) {
         ALOGE("%s: Duplicate entry for key code '%s'.", mTokenizer->getLocation().string(),
                 keyCodeToken.string());
         return BAD_VALUE;
@@ -1029,11 +1036,9 @@ status_t KeyCharacterMap::Parser::parseKey() {
         return BAD_VALUE;
     }
 
-#if DEBUG_PARSER
-    ALOGD("Parsed beginning of key: keyCode=%d.", keyCode);
-#endif
-    mKeyCode = keyCode;
-    mMap->mKeys.add(keyCode, new Key());
+    ALOGD_IF(DEBUG_PARSER, "Parsed beginning of key: keyCode=%d.", *keyCode);
+    mKeyCode = *keyCode;
+    mMap->mKeys.add(*keyCode, new Key());
     mState = STATE_KEY;
     return NO_ERROR;
 }
@@ -1129,7 +1134,7 @@ status_t KeyCharacterMap::Parser::parseKeyProperty() {
             } else if (token == "fallback") {
                 mTokenizer->skipDelimiters(WHITESPACE);
                 token = mTokenizer->nextToken(WHITESPACE);
-                int32_t keyCode = InputEventLookup::getKeyCodeByLabel(token.string());
+                std::optional<int> keyCode = InputEventLookup::getKeyCodeByLabel(token.string());
                 if (!keyCode) {
                     ALOGE("%s: Invalid key code label for fallback behavior, got '%s'.",
                             mTokenizer->getLocation().string(),
@@ -1141,12 +1146,12 @@ status_t KeyCharacterMap::Parser::parseKeyProperty() {
                             mTokenizer->getLocation().string());
                     return BAD_VALUE;
                 }
-                behavior.fallbackKeyCode = keyCode;
+                behavior.fallbackKeyCode = *keyCode;
                 haveFallback = true;
             } else if (token == "replace") {
                 mTokenizer->skipDelimiters(WHITESPACE);
                 token = mTokenizer->nextToken(WHITESPACE);
-                int32_t keyCode = InputEventLookup::getKeyCodeByLabel(token.string());
+                std::optional<int> keyCode = InputEventLookup::getKeyCodeByLabel(token.string());
                 if (!keyCode) {
                     ALOGE("%s: Invalid key code label for replace, got '%s'.",
                             mTokenizer->getLocation().string(),
@@ -1163,7 +1168,7 @@ status_t KeyCharacterMap::Parser::parseKeyProperty() {
                             mTokenizer->getLocation().string());
                     return BAD_VALUE;
                 }
-                behavior.replacementKeyCode = keyCode;
+                behavior.replacementKeyCode = *keyCode;
                 haveReplacement = true;
 
             } else {

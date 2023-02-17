@@ -25,11 +25,61 @@ namespace android {
 
 namespace inputdispatcher {
 
+bool TouchedWindow::hasHoveringPointers() const {
+    return !mHoveringPointerIdsByDevice.empty();
+}
+
+bool TouchedWindow::hasHoveringPointers(int32_t deviceId) const {
+    return mHoveringPointerIdsByDevice.find(deviceId) != mHoveringPointerIdsByDevice.end();
+}
+
+void TouchedWindow::clearHoveringPointers() {
+    mHoveringPointerIdsByDevice.clear();
+}
+
+bool TouchedWindow::hasHoveringPointer(int32_t deviceId, int32_t pointerId) const {
+    auto it = mHoveringPointerIdsByDevice.find(deviceId);
+    if (it == mHoveringPointerIdsByDevice.end()) {
+        return false;
+    }
+    return it->second.test(pointerId);
+}
+
+void TouchedWindow::addHoveringPointer(int32_t deviceId, int32_t pointerId) {
+    const auto [it, _] = mHoveringPointerIdsByDevice.insert({deviceId, {}});
+    it->second.set(pointerId);
+}
+
+void TouchedWindow::removeTouchingPointer(int32_t pointerId) {
+    pointerIds.reset(pointerId);
+    pilferedPointerIds.reset(pointerId);
+    if (pointerIds.none()) {
+        firstDownTimeInTarget.reset();
+    }
+}
+
+void TouchedWindow::removeHoveringPointer(int32_t deviceId, int32_t pointerId) {
+    const auto it = mHoveringPointerIdsByDevice.find(deviceId);
+    if (it == mHoveringPointerIdsByDevice.end()) {
+        return;
+    }
+    it->second.set(pointerId, false);
+
+    if (it->second.none()) {
+        mHoveringPointerIdsByDevice.erase(deviceId);
+    }
+}
+
 std::string TouchedWindow::dump() const {
-    return StringPrintf("name='%s', pointerIds=0x%0x, "
-                        "targetFlags=%s, firstDownTimeInTarget=%s\n",
-                        windowHandle->getName().c_str(), pointerIds.value,
-                        targetFlags.string().c_str(), toString(firstDownTimeInTarget).c_str());
+    std::string out;
+    std::string hoveringPointers =
+            dumpMap(mHoveringPointerIdsByDevice, constToString, bitsetToString);
+    out += StringPrintf("name='%s', pointerIds=%s, targetFlags=%s, firstDownTimeInTarget=%s, "
+                        "mHoveringPointerIdsByDevice=%s, pilferedPointerIds=%s\n",
+                        windowHandle->getName().c_str(), bitsetToString(pointerIds).c_str(),
+                        targetFlags.string().c_str(), toString(firstDownTimeInTarget).c_str(),
+                        hoveringPointers.c_str(), bitsetToString(pilferedPointerIds).c_str());
+    return out;
 }
 
 } // namespace inputdispatcher

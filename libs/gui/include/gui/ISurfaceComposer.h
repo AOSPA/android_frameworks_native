@@ -23,11 +23,11 @@
 #include <android/gui/IHdrLayerInfoListener.h>
 #include <android/gui/IRegionSamplingListener.h>
 #include <android/gui/IScreenCaptureListener.h>
-#include <android/gui/ITransactionCompletedListener.h>
 #include <android/gui/ITunnelModeEnabledListener.h>
 #include <android/gui/IWindowInfosListener.h>
 #include <binder/IBinder.h>
 #include <binder/IInterface.h>
+#include <gui/ITransactionCompletedListener.h>
 #include <gui/SpHash.h>
 #include <math/vec4.h>
 #include <stdint.h>
@@ -66,7 +66,6 @@ using gui::FrameTimelineInfo;
 using gui::IDisplayEventConnection;
 using gui::IRegionSamplingListener;
 using gui::IScreenCaptureListener;
-using gui::ListenerCallbacks;
 using gui::SpHash;
 
 namespace gui {
@@ -114,8 +113,9 @@ public:
             const FrameTimelineInfo& frameTimelineInfo, Vector<ComposerState>& state,
             const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
             const InputWindowCommands& inputWindowCommands, int64_t desiredPresentTime,
-            bool isAutoTimestamp, const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
-            const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId) = 0;
+            bool isAutoTimestamp, const std::vector<client_cache_t>& uncacheBuffer,
+            bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks,
+            uint64_t transactionId) = 0;
 };
 
 // ----------------------------------------------------------------------------

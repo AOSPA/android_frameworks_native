@@ -93,7 +93,7 @@ public:
     MOCK_METHOD2(onHotplug,
                  std::optional<DisplayIdentificationInfo>(hal::HWDisplayId, hal::Connection));
     MOCK_CONST_METHOD0(updatesDeviceProductInfoOnHotplugReconnect, bool());
-    MOCK_METHOD2(onVsync, bool(hal::HWDisplayId, int64_t));
+    MOCK_METHOD(std::optional<PhysicalDisplayId>, onVsync, (hal::HWDisplayId, int64_t));
     MOCK_METHOD2(setVsyncEnabled, void(PhysicalDisplayId, hal::Vsync));
     MOCK_CONST_METHOD1(isConnected, bool(PhysicalDisplayId));
     MOCK_CONST_METHOD1(getModes, std::vector<HWComposer::HWCDisplayMode>(PhysicalDisplayId));
@@ -112,6 +112,12 @@ public:
     MOCK_METHOD1(clearBootDisplayMode, status_t(PhysicalDisplayId));
     MOCK_METHOD1(getPreferredBootDisplayMode, std::optional<hal::HWConfigId>(PhysicalDisplayId));
     MOCK_METHOD0(getBootDisplayModeSupport, bool());
+    MOCK_CONST_METHOD0(
+            getHdrConversionCapabilities,
+            std::vector<aidl::android::hardware::graphics::common::HdrConversionCapability>());
+    MOCK_METHOD2(setHdrConversionStrategy,
+                 status_t(aidl::android::hardware::graphics::common::HdrConversionStrategy,
+                          aidl::android::hardware::graphics::common::Hdr*));
     MOCK_METHOD2(setAutoLowLatencyMode, status_t(PhysicalDisplayId, bool));
     MOCK_METHOD(status_t, getSupportedContentTypes,
                 (PhysicalDisplayId, std::vector<hal::ContentType>*), (const, override));

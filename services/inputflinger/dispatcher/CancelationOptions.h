@@ -16,7 +16,8 @@
 
 #pragma once
 
-#include <utils/BitSet.h>
+#include <input/Input.h>
+#include <bitset>
 #include <optional>
 
 namespace android {
@@ -29,6 +30,7 @@ struct CancelationOptions {
         CANCEL_POINTER_EVENTS = 1,
         CANCEL_NON_POINTER_EVENTS = 2,
         CANCEL_FALLBACK_EVENTS = 3,
+        ftl_last = CANCEL_FALLBACK_EVENTS,
     };
 
     // The criterion to use to determine which events should be canceled.
@@ -47,7 +49,7 @@ struct CancelationOptions {
     std::optional<int32_t> displayId = std::nullopt;
 
     // The specific pointers to cancel, or nullopt to cancel all pointer events
-    std::optional<BitSet32> pointerIds = std::nullopt;
+    std::optional<std::bitset<MAX_POINTER_ID + 1>> pointerIds = std::nullopt;
 
     CancelationOptions(Mode mode, const char* reason) : mode(mode), reason(reason) {}
 };

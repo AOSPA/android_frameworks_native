@@ -26,26 +26,13 @@
 #include <unordered_set>
 
 #include <android-base/thread_annotations.h>
-#include <android/gui/ITransactionCompletedListener.h>
-
 #include <binder/IBinder.h>
-#include <gui/ListenerStats.h>
-#include <gui/ReleaseCallbackId.h>
-#include <renderengine/RenderEngine.h>
+#include <ftl/future.h>
+#include <gui/ITransactionCompletedListener.h>
 #include <ui/Fence.h>
 #include <ui/FenceResult.h>
 
 namespace android {
-
-using gui::CallbackId;
-using gui::FrameEventHistoryStats;
-using gui::IListenerHash;
-using gui::ITransactionCompletedListener;
-using gui::JankData;
-using gui::ListenerCallbacks;
-using gui::ListenerStats;
-using gui::ReleaseCallbackId;
-using gui::TransactionStats;
 
 class CallbackHandle : public RefBase {
 public:
@@ -79,9 +66,6 @@ public:
     status_t addOnCommitCallbackHandles(const std::deque<sp<CallbackHandle>>& handles,
                                              std::deque<sp<CallbackHandle>>& outRemainingHandles);
 
-    // Adds the Transaction CallbackHandle from a layer that does not need to be relatched and
-    // presented this frame.
-    status_t registerUnpresentedCallbackHandle(const sp<CallbackHandle>& handle);
     void addEmptyTransaction(const ListenerCallbacks& listenerCallbacks);
 
     void addPresentFence(sp<Fence>);

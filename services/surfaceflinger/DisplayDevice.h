@@ -24,6 +24,7 @@
 #include <android-base/thread_annotations.h>
 #include <android/native_window.h>
 #include <binder/IBinder.h>
+#include <ftl/concat.h>
 #include <gui/LayerState.h>
 #include <math/mat4.h>
 #include <renderengine/RenderEngine.h>
@@ -115,7 +116,6 @@ public:
     const ui::Transform& getTransform() const;
     const Rect& getLayerStackSpaceRect() const;
     const Rect& getOrientedDisplaySpaceRect() const;
-    bool needsFiltering() const;
     ui::LayerStack getLayerStack() const;
     bool receivesInput() const { return mFlags & eReceivesInput; }
 
@@ -237,13 +237,19 @@ public:
     }
 
     // Enables an overlay to be displayed with the current refresh rate
-    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate)
-            REQUIRES(kMainThreadContext);
+    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate,
+                                  bool showInMiddle) REQUIRES(kMainThreadContext);
     bool isRefreshRateOverlayEnabled() const { return mRefreshRateOverlay != nullptr; }
     bool onKernelTimerChanged(std::optional<DisplayModeId>, bool timerExpired);
     void animateRefreshRateOverlay();
 
     nsecs_t getVsyncPeriodFromHWC() const;
+
+    Fps getAdjustedRefreshRate() const { return mAdjustedRefreshRate; }
+
+    // Round the requested refresh rate to match a divisor of the leader
+    // display's refresh rate. Only supported for virtual displays.
+    void adjustRefreshRate(Fps leaderDisplayRefreshRate);
 
     // release HWC resources (if any) for removable displays
     void disconnect();
@@ -272,12 +278,21 @@ private:
     std::optional<hardware::graphics::composer::hal::PowerMode> mPowerMode;
 
     std::optional<float> mStagedBrightness;
-    float mBrightness = -1.f;
+    std::optional<float> mBrightness;
 
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;
 
     uint32_t mFlags = 0;
+
+    // Requested refresh rate in fps, supported only for virtual displays.
+    // when this value is non zero, SurfaceFlinger will try to drop frames
+    // for virtual displays to match this requested refresh rate.
+    const Fps mRequestedRefreshRate;
+
+    // Adjusted refresh rate, rounded to match a divisor of the leader
+    // display's refresh rate. Only supported for virtual displays.
+    Fps mAdjustedRefreshRate = 0_Hz;
 
     std::vector<ui::Hdr> mOverrideHdrTypes;
 
@@ -286,8 +301,8 @@ private:
 
     mutable std::mutex mActiveModeLock;
     ActiveModeInfo mDesiredActiveMode GUARDED_BY(mActiveModeLock);
-    TracedOrdinal<bool> mDesiredActiveModeChanged
-            GUARDED_BY(mActiveModeLock) = {"DesiredActiveModeChanged", false};
+    TracedOrdinal<bool> mDesiredActiveModeChanged GUARDED_BY(mActiveModeLock) =
+            {ftl::Concat("DesiredActiveModeChanged-", getId().value).c_str(), false};
     ActiveModeInfo mUpcomingActiveMode GUARDED_BY(kMainThreadContext);
 };
 
@@ -316,6 +331,8 @@ struct DisplayDeviceState {
     uint32_t height = 0;
     std::string displayName;
     bool isSecure = false;
+    // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
+    Fps requestedRefreshRate;
 
 private:
     static std::atomic<int32_t> sNextSequenceId;
@@ -345,6 +362,8 @@ struct DisplayDeviceCreationArgs {
     std::optional<hardware::graphics::composer::hal::PowerMode> initialPowerMode;
     bool isPrimary{false};
     DisplayModeId activeModeId;
+    // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
+    Fps requestedRefreshRate;
 };
 
 } // namespace android

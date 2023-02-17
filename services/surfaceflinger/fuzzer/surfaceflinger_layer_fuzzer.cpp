@@ -148,7 +148,7 @@ void LayerFuzzer::invokeBufferStateLayer() {
     layer->fenceHasSignaled();
     layer->onPreComposition(mFdp.ConsumeIntegral<int64_t>());
     const std::vector<sp<CallbackHandle>> callbacks;
-    layer->setTransactionCompletedListeners(callbacks);
+    layer->setTransactionCompletedListeners(callbacks, mFdp.ConsumeBool());
 
     std::shared_ptr<renderengine::ExternalTexture> texture = std::make_shared<
             renderengine::mock::FakeExternalTexture>(mFdp.ConsumeIntegral<uint32_t>(),
@@ -166,7 +166,7 @@ void LayerFuzzer::invokeBufferStateLayer() {
                               {mFdp.ConsumeIntegral<int32_t>(),
                                mFdp.ConsumeIntegral<int32_t>()} /*reqSize*/,
                               mFdp.PickValueInArray(kDataspaces), mFdp.ConsumeBool(),
-                              getFuzzedRect(), mFdp.ConsumeBool());
+                              mFdp.ConsumeBool());
     layerArea.render([]() {} /*drawLayers*/);
 
     if (!ownsHandle) {

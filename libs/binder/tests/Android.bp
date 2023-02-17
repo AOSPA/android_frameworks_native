@@ -100,6 +100,7 @@ cc_test {
         "binderBinderUnitTest.cpp",
         "binderStatusUnitTest.cpp",
         "binderMemoryHeapBaseUnitTest.cpp",
+        "binderRecordedTransactionTest.cpp",
     ],
     shared_libs: [
         "libbinder",
@@ -137,6 +138,7 @@ cc_test {
 
 aidl_interface {
     name: "binderRpcTestIface",
+    vendor_available: true,
     host_supported: true,
     unstable: true,
     srcs: [
@@ -157,6 +159,7 @@ aidl_interface {
 
 cc_library_static {
     name: "libbinder_tls_test_utils",
+    vendor_available: true,
     host_supported: true,
     target: {
         darwin: {
@@ -210,6 +213,7 @@ cc_defaults {
     defaults: [
         "binderRpcTest_common_defaults",
     ],
+    vendor_available: true,
     gtest: false,
     auto_gen_config: false,
     srcs: [
@@ -220,9 +224,17 @@ cc_defaults {
 
 cc_defaults {
     name: "binderRpcTest_defaults",
+    vendor_available: true,
     target: {
         android: {
             test_suites: ["vts"],
+        },
+
+        vendor: {
+            shared_libs: [
+                "libbinder_trusty",
+                "libtrusty",
+            ],
         },
     },
     defaults: [
@@ -266,6 +278,7 @@ cc_defaults {
     name: "binderRpcTest_static_defaults",
 
     shared_libs: [
+        "liblog",
         "libutils",
         // libcrypto_static is not visible to this module
         "libcrypto",
@@ -273,7 +286,6 @@ cc_defaults {
     static_libs: [
         "libbase",
         "libcutils",
-        "liblog",
         "libssl",
     ],
 
@@ -335,6 +347,54 @@ cc_test {
     ],
 }
 
+cc_binary {
+    name: "binderRpcTestService_on_trusty_mock",
+    defaults: [
+        "trusty_mock_defaults",
+    ],
+
+    srcs: [
+        "binderRpcTestCommon.cpp",
+        "binderRpcTestServiceTrusty.cpp",
+    ],
+
+    shared_libs: [
+        "libbinder_on_trusty_mock",
+        "libbase",
+        "libutils",
+        "libcutils",
+    ],
+
+    static_libs: [
+        "binderRpcTestIface-cpp",
+    ],
+}
+
+cc_binary {
+    name: "binderRpcTest_on_trusty_mock",
+    defaults: [
+        "trusty_mock_defaults",
+    ],
+
+    srcs: [
+        "binderRpcUniversalTests.cpp",
+        "binderRpcTestCommon.cpp",
+        "binderRpcTestTrusty.cpp",
+    ],
+
+    shared_libs: [
+        "libbinder_on_trusty_mock",
+        "libbase",
+        "libutils",
+        "libcutils",
+    ],
+
+    static_libs: [
+        "binderRpcTestIface-cpp",
+        "libgtest",
+    ],
+}
+
 cc_test {
     name: "binderRpcTest",
     defaults: [
@@ -346,6 +406,8 @@ cc_test {
     // Add the Trusty mock library as a fake dependency so it gets built
     required: [
         "libbinder_on_trusty_mock",
+        "binderRpcTestService_on_trusty_mock",
+        "binderRpcTest_on_trusty_mock",
     ],
 }
 

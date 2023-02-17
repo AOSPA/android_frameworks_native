@@ -21,11 +21,29 @@
 #include <optional>
 
 #include <gui/ISurfaceComposer.h>
+#include <gui/ITransactionCompletedListener.h>
 #include <gui/LayerState.h>
-#include <gui/ListenerStats.h>
 #include <private/gui/ParcelUtils.h>
 
-namespace android::gui {
+namespace android {
+
+namespace { // Anonymous
+
+enum class Tag : uint32_t {
+    ON_TRANSACTION_COMPLETED = IBinder::FIRST_CALL_TRANSACTION,
+    ON_RELEASE_BUFFER,
+    ON_TRANSACTION_QUEUE_STALLED,
+    ON_TRUSTED_PRESENTATION_CHANGED,
+    LAST = ON_TRUSTED_PRESENTATION_CHANGED,
+};
+
+} // Anonymous namespace
+
+namespace { // Anonymous
+
+constexpr int32_t kSerializedCallbackTypeOnCompelteWithJankData = 2;
+
+} // Anonymous namespace
 
 status_t FrameEventHistoryStats::writeToParcel(Parcel* output) const {
     status_t err = output->writeUint64(frameNumber);
@@ -263,6 +281,68 @@ ListenerStats ListenerStats::createEmpty(
     return listenerStats;
 }
 
+class BpTransactionCompletedListener : public SafeBpInterface<ITransactionCompletedListener> {
+public:
+    explicit BpTransactionCompletedListener(const sp<IBinder>& impl)
+          : SafeBpInterface<ITransactionCompletedListener>(impl, "BpTransactionCompletedListener") {
+    }
+
+    ~BpTransactionCompletedListener() override;
+
+    void onTransactionCompleted(ListenerStats stats) override {
+        callRemoteAsync<decltype(&ITransactionCompletedListener::
+                                         onTransactionCompleted)>(Tag::ON_TRANSACTION_COMPLETED,
+                                                                  stats);
+    }
+
+    void onReleaseBuffer(ReleaseCallbackId callbackId, sp<Fence> releaseFence,
+                         uint32_t currentMaxAcquiredBufferCount) override {
+        callRemoteAsync<decltype(&ITransactionCompletedListener::
+                                         onReleaseBuffer)>(Tag::ON_RELEASE_BUFFER, callbackId,
+                                                           releaseFence,
+                                                           currentMaxAcquiredBufferCount);
+    }
+
+    void onTransactionQueueStalled(const String8& reason) override {
+        callRemoteAsync<
+                decltype(&ITransactionCompletedListener::
+                                 onTransactionQueueStalled)>(Tag::ON_TRANSACTION_QUEUE_STALLED,
+                                                             reason);
+    }
+
+    void onTrustedPresentationChanged(int id, bool inTrustedPresentationState) override {
+        callRemoteAsync<decltype(&ITransactionCompletedListener::onTrustedPresentationChanged)>(
+                Tag::ON_TRUSTED_PRESENTATION_CHANGED, id, inTrustedPresentationState);
+    }
+};
+
+// Out-of-line virtual method definitions to trigger vtable emission in this translation unit (see
+// clang warning -Wweak-vtables)
+BpTransactionCompletedListener::~BpTransactionCompletedListener() = default;
+
+IMPLEMENT_META_INTERFACE(TransactionCompletedListener, "android.gui.ITransactionComposerListener");
+
+status_t BnTransactionCompletedListener::onTransact(uint32_t code, const Parcel& data,
+                                                    Parcel* reply, uint32_t flags) {
+    if (code < IBinder::FIRST_CALL_TRANSACTION || code > static_cast<uint32_t>(Tag::LAST)) {
+        return BBinder::onTransact(code, data, reply, flags);
+    }
+    auto tag = static_cast<Tag>(code);
+    switch (tag) {
+        case Tag::ON_TRANSACTION_COMPLETED:
+            return callLocalAsync(data, reply,
+                                  &ITransactionCompletedListener::onTransactionCompleted);
+        case Tag::ON_RELEASE_BUFFER:
+            return callLocalAsync(data, reply, &ITransactionCompletedListener::onReleaseBuffer);
+        case Tag::ON_TRANSACTION_QUEUE_STALLED:
+            return callLocalAsync(data, reply,
+                                  &ITransactionCompletedListener::onTransactionQueueStalled);
+        case Tag::ON_TRUSTED_PRESENTATION_CHANGED:
+            return callLocalAsync(data, reply,
+                                  &ITransactionCompletedListener::onTrustedPresentationChanged);
+    }
+}
+
 ListenerCallbacks ListenerCallbacks::filter(CallbackId::Type type) const {
     std::vector<CallbackId> filteredCallbackIds;
     for (const auto& callbackId : callbackIds) {
@@ -275,7 +355,11 @@ ListenerCallbacks ListenerCallbacks::filter(CallbackId::Type type) const {
 
 status_t CallbackId::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(output->writeInt64, id);
-    SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(type));
+    if (type == Type::ON_COMPLETE && includeJankData) {
+        SAFE_PARCEL(output->writeInt32, kSerializedCallbackTypeOnCompelteWithJankData);
+    } else {
+        SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(type));
+    }
     return NO_ERROR;
 }
 
@@ -283,7 +367,13 @@ status_t CallbackId::readFromParcel(const Parcel* input) {
     SAFE_PARCEL(input->readInt64, &id);
     int32_t typeAsInt;
     SAFE_PARCEL(input->readInt32, &typeAsInt);
-    type = static_cast<CallbackId::Type>(typeAsInt);
+    if (typeAsInt == kSerializedCallbackTypeOnCompelteWithJankData) {
+        type = Type::ON_COMPLETE;
+        includeJankData = true;
+    } else {
+        type = static_cast<CallbackId::Type>(typeAsInt);
+        includeJankData = false;
+    }
     return NO_ERROR;
 }
 
@@ -301,4 +391,4 @@ status_t ReleaseCallbackId::readFromParcel(const Parcel* input) {
 
 const ReleaseCallbackId ReleaseCallbackId::INVALID_ID = ReleaseCallbackId(0, 0);
 
-}; // namespace android::gui
+}; // namespace android

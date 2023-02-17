@@ -31,8 +31,8 @@
 #include <android-base/stringprintf.h>
 #include <cutils/compiler.h>
 #include <cutils/properties.h>
+#include <gui/TraceUtils.h>
 #include <utils/Log.h>
-#include <utils/Trace.h>
 
 #include "RefreshRateSelector.h"
 #include "VSyncPredictor.h"
@@ -47,7 +47,7 @@ VSyncPredictor::~VSyncPredictor() = default;
 
 VSyncPredictor::VSyncPredictor(nsecs_t idealPeriod, size_t historySize,
                                size_t minimumSamplesForPrediction, uint32_t outlierTolerancePercent)
-      : mTraceOn(property_get_bool("debug.sf.vsp_trace", true)),
+      : mTraceOn(property_get_bool("debug.sf.vsp_trace", false)),
         kHistorySize(historySize),
         kMinimumSamplesForPrediction(minimumSamplesForPrediction),
         kOutlierTolerancePercent(std::min(outlierTolerancePercent, kMaxPercent)),
@@ -59,6 +59,10 @@ inline void VSyncPredictor::traceInt64If(const char* name, int64_t value) const 
     if (CC_UNLIKELY(mTraceOn)) {
         ATRACE_INT64(name, value);
     }
+}
+
+inline void VSyncPredictor::traceInt64(const char* name, int64_t value) const {
+    ATRACE_INT64(name, value);
 }
 
 inline size_t VSyncPredictor::next(size_t i) const {
@@ -124,6 +128,8 @@ bool VSyncPredictor::addVsyncTimestamp(nsecs_t timestamp) {
         mTimestamps[mLastTimestampIndex] = timestamp;
     }
 
+    traceInt64If("VSP-ts", timestamp);
+
     const size_t numSamples = mTimestamps.size();
     if (numSamples < kMinimumSamplesForPrediction) {
         mRateMap[mIdealPeriod] = {mIdealPeriod, 0};
@@ -161,8 +167,6 @@ bool VSyncPredictor::addVsyncTimestamp(nsecs_t timestamp) {
     nsecs_t meanOrdinal = 0;
 
     for (size_t i = 0; i < numSamples; i++) {
-        traceInt64If("VSP-ts", mTimestamps[i]);
-
         const auto timestamp = mTimestamps[i] - oldestTS;
         vsyncTS[i] = timestamp;
         meanTS += timestamp;
@@ -215,11 +219,22 @@ bool VSyncPredictor::addVsyncTimestamp(nsecs_t timestamp) {
     return true;
 }
 
+auto VSyncPredictor::getVsyncSequenceLocked(nsecs_t timestamp) const -> VsyncSequence {
+    const auto vsync = nextAnticipatedVSyncTimeFromLocked(timestamp);
+    if (!mLastVsyncSequence) return {vsync, 0};
+
+    const auto [slope, _] = getVSyncPredictionModelLocked();
+    const auto [lastVsyncTime, lastVsyncSequence] = *mLastVsyncSequence;
+    const auto vsyncSequence = lastVsyncSequence +
+            static_cast<int64_t>(std::round((vsync - lastVsyncTime) / static_cast<float>(slope)));
+    return {vsync, vsyncSequence};
+}
+
 nsecs_t VSyncPredictor::nextAnticipatedVSyncTimeFromLocked(nsecs_t timePoint) const {
     auto const [slope, intercept] = getVSyncPredictionModelLocked();
 
     if (mTimestamps.empty()) {
-        traceInt64If("VSP-mode", 1);
+        traceInt64("VSP-mode", 1);
         auto const knownTimestamp = mKnownTimestamp ? *mKnownTimestamp : timePoint;
         auto const numPeriodsOut = ((timePoint - knownTimestamp) / mIdealPeriod) + 1;
         return knownTimestamp + numPeriodsOut * mIdealPeriod;
@@ -232,7 +247,7 @@ nsecs_t VSyncPredictor::nextAnticipatedVSyncTimeFromLocked(nsecs_t timePoint) co
     auto const ordinalRequest = (timePoint - zeroPoint + slope) / slope;
     auto const prediction = (ordinalRequest * slope) + intercept + oldest;
 
-    traceInt64If("VSP-mode", 0);
+    traceInt64("VSP-mode", 0);
     traceInt64If("VSP-timePoint", timePoint);
     traceInt64If("VSP-prediction", prediction);
 
@@ -254,12 +269,30 @@ nsecs_t VSyncPredictor::nextAnticipatedVSyncTimeFromLocked(nsecs_t timePoint) co
 nsecs_t VSyncPredictor::nextAnticipatedVSyncTimeFrom(nsecs_t timePoint) const {
     std::lock_guard lock(mMutex);
 
-    // TODO(b/246164114): This implementation is not efficient at all. Refactor.
-    nsecs_t nextVsync = nextAnticipatedVSyncTimeFromLocked(timePoint);
-    while (!isVSyncInPhaseLocked(nextVsync, mDivisor)) {
-        nextVsync = nextAnticipatedVSyncTimeFromLocked(nextVsync + 1);
+    // update the mLastVsyncSequence for reference point
+    mLastVsyncSequence = getVsyncSequenceLocked(timePoint);
+
+    const auto renderRatePhase = [&]() REQUIRES(mMutex) -> int {
+        if (!mRenderRate) return 0;
+
+        const auto divisor =
+                RefreshRateSelector::getFrameRateDivisor(Fps::fromPeriodNsecs(mIdealPeriod),
+                                                         *mRenderRate);
+        if (divisor <= 1) return 0;
+
+        const int mod = mLastVsyncSequence->seq % divisor;
+        if (mod == 0) return 0;
+
+        return divisor - mod;
+    }();
+
+    if (renderRatePhase == 0) {
+        return mLastVsyncSequence->vsyncTime;
     }
-    return nextVsync;
+
+    auto const [slope, intercept] = getVSyncPredictionModelLocked();
+    const auto approximateNextVsync = mLastVsyncSequence->vsyncTime + slope * renderRatePhase;
+    return nextAnticipatedVSyncTimeFromLocked(approximateNextVsync - slope / 2);
 }
 
 /*
@@ -278,12 +311,12 @@ bool VSyncPredictor::isVSyncInPhase(nsecs_t timePoint, Fps frameRate) const {
 }
 
 bool VSyncPredictor::isVSyncInPhaseLocked(nsecs_t timePoint, unsigned divisor) const {
-    struct VsyncError {
-        nsecs_t vsyncTimestamp;
-        float error;
-
-        bool operator<(const VsyncError& other) const { return error < other.error; }
+    const TimePoint now = TimePoint::now();
+    const auto getTimePointIn = [](TimePoint now, nsecs_t timePoint) -> float {
+        return ticks<std::milli, float>(TimePoint::fromNs(timePoint) - now);
     };
+    ATRACE_FORMAT("%s timePoint in: %.2f divisor: %zu", __func__, getTimePointIn(now, timePoint),
+                  divisor);
 
     if (divisor <= 1 || timePoint == 0) {
         return true;
@@ -291,41 +324,16 @@ bool VSyncPredictor::isVSyncInPhaseLocked(nsecs_t timePoint, unsigned divisor) c
 
     const nsecs_t period = mRateMap[mIdealPeriod].slope;
     const nsecs_t justBeforeTimePoint = timePoint - period / 2;
-    const nsecs_t dividedPeriod = mIdealPeriod / divisor;
-
-    // If this is the first time we have asked about this divisor with the
-    // current vsync period, it is considered in phase and we store the closest
-    // vsync timestamp
-    const auto knownTimestampIter = mRateDivisorKnownTimestampMap.find(dividedPeriod);
-    if (knownTimestampIter == mRateDivisorKnownTimestampMap.end()) {
-        const auto vsync = nextAnticipatedVSyncTimeFromLocked(justBeforeTimePoint);
-        mRateDivisorKnownTimestampMap[dividedPeriod] = vsync;
-        return true;
-    }
-
-    // Find the next N vsync timestamp where N is the divisor.
-    // One of these vsyncs will be in phase. We return the one which is
-    // the most aligned with the last known in phase vsync
-    std::vector<VsyncError> vsyncs(static_cast<size_t>(divisor));
-    const nsecs_t knownVsync = knownTimestampIter->second;
-    nsecs_t point = justBeforeTimePoint;
-    for (size_t i = 0; i < divisor; i++) {
-        const nsecs_t vsync = nextAnticipatedVSyncTimeFromLocked(point);
-        const auto numPeriods = static_cast<float>(vsync - knownVsync) / (period * divisor);
-        const auto error = std::abs(std::round(numPeriods) - numPeriods);
-        vsyncs[i] = {vsync, error};
-        point = vsync + 1;
-    }
-
-    const auto minVsyncError = std::min_element(vsyncs.begin(), vsyncs.end());
-    mRateDivisorKnownTimestampMap[dividedPeriod] = minVsyncError->vsyncTimestamp;
-    return std::abs(minVsyncError->vsyncTimestamp - timePoint) < period / 2;
+    const auto vsyncSequence = getVsyncSequenceLocked(justBeforeTimePoint);
+    ATRACE_FORMAT_INSTANT("vsync in: %.2f sequence: %" PRId64,
+                          getTimePointIn(now, vsyncSequence.vsyncTime), vsyncSequence.seq);
+    return vsyncSequence.seq % divisor == 0;
 }
 
-void VSyncPredictor::setDivisor(unsigned divisor) {
-    ALOGV("%s: %d", __func__, divisor);
+void VSyncPredictor::setRenderRate(Fps fps) {
+    ALOGV("%s: %s", __func__, to_string(fps).c_str());
     std::lock_guard lock(mMutex);
-    mDivisor = divisor;
+    mRenderRate = fps;
 }
 
 VSyncPredictor::Model VSyncPredictor::getVSyncPredictionModel() const {
@@ -340,6 +348,7 @@ VSyncPredictor::Model VSyncPredictor::getVSyncPredictionModelLocked() const {
 
 void VSyncPredictor::setPeriod(nsecs_t period) {
     ATRACE_CALL();
+    traceInt64("VSP-setPeriod", period);
 
     std::lock_guard lock(mMutex);
     static constexpr size_t kSizeLimit = 30;
@@ -367,6 +376,7 @@ void VSyncPredictor::clearTimestamps() {
         mTimestamps.clear();
         mLastTimestampIndex = 0;
     }
+    mLastVsyncSequence.reset();
 }
 
 bool VSyncPredictor::needsMoreSamples() const {

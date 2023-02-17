@@ -37,15 +37,7 @@
 
 namespace android {
 
-struct ICompositor {
-    virtual void configure() = 0;
-    virtual bool commit(TimePoint frameTime, VsyncId, TimePoint expectedVsyncTime) = 0;
-    virtual void composite(TimePoint frameTime, VsyncId) = 0;
-    virtual void sample() = 0;
-
-protected:
-    ~ICompositor() = default;
-};
+struct ICompositor;
 
 template <typename F>
 class Task : public MessageHandler {
@@ -75,9 +67,11 @@ public:
 
     virtual void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                            std::chrono::nanoseconds workDuration) = 0;
+    virtual void destroyVsync() = 0;
     virtual void setDuration(std::chrono::nanoseconds workDuration) = 0;
     virtual void waitMessage() = 0;
     virtual void postMessage(sp<MessageHandler>&&) = 0;
+    virtual void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) = 0;
     virtual void scheduleConfigure() = 0;
     virtual void scheduleFrame() = 0;
 
@@ -138,10 +132,12 @@ public:
 
     void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
                    std::chrono::nanoseconds workDuration) override;
+    void destroyVsync() override;
     void setDuration(std::chrono::nanoseconds workDuration) override;
 
     void waitMessage() override;
     void postMessage(sp<MessageHandler>&&) override;
+    void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) override;
 
     void scheduleConfigure() override;
     void scheduleFrame() override;

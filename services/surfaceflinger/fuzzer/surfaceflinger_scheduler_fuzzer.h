@@ -78,22 +78,6 @@ public:
     sp<Layer> createClone() override { return nullptr; }
 };
 
-class FuzzImplVSyncSource : public VSyncSource {
-public:
-    const char* getName() const override { return "fuzz"; }
-
-    void setVSyncEnabled(bool /* enable */) override {}
-
-    void setCallback(Callback* /* callback */) override {}
-
-    void setDuration(std::chrono::nanoseconds /* workDuration */,
-                     std::chrono::nanoseconds /* readyDuration */) override {}
-
-    VSyncData getLatestVSyncData() const override { return {}; }
-
-    void dump(std::string& /* result */) const override {}
-};
-
 class FuzzImplVSyncTracker : public scheduler::VSyncTracker {
 public:
     FuzzImplVSyncTracker(nsecs_t period) { mPeriod = period; }
@@ -116,7 +100,7 @@ public:
         return true;
     }
 
-    void setDivisor(unsigned) override {}
+    void setRenderRate(Fps) override {}
 
     nsecs_t nextVSyncTime(nsecs_t timePoint) const {
         if (timePoint % mPeriod == 0) {

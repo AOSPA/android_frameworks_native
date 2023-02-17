@@ -24,6 +24,7 @@
 #include <android/gui/DisplayState.h>
 #include <android/gui/ISurfaceComposerClient.h>
 #include <android/gui/IWindowInfosListener.h>
+#include <android/gui/TrustedPresentationThresholds.h>
 #include <android/os/IInputConstants.h>
 #include <gui/TraceUtils.h>
 #include <utils/Errors.h>
@@ -52,6 +53,7 @@
 #include <ui/DisplayState.h>
 #include <ui/DynamicDisplayInfo.h>
 
+#include <android-base/thread_annotations.h>
 #include <private/gui/ComposerService.h>
 #include <private/gui/ComposerServiceAIDL.h>
 
@@ -63,6 +65,7 @@ namespace android {
 using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
 using gui::FocusRequest;
 using gui::IRegionSamplingListener;
+using gui::TrustedPresentationThresholds;
 using gui::WindowInfo;
 using gui::WindowInfoHandle;
 using gui::WindowInfosListener;
@@ -79,6 +82,8 @@ std::atomic<uint32_t> idCounter = 0;
 int64_t generateId() {
     return (((int64_t)getpid()) << 32) | ++idCounter;
 }
+
+void emptyCallback(nsecs_t, const sp<Fence>&, const std::vector<SurfaceControlStats>&) {}
 } // namespace
 
 ComposerService::ComposerService()
@@ -246,6 +251,14 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
                 surfaceControls,
         CallbackId::Type callbackType) {
     std::lock_guard<std::mutex> lock(mMutex);
+    return addCallbackFunctionLocked(callbackFunction, surfaceControls, callbackType);
+}
+
+CallbackId TransactionCompletedListener::addCallbackFunctionLocked(
+        const TransactionCompletedCallback& callbackFunction,
+        const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
+                surfaceControls,
+        CallbackId::Type callbackType) {
     startListeningLocked();
 
     CallbackId callbackId(getNextIdLocked(), callbackType);
@@ -254,6 +267,11 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
 
     for (const auto& surfaceControl : surfaceControls) {
         callbackSurfaceControls[surfaceControl->getHandle()] = surfaceControl;
+
+        if (callbackType == CallbackId::Type::ON_COMPLETE &&
+            mJankListeners.count(surfaceControl->getLayerId()) != 0) {
+            callbackId.includeJankData = true;
+        }
     }
 
     return callbackId;
@@ -302,20 +320,30 @@ void TransactionCompletedListener::removeSurfaceStatsListener(void* context, voi
 }
 
 void TransactionCompletedListener::addSurfaceControlToCallbacks(
-        const sp<SurfaceControl>& surfaceControl,
-        const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds) {
+        SurfaceComposerClient::CallbackInfo& callbackInfo,
+        const sp<SurfaceControl>& surfaceControl) {
     std::lock_guard<std::mutex> lock(mMutex);
 
-    for (auto callbackId : callbackIds) {
+    bool includingJankData = false;
+    for (auto callbackId : callbackInfo.callbackIds) {
         mCallbacks[callbackId].surfaceControls.emplace(std::piecewise_construct,
                                                        std::forward_as_tuple(
                                                                surfaceControl->getHandle()),
                                                        std::forward_as_tuple(surfaceControl));
+        includingJankData = includingJankData || callbackId.includeJankData;
+    }
+
+    // If no registered callback is requesting jank data, but there is a jank listener registered
+    // on the new surface control, add a synthetic callback that requests the jank data.
+    if (!includingJankData && mJankListeners.count(surfaceControl->getLayerId()) != 0) {
+        CallbackId callbackId =
+                addCallbackFunctionLocked(&emptyCallback, callbackInfo.surfaceControls,
+                                          CallbackId::Type::ON_COMPLETE);
+        callbackInfo.callbackIds.emplace(callbackId);
     }
 }
 
-binder::Status TransactionCompletedListener::onTransactionCompleted(
-        const ListenerStats& listenerStats) {
+void TransactionCompletedListener::onTransactionCompleted(ListenerStats listenerStats) {
     std::unordered_map<CallbackId, CallbackTranslation, CallbackIdHash> callbacksMap;
     std::multimap<int32_t, sp<JankDataListener>> jankListenersMap;
     {
@@ -455,10 +483,9 @@ binder::Status TransactionCompletedListener::onTransactionCompleted(
             }
         }
     }
-    return binder::Status::ok();
 }
 
-binder::Status TransactionCompletedListener::onTransactionQueueStalled(const std::string& reason) {
+void TransactionCompletedListener::onTransactionQueueStalled(const String8& reason) {
     std::unordered_map<void*, std::function<void(const std::string&)>> callbackCopy;
     {
         std::scoped_lock<std::mutex> lock(mMutex);
@@ -467,7 +494,6 @@ binder::Status TransactionCompletedListener::onTransactionQueueStalled(const std
     for (auto const& it : callbackCopy) {
         it.second(reason.c_str());
     }
-    return binder::Status::ok();
 }
 
 void TransactionCompletedListener::addQueueStallListener(
@@ -481,12 +507,9 @@ void TransactionCompletedListener::removeQueueStallListener(void* id) {
     mQueueStallListeners.erase(id);
 }
 
-binder::Status TransactionCompletedListener::onReleaseBuffer(
-        const ReleaseCallbackId& callbackId,
-        const std::optional<os::ParcelFileDescriptor>& releaseFenceFd,
-        int32_t currentMaxAcquiredBufferCount) {
-    sp<Fence> releaseFence(releaseFenceFd ? new Fence(::dup(releaseFenceFd->get()))
-                                          : Fence::NO_FENCE);
+void TransactionCompletedListener::onReleaseBuffer(ReleaseCallbackId callbackId,
+                                                   sp<Fence> releaseFence,
+                                                   uint32_t currentMaxAcquiredBufferCount) {
     ReleaseBufferCallback callback;
     {
         std::scoped_lock<std::mutex> lock(mMutex);
@@ -495,14 +518,13 @@ binder::Status TransactionCompletedListener::onReleaseBuffer(
     if (!callback) {
         ALOGE("Could not call release buffer callback, buffer not found %s",
               callbackId.to_string().c_str());
-        return binder::Status::fromExceptionCode(binder::Status::EX_ILLEGAL_ARGUMENT);
+        return;
     }
     std::optional<uint32_t> optionalMaxAcquiredBufferCount =
-            static_cast<uint32_t>(currentMaxAcquiredBufferCount) == UINT_MAX
+            currentMaxAcquiredBufferCount == UINT_MAX
             ? std::nullopt
             : std::make_optional<uint32_t>(currentMaxAcquiredBufferCount);
     callback(callbackId, releaseFence, optionalMaxAcquiredBufferCount);
-    return binder::Status::ok();
 }
 
 ReleaseBufferCallback TransactionCompletedListener::popReleaseBufferCallbackLocked(
@@ -523,6 +545,45 @@ void TransactionCompletedListener::removeReleaseBufferCallback(
         std::scoped_lock<std::mutex> lock(mMutex);
         popReleaseBufferCallbackLocked(callbackId);
     }
+}
+
+SurfaceComposerClient::PresentationCallbackRAII::PresentationCallbackRAII(
+        TransactionCompletedListener* tcl, int id) {
+    mTcl = tcl;
+    mId = id;
+}
+
+SurfaceComposerClient::PresentationCallbackRAII::~PresentationCallbackRAII() {
+    mTcl->clearTrustedPresentationCallback(mId);
+}
+
+sp<SurfaceComposerClient::PresentationCallbackRAII>
+TransactionCompletedListener::addTrustedPresentationCallback(TrustedPresentationCallback tpc,
+                                                             int id, void* context) {
+    std::scoped_lock<std::mutex> lock(mMutex);
+    mTrustedPresentationCallbacks[id] =
+            std::tuple<TrustedPresentationCallback, void*>(tpc, context);
+    return new SurfaceComposerClient::PresentationCallbackRAII(this, id);
+}
+
+void TransactionCompletedListener::clearTrustedPresentationCallback(int id) {
+    std::scoped_lock<std::mutex> lock(mMutex);
+    mTrustedPresentationCallbacks.erase(id);
+}
+
+void TransactionCompletedListener::onTrustedPresentationChanged(int id,
+                                                                bool presentedWithinThresholds) {
+    TrustedPresentationCallback tpc;
+    void* context;
+    {
+        std::scoped_lock<std::mutex> lock(mMutex);
+        auto it = mTrustedPresentationCallbacks.find(id);
+        if (it == mTrustedPresentationCallbacks.end()) {
+            return;
+        }
+        std::tie(tpc, context) = it->second;
+    }
+    tpc(context, presentedWithinThresholds);
 }
 
 // ---------------------------------------------------------------------------
@@ -572,11 +633,13 @@ public:
         return NO_ERROR;
     }
 
-    uint64_t cache(const sp<GraphicBuffer>& buffer) {
+    uint64_t cache(const sp<GraphicBuffer>& buffer,
+                   std::optional<client_cache_t>& outUncacheBuffer) {
         std::lock_guard<std::mutex> lock(mMutex);
 
         if (mBuffers.size() >= BUFFER_CACHE_MAX_SIZE) {
-            evictLeastRecentlyUsedBuffer();
+            outUncacheBuffer = findLeastRecentlyUsedBuffer();
+            mBuffers.erase(outUncacheBuffer->id);
         }
 
         buffer->addDeathCallback(removeDeadBufferCallback, nullptr);
@@ -587,16 +650,13 @@ public:
 
     void uncache(uint64_t cacheId) {
         std::lock_guard<std::mutex> lock(mMutex);
-        uncacheLocked(cacheId);
-    }
-
-    void uncacheLocked(uint64_t cacheId) REQUIRES(mMutex) {
-        mBuffers.erase(cacheId);
-        SurfaceComposerClient::doUncacheBufferTransaction(cacheId);
+        if (mBuffers.erase(cacheId)) {
+            SurfaceComposerClient::doUncacheBufferTransaction(cacheId);
+        }
     }
 
 private:
-    void evictLeastRecentlyUsedBuffer() REQUIRES(mMutex) {
+    client_cache_t findLeastRecentlyUsedBuffer() REQUIRES(mMutex) {
         auto itr = mBuffers.begin();
         uint64_t minCounter = itr->second;
         auto minBuffer = itr;
@@ -610,7 +670,8 @@ private:
             }
             itr++;
         }
-        uncacheLocked(minBuffer->first);
+
+        return {.token = getToken(), .id = minBuffer->first};
     }
 
     uint64_t getCounter() REQUIRES(mMutex) {
@@ -748,6 +809,18 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     InputWindowCommands inputWindowCommands;
     inputWindowCommands.read(*parcel);
 
+    count = static_cast<size_t>(parcel->readUint32());
+    if (count > parcel->dataSize()) {
+        return BAD_VALUE;
+    }
+    std::vector<client_cache_t> uncacheBuffers(count);
+    for (size_t i = 0; i < count; i++) {
+        sp<IBinder> tmpBinder;
+        SAFE_PARCEL(parcel->readStrongBinder, &tmpBinder);
+        uncacheBuffers[i].token = tmpBinder;
+        SAFE_PARCEL(parcel->readUint64, &uncacheBuffers[i].id);
+    }
+
     // Parsing was successful. Update the object.
     mId = transactionId;
     mTransactionNestCount = transactionNestCount;
@@ -762,6 +835,7 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     mComposerStates = composerStates;
     mInputWindowCommands = inputWindowCommands;
     mApplyToken = applyToken;
+    mUncacheBuffers = std::move(uncacheBuffers);
     return NO_ERROR;
 }
 
@@ -813,6 +887,13 @@ status_t SurfaceComposerClient::Transaction::writeToParcel(Parcel* parcel) const
     }
 
     mInputWindowCommands.write(*parcel);
+
+    SAFE_PARCEL(parcel->writeUint32, static_cast<uint32_t>(mUncacheBuffers.size()));
+    for (const client_cache_t& uncacheBuffer : mUncacheBuffers) {
+        SAFE_PARCEL(parcel->writeStrongBinder, uncacheBuffer.token.promote());
+        SAFE_PARCEL(parcel->writeUint64, uncacheBuffer.id);
+    }
+
     return NO_ERROR;
 }
 
@@ -832,11 +913,7 @@ void SurfaceComposerClient::Transaction::releaseBufferIfOverwriting(const layer_
                 ->mReleaseCallbackThread
                 .addReleaseCallback(state.bufferData->generateReleaseCallbackId(), fence);
     } else {
-        std::optional<os::ParcelFileDescriptor> fenceFd;
-        if (fence != Fence::NO_FENCE) {
-            fenceFd = os::ParcelFileDescriptor(base::unique_fd(::dup(fence->get())));
-        }
-        listener->onReleaseBuffer(state.bufferData->generateReleaseCallbackId(), fenceFd, UINT_MAX);
+        listener->onReleaseBuffer(state.bufferData->generateReleaseCallbackId(), fence, UINT_MAX);
     }
 }
 
@@ -879,9 +956,12 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::merge(Tr
         // register all surface controls for all callbackIds for this listener that is merging
         for (const auto& surfaceControl : currentProcessCallbackInfo.surfaceControls) {
             TransactionCompletedListener::getInstance()
-                    ->addSurfaceControlToCallbacks(surfaceControl,
-                                                   currentProcessCallbackInfo.callbackIds);
+                    ->addSurfaceControlToCallbacks(currentProcessCallbackInfo, surfaceControl);
         }
+    }
+
+    for (const auto& cacheId : other.mUncacheBuffers) {
+        mUncacheBuffers.push_back(cacheId);
     }
 
     mInputWindowCommands.merge(other.mInputWindowCommands);
@@ -902,6 +982,7 @@ void SurfaceComposerClient::Transaction::clear() {
     mDisplayStates.clear();
     mListenerCallbacks.clear();
     mInputWindowCommands.clear();
+    mUncacheBuffers.clear();
     mMayContainBuffer = false;
     mTransactionNestCount = 0;
     mAnimation = false;
@@ -924,10 +1005,10 @@ void SurfaceComposerClient::doUncacheBufferTransaction(uint64_t cacheId) {
     uncacheBuffer.token = BufferCache::getInstance().getToken();
     uncacheBuffer.id = cacheId;
     Vector<ComposerState> composerStates;
-    status_t status =
-            sf->setTransactionState(FrameTimelineInfo{}, composerStates, {},
-                                    ISurfaceComposer::eOneWay, Transaction::getDefaultApplyToken(),
-                                    {}, systemTime(), true, uncacheBuffer, false, {}, generateId());
+    status_t status = sf->setTransactionState(FrameTimelineInfo{}, composerStates, {},
+                                              ISurfaceComposer::eOneWay,
+                                              Transaction::getDefaultApplyToken(), {}, systemTime(),
+                                              true, {uncacheBuffer}, false, {}, generateId());
     if (status != NO_ERROR) {
         ALOGE_AND_TRACE("SurfaceComposerClient::doUncacheBufferTransaction - %s",
                         strerror(-status));
@@ -965,7 +1046,11 @@ void SurfaceComposerClient::Transaction::cacheBuffers() {
             s->bufferData->buffer = nullptr;
         } else {
             // Cache-miss. Include the buffer and send the new cacheId.
-            cacheId = BufferCache::getInstance().cache(s->bufferData->buffer);
+            std::optional<client_cache_t> uncacheBuffer;
+            cacheId = BufferCache::getInstance().cache(s->bufferData->buffer, uncacheBuffer);
+            if (uncacheBuffer) {
+                mUncacheBuffers.push_back(*uncacheBuffer);
+            }
         }
         s->bufferData->flags |= BufferData::BufferDataChange::cachedBufferChanged;
         s->bufferData->cachedBuffer.token = BufferCache::getInstance().getToken();
@@ -1098,8 +1183,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
     sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, flags, applyToken,
                             mInputWindowCommands, mDesiredPresentTime, mIsAutoTimestamp,
-                            {} /*uncacheBuffer - only set in doUncacheBufferTransaction*/,
-                            hasListenerCallbacks, listenerCallbacks, mId);
+                            mUncacheBuffers, hasListenerCallbacks, listenerCallbacks, mId);
     mId = generateId();
 
     // Clear the current states and flags
@@ -1122,14 +1206,29 @@ sp<IBinder> SurfaceComposerClient::Transaction::getDefaultApplyToken() {
 void SurfaceComposerClient::Transaction::setDefaultApplyToken(sp<IBinder> applyToken) {
     sApplyToken = applyToken;
 }
+
+status_t SurfaceComposerClient::Transaction::sendSurfaceFlushJankDataTransaction(
+        const sp<SurfaceControl>& sc) {
+    Transaction t;
+    layer_state_t* s = t.getLayerState(sc);
+    if (!s) {
+        return BAD_INDEX;
+    }
+
+    s->what |= layer_state_t::eFlushJankData;
+    t.registerSurfaceControlForCallback(sc);
+    return t.apply(/*sync=*/false, /* oneWay=*/true);
+}
 // ---------------------------------------------------------------------------
 
-sp<IBinder> SurfaceComposerClient::createDisplay(const String8& displayName, bool secure) {
+sp<IBinder> SurfaceComposerClient::createDisplay(const String8& displayName, bool secure,
+                                                 float requestedRefereshRate) {
     sp<IBinder> display = nullptr;
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->createDisplay(std::string(
                                                                              displayName.string()),
-                                                                     secure, &display);
+                                                                     secure, requestedRefereshRate,
+                                                                     &display);
     return status.isOk() ? display : nullptr;
 }
 
@@ -1193,8 +1292,7 @@ void SurfaceComposerClient::Transaction::registerSurfaceControlForCallback(
     auto& callbackInfo = mListenerCallbacks[TransactionCompletedListener::getIInstance()];
     callbackInfo.surfaceControls.insert(sc);
 
-    TransactionCompletedListener::getInstance()
-            ->addSurfaceControlToCallbacks(sc, callbackInfo.callbackIds);
+    TransactionCompletedListener::getInstance()->addSurfaceControlToCallbacks(callbackInfo, sc);
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setPosition(
@@ -1534,7 +1632,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffer(
         const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
         const std::optional<sp<Fence>>& fence, const std::optional<uint64_t>& optFrameNumber,
-        ReleaseBufferCallback callback) {
+        uint32_t producerId, ReleaseBufferCallback callback) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1553,6 +1651,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
     bufferData->buffer = buffer;
     uint64_t frameNumber = sc->resolveFrameNumber(optFrameNumber);
     bufferData->frameNumber = frameNumber;
+    bufferData->producerId = producerId;
     bufferData->flags |= BufferData::BufferDataChange::frameNumberChanged;
     if (fence) {
         bufferData->acquireFence = *fence;
@@ -1610,6 +1709,21 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDatas
     }
     s->what |= layer_state_t::eDataspaceChanged;
     s->dataspace = dataspace;
+
+    registerSurfaceControlForCallback(sc);
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setExtendedRangeBrightness(
+        const sp<SurfaceControl>& sc, float currentBufferRatio, float desiredRatio) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    s->what |= layer_state_t::eExtendedRangeBrightnessChanged;
+    s->currentSdrHdrRatio = currentBufferRatio;
+    s->desiredSdrHdrRatio = desiredRatio;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -2109,6 +2223,45 @@ void SurfaceComposerClient::Transaction::clearFrameTimelineInfo(FrameTimelineInf
     t.startTimeNanos = 0;
 }
 
+SurfaceComposerClient::Transaction&
+SurfaceComposerClient::Transaction::setTrustedPresentationCallback(
+        const sp<SurfaceControl>& sc, TrustedPresentationCallback cb,
+        const TrustedPresentationThresholds& thresholds, void* context,
+        sp<SurfaceComposerClient::PresentationCallbackRAII>& outCallbackRef) {
+    auto listener = TransactionCompletedListener::getInstance();
+    outCallbackRef = listener->addTrustedPresentationCallback(cb, sc->getLayerId(), context);
+
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    s->what |= layer_state_t::eTrustedPresentationInfoChanged;
+    s->trustedPresentationThresholds = thresholds;
+    s->trustedPresentationListener.callbackInterface = TransactionCompletedListener::getIInstance();
+    s->trustedPresentationListener.callbackId = sc->getLayerId();
+
+    return *this;
+}
+
+SurfaceComposerClient::Transaction&
+SurfaceComposerClient::Transaction::clearTrustedPresentationCallback(const sp<SurfaceControl>& sc) {
+    auto listener = TransactionCompletedListener::getInstance();
+    listener->clearTrustedPresentationCallback(sc->getLayerId());
+
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    s->what |= layer_state_t::eTrustedPresentationInfoChanged;
+    s->trustedPresentationThresholds = TrustedPresentationThresholds();
+    s->trustedPresentationListener.callbackInterface = nullptr;
+    s->trustedPresentationListener.callbackId = -1;
+
+    return *this;
+}
+
 // ---------------------------------------------------------------------------
 
 SurfaceComposerClient::SurfaceComposerClient() : mStatus(NO_INIT) {}
@@ -2496,6 +2649,28 @@ status_t SurfaceComposerClient::clearBootDisplayMode(const sp<IBinder>& display)
     return statusTFromBinderStatus(status);
 }
 
+status_t SurfaceComposerClient::getHdrConversionCapabilities(
+        std::vector<gui::HdrConversionCapability>* hdrConversionCapabilities) {
+    binder::Status status = ComposerServiceAIDL::getComposerService()->getHdrConversionCapabilities(
+            hdrConversionCapabilities);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::setHdrConversionStrategy(
+        gui::HdrConversionStrategy hdrConversionStrategy, ui::Hdr* outPreferredHdrOutputType) {
+    int hdrType;
+    binder::Status status = ComposerServiceAIDL::getComposerService()
+                                    ->setHdrConversionStrategy(hdrConversionStrategy, &hdrType);
+    *outPreferredHdrOutputType = static_cast<ui::Hdr>(hdrType);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::getHdrOutputConversionSupport(bool* isSupported) {
+    binder::Status status =
+            ComposerServiceAIDL::getComposerService()->getHdrOutputConversionSupport(isSupported);
+    return statusTFromBinderStatus(status);
+}
+
 status_t SurfaceComposerClient::setOverrideFrameRate(uid_t uid, float frameRate) {
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->setOverrideFrameRate(uid, frameRate);
@@ -2860,22 +3035,20 @@ void ReleaseCallbackThread::threadMain() {
     while (true) {
         {
             std::unique_lock<std::mutex> lock(mMutex);
+            base::ScopedLockAssertion assumeLocked(mMutex);
             callbackInfos = std::move(mCallbackInfos);
             mCallbackInfos = {};
         }
 
         while (!callbackInfos.empty()) {
             auto [callbackId, releaseFence] = callbackInfos.front();
-            std::optional<os::ParcelFileDescriptor> fenceFd;
-            if (releaseFence != Fence::NO_FENCE) {
-                fenceFd = os::ParcelFileDescriptor(base::unique_fd(::dup(releaseFence->get())));
-            }
-            listener->onReleaseBuffer(callbackId, fenceFd, UINT_MAX);
+            listener->onReleaseBuffer(callbackId, std::move(releaseFence), UINT_MAX);
             callbackInfos.pop();
         }
 
         {
             std::unique_lock<std::mutex> lock(mMutex);
+            base::ScopedLockAssertion assumeLocked(mMutex);
             if (mCallbackInfos.size() == 0) {
                 mReleaseCallbackPending.wait(lock);
             }

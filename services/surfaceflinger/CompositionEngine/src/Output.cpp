@@ -31,6 +31,7 @@
 #include <ftl/future.h>
 #include <gui/TraceUtils.h>
 
+#include <optional>
 #include <thread>
 
 #include "renderengine/ExternalTexture.h"
@@ -118,8 +119,9 @@ const std::string& Output::getName() const {
 void Output::setName(const std::string& name) {
     mName = name;
     auto displayIdOpt = getDisplayId();
-    mNamePlusId = base::StringPrintf("%s (%s)", mName.c_str(),
-                                     displayIdOpt ? to_string(*displayIdOpt).c_str() : "NA");
+    mNamePlusId = displayIdOpt ? base::StringPrintf("%s (%s)", mName.c_str(),
+                                     to_string(*displayIdOpt).c_str())
+                               : mName;
 }
 
 void Output::setCompositionEnabled(bool enabled) {
@@ -479,6 +481,9 @@ void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs&
 
     // Process the layers to determine visibility and coverage
     compositionengine::Output::CoverageState coverage{layerFESet};
+    coverage.aboveCoveredLayersExcludingOverlays = refreshArgs.hasTrustedPresentationListener
+            ? std::make_optional<Region>()
+            : std::nullopt;
     collectVisibleLayers(refreshArgs, coverage);
 
     // Compute the resulting coverage for this output, and store it for later
@@ -533,6 +538,9 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
         return;
     }
 
+    bool computeAboveCoveredExcludingOverlays =
+            coverage.aboveCoveredLayersExcludingOverlays && !layerFEState->isInternalDisplayOverlay;
+
     /*
      * opaqueRegion: area of a surface that is fully opaque.
      */
@@ -573,6 +581,11 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
      * shadowRegion: Region cast by the layer's shadow.
      */
     Region shadowRegion;
+
+    /**
+     * covered region above excluding internal display overlay layers
+     */
+    std::optional<Region> coveredRegionExcludingDisplayOverlays = std::nullopt;
 
     const ui::Transform& tr = layerFEState->geomLayerTransform;
 
@@ -645,6 +658,12 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
 
     // Update accumAboveCoveredLayers for next (lower) layer
     coverage.aboveCoveredLayers.orSelf(visibleRegion);
+
+    if (CC_UNLIKELY(computeAboveCoveredExcludingOverlays)) {
+        coveredRegionExcludingDisplayOverlays =
+                coverage.aboveCoveredLayersExcludingOverlays->intersect(visibleRegion);
+        coverage.aboveCoveredLayersExcludingOverlays->orSelf(visibleRegion);
+    }
 
     // subtract the opaque region covered by the layers above us
     visibleRegion.subtractSelf(coverage.aboveOpaqueLayers);
@@ -732,6 +751,10 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
             ? outputState.transform.transform(
                       transparentRegion.intersect(outputState.layerStackSpace.getContent()))
             : Region();
+    if (CC_UNLIKELY(computeAboveCoveredExcludingOverlays)) {
+        outputLayerState.coveredRegionExcludingDisplayOverlays =
+                std::move(coveredRegionExcludingDisplayOverlays);
+    }
 }
 
 void Output::setReleasedLayers(const compositionengine::CompositionRefreshArgs&) {
@@ -1224,8 +1247,9 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     ALOGV(__FUNCTION__);
 
     const auto& outputState = getState();
-    const TracedOrdinal<bool> hasClientComposition = {"hasClientComposition",
-                                                      outputState.usesClientComposition};
+    const TracedOrdinal<bool> hasClientComposition = {
+        base::StringPrintf("hasClientComposition %s", mNamePlusId.c_str()),
+        outputState.usesClientComposition};
     if (!hasClientComposition) {
         setExpensiveRenderingExpected(false);
         return base::unique_fd();
@@ -1436,7 +1460,7 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                              Enabled);
                 compositionengine::LayerFE::ClientCompositionTargetSettings
                         targetSettings{.clip = clip,
-                                       .needsFiltering = layerNeedsFiltering(layer) ||
+                                       .needsFiltering = layer->needsFiltering() ||
                                                outputState.needsFiltering,
                                        .isSecure = outputState.isSecure,
                                        .supportsProtectedContent = supportsProtectedContent,
@@ -1465,10 +1489,6 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
     }
 
     return clientCompositionLayers;
-}
-
-bool Output::layerNeedsFiltering(const compositionengine::OutputLayer* layer) const {
-    return layer->needsFiltering();
 }
 
 void Output::appendRegionFlashRequests(

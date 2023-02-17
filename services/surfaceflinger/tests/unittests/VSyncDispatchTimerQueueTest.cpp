@@ -55,7 +55,7 @@ public:
     MOCK_METHOD0(resetModel, void());
     MOCK_CONST_METHOD0(needsMoreSamples, bool());
     MOCK_CONST_METHOD2(isVSyncInPhase, bool(nsecs_t, Fps));
-    MOCK_METHOD(void, setDivisor, (unsigned), (override));
+    MOCK_METHOD(void, setRenderRate, (Fps), (override));
     MOCK_CONST_METHOD1(dump, void(std::string&));
 
     nsecs_t nextVSyncTime(nsecs_t timePoint) const {
@@ -268,6 +268,43 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingFuture) {
 
     ASSERT_THAT(cb.mCalls.size(), Eq(1));
     EXPECT_THAT(cb.mCalls[0], Eq(mPeriod));
+}
+
+TEST_F(VSyncDispatchTimerQueueTest, updateAlarmSettingFuture) {
+    auto intended = mPeriod - 230;
+    Sequence seq;
+    EXPECT_CALL(mMockClock, alarmAt(_, 900)).InSequence(seq);
+    EXPECT_CALL(mMockClock, alarmAt(_, 700)).InSequence(seq);
+
+    CountingCallback cb(mDispatch);
+    auto result = mDispatch.schedule(cb,
+                                     {.workDuration = 100,
+                                      .readyDuration = 0,
+                                      .earliestVsync = intended});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(900, *result);
+
+    result = mDispatch.update(cb,
+                              {.workDuration = 300, .readyDuration = 0, .earliestVsync = intended});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(700, *result);
+
+    advanceToNextCallback();
+
+    ASSERT_THAT(cb.mCalls.size(), Eq(1));
+    EXPECT_THAT(cb.mCalls[0], Eq(mPeriod));
+    EXPECT_THAT(cb.mWakeupTime[0], Eq(700));
+}
+
+TEST_F(VSyncDispatchTimerQueueTest, updateDoesntSchedule) {
+    auto intended = mPeriod - 230;
+    EXPECT_CALL(mMockClock, alarmAt(_, _)).Times(0);
+
+    CountingCallback cb(mDispatch);
+    const auto result =
+            mDispatch.update(cb,
+                             {.workDuration = 300, .readyDuration = 0, .earliestVsync = intended});
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingFutureWithAdjustmentToTrueVsync) {

@@ -16,12 +16,15 @@
 
 #pragma once
 
+#include <array>
 #include <list>
 #include <memory>
 
 #include <PointerControllerInterface.h>
 #include <utils/Timers.h>
 
+#include "EventHub.h"
+#include "InputDevice.h"
 #include "InputReaderContext.h"
 #include "NotifyArgs.h"
 #include "ui/Rotation.h"
@@ -34,7 +37,10 @@ namespace android {
 // PointerController calls.
 class GestureConverter {
 public:
-    GestureConverter(InputReaderContext& readerContext, int32_t deviceId);
+    GestureConverter(InputReaderContext& readerContext, const InputDeviceContext& deviceContext,
+                     int32_t deviceId);
+
+    std::string dump() const;
 
     void setOrientation(ui::Rotation orientation) { mOrientation = orientation; }
     void reset();
@@ -43,9 +49,18 @@ public:
                                                       const Gesture& gesture);
 
 private:
-    NotifyArgs handleMove(nsecs_t when, nsecs_t readTime, const Gesture& gesture);
+    [[nodiscard]] NotifyArgs handleMove(nsecs_t when, nsecs_t readTime, const Gesture& gesture);
     [[nodiscard]] std::list<NotifyArgs> handleButtonsChange(nsecs_t when, nsecs_t readTime,
                                                             const Gesture& gesture);
+    [[nodiscard]] std::list<NotifyArgs> handleScroll(nsecs_t when, nsecs_t readTime,
+                                                     const Gesture& gesture);
+    [[nodiscard]] NotifyArgs handleFling(nsecs_t when, nsecs_t readTime, const Gesture& gesture);
+    [[nodiscard]] std::list<NotifyArgs> handleMultiFingerSwipe(nsecs_t when, nsecs_t readTime,
+                                                               uint32_t fingerCount, float dx,
+                                                               float dy);
+    [[nodiscard]] std::list<NotifyArgs> handleMultiFingerSwipeLift(nsecs_t when, nsecs_t readTime);
+    [[nodiscard]] std::list<NotifyArgs> handlePinch(nsecs_t when, nsecs_t readTime,
+                                                    const Gesture& gesture);
 
     NotifyMotionArgs makeMotionArgs(nsecs_t when, nsecs_t readTime, int32_t action,
                                     int32_t actionButton, int32_t buttonState,
@@ -59,10 +74,30 @@ private:
     std::shared_ptr<PointerControllerInterface> mPointerController;
 
     ui::Rotation mOrientation = ui::ROTATION_0;
+    RawAbsoluteAxisInfo mXAxisInfo;
+    RawAbsoluteAxisInfo mYAxisInfo;
+
     // The current button state according to the gestures library, but converted into MotionEvent
     // button values (AMOTION_EVENT_BUTTON_...).
     uint32_t mButtonState = 0;
     nsecs_t mDownTime = 0;
+
+    MotionClassification mCurrentClassification = MotionClassification::NONE;
+    // Only used when mCurrentClassification is MULTI_FINGER_SWIPE.
+    uint32_t mSwipeFingerCount = 0;
+    static constexpr float INITIAL_PINCH_SEPARATION_PX = 200.0;
+    // Only used when mCurrentClassification is PINCH.
+    float mPinchFingerSeparation;
+    static constexpr size_t MAX_FAKE_FINGERS = 4;
+    // We never need any PointerProperties other than the finger tool type, so we can just keep a
+    // const array of them.
+    const std::array<PointerProperties, MAX_FAKE_FINGERS> mFingerProps = {{
+            {.id = 0, .toolType = AMOTION_EVENT_TOOL_TYPE_FINGER},
+            {.id = 1, .toolType = AMOTION_EVENT_TOOL_TYPE_FINGER},
+            {.id = 2, .toolType = AMOTION_EVENT_TOOL_TYPE_FINGER},
+            {.id = 3, .toolType = AMOTION_EVENT_TOOL_TYPE_FINGER},
+    }};
+    std::array<PointerCoords, MAX_FAKE_FINGERS> mFakeFingerCoords = {};
 };
 
 } // namespace android

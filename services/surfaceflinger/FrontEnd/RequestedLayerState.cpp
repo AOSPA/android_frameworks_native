@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
-#include "FrontEnd/LayerCreationArgs.h"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 #undef LOG_TAG
 #define LOG_TAG "RequestedLayerState"
 
+#include <log/log.h>
 #include <private/android_filesystem_config.h>
 #include <sys/types.h>
 
 #include "Layer.h"
+#include "LayerCreationArgs.h"
 #include "LayerHandle.h"
+#include "LayerLog.h"
 #include "RequestedLayerState.h"
 
 namespace android::surfaceflinger::frontend {
@@ -43,11 +45,21 @@ std::string layerIdToString(uint32_t layerId) {
     return layerId == UNASSIGNED_LAYER_ID ? "none" : std::to_string(layerId);
 }
 
+std::string layerIdsToString(const std::vector<uint32_t>& layerIds) {
+    std::stringstream stream;
+    stream << "{";
+    for (auto layerId : layerIds) {
+        stream << layerId << ",";
+    }
+    stream << "}";
+    return stream.str();
+}
+
 } // namespace
 
 RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
       : id(args.sequence),
-        name(args.name),
+        name(args.name + "#" + std::to_string(args.sequence)),
         canBeRoot(args.addToRoot),
         layerCreationFlags(args.flags),
         textureName(args.textureName),
@@ -59,8 +71,14 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     changes |= RequestedLayerState::Changes::Metadata;
     handleAlive = true;
     parentId = LayerHandle::getLayerId(args.parentHandle.promote());
-    mirrorId = LayerHandle::getLayerId(args.mirrorLayerHandle.promote());
-    if (mirrorId != UNASSIGNED_LAYER_ID) {
+    if (args.parentHandle != nullptr) {
+        canBeRoot = false;
+    }
+    layerIdToMirror = LayerHandle::getLayerId(args.mirrorLayerHandle.promote());
+    if (layerIdToMirror != UNASSIGNED_LAYER_ID) {
+        changes |= RequestedLayerState::Changes::Mirror;
+    } else if (args.layerStackToMirror != ui::INVALID_LAYER_STACK) {
+        layerStackToMirror = args.layerStackToMirror;
         changes |= RequestedLayerState::Changes::Mirror;
     }
 
@@ -83,6 +101,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     } else {
         color.rgb = {0.0_hf, 0.0_hf, 0.0_hf};
     }
+    LLOGV(layerId, "Created %s flags=%d", getDebugString().c_str(), flags);
     color.a = 1.0f;
 
     crop.makeInvalid();
@@ -90,6 +109,8 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     layerStack = ui::DEFAULT_LAYER_STACK;
     transformToDisplayInverse = false;
     dataspace = ui::Dataspace::UNKNOWN;
+    desiredSdrHdrRatio = 1.f;
+    currentSdrHdrRatio = 1.f;
     dataspaceRequested = false;
     hdrMetadata.validTypes = 0;
     surfaceDamageRegion = Region::INVALID_REGION;
@@ -114,27 +135,50 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     defaultFrameRateCompatibility =
             static_cast<int8_t>(scheduler::LayerInfo::FrameRateCompatibility::Default);
     dataspace = ui::Dataspace::V0_SRGB;
+    gameMode = gui::GameMode::Unsupported;
+    requestedFrameRate = {};
 }
 
 void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerState) {
-    bool oldFlags = flags;
-    Rect oldBufferSize = getBufferSize();
+    const uint32_t oldFlags = flags;
+    const half oldAlpha = color.a;
+    const bool hadBufferOrSideStream = hasValidBuffer() || sidebandStream != nullptr;
     const layer_state_t& clientState = resolvedComposerState.state;
-
+    const bool hadBlur = hasBlur();
     uint64_t clientChanges = what | layer_state_t::diff(clientState);
     layer_state_t::merge(clientState);
     what = clientChanges;
 
     if (clientState.what & layer_state_t::eFlagsChanged) {
         if ((oldFlags ^ flags) & layer_state_t::eLayerHidden) {
-            changes |= RequestedLayerState::Changes::Visibility;
+            changes |= RequestedLayerState::Changes::Visibility |
+                    RequestedLayerState::Changes::VisibleRegion;
         }
         if ((oldFlags ^ flags) & layer_state_t::eIgnoreDestinationFrame) {
             changes |= RequestedLayerState::Changes::Geometry;
         }
     }
-    if (clientState.what & layer_state_t::eBufferChanged && oldBufferSize != getBufferSize()) {
-        changes |= RequestedLayerState::Changes::Geometry;
+    if (clientState.what &
+        (layer_state_t::eBufferChanged | layer_state_t::eSidebandStreamChanged)) {
+        const bool hasBufferOrSideStream = hasValidBuffer() || sidebandStream != nullptr;
+        if (hadBufferOrSideStream != hasBufferOrSideStream) {
+            changes |= RequestedLayerState::Changes::Geometry |
+                    RequestedLayerState::Changes::VisibleRegion |
+                    RequestedLayerState::Changes::Visibility | RequestedLayerState::Changes::Input |
+                    RequestedLayerState::Changes::Buffer;
+        }
+    }
+    if (what & (layer_state_t::eAlphaChanged)) {
+        if (oldAlpha == 0 || color.a == 0) {
+            changes |= RequestedLayerState::Changes::Visibility |
+                    RequestedLayerState::Changes::VisibleRegion;
+        }
+    }
+    if (what & (layer_state_t::eBackgroundBlurRadiusChanged | layer_state_t::eBlurRegionsChanged)) {
+        if (hadBlur != hasBlur()) {
+            changes |= RequestedLayerState::Changes::Visibility |
+                    RequestedLayerState::Changes::VisibleRegion;
+        }
     }
     if (clientChanges & layer_state_t::HIERARCHY_CHANGES)
         changes |= RequestedLayerState::Changes::Hierarchy;
@@ -142,7 +186,12 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         changes |= RequestedLayerState::Changes::Content;
     if (clientChanges & layer_state_t::GEOMETRY_CHANGES)
         changes |= RequestedLayerState::Changes::Geometry;
-
+    if (clientChanges & layer_state_t::AFFECTS_CHILDREN)
+        changes |= RequestedLayerState::Changes::AffectsChildren;
+    if (clientChanges & layer_state_t::INPUT_CHANGES)
+        changes |= RequestedLayerState::Changes::Input;
+    if (clientChanges & layer_state_t::VISIBLE_REGION_CHANGES)
+        changes |= RequestedLayerState::Changes::VisibleRegion;
     if (clientState.what & layer_state_t::eColorTransformChanged) {
         static const mat4 identityMatrix = mat4();
         hasColorTransform = colorTransform != identityMatrix;
@@ -181,7 +230,6 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         wp<IBinder>& touchableRegionCropHandle =
                 windowInfoHandle->editInfo()->touchableRegionCropHandle;
         touchCropId = LayerHandle::getLayerId(touchableRegionCropHandle.promote());
-        changes |= RequestedLayerState::Changes::Input;
         touchableRegionCropHandle.clear();
     }
     if (clientState.what & layer_state_t::eStretchChanged) {
@@ -203,9 +251,45 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     if (clientState.what & layer_state_t::eMatrixChanged) {
         requestedTransform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
     }
+    if (clientState.what & layer_state_t::eMetadataChanged) {
+        const int32_t requestedGameMode =
+                clientState.metadata.getInt32(gui::METADATA_GAME_MODE, -1);
+        if (requestedGameMode != -1) {
+            // The transaction will be received on the Task layer and needs to be applied to all
+            // child layers.
+            if (static_cast<int32_t>(gameMode) != requestedGameMode) {
+                gameMode = static_cast<gui::GameMode>(requestedGameMode);
+                changes |= RequestedLayerState::Changes::AffectsChildren;
+            }
+        }
+    }
+    if (clientState.what & layer_state_t::eFrameRateChanged) {
+        const auto compatibility =
+                Layer::FrameRate::convertCompatibility(clientState.frameRateCompatibility);
+        const auto strategy = Layer::FrameRate::convertChangeFrameRateStrategy(
+                clientState.changeFrameRateStrategy);
+        requestedFrameRate =
+                Layer::FrameRate(Fps::fromValue(clientState.frameRate), compatibility, strategy);
+        changes |= RequestedLayerState::Changes::FrameRate;
+    }
 }
 
-ui::Transform RequestedLayerState::getTransform() const {
+ui::Size RequestedLayerState::getUnrotatedBufferSize(uint32_t displayRotationFlags) const {
+    uint32_t bufferWidth = externalTexture->getWidth();
+    uint32_t bufferHeight = externalTexture->getHeight();
+    // Undo any transformations on the buffer.
+    if (bufferTransform & ui::Transform::ROT_90) {
+        std::swap(bufferWidth, bufferHeight);
+    }
+    if (transformToDisplayInverse) {
+        if (displayRotationFlags & ui::Transform::ROT_90) {
+            std::swap(bufferWidth, bufferHeight);
+        }
+    }
+    return {bufferWidth, bufferHeight};
+}
+
+ui::Transform RequestedLayerState::getTransform(uint32_t displayRotationFlags) const {
     if ((flags & layer_state_t::eIgnoreDestinationFrame) || destinationFrame.isEmpty()) {
         // If destination frame is not set, use the requested transform set via
         // Transaction::setPosition and Transaction::setMatrix.
@@ -230,22 +314,10 @@ ui::Transform RequestedLayerState::getTransform() const {
         return transform;
     }
 
-    uint32_t bufferWidth = externalTexture->getWidth();
-    uint32_t bufferHeight = externalTexture->getHeight();
-    // Undo any transformations on the buffer.
-    if (bufferTransform & ui::Transform::ROT_90) {
-        std::swap(bufferWidth, bufferHeight);
-    }
-    // TODO(b/238781169) remove dep
-    uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
-    if (transformToDisplayInverse) {
-        if (invTransform & ui::Transform::ROT_90) {
-            std::swap(bufferWidth, bufferHeight);
-        }
-    }
+    ui::Size bufferSize = getUnrotatedBufferSize(displayRotationFlags);
 
-    float sx = static_cast<float>(destW) / static_cast<float>(bufferWidth);
-    float sy = static_cast<float>(destH) / static_cast<float>(bufferHeight);
+    float sx = static_cast<float>(destW) / static_cast<float>(bufferSize.width);
+    float sy = static_cast<float>(destH) / static_cast<float>(bufferSize.height);
     ui::Transform transform;
     transform.set(sx, 0, 0, sy);
     transform.set(static_cast<float>(destRect.left), static_cast<float>(destRect.top));
@@ -253,11 +325,11 @@ ui::Transform RequestedLayerState::getTransform() const {
 }
 
 std::string RequestedLayerState::getDebugString() const {
-    return "[" + std::to_string(id) + "]" + name + ",parent=" + layerIdToString(parentId) +
-            ",relativeParent=" + layerIdToString(relativeParentId) +
-            ",isRelativeOf=" + std::to_string(isRelativeOf) +
-            ",mirrorId=" + layerIdToString(mirrorId) +
-            ",handleAlive=" + std::to_string(handleAlive) + ",z=" + std::to_string(z);
+    std::stringstream debug;
+    debug << "RequestedLayerState{" << name << " parent=" << layerIdToString(parentId)
+          << " relativeParent=" << layerIdToString(relativeParentId)
+          << " mirrorId=" << layerIdsToString(mirrorIds) << " handle=" << handleAlive << " z=" << z;
+    return debug.str();
 }
 
 std::string RequestedLayerState::getDebugStringShort() const {
@@ -279,7 +351,7 @@ half4 RequestedLayerState::getColor() const {
     }
     return color;
 }
-Rect RequestedLayerState::getBufferSize() const {
+Rect RequestedLayerState::getBufferSize(uint32_t displayRotationFlags) const {
     // for buffer state layers we use the display frame size as the buffer size.
     if (!externalTexture) {
         return Rect::INVALID_RECT;
@@ -294,8 +366,7 @@ Rect RequestedLayerState::getBufferSize() const {
     }
 
     if (transformToDisplayInverse) {
-        // TODO(b/238781169) pass in display metrics (would be useful for input info as well
-        uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
+        uint32_t invTransform = displayRotationFlags;
         if (invTransform & ui::Transform::ROT_90) {
             std::swap(bufWidth, bufHeight);
         }
@@ -304,8 +375,8 @@ Rect RequestedLayerState::getBufferSize() const {
     return Rect(0, 0, static_cast<int32_t>(bufWidth), static_cast<int32_t>(bufHeight));
 }
 
-Rect RequestedLayerState::getCroppedBufferSize() const {
-    Rect size = getBufferSize();
+Rect RequestedLayerState::getCroppedBufferSize(const Rect& bufferSize) const {
+    Rect size = bufferSize;
     if (!crop.isEmpty() && size.isValid()) {
         size.intersect(crop, &size);
     } else if (!crop.isEmpty()) {
@@ -364,7 +435,21 @@ Rect RequestedLayerState::reduce(const Rect& win, const Region& exclude) {
 // If the relative parentid is unassigned, the layer will be considered relative but won't be
 // reachable.
 bool RequestedLayerState::hasValidRelativeParent() const {
-    return isRelativeOf && parentId != relativeParentId;
+    return isRelativeOf &&
+            (parentId != relativeParentId || relativeParentId == UNASSIGNED_LAYER_ID);
+}
+
+bool RequestedLayerState::hasInputInfo() const {
+    if (!windowInfoHandle) {
+        return false;
+    }
+    const auto windowInfo = windowInfoHandle->getInfo();
+    return windowInfo->token != nullptr ||
+            windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+}
+
+bool RequestedLayerState::hasBlur() const {
+    return backgroundBlurRadius > 0 || blurRegions.size() > 0;
 }
 
 } // namespace android::surfaceflinger::frontend

@@ -224,29 +224,36 @@ public:
 
         const auto fps = selectorPtr->getActiveMode().fps;
         mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
-        mFlinger->mVsyncModulator = sp<scheduler::VsyncModulator>::make(
-                mFlinger->mVsyncConfiguration->getCurrentConfigs());
 
         mFlinger->mRefreshRateStats =
                 std::make_unique<scheduler::RefreshRateStats>(*mFlinger->mTimeStats, fps,
                                                               hal::PowerMode::OFF);
+
+        mTokenManager = std::make_unique<frametimeline::impl::TokenManager>();
 
         using Callback = scheduler::ISchedulerCallback;
         Callback& callback = callbackImpl == SchedulerCallbackImpl::kNoOp
                 ? static_cast<Callback&>(mNoOpSchedulerCallback)
                 : static_cast<Callback&>(mSchedulerCallback);
 
+        auto modulatorPtr = sp<scheduler::VsyncModulator>::make(
+                mFlinger->mVsyncConfiguration->getCurrentConfigs());
+
         if (useNiceMock) {
             mScheduler =
                     new testing::NiceMock<scheduler::TestableScheduler>(std::move(vsyncController),
                                                                         std::move(vsyncTracker),
                                                                         std::move(selectorPtr),
+                                                                        std::move(modulatorPtr),
                                                                         callback);
         } else {
             mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
                                                           std::move(vsyncTracker),
-                                                          std::move(selectorPtr), callback);
+                                                          std::move(selectorPtr),
+                                                          std::move(modulatorPtr), callback);
         }
+
+        mScheduler->initVsync(mScheduler->getVsyncSchedule().getDispatch(), *mTokenManager, 0ms);
 
         mFlinger->mAppConnectionHandle = mScheduler->createConnection(std::move(appEventThread));
         mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));
@@ -257,8 +264,6 @@ public:
 
     scheduler::TestableScheduler& mutableScheduler() { return *mScheduler; }
     scheduler::mock::SchedulerCallback& mockSchedulerCallback() { return mSchedulerCallback; }
-
-    auto& mutableVsyncModulator() { return mFlinger->mVsyncModulator; }
 
     using CreateBufferQueueFunction = surfaceflinger::test::Factory::CreateBufferQueueFunction;
     void setCreateBufferQueueFunction(CreateBufferQueueFunction f) {
@@ -401,8 +406,8 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto renderScreenImpl(std::unique_ptr<RenderArea> renderArea,
-                          SurfaceFlinger::TraverseLayersFunction traverseLayers,
+    auto renderScreenImpl(std::shared_ptr<const RenderArea> renderArea,
+                          SurfaceFlinger::GetLayerSnapshotsFunction traverseLayers,
                           const std::shared_ptr<renderengine::ExternalTexture>& buffer,
                           bool forSystem, bool regionSampling) {
         ScreenCaptureResults captureResults;
@@ -435,12 +440,13 @@ public:
                              uint32_t flags, const sp<IBinder>& applyToken,
                              const InputWindowCommands& inputWindowCommands,
                              int64_t desiredPresentTime, bool isAutoTimestamp,
-                             const client_cache_t& uncacheBuffer, bool hasListenerCallbacks,
+                             const std::vector<client_cache_t>& uncacheBuffers,
+                             bool hasListenerCallbacks,
                              std::vector<ListenerCallbacks>& listenerCallbacks,
                              uint64_t transactionId) {
         return mFlinger->setTransactionState(frameTimelineInfo, states, displays, flags, applyToken,
                                              inputWindowCommands, desiredPresentTime,
-                                             isAutoTimestamp, uncacheBuffer, hasListenerCallbacks,
+                                             isAutoTimestamp, uncacheBuffers, hasListenerCallbacks,
                                              listenerCallbacks, transactionId);
     }
 
@@ -468,7 +474,7 @@ public:
         return mFlinger->setDesiredDisplayModeSpecs(displayToken, specs);
     }
 
-    void onActiveDisplayChanged(const sp<DisplayDevice>& activeDisplay) {
+    void onActiveDisplayChanged(const DisplayDevice& activeDisplay) {
         Mutex::Autolock lock(mFlinger->mStateLock);
         ftl::FakeGuard guard(kMainThreadContext);
         mFlinger->onActiveDisplayChangedLocked(nullptr, activeDisplay);
@@ -911,6 +917,7 @@ private:
     sp<SurfaceFlinger> mFlinger;
     scheduler::mock::SchedulerCallback mSchedulerCallback;
     scheduler::mock::NoOpSchedulerCallback mNoOpSchedulerCallback;
+    std::unique_ptr<frametimeline::impl::TokenManager> mTokenManager;
     scheduler::TestableScheduler* mScheduler = nullptr;
 };
 

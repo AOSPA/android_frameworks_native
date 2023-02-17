@@ -262,8 +262,8 @@ struct DisplayPowerCase {
         return display;
     }
 
-    static void setInitialPrimaryHWVsyncEnabled(DisplayTransactionTest* test, bool enabled) {
-        test->mFlinger.scheduler()->mutablePrimaryHWVsyncEnabled() = enabled;
+    static void setInitialHwVsyncEnabled(DisplayTransactionTest* test, bool enabled) {
+        test->mFlinger.scheduler()->setInitialHwVsyncEnabled(enabled);
     }
 
     static void setupRepaintEverythingCallExpectations(DisplayTransactionTest* test) {
@@ -329,9 +329,9 @@ void SetPowerModeInternalTest::transitionDisplayCommon() {
     Case::Doze::setupComposerCallExpectations(this);
     auto display =
             Case::injectDisplayWithInitialPowerMode(this, Case::Transition::INITIAL_POWER_MODE);
-    Case::setInitialPrimaryHWVsyncEnabled(this,
-                                          PowerModeInitialVSyncEnabled<
-                                                  Case::Transition::INITIAL_POWER_MODE>::value);
+    Case::setInitialHwVsyncEnabled(this,
+                                   PowerModeInitialVSyncEnabled<
+                                           Case::Transition::INITIAL_POWER_MODE>::value);
 
     // --------------------------------------------------------------------
     // Call Expectations
@@ -404,13 +404,11 @@ TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfVirtualDisplay
     EXPECT_EQ(PowerMode::ON, display.mutableDisplayDevice()->getPowerMode());
 }
 
-// TODO(b/262417075)
-TEST_F(SetPowerModeInternalTest, DISABLED_transitionsDisplayFromOffToOnPrimaryDisplay) {
+TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToOnPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOffToOnVariant>>();
 }
 
-// TODO(b/262417075)
-TEST_F(SetPowerModeInternalTest, DISABLED_transitionsDisplayFromOffToDozeSuspendPrimaryDisplay) {
+TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToDozeSuspendPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOffToDozeSuspendVariant>>();
 }
 
@@ -446,13 +444,11 @@ TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToUnknownPrimaryDisplay
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOnToUnknownVariant>>();
 }
 
-// TODO(b/262417075)
-TEST_F(SetPowerModeInternalTest, DISABLED_transitionsDisplayFromOffToOnExternalDisplay) {
+TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToOnExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOffToOnVariant>>();
 }
 
-// TODO(b/262417075)
-TEST_F(SetPowerModeInternalTest, DISABLED_transitionsDisplayFromOffToDozeSuspendExternalDisplay) {
+TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToDozeSuspendExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOffToDozeSuspendVariant>>();
 }
 

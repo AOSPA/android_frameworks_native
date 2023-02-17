@@ -27,11 +27,8 @@ namespace android {
 std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutputArgs args) {
     std::shared_ptr<ScreenCaptureOutput> output = compositionengine::impl::createOutputTemplated<
             ScreenCaptureOutput, compositionengine::CompositionEngine, const RenderArea&,
-            std::unordered_set<compositionengine::LayerFE*>,
             const compositionengine::Output::ColorProfile&, bool>(args.compositionEngine,
                                                                   args.renderArea,
-                                                                  std::move(
-                                                                          args.filterForScreenshot),
                                                                   args.colorProfile,
                                                                   args.regionSampling);
     output->editState().isSecure = args.renderArea.isSecure();
@@ -45,25 +42,27 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
                     .setHasWideColorGamut(true)
                     .Build()));
 
-    ui::Rotation orientation = ui::Transform::toRotation(args.renderArea.getRotationFlags());
-    Rect orientedDisplaySpaceRect{args.renderArea.getReqWidth(), args.renderArea.getReqHeight()};
-    output->setProjection(orientation, args.renderArea.getLayerStackSpaceRect(),
-                          orientedDisplaySpaceRect);
-
-    Rect sourceCrop = args.renderArea.getSourceCrop();
+    const Rect& sourceCrop = args.renderArea.getSourceCrop();
+    const ui::Rotation orientation = ui::Transform::toRotation(args.renderArea.getRotationFlags());
+    const Rect orientedDisplaySpaceRect{args.renderArea.getReqWidth(),
+                                        args.renderArea.getReqHeight()};
+    output->setProjection(orientation, sourceCrop, orientedDisplaySpaceRect);
     output->setDisplaySize({sourceCrop.getWidth(), sourceCrop.getHeight()});
 
+    {
+        std::string name = args.regionSampling ? "RegionSampling" : "ScreenCaptureOutput";
+        if (auto displayDevice = args.renderArea.getDisplayDevice()) {
+            base::StringAppendF(&name, " for %" PRIu64, displayDevice->getId().value);
+        }
+        output->setName(name);
+    }
     return output;
 }
 
 ScreenCaptureOutput::ScreenCaptureOutput(
-        const RenderArea& renderArea,
-        std::unordered_set<compositionengine::LayerFE*> filterForScreenshot,
-        const compositionengine::Output::ColorProfile& colorProfile, bool regionSampling)
-      : mRenderArea(renderArea),
-        mFilterForScreenshot(std::move(filterForScreenshot)),
-        mColorProfile(colorProfile),
-        mRegionSampling(regionSampling) {}
+        const RenderArea& renderArea, const compositionengine::Output::ColorProfile& colorProfile,
+        bool regionSampling)
+      : mRenderArea(renderArea), mColorProfile(colorProfile), mRegionSampling(regionSampling) {}
 
 void ScreenCaptureOutput::updateColorProfile(const compositionengine::CompositionRefreshArgs&) {
     auto& outputState = editState();
@@ -106,11 +105,6 @@ ScreenCaptureOutput::generateClientCompositionRequests(
     clientCompositionLayers.insert(clientCompositionLayers.begin(), fillLayer);
 
     return clientCompositionLayers;
-}
-
-bool ScreenCaptureOutput::layerNeedsFiltering(const compositionengine::OutputLayer* layer) const {
-    return mRenderArea.needsFiltering() ||
-            mFilterForScreenshot.find(&layer->getLayerFE()) != mFilterForScreenshot.end();
 }
 
 } // namespace android

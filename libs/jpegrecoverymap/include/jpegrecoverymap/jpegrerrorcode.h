@@ -16,7 +16,7 @@
 
 #include <utils/Errors.h>
 
-namespace android::recoverymap {
+namespace android::jpegrecoverymap {
 
 enum {
     // status_t map for errors in the media framework
@@ -38,6 +38,7 @@ enum {
     ERROR_JPEGR_RESOLUTION_MISMATCH     = JPEGR_IO_ERROR_BASE - 3,
     ERROR_JPEGR_BUFFER_TOO_SMALL        = JPEGR_IO_ERROR_BASE - 4,
     ERROR_JPEGR_INVALID_COLORGAMUT      = JPEGR_IO_ERROR_BASE - 5,
+    ERROR_JPEGR_INVALID_TRANS_FUNC      = JPEGR_IO_ERROR_BASE - 6,
 
     JPEGR_RUNTIME_ERROR_BASE            = -20000,
     ERROR_JPEGR_ENCODE_ERROR            = JPEGR_RUNTIME_ERROR_BASE - 1,
@@ -47,4 +48,4 @@ enum {
     ERROR_JPEGR_TONEMAP_ERROR           = JPEGR_RUNTIME_ERROR_BASE - 5,
 };
 
-}  // namespace android::recoverymap
+}  // namespace android::jpegrecoverymap

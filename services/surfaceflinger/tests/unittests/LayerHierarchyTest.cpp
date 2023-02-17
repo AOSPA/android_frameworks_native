@@ -21,6 +21,7 @@
 #include "FrontEnd/LayerHierarchy.h"
 #include "FrontEnd/LayerLifecycleManager.h"
 #include "Layer.h"
+#include "LayerHierarchyTest.h"
 #include "gui/SurfaceComposerClient.h"
 
 #define UPDATE_AND_VERIFY(HIERARCHY)  \
@@ -31,16 +32,6 @@
 
 namespace android::surfaceflinger::frontend {
 
-namespace {
-LayerCreationArgs createArgs(uint32_t id, bool canBeRoot, wp<IBinder> parent, wp<IBinder> mirror) {
-    LayerCreationArgs args(nullptr, nullptr, "testlayer", 0, {}, std::make_optional(id));
-    args.addToRoot = canBeRoot;
-    args.parentHandle = parent;
-    args.mirrorLayerHandle = mirror;
-    return args;
-}
-} // namespace
-
 // To run test:
 /**
  mp :libsurfaceflinger_unittest && adb sync; adb shell \
@@ -50,163 +41,9 @@ LayerCreationArgs createArgs(uint32_t id, bool canBeRoot, wp<IBinder> parent, wp
     --gtest_brief=1
 */
 
-class LayerHierarchyTest : public testing::Test {
+class LayerHierarchyTest : public LayerHierarchyTestBase {
 protected:
-    LayerHierarchyTest() {
-        // tree with 3 levels of children
-        // ROOT
-        // ├── 1
-        // │   ├── 11
-        // │   │   └── 111
-        // │   ├── 12
-        // │   │   ├── 121
-        // │   │   └── 122
-        // │   │       └── 1221
-        // │   └── 13
-        // └── 2
-
-        createRootLayer(1);
-        createRootLayer(2);
-        createLayer(11, 1);
-        createLayer(12, 1);
-        createLayer(13, 1);
-        createLayer(111, 11);
-        createLayer(121, 12);
-        createLayer(122, 12);
-        createLayer(1221, 122);
-        mLifecycleManager.commitChanges();
-    }
-    std::vector<uint32_t> getTraversalPath(const LayerHierarchy& hierarchy) const {
-        std::vector<uint32_t> layerIds;
-        hierarchy.traverse([&layerIds = layerIds](const LayerHierarchy& hierarchy,
-                                                  const LayerHierarchy::TraversalPath&) -> bool {
-            layerIds.emplace_back(hierarchy.getLayer()->id);
-            return true;
-        });
-        return layerIds;
-    }
-
-    std::vector<uint32_t> getTraversalPathInZOrder(const LayerHierarchy& hierarchy) const {
-        std::vector<uint32_t> layerIds;
-        hierarchy.traverseInZOrder(
-                [&layerIds = layerIds](const LayerHierarchy& hierarchy,
-                                       const LayerHierarchy::TraversalPath&) -> bool {
-                    layerIds.emplace_back(hierarchy.getLayer()->id);
-                    return true;
-                });
-        return layerIds;
-    }
-
-    void createRootLayer(uint32_t id) {
-        sp<LayerHandle> handle = sp<LayerHandle>::make(id);
-        mHandles[id] = handle;
-        std::vector<std::unique_ptr<RequestedLayerState>> layers;
-        layers.emplace_back(std::make_unique<RequestedLayerState>(
-                createArgs(/*id=*/id, /*canBeRoot=*/true, /*parent=*/nullptr, /*mirror=*/nullptr)));
-        mLifecycleManager.addLayers(std::move(layers));
-    }
-
-    void createLayer(uint32_t id, uint32_t parentId) {
-        sp<LayerHandle> handle = sp<LayerHandle>::make(id);
-        mHandles[id] = handle;
-        std::vector<std::unique_ptr<RequestedLayerState>> layers;
-        layers.emplace_back(std::make_unique<RequestedLayerState>(
-                createArgs(/*id=*/id, /*canBeRoot=*/false, /*parent=*/mHandles[parentId],
-                           /*mirror=*/nullptr)));
-        mLifecycleManager.addLayers(std::move(layers));
-    }
-
-    void reparentLayer(uint32_t id, uint32_t newParentId) {
-        std::vector<TransactionState> transactions;
-        transactions.emplace_back();
-        transactions.back().states.push_back({});
-
-        if (newParentId == UNASSIGNED_LAYER_ID) {
-            transactions.back().states.front().state.parentSurfaceControlForChild = nullptr;
-        } else {
-            auto parentHandle = mHandles[newParentId];
-            transactions.back().states.front().state.parentSurfaceControlForChild =
-                    sp<SurfaceControl>::make(SurfaceComposerClient::getDefault(), parentHandle,
-                                             static_cast<int32_t>(newParentId), "Test");
-        }
-        transactions.back().states.front().state.what = layer_state_t::eReparent;
-        transactions.back().states.front().state.surface = mHandles[id];
-        mLifecycleManager.applyTransactions(transactions);
-    }
-
-    void reparentRelativeLayer(uint32_t id, uint32_t relativeParentId) {
-        std::vector<TransactionState> transactions;
-        transactions.emplace_back();
-        transactions.back().states.push_back({});
-
-        if (relativeParentId == UNASSIGNED_LAYER_ID) {
-            transactions.back().states.front().state.what = layer_state_t::eLayerChanged;
-        } else {
-            auto parentHandle = mHandles[relativeParentId];
-            transactions.back().states.front().state.relativeLayerSurfaceControl =
-                    sp<SurfaceControl>::make(SurfaceComposerClient::getDefault(), parentHandle,
-                                             static_cast<int32_t>(relativeParentId), "test");
-            transactions.back().states.front().state.what = layer_state_t::eRelativeLayerChanged;
-        }
-        transactions.back().states.front().state.surface = mHandles[id];
-        mLifecycleManager.applyTransactions(transactions);
-    }
-
-    void mirrorLayer(uint32_t id, uint32_t parent, uint32_t layerToMirror) {
-        auto parentHandle = (parent == UNASSIGNED_LAYER_ID) ? nullptr : mHandles[parent];
-        auto mirrorHandle =
-                (layerToMirror == UNASSIGNED_LAYER_ID) ? nullptr : mHandles[layerToMirror];
-
-        sp<LayerHandle> handle = sp<LayerHandle>::make(id);
-        mHandles[id] = handle;
-        std::vector<std::unique_ptr<RequestedLayerState>> layers;
-        layers.emplace_back(std::make_unique<RequestedLayerState>(
-                createArgs(/*id=*/id, /*canBeRoot=*/false, /*parent=*/parentHandle,
-                           /*mirror=*/mHandles[layerToMirror])));
-        mLifecycleManager.addLayers(std::move(layers));
-    }
-
-    void updateBackgroundColor(uint32_t id, half alpha) {
-        std::vector<TransactionState> transactions;
-        transactions.emplace_back();
-        transactions.back().states.push_back({});
-        transactions.back().states.front().state.what = layer_state_t::eBackgroundColorChanged;
-        transactions.back().states.front().state.bgColorAlpha = alpha;
-        transactions.back().states.front().state.surface = mHandles[id];
-        mLifecycleManager.applyTransactions(transactions);
-    }
-
-    void destroyLayerHandle(uint32_t id) { mLifecycleManager.onHandlesDestroyed({id}); }
-
-    void updateAndVerify(LayerHierarchyBuilder& hierarchyBuilder) {
-        if (mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy)) {
-            hierarchyBuilder.update(mLifecycleManager.getLayers(),
-                                    mLifecycleManager.getDestroyedLayers());
-        }
-        mLifecycleManager.commitChanges();
-
-        // rebuild layer hierarchy from scratch and verify that it matches the updated state.
-        LayerHierarchyBuilder newBuilder(mLifecycleManager.getLayers());
-        EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()),
-                  getTraversalPath(newBuilder.getHierarchy()));
-        EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()),
-                  getTraversalPathInZOrder(newBuilder.getHierarchy()));
-        EXPECT_FALSE(
-                mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy));
-    }
-
-    void setZ(uint32_t id, int32_t z) {
-        std::vector<TransactionState> transactions;
-        transactions.emplace_back();
-        transactions.back().states.push_back({});
-
-        transactions.back().states.front().state.what = layer_state_t::eLayerChanged;
-        transactions.back().states.front().state.layerId = static_cast<int32_t>(id);
-        transactions.back().states.front().state.z = z;
-        mLifecycleManager.applyTransactions(transactions);
-    }
-    LayerLifecycleManager mLifecycleManager;
-    std::unordered_map<uint32_t, sp<LayerHandle>> mHandles;
+    LayerHierarchyTest() : LayerHierarchyTestBase() { mLifecycleManager.commitChanges(); }
 };
 
 // reparenting tests
@@ -723,6 +560,150 @@ TEST_F(LayerHierarchyTest, traversalPathId) {
     };
     hierarchyBuilder.getHierarchy().traverse(checkTraversalPathIdVisitor);
     hierarchyBuilder.getHierarchy().traverseInZOrder(checkTraversalPathIdVisitor);
+}
+
+TEST_F(LayerHierarchyTest, zorderRespectsLayerSequenceId) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createRootLayer(2);
+    createRootLayer(4);
+    createRootLayer(5);
+    createLayer(11, 1);
+    createLayer(51, 5);
+    createLayer(53, 5);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 2, 4, 5, 51, 53};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+
+    // A new layer is added with a smaller sequence id. Make sure its sorted correctly. While
+    // sequence ids are always incremented, this scenario can happen when a layer is reparented.
+    createRootLayer(3);
+    createLayer(52, 5);
+
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    expectedTraversalPath = {1, 11, 2, 3, 4, 5, 51, 52, 53};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, zorderRespectsLayerZ) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createLayer(11, 1);
+    createLayer(12, 1);
+    createLayer(13, 1);
+    setZ(11, -1);
+    setZ(12, 2);
+    setZ(13, 1);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 13, 12};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    expectedTraversalPath = {11, 1, 13, 12};
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, zorderRespectsLayerStack) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createRootLayer(2);
+    createLayer(11, 1);
+    createLayer(21, 2);
+    setLayerStack(1, 20);
+    setLayerStack(2, 10);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 2, 21};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    expectedTraversalPath = {1, 11, 2, 21};
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, canMirrorDisplay) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1,  11,  111, 12,  121, 122,  1221, 13, 2,
+                                      1, 11, 111, 12,  121, 122, 1221, 13,   2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, mirrorNonExistingDisplay) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(5));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1, 11, 111, 12, 121, 122, 1221, 13, 2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, newRootLayerIsMirrored) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    createRootLayer(4);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1,  11,  111, 12,  121, 122,  1221, 13, 2, 4,
+                                      1, 11, 111, 12,  121, 122, 1221, 13,   2,  4};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, removedRootLayerIsNoLongerMirrored) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    reparentLayer(1, UNASSIGNED_LAYER_ID);
+    destroyLayerHandle(1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 2, 2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {11, 111, 12, 121, 122, 1221, 13};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
 }
 
 } // namespace android::surfaceflinger::frontend

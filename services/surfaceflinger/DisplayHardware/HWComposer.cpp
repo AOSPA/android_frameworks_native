@@ -30,6 +30,7 @@
 #include <compositionengine/Output.h>
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
+#include <ftl/concat.h>
 #include <log/log.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
@@ -70,6 +71,8 @@
 #define RETURN_IF_HWC_ERROR(error, displayId, ...) \
     RETURN_IF_HWC_ERROR_FOR(__FUNCTION__, error, displayId, __VA_ARGS__)
 
+using aidl::android::hardware::graphics::common::HdrConversionCapability;
+using aidl::android::hardware::graphics::common::HdrConversionStrategy;
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 namespace hal = android::hardware::graphics::composer::hal;
@@ -97,6 +100,7 @@ void HWComposer::setCallback(HWC2::ComposerCallback& callback) {
     loadCapabilities();
     loadLayerMetadataSupport();
     loadOverlayProperties();
+    loadHdrConversionCapabilities();
 
     if (mRegisteredCallback) {
         ALOGW("Callback already registered. Ignored extra registration attempt.");
@@ -145,16 +149,17 @@ bool HWComposer::updatesDeviceProductInfoOnHotplugReconnect() const {
     return mUpdateDeviceProductInfoOnHotplugReconnect;
 }
 
-bool HWComposer::onVsync(hal::HWDisplayId hwcDisplayId, nsecs_t timestamp) {
-    const auto displayId = toPhysicalDisplayId(hwcDisplayId);
-    if (!displayId) {
+std::optional<PhysicalDisplayId> HWComposer::onVsync(hal::HWDisplayId hwcDisplayId,
+                                                     nsecs_t timestamp) {
+    const auto displayIdOpt = toPhysicalDisplayId(hwcDisplayId);
+    if (!displayIdOpt) {
         LOG_HWC_DISPLAY_ERROR(hwcDisplayId, "Invalid HWC display");
-        return false;
+        return {};
     }
 
-    RETURN_IF_INVALID_DISPLAY(*displayId, false);
+    RETURN_IF_INVALID_DISPLAY(*displayIdOpt, {});
 
-    auto& displayData = mDisplayData[*displayId];
+    auto& displayData = mDisplayData[*displayIdOpt];
 
     {
         // There have been reports of HWCs that signal several vsync events
@@ -163,18 +168,18 @@ bool HWComposer::onVsync(hal::HWDisplayId hwcDisplayId, nsecs_t timestamp) {
         // out here so they don't cause havoc downstream.
         if (timestamp == displayData.lastPresentTimestamp) {
             ALOGW("Ignoring duplicate VSYNC event from HWC for display %s (t=%" PRId64 ")",
-                  to_string(*displayId).c_str(), timestamp);
-            return false;
+                  to_string(*displayIdOpt).c_str(), timestamp);
+            return {};
         }
 
         displayData.lastPresentTimestamp = timestamp;
     }
 
-    const auto tag = "HW_VSYNC_" + to_string(*displayId);
-    ATRACE_INT(tag.c_str(), displayData.vsyncTraceToggle);
+    ATRACE_INT(ftl::Concat("HW_VSYNC_", displayIdOpt->value).c_str(),
+               displayData.vsyncTraceToggle);
     displayData.vsyncTraceToggle = !displayData.vsyncTraceToggle;
 
-    return true;
+    return displayIdOpt;
 }
 
 size_t HWComposer::getMaxVirtualDisplayCount() const {
@@ -372,8 +377,8 @@ void HWComposer::setVsyncEnabled(PhysicalDisplayId displayId, hal::Vsync enabled
 
     displayData.vsyncEnabled = enabled;
 
-    const auto tag = "HW_VSYNC_ON_" + to_string(displayId);
-    ATRACE_INT(tag.c_str(), enabled == hal::Vsync::ENABLE ? 1 : 0);
+    ATRACE_INT(ftl::Concat("HW_VSYNC_ON_", displayId.value).c_str(),
+               enabled == hal::Vsync::ENABLE ? 1 : 0);
 }
 
 status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
@@ -787,6 +792,22 @@ std::optional<hal::HWConfigId> HWComposer::getPreferredBootDisplayMode(
     return displayModeId;
 }
 
+std::vector<HdrConversionCapability> HWComposer::getHdrConversionCapabilities() const {
+    return mHdrConversionCapabilities;
+}
+
+status_t HWComposer::setHdrConversionStrategy(
+        HdrConversionStrategy hdrConversionStrategy,
+        aidl::android::hardware::graphics::common::Hdr* outPreferredHdrOutputType) {
+    const auto error =
+            mComposer->setHdrConversionStrategy(hdrConversionStrategy, outPreferredHdrOutputType);
+    if (error != hal::Error::NONE) {
+        ALOGE("Error in setting HDR conversion strategy %s", to_string(error).c_str());
+        return INVALID_OPERATION;
+    }
+    return NO_ERROR;
+}
+
 status_t HWComposer::getDisplayDecorationSupport(
         PhysicalDisplayId displayId,
         std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
@@ -977,6 +998,14 @@ void HWComposer::loadCapabilities() {
 
 void HWComposer::loadOverlayProperties() {
     mComposer->getOverlaySupport(&mOverlayProperties);
+}
+
+void HWComposer::loadHdrConversionCapabilities() {
+    const auto error = mComposer->getHdrConversionCapabilities(&mHdrConversionCapabilities);
+    if (error != hal::Error::NONE) {
+        ALOGE("Error in fetching HDR conversion capabilities %s", to_string(error).c_str());
+        mHdrConversionCapabilities = {};
+    }
 }
 
 status_t HWComposer::setIdleTimerEnabled(PhysicalDisplayId displayId,

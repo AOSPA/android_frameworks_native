@@ -30,6 +30,8 @@ import android.gui.DisplayStatInfo;
 import android.gui.DynamicDisplayInfo;
 import android.gui.FrameEvent;
 import android.gui.FrameStats;
+import android.gui.HdrConversionCapability;
+import android.gui.HdrConversionStrategy;
 import android.gui.IDisplayEventConnection;
 import android.gui.IFpsListener;
 import android.gui.IHdrLayerInfoListener;
@@ -66,9 +68,15 @@ interface ISurfaceComposer {
 
     /**
      * Create a display event connection
+     *
+     * layerHandle
+     *     Optional binder handle representing a Layer in SF to associate the new
+     *     DisplayEventConnection with. This handle can be found inside a surface control after
+     *     surface creation, see ISurfaceComposerClient::createSurface. Set to null if no layer
+     *     association should be made.
      */
     @nullable IDisplayEventConnection createDisplayEventConnection(VsyncSource vsyncSource,
-            EventRegistration eventRegistration);
+            EventRegistration eventRegistration, @nullable IBinder layerHandle);
 
     /**
      * Create a connection with SurfaceFlinger.
@@ -77,9 +85,21 @@ interface ISurfaceComposer {
 
     /**
      * Create a virtual display
+     *
+     * displayName
+     *     The name of the virtual display
+     * secure
+     *     Whether this virtual display is secure
+     * requestedRefreshRate
+     *     The refresh rate, frames per second, to request on the virtual display.
+     *     This is just a request, the actual rate may be adjusted to align well
+     *     with physical displays running concurrently. If 0 is specified, the
+     *     virtual display is refreshed at the physical display refresh rate.
+     *
      * requires ACCESS_SURFACE_FLINGER permission.
      */
-    @nullable IBinder createDisplay(@utf8InCpp String displayName, boolean secure);
+    @nullable IBinder createDisplay(@utf8InCpp String displayName, boolean secure,
+            float requestedRefreshRate);
 
     /**
      * Destroy a virtual display
@@ -160,6 +180,28 @@ interface ISurfaceComposer {
      */
     // TODO(b/213909104) : Add unit tests to verify surface flinger boot time APIs
     boolean getBootDisplayModeSupport();
+
+    /**
+     * Gets the HDR conversion capabilities of the device. The conversion capability defines whether
+     * conversion from sourceType to outputType is possible (with or without latency).
+     *
+     * Requires the ACCESS_SURFACE_FLINGER permission.
+     */
+     List<HdrConversionCapability> getHdrConversionCapabilities();
+
+     /**
+      * Sets the HDR conversion strategy of the device.
+      * Returns the preferred HDR output type of the device, in case when HdrConversionStrategy has
+      * autoAllowedHdrTypes set. Returns Hdr::INVALID in other cases.
+      *
+      * Requires the ACCESS_SURFACE_FLINGER permission.
+      */
+     int setHdrConversionStrategy(in HdrConversionStrategy hdrConversionStrategy);
+
+     /**
+      * Gets whether HDR output conversion operations are supported on the device.
+      */
+     boolean getHdrOutputConversionSupport();
 
     /**
      * Switches Auto Low Latency Mode on/off on the connected display, if it is

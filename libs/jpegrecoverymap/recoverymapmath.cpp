@@ -15,13 +15,109 @@
  */
 
 #include <cmath>
-
+#include <vector>
 #include <jpegrecoverymap/recoverymapmath.h>
 
-namespace android::recoverymap {
+namespace android::jpegrecoverymap {
+
+static const std::vector<float> kPqOETF = [] {
+    std::vector<float> result;
+    for (int idx = 0; idx < kPqOETFNumEntries; idx++) {
+      float value = static_cast<float>(idx) / static_cast<float>(kPqOETFNumEntries - 1);
+      result.push_back(pqOetf(value));
+    }
+    return result;
+}();
+
+static const std::vector<float> kPqInvOETF = [] {
+    std::vector<float> result;
+    for (int idx = 0; idx < kPqInvOETFNumEntries; idx++) {
+      float value = static_cast<float>(idx) / static_cast<float>(kPqInvOETFNumEntries - 1);
+      result.push_back(pqInvOetf(value));
+    }
+    return result;
+}();
+
+static const std::vector<float> kHlgOETF = [] {
+    std::vector<float> result;
+    for (int idx = 0; idx < kHlgOETFNumEntries; idx++) {
+      float value = static_cast<float>(idx) / static_cast<float>(kHlgOETFNumEntries - 1);
+      result.push_back(hlgOetf(value));
+    }
+    return result;
+}();
+
+static const std::vector<float> kHlgInvOETF = [] {
+    std::vector<float> result;
+    for (int idx = 0; idx < kHlgInvOETFNumEntries; idx++) {
+      float value = static_cast<float>(idx) / static_cast<float>(kHlgInvOETFNumEntries - 1);
+      result.push_back(hlgInvOetf(value));
+    }
+    return result;
+}();
+
+static const std::vector<float> kSrgbInvOETF = [] {
+    std::vector<float> result;
+    for (int idx = 0; idx < kSrgbInvOETFNumEntries; idx++) {
+      float value = static_cast<float>(idx) / static_cast<float>(kSrgbInvOETFNumEntries - 1);
+      result.push_back(srgbInvOetf(value));
+    }
+    return result;
+}();
+
+// Use Shepard's method for inverse distance weighting. For more information:
+// en.wikipedia.org/wiki/Inverse_distance_weighting#Shepard's_method
+
+float ShepardsIDW::euclideanDistance(float x1, float x2, float y1, float y2) {
+  return sqrt(((y2 - y1) * (y2 - y1)) + (x2 - x1) * (x2 - x1));
+}
+
+void ShepardsIDW::fillShepardsIDW(float *weights, int incR, int incB) {
+  for (int y = 0; y < mMapScaleFactor; y++) {
+    for (int x = 0; x < mMapScaleFactor; x++) {
+      float pos_x = ((float)x) / mMapScaleFactor;
+      float pos_y = ((float)y) / mMapScaleFactor;
+      int curr_x = floor(pos_x);
+      int curr_y = floor(pos_y);
+      int next_x = curr_x + incR;
+      int next_y = curr_y + incB;
+      float e1_distance = euclideanDistance(pos_x, curr_x, pos_y, curr_y);
+      int index = y * mMapScaleFactor * 4 + x * 4;
+      if (e1_distance == 0) {
+        weights[index++] = 1.f;
+        weights[index++] = 0.f;
+        weights[index++] = 0.f;
+        weights[index++] = 0.f;
+      } else {
+        float e1_weight = 1.f / e1_distance;
+
+        float e2_distance = euclideanDistance(pos_x, curr_x, pos_y, next_y);
+        float e2_weight = 1.f / e2_distance;
+
+        float e3_distance = euclideanDistance(pos_x, next_x, pos_y, curr_y);
+        float e3_weight = 1.f / e3_distance;
+
+        float e4_distance = euclideanDistance(pos_x, next_x, pos_y, next_y);
+        float e4_weight = 1.f / e4_distance;
+
+        float total_weight = e1_weight + e2_weight + e3_weight + e4_weight;
+
+        weights[index++] = e1_weight / total_weight;
+        weights[index++] = e2_weight / total_weight;
+        weights[index++] = e3_weight / total_weight;
+        weights[index++] = e4_weight / total_weight;
+      }
+    }
+  }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // sRGB transformations
+
+static const float kMaxPixelFloat = 1.0f;
+static float clampPixelFloat(float value) {
+    return (value < 0.0f) ? 0.0f : (value > kMaxPixelFloat) ? kMaxPixelFloat : value;
+}
 
 // See IEC 61966-2-1, Equation F.7.
 static const float kSrgbR = 0.2126f, kSrgbG = 0.7152f, kSrgbB = 0.0722f;
@@ -34,9 +130,9 @@ float srgbLuminance(Color e) {
 static const float kSrgbRCr = 1.402f, kSrgbGCb = 0.34414f, kSrgbGCr = 0.71414f, kSrgbBCb = 1.772f;
 
 Color srgbYuvToRgb(Color e_gamma) {
-  return {{{ e_gamma.y + kSrgbRCr * e_gamma.v,
-             e_gamma.y - kSrgbGCb * e_gamma.u - kSrgbGCr * e_gamma.v,
-             e_gamma.y + kSrgbBCb * e_gamma.u }}};
+  return {{{ clampPixelFloat(e_gamma.y + kSrgbRCr * e_gamma.v),
+             clampPixelFloat(e_gamma.y - kSrgbGCb * e_gamma.u - kSrgbGCr * e_gamma.v),
+             clampPixelFloat(e_gamma.y + kSrgbBCb * e_gamma.u) }}};
 }
 
 // See ECMA TR/98, Section 7.
@@ -65,6 +161,19 @@ Color srgbInvOetf(Color e_gamma) {
              srgbInvOetf(e_gamma.b) }}};
 }
 
+// See IEC 61966-2-1, Equations F.5 and F.6.
+float srgbInvOetfLUT(float e_gamma) {
+  uint32_t value = static_cast<uint32_t>(e_gamma * kSrgbInvOETFNumEntries);
+  //TODO() : Remove once conversion modules have appropriate clamping in place
+  value = CLIP3(value, 0, kSrgbInvOETFNumEntries - 1);
+  return kSrgbInvOETF[value];
+}
+
+Color srgbInvOetfLUT(Color e_gamma) {
+  return {{{ srgbInvOetfLUT(e_gamma.r),
+             srgbInvOetfLUT(e_gamma.g),
+             srgbInvOetfLUT(e_gamma.b) }}};
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Display-P3 transformations
@@ -122,9 +231,9 @@ static const float kBt2100GCb = kBt2100B * kBt2100Cb / kBt2100G;
 static const float kBt2100GCr = kBt2100R * kBt2100Cr / kBt2100G;
 
 Color bt2100YuvToRgb(Color e_gamma) {
-  return {{{ e_gamma.y + kBt2100Cr * e_gamma.v,
-             e_gamma.y - kBt2100GCb * e_gamma.u - kBt2100GCr * e_gamma.v,
-             e_gamma.y + kBt2100Cb * e_gamma.u }}};
+  return {{{ clampPixelFloat(e_gamma.y + kBt2100Cr * e_gamma.v),
+             clampPixelFloat(e_gamma.y - kBt2100GCb * e_gamma.u - kBt2100GCr * e_gamma.v),
+             clampPixelFloat(e_gamma.y + kBt2100Cb * e_gamma.u) }}};
 }
 
 // See ITU-R BT.2100-2, Table 5, HLG Reference OETF.
@@ -142,6 +251,18 @@ Color hlgOetf(Color e) {
   return {{{ hlgOetf(e.r), hlgOetf(e.g), hlgOetf(e.b) }}};
 }
 
+float hlgOetfLUT(float e) {
+  uint32_t value = static_cast<uint32_t>(e * kHlgOETFNumEntries);
+  //TODO() : Remove once conversion modules have appropriate clamping in place
+  value = CLIP3(value, 0, kHlgOETFNumEntries - 1);
+
+  return kHlgOETF[value];
+}
+
+Color hlgOetfLUT(Color e) {
+  return {{{ hlgOetfLUT(e.r), hlgOetfLUT(e.g), hlgOetfLUT(e.b) }}};
+}
+
 // See ITU-R BT.2100-2, Table 5, HLG Reference EOTF.
 float hlgInvOetf(float e_gamma) {
   if (e_gamma <= 0.5f) {
@@ -157,6 +278,20 @@ Color hlgInvOetf(Color e_gamma) {
              hlgInvOetf(e_gamma.b) }}};
 }
 
+float hlgInvOetfLUT(float e_gamma) {
+  uint32_t value = static_cast<uint32_t>(e_gamma * kHlgInvOETFNumEntries);
+  //TODO() : Remove once conversion modules have appropriate clamping in place
+  value = CLIP3(value, 0, kHlgInvOETFNumEntries - 1);
+
+  return kHlgInvOETF[value];
+}
+
+Color hlgInvOetfLUT(Color e_gamma) {
+  return {{{ hlgInvOetfLUT(e_gamma.r),
+             hlgInvOetfLUT(e_gamma.g),
+             hlgInvOetfLUT(e_gamma.b) }}};
+}
+
 // See ITU-R BT.2100-2, Table 4, Reference PQ OETF.
 static const float kPqM1 = 2610.0f / 16384.0f, kPqM2 = 2523.0f / 4096.0f * 128.0f;
 static const float kPqC1 = 3424.0f / 4096.0f, kPqC2 = 2413.0f / 4096.0f * 32.0f,
@@ -170,6 +305,18 @@ float pqOetf(float e) {
 
 Color pqOetf(Color e) {
   return {{{ pqOetf(e.r), pqOetf(e.g), pqOetf(e.b) }}};
+}
+
+float pqOetfLUT(float e) {
+  uint32_t value = static_cast<uint32_t>(e * kPqOETFNumEntries);
+  //TODO() : Remove once conversion modules have appropriate clamping in place
+  value = CLIP3(value, 0, kPqOETFNumEntries - 1);
+
+  return kPqOETF[value];
+}
+
+Color pqOetfLUT(Color e) {
+  return {{{ pqOetfLUT(e.r), pqOetfLUT(e.g), pqOetfLUT(e.b) }}};
 }
 
 // Derived from the inverse of the Reference PQ OETF.
@@ -190,6 +337,20 @@ Color pqInvOetf(Color e_gamma) {
   return {{{ pqInvOetf(e_gamma.r),
              pqInvOetf(e_gamma.g),
              pqInvOetf(e_gamma.b) }}};
+}
+
+float pqInvOetfLUT(float e_gamma) {
+  uint32_t value = static_cast<uint32_t>(e_gamma * kPqInvOETFNumEntries);
+  //TODO() : Remove once conversion modules have appropriate clamping in place
+  value = CLIP3(value, 0, kPqInvOETFNumEntries - 1);
+
+  return kPqInvOETF[value];
+}
+
+Color pqInvOetfLUT(Color e_gamma) {
+  return {{{ pqInvOetfLUT(e_gamma.r),
+             pqInvOetfLUT(e_gamma.g),
+             pqInvOetfLUT(e_gamma.b) }}};
 }
 
 
@@ -281,28 +442,30 @@ ColorTransformFn getHdrConversionFn(jpegr_color_gamut sdr_gamut, jpegr_color_gam
 
 ////////////////////////////////////////////////////////////////////////////////
 // Recovery map calculations
-
-uint8_t encodeRecovery(float y_sdr, float y_hdr, float hdr_ratio) {
+uint8_t encodeRecovery(float y_sdr, float y_hdr, jr_metadata_ptr metadata) {
   float gain = 1.0f;
   if (y_sdr > 0.0f) {
     gain = y_hdr / y_sdr;
   }
 
-  if (gain < (1.0f / hdr_ratio)) gain = 1.0f / hdr_ratio;
-  if (gain > hdr_ratio) gain = hdr_ratio;
+  if (gain < metadata->minContentBoost) gain = metadata->minContentBoost;
+  if (gain > metadata->maxContentBoost) gain = metadata->maxContentBoost;
 
-  return static_cast<uint8_t>(log2(gain) / log2(hdr_ratio) * 127.5f  + 127.5f);
+  return static_cast<uint8_t>((log2(gain) - log2(metadata->minContentBoost))
+                            / (log2(metadata->maxContentBoost) - log2(metadata->minContentBoost))
+                            * 255.0f);
 }
 
-static float applyRecovery(float e, float recovery, float hdr_ratio) {
-  if (e <= 0.0f) return 0.0f;
-  return exp2(log2(e) + recovery * log2(hdr_ratio));
+Color applyRecovery(Color e, float recovery, jr_metadata_ptr metadata) {
+  float logBoost = log2(metadata->minContentBoost) * (1.0f - recovery)
+                 + log2(metadata->maxContentBoost) * recovery;
+  float recoveryFactor = exp2(logBoost);
+  return e * recoveryFactor;
 }
 
-Color applyRecovery(Color e, float recovery, float hdr_ratio) {
-  return {{{ applyRecovery(e.r, recovery, hdr_ratio),
-             applyRecovery(e.g, recovery, hdr_ratio),
-             applyRecovery(e.b, recovery, hdr_ratio) }}};
+Color applyRecoveryLUT(Color e, float recovery, RecoveryLUT& recoveryLUT) {
+  float recoveryFactor = recoveryLUT.getRecoveryFactor(recovery);
+  return e * recoveryFactor;
 }
 
 Color getYuv420Pixel(jr_uncompressed_ptr image, size_t x, size_t y) {
@@ -371,16 +534,17 @@ static size_t clamp(const size_t& val, const size_t& low, const size_t& high) {
 }
 
 static float mapUintToFloat(uint8_t map_uint) {
-  return (static_cast<float>(map_uint) - 127.5f) / 127.5f;
+  return static_cast<float>(map_uint) / 255.0f;
 }
 
 static float pythDistance(float x_diff, float y_diff) {
   return sqrt(pow(x_diff, 2.0f) + pow(y_diff, 2.0f));
 }
 
-float sampleMap(jr_uncompressed_ptr map, size_t map_scale_factor, size_t x, size_t y) {
-  float x_map = static_cast<float>(x) / static_cast<float>(map_scale_factor);
-  float y_map = static_cast<float>(y) / static_cast<float>(map_scale_factor);
+// TODO: If map_scale_factor is guaranteed to be an integer, then remove the following.
+float sampleMap(jr_uncompressed_ptr map, float map_scale_factor, size_t x, size_t y) {
+  float x_map = static_cast<float>(x) / map_scale_factor;
+  float y_map = static_cast<float>(y) / map_scale_factor;
 
   size_t x_lower = static_cast<size_t>(floor(x_map));
   size_t x_upper = x_lower + 1;
@@ -427,6 +591,39 @@ float sampleMap(jr_uncompressed_ptr map, size_t map_scale_factor, size_t x, size
        + e4 * (e4_weight / total_weight);
 }
 
+float sampleMap(jr_uncompressed_ptr map, size_t map_scale_factor, size_t x, size_t y,
+                ShepardsIDW& weightTables) {
+  // TODO: If map_scale_factor is guaranteed to be an integer power of 2, then optimize the
+  // following by computing log2(map_scale_factor) once and then using >> log2(map_scale_factor)
+  int x_lower = x / map_scale_factor;
+  int x_upper = x_lower + 1;
+  int y_lower = y / map_scale_factor;
+  int y_upper = y_lower + 1;
+
+  x_lower = std::min(x_lower, map->width - 1);
+  x_upper = std::min(x_upper, map->width - 1);
+  y_lower = std::min(y_lower, map->height - 1);
+  y_upper = std::min(y_upper, map->height - 1);
+
+  float e1 = mapUintToFloat(reinterpret_cast<uint8_t*>(map->data)[x_lower + y_lower * map->width]);
+  float e2 = mapUintToFloat(reinterpret_cast<uint8_t*>(map->data)[x_lower + y_upper * map->width]);
+  float e3 = mapUintToFloat(reinterpret_cast<uint8_t*>(map->data)[x_upper + y_lower * map->width]);
+  float e4 = mapUintToFloat(reinterpret_cast<uint8_t*>(map->data)[x_upper + y_upper * map->width]);
+
+  // TODO: If map_scale_factor is guaranteed to be an integer power of 2, then optimize the
+  // following by using & (map_scale_factor - 1)
+  int offset_x = x % map_scale_factor;
+  int offset_y = y % map_scale_factor;
+
+  float* weights = weightTables.mWeights;
+  if (x_lower == x_upper && y_lower == y_upper) weights = weightTables.mWeightsC;
+  else if (x_lower == x_upper) weights = weightTables.mWeightsNR;
+  else if (y_lower == y_upper) weights = weightTables.mWeightsNB;
+  weights += offset_y * map_scale_factor * 4 + offset_x * 4;
+
+  return e1 * weights[0] + e2 * weights[1] + e3 * weights[2] + e4 * weights[3];
+}
+
 uint32_t colorToRgba1010102(Color e_gamma) {
   return (0x3ff & static_cast<uint32_t>(e_gamma.r * 1023.0f))
        | ((0x3ff & static_cast<uint32_t>(e_gamma.g * 1023.0f)) << 10)
@@ -434,4 +631,4 @@ uint32_t colorToRgba1010102(Color e_gamma) {
        | (0x3 << 30);  // Set alpha to 1.0
 }
 
-} // namespace android::recoverymap
+} // namespace android::jpegrecoverymap

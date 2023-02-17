@@ -74,6 +74,7 @@
 #include <android/hidl/manager/1.0/IServiceManager.h>
 #include <android/os/IIncidentCompanion.h>
 #include <binder/IServiceManager.h>
+#include <cutils/multiuser.h>
 #include <cutils/native_handle.h>
 #include <cutils/properties.h>
 #include <cutils/sockets.h>
@@ -185,6 +186,7 @@ void add_mountinfo();
 #define SYSTEM_TRACE_SNAPSHOT "/data/misc/perfetto-traces/bugreport/systrace.pftrace"
 #define CGROUPFS_DIR "/sys/fs/cgroup"
 #define SDK_EXT_INFO "/apex/com.android.sdkext/bin/derive_sdk"
+#define DROPBOX_DIR "/data/system/dropbox"
 
 // TODO(narayan): Since this information has to be kept in sync
 // with tombstoned, we should just put it in a common header.
@@ -523,6 +525,15 @@ static bool skip_not_stat(const char *path) {
         return false;
     }
     return strcmp(path + len - sizeof(stat) + 1, stat); /* .../stat? */
+}
+
+static bool skip_wtf_strictmode(const char *path) {
+    if (strstr(path, "_wtf")) {
+        return true;
+    } else if (strstr(path, "_strictmode")) {
+        return true;
+    }
+    return false;
 }
 
 static bool skip_none(const char* path __attribute__((unused))) {
@@ -1894,6 +1905,11 @@ Dumpstate::RunStatus Dumpstate::DumpstateDefaultAfterCritical() {
     DumpIpTablesAsRoot();
     DumpDynamicPartitionInfo();
     ds.AddDir(OTA_METADATA_DIR, true);
+    if (!PropertiesHelper::IsUserBuild()) {
+        // Include dropbox entry files inside ZIP, but exclude
+        // noisy WTF and StrictMode entries
+        dump_files("", DROPBOX_DIR, skip_wtf_strictmode, _add_file_from_fd);
+    }
 
     // Capture any IPSec policies in play. No keys are exposed here.
     RunCommand("IP XFRM POLICY", {"ip", "xfrm", "policy"}, CommandOptions::WithTimeout(10).Build());
@@ -2619,10 +2635,13 @@ bool Dumpstate::FinishZipFile() {
     return true;
 }
 
-static void SendBroadcast(const std::string& action, const std::vector<std::string>& args) {
+static void SendBroadcast(const std::string& action,
+                          const std::vector<std::string>& args,
+                          int32_t user_id) {
     // clang-format off
-    std::vector<std::string> am = {"/system/bin/cmd", "activity", "broadcast", "--user", "0",
-                    "--receiver-foreground", "--receiver-include-background", "-a", action};
+    std::vector<std::string> am = {"/system/bin/cmd", "activity", "broadcast", "--user",
+                        std::to_string(user_id), "--receiver-foreground",
+                        "--receiver-include-background", "-a", action};
     // clang-format on
 
     am.insert(am.end(), args.begin(), args.end());
@@ -2757,6 +2776,11 @@ static inline const char* ModeToString(Dumpstate::BugreportMode mode) {
     }
 }
 
+static bool IsConsentlessBugreportAllowed(const Dumpstate::DumpOptions& options) {
+    // only BUGREPORT_TELEPHONY does not allow using consentless bugreport
+    return !options.telephony_only;
+}
+
 static void SetOptionsFromMode(Dumpstate::BugreportMode mode, Dumpstate::DumpOptions* options,
                                bool is_screenshot_requested) {
     // Modify com.android.shell.BugreportProgressService#isDefaultScreenshotRequired as well for
@@ -2816,6 +2840,7 @@ void Dumpstate::DumpOptions::Initialize(BugreportMode bugreport_mode,
                                         const android::base::unique_fd& screenshot_fd_in,
                                         bool is_screenshot_requested) {
     this->use_predumped_ui_data = bugreport_flags & BugreportFlag::BUGREPORT_USE_PREDUMPED_UI_DATA;
+    this->is_consent_deferred = bugreport_flags & BugreportFlag::BUGREPORT_FLAG_DEFER_CONSENT;
     // Duplicate the fds because the passed in fds don't outlive the binder transaction.
     bugreport_fd.reset(fcntl(bugreport_fd_in.get(), F_DUPFD_CLOEXEC, 0));
     screenshot_fd.reset(fcntl(screenshot_fd_in.get(), F_DUPFD_CLOEXEC, 0));
@@ -2898,10 +2923,64 @@ void Dumpstate::Initialize() {
 
 Dumpstate::RunStatus Dumpstate::Run(int32_t calling_uid, const std::string& calling_package) {
     Dumpstate::RunStatus status = RunInternal(calling_uid, calling_package);
-    if (listener_ != nullptr) {
+    HandleRunStatus(status);
+    return status;
+}
+
+Dumpstate::RunStatus Dumpstate::Retrieve(int32_t calling_uid, const std::string& calling_package) {
+    Dumpstate::RunStatus status = RetrieveInternal(calling_uid, calling_package);
+    HandleRunStatus(status);
+    return status;
+}
+
+Dumpstate::RunStatus  Dumpstate::RetrieveInternal(int32_t calling_uid,
+                                                  const std::string& calling_package) {
+  consent_callback_ = new ConsentCallback();
+  const String16 incidentcompanion("incidentcompanion");
+  sp<android::IBinder> ics(
+      defaultServiceManager()->checkService(incidentcompanion));
+  android::String16 package(calling_package.c_str());
+  if (ics != nullptr) {
+    MYLOGD("Checking user consent via incidentcompanion service\n");
+    android::interface_cast<android::os::IIncidentCompanion>(ics)->authorizeReport(
+        calling_uid, package, String16(), String16(),
+        0x1 /* FLAG_CONFIRMATION_DIALOG */, consent_callback_.get());
+  } else {
+    MYLOGD(
+        "Unable to check user consent; incidentcompanion service unavailable\n");
+    return RunStatus::USER_CONSENT_TIMED_OUT;
+  }
+  UserConsentResult consent_result = consent_callback_->getResult();
+  int timeout_ms = 30 * 1000;
+  while (consent_result == UserConsentResult::UNAVAILABLE &&
+      consent_callback_->getElapsedTimeMs() < timeout_ms) {
+    sleep(1);
+    consent_result = consent_callback_->getResult();
+  }
+  if (consent_result == UserConsentResult::DENIED) {
+    return RunStatus::USER_CONSENT_DENIED;
+  }
+  if (consent_result == UserConsentResult::UNAVAILABLE) {
+    MYLOGD("Canceling user consent request via incidentcompanion service\n");
+    android::interface_cast<android::os::IIncidentCompanion>(ics)->cancelAuthorization(
+        consent_callback_.get());
+    return RunStatus::USER_CONSENT_TIMED_OUT;
+  }
+
+  bool copy_succeeded =
+      android::os::CopyFileToFd(path_, options_->bugreport_fd.get());
+  if (copy_succeeded) {
+    android::os::UnlinkAndLogOnError(path_);
+  }
+  return copy_succeeded ? Dumpstate::RunStatus::OK
+                        : Dumpstate::RunStatus::ERROR;
+}
+
+void Dumpstate::HandleRunStatus(Dumpstate::RunStatus status) {
+      if (listener_ != nullptr) {
         switch (status) {
             case Dumpstate::RunStatus::OK:
-                listener_->onFinished();
+                listener_->onFinished(path_.c_str());
                 break;
             case Dumpstate::RunStatus::HELP:
                 break;
@@ -2919,9 +2998,7 @@ Dumpstate::RunStatus Dumpstate::Run(int32_t calling_uid, const std::string& call
                 break;
         }
     }
-    return status;
 }
-
 void Dumpstate::Cancel() {
     CleanupTmpFiles();
     android::os::UnlinkAndLogOnError(log_path_);
@@ -3057,7 +3134,8 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
         };
         // clang-format on
         // Send STARTED broadcast for apps that listen to bugreport generation events
-        SendBroadcast("com.android.internal.intent.action.BUGREPORT_STARTED", am_args);
+        SendBroadcast("com.android.internal.intent.action.BUGREPORT_STARTED",
+                      am_args, multiuser_get_user_id(calling_uid));
         if (options_->progress_updates_to_socket) {
             dprintf(control_socket_fd_, "BEGIN:%s\n", path_.c_str());
         }
@@ -3171,7 +3249,7 @@ Dumpstate::RunStatus Dumpstate::RunInternal(int32_t calling_uid,
 
     // Share the final file with the caller if the user has consented or Shell is the caller.
     Dumpstate::RunStatus status = Dumpstate::RunStatus::OK;
-    if (CalledByApi()) {
+    if (CalledByApi() && !options_->is_consent_deferred) {
         status = CopyBugreportIfUserConsented(calling_uid);
         if (status != Dumpstate::RunStatus::OK &&
             status != Dumpstate::RunStatus::USER_CONSENT_TIMED_OUT) {
@@ -3260,6 +3338,15 @@ void Dumpstate::MaybeSnapshotUiTraces() {
         return;
     }
 
+    // Include the proto logging from WMShell.
+    RunCommand(
+        // Empty name because it's not intended to be classified as a bugreport section.
+        // Actual logging files can be found as "/data/misc/wmtrace/shell_log.winscope"
+        // in the bugreport.
+        "", {"dumpsys", "activity", "service", "SystemUIService",
+             "WMShell", "protolog", "save-for-bugreport"},
+        CommandOptions::WithTimeout(10).Always().DropRoot().RedirectStderr().Build());
+
     // Currently WindowManagerService and InputMethodManagerSerivice support WinScope protocol.
     for (const auto& service : {"input_method", "window"}) {
         RunCommand(
@@ -3305,7 +3392,7 @@ void Dumpstate::MaybeAddUiTracesToZip() {
 }
 
 void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
-    if (calling_uid == AID_SHELL || !CalledByApi()) {
+    if (multiuser_get_app_id(calling_uid) == AID_SHELL || !CalledByApi()) {
         return;
     }
     if (listener_ != nullptr) {
@@ -3316,9 +3403,11 @@ void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
 }
 
 void Dumpstate::MaybeCheckUserConsent(int32_t calling_uid, const std::string& calling_package) {
-    if (calling_uid == AID_SHELL || !CalledByApi()) {
-        // No need to get consent for shell triggered dumpstates, or not through
-        // bugreporting API (i.e. no fd to copy back).
+    if (multiuser_get_app_id(calling_uid) == AID_SHELL ||
+        !CalledByApi() || options_->is_consent_deferred) {
+        // No need to get consent for shell triggered dumpstates, or not
+        // through bugreporting API (i.e. no fd to copy back), or when consent
+        // is deferred.
         return;
     }
     consent_callback_ = new ConsentCallback();
@@ -3327,9 +3416,12 @@ void Dumpstate::MaybeCheckUserConsent(int32_t calling_uid, const std::string& ca
     android::String16 package(calling_package.c_str());
     if (ics != nullptr) {
         MYLOGD("Checking user consent via incidentcompanion service\n");
+        int flags = 0x1; // IncidentManager.FLAG_CONFIRMATION_DIALOG
+        if (IsConsentlessBugreportAllowed(*options_)) {
+            flags |= 0x2; // IncidentManager.FLAG_ALLOW_CONSENTLESS_BUGREPORT
+        }
         android::interface_cast<android::os::IIncidentCompanion>(ics)->authorizeReport(
-            calling_uid, package, String16(), String16(),
-            0x1 /* FLAG_CONFIRMATION_DIALOG */, consent_callback_.get());
+            calling_uid, package, String16(), String16(), flags, consent_callback_.get());
     } else {
         MYLOGD("Unable to check user consent; incidentcompanion service unavailable\n");
     }
@@ -3398,7 +3490,7 @@ Dumpstate::RunStatus Dumpstate::CopyBugreportIfUserConsented(int32_t calling_uid
     // If the caller has asked to copy the bugreport over to their directory, we need explicit
     // user consent (unless the caller is Shell).
     UserConsentResult consent_result;
-    if (calling_uid == AID_SHELL) {
+    if (multiuser_get_app_id(calling_uid) == AID_SHELL) {
         consent_result = UserConsentResult::APPROVED;
     } else {
         consent_result = consent_callback_->getResult();

@@ -112,6 +112,13 @@ ARpcServer* ARpcServer_newInitUnixDomain(AIBinder* service, const char* name) {
         LOG(ERROR) << "Failed to get fd for the socket:" << name;
         return nullptr;
     }
+    // Control socket fds are inherited from init, so they don't have O_CLOEXEC set.
+    // But we don't want any child processes to inherit the socket we are running
+    // the server on, so attempt to set the flag now.
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        LOG(WARNING) << "Failed to set CLOEXEC on control socket with name " << name
+                     << " error: " << errno;
+    }
     if (status_t status = server->setupRawSocketServer(std::move(fd)); status != OK) {
         LOG(ERROR) << "Failed to set up Unix Domain RPC server with name " << name
                    << " error: " << statusToString(status).c_str();
@@ -132,6 +139,17 @@ ARpcServer* ARpcServer_newUnixDomainBootstrap(AIBinder* service, int bootstrapFd
         status != OK) {
         LOG(ERROR) << "Failed to set up Unix Domain RPC server with bootstrap fd " << bootstrapFd
                    << " error: " << statusToString(status).c_str();
+        return nullptr;
+    }
+    server->setRootObject(AIBinder_toPlatformBinder(service));
+    return createObjectHandle<ARpcServer>(server);
+}
+
+ARpcServer* ARpcServer_newInet(AIBinder* service, const char* address, unsigned int port) {
+    auto server = RpcServer::make();
+    if (status_t status = server->setupInetServer(address, port, nullptr); status != OK) {
+        LOG(ERROR) << "Failed to set up inet RPC server with address " << address << " and port "
+                   << port << " error: " << statusToString(status).c_str();
         return nullptr;
     }
     server->setRootObject(AIBinder_toPlatformBinder(service));
@@ -210,6 +228,16 @@ AIBinder* ARpcSession_setupUnixDomainBootstrapClient(ARpcSession* handle, int bo
         status != OK) {
         LOG(ERROR) << "Failed to set up Unix Domain RPC client with bootstrap fd: " << bootstrapFd
                    << " error: " << statusToString(status).c_str();
+        return nullptr;
+    }
+    return AIBinder_fromPlatformBinder(session->getRootObject());
+}
+
+AIBinder* ARpcSession_setupInet(ARpcSession* handle, const char* address, unsigned int port) {
+    auto session = handleToStrongPointer<RpcSession>(handle);
+    if (status_t status = session->setupInetClient(address, port); status != OK) {
+        LOG(ERROR) << "Failed to set up inet RPC client with address " << address << " and port "
+                   << port << " error: " << statusToString(status).c_str();
         return nullptr;
     }
     return AIBinder_fromPlatformBinder(session->getRootObject());

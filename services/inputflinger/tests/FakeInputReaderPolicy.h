@@ -75,6 +75,8 @@ public:
     float getPointerGestureMovementSpeedRatio();
     float getPointerGestureZoomSpeedRatio();
     void setVelocityControlParams(const VelocityControlParameters& params);
+    void setStylusButtonMotionEventsEnabled(bool enabled);
+    void setStylusPointerIconEnabled(bool enabled);
 
 private:
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override;

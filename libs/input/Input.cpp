@@ -72,6 +72,10 @@ const char* motionClassificationToString(MotionClassification classification) {
             return "DEEP_PRESS";
         case MotionClassification::TWO_FINGER_SWIPE:
             return "TWO_FINGER_SWIPE";
+        case MotionClassification::MULTI_FINGER_SWIPE:
+            return "MULTI_FINGER_SWIPE";
+        case MotionClassification::PINCH:
+            return "PINCH";
     }
 }
 
@@ -295,7 +299,7 @@ const char* KeyEvent::getLabel(int32_t keyCode) {
     return InputEventLookup::getLabelByKeyCode(keyCode);
 }
 
-int32_t KeyEvent::getKeyCodeFromLabel(const char* label) {
+std::optional<int> KeyEvent::getKeyCodeFromLabel(const char* label) {
     return InputEventLookup::getKeyCodeByLabel(label);
 }
 
@@ -337,6 +341,28 @@ const char* KeyEvent::actionToString(int32_t action) {
             return "MULTIPLE";
     }
     return "UNKNOWN";
+}
+
+std::ostream& operator<<(std::ostream& out, const KeyEvent& event) {
+    out << "KeyEvent { action=" << KeyEvent::actionToString(event.getAction());
+
+    out << ", keycode=" << event.getKeyCode() << "(" << KeyEvent::getLabel(event.getKeyCode())
+        << ")";
+
+    if (event.getMetaState() != 0) {
+        out << ", metaState=" << event.getMetaState();
+    }
+
+    out << ", eventTime=" << event.getEventTime();
+    out << ", downTime=" << event.getDownTime();
+    out << ", flags=" << std::hex << event.getFlags() << std::dec;
+    out << ", repeatCount=" << event.getRepeatCount();
+    out << ", deviceId=" << event.getDeviceId();
+    out << ", source=" << inputEventSourceToString(event.getSource());
+    out << ", displayId=" << event.getDisplayId();
+    out << ", eventId=" << event.getId();
+    out << "}";
+    return out;
 }
 
 // --- PointerCoords ---
@@ -411,6 +437,8 @@ status_t PointerCoords::readFromParcel(Parcel* parcel) {
     for (uint32_t i = 0; i < count; i++) {
         values[i] = parcel->readFloat();
     }
+
+    isResampled = parcel->readBool();
     return OK;
 }
 
@@ -421,6 +449,8 @@ status_t PointerCoords::writeToParcel(Parcel* parcel) const {
     for (uint32_t i = 0; i < count; i++) {
         parcel->writeFloat(values[i]);
     }
+
+    parcel->writeBool(isResampled);
     return OK;
 }
 #endif
@@ -439,6 +469,9 @@ bool PointerCoords::operator==(const PointerCoords& other) const {
         if (values[i] != other.values[i]) {
             return false;
         }
+    }
+    if (isResampled != other.isResampled) {
+        return false;
     }
     return true;
 }
@@ -858,7 +891,7 @@ const char* MotionEvent::getLabel(int32_t axis) {
     return InputEventLookup::getAxisLabel(axis);
 }
 
-int32_t MotionEvent::getAxisFromLabel(const char* label) {
+std::optional<int> MotionEvent::getAxisFromLabel(const char* label) {
     return InputEventLookup::getAxisByLabel(label);
 }
 
