@@ -223,6 +223,8 @@ public:
         gui::DropInputMode dropInputMode;
         bool autoRefresh = false;
         bool dimmingEnabled = true;
+        float currentSdrHdrRatio = 1.f;
+        float desiredSdrHdrRatio = 1.f;
     };
 
     explicit Layer(const LayerCreationArgs& args);
@@ -289,7 +291,9 @@ public:
     virtual mat4 getColorTransform() const;
     virtual bool hasColorTransform() const;
     virtual bool isColorSpaceAgnostic() const { return mDrawingState.colorSpaceAgnostic; }
-    virtual bool isDimmingEnabled() const { return getDrawingState().dimmingEnabled; };
+    virtual bool isDimmingEnabled() const { return getDrawingState().dimmingEnabled; }
+    float getDesiredSdrHdrRatio() const { return getDrawingState().desiredSdrHdrRatio; }
+    float getCurrentSdrHdrRatio() const { return getDrawingState().currentSdrHdrRatio; }
 
     bool setTransform(uint32_t /*transform*/);
     bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/);
@@ -298,6 +302,7 @@ public:
                    nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
                    std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/);
     bool setDataspace(ui::Dataspace /*dataspace*/);
+    bool setExtendedRangeBrightness(float currentBufferRatio, float desiredRatio);
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
     bool setApi(int32_t /*api*/);
@@ -499,6 +504,7 @@ public:
         uint64_t mFrameNumber;
 
         bool mFrameLatencyNeeded{false};
+        float mDesiredSdrHdrRatio = 1.f;
     };
 
     BufferInfo mBufferInfo;
@@ -526,6 +532,19 @@ public:
     bool isLegacyDataSpace() const;
 
     uint32_t getTransactionFlags() const { return mTransactionFlags; }
+
+    static bool computeTrustedPresentationState(const FloatRect& bounds,
+                                                const FloatRect& sourceBounds,
+                                                const Region& coveredRegion,
+                                                const FloatRect& screenBounds, float,
+                                                const ui::Transform&,
+                                                const TrustedPresentationThresholds&);
+    void updateTrustedPresentationState(const DisplayDevice* display, int64_t time_in_ms,
+                                        bool leaveState);
+
+    inline bool hasTrustedPresentationListener() {
+        return mTrustedPresentationListener.callbackInterface != nullptr;
+    }
 
     // Sets the masked bits.
     void setTransactionFlags(uint32_t mask);
@@ -728,6 +747,9 @@ public:
     std::shared_ptr<frametimeline::SurfaceFrame> createSurfaceFrameForBuffer(
             const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName);
 
+    void setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
+                                    TrustedPresentationListener const& listener);
+
     // Creates a new handle each time, so we only expect
     // this to be called once.
     sp<IBinder> getHandle();
@@ -885,6 +907,12 @@ protected:
     // These are only accessed by the main thread or the tracing thread.
     State mDrawingState;
 
+    TrustedPresentationThresholds mTrustedPresentationThresholds;
+    TrustedPresentationListener mTrustedPresentationListener;
+    bool mLastComputedTrustedPresentationState = false;
+    bool mLastReportedTrustedPresentationState = false;
+    int64_t mEnteredTrustedPresentationStateTime = -1;
+
     uint32_t mTransactionFlags{0};
     // Updated in doTransaction, used to track the last sequence number we
     // committed. Currently this is really only used for updating visible
@@ -1009,10 +1037,6 @@ private:
     Rect computeBufferCrop(const State& s);
 
     bool willPresentCurrentTransaction() const;
-
-    // Returns true if the transformed buffer size does not match the layer size and we need
-    // to apply filtering.
-    bool bufferNeedsFiltering() const;
 
     void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                    const sp<GraphicBuffer>& buffer, uint64_t framenumber,

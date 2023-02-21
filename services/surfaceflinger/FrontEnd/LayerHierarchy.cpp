@@ -28,8 +28,8 @@ auto layerZCompare = [](const std::pair<LayerHierarchy*, LayerHierarchy::Variant
                         const std::pair<LayerHierarchy*, LayerHierarchy::Variant>& rhs) {
     auto lhsLayer = lhs.first->getLayer();
     auto rhsLayer = rhs.first->getLayer();
-    if (lhsLayer->layerStack != rhsLayer->layerStack) {
-        return lhsLayer->layerStack.id < rhsLayer->layerStack.id;
+    if (lhsLayer->layerStack.id != rhsLayer->layerStack.id) {
+        return lhsLayer->layerStack.id > rhsLayer->layerStack.id;
     }
     if (lhsLayer->z != rhsLayer->z) {
         return lhsLayer->z < rhsLayer->z;
@@ -75,11 +75,11 @@ void LayerHierarchy::traverseInZOrder(const Visitor& visitor,
     for (auto it = mChildren.begin(); it < mChildren.end(); it++) {
         auto& [child, childVariant] = *it;
         if (traverseThisLayer && child->getLayer()->z >= 0) {
+            traverseThisLayer = false;
             bool breakTraversal = !visitor(*this, traversalPath);
             if (breakTraversal) {
                 return;
             }
-            traverseThisLayer = false;
         }
         if (childVariant == LayerHierarchy::Variant::Detached) {
             continue;
@@ -252,8 +252,8 @@ void LayerHierarchyBuilder::onLayerAdded(RequestedLayerState* layer) {
     attachToParent(hierarchy);
     attachToRelativeParent(hierarchy);
 
-    if (layer->mirrorId != UNASSIGNED_LAYER_ID) {
-        LayerHierarchy* mirror = getHierarchyFromId(layer->mirrorId);
+    for (uint32_t mirrorId : layer->mirrorIds) {
+        LayerHierarchy* mirror = getHierarchyFromId(mirrorId);
         hierarchy->addChild(mirror, LayerHierarchy::Variant::Mirror);
     }
 }
@@ -292,14 +292,14 @@ void LayerHierarchyBuilder::updateMirrorLayer(RequestedLayerState* layer) {
     auto it = hierarchy->mChildren.begin();
     while (it != hierarchy->mChildren.end()) {
         if (it->second == LayerHierarchy::Variant::Mirror) {
-            hierarchy->mChildren.erase(it);
-            break;
+            it = hierarchy->mChildren.erase(it);
+        } else {
+            it++;
         }
-        it++;
     }
 
-    if (layer->mirrorId != UNASSIGNED_LAYER_ID) {
-        hierarchy->addChild(getHierarchyFromId(layer->mirrorId), LayerHierarchy::Variant::Mirror);
+    for (uint32_t mirrorId : layer->mirrorIds) {
+        hierarchy->addChild(getHierarchyFromId(mirrorId), LayerHierarchy::Variant::Mirror);
     }
 }
 

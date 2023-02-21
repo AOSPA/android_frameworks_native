@@ -52,6 +52,9 @@
       "name": "memunreachable_binder_test"
     },
     {
+      "name": "resolv_integration_test"
+    },
+    {
       "name": "libbinderthreadstateutils_test"
     },
     {
@@ -95,6 +98,20 @@
   "hwasan-presubmit": [
     {
       "name": "binderLibTest"
+    }
+  ],
+  "kernel-presubmit": [
+    {
+      "name": "binderDriverInterfaceTest"
+    },
+    {
+      "name": "binderLibTest"
+    },
+    {
+      "name": "binderSafeInterfaceTest"
+    },
+    {
+      "name": "memunreachable_binder_test"
     }
   ]
 }

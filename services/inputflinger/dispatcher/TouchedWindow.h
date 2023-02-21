@@ -17,7 +17,9 @@
 #pragma once
 
 #include <gui/WindowInfo.h>
+#include <input/Input.h>
 #include <utils/BitSet.h>
+#include <bitset>
 #include "InputTarget.h"
 
 namespace android {
@@ -29,11 +31,23 @@ struct TouchedWindow {
     sp<gui::WindowInfoHandle> windowHandle;
     ftl::Flags<InputTarget::Flags> targetFlags;
     BitSet32 pointerIds;
-    bool isPilferingPointers = false;
+    // The pointer ids of the pointers that this window is currently pilfering
+    std::bitset<MAX_POINTERS> pilferedPointerIds;
     // Time at which the first action down occurred on this window.
     // NOTE: This is not initialized in case of HOVER entry/exit and DISPATCH_AS_OUTSIDE scenario.
     std::optional<nsecs_t> firstDownTimeInTarget;
+
+    bool hasHoveringPointers() const;
+    bool hasHoveringPointers(int32_t deviceId) const;
+
+    bool hasHoveringPointer(int32_t deviceId, int32_t pointerId) const;
+    void addHoveringPointer(int32_t deviceId, int32_t pointerId);
+    void removeHoveringPointer(int32_t deviceId, int32_t pointerId);
+    void clearHoveringPointers();
     std::string dump() const;
+
+private:
+    std::map<int32_t /*deviceId*/, std::bitset<MAX_POINTERS>> mHoveringPointerIdsByDevice;
 };
 
 } // namespace inputdispatcher

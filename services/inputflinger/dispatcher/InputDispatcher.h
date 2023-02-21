@@ -237,9 +237,9 @@ private:
     // to transfer focus to a new application.
     std::shared_ptr<EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
 
-    sp<android::gui::WindowInfoHandle> findTouchedWindowAtLocked(
-            int32_t displayId, int32_t x, int32_t y, TouchState* touchState, bool isStylus = false,
-            bool addOutsideTargets = false, bool ignoreDragWindow = false) const REQUIRES(mLock);
+    std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
+    findTouchedWindowAtLocked(int32_t displayId, int32_t x, int32_t y, bool isStylus = false,
+                              bool ignoreDragWindow = false) const REQUIRES(mLock);
 
     std::vector<sp<android::gui::WindowInfoHandle>> findTouchedSpyWindowsAtLocked(
             int32_t displayId, int32_t x, int32_t y, bool isStylus) const REQUIRES(mLock);
@@ -530,9 +530,6 @@ private:
     // prevent unneeded wakeups.
     AnrTracker mAnrTracker GUARDED_BY(mLock);
 
-    // Contains the last window which received a hover event.
-    sp<android::gui::WindowInfoHandle> mLastHoverWindowHandle GUARDED_BY(mLock);
-
     void cancelEventsForAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
     // If a focused application changes, we should stop counting down the "no focused window" time,
     // because we will have no way of knowing when the previous application actually added a window.
@@ -546,7 +543,7 @@ private:
     sp<android::gui::WindowInfoHandle> findFocusedWindowTargetLocked(
             nsecs_t currentTime, const EventEntry& entry, nsecs_t* nextWakeupTime,
             android::os::InputEventInjectionResult& outInjectionResult) REQUIRES(mLock);
-    std::vector<TouchedWindow> findTouchedWindowTargetsLocked(
+    std::vector<InputTarget> findTouchedWindowTargetsLocked(
             nsecs_t currentTime, const MotionEntry& entry, bool* outConflictingPointerActions,
             android::os::InputEventInjectionResult& outInjectionResult) REQUIRES(mLock);
     std::vector<Monitor> selectResponsiveMonitorsLocked(
@@ -700,7 +697,8 @@ private:
     void slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFlags,
                             const sp<android::gui::WindowInfoHandle>& oldWindowHandle,
                             const sp<android::gui::WindowInfoHandle>& newWindowHandle,
-                            TouchState& state, const BitSet32& pointerIds) REQUIRES(mLock);
+                            TouchState& state, int32_t pointerId, std::vector<InputTarget>& targets)
+            REQUIRES(mLock);
     void transferWallpaperTouch(ftl::Flags<InputTarget::Flags> oldTargetFlags,
                                 ftl::Flags<InputTarget::Flags> newTargetFlags,
                                 const sp<android::gui::WindowInfoHandle> fromWindowHandle,

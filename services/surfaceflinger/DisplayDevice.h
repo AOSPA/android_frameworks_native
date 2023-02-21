@@ -121,7 +121,6 @@ public:
     const ui::Transform& getTransform() const;
     const Rect& getLayerStackSpaceRect() const;
     const Rect& getOrientedDisplaySpaceRect() const;
-    bool needsFiltering() const;
     ui::LayerStack getLayerStack() const;
     bool receivesInput() const { return mFlags & eReceivesInput; }
 

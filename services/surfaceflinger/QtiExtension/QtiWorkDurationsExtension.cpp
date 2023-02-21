@@ -4,6 +4,8 @@
 // #define LOG_NDEBUG 0
 #include "QtiPhaseOffsetsExtension.h"
 
+#include <log/log.h>
+
 namespace android::surfaceflingerextension {
 
 namespace {

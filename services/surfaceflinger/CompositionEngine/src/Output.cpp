@@ -1465,7 +1465,7 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                              Enabled);
                 compositionengine::LayerFE::ClientCompositionTargetSettings
                         targetSettings{.clip = clip,
-                                       .needsFiltering = layerNeedsFiltering(layer) ||
+                                       .needsFiltering = layer->needsFiltering() ||
                                                outputState.needsFiltering,
                                        .isSecure = outputState.isSecure,
                                        .supportsProtectedContent = supportsProtectedContent,
@@ -1494,10 +1494,6 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
     }
 
     return clientCompositionLayers;
-}
-
-bool Output::layerNeedsFiltering(const compositionengine::OutputLayer* layer) const {
-    return layer->needsFiltering();
 }
 
 void Output::appendRegionFlashRequests(

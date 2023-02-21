@@ -15,6 +15,7 @@
  */
 
 #include <jpegrecoverymap/recoverymap.h>
+#include <jpegrecoverymap/recoverymapmath.h>
 #include <jpegrecoverymap/recoverymaputils.h>
 #include <fcntl.h>
 #include <fstream>
@@ -30,6 +31,7 @@
 
 #define SAVE_ENCODING_RESULT true
 #define SAVE_DECODING_RESULT true
+#define SAVE_INPUT_RGBA true
 
 namespace android::recoverymap {
 
@@ -104,13 +106,22 @@ TEST_F(RecoveryMapTest, writeXmpThenRead) {
   metadata_expected.transferFunction = JPEGR_TF_HLG;
   metadata_expected.rangeScalingFactor = 1.25;
   int length_expected = 1000;
+  const std::string nameSpace = "http://ns.adobe.com/xap/1.0/\0";
+  const int nameSpaceLength = nameSpace.size() + 1;  // need to count the null terminator
+
   std::string xmp = generateXmp(1000, metadata_expected);
 
+  std::vector<uint8_t> xmpData;
+  xmpData.reserve(nameSpaceLength + xmp.size());
+  xmpData.insert(xmpData.end(), reinterpret_cast<const uint8_t*>(nameSpace.c_str()),
+                  reinterpret_cast<const uint8_t*>(nameSpace.c_str()) + nameSpaceLength);
+  xmpData.insert(xmpData.end(), reinterpret_cast<const uint8_t*>(xmp.c_str()),
+                  reinterpret_cast<const uint8_t*>(xmp.c_str()) + xmp.size());
+
   jpegr_metadata metadata_read;
-  EXPECT_TRUE(getMetadataFromXMP(reinterpret_cast<uint8_t*>(xmp[0]), xmp.size(), &metadata_read));
+  EXPECT_TRUE(getMetadataFromXMP(xmpData.data(), xmpData.size(), &metadata_read));
   ASSERT_EQ(metadata_expected.transferFunction, metadata_read.transferFunction);
   ASSERT_EQ(metadata_expected.rangeScalingFactor, metadata_read.rangeScalingFactor);
-
 }
 
 /* Test Encode API-0 and decode */
@@ -304,6 +315,29 @@ TEST_F(RecoveryMapTest, encodeFromJpegThenDecode) {
   mRawP010Image.height = TEST_IMAGE_HEIGHT;
   mRawP010Image.colorGamut = jpegr_color_gamut::JPEGR_COLORGAMUT_BT2100;
 
+  if (SAVE_INPUT_RGBA) {
+    size_t rgbaSize = mRawP010Image.width * mRawP010Image.height * sizeof(uint32_t);
+    uint32_t *data = (uint32_t *)malloc(rgbaSize);
+
+    for (size_t y = 0; y < mRawP010Image.height; ++y) {
+      for (size_t x = 0; x < mRawP010Image.width; ++x) {
+        Color hdr_yuv_gamma = getP010Pixel(&mRawP010Image, x, y);
+        Color hdr_rgb_gamma = bt2100YuvToRgb(hdr_yuv_gamma);
+        uint32_t rgba1010102 = colorToRgba1010102(hdr_rgb_gamma);
+        size_t pixel_idx =  x + y * mRawP010Image.width;
+        reinterpret_cast<uint32_t*>(data)[pixel_idx] = rgba1010102;
+      }
+    }
+
+    // Output image data to file
+    std::string filePath = "/sdcard/Documents/input_from_p010.rgb10";
+    std::ofstream imageFile(filePath.c_str(), std::ofstream::binary);
+    if (!imageFile.is_open()) {
+      ALOGE("%s: Unable to create file %s", __FUNCTION__, filePath.c_str());
+    }
+    imageFile.write((const char*)data, rgbaSize);
+    free(data);
+  }
   if (!loadFile(JPEG_IMAGE, mJpegImage.data, &mJpegImage.length)) {
     FAIL() << "Load file " << JPEG_IMAGE << " failed";
   }

@@ -299,7 +299,7 @@ const char* KeyEvent::getLabel(int32_t keyCode) {
     return InputEventLookup::getLabelByKeyCode(keyCode);
 }
 
-int32_t KeyEvent::getKeyCodeFromLabel(const char* label) {
+std::optional<int> KeyEvent::getKeyCodeFromLabel(const char* label) {
     return InputEventLookup::getKeyCodeByLabel(label);
 }
 
@@ -341,6 +341,28 @@ const char* KeyEvent::actionToString(int32_t action) {
             return "MULTIPLE";
     }
     return "UNKNOWN";
+}
+
+std::ostream& operator<<(std::ostream& out, const KeyEvent& event) {
+    out << "KeyEvent { action=" << KeyEvent::actionToString(event.getAction());
+
+    out << ", keycode=" << event.getKeyCode() << "(" << KeyEvent::getLabel(event.getKeyCode())
+        << ")";
+
+    if (event.getMetaState() != 0) {
+        out << ", metaState=" << event.getMetaState();
+    }
+
+    out << ", eventTime=" << event.getEventTime();
+    out << ", downTime=" << event.getDownTime();
+    out << ", flags=" << std::hex << event.getFlags() << std::dec;
+    out << ", repeatCount=" << event.getRepeatCount();
+    out << ", deviceId=" << event.getDeviceId();
+    out << ", source=" << inputEventSourceToString(event.getSource());
+    out << ", displayId=" << event.getDisplayId();
+    out << ", eventId=" << event.getId();
+    out << "}";
+    return out;
 }
 
 // --- PointerCoords ---
@@ -869,7 +891,7 @@ const char* MotionEvent::getLabel(int32_t axis) {
     return InputEventLookup::getAxisLabel(axis);
 }
 
-int32_t MotionEvent::getAxisFromLabel(const char* label) {
+std::optional<int> MotionEvent::getAxisFromLabel(const char* label) {
     return InputEventLookup::getAxisByLabel(label);
 }
 

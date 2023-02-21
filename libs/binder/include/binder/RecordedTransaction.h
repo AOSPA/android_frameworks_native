@@ -26,7 +26,7 @@ namespace binder::debug {
 
 // Warning: Transactions are sequentially recorded to the file descriptor in a
 // non-stable format. A detailed description of the recording format can be found in
-// BinderRecordReplay.cpp.
+// RecordedTransaction.cpp.
 
 class RecordedTransaction {
 public:
@@ -41,7 +41,7 @@ public:
 
     [[nodiscard]] status_t dumpToFile(const android::base::unique_fd& fd) const;
 
-    const String8& getInterfaceName() const;
+    const std::string& getInterfaceName() const;
     uint32_t getCode() const;
     uint32_t getFlags() const;
     int32_t getReturnedStatus() const;
@@ -73,7 +73,7 @@ private:
 
     struct MovableData { // movable
         TransactionHeader mHeader;
-        String8 mInterfaceName;
+        std::string mInterfaceName;
     };
     MovableData mData;
     Parcel mSent;

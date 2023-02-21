@@ -562,4 +562,148 @@ TEST_F(LayerHierarchyTest, traversalPathId) {
     hierarchyBuilder.getHierarchy().traverseInZOrder(checkTraversalPathIdVisitor);
 }
 
+TEST_F(LayerHierarchyTest, zorderRespectsLayerSequenceId) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createRootLayer(2);
+    createRootLayer(4);
+    createRootLayer(5);
+    createLayer(11, 1);
+    createLayer(51, 5);
+    createLayer(53, 5);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 2, 4, 5, 51, 53};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+
+    // A new layer is added with a smaller sequence id. Make sure its sorted correctly. While
+    // sequence ids are always incremented, this scenario can happen when a layer is reparented.
+    createRootLayer(3);
+    createLayer(52, 5);
+
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    expectedTraversalPath = {1, 11, 2, 3, 4, 5, 51, 52, 53};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, zorderRespectsLayerZ) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createLayer(11, 1);
+    createLayer(12, 1);
+    createLayer(13, 1);
+    setZ(11, -1);
+    setZ(12, 2);
+    setZ(13, 1);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 13, 12};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    expectedTraversalPath = {11, 1, 13, 12};
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, zorderRespectsLayerStack) {
+    // remove default hierarchy
+    mLifecycleManager = LayerLifecycleManager();
+    createRootLayer(1);
+    createRootLayer(2);
+    createLayer(11, 1);
+    createLayer(21, 2);
+    setLayerStack(1, 20);
+    setLayerStack(2, 10);
+
+    mLifecycleManager.commitChanges();
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+    std::vector<uint32_t> expectedTraversalPath = {1, 11, 2, 21};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+
+    expectedTraversalPath = {1, 11, 2, 21};
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expectedTraversalPath);
+    expectedTraversalPath = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expectedTraversalPath);
+}
+
+TEST_F(LayerHierarchyTest, canMirrorDisplay) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1,  11,  111, 12,  121, 122,  1221, 13, 2,
+                                      1, 11, 111, 12,  121, 122, 1221, 13,   2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, mirrorNonExistingDisplay) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(5));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1, 11, 111, 12, 121, 122, 1221, 13, 2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, newRootLayerIsMirrored) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    createRootLayer(4);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 1,  11,  111, 12,  121, 122,  1221, 13, 2, 4,
+                                      1, 11, 111, 12,  121, 122, 1221, 13,   2,  4};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
+TEST_F(LayerHierarchyTest, removedRootLayerIsNoLongerMirrored) {
+    LayerHierarchyBuilder hierarchyBuilder(mLifecycleManager.getLayers());
+    setFlags(12, layer_state_t::eLayerSkipScreenshot, layer_state_t::eLayerSkipScreenshot);
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    reparentLayer(1, UNASSIGNED_LAYER_ID);
+    destroyLayerHandle(1);
+    UPDATE_AND_VERIFY(hierarchyBuilder);
+
+    std::vector<uint32_t> expected = {3, 2, 2};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()), expected);
+    EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()), expected);
+    expected = {11, 111, 12, 121, 122, 1221, 13};
+    EXPECT_EQ(getTraversalPath(hierarchyBuilder.getOffscreenHierarchy()), expected);
+}
+
 } // namespace android::surfaceflinger::frontend

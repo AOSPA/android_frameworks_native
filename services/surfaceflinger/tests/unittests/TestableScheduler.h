@@ -16,10 +16,11 @@
 
 #pragma once
 
-#include <Scheduler/Scheduler.h>
 #include <ftl/fake_guard.h>
 #include <gmock/gmock.h>
 #include <gui/ISurfaceComposer.h>
+
+#include <scheduler/interface/ICompositor.h>
 
 #include "Scheduler/EventThread.h"
 #include "Scheduler/LayerHistory.h"
@@ -37,12 +38,12 @@ public:
     TestableScheduler(RefreshRateSelectorPtr selectorPtr, ISchedulerCallback& callback)
           : TestableScheduler(std::make_unique<mock::VsyncController>(),
                               std::make_unique<mock::VSyncTracker>(), std::move(selectorPtr),
-                              callback) {}
+                              /* modulatorPtr */ nullptr, callback) {}
 
     TestableScheduler(std::unique_ptr<VsyncController> controller,
                       std::unique_ptr<VSyncTracker> tracker, RefreshRateSelectorPtr selectorPtr,
-                      ISchedulerCallback& callback)
-          : Scheduler(*this, callback, Feature::kContentDetection) {
+                      sp<VsyncModulator> modulatorPtr, ISchedulerCallback& callback)
+          : Scheduler(*this, callback, Feature::kContentDetection, std::move(modulatorPtr)) {
         mVsyncSchedule.emplace(VsyncSchedule(std::move(tracker),
                                              std::make_unique<mock::VSyncDispatch>(),
                                              std::move(controller)));
@@ -78,8 +79,6 @@ public:
         return mRefreshRateSelectors;
     }
 
-    bool hasRefreshRateSelectors() const { return !refreshRateSelectors().empty(); }
-
     void registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr) {
         ftl::FakeGuard guard(kMainThreadContext);
         Scheduler::registerDisplay(displayId, std::move(selectorPtr));
@@ -99,6 +98,7 @@ public:
         Scheduler::setLeaderDisplay(displayId);
     }
 
+    auto& mutableVsyncModulator() { return *mVsyncModulator; }
     auto& mutableLayerHistory() { return mLayerHistory; }
 
     size_t layerHistorySize() NO_THREAD_SAFETY_ANALYSIS {

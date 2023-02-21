@@ -26,12 +26,12 @@
 #include <optional>
 #include <string>
 
+#include <android-base/thread_annotations.h>
 #include <ftl/small_map.h>
 #include <utils/Timers.h>
 
 #include <scheduler/Fps.h>
-
-#include "VsyncModulator.h"
+#include <scheduler/VsyncConfig.h>
 
 /* QTI_BEGIN */
 #include "../QtiExtension/QtiPhaseOffsetsExtension.h"
@@ -58,8 +58,6 @@ namespace android::scheduler {
  */
 class VsyncConfiguration {
 public:
-    using VsyncConfigSet = VsyncModulator::VsyncConfigSet;
-
     virtual ~VsyncConfiguration() = default;
     virtual VsyncConfigSet getCurrentConfigs() const = 0;
     virtual VsyncConfigSet getConfigsForRefreshRate(Fps fps) const = 0;
@@ -111,7 +109,7 @@ protected:
     friend class android::surfaceflingerextension::QtiWorkDurationsExtension;
     /* QTI_END */
 
-    virtual VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const = 0;
+    virtual VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const = 0;
 
     VsyncConfigSet getConfigsForRefreshRateLocked(Fps fps) const REQUIRES(mLock);
 
@@ -145,7 +143,7 @@ private:
     friend class android::surfaceflingerextension::QtiPhaseOffsetsExtension;
     /* QTI_END */
 
-    VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
+    VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
 
     VsyncConfigSet getDefaultOffsets(nsecs_t vsyncPeriod) const;
     VsyncConfigSet getHighFpsOffsets(nsecs_t vsyncPeriod) const;
@@ -188,7 +186,7 @@ private:
     friend class android::surfaceflingerextension::QtiWorkDurationsExtension;
     /* QTI_END */
 
-    VsyncConfiguration::VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
+    VsyncConfigSet constructOffsets(nsecs_t vsyncDuration) const override;
 
     const nsecs_t mSfDuration;
     const nsecs_t mAppDuration;

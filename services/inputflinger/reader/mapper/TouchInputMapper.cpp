@@ -55,6 +55,10 @@ static bool isPointInRect(const Rect& rect, vec2 p) {
     return p.x >= rect.left && p.x < rect.right && p.y >= rect.top && p.y < rect.bottom;
 }
 
+static std::string toString(const InputDeviceUsiVersion& v) {
+    return base::StringPrintf("%d.%d", v.majorVersion, v.minorVersion);
+}
+
 template <typename T>
 inline static void swap(T& a, T& b) {
     T temp = a;
@@ -188,7 +192,7 @@ void TouchInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
         info->addMotionRange(AMOTION_EVENT_AXIS_HSCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
     }
     info->setButtonUnderPad(mParameters.hasButtonUnderPad);
-    info->setSupportsUsi(mParameters.supportsUsi);
+    info->setUsiVersion(mParameters.usiVersion);
 }
 
 void TouchInputMapper::dump(std::string& dump) {
@@ -421,9 +425,13 @@ void TouchInputMapper::configureParameters() {
     mParameters.wake = getDeviceContext().isExternal();
     getDeviceContext().getConfiguration().tryGetProperty("touch.wake", mParameters.wake);
 
-    mParameters.supportsUsi = false;
-    getDeviceContext().getConfiguration().tryGetProperty("touch.supportsUsi",
-                                                         mParameters.supportsUsi);
+    InputDeviceUsiVersion usiVersion;
+    if (getDeviceContext().getConfiguration().tryGetProperty("touch.usiVersionMajor",
+                                                             usiVersion.majorVersion) &&
+        getDeviceContext().getConfiguration().tryGetProperty("touch.usiVersionMinor",
+                                                             usiVersion.minorVersion)) {
+        mParameters.usiVersion = usiVersion;
+    }
 
     mParameters.enableForInactiveViewport = false;
     getDeviceContext().getConfiguration().tryGetProperty("touch.enableForInactiveViewport",
@@ -472,7 +480,8 @@ void TouchInputMapper::dumpParameters(std::string& dump) {
                          mParameters.uniqueDisplayId.c_str());
     dump += StringPrintf(INDENT4 "OrientationAware: %s\n", toString(mParameters.orientationAware));
     dump += INDENT4 "Orientation: " + ftl::enum_string(mParameters.orientation) + "\n";
-    dump += StringPrintf(INDENT4 "SupportsUsi: %s\n", toString(mParameters.supportsUsi));
+    dump += StringPrintf(INDENT4 "UsiVersion: %s\n",
+                         toString(mParameters.usiVersion, toString).c_str());
     dump += StringPrintf(INDENT4 "EnableForInactiveViewport: %s\n",
                          toString(mParameters.enableForInactiveViewport));
 }
@@ -875,8 +884,6 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
         mDeviceMode = DeviceMode::POINTER;
         if (hasStylus()) {
             mSource |= AINPUT_SOURCE_STYLUS;
-        } else {
-            mSource |= AINPUT_SOURCE_TOUCHPAD;
         }
     } else if (isTouchScreen()) {
         mSource = AINPUT_SOURCE_TOUCHSCREEN;
@@ -1448,7 +1455,7 @@ std::list<NotifyArgs> TouchInputMapper::sync(nsecs_t when, nsecs_t readTime) {
               next.rawPointerData.hoveringIdBits.value);
     }
 
-    out += processRawTouches(false /*timeout*/);
+    out += processRawTouches(/*timeout=*/false);
     return out;
 }
 
@@ -1742,11 +1749,11 @@ std::list<NotifyArgs> TouchInputMapper::timeoutExpired(nsecs_t when) {
         if (mPointerUsage == PointerUsage::GESTURES) {
             // Since this is a synthetic event, we can consider its latency to be zero
             const nsecs_t readTime = when;
-            out += dispatchPointerGestures(when, readTime, 0 /*policyFlags*/, true /*isTimeout*/);
+            out += dispatchPointerGestures(when, readTime, /*policyFlags=*/0, /*isTimeout=*/true);
         }
     } else if (mDeviceMode == DeviceMode::DIRECT) {
         if (mExternalStylusFusionTimeout <= when) {
-            out += processRawTouches(true /*timeout*/);
+            out += processRawTouches(/*timeout=*/true);
         } else if (mExternalStylusFusionTimeout != LLONG_MAX) {
             getContext()->requestTimeoutAtTime(mExternalStylusFusionTimeout);
         }
@@ -1765,7 +1772,7 @@ std::list<NotifyArgs> TouchInputMapper::updateExternalStylusState(const StylusSt
         // - Only the button state, which is not reported through a specific pointer, has changed.
         // Go ahead and dispatch now that we have fresh stylus data.
         mExternalStylusDataPending = true;
-        out += processRawTouches(false /*timeout*/);
+        out += processRawTouches(/*timeout=*/false);
     }
     return out;
 }
@@ -2366,7 +2373,7 @@ std::list<NotifyArgs> TouchInputMapper::dispatchPointerUsage(nsecs_t when, nsecs
 
     switch (mPointerUsage) {
         case PointerUsage::GESTURES:
-            out += dispatchPointerGestures(when, readTime, policyFlags, false /*isTimeout*/);
+            out += dispatchPointerGestures(when, readTime, policyFlags, /*isTimeout=*/false);
             break;
         case PointerUsage::STYLUS:
             out += dispatchPointerStylus(when, readTime, policyFlags);
@@ -3703,8 +3710,8 @@ NotifyMotionArgs TouchInputMapper::dispatchMotion(
 
 std::list<NotifyArgs> TouchInputMapper::cancelTouch(nsecs_t when, nsecs_t readTime) {
     std::list<NotifyArgs> out;
-    out += abortPointerUsage(when, readTime, 0 /*policyFlags*/);
-    out += abortTouches(when, readTime, 0 /* policyFlags*/);
+    out += abortPointerUsage(when, readTime, /*policyFlags=*/0);
+    out += abortTouches(when, readTime, /* policyFlags=*/0);
     return out;
 }
 

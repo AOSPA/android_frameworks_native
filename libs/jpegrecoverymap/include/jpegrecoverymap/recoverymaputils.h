@@ -17,6 +17,8 @@
 #ifndef ANDROID_JPEGRECOVERYMAP_RECOVERYMAPUTILS_H
 #define ANDROID_JPEGRECOVERYMAP_RECOVERYMAPUTILS_H
 
+#include <jpegrecoverymap/recoverymap.h>
+
 #include <sstream>
 #include <stdint.h>
 #include <string>
@@ -25,6 +27,25 @@
 namespace android::recoverymap {
 
 struct jpegr_metadata;
+
+// If the EXIF package doesn't exist in the input JPEG, we'll create one with one entry
+// where the length is represented by this value.
+const size_t PSEUDO_EXIF_PACKAGE_LENGTH = 28;
+// If the EXIF package exists in the input JPEG, we'll add an "JR" entry where the length is
+// represented by this value.
+const size_t EXIF_J_R_ENTRY_LENGTH = 12;
+
+/*
+ * Helper function used for writing data to destination.
+ *
+ * @param destination destination of the data to be written.
+ * @param source source of data being written.
+ * @param length length of the data to be written.
+ * @param position cursor in desitination where the data is to be written.
+ * @return status of succeed or error code.
+ */
+status_t Write(jr_compressed_ptr destination, const void* source, size_t length, int &position);
+
 
 /*
  * Parses XMP packet and fills metadata with data from XMP
@@ -56,8 +77,8 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  *         <rdf:Seq>
  *           <rdf:li>
  *             <GContainer:Item
- *               Item:Semantic="Primary"
- *               Item:Mime="image/jpeg"
+ *               GContainer:ItemSemantic="Primary"
+ *               GContainer:ItemMime="image/jpeg"
  *               RecoveryMap:Version=”1”
  *               RecoveryMap:RangeScalingFactor=”1.25”
  *               RecoveryMap:TransferFunction=”2”/>
@@ -68,9 +89,9 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  *           </rdf:li>
  *           <rdf:li>
  *             <GContainer:Item
- *               Item:Semantic="RecoveryMap"
- *               Item:Mime="image/jpeg"
- *               Item:Length="1000"/>
+ *               GContainer:ItemSemantic="RecoveryMap"
+ *               GContainer:ItemMime="image/jpeg"
+ *               GContainer:ItemLength="1000"/>
  *           </rdf:li>
  *         </rdf:Seq>
  *       </GContainer:Directory>
