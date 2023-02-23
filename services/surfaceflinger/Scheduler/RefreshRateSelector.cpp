@@ -32,6 +32,7 @@
 #include <ftl/fake_guard.h>
 #include <ftl/match.h>
 #include <ftl/unit.h>
+#include <gui/TraceUtils.h>
 #include <scheduler/FrameRateMode.h>
 #include <utils/Trace.h>
 
@@ -416,8 +417,10 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     // Keep the display at max frame rate for the duration of powering on the display.
     if (signals.powerOnImminent) {
         ALOGV("Power On Imminent");
-        return {rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Descending),
-                GlobalSignals{.powerOnImminent = true}};
+        const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Descending);
+        ATRACE_FORMAT_INSTANT("%s (Power On Imminent)",
+                              to_string(ranking.front().frameRateMode.fps).c_str());
+        return {ranking, GlobalSignals{.powerOnImminent = true}};
     }
 
     int noVoteLayers = 0;
@@ -476,8 +479,10 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     // selected a refresh rate to see if we should apply touch boost.
     if (signals.touch && !hasExplicitVoteLayers) {
         ALOGV("Touch Boost");
-        return {rankFrameRates(anchorGroup, RefreshRateOrder::Descending),
-                GlobalSignals{.touch = true}};
+        const auto ranking = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
+        ATRACE_FORMAT_INSTANT("%s (Touch Boost)",
+                              to_string(ranking.front().frameRateMode.fps).c_str());
+        return {ranking, GlobalSignals{.touch = true}};
     }
 
     // If the primary range consists of a single refresh rate then we can only
@@ -488,19 +493,26 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
 
     if (!signals.touch && signals.idle && !(primaryRangeIsSingleRate && hasExplicitVoteLayers)) {
         ALOGV("Idle");
-        return {rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending),
-                GlobalSignals{.idle = true}};
+        const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending);
+        ATRACE_FORMAT_INSTANT("%s (Idle)", to_string(ranking.front().frameRateMode.fps).c_str());
+        return {ranking, GlobalSignals{.idle = true}};
     }
 
     if (layers.empty() || noVoteLayers == layers.size()) {
         ALOGV("No layers with votes");
-        return {rankFrameRates(anchorGroup, RefreshRateOrder::Descending), kNoSignals};
+        const auto ranking = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
+        ATRACE_FORMAT_INSTANT("%s (No layers with votes)",
+                              to_string(ranking.front().frameRateMode.fps).c_str());
+        return {ranking, kNoSignals};
     }
 
     // Only if all layers want Min we should return Min
     if (noVoteLayers + minVoteLayers == layers.size()) {
         ALOGV("All layers Min");
-        return {rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending), kNoSignals};
+        const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending);
+        ATRACE_FORMAT_INSTANT("%s (All layers Min)",
+                              to_string(ranking.front().frameRateMode.fps).c_str());
+        return {ranking, kNoSignals};
     }
 
     // Find the best refresh rate based on score
@@ -670,8 +682,13 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         // range instead of picking a random score from the app range.
         if (noLayerScore) {
             ALOGV("Layers not scored");
-            return {rankFrameRates(anchorGroup, RefreshRateOrder::Descending), kNoSignals};
+            const auto descending = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
+            ATRACE_FORMAT_INSTANT("%s (Layers not scored)",
+                                  to_string(descending.front().frameRateMode.fps).c_str());
+            return {descending, kNoSignals};
         } else {
+            ATRACE_FORMAT_INSTANT("%s (primaryRangeIsSingleRate)",
+                                  to_string(ranking.front().frameRateMode.fps).c_str());
             return {ranking, kNoSignals};
         }
     }
@@ -696,17 +713,22 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     if (signals.touch && explicitDefaultVoteLayers == 0 && touchBoostForExplicitExact &&
         scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
         ALOGV("Touch Boost");
+        ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
+                              to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
         return {touchRefreshRates, GlobalSignals{.touch = true}};
     }
 
     // If we never scored any layers, and we don't favor high refresh rates, prefer to stay with the
     // current config
     if (noLayerScore && refreshRateOrder == RefreshRateOrder::Ascending) {
-        const auto preferredDisplayMode = activeMode.getId();
-        return {rankFrameRates(anchorGroup, RefreshRateOrder::Ascending, preferredDisplayMode),
-                kNoSignals};
+        const auto ascendingWithPreferred =
+                rankFrameRates(anchorGroup, RefreshRateOrder::Ascending, activeMode.getId());
+        ATRACE_FORMAT_INSTANT("%s (preferredDisplayMode)",
+                              to_string(ascendingWithPreferred.front().frameRateMode.fps).c_str());
+        return {ascendingWithPreferred, kNoSignals};
     }
 
+    ATRACE_FORMAT_INSTANT("%s (scored))", to_string(ranking.front().frameRateMode.fps).c_str());
     return {ranking, kNoSignals};
 }
 
@@ -907,7 +929,28 @@ auto RefreshRateSelector::rankFrameRates(std::optional<int> anchorGroupOpt,
                                          RefreshRateOrder refreshRateOrder,
                                          std::optional<DisplayModeId> preferredDisplayModeOpt) const
         -> FrameRateRanking {
+    using fps_approx_ops::operator<;
     const char* const whence = __func__;
+
+    // find the highest frame rate for each display mode
+    ftl::SmallMap<DisplayModeId, Fps, 8> maxRenderRateForMode;
+    const bool ascending = (refreshRateOrder == RefreshRateOrder::Ascending);
+    if (ascending) {
+        // TODO(b/266481656): Once this bug is fixed, we can remove this workaround and actually
+        //  use a lower frame rate when we want Ascending frame rates.
+        for (const auto& frameRateMode : mPrimaryFrameRates) {
+            if (anchorGroupOpt && frameRateMode.modePtr->getGroup() != anchorGroupOpt) {
+                continue;
+            }
+
+            const auto [iter, _] = maxRenderRateForMode.try_emplace(frameRateMode.modePtr->getId(),
+                                                                    frameRateMode.fps);
+            if (iter->second < frameRateMode.fps) {
+                iter->second = frameRateMode.fps;
+            }
+        }
+    }
+
     std::deque<ScoredFrameRate> ranking;
     const auto rankFrameRate = [&](const FrameRateMode& frameRateMode) REQUIRES(mLock) {
         const auto& modePtr = frameRateMode.modePtr;
@@ -915,9 +958,17 @@ auto RefreshRateSelector::rankFrameRates(std::optional<int> anchorGroupOpt,
             return;
         }
 
+        const bool ascending = (refreshRateOrder == RefreshRateOrder::Ascending);
+        const auto id = frameRateMode.modePtr->getId();
+        if (ascending && frameRateMode.fps < *maxRenderRateForMode.get(id)) {
+            // TODO(b/266481656): Once this bug is fixed, we can remove this workaround and actually
+            //  use a lower frame rate when we want Ascending frame rates.
+            return;
+        }
+
         float score = calculateDistanceScoreFromMax(frameRateMode.fps);
-        const bool inverseScore = (refreshRateOrder == RefreshRateOrder::Ascending);
-        if (inverseScore) {
+
+        if (ascending) {
             score = 1.0f / score;
         }
         if (preferredDisplayModeOpt) {
@@ -929,6 +980,7 @@ auto RefreshRateSelector::rankFrameRates(std::optional<int> anchorGroupOpt,
             constexpr float kNonPreferredModePenalty = 0.95f;
             score *= kNonPreferredModePenalty;
         }
+
         ALOGV("%s(%s) %s (%s) scored %.2f", whence, ftl::enum_string(refreshRateOrder).c_str(),
               to_string(frameRateMode.fps).c_str(), to_string(modePtr->getFps()).c_str(), score);
         ranking.emplace_back(ScoredFrameRate{frameRateMode, score});

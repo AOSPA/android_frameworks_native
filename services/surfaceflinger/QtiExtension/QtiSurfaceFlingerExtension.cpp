@@ -567,10 +567,12 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
             mQtiPhaseOffsetsExtn->qtiUpdateSfOffsets(&mQtiAdvancedSfOffsets);
         }
 
+        /*
         const auto vsyncConfig = mQtiFlinger->mVsyncModulator->setVsyncConfigSet(
                 mQtiFlinger->mVsyncConfiguration->getCurrentConfigs());
         ALOGV("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
         ALOGV("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
+        */
     }
 #endif
 }
@@ -582,7 +584,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
         return;
     }
 
-    const sp<Fence>& fence = mQtiFlinger->mVsyncModulator->getVsyncConfig().sfOffset > 0
+    const sp<Fence>& fence = mQtiFlinger->mScheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
             ? mQtiFlinger->mPreviousPresentFences[0].fence
             : mQtiFlinger->mPreviousPresentFences[1].fence;
 
@@ -603,7 +605,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
         bool periodFlushed = false;
         mQtiFlinger->mScheduler->addResyncSample(timeStamp, period, &periodFlushed);
         if (periodFlushed) {
-            mQtiFlinger->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
+            mQtiFlinger->mScheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
 }

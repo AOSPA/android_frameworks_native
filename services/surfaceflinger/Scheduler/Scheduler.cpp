@@ -40,6 +40,8 @@
 #include <utils/Trace.h>
 
 #include <FrameTimeline/FrameTimeline.h>
+#include <scheduler/interface/ICompositor.h>
+
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
@@ -66,8 +68,12 @@
 
 namespace android::scheduler {
 
-Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features)
-      : impl::MessageQueue(compositor), mFeatures(features), mSchedulerCallback(callback) {}
+Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features,
+                     sp<VsyncModulator> modulatorPtr)
+      : impl::MessageQueue(compositor),
+        mFeatures(features),
+        mVsyncModulator(std::move(modulatorPtr)),
+        mSchedulerCallback(callback) {}
 
 Scheduler::~Scheduler() {
     // MessageQueue depends on VsyncSchedule, so first destroy it.
@@ -126,6 +132,11 @@ void Scheduler::unregisterDisplay(PhysicalDisplayId displayId) {
 
     std::scoped_lock lock(mDisplayLock);
     mRefreshRateSelectors.erase(displayId);
+
+    // Do not allow removing the final display. Code in the scheduler expects
+    // there to be at least one display. (This may be relaxed in the future with
+    // headless virtual display.)
+    LOG_ALWAYS_FATAL_IF(mRefreshRateSelectors.empty(), "Cannot unregister all displays!");
 
     promoteLeaderDisplay();
 }
@@ -192,17 +203,19 @@ impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction(
     };
 }
 
-ConnectionHandle Scheduler::createConnection(const char* connectionName,
-                                             frametimeline::TokenManager* tokenManager,
-                                             std::chrono::nanoseconds workDuration,
-                                             std::chrono::nanoseconds readyDuration) {
-    auto throttleVsync = makeThrottleVsyncCallback();
-    auto getVsyncPeriod = makeGetVsyncPeriodFunction();
-    auto eventThread =
-            std::make_unique<impl::EventThread>(connectionName, *mVsyncSchedule, tokenManager,
-                                                std::move(throttleVsync), std::move(getVsyncPeriod),
-                                                workDuration, readyDuration);
-    return createConnection(std::move(eventThread));
+ConnectionHandle Scheduler::createEventThread(Cycle cycle,
+                                              frametimeline::TokenManager* tokenManager,
+                                              std::chrono::nanoseconds workDuration,
+                                              std::chrono::nanoseconds readyDuration) {
+    auto eventThread = std::make_unique<impl::EventThread>(cycle == Cycle::Render ? "app" : "appSf",
+                                                           *mVsyncSchedule, tokenManager,
+                                                           makeThrottleVsyncCallback(),
+                                                           makeGetVsyncPeriodFunction(),
+                                                           workDuration, readyDuration);
+
+    auto& handle = cycle == Cycle::Render ? mAppConnectionHandle : mSfConnectionHandle;
+    handle = createConnection(std::move(eventThread));
+    return handle;
 }
 
 ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread) {
@@ -360,6 +373,20 @@ void Scheduler::setDuration(ConnectionHandle handle, std::chrono::nanoseconds wo
         thread = mConnections[handle].thread.get();
     }
     thread->setDuration(workDuration, readyDuration);
+}
+
+void Scheduler::setVsyncConfigSet(const VsyncConfigSet& configs, Period vsyncPeriod) {
+    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(configs), vsyncPeriod);
+}
+
+void Scheduler::setVsyncConfig(const VsyncConfig& config, Period vsyncPeriod) {
+    setDuration(mAppConnectionHandle,
+                /* workDuration */ config.appWorkDuration,
+                /* readyDuration */ config.sfWorkDuration);
+    setDuration(mSfConnectionHandle,
+                /* workDuration */ vsyncPeriod,
+                /* readyDuration */ config.sfWorkDuration);
+    setDuration(config.sfWorkDuration);
 }
 
 void Scheduler::enableHardwareVsync() {

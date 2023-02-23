@@ -16,7 +16,11 @@
 
 #include "gestures/GestureConverter.h"
 
+#include <sstream>
+
+#include <android-base/stringprintf.h>
 #include <android/input.h>
+#include <ftl/enum.h>
 #include <linux/input-event-codes.h>
 #include <log/log_main.h>
 
@@ -53,6 +57,18 @@ GestureConverter::GestureConverter(InputReaderContext& readerContext,
         mPointerController(readerContext.getPointerController(deviceId)) {
     deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_X, &mXAxisInfo);
     deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_Y, &mYAxisInfo);
+}
+
+std::string GestureConverter::dump() const {
+    std::stringstream out;
+    out << "Orientation: " << ftl::enum_string(mOrientation) << "\n";
+    out << "Axis info:\n";
+    out << "  X: " << mXAxisInfo << "\n";
+    out << "  Y: " << mYAxisInfo << "\n";
+    out << StringPrintf("Button state: 0x%08x\n", mButtonState);
+    out << "Down time: " << mDownTime << "\n";
+    out << "Current classification: " << ftl::enum_string(mCurrentClassification) << "\n";
+    return out.str();
 }
 
 void GestureConverter::reset() {
@@ -203,11 +219,11 @@ std::list<NotifyArgs> GestureConverter::handleScroll(nsecs_t when, nsecs_t readT
     float deltaY = gesture.details.scroll.dy;
     rotateDelta(mOrientation, &deltaX, &deltaY);
 
-    coords.setAxisValue(AMOTION_EVENT_AXIS_X, coords.getAxisValue(AMOTION_EVENT_AXIS_X) - deltaX);
-    coords.setAxisValue(AMOTION_EVENT_AXIS_Y, coords.getAxisValue(AMOTION_EVENT_AXIS_Y) - deltaY);
+    coords.setAxisValue(AMOTION_EVENT_AXIS_X, coords.getAxisValue(AMOTION_EVENT_AXIS_X) + deltaX);
+    coords.setAxisValue(AMOTION_EVENT_AXIS_Y, coords.getAxisValue(AMOTION_EVENT_AXIS_Y) + deltaY);
     // TODO(b/262876643): set AXIS_GESTURE_{X,Y}_OFFSET.
-    coords.setAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_X_DISTANCE, gesture.details.scroll.dx);
-    coords.setAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_Y_DISTANCE, gesture.details.scroll.dy);
+    coords.setAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_X_DISTANCE, -gesture.details.scroll.dx);
+    coords.setAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_Y_DISTANCE, -gesture.details.scroll.dy);
     out.push_back(makeMotionArgs(when, readTime, AMOTION_EVENT_ACTION_MOVE, /* actionButton= */ 0,
                                  mButtonState, /* pointerCount= */ 1, mFingerProps.data(),
                                  mFakeFingerCoords.data(), xCursorPosition, yCursorPosition));

@@ -220,7 +220,7 @@ static bool isV4lTouchNode(std::string name) {
  * directly from /dev.
  */
 static bool isV4lScanningEnabled() {
-    return property_get_bool("ro.input.video_enabled", true /* default_value */);
+    return property_get_bool("ro.input.video_enabled", /*default_value=*/true);
 }
 
 static nsecs_t processEventTimestamp(const struct input_event& event) {
@@ -513,6 +513,18 @@ ftl::Flags<InputDeviceClass> getAbsAxisUsage(int32_t axis,
 
     // Joystick devices get the rest.
     return deviceClasses & InputDeviceClass::JOYSTICK;
+}
+
+// --- RawAbsoluteAxisInfo ---
+
+std::ostream& operator<<(std::ostream& out, const RawAbsoluteAxisInfo& info) {
+    if (info.valid) {
+        out << "min=" << info.minValue << ", max=" << info.maxValue << ", flat=" << info.flat
+            << ", fuzz=" << info.fuzz << ", resolution=" << info.resolution;
+    } else {
+        out << "unknown range";
+    }
+    return out;
 }
 
 // --- EventHub::Device ---
@@ -994,7 +1006,7 @@ int32_t EventHub::getKeyCodeForKeyLocation(int32_t deviceId, int32_t locationKey
     }
     int32_t outKeyCode;
     status_t mapKeyRes =
-            device->getKeyCharacterMap()->mapKey(scanCodes[0], 0 /*usageCode*/, &outKeyCode);
+            device->getKeyCharacterMap()->mapKey(scanCodes[0], /*usageCode=*/0, &outKeyCode);
     switch (mapKeyRes) {
         case OK:
             break;
@@ -2532,7 +2544,7 @@ void EventHub::createVirtualKeyboardLocked() {
 
     std::unique_ptr<Device> device =
             std::make_unique<Device>(-1, ReservedInputDeviceId::VIRTUAL_KEYBOARD_ID, "<virtual>",
-                                     identifier, nullptr /*associatedDevice*/);
+                                     identifier, /*associatedDevice=*/nullptr);
     device->classes = InputDeviceClass::KEYBOARD | InputDeviceClass::ALPHAKEY |
             InputDeviceClass::DPAD | InputDeviceClass::VIRTUAL;
     device->loadKeyMapLocked();
