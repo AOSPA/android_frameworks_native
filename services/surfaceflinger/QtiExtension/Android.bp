@@ -1,16 +1,60 @@
 // This contains libraries needed by both SF and QtiSurfaceFlingerExtension.
+soong_config_module_type {
+    name: "qtidisplaycommonsys_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "qtidisplaycommonsys",
+    bool_variables: [
+        "displayconfig",
+        "unifieddraw",
+        "composer3ext",
+    ],
+    properties: [
+        "cflags",
+        "srcs",
+        "shared_libs",
+    ],
+}
+
+qtidisplaycommonsys_cc_defaults {
+    name: "displaycommonsys_defaults",
+    soong_config_variables: {
+        displayconfig: {
+            cflags: [
+                "-Wno-unused-parameter",
+                "-DQTI_DISPLAY_HIDL_CONFIG",
+                "-DQTI_DISPLAY_AIDL_CONFIG",
+            ],
+            shared_libs: [
+                "libdisplayconfig.system.qti",
+                "libbinder_ndk",
+                "vendor.qti.hardware.display.config-V5-ndk",
+            ],
+        },
+        unifieddraw: {
+            cflags: [
+                "-Wno-unused-parameter",
+                "-DQTI_UNIFIED_DRAW",
+            ],
+            shared_libs: ["vendor.qti.hardware.display.composer@3.1"],
+        },
+        composer3ext: {
+            cflags: [
+                "-Wno-unused-parameter",
+                "-DQTI_COMPOSER3_EXTENSIONS",
+            ],
+            shared_libs: ["vendor.qti.hardware.display.composer3-V1-ndk"],
+        },
+
+    },
+}
+
 cc_defaults {
     name: "libqtisurfaceflingerextension_defaults",
     cflags: [
         "-DQTI_DISPLAY_EXTENSION",
     ],
-    shared_libs: [
-        "vendor.qti.hardware.display.composer@3.0",
-    ],
     defaults: [
-        "qti_libdisplayconfigaidl_defaults",
-        "qti_libdisplayconfighidl_defaults",
-        "qti_unfieddraw_defaults",
+        "displaycommonsys_defaults",
     ],
     header_libs: [
         "display_intf_headers",
@@ -24,11 +68,10 @@ cc_library_static {
     defaults: [
         "android.hardware.graphics.composer3-ndk_shared",
         "libqtisurfaceflingerextension_defaults",
-        "surfaceflinger_defaults"
+        "surfaceflinger_defaults",
     ],
     cflags: [
-        "-DLOG_TAG=\"SurfaceFlingerExtension\"",
-        "-DQTI_DISPLAY_EXTENSION",
+        "-DLOG_TAG=\"QtiSurfaceFlingerExtension\"",
     ],
     srcs: [
         "QtiComposerHalExtension.cpp",
@@ -61,6 +104,7 @@ cc_library_static {
         "libutils",
         "libSurfaceFlingerProp",
         "vendor.qti.hardware.display.composer@3.0",
+        "vendor.qti.hardware.display.config-V5-ndk",
     ],
     static_libs: [
         "libcompositionengine",
@@ -82,69 +126,5 @@ cc_library_static {
     export_shared_lib_headers: [
         "libhidlbase",
     ],
+    local_include_dirs: ["."],
 }
-
-cc_defaults {
-    name: "qti_libdisplayconfigaidl_defaults",
-    cflags: [
-        "-DQTI_DISPLAY_AIDL_CONFIG",
-    ],
-    shared_libs: [
-       "libbinder_ndk",
-       "vendor.qti.hardware.display.config-V5-ndk",
-    ],
-}
-
-soong_config_module_type {
-      name: "libdisplayconfig_cc_defaults",
-      module_type: "cc_defaults",
-      config_namespace: "qtidisplaycommonsys",
-      bool_variables: [
-          "displayconfig_enabled",
-      ],
-      properties: [
-          "cflags",
-          "srcs",
-          "shared_libs",
-      ],
-  }
-
-  libdisplayconfig_cc_defaults {
-      name: "qti_libdisplayconfighidl_defaults",
-      soong_config_variables: {
-          displayconfig_enabled : {
-              cflags: [
-                  "-Wno-unused-parameter",
-                  "-DQTI_DISPLAY_HIDL_CONFIG",
-              ],
-              shared_libs : ["libdisplayconfig.system.qti"]
-          }
-      }
-  }
-
-soong_config_module_type {
-      name: "unifieddraw_cc_defaults",
-      module_type: "cc_defaults",
-      config_namespace: "qtiunifeddraw",
-       bool_variables: [
-           "qtiunifeddraw_enabled",
-       ],
-       properties: [
-           "cflags",
-           "srcs",
-           "shared_libs",
-       ],
-  }
-
-  unifieddraw_cc_defaults {
-      name: "qti_unfieddraw_defaults",
-      soong_config_variables: {
-          qtiunifeddraw_enabled: {
-              cflags: [
-              "-Wno-unused-parameter",
-              "-DQTI_UNIFIED_DRAW"
-              ],
-              shared_libs : ["vendor.qti.hardware.display.composer@3.1"]
-          }
-      }
-  }
