@@ -50,6 +50,14 @@ void TouchedWindow::addHoveringPointer(int32_t deviceId, int32_t pointerId) {
     it->second.set(pointerId);
 }
 
+void TouchedWindow::removeTouchingPointer(int32_t pointerId) {
+    pointerIds.reset(pointerId);
+    pilferedPointerIds.reset(pointerId);
+    if (pointerIds.none()) {
+        firstDownTimeInTarget.reset();
+    }
+}
+
 void TouchedWindow::removeHoveringPointer(int32_t deviceId, int32_t pointerId) {
     const auto it = mHoveringPointerIdsByDevice.find(deviceId);
     if (it == mHoveringPointerIdsByDevice.end()) {
@@ -66,9 +74,9 @@ std::string TouchedWindow::dump() const {
     std::string out;
     std::string hoveringPointers =
             dumpMap(mHoveringPointerIdsByDevice, constToString, bitsetToString);
-    out += StringPrintf("name='%s', pointerIds=0x%0x, targetFlags=%s, firstDownTimeInTarget=%s, "
+    out += StringPrintf("name='%s', pointerIds=%s, targetFlags=%s, firstDownTimeInTarget=%s, "
                         "mHoveringPointerIdsByDevice=%s, pilferedPointerIds=%s\n",
-                        windowHandle->getName().c_str(), pointerIds.value,
+                        windowHandle->getName().c_str(), bitsetToString(pointerIds).c_str(),
                         targetFlags.string().c_str(), toString(firstDownTimeInTarget).c_str(),
                         hoveringPointers.c_str(), bitsetToString(pilferedPointerIds).c_str());
     return out;

@@ -68,9 +68,15 @@ interface ISurfaceComposer {
 
     /**
      * Create a display event connection
+     *
+     * layerHandle
+     *     Optional binder handle representing a Layer in SF to associate the new
+     *     DisplayEventConnection with. This handle can be found inside a surface control after
+     *     surface creation, see ISurfaceComposerClient::createSurface. Set to null if no layer
+     *     association should be made.
      */
     @nullable IDisplayEventConnection createDisplayEventConnection(VsyncSource vsyncSource,
-            EventRegistration eventRegistration);
+            EventRegistration eventRegistration, @nullable IBinder layerHandle);
 
     /**
      * Create a connection with SurfaceFlinger.
@@ -79,9 +85,21 @@ interface ISurfaceComposer {
 
     /**
      * Create a virtual display
+     *
+     * displayName
+     *     The name of the virtual display
+     * secure
+     *     Whether this virtual display is secure
+     * requestedRefreshRate
+     *     The refresh rate, frames per second, to request on the virtual display.
+     *     This is just a request, the actual rate may be adjusted to align well
+     *     with physical displays running concurrently. If 0 is specified, the
+     *     virtual display is refreshed at the physical display refresh rate.
+     *
      * requires ACCESS_SURFACE_FLINGER permission.
      */
-    @nullable IBinder createDisplay(@utf8InCpp String displayName, boolean secure);
+    @nullable IBinder createDisplay(@utf8InCpp String displayName, boolean secure,
+            float requestedRefreshRate);
 
     /**
      * Destroy a virtual display

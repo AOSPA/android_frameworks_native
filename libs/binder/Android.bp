@@ -215,6 +215,8 @@ cc_library_headers {
 
 cc_defaults {
     name: "trusty_mock_defaults",
+    vendor_available: true,
+    host_supported: true,
 
     header_libs: [
         "trusty_mock_headers",
@@ -287,6 +289,14 @@ cc_defaults {
     cflags: [
         "-DBINDER_WITH_KERNEL_IPC",
     ],
+    arch: {
+        // TODO(b/254713216): undefined symbol in BufferedTextOutput::getBuffer
+        riscv64: {
+            lto: {
+                thin: false,
+            },
+        },
+    },
 }
 
 cc_library {
@@ -508,6 +518,10 @@ aidl_interface {
             enabled: false,
         },
     },
+    visibility: [
+        ":__subpackages__",
+        "//system/tools/aidl:__subpackages__",
+    ],
 }
 
 // TODO(b/184872979): remove once the Rust API is created.

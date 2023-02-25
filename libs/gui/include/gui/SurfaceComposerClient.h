@@ -194,6 +194,8 @@ public:
     static status_t getHdrConversionCapabilities(std::vector<gui::HdrConversionCapability>*);
     // Sets the HDR conversion strategy for the device
     static status_t setHdrConversionStrategy(gui::HdrConversionStrategy hdrConversionStrategy);
+    // Returns whether HDR conversion is supported by the device.
+    static status_t getHdrOutputConversionSupport(bool* isSupported);
 
     // Sets the frame rate of a particular app (uid). This is currently called
     // by GameManager.
@@ -355,7 +357,8 @@ public:
     sp<SurfaceControl> mirrorDisplay(DisplayId displayId);
 
     //! Create a virtual display
-    static sp<IBinder> createDisplay(const String8& displayName, bool secure);
+    static sp<IBinder> createDisplay(const String8& displayName, bool secure,
+                                     float requestedRefereshRate = 0);
 
     //! Destroy a virtual display
     static void destroyDisplay(const sp<IBinder>& display);
@@ -535,7 +538,7 @@ public:
         Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
                                const std::optional<sp<Fence>>& fence = std::nullopt,
                                const std::optional<uint64_t>& frameNumber = std::nullopt,
-                               ReleaseBufferCallback callback = nullptr);
+                               uint32_t producerId = 0, ReleaseBufferCallback callback = nullptr);
         std::shared_ptr<BufferData> getAndClearBuffer(const sp<SurfaceControl>& sc);
 
         /**
@@ -741,6 +744,8 @@ public:
 
         static sp<IBinder> getDefaultApplyToken();
         static void setDefaultApplyToken(sp<IBinder> applyToken);
+
+        static status_t sendSurfaceFlushJankDataTransaction(const sp<SurfaceControl>& sc);
     };
 
     status_t clearLayerFrameStats(const sp<IBinder>& token) const;
@@ -875,10 +880,14 @@ public:
             const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
                     surfaceControls,
             CallbackId::Type callbackType);
+    CallbackId addCallbackFunctionLocked(
+            const TransactionCompletedCallback& callbackFunction,
+            const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
+                    surfaceControls,
+            CallbackId::Type callbackType) REQUIRES(mMutex);
 
-    void addSurfaceControlToCallbacks(
-            const sp<SurfaceControl>& surfaceControl,
-            const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds);
+    void addSurfaceControlToCallbacks(SurfaceComposerClient::CallbackInfo& callbackInfo,
+                                      const sp<SurfaceControl>& surfaceControl);
 
     void addQueueStallListener(std::function<void(const std::string&)> stallListener, void* id);
     void removeQueueStallListener(void *id);
@@ -920,7 +929,7 @@ public:
     void onTrustedPresentationChanged(int id, bool presentedWithinThresholds) override;
 
 private:
-    ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&);
+    ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&) REQUIRES(mMutex);
     static sp<TransactionCompletedListener> sInstance;
 };
 

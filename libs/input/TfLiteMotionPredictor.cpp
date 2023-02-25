@@ -17,27 +17,31 @@
 #define LOG_TAG "TfLiteMotionPredictor"
 #include <input/TfLiteMotionPredictor.h>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
-#include <ios>
-#include <iterator>
 #include <memory>
 #include <span>
-#include <string>
 #include <type_traits>
 #include <utility>
 
+#include <android-base/logging.h>
+#include <android-base/mapped_file.h>
 #define ATRACE_TAG ATRACE_TAG_INPUT
 #include <cutils/trace.h>
 #include <log/log.h>
 
 #include "tensorflow/lite/core/api/error_reporter.h"
+#include "tensorflow/lite/core/api/op_resolver.h"
 #include "tensorflow/lite/interpreter.h"
-#include "tensorflow/lite/kernels/register.h"
+#include "tensorflow/lite/kernels/builtin_op_kernels.h"
 #include "tensorflow/lite/model.h"
+#include "tensorflow/lite/mutable_op_resolver.h"
 
 namespace android {
 namespace {
@@ -102,15 +106,24 @@ void checkTensor(const TfLiteTensor* tensor) {
     LOG_ALWAYS_FATAL_IF(buffer.empty(), "No buffer for tensor '%s'", tensor->name);
 }
 
+std::unique_ptr<tflite::OpResolver> createOpResolver() {
+    auto resolver = std::make_unique<tflite::MutableOpResolver>();
+    resolver->AddBuiltin(::tflite::BuiltinOperator_CONCATENATION,
+                         ::tflite::ops::builtin::Register_CONCATENATION());
+    resolver->AddBuiltin(::tflite::BuiltinOperator_FULLY_CONNECTED,
+                         ::tflite::ops::builtin::Register_FULLY_CONNECTED());
+    return resolver;
+}
+
 } // namespace
 
-TfLiteMotionPredictorBuffers::TfLiteMotionPredictorBuffers(size_t inputLength) {
+TfLiteMotionPredictorBuffers::TfLiteMotionPredictorBuffers(size_t inputLength)
+      : mInputR(inputLength, 0),
+        mInputPhi(inputLength, 0),
+        mInputPressure(inputLength, 0),
+        mInputTilt(inputLength, 0),
+        mInputOrientation(inputLength, 0) {
     LOG_ALWAYS_FATAL_IF(inputLength == 0, "Buffer input size must be greater than 0");
-    mInputR.resize(inputLength);
-    mInputPhi.resize(inputLength);
-    mInputPressure.resize(inputLength);
-    mInputTilt.resize(inputLength);
-    mInputOrientation.resize(inputLength);
 }
 
 void TfLiteMotionPredictorBuffers::reset() {
@@ -186,42 +199,51 @@ void TfLiteMotionPredictorBuffers::pushSample(int64_t timestamp,
     mAxisTo = sample;
 
     // Push the current sample onto the end of the input buffers.
-    mInputR.erase(mInputR.begin());
-    mInputPhi.erase(mInputPhi.begin());
-    mInputPressure.erase(mInputPressure.begin());
-    mInputTilt.erase(mInputTilt.begin());
-    mInputOrientation.erase(mInputOrientation.begin());
-
-    mInputR.push_back(r);
-    mInputPhi.push_back(phi);
-    mInputPressure.push_back(sample.pressure);
-    mInputTilt.push_back(sample.tilt);
-    mInputOrientation.push_back(orientation);
+    mInputR.pushBack(r);
+    mInputPhi.pushBack(phi);
+    mInputPressure.pushBack(sample.pressure);
+    mInputTilt.pushBack(sample.tilt);
+    mInputOrientation.pushBack(orientation);
 }
 
 std::unique_ptr<TfLiteMotionPredictorModel> TfLiteMotionPredictorModel::create(
         const char* modelPath) {
-    std::ifstream f(modelPath, std::ios::binary);
-    LOG_ALWAYS_FATAL_IF(!f, "Could not read model from %s", modelPath);
+    const int fd = open(modelPath, O_RDONLY);
+    if (fd == -1) {
+        PLOG(FATAL) << "Could not read model from " << modelPath;
+    }
 
-    std::string data;
-    data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const off_t fdSize = lseek(fd, 0, SEEK_END);
+    if (fdSize == -1) {
+        PLOG(FATAL) << "Failed to determine file size";
+    }
+
+    std::unique_ptr<android::base::MappedFile> modelBuffer =
+            android::base::MappedFile::FromFd(fd, /*offset=*/0, fdSize, PROT_READ);
+    if (!modelBuffer) {
+        PLOG(FATAL) << "Failed to mmap model";
+    }
+    if (close(fd) == -1) {
+        PLOG(FATAL) << "Failed to close model fd";
+    }
 
     return std::unique_ptr<TfLiteMotionPredictorModel>(
-            new TfLiteMotionPredictorModel(std::move(data)));
+            new TfLiteMotionPredictorModel(std::move(modelBuffer)));
 }
 
-TfLiteMotionPredictorModel::TfLiteMotionPredictorModel(std::string model)
+TfLiteMotionPredictorModel::TfLiteMotionPredictorModel(
+        std::unique_ptr<android::base::MappedFile> model)
       : mFlatBuffer(std::move(model)) {
+    CHECK(mFlatBuffer);
     mErrorReporter = std::make_unique<LoggingErrorReporter>();
-    mModel = tflite::FlatBufferModel::VerifyAndBuildFromBuffer(mFlatBuffer.data(),
-                                                               mFlatBuffer.length(),
+    mModel = tflite::FlatBufferModel::VerifyAndBuildFromBuffer(mFlatBuffer->data(),
+                                                               mFlatBuffer->size(),
                                                                /*extra_verifier=*/nullptr,
                                                                mErrorReporter.get());
     LOG_ALWAYS_FATAL_IF(!mModel);
 
-    tflite::ops::builtin::BuiltinOpResolver resolver;
-    tflite::InterpreterBuilder builder(*mModel, resolver);
+    auto resolver = createOpResolver();
+    tflite::InterpreterBuilder builder(*mModel, *resolver);
 
     if (builder(&mInterpreter) != kTfLiteOk || !mInterpreter) {
         LOG_ALWAYS_FATAL("Failed to build interpreter");
@@ -232,6 +254,8 @@ TfLiteMotionPredictorModel::TfLiteMotionPredictorModel(std::string model)
 
     allocateTensors();
 }
+
+TfLiteMotionPredictorModel::~TfLiteMotionPredictorModel() {}
 
 void TfLiteMotionPredictorModel::allocateTensors() {
     if (mRunner->AllocateTensors() != kTfLiteOk) {

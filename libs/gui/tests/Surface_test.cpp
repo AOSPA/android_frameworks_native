@@ -725,6 +725,7 @@ public:
 
     binder::Status createDisplayEventConnection(
             VsyncSource /*vsyncSource*/, EventRegistration /*eventRegistration*/,
+            const sp<IBinder>& /*layerHandle*/,
             sp<gui::IDisplayEventConnection>* outConnection) override {
         *outConnection = nullptr;
         return binder::Status::ok();
@@ -736,6 +737,7 @@ public:
     }
 
     binder::Status createDisplay(const std::string& /*displayName*/, bool /*secure*/,
+                                 float /*requestedRefreshRate*/,
                                  sp<IBinder>* /*outDisplay*/) override {
         return binder::Status::ok();
     }
