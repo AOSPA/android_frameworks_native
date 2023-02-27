@@ -684,6 +684,9 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eDimmingEnabledChanged;
         dimmingEnabled = other.dimmingEnabled;
     }
+    if (other.what & eFlushJankData) {
+        what |= eFlushJankData;
+    }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "
               "other.what=0x%" PRIX64 " what=0x%" PRIX64 " unmerged flags=0x%" PRIX64,
@@ -981,6 +984,7 @@ status_t BufferData::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(output->writeUint64, cachedBuffer.id);
     SAFE_PARCEL(output->writeBool, hasBarrier);
     SAFE_PARCEL(output->writeUint64, barrierFrameNumber);
+    SAFE_PARCEL(output->writeUint32, producerId);
 
     return NO_ERROR;
 }
@@ -1019,6 +1023,7 @@ status_t BufferData::readFromParcel(const Parcel* input) {
 
     SAFE_PARCEL(input->readBool, &hasBarrier);
     SAFE_PARCEL(input->readUint64, &barrierFrameNumber);
+    SAFE_PARCEL(input->readUint32, &producerId);
 
     return NO_ERROR;
 }

@@ -580,8 +580,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     mQtiFlinger->mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(period)/*,
                                       true force resync */);
     if (timeStamp > 0) {
-        bool periodFlushed = false;
-        mQtiFlinger->mScheduler->addResyncSample(timeStamp, period, &periodFlushed);
+        bool periodFlushed = mQtiFlinger->mScheduler->addResyncSample(timeStamp, period);
         if (periodFlushed) {
             mQtiFlinger->mScheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
         }

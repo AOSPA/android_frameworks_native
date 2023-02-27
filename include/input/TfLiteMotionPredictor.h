@@ -22,8 +22,9 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
-#include <vector>
+
+#include <android-base/mapped_file.h>
+#include <input/RingBuffer.h>
 
 #include <tensorflow/lite/core/api/error_reporter.h>
 #include <tensorflow/lite/interpreter.h>
@@ -83,11 +84,11 @@ public:
 private:
     int64_t mTimestamp = 0;
 
-    std::vector<float> mInputR;
-    std::vector<float> mInputPhi;
-    std::vector<float> mInputPressure;
-    std::vector<float> mInputTilt;
-    std::vector<float> mInputOrientation;
+    RingBuffer<float> mInputR;
+    RingBuffer<float> mInputPhi;
+    RingBuffer<float> mInputPressure;
+    RingBuffer<float> mInputTilt;
+    RingBuffer<float> mInputOrientation;
 
     // The samples defining the current polar axis.
     std::optional<TfLiteMotionPredictorSample> mAxisFrom;
@@ -99,6 +100,8 @@ class TfLiteMotionPredictorModel {
 public:
     // Creates a model from an encoded Flatbuffer model.
     static std::unique_ptr<TfLiteMotionPredictorModel> create(const char* modelPath);
+
+    ~TfLiteMotionPredictorModel();
 
     // Returns the length of the model's input buffers.
     size_t inputLength() const;
@@ -121,7 +124,7 @@ public:
     std::span<const float> outputPressure() const;
 
 private:
-    explicit TfLiteMotionPredictorModel(std::string model);
+    explicit TfLiteMotionPredictorModel(std::unique_ptr<android::base::MappedFile> model);
 
     void allocateTensors();
     void attachInputTensors();
@@ -137,7 +140,7 @@ private:
     const TfLiteTensor* mOutputPhi = nullptr;
     const TfLiteTensor* mOutputPressure = nullptr;
 
-    std::string mFlatBuffer;
+    std::unique_ptr<android::base::MappedFile> mFlatBuffer;
     std::unique_ptr<tflite::ErrorReporter> mErrorReporter;
     std::unique_ptr<tflite::FlatBufferModel> mModel;
     std::unique_ptr<tflite::Interpreter> mInterpreter;
