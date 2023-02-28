@@ -53,6 +53,7 @@
 #include <ui/DisplayState.h>
 #include <ui/DynamicDisplayInfo.h>
 
+#include <android-base/thread_annotations.h>
 #include <private/gui/ComposerService.h>
 #include <private/gui/ComposerServiceAIDL.h>
 
@@ -81,6 +82,8 @@ std::atomic<uint32_t> idCounter = 0;
 int64_t generateId() {
     return (((int64_t)getpid()) << 32) | ++idCounter;
 }
+
+void emptyCallback(nsecs_t, const sp<Fence>&, const std::vector<SurfaceControlStats>&) {}
 } // namespace
 
 ComposerService::ComposerService()
@@ -248,6 +251,14 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
                 surfaceControls,
         CallbackId::Type callbackType) {
     std::lock_guard<std::mutex> lock(mMutex);
+    return addCallbackFunctionLocked(callbackFunction, surfaceControls, callbackType);
+}
+
+CallbackId TransactionCompletedListener::addCallbackFunctionLocked(
+        const TransactionCompletedCallback& callbackFunction,
+        const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
+                surfaceControls,
+        CallbackId::Type callbackType) {
     startListeningLocked();
 
     CallbackId callbackId(getNextIdLocked(), callbackType);
@@ -256,6 +267,11 @@ CallbackId TransactionCompletedListener::addCallbackFunction(
 
     for (const auto& surfaceControl : surfaceControls) {
         callbackSurfaceControls[surfaceControl->getHandle()] = surfaceControl;
+
+        if (callbackType == CallbackId::Type::ON_COMPLETE &&
+            mJankListeners.count(surfaceControl->getLayerId()) != 0) {
+            callbackId.includeJankData = true;
+        }
     }
 
     return callbackId;
@@ -304,15 +320,26 @@ void TransactionCompletedListener::removeSurfaceStatsListener(void* context, voi
 }
 
 void TransactionCompletedListener::addSurfaceControlToCallbacks(
-        const sp<SurfaceControl>& surfaceControl,
-        const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds) {
+        SurfaceComposerClient::CallbackInfo& callbackInfo,
+        const sp<SurfaceControl>& surfaceControl) {
     std::lock_guard<std::mutex> lock(mMutex);
 
-    for (auto callbackId : callbackIds) {
+    bool includingJankData = false;
+    for (auto callbackId : callbackInfo.callbackIds) {
         mCallbacks[callbackId].surfaceControls.emplace(std::piecewise_construct,
                                                        std::forward_as_tuple(
                                                                surfaceControl->getHandle()),
                                                        std::forward_as_tuple(surfaceControl));
+        includingJankData = includingJankData || callbackId.includeJankData;
+    }
+
+    // If no registered callback is requesting jank data, but there is a jank listener registered
+    // on the new surface control, add a synthetic callback that requests the jank data.
+    if (!includingJankData && mJankListeners.count(surfaceControl->getLayerId()) != 0) {
+        CallbackId callbackId =
+                addCallbackFunctionLocked(&emptyCallback, callbackInfo.surfaceControls,
+                                          CallbackId::Type::ON_COMPLETE);
+        callbackInfo.callbackIds.emplace(callbackId);
     }
 }
 
@@ -929,8 +956,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::merge(Tr
         // register all surface controls for all callbackIds for this listener that is merging
         for (const auto& surfaceControl : currentProcessCallbackInfo.surfaceControls) {
             TransactionCompletedListener::getInstance()
-                    ->addSurfaceControlToCallbacks(surfaceControl,
-                                                   currentProcessCallbackInfo.callbackIds);
+                    ->addSurfaceControlToCallbacks(currentProcessCallbackInfo, surfaceControl);
         }
     }
 
@@ -1180,14 +1206,29 @@ sp<IBinder> SurfaceComposerClient::Transaction::getDefaultApplyToken() {
 void SurfaceComposerClient::Transaction::setDefaultApplyToken(sp<IBinder> applyToken) {
     sApplyToken = applyToken;
 }
+
+status_t SurfaceComposerClient::Transaction::sendSurfaceFlushJankDataTransaction(
+        const sp<SurfaceControl>& sc) {
+    Transaction t;
+    layer_state_t* s = t.getLayerState(sc);
+    if (!s) {
+        return BAD_INDEX;
+    }
+
+    s->what |= layer_state_t::eFlushJankData;
+    t.registerSurfaceControlForCallback(sc);
+    return t.apply(/*sync=*/false, /* oneWay=*/true);
+}
 // ---------------------------------------------------------------------------
 
-sp<IBinder> SurfaceComposerClient::createDisplay(const String8& displayName, bool secure) {
+sp<IBinder> SurfaceComposerClient::createDisplay(const String8& displayName, bool secure,
+                                                 float requestedRefereshRate) {
     sp<IBinder> display = nullptr;
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->createDisplay(std::string(
                                                                              displayName.string()),
-                                                                     secure, &display);
+                                                                     secure, requestedRefereshRate,
+                                                                     &display);
     return status.isOk() ? display : nullptr;
 }
 
@@ -1251,8 +1292,7 @@ void SurfaceComposerClient::Transaction::registerSurfaceControlForCallback(
     auto& callbackInfo = mListenerCallbacks[TransactionCompletedListener::getIInstance()];
     callbackInfo.surfaceControls.insert(sc);
 
-    TransactionCompletedListener::getInstance()
-            ->addSurfaceControlToCallbacks(sc, callbackInfo.callbackIds);
+    TransactionCompletedListener::getInstance()->addSurfaceControlToCallbacks(callbackInfo, sc);
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setPosition(
@@ -1592,7 +1632,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffer(
         const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
         const std::optional<sp<Fence>>& fence, const std::optional<uint64_t>& optFrameNumber,
-        ReleaseBufferCallback callback) {
+        uint32_t producerId, ReleaseBufferCallback callback) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1611,6 +1651,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBuffe
     bufferData->buffer = buffer;
     uint64_t frameNumber = sc->resolveFrameNumber(optFrameNumber);
     bufferData->frameNumber = frameNumber;
+    bufferData->producerId = producerId;
     bufferData->flags |= BufferData::BufferDataChange::frameNumberChanged;
     if (fence) {
         bufferData->acquireFence = *fence;
@@ -2622,6 +2663,12 @@ status_t SurfaceComposerClient::setHdrConversionStrategy(
     return statusTFromBinderStatus(status);
 }
 
+status_t SurfaceComposerClient::getHdrOutputConversionSupport(bool* isSupported) {
+    binder::Status status =
+            ComposerServiceAIDL::getComposerService()->getHdrOutputConversionSupport(isSupported);
+    return statusTFromBinderStatus(status);
+}
+
 status_t SurfaceComposerClient::setOverrideFrameRate(uid_t uid, float frameRate) {
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->setOverrideFrameRate(uid, frameRate);
@@ -2986,6 +3033,7 @@ void ReleaseCallbackThread::threadMain() {
     while (true) {
         {
             std::unique_lock<std::mutex> lock(mMutex);
+            base::ScopedLockAssertion assumeLocked(mMutex);
             callbackInfos = std::move(mCallbackInfos);
             mCallbackInfos = {};
         }
@@ -2998,6 +3046,7 @@ void ReleaseCallbackThread::threadMain() {
 
         {
             std::unique_lock<std::mutex> lock(mMutex);
+            base::ScopedLockAssertion assumeLocked(mMutex);
             if (mCallbackInfos.size() == 0) {
                 mReleaseCallbackPending.wait(lock);
             }

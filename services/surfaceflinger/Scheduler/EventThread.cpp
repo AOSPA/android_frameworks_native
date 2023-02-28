@@ -541,6 +541,13 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
 bool EventThread::shouldConsumeEvent(const DisplayEventReceiver::Event& event,
                                      const sp<EventThreadConnection>& connection) const {
     const auto throttleVsync = [&] {
+        const auto& vsyncData = event.vsync.vsyncData;
+        if (connection->frameRate.isValid()) {
+            return !mVsyncSchedule.getTracker()
+                            .isVSyncInPhase(vsyncData.preferredExpectedPresentationTime(),
+                                            connection->frameRate);
+        }
+
         return mThrottleVsyncCallback &&
                 mThrottleVsyncCallback(event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                        connection->mOwnerUid);

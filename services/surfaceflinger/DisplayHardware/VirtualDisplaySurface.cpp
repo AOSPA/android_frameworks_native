@@ -39,6 +39,10 @@
 #include "SurfaceFlinger.h"
 #include "VirtualDisplaySurface.h"
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
+/* QTI_END */
+
 #define VDS_LOGE(msg, ...) ALOGE("[%s] " msg, \
         mDisplayName.c_str(), ##__VA_ARGS__)
 #define VDS_LOGW_IF(cond, msg, ...) ALOGW_IF(cond, "[%s] " msg, \

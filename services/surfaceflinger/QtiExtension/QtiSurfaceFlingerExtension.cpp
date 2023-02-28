@@ -43,27 +43,9 @@ namespace android::surfaceflingerextension {
 
 bool QtiSurfaceFlingerExtension::mQtiSDirectStreaming;
 
-#ifdef QTI_DISPLAY_AIDL_CONFIG
 std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
-#endif
-
-#ifdef QTI_DISPLAY_HIDL_CONFIG
 ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
-#endif
 
-QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger* flinger) {
-#ifdef QTI_DISPLAY_EXTENSION
-    bool mQtiEnableDisplayExtn =
-            base::GetBoolProperty("vendor.display.enable_display_extensions", false);
-    if (mQtiEnableDisplayExtn) {
-        ALOGI("Enabling QtiSurfaceFlingerExtension ...");
-        return new QtiSurfaceFlingerExtension();
-    }
-#endif
-
-    ALOGI("Enabling QtiNullSurfaceFlingerExtension in QSSI ...");
-    return new QtiNullExtension(flinger);
-}
 
 QtiSurfaceFlingerExtension::QtiSurfaceFlingerExtension() {}
 QtiSurfaceFlingerExtension::~QtiSurfaceFlingerExtension() = default;
@@ -117,24 +99,11 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
     }
 
     mQtiFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
-
-#ifdef QTI_DISPLAY_HIDL_CONFIG
-    int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
-                                                       nullptr, &mQtiDisplayConfigHidl);
-    if (ret || !mQtiDisplayConfigHidl) {
-        ALOGE("DisplayConfig HIDL not present");
-        mQtiDisplayConfigHidl = nullptr;
-    } else {
-        ALOGI("Initialized DisplayConfig HIDL %p successfully", mQtiDisplayConfigHidl);
-        mQtiEnabledIDC = true;
-    }
-#endif
 }
 
 QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
         scheduler::VsyncConfiguration* vsyncConfig, Hwc2::Composer* composerHal) {
-#ifdef QTI_DISPLAY_AIDL_CONFIG
     ndk::SpAIBinder binder(AServiceManager_checkService(
             "vendor.qti.hardware.display.config.IDisplayConfig/default"));
 
@@ -146,19 +115,26 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
             ALOGE("Failed to retrieve DisplayConfig AIDL binder");
         } else {
             ALOGI("Initialized DisplayConfig AIDL %p successfully", mQtiDisplayConfigAidl.get());
+            if (mQtiFeatureManager) mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigAidl);
             mQtiEnabledIDC = true;
         }
     }
-#endif
+
+    // Initialize IDC HIDL only if AIDL is not present
+    if (mQtiDisplayConfigAidl == nullptr) {
+        int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
+                                                           nullptr, &mQtiDisplayConfigHidl);
+        if (ret || !mQtiDisplayConfigHidl) {
+            ALOGE("DisplayConfig HIDL not present");
+            mQtiDisplayConfigHidl = nullptr;
+        } else {
+            ALOGI("Initialized DisplayConfig HIDL %p successfully", mQtiDisplayConfigHidl);
+            if (mQtiFeatureManager) mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigHidl);
+            mQtiEnabledIDC = true;
+        }
+    }
 
     if (mQtiFeatureManager) {
-#ifdef QTI_DISPLAY_AIDL_CONFIG
-        mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigAidl);
-#endif
-
-#ifdef QTI_DISPLAY_HIDL_CONFIG
-        mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigHidl);
-#endif
         mQtiFeatureManager->qtiPostInit();
     }
 
@@ -168,7 +144,8 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         return new QtiNullExtension();
     }
 
-    mQtiHWComposerExtn = new QtiHWComposerExtension(hwc, composerHal);
+    mQtiHWComposerExtnIntf =
+            android::surfaceflingerextension::qtiCreateHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
 
     qtiSetVsyncConfiguration(vsyncConfig);
@@ -215,7 +192,8 @@ bool QtiSurfaceFlingerExtension::qtiGetHwcDisplayId(const sp<DisplayDevice>& dis
         if (!virtualDisplayId) {
             return false;
         }
-        const auto halDisplayId = mQtiHWComposerExtn->qtiFromVirtualDisplayId(*virtualDisplayId);
+        const auto halDisplayId =
+                mQtiHWComposerExtnIntf->qtiFromVirtualDisplayId(*virtualDisplayId);
         if (!halDisplayId) {
             return false;
         }
@@ -392,7 +370,7 @@ bool QtiSurfaceFlingerExtension::qtiIsExtensionFeatureEnabled(QtiFeature feature
  */
 status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
         std::chrono::steady_clock::time_point earliestPresentTime) const {
-    if (!mQtiFlinger->mBootFinished || !mQtiSFExtnBootComplete || !mQtiHWComposerExtn) {
+    if (!mQtiFlinger->mBootFinished || !mQtiSFExtnBootComplete || !mQtiHWComposerExtnIntf) {
         return OK;
     }
 
@@ -420,7 +398,7 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
             return BAD_VALUE;
         }
 
-        return mQtiHWComposerExtn
+        return mQtiHWComposerExtnIntf
                 ->qtiSetDisplayElapseTime(*id,
                                           static_cast<uint64_t>(
                                                   timeStamp.time_since_epoch().count()));
@@ -602,8 +580,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     mQtiFlinger->mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(period)/*,
                                       true force resync */);
     if (timeStamp > 0) {
-        bool periodFlushed = false;
-        mQtiFlinger->mScheduler->addResyncSample(timeStamp, period, &periodFlushed);
+        bool periodFlushed = mQtiFlinger->mScheduler->addResyncSample(timeStamp, period);
         if (periodFlushed) {
             mQtiFlinger->mScheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
         }
@@ -639,7 +616,6 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
         return NAME_NOT_FOUND;
     }
 
-#ifdef QTI_DISPLAY_AIDL_CONFIG
     if (mQtiDisplayConfigAidl != nullptr) {
         const auto displayId = PhysicalDisplayId::tryCast(display->getId());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
@@ -654,7 +630,6 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
             return NO_ERROR;
         }
     }
-#elif QTI_DISPLAY_HIDL_CONFIG
     if (mQtiDisplayConfigHidl != nullptr) {
         const auto displayId = PhysicalDisplayId::tryCast(display->getId());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
@@ -669,7 +644,6 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
             return NO_ERROR;
         }
     }
-#endif
 
     return NO_ERROR;
 }
@@ -688,7 +662,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPowerMode(uint64_t displayId, i
             qtiSetPowerMode(mQtiFlinger->getPhysicalDisplayToken(dispId.value()), mode);
         }
     } else {
-#if defined(QTI_DISPLAY_HIDL_CONFIG) && defined(DISPLAY_CONFIG_TILE_DISPLAY_APIS_1_0)
         if (mQtiDisplayConfigHidl) {
             ::DisplayConfig::PowerMode hwcMode = ::DisplayConfig::PowerMode::kOff;
             switch (power_mode) {
@@ -726,7 +699,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPowerMode(uint64_t displayId, i
                   (unsigned long long)displayId, mode, tile_h_loc, tile_v_loc, num_h_tiles,
                   num_v_tiles);
         }
-#endif
     }
     return err;
 }
@@ -751,7 +723,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPanelBrightnessTiled(uint64_t d
                                               brightness);
         }
     } else {
-#if defined(QTI_DISPLAY_HIDL_CONFIG) && defined(DISPLAY_CONFIG_TILE_DISPLAY_APIS_1_0)
         // A regular display has one h tile and one v tile.
         mQtiDisplayConfigHidl->GetDisplayTileCount(displayId, &num_h_tiles, &num_v_tiles);
         if (((num_h_tiles * num_v_tiles) < 2) || static_cast<uint32_t>(tile_h_loc) >= num_h_tiles ||
@@ -770,7 +741,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPanelBrightnessTiled(uint64_t d
                       err);
             }
         }
-#endif
         ALOGI("Debug: Set display = %llu, brightness level = %d/255 (%0.2ff) at tile h "
               "loc = %d, tile v loc = %d (Has %u h tiles and %u v tiles)",
               (unsigned long long)displayId, level, levelf, tile_h_loc, tile_v_loc, num_h_tiles,
@@ -782,7 +752,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPanelBrightnessTiled(uint64_t d
 status_t QtiSurfaceFlingerExtension::qtiBinderSetWideModePreference(uint64_t displayId,
                                                                     int32_t pref) {
     status_t err = NO_ERROR;
-#ifdef QTI_DISPLAY_HIDL_CONFIG
     ALOGI("Debug: Set display = %llu, wider-mode preference = %d", (unsigned long long)displayId,
           pref);
     ::DisplayConfig::WiderModePref wider_mode_pref = ::DisplayConfig::WiderModePref::kNoPreference;
@@ -801,7 +770,6 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetWideModePreference(uint64_t dis
     if (NO_ERROR != err) {
         ALOGE("Debug: DisplayConfig::SetWiderModePreference() returned error %d", err);
     }
-#endif
     return err;
 }
 
@@ -839,7 +807,6 @@ void QtiSurfaceFlingerExtension::qtiSetPowerMode(const sp<IBinder>& displayToken
         ALOGW("Attempt to set invalid displayId");
         return;
     }
-#ifdef QTI_DISPLAY_HIDL_CONFIG
     const auto hwcDisplayId =
             mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
     const auto currentDisplayPowerMode = display->getPowerMode();
@@ -876,7 +843,6 @@ void QtiSurfaceFlingerExtension::qtiSetPowerMode(const sp<IBinder>& displayToken
     if (!step_up) {
         mQtiDisplayConfigHidl->SetPowerMode(static_cast<uint32_t>(*hwcDisplayId), hwcMode);
     }
-#endif
 }
 
 void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) {
@@ -886,22 +852,18 @@ void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice>
         const auto hwcDisplayId =
                 mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
 
-#ifdef QTI_DISPLAY_AIDL_CONFIG
         if (mQtiDisplayConfigAidl) {
             mQtiDisplayConfigAidl->isPowerModeOverrideSupported(static_cast<int32_t>(*hwcDisplayId),
                                                                 &supported);
             goto end;
         }
-#endif
 
-#ifdef QTI_DISPLAY_HIDL_CONFIG
         if (mQtiDisplayConfigHidl) {
             mQtiDisplayConfigHidl->IsPowerModeOverrideSupported(static_cast<uint32_t>(
                                                                         *hwcDisplayId),
                                                                 &supported);
             goto end;
         }
-#endif
     }
 
 end:
@@ -1057,19 +1019,15 @@ void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, 
     }
 
 // Use either IDisplayConfig AIDL or HIDL
-#ifdef QTI_DISPLAY_AIDL_CONFIG
     if (mQtiDisplayConfigAidl) {
         mQtiDisplayConfigAidl->createVirtualDisplay(width, height, format);
         return;
     }
-#endif
 
-#ifdef QTI_DISPLAY_HIDL_CONFIG
     if (mQtiDisplayConfigHidl) {
         mQtiDisplayConfigHidl->CreateVirtualDisplay((uint32_t)width, (uint32_t)height, format);
         return;
     }
-#endif
 }
 
 void QtiSurfaceFlingerExtension::qtiHasProtectedLayer(bool* hasProtectedLayer) {

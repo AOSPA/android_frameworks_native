@@ -111,6 +111,7 @@ public:
     uint64_t frameNumber = 0;
     bool hasBarrier = false;
     uint64_t barrierFrameNumber = 0;
+    uint32_t producerId = 0;
 
     // Listens to when the buffer is safe to be released. This is used for blast
     // layers only. The callback includes a release fence as well as the graphic
@@ -170,7 +171,7 @@ struct layer_state_t {
         eTransparentRegionChanged = 0x00000020,
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
-        /* unused = 0x00000100, */
+        eFlushJankData = 0x00000100,
         /* unused = 0x00000200, */
         eDimmingEnabledChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,

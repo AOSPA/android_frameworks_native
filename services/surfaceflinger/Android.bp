@@ -28,7 +28,6 @@ cc_defaults {
         "android.hardware.graphics.composer3-ndk_shared",
         "librenderengine_deps",
         "surfaceflinger_defaults",
-        "libqtisurfaceflingerextension_defaults",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
@@ -73,7 +72,6 @@ cc_defaults {
         "libutils",
         "libSurfaceFlingerProp",
         "server_configurable_flags",
-        "vendor.qti.hardware.display.composer@3.0",
     ],
     static_libs: [
         "libaidlcommonsupport",
@@ -86,8 +84,6 @@ cc_defaults {
         "libserviceutils",
         "libshaders",
         "libtonemap",
-        "libqticompositionengineextension",
-        "libqtisurfaceflingerextension",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -95,7 +91,6 @@ cc_defaults {
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
         "android.hardware.graphics.composer3-command-buffer",
-        "display_intf_headers",
     ],
     export_static_lib_headers: [
         "libcompositionengine",
@@ -248,7 +243,10 @@ filegroup {
 
 cc_binary {
     name: "surfaceflinger",
-    defaults: ["libsurfaceflinger_binary"],
+    defaults: [
+        "libsurfaceflinger_binary",
+        "libqtisurfaceflingerextension_defaults",
+    ],
     init_rc: ["surfaceflinger.rc"],
     srcs: [
         ":surfaceflinger_binary_sources",
@@ -258,6 +256,11 @@ cc_binary {
     ],
     shared_libs: [
         "libSurfaceFlingerProp",
+    ],
+    static_libs: [
+        "libqticompositionengineextension",
+        "libqtisurfaceflingerextension",
+
     ],
 
     logtags: ["EventLog/EventLogTags.logtags"],

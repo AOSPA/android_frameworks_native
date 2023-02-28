@@ -17,7 +17,7 @@
 #include "../DisplayHardware/PowerAdvisor.h"
 #include "../SurfaceFlinger.h"
 #include "QtiFeatureManager.h"
-#include "QtiHWComposerExtension.h"
+#include "QtiHWComposerExtensionIntf.h"
 #include "QtiNullExtension.h"
 #include "QtiPhaseOffsetsExtension.h"
 #include "QtiPowerAdvisorExtension.h"
@@ -120,7 +120,7 @@ private:
     composer::DisplayExtnIntf* mQtiDisplayExtnIntf = nullptr;
     composer::FrameSchedulerIntf* mQtiFrameSchedulerExtnIntf = nullptr;
     QtiFeatureManager* mQtiFeatureManager = nullptr;
-    QtiHWComposerExtension* mQtiHWComposerExtn = nullptr;
+    QtiHWComposerExtensionIntf* mQtiHWComposerExtnIntf = nullptr;
     QtiPowerAdvisorExtension* mQtiPowerAdvisorExtn = nullptr;
     QtiPhaseOffsetsExtension* mQtiPhaseOffsetsExtn = nullptr;
     QtiWorkDurationsExtension* mQtiWorkDurationsExtn = nullptr;

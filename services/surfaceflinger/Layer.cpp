@@ -161,7 +161,7 @@ Layer::Layer(const LayerCreationArgs& args)
         mLayerCreationFlags(args.flags),
         mBorderEnabled(false),
         mTextureName(args.textureName),
-        mLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
+        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
     ALOGV("Creating Layer %s", getDebugName());
 
     uint32_t layerFlags = 0;
@@ -243,9 +243,7 @@ Layer::~Layer() {
     if (mBufferInfo.mBuffer != nullptr) {
         callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                   mBufferInfo.mBuffer->getBuffer(), mBufferInfo.mFrameNumber,
-                                  mBufferInfo.mFence,
-                                  mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
-                                          mOwnerUid));
+                                  mBufferInfo.mFence);
     }
     if (!isClone()) {
         // The original layer and the clone layer share the same texture. Therefore, only one of
@@ -269,7 +267,7 @@ Layer::~Layer() {
     }
     if (hasTrustedPresentationListener()) {
         mFlinger->mNumTrustedPresentationListeners--;
-        updateTrustedPresentationState(nullptr, -1 /* time_in_ms */, true /* leaveState*/);
+        updateTrustedPresentationState(nullptr, nullptr, -1 /* time_in_ms */, true /* leaveState*/);
     }
 }
 
@@ -300,7 +298,7 @@ void Layer::removeFromCurrentState() {
         mRemovedFromDrawingState = true;
         mFlinger->mScheduler->deregisterLayer(this);
     }
-    updateTrustedPresentationState(nullptr, -1 /* time_in_ms */, true /* leaveState*/);
+    updateTrustedPresentationState(nullptr, nullptr, -1 /* time_in_ms */, true /* leaveState*/);
 
     mFlinger->markLayerPendingRemovalLocked(sp<Layer>::fromExisting(this));
 }
@@ -399,8 +397,9 @@ FloatRect Layer::getBounds(const Region& activeTransparentRegion) const {
 }
 
 // No early returns.
-void Layer::updateTrustedPresentationState(const DisplayDevice* display, int64_t time_in_ms,
-                                           bool leaveState) {
+void Layer::updateTrustedPresentationState(const DisplayDevice* display,
+                                           const frontend::LayerSnapshot* snapshot,
+                                           int64_t time_in_ms, bool leaveState) {
     if (!hasTrustedPresentationListener()) {
         return;
     }
@@ -410,12 +409,21 @@ void Layer::updateTrustedPresentationState(const DisplayDevice* display, int64_t
     if (!leaveState) {
         const auto outputLayer = findOutputLayerForDisplay(display);
         if (outputLayer != nullptr) {
-            mLastComputedTrustedPresentationState =
-                    computeTrustedPresentationState(mBounds, mSourceBounds,
-                                                    outputLayer->getState().coveredRegion,
-                                                    mScreenBounds, getCompositionState()->alpha,
-                                                    getCompositionState()->geomLayerTransform,
-                                                    mTrustedPresentationThresholds);
+            if (outputLayer->getState().coveredRegionExcludingDisplayOverlays) {
+                Region coveredRegion =
+                        *outputLayer->getState().coveredRegionExcludingDisplayOverlays;
+                mLastComputedTrustedPresentationState =
+                        computeTrustedPresentationState(snapshot->geomLayerBounds,
+                                                        snapshot->sourceBounds(), coveredRegion,
+                                                        snapshot->transformedBounds,
+                                                        snapshot->alpha,
+                                                        snapshot->geomLayerTransform,
+                                                        mTrustedPresentationThresholds);
+            } else {
+                ALOGE("CoveredRegionExcludingDisplayOverlays was not set for %s. Don't compute "
+                      "TrustedPresentationState",
+                      getDebugName());
+            }
         }
     }
     const bool newState = mLastComputedTrustedPresentationState;
@@ -472,10 +480,15 @@ bool Layer::computeTrustedPresentationState(const FloatRect& bounds, const Float
     float boundsOverSourceH = bounds.getHeight() / (float)sourceBounds.getHeight();
     fractionRendered *= boundsOverSourceW * boundsOverSourceH;
 
-    Rect coveredBounds = coveredRegion.bounds();
-    fractionRendered *= (1 -
-                         ((coveredBounds.width() / (float)screenBounds.getWidth()) *
-                          coveredBounds.height() / (float)screenBounds.getHeight()));
+    Region tJunctionFreeRegion = Region::createTJunctionFreeRegion(coveredRegion);
+    // Compute the size of all the rects since they may be disconnected.
+    float coveredSize = 0;
+    for (auto rect = tJunctionFreeRegion.begin(); rect < tJunctionFreeRegion.end(); rect++) {
+        float size = rect->width() * rect->height();
+        coveredSize += size;
+    }
+
+    fractionRendered *= (1 - (coveredSize / (screenBounds.getWidth() * screenBounds.getHeight())));
 
     if (fractionRendered < thresholds.minFractionRendered) {
         return false;
@@ -754,11 +767,45 @@ bool Layer::isSecure() const {
     return (p != nullptr) ? p->isSecure() : false;
 }
 
+void Layer::transferAvailableJankData(const std::deque<sp<CallbackHandle>>& handles,
+                                      std::vector<JankData>& jankData) {
+    if (mPendingJankClassifications.empty() ||
+        !mPendingJankClassifications.front()->getJankType()) {
+        return;
+    }
+
+    bool includeJankData = false;
+    for (const auto& handle : handles) {
+        for (const auto& cb : handle->callbackIds) {
+            if (cb.includeJankData) {
+                includeJankData = true;
+                break;
+            }
+        }
+
+        if (includeJankData) {
+            jankData.reserve(mPendingJankClassifications.size());
+            break;
+        }
+    }
+
+    while (!mPendingJankClassifications.empty() &&
+           mPendingJankClassifications.front()->getJankType()) {
+        if (includeJankData) {
+            std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame =
+                    mPendingJankClassifications.front();
+            jankData.emplace_back(
+                    JankData(surfaceFrame->getToken(), surfaceFrame->getJankType().value()));
+        }
+        mPendingJankClassifications.pop_front();
+    }
+}
+
 // ----------------------------------------------------------------------------
 // transaction
 // ----------------------------------------------------------------------------
 
-uint32_t Layer::doTransaction(uint32_t flags) {
+uint32_t Layer::doTransaction(uint32_t flags, nsecs_t latchTime) {
     ATRACE_CALL();
 
     // TODO: This is unfortunate.
@@ -786,23 +833,24 @@ uint32_t Layer::doTransaction(uint32_t flags) {
         mFlinger->mUpdateInputInfo = true;
     }
 
-    commitTransaction(mDrawingState);
+    commitTransaction(mDrawingState, latchTime);
 
     return flags;
 }
 
-void Layer::commitTransaction(State&) {
+void Layer::commitTransaction(State&, nsecs_t currentLatchTime) {
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
     for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
         if (surfaceFrame->getPresentState() != PresentState::Presented) {
             // With applyPendingStates, we could end up having presented surfaceframes from previous
             // states
-            surfaceFrame->setPresentState(PresentState::Presented);
+            surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
             mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
         }
     }
     mDrawingState.bufferlessSurfaceFramesTX.clear();
+    mLastLatchTime = currentLatchTime;
 }
 
 uint32_t Layer::clearTransactionFlags(uint32_t mask) {
@@ -2718,12 +2766,13 @@ void Layer::cloneDrawingState(const Layer* from) {
 
 void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                       const sp<GraphicBuffer>& buffer, uint64_t framenumber,
-                                      const sp<Fence>& releaseFence,
-                                      uint32_t currentMaxAcquiredBufferCount) {
+                                      const sp<Fence>& releaseFence) {
     if (!listener) {
         return;
     }
     ATRACE_FORMAT_INSTANT("callReleaseBufferCallback %s - %" PRIu64, getDebugName(), framenumber);
+    uint32_t currentMaxAcquiredBufferCount =
+            mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mOwnerUid);
     listener->onReleaseBuffer({buffer->getId(), framenumber},
                               releaseFence ? releaseFence : Fence::NO_FENCE,
                               currentMaxAcquiredBufferCount);
@@ -2818,16 +2867,7 @@ void Layer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
     }
 
     std::vector<JankData> jankData;
-    jankData.reserve(mPendingJankClassifications.size());
-    while (!mPendingJankClassifications.empty() &&
-           mPendingJankClassifications.front()->getJankType()) {
-        std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame =
-                mPendingJankClassifications.front();
-        mPendingJankClassifications.pop_front();
-        jankData.emplace_back(
-                JankData(surfaceFrame->getToken(), surfaceFrame->getJankType().value()));
-    }
-
+    transferAvailableJankData(mDrawingState.callbackHandles, jankData);
     mFlinger->getTransactionCallbackInvoker().addCallbackHandles(mDrawingState.callbackHandles,
                                                                  jankData);
     mDrawingState.callbackHandles = {};
@@ -2983,9 +3023,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             // call any release buffer callbacks if set.
             callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                       mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
-                                      mDrawingState.acquireFence,
-                                      mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
-                                              mOwnerUid));
+                                      mDrawingState.acquireFence);
             decrementPendingBufferCount();
             if (mDrawingState.bufferSurfaceFrameTX != nullptr &&
                 mDrawingState.bufferSurfaceFrameTX->getPresentState() != PresentState::Presented) {
@@ -2995,13 +3033,12 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
         } else if (EARLY_RELEASE_ENABLED && mLastClientCompositionFence != nullptr) {
             callReleaseBufferCallback(mDrawingState.releaseBufferListener,
                                       mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
-                                      mLastClientCompositionFence,
-                                      mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(
-                                              mOwnerUid));
+                                      mLastClientCompositionFence);
             mLastClientCompositionFence = nullptr;
         }
     }
 
+    mDrawingState.producerId = bufferData.producerId;
     mDrawingState.frameNumber = frameNumber;
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
     mDrawingState.buffer = std::move(buffer);
@@ -3118,15 +3155,15 @@ bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream) {
     return true;
 }
 
-bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& handles) {
+bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& handles,
+                                             bool willPresent) {
     // If there is no handle, we will not send a callback so reset mReleasePreviousBuffer and return
     if (handles.empty()) {
         mReleasePreviousBuffer = false;
         return false;
     }
 
-    const bool willPresent = willPresentCurrentTransaction();
-
+    std::deque<sp<CallbackHandle>> remainingHandles;
     for (const auto& handle : handles) {
         // If this transaction set a buffer on this layer, release its previous buffer
         handle->releasePreviousBuffer = mReleasePreviousBuffer;
@@ -3141,9 +3178,17 @@ bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle
             mDrawingState.callbackHandles.push_back(handle);
 
         } else { // If this layer will NOT need to be relatched and presented this frame
-            // Notify the transaction completed thread this handle is done
-            mFlinger->getTransactionCallbackInvoker().registerUnpresentedCallbackHandle(handle);
+            // Queue this handle to be notified below.
+            remainingHandles.push_back(handle);
         }
+    }
+
+    if (!remainingHandles.empty()) {
+        // Notify the transaction completed threads these handles are done. These are only the
+        // handles that were not added to the mDrawingState, which will be notified later.
+        std::vector<JankData> jankData;
+        transferAvailableJankData(remainingHandles, jankData);
+        mFlinger->getTransactionCallbackInvoker().addCallbackHandles(remainingHandles, jankData);
     }
 
     mReleasePreviousBuffer = false;
@@ -3200,11 +3245,10 @@ bool Layer::fenceHasSignaled() const {
     return fenceSignaled;
 }
 
-bool Layer::onPreComposition(nsecs_t refreshStartTime) {
+void Layer::onPreComposition(nsecs_t refreshStartTime) {
     for (const auto& handle : mDrawingState.callbackHandles) {
         handle->refreshStartTime = refreshStartTime;
     }
-    return hasReadyFrame();
 }
 
 void Layer::setAutoRefresh(bool autoRefresh) {
@@ -3590,7 +3634,7 @@ bool Layer::isHdrY410() const {
 
 sp<LayerFE> Layer::getCompositionEngineLayerFE() const {
     // There's no need to get a CE Layer if the layer isn't going to draw anything.
-    return hasSomethingToDraw() ? mLayerFE : nullptr;
+    return hasSomethingToDraw() ? mLegacyLayerFE : nullptr;
 }
 
 const LayerSnapshot* Layer::getLayerSnapshot() const {
@@ -3601,14 +3645,34 @@ LayerSnapshot* Layer::editLayerSnapshot() {
     return mSnapshot.get();
 }
 
+std::unique_ptr<frontend::LayerSnapshot> Layer::stealLayerSnapshot() {
+    return std::move(mSnapshot);
+}
+
+void Layer::updateLayerSnapshot(std::unique_ptr<frontend::LayerSnapshot> snapshot) {
+    mSnapshot = std::move(snapshot);
+}
+
 const compositionengine::LayerFECompositionState* Layer::getCompositionState() const {
     return mSnapshot.get();
 }
 
 sp<LayerFE> Layer::copyCompositionEngineLayerFE() const {
-    auto result = mFlinger->getFactory().createLayerFE(mLayerFE->getDebugName());
+    auto result = mFlinger->getFactory().createLayerFE(mName);
     result->mSnapshot = std::make_unique<LayerSnapshot>(*mSnapshot);
     return result;
+}
+
+sp<LayerFE> Layer::getCompositionEngineLayerFE(
+        const frontend::LayerHierarchy::TraversalPath& path) {
+    for (auto& [p, layerFE] : mLayerFEs) {
+        if (p == path) {
+            return layerFE;
+        }
+    }
+    auto layerFE = mFlinger->getFactory().createLayerFE(mName);
+    mLayerFEs.emplace_back(path, layerFE);
+    return layerFE;
 }
 
 void Layer::useSurfaceDamage() {
@@ -3964,6 +4028,7 @@ void Layer::updateSnapshot(bool updateGeometry) {
     snapshot->bufferSize = getBufferSize(mDrawingState);
     snapshot->externalTexture = mBufferInfo.mBuffer;
     snapshot->hasReadyFrame = hasReadyFrame();
+    snapshot->isInternalDisplayOverlay = isInternalDisplayOverlay();
     preparePerFrameCompositionState();
 }
 
@@ -4004,28 +4069,6 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
         }
         relative->updateRelativeMetadataSnapshot(childRelativeLayerMetadata, visited);
     }
-}
-
-LayerSnapshotGuard::LayerSnapshotGuard(Layer* layer) : mLayer(layer) {
-    if (mLayer) {
-        mLayer->mLayerFE->mSnapshot = std::move(mLayer->mSnapshot);
-    }
-}
-
-LayerSnapshotGuard::~LayerSnapshotGuard() {
-    if (mLayer) {
-        mLayer->mSnapshot = std::move(mLayer->mLayerFE->mSnapshot);
-    }
-}
-
-LayerSnapshotGuard::LayerSnapshotGuard(LayerSnapshotGuard&& other) : mLayer(other.mLayer) {
-    other.mLayer = nullptr;
-}
-
-LayerSnapshotGuard& LayerSnapshotGuard::operator=(LayerSnapshotGuard&& other) {
-    mLayer = other.mLayer;
-    other.mLayer = nullptr;
-    return *this;
 }
 
 void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
