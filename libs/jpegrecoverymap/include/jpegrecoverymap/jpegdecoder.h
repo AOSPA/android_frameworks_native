@@ -36,18 +36,18 @@ public:
     JpegDecoder();
     ~JpegDecoder();
     /*
-     * Decompresses JPEG image to raw image (YUV420planer or grey-scale) format. After calling
-     * this method, call getDecompressedImage() to get the image.
+     * Decompresses JPEG image to raw image (YUV420planer, grey-scale or RGBA) format. After
+     * calling this method, call getDecompressedImage() to get the image.
      * Returns false if decompressing the image fails.
      */
-    bool decompressImage(const void* image, int length);
+    bool decompressImage(const void* image, int length, bool decodeToRGBA = false);
     /*
      * Returns the decompressed raw image buffer pointer. This method must be called only after
      * calling decompressImage().
      */
     void* getDecompressedImagePtr();
     /*
-     * Returns the decompressed raw image buffer size. This method must be called only after
+     * Returns the decompressed raw image buffer size. This mgit ethod must be called only after
      * calling decompressImage().
      */
     size_t getDecompressedImageSize();
@@ -67,20 +67,42 @@ public:
     void* getXMPPtr();
     /*
      * Returns the decompressed XMP buffer size. This method must be called only after
-     * calling decompressImage().
+     * calling decompressImage() or getCompressedImageParameters().
      */
     size_t getXMPSize();
-
+    /*
+     * Returns the EXIF data from the image.
+     */
+    void* getEXIFPtr();
+    /*
+     * Returns the decompressed EXIF buffer size. This method must be called only after
+     * calling decompressImage() or getCompressedImageParameters().
+     */
+    size_t getEXIFSize();
+    /*
+     * Returns the position offset of EXIF package
+     * (4 bypes offset to FF sign, the byte after FF E1 XX XX <this byte>),
+     * or -1  if no EXIF exists.
+     */
+    int getEXIFPos() { return mExifPos; }
+    /*
+     * Decompresses metadata of the image. All vectors are owned by the caller.
+     */
     bool getCompressedImageParameters(const void* image, int length,
-                              size_t* pWidth, size_t* pHeight,
-                              std::vector<uint8_t>* &iccData,
-                              std::vector<uint8_t>* &exifData);
+                                      size_t* pWidth, size_t* pHeight,
+                                      std::vector<uint8_t>* iccData,
+                                      std::vector<uint8_t>* exifData);
+    /*
+     * Extracts EXIF package and updates the EXIF position / length without decoding the image.
+     */
+    bool extractEXIF(const void* image, int length);
 
 private:
-    bool decode(const void* image, int length);
+    bool decode(const void* image, int length, bool decodeToRGBA);
     // Returns false if errors occur.
     bool decompress(jpeg_decompress_struct* cinfo, const uint8_t* dest, bool isSingleChannel);
     bool decompressYUV(jpeg_decompress_struct* cinfo, const uint8_t* dest);
+    bool decompressRGBA(jpeg_decompress_struct* cinfo, const uint8_t* dest);
     bool decompressSingleChannel(jpeg_decompress_struct* cinfo, const uint8_t* dest);
     // Process 16 lines of Y and 16 lines of U/V each time.
     // We must pass at least 16 scanlines according to libjpeg documentation.
@@ -89,10 +111,14 @@ private:
     std::vector<JOCTET> mResultBuffer;
     // The buffer that holds XMP Data.
     std::vector<JOCTET> mXMPBuffer;
+    // The buffer that holds EXIF Data.
+    std::vector<JOCTET> mEXIFBuffer;
 
     // Resolution of the decompressed image.
     size_t mWidth;
     size_t mHeight;
+    // Position of EXIF package, default value is -1 which means no EXIF package appears.
+    size_t mExifPos;
 };
 } /* namespace android  */
 

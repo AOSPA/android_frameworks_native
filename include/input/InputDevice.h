@@ -24,7 +24,6 @@
 #include <vector>
 
 #include <android/os/IInputConstants.h>
-#include "android/hardware/input/InputDeviceCountryCode.h"
 
 namespace android {
 
@@ -205,6 +204,16 @@ struct InputDeviceBatteryInfo {
     int32_t id;
 };
 
+struct KeyboardLayoutInfo {
+    explicit KeyboardLayoutInfo(std::string languageTag, std::string layoutType)
+          : languageTag(languageTag), layoutType(layoutType) {}
+
+    // A BCP 47 conformant language tag such as "en-US".
+    std::string languageTag;
+    // The layout type such as QWERTY or AZERTY.
+    std::string layoutType;
+};
+
 /*
  * Describes the characteristics and capabilities of an input device.
  */
@@ -226,9 +235,7 @@ public:
 
     void initialize(int32_t id, int32_t generation, int32_t controllerNumber,
                     const InputDeviceIdentifier& identifier, const std::string& alias,
-                    bool isExternal, bool hasMic,
-                    hardware::input::InputDeviceCountryCode countryCode =
-                            hardware::input::InputDeviceCountryCode::INVALID);
+                    bool isExternal, bool hasMic);
 
     inline int32_t getId() const { return mId; }
     inline int32_t getControllerNumber() const { return mControllerNumber; }
@@ -240,7 +247,6 @@ public:
     }
     inline bool isExternal() const { return mIsExternal; }
     inline bool hasMic() const { return mHasMic; }
-    inline hardware::input::InputDeviceCountryCode getCountryCode() const { return mCountryCode; }
     inline uint32_t getSources() const { return mSources; }
 
     const MotionRange* getMotionRange(int32_t axis, uint32_t source) const;
@@ -255,6 +261,11 @@ public:
 
     void setKeyboardType(int32_t keyboardType);
     inline int32_t getKeyboardType() const { return mKeyboardType; }
+
+    void setKeyboardLayoutInfo(KeyboardLayoutInfo keyboardLayoutInfo);
+    inline const std::optional<KeyboardLayoutInfo>& getKeyboardLayoutInfo() const {
+        return mKeyboardLayoutInfo;
+    }
 
     inline void setKeyCharacterMap(const std::shared_ptr<KeyCharacterMap> value) {
         mKeyCharacterMap = value;
@@ -295,7 +306,7 @@ private:
     std::string mAlias;
     bool mIsExternal;
     bool mHasMic;
-    hardware::input::InputDeviceCountryCode mCountryCode;
+    std::optional<KeyboardLayoutInfo> mKeyboardLayoutInfo;
     uint32_t mSources;
     int32_t mKeyboardType;
     std::shared_ptr<KeyCharacterMap> mKeyCharacterMap;

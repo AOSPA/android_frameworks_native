@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <aidl/IBinderRpcTest.h>
 #include <android-base/stringprintf.h>
 
 #include <chrono>
@@ -372,12 +373,12 @@ TEST_P(BinderRpc, ThreadPoolGreaterThanEqualRequested) {
         ts.push_back(std::thread([&] { proc.rootIface->lockUnlock(); }));
     }
 
-    usleep(10000); // give chance for calls on other threads
+    usleep(100000); // give chance for calls on other threads
 
     // other calls still work
     EXPECT_EQ(OK, proc.rootBinder->pingBinder());
 
-    constexpr size_t blockTimeMs = 50;
+    constexpr size_t blockTimeMs = 100;
     size_t epochMsBefore = epochMillis();
     // after this, we should never see a response within this time
     EXPECT_OK(proc.rootIface->unlockInMsAsync(blockTimeMs));
@@ -1100,15 +1101,6 @@ static std::vector<SocketType> testSocketTypes(bool hasPreconnected = true) {
     return ret;
 }
 
-static std::vector<uint32_t> testVersions() {
-    std::vector<uint32_t> versions;
-    for (size_t i = 0; i < RPC_WIRE_PROTOCOL_VERSION_NEXT; i++) {
-        versions.push_back(i);
-    }
-    versions.push_back(RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL);
-    return versions;
-}
-
 INSTANTIATE_TEST_CASE_P(PerSocket, BinderRpc,
                         ::testing::Combine(::testing::ValuesIn(testSocketTypes()),
                                            ::testing::ValuesIn(RpcSecurityValues()),
@@ -1342,7 +1334,7 @@ public:
                 } break;
                 case SocketType::VSOCK: {
                     auto port = allocateVsockPort();
-                    auto status = rpcServer->setupVsockServer(port);
+                    auto status = rpcServer->setupVsockServer(VMADDR_CID_LOCAL, port);
                     if (status != OK) {
                         return AssertionFailure() << "setupVsockServer: " << statusToString(status);
                     }

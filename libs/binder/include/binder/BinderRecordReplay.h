@@ -33,18 +33,19 @@ public:
     // Filled with the first transaction from fd.
     static std::optional<RecordedTransaction> fromFile(const android::base::unique_fd& fd);
     // Filled with the arguments.
-    static std::optional<RecordedTransaction> fromDetails(uint32_t code, uint32_t flags,
-                                                          const Parcel& data, const Parcel& reply,
-                                                          status_t err);
+    static std::optional<RecordedTransaction> fromDetails(const String16& interfaceName,
+                                                          uint32_t code, uint32_t flags,
+                                                          timespec timestamp, const Parcel& data,
+                                                          const Parcel& reply, status_t err);
     RecordedTransaction(RecordedTransaction&& t) noexcept;
 
     [[nodiscard]] status_t dumpToFile(const android::base::unique_fd& fd) const;
 
+    const String8& getInterfaceName() const;
     uint32_t getCode() const;
     uint32_t getFlags() const;
-    uint64_t getDataSize() const;
-    uint64_t getReplySize() const;
     int32_t getReturnedStatus() const;
+    timespec getTimestamp() const;
     uint32_t getVersion() const;
     const Parcel& getDataParcel() const;
     const Parcel& getReplyParcel() const;
@@ -52,27 +53,31 @@ public:
 private:
     RecordedTransaction() = default;
 
+    android::status_t writeChunk(const android::base::borrowed_fd, uint32_t chunkType,
+                                 size_t byteCount, const uint8_t* data) const;
+
 #pragma clang diagnostic push
 #pragma clang diagnostic error "-Wpadded"
     struct TransactionHeader {
         uint32_t code = 0;
         uint32_t flags = 0;
-        uint64_t dataSize = 0;
-        uint64_t replySize = 0;
         int32_t statusReturned = 0;
         uint32_t version = 0; // !0 iff Rpc
+        int64_t timestampSeconds = 0;
+        int32_t timestampNanoseconds = 0;
+        int32_t reserved = 0;
     };
 #pragma clang diagnostic pop
     static_assert(sizeof(TransactionHeader) == 32);
     static_assert(sizeof(TransactionHeader) % 8 == 0);
 
-    TransactionHeader mHeader;
+    struct MovableData { // movable
+        TransactionHeader mHeader;
+        String8 mInterfaceName;
+    };
+    MovableData mData;
     Parcel mSent;
     Parcel mReply;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-private-field"
-    uint8_t mReserved[40];
-#pragma clang diagnostic pop
 };
 
 } // namespace binder::debug

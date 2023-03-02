@@ -339,7 +339,8 @@ namespace android {
     DEFINE_KEYCODE(STYLUS_BUTTON_PRIMARY), \
     DEFINE_KEYCODE(STYLUS_BUTTON_SECONDARY), \
     DEFINE_KEYCODE(STYLUS_BUTTON_TERTIARY), \
-    DEFINE_KEYCODE(STYLUS_BUTTON_TAIL)
+    DEFINE_KEYCODE(STYLUS_BUTTON_TAIL), \
+    DEFINE_KEYCODE(RECENT_APPS)
 
 // NOTE: If you add a new axis here you must also add it to several other files.
 //       Refer to frameworks/base/core/java/android/view/MotionEvent.java for the full list.
@@ -393,7 +394,10 @@ namespace android {
     DEFINE_AXIS(GENERIC_15), \
     DEFINE_AXIS(GENERIC_16), \
     DEFINE_AXIS(GESTURE_X_OFFSET), \
-    DEFINE_AXIS(GESTURE_Y_OFFSET)
+    DEFINE_AXIS(GESTURE_Y_OFFSET), \
+    DEFINE_AXIS(GESTURE_SCROLL_X_DISTANCE), \
+    DEFINE_AXIS(GESTURE_SCROLL_Y_DISTANCE), \
+    DEFINE_AXIS(GESTURE_PINCH_SCALE_FACTOR)
 
 // NOTE: If you add new LEDs here, you must also add them to Input.h
 #define LEDS_SEQUENCE \

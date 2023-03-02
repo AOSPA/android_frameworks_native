@@ -30,8 +30,10 @@ typedef enum {
 
 // Transfer functions as defined for XMP metadata
 typedef enum {
-  JPEGR_TF_HLG = 0,
-  JPEGR_TF_PQ = 1,
+  JPEGR_TF_UNSPECIFIED = -1,
+  JPEGR_TF_LINEAR = 0,
+  JPEGR_TF_HLG = 1,
+  JPEGR_TF_PQ = 2,
 } jpegr_transfer_function;
 
 struct jpegr_info_struct {
@@ -129,6 +131,28 @@ typedef struct jpegr_info_struct* jr_info_ptr;
 class RecoveryMap {
 public:
     /*
+     * Encode API-0
+     * Compress JPEGR image from 10-bit HDR YUV.
+     *
+     * Tonemap the HDR input to a SDR image, generate recovery map from the HDR and SDR images,
+     * compress SDR YUV to 8-bit JPEG and append the recovery map to the end of the compressed
+     * JPEG.
+     * @param uncompressed_p010_image uncompressed HDR image in P010 color format
+     * @param hdr_tf transfer function of the HDR image
+     * @param dest destination of the compressed JPEGR image
+     * @param quality target quality of the JPEG encoding, must be in range of 0-100 where 100 is
+     *                the highest quality
+     * @param exif pointer to the exif metadata.
+     * @return NO_ERROR if encoding succeeds, error code if error occurs.
+     */
+    status_t encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
+                         jpegr_transfer_function hdr_tf,
+                         jr_compressed_ptr dest,
+                         int quality,
+                         jr_exif_ptr exif);
+
+    /*
+     * Encode API-1
      * Compress JPEGR image from 10-bit HDR YUV and 8-bit SDR YUV.
      *
      * Generate recovery map from the HDR and SDR inputs, compress SDR YUV to 8-bit JPEG and append
@@ -151,6 +175,7 @@ public:
                          jr_exif_ptr exif);
 
     /*
+     * Encode API-2
      * Compress JPEGR image from 10-bit HDR YUV, 8-bit SDR YUV and compressed 8-bit JPEG.
      *
      * This method requires HAL Hardware JPEG encoder.
@@ -159,6 +184,8 @@ public:
      * compressed JPEG. HDR and SDR inputs must be the same resolution and color space.
      * @param uncompressed_p010_image uncompressed HDR image in P010 color format
      * @param uncompressed_yuv_420_image uncompressed SDR image in YUV_420 color format
+     *                                   Note: the SDR image must be the decoded version of the JPEG
+     *                                         input
      * @param compressed_jpeg_image compressed 8-bit JPEG image
      * @param hdr_tf transfer function of the HDR image
      * @param dest destination of the compressed JPEGR image
@@ -171,6 +198,7 @@ public:
                          jr_compressed_ptr dest);
 
     /*
+     * Encode API-3
      * Compress JPEGR image from 10-bit HDR YUV and 8-bit SDR YUV.
      *
      * This method requires HAL Hardware JPEG encoder.
@@ -190,6 +218,7 @@ public:
                          jr_compressed_ptr dest);
 
     /*
+     * Decode API
      * Decompress JPEGR image.
      *
      * The output JPEGR image is in RGBA_1010102 data format if decoding to HDR.
@@ -216,22 +245,13 @@ public:
     *
     * The output is filled jpegr_info structure
     * @param compressed_jpegr_image compressed JPEGR image
-    * @param jpegr_info pointer to output JPEGR info
+    * @param jpegr_info pointer to output JPEGR info. Members of jpegr_info
+    *         are owned by the caller
     * @return NO_ERROR if JPEGR parsing succeeds, error code otherwise
     */
     status_t getJPEGRInfo(jr_compressed_ptr compressed_jpegr_image,
                           jr_info_ptr jpegr_info);
 private:
-    /*
-     * This method is called in the decoding pipeline. It will decode the recovery map.
-     *
-     * @param compressed_recovery_map compressed recovery map
-     * @param dest decoded recover map
-     * @return NO_ERROR if decoding succeeds, error code if error occurs.
-     */
-    status_t decompressRecoveryMap(jr_compressed_ptr compressed_recovery_map,
-                               jr_uncompressed_ptr dest);
-
     /*
      * This method is called in the encoding pipeline. It will encode the recovery map.
      *
@@ -307,55 +327,26 @@ private:
      *
      * @param compressed_jpeg_image compressed 8-bit JPEG image
      * @param compress_recovery_map compressed recover map
+     * @param exif EXIF package
      * @param metadata JPEG/R metadata to encode in XMP of the jpeg
      * @param dest compressed JPEGR image
      * @return NO_ERROR if calculation succeeds, error code if error occurs.
      */
     status_t appendRecoveryMap(jr_compressed_ptr compressed_jpeg_image,
                                jr_compressed_ptr compressed_recovery_map,
+                               jr_exif_ptr exif,
                                jr_metadata_ptr metadata,
                                jr_compressed_ptr dest);
 
     /*
-     * This method generates XMP metadata.
+     * This method will tone map a HDR image to an SDR image.
      *
-     * below is an example of the XMP metadata that this function generates where
-     * secondary_image_length = 1000
-     * range_scaling_factor = 1.25
-     *
-     * <x:xmpmeta
-     *   xmlns:x="adobe:ns:meta/"
-     *   x:xmptk="Adobe XMP Core 5.1.2">
-     *   <rdf:RDF
-     *     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-     *     <rdf:Description
-     *       xmlns:GContainer="http://ns.google.com/photos/1.0/container/">
-     *       <GContainer:Version>1</GContainer:Version>
-     *       <GContainer:RangeScalingFactor>1.25</GContainer:RangeScalingFactor>
-     *       <GContainer:Directory>
-     *         <rdf:Seq>
-     *           <rdf:li>
-     *             <GContainer:Item
-     *               Item:Semantic="Primary"
-     *               Item:Mime="image/jpeg"/>
-     *           </rdf:li>
-     *           <rdf:li>
-     *             <GContainer:Item
-     *               Item:Semantic="RecoveryMap"
-     *               Item:Mime="image/jpeg"
-     *               Item:Length="1000"/>
-     *           </rdf:li>
-     *         </rdf:Seq>
-     *       </GContainer:Directory>
-     *     </rdf:Description>
-     *   </rdf:RDF>
-     * </x:xmpmeta>
-     *
-     * @param secondary_image_length length of secondary image
-     * @param metadata JPEG/R metadata to encode as XMP
-     * @return XMP metadata in type of string
+     * @param src (input) uncompressed P010 image
+     * @param dest (output) tone mapping result as a YUV_420 image
+     * @return NO_ERROR if calculation succeeds, error code if error occurs.
      */
-    std::string generateXmp(int secondary_image_length, jpegr_metadata& metadata);
+    status_t toneMap(jr_uncompressed_ptr src,
+                     jr_uncompressed_ptr dest);
 };
 
 } // namespace android::recoverymap

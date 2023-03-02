@@ -26,7 +26,6 @@
 #include <input/InputEventLabels.h>
 
 using android::base::StringPrintf;
-using android::hardware::input::InputDeviceCountryCode;
 
 namespace android {
 
@@ -178,7 +177,7 @@ InputDeviceInfo::InputDeviceInfo(const InputDeviceInfo& other)
         mAlias(other.mAlias),
         mIsExternal(other.mIsExternal),
         mHasMic(other.mHasMic),
-        mCountryCode(other.mCountryCode),
+        mKeyboardLayoutInfo(other.mKeyboardLayoutInfo),
         mSources(other.mSources),
         mKeyboardType(other.mKeyboardType),
         mKeyCharacterMap(other.mKeyCharacterMap),
@@ -196,7 +195,7 @@ InputDeviceInfo::~InputDeviceInfo() {
 
 void InputDeviceInfo::initialize(int32_t id, int32_t generation, int32_t controllerNumber,
                                  const InputDeviceIdentifier& identifier, const std::string& alias,
-                                 bool isExternal, bool hasMic, InputDeviceCountryCode countryCode) {
+                                 bool isExternal, bool hasMic) {
     mId = id;
     mGeneration = generation;
     mControllerNumber = controllerNumber;
@@ -204,7 +203,6 @@ void InputDeviceInfo::initialize(int32_t id, int32_t generation, int32_t control
     mAlias = alias;
     mIsExternal = isExternal;
     mHasMic = hasMic;
-    mCountryCode = countryCode;
     mSources = 0;
     mKeyboardType = AINPUT_KEYBOARD_TYPE_NONE;
     mHasVibrator = false;
@@ -268,6 +266,10 @@ void InputDeviceInfo::setKeyboardType(int32_t keyboardType) {
     static_assert(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC < AINPUT_KEYBOARD_TYPE_ALPHABETIC);
     // There can be multiple subdevices with different keyboard types, set it to the highest type
     mKeyboardType = std::max(mKeyboardType, keyboardType);
+}
+
+void InputDeviceInfo::setKeyboardLayoutInfo(KeyboardLayoutInfo layoutInfo) {
+    mKeyboardLayoutInfo = std::move(layoutInfo);
 }
 
 std::vector<InputDeviceSensorInfo> InputDeviceInfo::getSensors() {

@@ -180,7 +180,7 @@ auto RefreshRateSelector::createFrameRateModes(
         for (auto divisor = start; divisor <= end; divisor++) {
             const auto fps = mode->getFps() / divisor;
             using fps_approx_ops::operator<;
-            if (fps < kMinSupportedFrameRate) {
+            if (divisor > 1 && fps < kMinSupportedFrameRate) {
                 break;
             }
 
@@ -354,6 +354,7 @@ float RefreshRateSelector::calculateDistanceScoreFromMax(Fps refreshRate) const 
 
 float RefreshRateSelector::calculateLayerScoreLocked(const LayerRequirement& layer, Fps refreshRate,
                                                      bool isSeamlessSwitch) const {
+    ATRACE_CALL();
     // Slightly prefer seamless switches.
     constexpr float kSeamedSwitchPenalty = 0.95f;
     const float seamlessness = isSeamlessSwitch ? 1.0f : kSeamedSwitchPenalty;

@@ -97,6 +97,7 @@ public:
     void prepare(const CompositionRefreshArgs&, LayerFESet&) override;
     void present(const CompositionRefreshArgs&) override;
 
+    void uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache) override;
     void rebuildLayerStacks(const CompositionRefreshArgs&, LayerFESet&) override;
     void collectVisibleLayers(const CompositionRefreshArgs&,
                               compositionengine::Output::CoverageState&) override;
@@ -110,11 +111,10 @@ public:
     void updateColorProfile(const compositionengine::CompositionRefreshArgs&) override;
     void beginFrame() override;
     void prepareFrame() override;
-    GpuCompositionResult prepareFrameAsync(const CompositionRefreshArgs&) override;
+    GpuCompositionResult prepareFrameAsync() override;
     void devOptRepaintFlash(const CompositionRefreshArgs&) override;
-    void finishFrame(const CompositionRefreshArgs&, GpuCompositionResult&&) override;
+    void finishFrame(GpuCompositionResult&&) override;
     std::optional<base::unique_fd> composeSurfaces(const Region&,
-                                                   const compositionengine::CompositionRefreshArgs&,
                                                    std::shared_ptr<renderengine::ExternalTexture>,
                                                    base::unique_fd&) override;
     void postFramebuffer() override;

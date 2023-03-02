@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <aidl/android/hardware/sensors/ISensors.h>
 #include <android-base/strings.h>
 #include <android/content/pm/IPackageManagerNative.h>
 #include <android/util/ProtoOutputStream.h>
@@ -51,6 +52,7 @@
 #include "SensorEventConnection.h"
 #include "SensorRecord.h"
 #include "SensorRegistrationInfo.h"
+#include "SensorServiceUtils.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -63,6 +65,7 @@
 
 #include <ctime>
 #include <future>
+#include <string>
 
 #include <private/android_filesystem_config.h>
 
@@ -104,12 +107,10 @@ static const String16 sManageSensorsPermission("android.permission.MANAGE_SENSOR
 
 namespace {
 
-// TODO(b/259227294): Move the sensor ranges to the HAL.
 int32_t nextRuntimeSensorHandle() {
-    static constexpr int32_t kRuntimeHandleBase = 0x5F000000;
-    static constexpr int32_t kRuntimeHandleEnd = 0x5FFFFFFF;
-    static int32_t nextHandle = kRuntimeHandleBase;
-    if (nextHandle == kRuntimeHandleEnd) {
+    using ::aidl::android::hardware::sensors::ISensors;
+    static int32_t nextHandle = ISensors::RUNTIME_SENSORS_HANDLE_BASE;
+    if (nextHandle == ISensors::RUNTIME_SENSORS_HANDLE_END) {
         return -1;
     }
     return nextHandle++;
@@ -183,15 +184,14 @@ int SensorService::registerRuntimeSensor(
     sensor_t runtimeSensor = sensor;
     // force the handle to be consistent
     runtimeSensor.handle = handle;
-    SensorInterface *si = new RuntimeSensor(runtimeSensor, std::move(runtimeSensorCallback));
+    auto si = std::make_shared<RuntimeSensor>(runtimeSensor, std::move(runtimeSensorCallback));
 
     Mutex::Autolock _l(mLock);
-    const Sensor& s = registerSensor(si, /* isDebug= */ false, /* isVirtual= */ false, deviceId);
-
-    if (s.getHandle() != handle) {
+    if (!registerSensor(std::move(si), /* isDebug= */ false, /* isVirtual= */ false, deviceId)) {
         // The registration was unsuccessful.
-        return s.getHandle();
+        return mSensors.getNonSensor().getHandle();
     }
+
     return handle;
 }
 
@@ -319,11 +319,13 @@ void SensorService::onFirstRef() {
                 }
                 if (useThisSensor) {
                     if (list[i].type == SENSOR_TYPE_PROXIMITY) {
-                        SensorInterface* s = new ProximitySensor(list[i], *this);
-                        registerSensor(s);
-                        mProxSensorHandles.push_back(s->getSensor().getHandle());
+                        auto s = std::make_shared<ProximitySensor>(list[i], *this);
+                        const int handle = s->getSensor().getHandle();
+                        if (registerSensor(std::move(s))) {
+                            mProxSensorHandles.push_back(handle);
+                        }
                     } else {
-                        registerSensor(new HardwareSensor(list[i]));
+                        registerSensor(std::make_shared<HardwareSensor>(list[i]));
                     }
                 }
             }
@@ -338,56 +340,63 @@ void SensorService::onFirstRef() {
                 // available in the HAL
                 bool needRotationVector =
                         (virtualSensorsNeeds & (1<<SENSOR_TYPE_ROTATION_VECTOR)) != 0;
-
-                registerSensor(new RotationVectorSensor(), !needRotationVector, true);
-                registerSensor(new OrientationSensor(), !needRotationVector, true);
+                registerVirtualSensor(std::make_shared<RotationVectorSensor>(),
+                                      /* isDebug= */ !needRotationVector);
+                registerVirtualSensor(std::make_shared<OrientationSensor>(),
+                                      /* isDebug= */ !needRotationVector);
 
                 // virtual debugging sensors are not for user
-                registerSensor( new CorrectedGyroSensor(list, count), true, true);
-                registerSensor( new GyroDriftSensor(), true, true);
+                registerVirtualSensor(std::make_shared<CorrectedGyroSensor>(list, count),
+                                      /* isDebug= */ true);
+                registerVirtualSensor(std::make_shared<GyroDriftSensor>(), /* isDebug= */ true);
             }
 
             if (hasAccel && (hasGyro || hasGyroUncalibrated)) {
                 bool needGravitySensor = (virtualSensorsNeeds & (1<<SENSOR_TYPE_GRAVITY)) != 0;
-                registerSensor(new GravitySensor(list, count), !needGravitySensor, true);
+                registerVirtualSensor(std::make_shared<GravitySensor>(list, count),
+                                      /* isDebug= */ !needGravitySensor);
 
                 bool needLinearAcceleration =
                         (virtualSensorsNeeds & (1<<SENSOR_TYPE_LINEAR_ACCELERATION)) != 0;
-                registerSensor(new LinearAccelerationSensor(list, count),
-                               !needLinearAcceleration, true);
+                registerVirtualSensor(std::make_shared<LinearAccelerationSensor>(list, count),
+                                      /* isDebug= */ !needLinearAcceleration);
 
                 bool needGameRotationVector =
                         (virtualSensorsNeeds & (1<<SENSOR_TYPE_GAME_ROTATION_VECTOR)) != 0;
-                registerSensor(new GameRotationVectorSensor(), !needGameRotationVector, true);
+                registerVirtualSensor(std::make_shared<GameRotationVectorSensor>(),
+                                      /* isDebug= */ !needGameRotationVector);
             }
 
             if (hasAccel && hasMag) {
                 bool needGeoMagRotationVector =
                         (virtualSensorsNeeds & (1<<SENSOR_TYPE_GEOMAGNETIC_ROTATION_VECTOR)) != 0;
-                registerSensor(new GeoMagRotationVectorSensor(), !needGeoMagRotationVector, true);
+                registerVirtualSensor(std::make_shared<GeoMagRotationVectorSensor>(),
+                                      /* isDebug= */ !needGeoMagRotationVector);
             }
 
             if (isAutomotive()) {
                 if (hasAccel) {
-                   registerSensor(new LimitedAxesImuSensor(list, count, SENSOR_TYPE_ACCELEROMETER),
-                                  /*isDebug=*/false, /*isVirtual=*/true);
+                    registerVirtualSensor(
+                            std::make_shared<LimitedAxesImuSensor>(
+                                    list, count, SENSOR_TYPE_ACCELEROMETER));
                }
 
                if (hasGyro) {
-                   registerSensor(new LimitedAxesImuSensor(list, count, SENSOR_TYPE_GYROSCOPE),
-                                  /*isDebug=*/false, /*isVirtual=*/true);
+                    registerVirtualSensor(
+                            std::make_shared<LimitedAxesImuSensor>(
+                                    list, count, SENSOR_TYPE_GYROSCOPE));
                }
 
                if (hasAccelUncalibrated) {
-                   registerSensor(new LimitedAxesImuSensor(list, count,
-                                                           SENSOR_TYPE_ACCELEROMETER_UNCALIBRATED),
-                                  /*isDebug=*/false, /*isVirtual=*/true);
+                    registerVirtualSensor(
+                            std::make_shared<LimitedAxesImuSensor>(
+                                    list, count, SENSOR_TYPE_ACCELEROMETER_UNCALIBRATED));
                }
 
                if (hasGyroUncalibrated) {
-                   registerSensor(new LimitedAxesImuSensor(list, count,
-                                                           SENSOR_TYPE_GYROSCOPE_UNCALIBRATED),
-                                  /*isDebug=*/false, /*isVirtual=*/true);
+                    registerVirtualSensor(
+                            std::make_shared<LimitedAxesImuSensor>(
+                                    list, count, SENSOR_TYPE_GYROSCOPE_UNCALIBRATED));
                }
             }
 
@@ -488,20 +497,21 @@ bool SensorService::hasSensorAccessLocked(uid_t uid, const String16& opPackageNa
         && isUidActive(uid) && !isOperationRestrictedLocked(opPackageName);
 }
 
-const Sensor& SensorService::registerSensor(SensorInterface* s, bool isDebug, bool isVirtual,
-                                            int deviceId) {
-    int handle = s->getSensor().getHandle();
-    int type = s->getSensor().getType();
-    if (mSensors.add(handle, s, isDebug, isVirtual, deviceId)) {
+bool SensorService::registerSensor(std::shared_ptr<SensorInterface> s, bool isDebug, bool isVirtual,
+                                   int deviceId) {
+    const int handle = s->getSensor().getHandle();
+    const int type = s->getSensor().getType();
+    if (mSensors.add(handle, std::move(s), isDebug, isVirtual, deviceId)) {
         mRecentEvent.emplace(handle, new SensorServiceUtil::RecentEventLogger(type));
-        return s->getSensor();
+        return true;
     } else {
-        return mSensors.getNonSensor();
+        LOG_FATAL("Failed to register sensor with handle %d", handle);
+        return false;
     }
 }
 
-const Sensor& SensorService::registerDynamicSensorLocked(SensorInterface* s, bool isDebug) {
-    return registerSensor(s, isDebug);
+bool SensorService::registerDynamicSensorLocked(std::shared_ptr<SensorInterface> s, bool isDebug) {
+    return registerSensor(std::move(s), isDebug);
 }
 
 bool SensorService::unregisterDynamicSensorLocked(int handle) {
@@ -515,8 +525,8 @@ bool SensorService::unregisterDynamicSensorLocked(int handle) {
     return ret;
 }
 
-const Sensor& SensorService::registerVirtualSensor(SensorInterface* s, bool isDebug) {
-    return registerSensor(s, isDebug, true);
+bool SensorService::registerVirtualSensor(std::shared_ptr<SensorInterface> s, bool isDebug) {
+    return registerSensor(std::move(s), isDebug, true);
 }
 
 SensorService::~SensorService() {
@@ -539,55 +549,22 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
         if (args.size() > 2) {
            return INVALID_OPERATION;
         }
-        ConnectionSafeAutolock connLock = mConnectionHolder.lock(mLock);
-        SensorDevice& dev(SensorDevice::getInstance());
-        if (args.size() == 2 && args[0] == String16("restrict")) {
-            // If already in restricted mode. Ignore.
-            if (mCurrentOperatingMode == RESTRICTED) {
-                return status_t(NO_ERROR);
+        if (args.size() > 0) {
+            Mode targetOperatingMode = NORMAL;
+            std::string inputStringMode = String8(args[0]).string();
+            if (getTargetOperatingMode(inputStringMode, &targetOperatingMode)) {
+              status_t error = changeOperatingMode(args, targetOperatingMode);
+              // Dump the latest state only if no error was encountered.
+              if (error != NO_ERROR) {
+                return error;
+              }
             }
-            // If in any mode other than normal, ignore.
-            if (mCurrentOperatingMode != NORMAL) {
-                return INVALID_OPERATION;
-            }
+        }
 
-            mCurrentOperatingMode = RESTRICTED;
-            // temporarily stop all sensor direct report and disable sensors
-            disableAllSensorsLocked(&connLock);
-            mWhiteListedPackage.setTo(String8(args[1]));
-            return status_t(NO_ERROR);
-        } else if (args.size() == 1 && args[0] == String16("enable")) {
-            // If currently in restricted mode, reset back to NORMAL mode else ignore.
-            if (mCurrentOperatingMode == RESTRICTED) {
-                mCurrentOperatingMode = NORMAL;
-                // enable sensors and recover all sensor direct report
-                enableAllSensorsLocked(&connLock);
-            }
-            if (mCurrentOperatingMode == DATA_INJECTION) {
-               resetToNormalModeLocked();
-            }
-            mWhiteListedPackage.clear();
-            return status_t(NO_ERROR);
-        } else if (args.size() == 2 && args[0] == String16("data_injection")) {
-            if (mCurrentOperatingMode == NORMAL) {
-                dev.disableAllSensors();
-                status_t err = dev.setMode(DATA_INJECTION);
-                if (err == NO_ERROR) {
-                    mCurrentOperatingMode = DATA_INJECTION;
-                } else {
-                    // Re-enable sensors.
-                    dev.enableAllSensors();
-                }
-                mWhiteListedPackage.setTo(String8(args[1]));
-                return NO_ERROR;
-            } else if (mCurrentOperatingMode == DATA_INJECTION) {
-                // Already in DATA_INJECTION mode. Treat this as a no_op.
-                return NO_ERROR;
-            } else {
-                // Transition to data injection mode supported only from NORMAL mode.
-                return INVALID_OPERATION;
-            }
-        } else if (args.size() == 1 && args[0] == String16("--proto")) {
+        ConnectionSafeAutolock connLock = mConnectionHolder.lock(mLock);
+        // Run the following logic if a transition isn't requested above based on the input
+        // argument parsing.
+        if (args.size() == 1 && args[0] == String16("--proto")) {
             return dumpProtoLocked(fd, &connLock);
         } else if (!mSensors.hasAnySensor()) {
             result.append("No Sensors on the device\n");
@@ -611,8 +588,8 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
 
             result.append("Recent Sensor events:\n");
             for (auto&& i : mRecentEvent) {
-                sp<SensorInterface> s = mSensors.getInterface(i.first);
-                if (!i.second->isEmpty()) {
+                std::shared_ptr<SensorInterface> s = getSensorInterfaceFromHandle(i.first);
+                if (!i.second->isEmpty() && s != nullptr) {
                     if (privileged || s->getSensor().getRequiredPermission().isEmpty()) {
                         i.second->setFormat("normal");
                     } else {
@@ -646,10 +623,18 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
                    result.appendFormat(" NORMAL\n");
                    break;
                case RESTRICTED:
-                   result.appendFormat(" RESTRICTED : %s\n", mWhiteListedPackage.string());
+                   result.appendFormat(" RESTRICTED : %s\n", mAllowListedPackage.string());
                    break;
                case DATA_INJECTION:
-                   result.appendFormat(" DATA_INJECTION : %s\n", mWhiteListedPackage.string());
+                   result.appendFormat(" DATA_INJECTION : %s\n", mAllowListedPackage.string());
+                   break;
+               case REPLAY_DATA_INJECTION:
+                   result.appendFormat(" REPLAY_DATA_INJECTION : %s\n",
+                            mAllowListedPackage.string());
+                   break;
+               default:
+                   result.appendFormat(" UNKNOWN\n");
+                   break;
             }
             result.appendFormat("Sensor Privacy: %s\n",
                     mSensorPrivacyPolicy->isSensorPrivacyEnabled() ? "enabled" : "disabled");
@@ -729,8 +714,8 @@ status_t SensorService::dumpProtoLocked(int fd, ConnectionSafeAutolock* connLock
     // Write SensorEventsProto
     token = proto.start(SENSOR_EVENTS);
     for (auto&& i : mRecentEvent) {
-        sp<SensorInterface> s = mSensors.getInterface(i.first);
-        if (!i.second->isEmpty()) {
+        std::shared_ptr<SensorInterface> s = getSensorInterfaceFromHandle(i.first);
+        if (!i.second->isEmpty() && s != nullptr) {
             i.second->setFormat(privileged || s->getSensor().getRequiredPermission().isEmpty() ?
                     "normal" : "mask_data");
             const uint64_t mToken = proto.start(service::SensorEventsProto::RECENT_EVENTS_LOGS);
@@ -767,11 +752,11 @@ status_t SensorService::dumpProtoLocked(int fd, ConnectionSafeAutolock* connLock
             break;
         case RESTRICTED:
             proto.write(OPERATING_MODE, OP_MODE_RESTRICTED);
-            proto.write(WHITELISTED_PACKAGE, std::string(mWhiteListedPackage.string()));
+            proto.write(WHITELISTED_PACKAGE, std::string(mAllowListedPackage.string()));
             break;
         case DATA_INJECTION:
             proto.write(OPERATING_MODE, OP_MODE_DATA_INJECTION);
-            proto.write(WHITELISTED_PACKAGE, std::string(mWhiteListedPackage.string()));
+            proto.write(WHITELISTED_PACKAGE, std::string(mAllowListedPackage.string()));
             break;
         default:
             proto.write(OPERATING_MODE, OP_MODE_UNKNOWN);
@@ -1020,7 +1005,7 @@ void SensorService::cleanupAutoDisabledSensorLocked(const sp<SensorEventConnecti
             handle = buffer[i].meta_data.sensor;
         }
         if (connection->hasSensor(handle)) {
-            sp<SensorInterface> si = getSensorInterfaceFromHandle(handle);
+            std::shared_ptr<SensorInterface> si = getSensorInterfaceFromHandle(handle);
             // If this buffer has an event from a one_shot sensor and this connection is registered
             // for this particular one_shot sensor, try cleaning up the connection.
             if (si != nullptr &&
@@ -1105,7 +1090,7 @@ bool SensorService::threadLoop() {
                             break;
                         }
                         sensors_event_t out;
-                        sp<SensorInterface> si = mSensors.getInterface(handle);
+                        std::shared_ptr<SensorInterface> si = getSensorInterfaceFromHandle(handle);
                         if (si == nullptr) {
                             ALOGE("handle %d is not an valid virtual sensor", handle);
                             continue;
@@ -1200,12 +1185,12 @@ bool SensorService::threadLoop() {
                         // force the handle to be consistent
                         s.handle = handle;
 
-                        SensorInterface *si = new HardwareSensor(s, uuid);
+                        auto si = std::make_shared<HardwareSensor>(s, uuid);
 
                         // This will release hold on dynamic sensor meta, so it should be called
                         // after Sensor object is created.
                         device.handleDynamicSensorConnection(handle, true /*connected*/);
-                        registerDynamicSensorLocked(si);
+                        registerDynamicSensorLocked(std::move(si));
                     } else {
                         ALOGE("Handle %d has been used, cannot use again before reboot.", handle);
                     }
@@ -1332,7 +1317,7 @@ String8 SensorService::getSensorStringType(int handle) const {
 }
 
 bool SensorService::isVirtualSensor(int handle) const {
-    sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+    std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
     return sensor != nullptr && sensor->isVirtual();
 }
 
@@ -1341,7 +1326,7 @@ bool SensorService::isWakeUpSensorEvent(const sensors_event_t& event) const {
     if (event.type == SENSOR_TYPE_META_DATA) {
         handle = event.meta_data.sensor;
     }
-    sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+    std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
     return sensor != nullptr && sensor->getSensor().isWakeUpSensor();
 }
 
@@ -1490,8 +1475,10 @@ Vector<Sensor> SensorService::getRuntimeSensorList(const String16& opPackageName
 
 sp<ISensorEventConnection> SensorService::createSensorEventConnection(const String8& packageName,
         int requestedMode, const String16& opPackageName, const String16& attributionTag) {
-    // Only 2 modes supported for a SensorEventConnection ... NORMAL and DATA_INJECTION.
-    if (requestedMode != NORMAL && requestedMode != DATA_INJECTION) {
+    // Only 3 modes supported for a SensorEventConnection ... NORMAL, DATA_INJECTION and
+    // REPLAY_DATA_INJECTION.
+    if (requestedMode != NORMAL && requestedMode != DATA_INJECTION &&
+            requestedMode != REPLAY_DATA_INJECTION) {
         return nullptr;
     }
     resetTargetSdkVersionCache(opPackageName);
@@ -1501,7 +1488,7 @@ sp<ISensorEventConnection> SensorService::createSensorEventConnection(const Stri
     // operating in DI mode.
     if (requestedMode == DATA_INJECTION) {
         if (mCurrentOperatingMode != DATA_INJECTION) return nullptr;
-        if (!isWhiteListedPackage(packageName)) return nullptr;
+        if (!isAllowListedPackage(packageName)) return nullptr;
     }
 
     uid_t uid = IPCThreadState::self()->getCallingUid();
@@ -1512,8 +1499,9 @@ sp<ISensorEventConnection> SensorService::createSensorEventConnection(const Stri
     String16 connOpPackageName =
             (opPackageName == String16("")) ? String16(connPackageName) : opPackageName;
     sp<SensorEventConnection> result(new SensorEventConnection(this, uid, connPackageName,
-            requestedMode == DATA_INJECTION, connOpPackageName, attributionTag));
-    if (requestedMode == DATA_INJECTION) {
+            requestedMode == DATA_INJECTION || requestedMode == REPLAY_DATA_INJECTION,
+            connOpPackageName, attributionTag));
+    if (requestedMode == DATA_INJECTION || requestedMode == REPLAY_DATA_INJECTION) {
         mConnectionHolder.addEventConnectionIfNotPresent(result);
         // Add the associated file descriptor to the Looper for polling whenever there is data to
         // be injected.
@@ -1741,7 +1729,7 @@ void SensorService::cleanupConnection(SensorEventConnection* c) {
         int handle = mActiveSensors.keyAt(i);
         if (c->hasSensor(handle)) {
             ALOGD_IF(DEBUG_CONNECTIONS, "%zu: disabling handle=0x%08x", i, handle);
-            sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+            std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
             if (sensor != nullptr) {
                 sensor->activate(c, false);
             } else {
@@ -1855,7 +1843,7 @@ status_t SensorService::removeProximityActiveListener(
     return NAME_NOT_FOUND;
 }
 
-sp<SensorInterface> SensorService::getSensorInterfaceFromHandle(int handle) const {
+std::shared_ptr<SensorInterface> SensorService::getSensorInterfaceFromHandle(int handle) const {
     return mSensors.getInterface(handle);
 }
 
@@ -1865,15 +1853,15 @@ status_t SensorService::enable(const sp<SensorEventConnection>& connection,
     if (mInitCheck != NO_ERROR)
         return mInitCheck;
 
-    sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+    std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
     if (sensor == nullptr ||
         !canAccessSensor(sensor->getSensor(), "Tried enabling", opPackageName)) {
         return BAD_VALUE;
     }
 
     ConnectionSafeAutolock connLock = mConnectionHolder.lock(mLock);
-    if (mCurrentOperatingMode != NORMAL
-           && !isWhiteListedPackage(connection->getPackageName())) {
+    if (mCurrentOperatingMode != NORMAL && mCurrentOperatingMode != REPLAY_DATA_INJECTION &&
+           !isAllowListedPackage(connection->getPackageName())) {
         return INVALID_OPERATION;
     }
 
@@ -2011,7 +1999,7 @@ status_t SensorService::disable(const sp<SensorEventConnection>& connection, int
     Mutex::Autolock _l(mLock);
     status_t err = cleanupWithoutDisableLocked(connection, handle);
     if (err == NO_ERROR) {
-        sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+        std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
         err = sensor != nullptr ? sensor->activate(connection.get(), false) : status_t(BAD_VALUE);
 
     }
@@ -2057,7 +2045,7 @@ status_t SensorService::setEventRate(const sp<SensorEventConnection>& connection
     if (mInitCheck != NO_ERROR)
         return mInitCheck;
 
-    sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+    std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
     if (sensor == nullptr ||
         !canAccessSensor(sensor->getSensor(), "Tried configuring", opPackageName)) {
         return BAD_VALUE;
@@ -2083,7 +2071,7 @@ status_t SensorService::flushSensor(const sp<SensorEventConnection>& connection,
     Mutex::Autolock _l(mLock);
     // Loop through all sensors for this connection and call flush on each of them.
     for (int handle : connection->getActiveSensorHandles()) {
-        sp<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
+        std::shared_ptr<SensorInterface> sensor = getSensorInterfaceFromHandle(handle);
         if (sensor == nullptr) {
             continue;
         }
@@ -2221,6 +2209,95 @@ void SensorService::resetTargetSdkVersionCache(const String16& opPackageName) {
     }
 }
 
+bool SensorService::getTargetOperatingMode(const std::string &inputString, Mode *targetModeOut) {
+    if (inputString == std::string("restrict")) {
+      *targetModeOut = RESTRICTED;
+      return true;
+    }
+    if (inputString == std::string("enable")) {
+      *targetModeOut = NORMAL;
+      return true;
+    }
+    if (inputString == std::string("data_injection")) {
+      *targetModeOut = DATA_INJECTION;
+      return true;
+    }
+    if (inputString == std::string("replay_data_injection")) {
+      *targetModeOut = REPLAY_DATA_INJECTION;
+      return true;
+    }
+    return false;
+}
+
+status_t SensorService::changeOperatingMode(const Vector<String16>& args,
+                                            Mode targetOperatingMode) {
+    ConnectionSafeAutolock connLock = mConnectionHolder.lock(mLock);
+    SensorDevice& dev(SensorDevice::getInstance());
+    if (mCurrentOperatingMode == targetOperatingMode) {
+        return NO_ERROR;
+    }
+    if (targetOperatingMode != NORMAL && args.size() < 2) {
+        return INVALID_OPERATION;
+    }
+    switch (targetOperatingMode) {
+      case NORMAL:
+        // If currently in restricted mode, reset back to NORMAL mode else ignore.
+        if (mCurrentOperatingMode == RESTRICTED) {
+            mCurrentOperatingMode = NORMAL;
+            // enable sensors and recover all sensor direct report
+            enableAllSensorsLocked(&connLock);
+        }
+        if (mCurrentOperatingMode == REPLAY_DATA_INJECTION) {
+            dev.disableAllSensors();
+        }
+        if (mCurrentOperatingMode == DATA_INJECTION ||
+                mCurrentOperatingMode == REPLAY_DATA_INJECTION) {
+          resetToNormalModeLocked();
+        }
+        mAllowListedPackage.clear();
+        return status_t(NO_ERROR);
+      case RESTRICTED:
+        // If in any mode other than normal, ignore.
+        if (mCurrentOperatingMode != NORMAL) {
+            return INVALID_OPERATION;
+        }
+
+        mCurrentOperatingMode = RESTRICTED;
+        // temporarily stop all sensor direct report and disable sensors
+        disableAllSensorsLocked(&connLock);
+        mAllowListedPackage.setTo(String8(args[1]));
+        return status_t(NO_ERROR);
+      case REPLAY_DATA_INJECTION:
+        if (SensorServiceUtil::isUserBuild()) {
+            return INVALID_OPERATION;
+        }
+        FALLTHROUGH_INTENDED;
+      case DATA_INJECTION:
+        if (mCurrentOperatingMode == NORMAL) {
+            dev.disableAllSensors();
+            // Always use DATA_INJECTION here since this value goes to the HAL and the HAL
+            // doesn't have an understanding of replay vs. normal data injection.
+            status_t err = dev.setMode(DATA_INJECTION);
+            if (err == NO_ERROR) {
+                mCurrentOperatingMode = targetOperatingMode;
+            }
+            if (err != NO_ERROR || targetOperatingMode == REPLAY_DATA_INJECTION) {
+                // Re-enable sensors.
+                dev.enableAllSensors();
+            }
+            mAllowListedPackage.setTo(String8(args[1]));
+            return NO_ERROR;
+        } else {
+            // Transition to data injection mode supported only from NORMAL mode.
+            return INVALID_OPERATION;
+        }
+        break;
+      default:
+        break;
+    }
+    return NO_ERROR;
+}
+
 void SensorService::checkWakeLockState() {
     ConnectionSafeAutolock connLock = mConnectionHolder.lock(mLock);
     checkWakeLockStateLocked(&connLock);
@@ -2250,14 +2327,14 @@ void SensorService::sendEventsFromCache(const sp<SensorEventConnection>& connect
     }
 }
 
-bool SensorService::isWhiteListedPackage(const String8& packageName) {
-    return (packageName.contains(mWhiteListedPackage.string()));
+bool SensorService::isAllowListedPackage(const String8& packageName) {
+    return (packageName.contains(mAllowListedPackage.string()));
 }
 
 bool SensorService::isOperationRestrictedLocked(const String16& opPackageName) {
     if (mCurrentOperatingMode == RESTRICTED) {
         String8 package(opPackageName);
-        return !isWhiteListedPackage(package);
+        return !isAllowListedPackage(package);
     }
     return false;
 }

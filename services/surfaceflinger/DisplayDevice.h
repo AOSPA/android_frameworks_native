@@ -216,7 +216,8 @@ public:
         InitiateDisplayModeSwitch,
         InitiateRenderRateSwitch
     };
-    DesiredActiveModeAction setDesiredActiveMode(const ActiveModeInfo&) EXCLUDES(mActiveModeLock);
+    DesiredActiveModeAction setDesiredActiveMode(const ActiveModeInfo&, bool force = false)
+            EXCLUDES(mActiveModeLock);
     std::optional<ActiveModeInfo> getDesiredActiveMode() const EXCLUDES(mActiveModeLock);
     void clearDesiredActiveModeState() EXCLUDES(mActiveModeLock);
     ActiveModeInfo getUpcomingActiveMode() const REQUIRES(kMainThreadContext) {
@@ -242,8 +243,8 @@ public:
     }
 
     // Enables an overlay to be displayed with the current refresh rate
-    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate)
-            REQUIRES(kMainThreadContext);
+    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate,
+                                  bool showInMiddle) REQUIRES(kMainThreadContext);
     bool isRefreshRateOverlayEnabled() const { return mRefreshRateOverlay != nullptr; }
     bool onKernelTimerChanged(std::optional<DisplayModeId>, bool timerExpired);
     void animateRefreshRateOverlay();
@@ -283,7 +284,7 @@ private:
     std::optional<hardware::graphics::composer::hal::PowerMode> mPowerMode;
 
     std::optional<float> mStagedBrightness;
-    float mBrightness = -1.f;
+    std::optional<float> mBrightness;
 
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;

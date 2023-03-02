@@ -130,8 +130,9 @@ const std::string& Output::getName() const {
 void Output::setName(const std::string& name) {
     mName = name;
     auto displayIdOpt = getDisplayId();
-    mNamePlusId = base::StringPrintf("%s (%s)", mName.c_str(),
-                                     displayIdOpt ? to_string(*displayIdOpt).c_str() : "NA");
+    mNamePlusId = displayIdOpt ? base::StringPrintf("%s (%s)", mName.c_str(),
+                                     to_string(*displayIdOpt).c_str())
+                               : mName;
 }
 
 void Output::setCompositionEnabled(bool enabled) {
@@ -440,6 +441,7 @@ void Output::prepare(const compositionengine::CompositionRefreshArgs& refreshArg
     ALOGV(__FUNCTION__);
 
     rebuildLayerStacks(refreshArgs, geomSnapshots);
+    uncacheBuffers(refreshArgs.bufferIdsToUncache);
 }
 
 void Output::present(const compositionengine::CompositionRefreshArgs& refreshArgs) {
@@ -456,15 +458,24 @@ void Output::present(const compositionengine::CompositionRefreshArgs& refreshArg
     GpuCompositionResult result;
     const bool predictCompositionStrategy = canPredictCompositionStrategy(refreshArgs);
     if (predictCompositionStrategy) {
-        result = prepareFrameAsync(refreshArgs);
+        result = prepareFrameAsync();
     } else {
         prepareFrame();
     }
 
     devOptRepaintFlash(refreshArgs);
-    finishFrame(refreshArgs, std::move(result));
+    finishFrame(std::move(result));
     postFramebuffer();
     renderCachedSets(refreshArgs);
+}
+
+void Output::uncacheBuffers(std::vector<uint64_t> const& bufferIdsToUncache) {
+    if (bufferIdsToUncache.empty()) {
+        return;
+    }
+    for (auto outputLayer : getOutputLayersOrderedByZ()) {
+        outputLayer->uncacheBuffers(bufferIdsToUncache);
+    }
 }
 
 void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs& refreshArgs,
@@ -1078,7 +1089,7 @@ std::future<bool> Output::chooseCompositionStrategyAsync(
             [&, changes]() { return chooseCompositionStrategy(changes); });
 }
 
-GpuCompositionResult Output::prepareFrameAsync(const CompositionRefreshArgs& refreshArgs) {
+GpuCompositionResult Output::prepareFrameAsync() {
     ATRACE_CALL();
     ALOGV(__FUNCTION__);
     auto& state = editState();
@@ -1098,7 +1109,7 @@ GpuCompositionResult Output::prepareFrameAsync(const CompositionRefreshArgs& ref
     GpuCompositionResult compositionResult;
     if (dequeueSucceeded) {
         std::optional<base::unique_fd> optFd =
-                composeSurfaces(Region::INVALID_REGION, refreshArgs, buffer, bufferFence);
+                composeSurfaces(Region::INVALID_REGION, buffer, bufferFence);
         if (optFd) {
             compositionResult.fence = std::move(*optFd);
         }
@@ -1136,7 +1147,7 @@ void Output::devOptRepaintFlash(const compositionengine::CompositionRefreshArgs&
             std::shared_ptr<renderengine::ExternalTexture> buffer;
             updateProtectedContentState();
             dequeueRenderBuffer(&bufferFence, &buffer);
-            static_cast<void>(composeSurfaces(dirtyRegion, refreshArgs, buffer, bufferFence));
+            static_cast<void>(composeSurfaces(dirtyRegion, buffer, bufferFence));
             mRenderSurface->queueBuffer(base::unique_fd());
         }
     }
@@ -1148,7 +1159,7 @@ void Output::devOptRepaintFlash(const compositionengine::CompositionRefreshArgs&
     prepareFrame();
 }
 
-void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositionResult&& result) {
+void Output::finishFrame(GpuCompositionResult&& result) {
     ATRACE_CALL();
     ALOGV(__FUNCTION__);
     const auto& outputState = getState();
@@ -1173,7 +1184,7 @@ void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositi
         }
         // Repaint the framebuffer (if needed), getting the optional fence for when
         // the composition completes.
-        optReadyFence = composeSurfaces(Region::INVALID_REGION, refreshArgs, buffer, bufferFence);
+        optReadyFence = composeSurfaces(Region::INVALID_REGION, buffer, bufferFence);
     }
     if (!optReadyFence) {
         return;
@@ -1235,14 +1246,15 @@ bool Output::dequeueRenderBuffer(base::unique_fd* bufferFence,
 }
 
 std::optional<base::unique_fd> Output::composeSurfaces(
-        const Region& debugRegion, const compositionengine::CompositionRefreshArgs& refreshArgs,
-        std::shared_ptr<renderengine::ExternalTexture> tex, base::unique_fd& fd) {
+        const Region& debugRegion, std::shared_ptr<renderengine::ExternalTexture> tex,
+        base::unique_fd& fd) {
     ATRACE_CALL();
     ALOGV(__FUNCTION__);
 
     const auto& outputState = getState();
-    const TracedOrdinal<bool> hasClientComposition = {"hasClientComposition",
-                                                      outputState.usesClientComposition};
+    const TracedOrdinal<bool> hasClientComposition = {
+        base::StringPrintf("hasClientComposition %s", mNamePlusId.c_str()),
+        outputState.usesClientComposition};
     if (!hasClientComposition) {
         setExpensiveRenderingExpected(false);
         return base::unique_fd();
@@ -1292,9 +1304,7 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // or complex GPU shaders and it's expensive. We boost the GPU frequency so that
     // GPU composition can finish in time. We must reset GPU frequency afterwards,
     // because high frequency consumes extra battery.
-    const bool expensiveBlurs =
-            refreshArgs.blursAreExpensive && mLayerRequestingBackgroundBlur != nullptr;
-    const bool expensiveRenderingExpected = expensiveBlurs ||
+    const bool expensiveRenderingExpected =
             std::any_of(clientCompositionLayers.begin(), clientCompositionLayers.end(),
                         [outputDataspace =
                                  clientCompositionDisplay.outputDataspace](const auto& layer) {

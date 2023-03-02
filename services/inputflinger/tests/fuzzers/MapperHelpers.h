@@ -13,16 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #pragma once
 
 #include <InputDevice.h>
 #include <InputMapper.h>
 #include <InputReader.h>
-#include <fuzzer/FuzzedDataProvider.h>
-#include "android/hardware/input/InputDeviceCountryCode.h"
-
-using android::hardware::input::InputDeviceCountryCode;
+#include <ThreadSafeFuzzedDataProvider.h>
 
 constexpr size_t kValidTypes[] = {EV_SW,
                                   EV_SYN,
@@ -66,46 +62,6 @@ constexpr size_t kValidCodes[] = {
         BTN_TASK,
 };
 
-constexpr InputDeviceCountryCode kCountryCodes[] = {
-        InputDeviceCountryCode::INVALID,
-        InputDeviceCountryCode::NOT_SUPPORTED,
-        InputDeviceCountryCode::ARABIC,
-        InputDeviceCountryCode::BELGIAN,
-        InputDeviceCountryCode::CANADIAN_BILINGUAL,
-        InputDeviceCountryCode::CANADIAN_FRENCH,
-        InputDeviceCountryCode::CZECH_REPUBLIC,
-        InputDeviceCountryCode::DANISH,
-        InputDeviceCountryCode::FINNISH,
-        InputDeviceCountryCode::FRENCH,
-        InputDeviceCountryCode::GERMAN,
-        InputDeviceCountryCode::GREEK,
-        InputDeviceCountryCode::HEBREW,
-        InputDeviceCountryCode::HUNGARY,
-        InputDeviceCountryCode::INTERNATIONAL,
-        InputDeviceCountryCode::ITALIAN,
-        InputDeviceCountryCode::JAPAN,
-        InputDeviceCountryCode::KOREAN,
-        InputDeviceCountryCode::LATIN_AMERICAN,
-        InputDeviceCountryCode::DUTCH,
-        InputDeviceCountryCode::NORWEGIAN,
-        InputDeviceCountryCode::PERSIAN,
-        InputDeviceCountryCode::POLAND,
-        InputDeviceCountryCode::PORTUGUESE,
-        InputDeviceCountryCode::RUSSIA,
-        InputDeviceCountryCode::SLOVAKIA,
-        InputDeviceCountryCode::SPANISH,
-        InputDeviceCountryCode::SWEDISH,
-        InputDeviceCountryCode::SWISS_FRENCH,
-        InputDeviceCountryCode::SWISS_GERMAN,
-        InputDeviceCountryCode::SWITZERLAND,
-        InputDeviceCountryCode::TAIWAN,
-        InputDeviceCountryCode::TURKISH_Q,
-        InputDeviceCountryCode::UK,
-        InputDeviceCountryCode::US,
-        InputDeviceCountryCode::YUGOSLAVIA,
-        InputDeviceCountryCode::TURKISH_F,
-};
-
 constexpr size_t kMaxSize = 256;
 
 namespace android {
@@ -114,10 +70,10 @@ class FuzzEventHub : public EventHubInterface {
     InputDeviceIdentifier mIdentifier;
     std::vector<TouchVideoFrame> mVideoFrames;
     PropertyMap mFuzzConfig;
-    std::shared_ptr<FuzzedDataProvider> mFdp;
+    std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp;
 
 public:
-    FuzzEventHub(std::shared_ptr<FuzzedDataProvider> fdp) : mFdp(std::move(fdp)) {}
+    FuzzEventHub(std::shared_ptr<ThreadSafeFuzzedDataProvider> fdp) : mFdp(std::move(fdp)) {}
     ~FuzzEventHub() {}
     void addProperty(std::string key, std::string value) { mFuzzConfig.addProperty(key, value); }
 
@@ -198,8 +154,8 @@ public:
     void setLightIntensities(int32_t deviceId, int32_t lightId,
                              std::unordered_map<LightColor, int32_t> intensities) override{};
 
-    InputDeviceCountryCode getCountryCode(int32_t deviceId) const override {
-        return mFdp->PickValueInArray<InputDeviceCountryCode>(kCountryCodes);
+    std::optional<RawLayoutInfo> getRawLayoutInfo(int32_t deviceId) const override {
+        return std::nullopt;
     };
 
     int32_t getScanCodeState(int32_t deviceId, int32_t scanCode) const override {
@@ -264,10 +220,10 @@ public:
 };
 
 class FuzzPointerController : public PointerControllerInterface {
-    std::shared_ptr<FuzzedDataProvider> mFdp;
+    std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp;
 
 public:
-    FuzzPointerController(std::shared_ptr<FuzzedDataProvider> mFdp) : mFdp(mFdp) {}
+    FuzzPointerController(std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp) : mFdp(mFdp) {}
     ~FuzzPointerController() {}
     bool getBounds(float* outMinX, float* outMinY, float* outMaxX, float* outMaxY) const override {
         return mFdp->ConsumeBool();
@@ -290,13 +246,13 @@ public:
 class FuzzInputReaderPolicy : public InputReaderPolicyInterface {
     TouchAffineTransformation mTransform;
     std::shared_ptr<FuzzPointerController> mPointerController;
-    std::shared_ptr<FuzzedDataProvider> mFdp;
+    std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp;
 
 protected:
     ~FuzzInputReaderPolicy() {}
 
 public:
-    FuzzInputReaderPolicy(std::shared_ptr<FuzzedDataProvider> mFdp) : mFdp(mFdp) {
+    FuzzInputReaderPolicy(std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp) : mFdp(mFdp) {
         mPointerController = std::make_shared<FuzzPointerController>(mFdp);
     }
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override {}
@@ -334,13 +290,13 @@ public:
 class FuzzInputReaderContext : public InputReaderContext {
     std::shared_ptr<EventHubInterface> mEventHub;
     sp<InputReaderPolicyInterface> mPolicy;
-    std::shared_ptr<FuzzedDataProvider> mFdp;
+    std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp;
 
 public:
     FuzzInputReaderContext(std::shared_ptr<EventHubInterface> eventHub,
                            const sp<InputReaderPolicyInterface>& policy,
                            InputListenerInterface& listener,
-                           std::shared_ptr<FuzzedDataProvider> mFdp)
+                           std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp)
           : mEventHub(eventHub), mPolicy(policy), mFdp(mFdp) {}
     ~FuzzInputReaderContext() {}
     void updateGlobalMetaState() override {}

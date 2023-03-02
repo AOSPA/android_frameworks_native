@@ -209,8 +209,8 @@ public:
     void dump(ConnectionHandle, std::string&) const;
     void dumpVsync(std::string&) const;
 
-    // Get the appropriate refresh for current conditions.
-    ftl::Optional<FrameRateMode> getPreferredDisplayMode();
+    // Returns the preferred refresh rate and frame rate for the leader display.
+    FrameRateMode getPreferredDisplayMode();
 
     // Notifies the scheduler about a refresh rate timeline change.
     void onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline);
@@ -222,11 +222,6 @@ public:
     void onActiveDisplayAreaChanged(uint32_t displayArea);
 
     size_t getEventThreadConnectionCount(ConnectionHandle handle);
-
-    std::unique_ptr<VSyncSource> makePrimaryDispSyncSource(const char* name,
-                                                           std::chrono::nanoseconds workDuration,
-                                                           std::chrono::nanoseconds readyDuration,
-                                                           bool traceVsync = true);
 
     // Stores the preferred refresh rate that an app should run at.
     // FrameRateOverride.refreshRateHz == 0 means no preference.

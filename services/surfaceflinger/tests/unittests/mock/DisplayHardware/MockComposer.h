@@ -98,6 +98,8 @@ public:
                  Error(Display, nsecs_t, uint32_t*, uint32_t*, int*, uint32_t*));
     MOCK_METHOD4(setCursorPosition, Error(Display, Layer, int32_t, int32_t));
     MOCK_METHOD5(setLayerBuffer, Error(Display, Layer, uint32_t, const sp<GraphicBuffer>&, int));
+    MOCK_METHOD4(setLayerBufferSlotsToClear,
+                 Error(Display, Layer, const std::vector<uint32_t>&, uint32_t));
     MOCK_METHOD3(setLayerSurfaceDamage,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerBlendMode, Error(Display, Layer, IComposerClient::BlendMode));
@@ -143,6 +145,11 @@ public:
     MOCK_METHOD2(setBootDisplayConfig, Error(Display, Config));
     MOCK_METHOD1(clearBootDisplayConfig, Error(Display));
     MOCK_METHOD2(getPreferredBootDisplayConfig, Error(Display, Config*));
+    MOCK_METHOD1(getHdrConversionCapabilities,
+                 Error(std::vector<
+                         aidl::android::hardware::graphics::common::HdrConversionCapability>*));
+    MOCK_METHOD1(setHdrConversionStrategy,
+                 Error(aidl::android::hardware::graphics::common::HdrConversionStrategy));
     MOCK_METHOD2(getSupportedContentTypes,
                  V2_4::Error(Display, std::vector<IComposerClient::ContentType>*));
     MOCK_METHOD2(setContentType, V2_4::Error(Display, IComposerClient::ContentType));

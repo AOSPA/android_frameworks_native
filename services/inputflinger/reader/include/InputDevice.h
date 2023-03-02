@@ -54,6 +54,7 @@ public:
     inline std::optional<std::string> getBluetoothAddress() const {
         return mIdentifier.bluetoothAddress;
     }
+    inline const std::string getLocation() const { return mIdentifier.location; }
     inline ftl::Flags<InputDeviceClass> getClasses() const { return mClasses; }
     inline uint32_t getSources() const { return mSources; }
     inline bool hasEventHubDevices() const { return !mDevices.empty(); }
@@ -64,6 +65,9 @@ public:
     }
     inline std::optional<std::string> getAssociatedDisplayUniqueId() const {
         return mAssociatedDisplayUniqueId;
+    }
+    inline std::optional<std::string> getDeviceTypeAssociation() const {
+        return mAssociatedDeviceType;
     }
     inline std::optional<DisplayViewport> getAssociatedViewport() const {
         return mAssociatedViewport;
@@ -163,7 +167,6 @@ private:
     int32_t mId;
     int32_t mGeneration;
     int32_t mControllerNumber;
-    hardware::input::InputDeviceCountryCode mCountryCode;
     InputDeviceIdentifier mIdentifier;
     std::string mAlias;
     ftl::Flags<InputDeviceClass> mClasses;
@@ -180,6 +183,7 @@ private:
     bool mIsExternal;
     std::optional<uint8_t> mAssociatedDisplayPort;
     std::optional<std::string> mAssociatedDisplayUniqueId;
+    std::optional<std::string> mAssociatedDeviceType;
     std::optional<DisplayViewport> mAssociatedViewport;
     bool mHasMic;
     bool mDropUntilNextSync;
@@ -321,9 +325,6 @@ public:
     }
 
     inline std::vector<TouchVideoFrame> getVideoFrames() { return mEventHub->getVideoFrames(mId); }
-    inline hardware::input::InputDeviceCountryCode getCountryCode() const {
-        return mEventHub->getCountryCode(mId);
-    }
     inline int32_t getScanCodeState(int32_t scanCode) const {
         return mEventHub->getScanCodeState(mId, scanCode);
     }
@@ -355,6 +356,9 @@ public:
     }
     inline bool setKeyboardLayoutOverlay(std::shared_ptr<KeyCharacterMap> map) {
         return mEventHub->setKeyboardLayoutOverlay(mId, map);
+    }
+    inline const std::optional<RawLayoutInfo> getRawLayoutInfo() {
+        return mEventHub->getRawLayoutInfo(mId);
     }
     inline void vibrate(const VibrationElement& element) {
         return mEventHub->vibrate(mId, element);
@@ -399,14 +403,18 @@ public:
     inline status_t enableDevice() { return mEventHub->enableDevice(mId); }
     inline status_t disableDevice() { return mEventHub->disableDevice(mId); }
 
-    inline const std::string getName() { return mDevice.getName(); }
+    inline const std::string getName() const { return mDevice.getName(); }
     inline const std::string getDescriptor() { return mDevice.getDescriptor(); }
+    inline const std::string getLocation() { return mDevice.getLocation(); }
     inline bool isExternal() { return mDevice.isExternal(); }
     inline std::optional<uint8_t> getAssociatedDisplayPort() const {
         return mDevice.getAssociatedDisplayPort();
     }
     inline std::optional<std::string> getAssociatedDisplayUniqueId() const {
         return mDevice.getAssociatedDisplayUniqueId();
+    }
+    inline std::optional<std::string> getDeviceTypeAssociation() const {
+        return mDevice.getDeviceTypeAssociation();
     }
     inline std::optional<DisplayViewport> getAssociatedViewport() const {
         return mDevice.getAssociatedViewport();

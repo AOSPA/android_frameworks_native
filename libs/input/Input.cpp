@@ -46,25 +46,6 @@ namespace android {
 
 namespace {
 
-float transformAngle(const ui::Transform& transform, float angleRadians) {
-    // Construct and transform a vector oriented at the specified clockwise angle from vertical.
-    // Coordinate system: down is increasing Y, right is increasing X.
-    float x = sinf(angleRadians);
-    float y = -cosf(angleRadians);
-    vec2 transformedPoint = transform.transform(x, y);
-
-    // Determine how the origin is transformed by the matrix so that we
-    // can transform orientation vectors.
-    const vec2 origin = transform.transform(0, 0);
-
-    transformedPoint.x -= origin.x;
-    transformedPoint.y -= origin.y;
-
-    // Derive the transformed vector's clockwise angle from vertical.
-    // The return value of atan2f is in range [-pi, pi] which conforms to the orientation API.
-    return atan2f(transformedPoint.x, -transformedPoint.y);
-}
-
 bool shouldDisregardTransformation(uint32_t source) {
     // Do not apply any transformations to axes from joysticks, touchpads, or relative mice.
     return isFromSource(source, AINPUT_SOURCE_CLASS_JOYSTICK) ||
@@ -91,6 +72,10 @@ const char* motionClassificationToString(MotionClassification classification) {
             return "DEEP_PRESS";
         case MotionClassification::TWO_FINGER_SWIPE:
             return "TWO_FINGER_SWIPE";
+        case MotionClassification::MULTI_FINGER_SWIPE:
+            return "MULTI_FINGER_SWIPE";
+        case MotionClassification::PINCH:
+            return "PINCH";
     }
 }
 
@@ -170,6 +155,25 @@ vec2 transformWithoutTranslation(const ui::Transform& transform, const vec2& xy)
     const vec2 transformedXy = transform.transform(xy);
     const vec2 transformedOrigin = transform.transform(0, 0);
     return transformedXy - transformedOrigin;
+}
+
+float transformAngle(const ui::Transform& transform, float angleRadians) {
+    // Construct and transform a vector oriented at the specified clockwise angle from vertical.
+    // Coordinate system: down is increasing Y, right is increasing X.
+    float x = sinf(angleRadians);
+    float y = -cosf(angleRadians);
+    vec2 transformedPoint = transform.transform(x, y);
+
+    // Determine how the origin is transformed by the matrix so that we
+    // can transform orientation vectors.
+    const vec2 origin = transform.transform(0, 0);
+
+    transformedPoint.x -= origin.x;
+    transformedPoint.y -= origin.y;
+
+    // Derive the transformed vector's clockwise angle from vertical.
+    // The return value of atan2f is in range [-pi, pi] which conforms to the orientation API.
+    return atan2f(transformedPoint.x, -transformedPoint.y);
 }
 
 const char* inputEventTypeToString(int32_t type) {
@@ -411,6 +415,8 @@ status_t PointerCoords::readFromParcel(Parcel* parcel) {
     for (uint32_t i = 0; i < count; i++) {
         values[i] = parcel->readFloat();
     }
+
+    isResampled = parcel->readBool();
     return OK;
 }
 
@@ -421,6 +427,8 @@ status_t PointerCoords::writeToParcel(Parcel* parcel) const {
     for (uint32_t i = 0; i < count; i++) {
         parcel->writeFloat(values[i]);
     }
+
+    parcel->writeBool(isResampled);
     return OK;
 }
 #endif
@@ -439,6 +447,9 @@ bool PointerCoords::operator==(const PointerCoords& other) const {
         if (values[i] != other.values[i]) {
             return false;
         }
+    }
+    if (isResampled != other.isResampled) {
+        return false;
     }
     return true;
 }

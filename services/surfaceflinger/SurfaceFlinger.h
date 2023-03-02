@@ -102,6 +102,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include "Client.h"
@@ -320,6 +321,11 @@ public:
     // SMPTE 170M as sRGB prior to color management being implemented, and now implementations rely
     // on this behavior to increase contrast for some media sources.
     bool mTreat170mAsSrgb = false;
+
+    // Allows to ignore physical orientation provided through hwc API in favour of
+    // 'ro.surface_flinger.primary_display_orientation'.
+    // TODO(b/246793311): Clean up a temporary property
+    bool mIgnoreHwcPhysicalDisplayOrientation = false;
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -544,6 +550,10 @@ private:
     status_t setBootDisplayMode(const sp<display::DisplayToken>&, DisplayModeId);
     status_t getOverlaySupport(gui::OverlayProperties* outProperties) const;
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken);
+    status_t getHdrConversionCapabilities(
+            std::vector<gui::HdrConversionCapability>* hdrConversionCapaabilities) const;
+    status_t setHdrConversionStrategy(const gui::HdrConversionStrategy& hdrConversionStrategy);
+    status_t getHdrOutputConversionSupport(bool* outSupport) const;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
     void setPowerMode(const sp<IBinder>& displayToken, int mode);
@@ -663,8 +673,11 @@ private:
     bool mRefreshRateOverlaySpinner = false;
     // Show render rate with refresh rate overlay
     bool mRefreshRateOverlayRenderRate = false;
+    // Show render rate overlay offseted to the middle of the screen (e.g. for circular displays)
+    bool mRefreshRateOverlayShowInMiddle = false;
 
-    void setDesiredActiveMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+    void setDesiredActiveMode(display::DisplayModeRequest&&, bool force = false)
+            REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId);
     // Sets the active mode and a new refresh rate in SF.
@@ -693,7 +706,8 @@ private:
 
     // TODO(b/241285191): Look up RefreshRateSelector on Scheduler to remove redundant parameter.
     status_t applyRefreshRateSelectorPolicy(PhysicalDisplayId,
-                                            const scheduler::RefreshRateSelector&)
+                                            const scheduler::RefreshRateSelector&,
+                                            bool force = false)
             REQUIRES(mStateLock, kMainThreadContext);
 
     void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
@@ -810,7 +824,7 @@ private:
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, const sp<IScreenCaptureListener>&);
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::unique_ptr<RenderArea>, TraverseLayersFunction,
+            std::shared_ptr<const RenderArea>, TraverseLayersFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
             bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
@@ -1116,6 +1130,10 @@ private:
     std::atomic<uint32_t> mUniqueTransactionId = 1;
     SortedVector<sp<Layer>> mLayersPendingRemoval;
 
+    // Buffers that have been discarded by clients and need to be evicted from per-layer caches so
+    // the graphics memory can be immediately freed.
+    std::vector<uint64_t> mBufferIdsToUncache;
+
     // global color transform states
     Daltonizer mDaltonizer;
     float mGlobalSaturationFactor = 1.0f;
@@ -1198,7 +1216,9 @@ private:
     display::PhysicalDisplays mPhysicalDisplays GUARDED_BY(mStateLock);
 
     // The inner or outer display for foldables, assuming they have mutually exclusive power states.
-    PhysicalDisplayId mActiveDisplayId GUARDED_BY(mStateLock);
+    // Atomic because writes from onActiveDisplayChangedLocked are not always under mStateLock, but
+    // reads from ISchedulerCallback::requestDisplayModes may happen concurrently.
+    std::atomic<PhysicalDisplayId> mActiveDisplayId GUARDED_BY(mStateLock);
 
     struct {
         DisplayIdGenerator<GpuVirtualDisplayId> gpu;
@@ -1228,8 +1248,6 @@ private:
 
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
-    // If blurs are considered expensive and should require high GPU frequency.
-    bool mBlursAreExpensive = false;
     std::atomic<uint32_t> mFrameMissedCount = 0;
     std::atomic<uint32_t> mHwcFrameMissedCount = 0;
     std::atomic<uint32_t> mGpuFrameMissedCount = 0;
@@ -1440,6 +1458,11 @@ public:
     binder::Status clearBootDisplayMode(const sp<IBinder>& display) override;
     binder::Status getBootDisplayModeSupport(bool* outMode) override;
     binder::Status getOverlaySupport(gui::OverlayProperties* outProperties) override;
+    binder::Status getHdrConversionCapabilities(
+            std::vector<gui::HdrConversionCapability>*) override;
+    binder::Status setHdrConversionStrategy(
+            const gui::HdrConversionStrategy& hdrConversionStrategy) override;
+    binder::Status getHdrOutputConversionSupport(bool* outSupport) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;
     binder::Status captureDisplay(const DisplayCaptureArgs&,

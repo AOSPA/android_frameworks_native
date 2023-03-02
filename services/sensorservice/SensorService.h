@@ -102,8 +102,7 @@ public:
        // Step Detector etc. Typically in this mode, there will be a client (a
        // SensorEventConnection) which will be injecting sensor data into the HAL. Normal apps can
        // unregister and register for any sensor that supports injection. Registering to sensors
-       // that do not support injection will give an error.  TODO: Allow exactly one
-       // client to inject sensor data at a time.
+       // that do not support injection will give an error.
        DATA_INJECTION = 1,
        // This mode is used only for testing sensors. Each sensor can be tested in isolation with
        // the required sampling_rate and maxReportLatency parameters without having to think about
@@ -116,10 +115,14 @@ public:
        // corresponding parameters if the application hasn't unregistered for sensors in the mean
        // time.  NOTE: Non allowlisted app whose sensors were previously deactivated may still
        // receive events if a allowlisted app requests data from the same sensor.
-       RESTRICTED = 2
+       RESTRICTED = 2,
+       // Mostly equivalent to DATA_INJECTION with the difference being that the injected data is
+       // delivered to all requesting apps rather than just the package allowed to inject data.
+       // This mode is only allowed to be used on development builds.
+       REPLAY_DATA_INJECTION = 3,
 
       // State Transitions supported.
-      //     RESTRICTED   <---  NORMAL   ---> DATA_INJECTION
+      //     RESTRICTED   <---  NORMAL   ---> DATA_INJECTION/REPLAY_DATA_INJECTION
       //                  --->           <---
 
       // Shell commands to switch modes in SensorService.
@@ -375,15 +378,14 @@ private:
     String8 getSensorName(int handle) const;
     String8 getSensorStringType(int handle) const;
     bool isVirtualSensor(int handle) const;
-    sp<SensorInterface> getSensorInterfaceFromHandle(int handle) const;
+    std::shared_ptr<SensorInterface> getSensorInterfaceFromHandle(int handle) const;
     bool isWakeUpSensor(int type) const;
     void recordLastValueLocked(sensors_event_t const* buffer, size_t count);
     static void sortEventBuffer(sensors_event_t* buffer, size_t count);
-    const Sensor& registerSensor(SensorInterface* sensor, bool isDebug = false,
-                                 bool isVirtual = false,
-                                 int deviceId = RuntimeSensor::DEFAULT_DEVICE_ID);
-    const Sensor& registerVirtualSensor(SensorInterface* sensor, bool isDebug = false);
-    const Sensor& registerDynamicSensorLocked(SensorInterface* sensor, bool isDebug = false);
+    bool registerSensor(std::shared_ptr<SensorInterface> sensor, bool isDebug = false,
+                        bool isVirtual = false, int deviceId = RuntimeSensor::DEFAULT_DEVICE_ID);
+    bool registerVirtualSensor(std::shared_ptr<SensorInterface> sensor, bool isDebug = false);
+    bool registerDynamicSensorLocked(std::shared_ptr<SensorInterface> sensor, bool isDebug = false);
     bool unregisterDynamicSensorLocked(int handle);
     status_t cleanupWithoutDisable(const sp<SensorEventConnection>& connection, int handle);
     status_t cleanupWithoutDisableLocked(const sp<SensorEventConnection>& connection, int handle);
@@ -396,6 +398,9 @@ private:
     static bool hasPermissionForSensor(const Sensor& sensor);
     static int getTargetSdkVersion(const String16& opPackageName);
     static void resetTargetSdkVersionCache(const String16& opPackageName);
+    // Checks if the provided target operating mode is valid and returns the enum if it is.
+    static bool getTargetOperatingMode(const std::string &inputString, Mode *targetModeOut);
+    status_t changeOperatingMode(const Vector<String16>& args, Mode targetOperatingMode);
     // SensorService acquires a partial wakelock for delivering events from wake up sensors. This
     // method checks whether all the events from these wake up sensors have been delivered to the
     // corresponding applications, if yes the wakelock is released.
@@ -421,7 +426,7 @@ private:
     // If SensorService is operating in RESTRICTED mode, only select whitelisted packages are
     // allowed to register for or call flush on sensors. Typically only cts test packages are
     // allowed.
-    bool isWhiteListedPackage(const String8& packageName);
+    bool isAllowListedPackage(const String8& packageName);
 
     // Returns true if a connection with the specified opPackageName has no access to sensors
     // in the RESTRICTED mode (i.e. the service is in RESTRICTED mode, and the package is not
@@ -520,7 +525,7 @@ private:
     // applications with this packageName are allowed to activate/deactivate or call flush on
     // sensors. To run CTS this is can be set to ".cts." and only CTS tests will get access to
     // sensors.
-    String8 mWhiteListedPackage;
+    String8 mAllowListedPackage;
 
     int mNextSensorRegIndex;
     Vector<SensorRegistrationInfo> mLastNSensorRegistrations;

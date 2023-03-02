@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cmath>
+
 #include <android/input.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -66,12 +68,66 @@ MATCHER_P(WithKeyCode, keyCode, "KeyEvent with specified key code") {
     return arg.keyCode == keyCode;
 }
 
+MATCHER_P(WithPointerCount, count, "MotionEvent with specified number of pointers") {
+    *result_listener << "expected " << count << " pointer(s), but got " << arg.pointerCount;
+    return arg.pointerCount == count;
+}
+
 MATCHER_P2(WithCoords, x, y, "InputEvent with specified coords") {
     const auto argX = arg.pointerCoords[0].getX();
     const auto argY = arg.pointerCoords[0].getY();
     *result_listener << "expected coords (" << x << ", " << y << "), but got (" << argX << ", "
                      << argY << ")";
     return argX == x && argY == y;
+}
+
+MATCHER_P3(WithPointerCoords, pointer, x, y, "InputEvent with specified coords for pointer") {
+    const auto argX = arg.pointerCoords[pointer].getX();
+    const auto argY = arg.pointerCoords[pointer].getY();
+    *result_listener << "expected pointer " << pointer << " to have coords (" << x << ", " << y
+                     << "), but got (" << argX << ", " << argY << ")";
+    return argX == x && argY == y;
+}
+
+MATCHER_P2(WithRelativeMotion, x, y, "InputEvent with specified relative motion") {
+    const auto argX = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X);
+    const auto argY = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
+    *result_listener << "expected relative motion (" << x << ", " << y << "), but got (" << argX
+                     << ", " << argY << ")";
+    return argX == x && argY == y;
+}
+
+MATCHER_P3(WithGestureOffset, dx, dy, epsilon,
+           "InputEvent with specified touchpad gesture offset") {
+    const auto argGestureX = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_X_OFFSET);
+    const auto argGestureY = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_Y_OFFSET);
+    const double xDiff = fabs(argGestureX - dx);
+    const double yDiff = fabs(argGestureY - dy);
+    *result_listener << "expected gesture offset (" << dx << ", " << dy << ") within " << epsilon
+                     << ", but got (" << argGestureX << ", " << argGestureY << ")";
+    return xDiff <= epsilon && yDiff <= epsilon;
+}
+
+MATCHER_P3(WithGestureScrollDistance, x, y, epsilon,
+           "InputEvent with specified touchpad gesture scroll distance") {
+    const auto argXDistance =
+            arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_X_DISTANCE);
+    const auto argYDistance =
+            arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_SCROLL_Y_DISTANCE);
+    const double xDiff = fabs(argXDistance - x);
+    const double yDiff = fabs(argYDistance - y);
+    *result_listener << "expected gesture offset (" << x << ", " << y << ") within " << epsilon
+                     << ", but got (" << argXDistance << ", " << argYDistance << ")";
+    return xDiff <= epsilon && yDiff <= epsilon;
+}
+
+MATCHER_P2(WithGesturePinchScaleFactor, factor, epsilon,
+           "InputEvent with specified touchpad pinch gesture scale factor") {
+    const auto argScaleFactor =
+            arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_PINCH_SCALE_FACTOR);
+    *result_listener << "expected gesture scale factor " << factor << " within " << epsilon
+                     << " but got " << argScaleFactor;
+    return fabs(argScaleFactor - factor) <= epsilon;
 }
 
 MATCHER_P(WithPressure, pressure, "InputEvent with specified pressure") {
@@ -92,14 +148,32 @@ MATCHER_P(WithFlags, flags, "InputEvent with specified flags") {
     return arg.flags == flags;
 }
 
+MATCHER_P(WithMotionClassification, classification,
+          "InputEvent with specified MotionClassification") {
+    *result_listener << "expected classification " << motionClassificationToString(classification)
+                     << ", but got " << motionClassificationToString(arg.classification);
+    return arg.classification == classification;
+}
+
 MATCHER_P(WithButtonState, buttons, "InputEvent with specified button state") {
     *result_listener << "expected button state " << buttons << ", but got " << arg.buttonState;
     return arg.buttonState == buttons;
 }
 
+MATCHER_P(WithActionButton, actionButton, "InputEvent with specified action button") {
+    *result_listener << "expected action button " << actionButton << ", but got "
+                     << arg.actionButton;
+    return arg.actionButton == actionButton;
+}
+
 MATCHER_P(WithEventTime, eventTime, "InputEvent with specified eventTime") {
     *result_listener << "expected event time " << eventTime << ", but got " << arg.eventTime;
     return arg.eventTime == eventTime;
+}
+
+MATCHER_P(WithDownTime, downTime, "InputEvent with specified downTime") {
+    *result_listener << "expected down time " << downTime << ", but got " << arg.downTime;
+    return arg.downTime == downTime;
 }
 
 } // namespace android

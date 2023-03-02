@@ -126,9 +126,19 @@ void FakeInputReaderPolicy::addInputPortAssociation(const std::string& inputPort
     mConfig.portAssociations.insert({inputPort, displayPort});
 }
 
+void FakeInputReaderPolicy::addDeviceTypeAssociation(const std::string& inputPort,
+                                                     const std::string& type) {
+    mConfig.deviceTypeAssociations.insert({inputPort, type});
+}
+
 void FakeInputReaderPolicy::addInputUniqueIdAssociation(const std::string& inputUniqueId,
                                                         const std::string& displayUniqueId) {
     mConfig.uniqueIdAssociations.insert({inputUniqueId, displayUniqueId});
+}
+
+void FakeInputReaderPolicy::addKeyboardLayoutAssociation(const std::string& inputUniqueId,
+                                                         const KeyboardLayoutInfo& layoutInfo) {
+    mConfig.keyboardLayoutAssociations.insert({inputUniqueId, layoutInfo});
 }
 
 void FakeInputReaderPolicy::addDisabledDevice(int32_t deviceId) {
@@ -189,6 +199,10 @@ float FakeInputReaderPolicy::getPointerGestureZoomSpeedRatio() {
 void FakeInputReaderPolicy::setVelocityControlParams(const VelocityControlParameters& params) {
     mConfig.pointerVelocityControlParameters = params;
     mConfig.wheelVelocityControlParameters = params;
+}
+
+void FakeInputReaderPolicy::setStylusButtonMotionEventsEnabled(bool enabled) {
+    mConfig.stylusButtonMotionEventsEnabled = enabled;
 }
 
 void FakeInputReaderPolicy::getReaderConfiguration(InputReaderConfiguration* outConfig) {

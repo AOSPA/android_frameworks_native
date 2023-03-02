@@ -67,7 +67,8 @@ public:
      * a system property, or in the case of services in the VINTF manifest, it can be checked
      * with isDeclared).
      */
-    virtual sp<IBinder>         getService( const String16& name) const = 0;
+    [[deprecated("this polls for 5s, prefer waitForService or checkService")]]
+    virtual sp<IBinder> getService(const String16& name) const = 0;
 
     /**
      * Retrieve an existing service, non-blocking.
@@ -197,7 +198,10 @@ status_t getService(const String16& name, sp<INTERFACE>* outService)
 {
     const sp<IServiceManager> sm = defaultServiceManager();
     if (sm != nullptr) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         *outService = interface_cast<INTERFACE>(sm->getService(name));
+#pragma clang diagnostic pop // getService deprecation
         if ((*outService) != nullptr) return NO_ERROR;
     }
     return NAME_NOT_FOUND;

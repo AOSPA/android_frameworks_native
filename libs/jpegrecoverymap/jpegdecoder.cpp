@@ -16,7 +16,7 @@
 
 #include <jpegrecoverymap/jpegdecoder.h>
 
-#include <cutils/log.h>
+#include <utils/Log.h>
 
 #include <errno.h>
 #include <setjmp.h>
@@ -26,8 +26,16 @@ using namespace std;
 
 namespace android::recoverymap {
 
-const uint32_t kExifMarker = JPEG_APP0 + 1;
-const uint32_t kICCMarker = JPEG_APP0 + 2;
+const uint32_t kAPP0Marker = JPEG_APP0;      // JFIF
+const uint32_t kAPP1Marker = JPEG_APP0 + 1;  // EXIF, XMP
+const uint32_t kAPP2Marker = JPEG_APP0 + 2;  // ICC
+
+const std::string kXmpNameSpace = "http://ns.adobe.com/xap/1.0/";
+const std::string kExifIdCode = "Exif";
+constexpr uint32_t kICCMarkerHeaderSize = 14;
+constexpr uint8_t kICCSig[] = {
+        'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', '\0',
+};
 
 struct jpegr_source_mgr : jpeg_source_mgr {
     jpegr_source_mgr(const uint8_t* ptr, int len);
@@ -83,12 +91,13 @@ static void jpegrerror_exit(j_common_ptr cinfo) {
 }
 
 JpegDecoder::JpegDecoder() {
+  mExifPos = 0;
 }
 
 JpegDecoder::~JpegDecoder() {
 }
 
-bool JpegDecoder::decompressImage(const void* image, int length) {
+bool JpegDecoder::decompressImage(const void* image, int length, bool decodeToRGBA) {
     if (image == nullptr || length <= 0) {
         ALOGE("Image size can not be handled: %d", length);
         return false;
@@ -96,7 +105,7 @@ bool JpegDecoder::decompressImage(const void* image, int length) {
 
     mResultBuffer.clear();
     mXMPBuffer.clear();
-    if (!decode(image, length)) {
+    if (!decode(image, length, decodeToRGBA)) {
         return false;
     }
 
@@ -119,6 +128,13 @@ size_t JpegDecoder::getXMPSize() {
     return mXMPBuffer.size();
 }
 
+void* JpegDecoder::getEXIFPtr() {
+    return mEXIFBuffer.data();
+}
+
+size_t JpegDecoder::getEXIFSize() {
+    return mEXIFBuffer.size();
+}
 
 size_t JpegDecoder::getDecompressedImageWidth() {
     return mWidth;
@@ -128,11 +144,10 @@ size_t JpegDecoder::getDecompressedImageHeight() {
     return mHeight;
 }
 
-bool JpegDecoder::decode(const void* image, int length) {
+bool JpegDecoder::decode(const void* image, int length, bool decodeToRGBA) {
     jpeg_decompress_struct cinfo;
     jpegr_source_mgr mgr(static_cast<const uint8_t*>(image), length);
     jpegrerror_mgr myerr;
-    string nameSpace = "http://ns.adobe.com/xap/1.0/";
 
     cinfo.err = jpeg_std_error(&myerr.pub);
     myerr.pub.error_exit = jpegrerror_exit;
@@ -143,38 +158,82 @@ bool JpegDecoder::decode(const void* image, int length) {
     }
     jpeg_create_decompress(&cinfo);
 
-    jpeg_save_markers(&cinfo, kExifMarker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP0Marker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP1Marker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP2Marker, 0xFFFF);
 
     cinfo.src = &mgr;
     jpeg_read_header(&cinfo, TRUE);
 
-    // Save XMP Data
-    for (jpeg_marker_struct* marker = cinfo.marker_list; marker; marker = marker->next) {
-        if (marker->marker == kExifMarker) {
-            const unsigned int len = marker->data_length;
-            if (len > nameSpace.size() &&
-                !strncmp(reinterpret_cast<const char*>(marker->data),
-                         nameSpace.c_str(), nameSpace.size())) {
-                mXMPBuffer.resize(len+1, 0);
-                memcpy(static_cast<void*>(mXMPBuffer.data()), marker->data, len);
-                break;
-            }
+    // Save XMP data and EXIF data.
+    // Here we only handle the first XMP / EXIF package.
+    // The parameter pos is used for capturing start offset of EXIF, which is hacky, but working...
+    // We assume that all packages are starting with two bytes marker (eg FF E1 for EXIF package),
+    // two bytes of package length which is stored in marker->original_length, and the real data
+    // which is stored in marker->data. The pos is adding up all previous package lengths (
+    // 4 bytes marker and length, marker->original_length) before EXIF appears. Note that here we
+    // we are using marker->original_length instead of marker->data_length because in case the real
+    // package length is larger than the limitation, jpeg-turbo will only copy the data within the
+    // limitation (represented by data_length) and this may vary from original_length / real offset.
+    // A better solution is making jpeg_marker_struct holding the offset, but currently it doesn't.
+    bool exifAppears = false;
+    bool xmpAppears = false;
+    size_t pos = 2;  // position after SOI
+    for (jpeg_marker_struct* marker = cinfo.marker_list;
+         marker && !(exifAppears && xmpAppears);
+         marker = marker->next) {
+
+        pos += 4;
+        pos += marker->original_length;
+
+        if (marker->marker != kAPP1Marker) {
+            continue;
+        }
+
+        const unsigned int len = marker->data_length;
+        if (!xmpAppears &&
+            len > kXmpNameSpace.size() &&
+            !strncmp(reinterpret_cast<const char*>(marker->data),
+                     kXmpNameSpace.c_str(),
+                     kXmpNameSpace.size())) {
+            mXMPBuffer.resize(len+1, 0);
+            memcpy(static_cast<void*>(mXMPBuffer.data()), marker->data, len);
+            xmpAppears = true;
+        } else if (!exifAppears &&
+                   len > kExifIdCode.size() &&
+                   !strncmp(reinterpret_cast<const char*>(marker->data),
+                            kExifIdCode.c_str(),
+                            kExifIdCode.size())) {
+            mEXIFBuffer.resize(len, 0);
+            memcpy(static_cast<void*>(mEXIFBuffer.data()), marker->data, len);
+            exifAppears = true;
+            mExifPos = pos - marker->original_length;
         }
     }
-
 
     mWidth = cinfo.image_width;
     mHeight = cinfo.image_height;
 
-    if (cinfo.jpeg_color_space == JCS_YCbCr) {
-        mResultBuffer.resize(cinfo.image_width * cinfo.image_height * 3 / 2, 0);
-    } else if (cinfo.jpeg_color_space == JCS_GRAYSCALE) {
-        mResultBuffer.resize(cinfo.image_width * cinfo.image_height, 0);
+    if (decodeToRGBA) {
+        if (cinfo.jpeg_color_space == JCS_GRAYSCALE) {
+            // We don't intend to support decoding grayscale to RGBA
+            return false;
+        }
+        // 4 bytes per pixel
+        mResultBuffer.resize(cinfo.image_width * cinfo.image_height * 4);
+        cinfo.out_color_space = JCS_EXT_RGBA;
+    } else {
+        if (cinfo.jpeg_color_space == JCS_YCbCr) {
+            // 1 byte per pixel for Y, 0.5 byte per pixel for U+V
+            mResultBuffer.resize(cinfo.image_width * cinfo.image_height * 3 / 2, 0);
+        } else if (cinfo.jpeg_color_space == JCS_GRAYSCALE) {
+            mResultBuffer.resize(cinfo.image_width * cinfo.image_height, 0);
+        }
+        cinfo.out_color_space = cinfo.jpeg_color_space;
+        cinfo.raw_data_out = TRUE;
     }
 
-    cinfo.raw_data_out = TRUE;
     cinfo.dct_method = JDCT_IFAST;
-    cinfo.out_color_space = cinfo.jpeg_color_space;
 
     jpeg_start_decompress(&cinfo);
 
@@ -189,17 +248,74 @@ bool JpegDecoder::decode(const void* image, int length) {
     return true;
 }
 
+// TODO (Fyodor/Dichen): merge this method with getCompressedImageParameters() since they have
+// similar functionality. Yet Dichen is not familiar with who's calling
+// getCompressedImageParameters(), looks like it's used by some pending CLs.
+bool JpegDecoder::extractEXIF(const void* image, int length) {
+    jpeg_decompress_struct cinfo;
+    jpegr_source_mgr mgr(static_cast<const uint8_t*>(image), length);
+    jpegrerror_mgr myerr;
+
+    cinfo.err = jpeg_std_error(&myerr.pub);
+    myerr.pub.error_exit = jpegrerror_exit;
+
+    if (setjmp(myerr.setjmp_buffer)) {
+        jpeg_destroy_decompress(&cinfo);
+        return false;
+    }
+    jpeg_create_decompress(&cinfo);
+
+    jpeg_save_markers(&cinfo, kAPP0Marker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP1Marker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP2Marker, 0xFFFF);
+
+    cinfo.src = &mgr;
+    jpeg_read_header(&cinfo, TRUE);
+
+    bool exifAppears = false;
+    size_t pos = 2;  // position after SOI
+    for (jpeg_marker_struct* marker = cinfo.marker_list;
+         marker && !exifAppears;
+         marker = marker->next) {
+
+        pos += 4;
+        pos += marker->original_length;
+
+        if (marker->marker != kAPP1Marker) {
+            continue;
+        }
+
+        const unsigned int len = marker->data_length;
+        if (!exifAppears &&
+            len > kExifIdCode.size() &&
+            !strncmp(reinterpret_cast<const char*>(marker->data),
+                     kExifIdCode.c_str(),
+                     kExifIdCode.size())) {
+            mEXIFBuffer.resize(len, 0);
+            memcpy(static_cast<void*>(mEXIFBuffer.data()), marker->data, len);
+            exifAppears = true;
+            mExifPos = pos - marker->original_length;
+        }
+    }
+
+    jpeg_destroy_decompress(&cinfo);
+    return true;
+}
+
 bool JpegDecoder::decompress(jpeg_decompress_struct* cinfo, const uint8_t* dest,
         bool isSingleChannel) {
     if (isSingleChannel) {
         return decompressSingleChannel(cinfo, dest);
     }
-    return decompressYUV(cinfo, dest);
+    if (cinfo->out_color_space == JCS_EXT_RGBA)
+        return decompressRGBA(cinfo, dest);
+    else
+        return decompressYUV(cinfo, dest);
 }
 
 bool JpegDecoder::getCompressedImageParameters(const void* image, int length,
                               size_t *pWidth, size_t *pHeight,
-                              std::vector<uint8_t> *&iccData , std::vector<uint8_t> *&exifData) {
+                              std::vector<uint8_t> *iccData , std::vector<uint8_t> *exifData) {
     jpeg_decompress_struct cinfo;
     jpegr_source_mgr mgr(static_cast<const uint8_t*>(image), length);
     jpegrerror_mgr myerr;
@@ -212,8 +328,8 @@ bool JpegDecoder::getCompressedImageParameters(const void* image, int length,
     }
     jpeg_create_decompress(&cinfo);
 
-    jpeg_save_markers(&cinfo, kExifMarker, 0xFFFF);
-    jpeg_save_markers(&cinfo, kICCMarker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP1Marker, 0xFFFF);
+    jpeg_save_markers(&cinfo, kAPP2Marker, 0xFFFF);
 
     cinfo.src = &mgr;
     if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
@@ -224,15 +340,60 @@ bool JpegDecoder::getCompressedImageParameters(const void* image, int length,
     *pWidth = cinfo.image_width;
     *pHeight = cinfo.image_height;
 
-    //TODO: Parse iccProfile and exifData
-    (void)iccData;
-    (void)exifData;
+    if (iccData != nullptr) {
+        for (jpeg_marker_struct* marker = cinfo.marker_list; marker;
+             marker = marker->next) {
+            if (marker->marker != kAPP2Marker) {
+                continue;
+            }
+            if (marker->data_length <= kICCMarkerHeaderSize ||
+                memcmp(marker->data, kICCSig, sizeof(kICCSig)) != 0) {
+                continue;
+            }
 
+            const unsigned int len = marker->data_length - kICCMarkerHeaderSize;
+            const uint8_t *src = marker->data + kICCMarkerHeaderSize;
+            iccData->insert(iccData->end(), src, src+len);
+        }
+    }
+
+    if (exifData != nullptr) {
+        bool exifAppears = false;
+        for (jpeg_marker_struct* marker = cinfo.marker_list; marker && !exifAppears;
+             marker = marker->next) {
+            if (marker->marker != kAPP1Marker) {
+                continue;
+            }
+
+            const unsigned int len = marker->data_length;
+            if (len >= kExifIdCode.size() &&
+                !strncmp(reinterpret_cast<const char*>(marker->data), kExifIdCode.c_str(),
+                         kExifIdCode.size())) {
+                exifData->resize(len, 0);
+                memcpy(static_cast<void*>(exifData->data()), marker->data, len);
+                exifAppears = true;
+            }
+        }
+    }
 
     jpeg_destroy_decompress(&cinfo);
     return true;
 }
 
+bool JpegDecoder::decompressRGBA(jpeg_decompress_struct* cinfo, const uint8_t* dest) {
+    JSAMPLE* decodeDst = (JSAMPLE*) dest;
+    uint32_t lines = 0;
+    // TODO: use batches for more effectiveness
+    while (lines < cinfo->image_height) {
+        uint32_t ret = jpeg_read_scanlines(cinfo, &decodeDst, 1);
+        if (ret == 0) {
+            break;
+        }
+        decodeDst += cinfo->image_width * 4;
+        lines++;
+    }
+    return lines == cinfo->image_height;
+}
 
 bool JpegDecoder::decompressYUV(jpeg_decompress_struct* cinfo, const uint8_t* dest) {
 

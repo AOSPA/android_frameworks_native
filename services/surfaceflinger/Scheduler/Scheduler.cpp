@@ -48,7 +48,6 @@
 #include <numeric>
 
 #include "../Layer.h"
-#include "DispSyncSource.h"
 #include "Display/DisplayMap.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
@@ -71,6 +70,11 @@ Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, Feat
       : impl::MessageQueue(compositor), mFeatures(features), mSchedulerCallback(callback) {}
 
 Scheduler::~Scheduler() {
+    // MessageQueue depends on VsyncSchedule, so first destroy it.
+    // Otherwise, MessageQueue will get destroyed after Scheduler's dtor,
+    // which will cause a use-after-free issue.
+    Impl::destroyVsync();
+
     // Stop timers and wait for their threads to exit.
     mDisplayPowerTimer.reset();
     mTouchTimer.reset();
@@ -148,14 +152,6 @@ void Scheduler::createVsyncSchedule(FeatureFlags features) {
     mVsyncSchedule.emplace(features);
 }
 
-std::unique_ptr<VSyncSource> Scheduler::makePrimaryDispSyncSource(
-        const char* name, std::chrono::nanoseconds workDuration,
-        std::chrono::nanoseconds readyDuration, bool traceVsync) {
-    return std::make_unique<scheduler::DispSyncSource>(mVsyncSchedule->getDispatch(),
-                                                       mVsyncSchedule->getTracker(), workDuration,
-                                                       readyDuration, traceVsync, name);
-}
-
 std::optional<Fps> Scheduler::getFrameRateOverride(uid_t uid) const {
     const bool supportsFrameRateOverrideByContent =
             leaderSelectorPtr()->supportsAppFrameRateOverrideByContent();
@@ -200,12 +196,12 @@ ConnectionHandle Scheduler::createConnection(const char* connectionName,
                                              frametimeline::TokenManager* tokenManager,
                                              std::chrono::nanoseconds workDuration,
                                              std::chrono::nanoseconds readyDuration) {
-    auto vsyncSource = makePrimaryDispSyncSource(connectionName, workDuration, readyDuration);
     auto throttleVsync = makeThrottleVsyncCallback();
     auto getVsyncPeriod = makeGetVsyncPeriodFunction();
-    auto eventThread = std::make_unique<impl::EventThread>(std::move(vsyncSource), tokenManager,
-                                                           std::move(throttleVsync),
-                                                           std::move(getVsyncPeriod));
+    auto eventThread =
+            std::make_unique<impl::EventThread>(connectionName, *mVsyncSchedule, tokenManager,
+                                                std::move(throttleVsync), std::move(getVsyncPeriod),
+                                                workDuration, readyDuration);
     return createConnection(std::move(eventThread));
 }
 
@@ -667,6 +663,7 @@ void Scheduler::demoteLeaderDisplay() {
 
 template <typename S, typename T>
 auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals {
+    ATRACE_CALL();
     std::vector<display::DisplayModeRequest> modeRequests;
     GlobalSignals consideredSignals;
 
@@ -829,18 +826,18 @@ GlobalSignals Scheduler::makeGlobalSignals() const {
             .powerOnImminent = powerOnImminent};
 }
 
-ftl::Optional<FrameRateMode> Scheduler::getPreferredDisplayMode() {
+FrameRateMode Scheduler::getPreferredDisplayMode() {
     std::lock_guard<std::mutex> lock(mPolicyLock);
-    // Make sure the stored mode is up to date.
-    if (mPolicy.modeOpt) {
-        const auto ranking =
-                leaderSelectorPtr()
-                        ->getRankedFrameRates(mPolicy.contentRequirements, makeGlobalSignals())
-                        .ranking;
+    const auto frameRateMode =
+            leaderSelectorPtr()
+                    ->getRankedFrameRates(mPolicy.contentRequirements, makeGlobalSignals())
+                    .ranking.front()
+                    .frameRateMode;
 
-        mPolicy.modeOpt = ranking.front().frameRateMode;
-    }
-    return mPolicy.modeOpt;
+    // Make sure the stored mode is up to date.
+    mPolicy.modeOpt = frameRateMode;
+
+    return frameRateMode;
 }
 
 void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline) {

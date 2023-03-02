@@ -971,14 +971,16 @@ void SurfaceComposerClient::Transaction::cacheBuffers() {
 
 class SyncCallback {
 public:
-    static void function(void* callbackContext, nsecs_t /* latchTime */,
-                         const sp<Fence>& /* presentFence */,
-                         const std::vector<SurfaceControlStats>& /* stats */) {
-        if (!callbackContext) {
-            ALOGE("failed to get callback context for SyncCallback");
-        }
-        SyncCallback* helper = static_cast<SyncCallback*>(callbackContext);
-        LOG_ALWAYS_FATAL_IF(sem_post(&helper->mSemaphore), "sem_post failed");
+    static auto getCallback(std::shared_ptr<SyncCallback>& callbackContext) {
+        return [callbackContext](void* /* unused context */, nsecs_t /* latchTime */,
+                                 const sp<Fence>& /* presentFence */,
+                                 const std::vector<SurfaceControlStats>& /* stats */) {
+            if (!callbackContext) {
+                ALOGE("failed to get callback context for SyncCallback");
+                return;
+            }
+            LOG_ALWAYS_FATAL_IF(sem_post(&callbackContext->mSemaphore), "sem_post failed");
+        };
     }
     ~SyncCallback() {
         if (mInitialized) {
@@ -1013,10 +1015,11 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
         return mStatus;
     }
 
-    SyncCallback syncCallback;
+    std::shared_ptr<SyncCallback> syncCallback = std::make_shared<SyncCallback>();
     if (synchronous) {
-        syncCallback.init();
-        addTransactionCommittedCallback(syncCallback.function, syncCallback.getContext());
+        syncCallback->init();
+        addTransactionCommittedCallback(SyncCallback::getCallback(syncCallback),
+                                        /*callbackContext=*/nullptr);
     }
 
     bool hasListenerCallbacks = !mListenerCallbacks.empty();
@@ -1092,7 +1095,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     clear();
 
     if (synchronous) {
-        syncCallback.wait();
+        syncCallback->wait();
     }
 
     mStatus = NO_ERROR;
@@ -2144,6 +2147,12 @@ void SurfaceComposerClient::dispose() {
     mStatus = NO_INIT;
 }
 
+status_t SurfaceComposerClient::bootFinished() {
+    sp<gui::ISurfaceComposer> sf(ComposerServiceAIDL::getComposerService());
+    binder::Status status = sf->bootFinished();
+    return statusTFromBinderStatus(status);
+}
+
 sp<SurfaceControl> SurfaceComposerClient::createSurface(const String8& name, uint32_t w, uint32_t h,
                                                         PixelFormat format, int32_t flags,
                                                         const sp<IBinder>& parentHandle,
@@ -2473,6 +2482,20 @@ status_t SurfaceComposerClient::setBootDisplayMode(const sp<IBinder>& display,
 status_t SurfaceComposerClient::clearBootDisplayMode(const sp<IBinder>& display) {
     binder::Status status =
             ComposerServiceAIDL::getComposerService()->clearBootDisplayMode(display);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::getHdrConversionCapabilities(
+        std::vector<gui::HdrConversionCapability>* hdrConversionCapabilities) {
+    binder::Status status = ComposerServiceAIDL::getComposerService()->getHdrConversionCapabilities(
+            hdrConversionCapabilities);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::setHdrConversionStrategy(
+        gui::HdrConversionStrategy hdrConversionStrategy) {
+    binder::Status status = ComposerServiceAIDL::getComposerService()->setHdrConversionStrategy(
+            hdrConversionStrategy);
     return statusTFromBinderStatus(status);
 }
 

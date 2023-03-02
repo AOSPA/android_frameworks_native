@@ -145,6 +145,9 @@ public:
     status_t linkToComposerDeath(const sp<IBinder::DeathRecipient>& recipient,
             void* cookie = nullptr, uint32_t flags = 0);
 
+    // Notify the SurfaceComposerClient that the boot procedure has completed
+    static status_t bootFinished();
+
     // Get transactional state of given display.
     static status_t getDisplayState(const sp<IBinder>& display, ui::DisplayState*);
 
@@ -183,6 +186,11 @@ public:
     static status_t setBootDisplayMode(const sp<IBinder>& display, ui::DisplayModeId);
     // Clears the user-preferred display mode
     static status_t clearBootDisplayMode(const sp<IBinder>& display);
+
+    // Gets the HDR conversion capabilities of the device
+    static status_t getHdrConversionCapabilities(std::vector<gui::HdrConversionCapability>*);
+    // Sets the HDR conversion strategy for the device
+    static status_t setHdrConversionStrategy(gui::HdrConversionStrategy hdrConversionStrategy);
 
     // Sets the frame rate of a particular app (uid). This is currently called
     // by GameManager.

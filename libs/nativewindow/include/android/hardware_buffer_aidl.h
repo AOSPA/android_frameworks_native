@@ -83,7 +83,7 @@ namespace aidl::android::hardware {
 class HardwareBuffer {
 public:
     HardwareBuffer() noexcept {}
-    explicit HardwareBuffer(HardwareBuffer&& other) noexcept : mBuffer(other.release()) {}
+    HardwareBuffer(HardwareBuffer&& other) noexcept : mBuffer(other.release()) {}
 
     ~HardwareBuffer() {
         reset();
@@ -118,6 +118,13 @@ public:
     inline AHardwareBuffer* _Nullable operator-> () const { return mBuffer;  }
     inline AHardwareBuffer* _Nullable get() const { return mBuffer; }
     inline explicit operator bool () const { return mBuffer != nullptr; }
+
+    inline bool operator!=(const HardwareBuffer& rhs) const { return get() != rhs.get(); }
+    inline bool operator<(const HardwareBuffer& rhs) const { return get() < rhs.get(); }
+    inline bool operator<=(const HardwareBuffer& rhs) const { return get() <= rhs.get(); }
+    inline bool operator==(const HardwareBuffer& rhs) const { return get() == rhs.get(); }
+    inline bool operator>(const HardwareBuffer& rhs) const { return get() > rhs.get(); }
+    inline bool operator>=(const HardwareBuffer& rhs) const { return get() >= rhs.get(); }
 
     HardwareBuffer& operator=(HardwareBuffer&& other) noexcept {
         reset(other.release());

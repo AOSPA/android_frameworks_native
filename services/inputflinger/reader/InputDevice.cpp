@@ -20,9 +20,7 @@
 
 #include <algorithm>
 
-#if defined(__ANDROID__)
 #include <android/sysprop/InputProperties.sysprop.h>
-#endif
 #include <ftl/flags.h>
 
 #include "CursorInputMapper.h"
@@ -38,8 +36,6 @@
 #include "SwitchInputMapper.h"
 #include "TouchpadInputMapper.h"
 #include "VibratorInputMapper.h"
-
-using android::hardware::input::InputDeviceCountryCode;
 
 namespace android {
 
@@ -213,11 +209,7 @@ void InputDevice::addEventHubDevice(int32_t eventHubId, bool populateMappers) {
 
     // Touchscreens and touchpad devices.
     static const bool ENABLE_TOUCHPAD_GESTURES_LIBRARY =
-#if defined(__ANDROID__)
             sysprop::InputProperties::enable_touchpad_gestures_library().value_or(false);
-#else
-            false;
-#endif
     if (ENABLE_TOUCHPAD_GESTURES_LIBRARY && classes.test(InputDeviceClass::TOUCHPAD) &&
         classes.test(InputDeviceClass::TOUCH_MT)) {
         mappers.push_back(std::make_unique<TouchpadInputMapper>(*contextPtr));
@@ -262,7 +254,6 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when, const InputReaderConf
     mSources = 0;
     mClasses = ftl::Flags<InputDeviceClass>(0);
     mControllerNumber = 0;
-    mCountryCode = InputDeviceCountryCode::INVALID;
 
     for_each_subdevice([this](InputDeviceContext& context) {
         mClasses |= context.getDeviceClasses();
@@ -273,16 +264,6 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when, const InputReaderConf
                       "controller numbers");
             }
             mControllerNumber = controllerNumber;
-        }
-
-        InputDeviceCountryCode countryCode = context.getCountryCode();
-        if (countryCode != InputDeviceCountryCode::INVALID) {
-            if (mCountryCode != InputDeviceCountryCode::INVALID && mCountryCode != countryCode) {
-                ALOGW("InputDevice::configure(): %s device contains multiple unique country "
-                      "codes",
-                      getName().c_str());
-            }
-            mCountryCode = countryCode;
         }
     });
 
@@ -297,6 +278,9 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when, const InputReaderConf
                 context.getConfiguration(&configuration);
                 mConfiguration.addAll(&configuration);
             });
+
+            mAssociatedDeviceType =
+                    getValueByKey(config->deviceTypeAssociations, mIdentifier.location);
         }
 
         if (!changes || (changes & InputReaderConfiguration::CHANGE_KEYBOARD_LAYOUTS)) {
@@ -468,7 +452,7 @@ std::list<NotifyArgs> InputDevice::updateExternalStylusState(const StylusState& 
 InputDeviceInfo InputDevice::getDeviceInfo() {
     InputDeviceInfo outDeviceInfo;
     outDeviceInfo.initialize(mId, mGeneration, mControllerNumber, mIdentifier, mAlias, mIsExternal,
-                             mHasMic, mCountryCode);
+                             mHasMic);
     for_each_mapper(
             [&outDeviceInfo](InputMapper& mapper) { mapper.populateDeviceInfo(&outDeviceInfo); });
 

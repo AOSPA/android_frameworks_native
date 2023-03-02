@@ -48,6 +48,8 @@
 namespace android::Hwc2 {
 
 using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
+using aidl::android::hardware::graphics::common::HdrConversionCapability;
+using aidl::android::hardware::graphics::common::HdrConversionStrategy;
 using aidl::android::hardware::graphics::composer3::ComposerClientReader;
 using aidl::android::hardware::graphics::composer3::ComposerClientWriter;
 using aidl::android::hardware::graphics::composer3::OverlayProperties;
@@ -143,6 +145,9 @@ public:
     /* see setClientTarget for the purpose of slot */
     Error setLayerBuffer(Display display, Layer layer, uint32_t slot,
                          const sp<GraphicBuffer>& buffer, int acquireFence) override;
+    Error setLayerBufferSlotsToClear(Display display, Layer layer,
+                                     const std::vector<uint32_t>& slotsToClear,
+                                     uint32_t activeBufferSlot) override;
     Error setLayerSurfaceDamage(Display display, Layer layer,
                                 const std::vector<IComposerClient::Rect>& damage) override;
     Error setLayerBlendMode(Display display, Layer layer, IComposerClient::BlendMode mode) override;
@@ -232,6 +237,8 @@ public:
                                         AidlTransform* outDisplayOrientation) override;
     void onHotplugConnect(Display) override;
     void onHotplugDisconnect(Display) override;
+    Error getHdrConversionCapabilities(std::vector<HdrConversionCapability>*) override;
+    Error setHdrConversionStrategy(HdrConversionStrategy) override;
 
 private:
     // Many public functions above simply write a command into the command
@@ -279,6 +286,9 @@ private:
     // TODO (b/257958323): Use std::shared_mutex and RAII once they support
     // threading annotations.
     ftl::SharedMutex mMutex;
+
+    // Buffer slots for layers are cleared by setting the slot buffer to this buffer.
+    sp<GraphicBuffer> mClearSlotBuffer;
 
     // Aidl interface
     using AidlIComposer = aidl::android::hardware::graphics::composer3::IComposer;

@@ -27,13 +27,12 @@
 
 namespace android {
 
-// Extends the client side composer state by resolving buffer cache ids.
+// Extends the client side composer state by resolving buffer.
 class ResolvedComposerState : public ComposerState {
 public:
     ResolvedComposerState() = default;
     ResolvedComposerState(ComposerState&& source) { state = std::move(source.state); }
     std::shared_ptr<renderengine::ExternalTexture> externalTexture;
-    int hwcBufferSlot = 0;
 };
 
 struct TransactionState {
@@ -92,7 +91,9 @@ struct TransactionState {
         if (!displays.empty()) return true;
 
         for (const auto& state : states) {
-            if (state.state.frameRateCompatibility != ANATIVEWINDOW_FRAME_RATE_NO_VOTE) {
+            const bool frameRateChanged = state.state.what & layer_state_t::eFrameRateChanged;
+            if (!frameRateChanged ||
+                state.state.frameRateCompatibility != ANATIVEWINDOW_FRAME_RATE_NO_VOTE) {
                 return true;
             }
         }

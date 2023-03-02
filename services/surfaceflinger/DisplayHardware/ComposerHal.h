@@ -32,6 +32,8 @@
 #include <utils/StrongPointer.h>
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+#include <aidl/android/hardware/graphics/common/HdrConversionCapability.h>
+#include <aidl/android/hardware/graphics/common/HdrConversionStrategy.h>
 #include <aidl/android/hardware/graphics/composer3/Capability.h>
 #include <aidl/android/hardware/graphics/composer3/ClientTargetPropertyWithBrightness.h>
 #include <aidl/android/hardware/graphics/composer3/Color.h>
@@ -179,6 +181,9 @@ public:
     /* see setClientTarget for the purpose of slot */
     virtual Error setLayerBuffer(Display display, Layer layer, uint32_t slot,
                                  const sp<GraphicBuffer>& buffer, int acquireFence) = 0;
+    virtual Error setLayerBufferSlotsToClear(Display display, Layer layer,
+                                             const std::vector<uint32_t>& slotsToClear,
+                                             uint32_t activeBufferSlot) = 0;
     virtual Error setLayerSurfaceDamage(Display display, Layer layer,
                                         const std::vector<IComposerClient::Rect>& damage) = 0;
     virtual Error setLayerBlendMode(Display display, Layer layer,
@@ -285,6 +290,10 @@ public:
     virtual Error getOverlaySupport(V3_0::OverlayProperties* outProperties) = 0;
     virtual void onHotplugConnect(Display) = 0;
     virtual void onHotplugDisconnect(Display) = 0;
+    virtual Error getHdrConversionCapabilities(
+            std::vector<::aidl::android::hardware::graphics::common::HdrConversionCapability>*) = 0;
+    virtual Error setHdrConversionStrategy(
+            ::aidl::android::hardware::graphics::common::HdrConversionStrategy) = 0;
 };
 
 } // namespace Hwc2

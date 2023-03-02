@@ -51,7 +51,6 @@
 #include "Client.h"
 #include "DisplayHardware/HWComposer.h"
 #include "FrameTracker.h"
-#include "HwcSlotGenerator.h"
 #include "LayerFE.h"
 #include "LayerVector.h"
 #include "Scheduler/LayerInfo.h"
@@ -146,7 +145,6 @@ public:
         bool transformToDisplayInverse;
         Region transparentRegionHint;
         std::shared_ptr<renderengine::ExternalTexture> buffer;
-        int hwcBufferSlot;
         client_cache_t clientCacheId;
         sp<Fence> acquireFence;
         std::shared_ptr<FenceTime> acquireFenceTime;
@@ -298,8 +296,7 @@ public:
     bool setBuffer(std::shared_ptr<renderengine::ExternalTexture>& /* buffer */,
                    const BufferData& /* bufferData */, nsecs_t /* postTime */,
                    nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
-                   std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/,
-                   int /* hwcBufferSlot */);
+                   std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/);
     bool setDataspace(ui::Dataspace /*dataspace*/);
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
@@ -327,8 +324,8 @@ public:
     virtual sp<LayerFE> getCompositionEngineLayerFE() const;
     virtual sp<LayerFE> copyCompositionEngineLayerFE() const;
 
-    const LayerSnapshot* getLayerSnapshot() const;
-    LayerSnapshot* editLayerSnapshot();
+    const frontend::LayerSnapshot* getLayerSnapshot() const;
+    frontend::LayerSnapshot* editLayerSnapshot();
 
     // If we have received a new buffer this frame, we will pass its surface
     // damage down to hardware composer. Otherwise, we must send a region with
@@ -467,7 +464,7 @@ public:
     // Returns how rounded corners should be drawn for this layer.
     // A layer can override its parent's rounded corner settings if the parent's rounded
     // corner crop does not intersect with its own rounded corner crop.
-    virtual RoundedCornerState getRoundedCornerState() const;
+    virtual frontend::RoundedCornerState getRoundedCornerState() const;
 
     bool hasRoundedCorners() const { return getRoundedCornerState().hasRoundedCorners(); }
 
@@ -500,7 +497,6 @@ public:
 
         std::shared_ptr<renderengine::ExternalTexture> mBuffer;
         uint64_t mFrameNumber;
-        int mBufferSlot{BufferQueue::INVALID_BUFFER_SLOT};
 
         bool mFrameLatencyNeeded{false};
     };
@@ -634,7 +630,7 @@ public:
 
     void miniDump(std::string& result, const DisplayDevice&) const;
     void dumpFrameStats(std::string& result) const;
-    void dumpCallingUidPid(std::string& result) const;
+    void dumpOffscreenDebugInfo(std::string& result) const;
     void clearFrameStats();
     void logFrameStats();
     void getFrameStats(FrameStats* outStats) const;
@@ -750,12 +746,12 @@ public:
      */
     bool hasInputInfo() const;
 
-    // Sets the GameMode for the tree rooted at this layer. A layer in the tree inherits this
-    // GameMode unless it (or an ancestor) has GAME_MODE_METADATA.
-    void setGameModeForTree(GameMode);
+    // Sets the gui::GameMode for the tree rooted at this layer. A layer in the tree inherits this
+    // gui::GameMode unless it (or an ancestor) has GAME_MODE_METADATA.
+    void setGameModeForTree(gui::GameMode);
 
-    void setGameMode(GameMode gameMode) { mGameMode = gameMode; }
-    GameMode getGameMode() const { return mGameMode; }
+    void setGameMode(gui::GameMode gameMode) { mGameMode = gameMode; }
+    gui::GameMode getGameMode() const { return mGameMode; }
 
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
@@ -813,7 +809,6 @@ public:
     void updateMetadataSnapshot(const LayerMetadata& parentMetadata);
     void updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMetadata,
                                         std::unordered_set<Layer*>& visited);
-    int getHwcCacheSlot(const client_cache_t& clientCacheId);
 
 protected:
     // For unit tests
@@ -832,7 +827,9 @@ protected:
     void gatherBufferInfo();
     void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&);
 
-    sp<Layer> getClonedFrom() { return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr; }
+    sp<Layer> getClonedFrom() const {
+        return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr;
+    }
     bool isClone() { return mClonedFrom != nullptr; }
     bool isClonedFromAlive() { return getClonedFrom() != nullptr; }
 
@@ -1069,7 +1066,7 @@ private:
     float mEffectiveShadowRadius = 0.f;
 
     // Game mode for the layer. Set by WindowManagerShell and recorded by SurfaceFlingerStats.
-    GameMode mGameMode = GameMode::Unsupported;
+    gui::GameMode mGameMode = gui::GameMode::Unsupported;
 
     // A list of regions on this layer that should have blurs.
     const std::vector<BlurRegion> getBlurRegions() const;
@@ -1124,10 +1121,9 @@ private:
     // not specify a destination frame.
     ui::Transform mRequestedTransform;
 
-    sp<HwcSlotGenerator> mHwcSlotGenerator;
-
     sp<LayerFE> mLayerFE;
-    std::unique_ptr<LayerSnapshot> mSnapshot = std::make_unique<LayerSnapshot>();
+    std::unique_ptr<frontend::LayerSnapshot> mSnapshot =
+            std::make_unique<frontend::LayerSnapshot>();
 
     friend class LayerSnapshotGuard;
 };

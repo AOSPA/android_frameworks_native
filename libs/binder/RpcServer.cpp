@@ -50,7 +50,8 @@ using base::unique_fd;
 
 RpcServer::RpcServer(std::unique_ptr<RpcTransportCtx> ctx) : mCtx(std::move(ctx)) {}
 RpcServer::~RpcServer() {
-    (void)shutdown();
+    RpcMutexUniqueLock _l(mLock);
+    LOG_ALWAYS_FATAL_IF(mShutdownTrigger != nullptr, "Must call shutdown() before destructor");
 }
 
 sp<RpcServer> RpcServer::make(std::unique_ptr<RpcTransportCtxFactory> rpcTransportCtxFactory) {
@@ -70,11 +71,8 @@ status_t RpcServer::setupUnixDomainServer(const char* path) {
     return setupSocketServer(UnixSocketAddress(path));
 }
 
-status_t RpcServer::setupVsockServer(unsigned int port) {
-    // realizing value w/ this type at compile time to avoid ubsan abort
-    constexpr unsigned int kAnyCid = VMADDR_CID_ANY;
-
-    return setupSocketServer(VsockSocketAddress(kAnyCid, port));
+status_t RpcServer::setupVsockServer(unsigned int bindCid, unsigned int port) {
+    return setupSocketServer(VsockSocketAddress(bindCid, port));
 }
 
 status_t RpcServer::setupInetServer(const char* address, unsigned int port,
@@ -157,6 +155,12 @@ void RpcServer::setPerSessionRootObject(
     mRootObjectFactory = std::move(makeObject);
 }
 
+void RpcServer::setConnectionFilter(std::function<bool(const void*, size_t)>&& filter) {
+    RpcMutexLockGuard _l(mLock);
+    LOG_ALWAYS_FATAL_IF(mShutdownTrigger != nullptr, "Already joined");
+    mConnectionFilter = std::move(filter);
+}
+
 sp<IBinder> RpcServer::getRootObject() {
     RpcMutexLockGuard _l(mLock);
     bool hasWeak = mRootObjectWeak.unsafe_get();
@@ -200,10 +204,14 @@ status_t RpcServer::recvmsgSocketConnection(const RpcServer& server, RpcTranspor
     iovec iov{&zero, sizeof(zero)};
     std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
 
-    if (receiveMessageFromSocket(server.mServer, &iov, 1, &fds) < 0) {
+    ssize_t num_bytes = receiveMessageFromSocket(server.mServer, &iov, 1, &fds);
+    if (num_bytes < 0) {
         int savedErrno = errno;
         ALOGE("Failed recvmsg: %s", strerror(savedErrno));
         return -savedErrno;
+    }
+    if (num_bytes == 0) {
+        return DEAD_OBJECT;
     }
     if (fds.size() != 1) {
         ALOGE("Expected exactly one fd from recvmsg, got %zu", fds.size());
@@ -239,16 +247,25 @@ void RpcServer::join() {
         socklen_t addrLen = addr.size();
 
         RpcTransportFd clientSocket;
-        if (mAcceptFn(*this, &clientSocket) != OK) {
-            continue;
+        if ((status = mAcceptFn(*this, &clientSocket)) != OK) {
+            if (status == DEAD_OBJECT)
+                break;
+            else
+                continue;
         }
+
+        LOG_RPC_DETAIL("accept on fd %d yields fd %d", mServer.fd.get(), clientSocket.fd.get());
+
         if (getpeername(clientSocket.fd.get(), reinterpret_cast<sockaddr*>(addr.data()),
                         &addrLen)) {
             ALOGE("Could not getpeername socket: %s", strerror(errno));
             continue;
         }
 
-        LOG_RPC_DETAIL("accept on fd %d yields fd %d", mServer.fd.get(), clientSocket.fd.get());
+        if (mConnectionFilter != nullptr && !mConnectionFilter(addr.data(), addrLen)) {
+            ALOGE("Dropped client connection fd %d", clientSocket.fd.get());
+            continue;
+        }
 
         {
             RpcMutexLockGuard _l(mLock);
