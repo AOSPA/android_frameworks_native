@@ -3366,7 +3366,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     }
 
     if (display->isVirtual()) {
-        display->adjustRefreshRate(mScheduler->getLeaderRefreshRate());
+        display->adjustRefreshRate(mScheduler->getPacesetterRefreshRate());
     }
 
     mDisplays.try_emplace(displayToken, std::move(display));
@@ -3954,8 +3954,14 @@ bool SurfaceFlinger::latchBuffers() {
             mLayersWithQueuedFrames.emplace(sp<Layer>::fromExisting(layer));
         } else {
             layer->useEmptyDamage();
-            // If the layer has frames we will update the latch time when latching the buffer.
-            layer->updateLastLatchTime(latchTime);
+            if (!layer->hasBuffer()) {
+                // The last latch time is used to classify a missed frame as buffer stuffing
+                // instead of a missed frame. This is used to identify scenarios where we
+                // could not latch a buffer or apply a transaction due to backpressure.
+                // We only update the latch time for buffer less layers here, the latch time
+                // is updated for buffer layers when the buffer is latched.
+                layer->updateLastLatchTime(latchTime);
+            }
         }
     });
     mForceTransactionDisplayChange = false;
@@ -7656,15 +7662,15 @@ void SurfaceFlinger::onActiveDisplayChangedLocked(const DisplayDevice* inactiveD
 
     updateActiveDisplayVsyncLocked(activeDisplay);
     mScheduler->setModeChangePending(false);
-    mScheduler->setLeaderDisplay(mActiveDisplayId);
+    mScheduler->setPacesetterDisplay(mActiveDisplayId);
 
     onActiveDisplaySizeChanged(activeDisplay);
     mActiveDisplayTransformHint = activeDisplay.getTransformHint();
 
-    // The policy of the new active/leader display may have changed while it was inactive. In that
-    // case, its preferred mode has not been propagated to HWC (via setDesiredActiveMode). In either
-    // case, the Scheduler's cachedModeChangedParams must be initialized to the newly active mode,
-    // and the kernel idle timer of the newly active display must be toggled.
+    // The policy of the new active/pacesetter display may have changed while it was inactive. In
+    // that case, its preferred mode has not been propagated to HWC (via setDesiredActiveMode). In
+    // either case, the Scheduler's cachedModeChangedParams must be initialized to the newly active
+    // mode, and the kernel idle timer of the newly active display must be toggled.
     constexpr bool kForce = true;
     applyRefreshRateSelectorPolicy(mActiveDisplayId, activeDisplay.refreshRateSelector(), kForce);
 }
