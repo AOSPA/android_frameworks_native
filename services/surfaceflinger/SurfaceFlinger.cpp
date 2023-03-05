@@ -456,6 +456,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         android::hardware::details::setTrebleTestingOverride(true);
     }
 
+    // TODO (b/270966065) Update the HWC based refresh rate overlay to support spinner
     mRefreshRateOverlaySpinner = property_get_bool("debug.sf.show_refresh_rate_overlay_spinner", 0);
     mRefreshRateOverlayRenderRate =
             property_get_bool("debug.sf.show_refresh_rate_overlay_render_rate", 0);
@@ -473,7 +474,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
             {.late = base::GetBoolProperty("debug.sf.send_late_power_session_hint"s, true),
              .early = base::GetBoolProperty("debug.sf.send_early_power_session_hint"s, false)};
     mLayerLifecycleManagerEnabled =
-            base::GetBoolProperty("debug.sf.enable_layer_lifecycle_manager"s, false);
+            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, false);
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
             base::GetBoolProperty("debug.sf.enable_legacy_frontend"s, true);
 }
@@ -2098,8 +2099,24 @@ void SurfaceFlinger::onComposerHalVsyncIdle(hal::HWDisplayId) {
     mScheduler->forceNextResync();
 }
 
-void SurfaceFlinger::onRefreshRateChangedDebug(const RefreshRateChangedDebugData&) {
-    // TODO(b/202734676) update refresh rate value on the RefreshRateOverlay
+void SurfaceFlinger::onRefreshRateChangedDebug(const RefreshRateChangedDebugData& data) {
+    ATRACE_CALL();
+    if (const auto displayId = getHwComposer().toPhysicalDisplayId(data.display); displayId) {
+        const Fps fps = Fps::fromPeriodNsecs(data.vsyncPeriodNanos);
+        ATRACE_FORMAT("%s Fps %d", __func__, fps.getIntValue());
+        static_cast<void>(mScheduler->schedule([=]() FTL_FAKE_GUARD(mStateLock) {
+            {
+                {
+                    const auto display = getDisplayDeviceLocked(*displayId);
+                    FTL_FAKE_GUARD(kMainThreadContext,
+                                   display->updateRefreshRateOverlayRate(fps,
+                                                                         display->getActiveMode()
+                                                                                 .fps,
+                                                                         /* setByHwc */ true));
+                }
+            }
+        }));
+    }
 }
 
 void SurfaceFlinger::setVsyncEnabled(PhysicalDisplayId id, bool enabled) {
@@ -2178,6 +2195,38 @@ bool SurfaceFlinger::updateLayerSnapshotsLegacy(VsyncId vsyncId, LifecycleUpdate
     return mustComposite;
 }
 
+void SurfaceFlinger::updateLayerHistory(const frontend::LayerSnapshot& snapshot) {
+    using Changes = frontend::RequestedLayerState::Changes;
+    if (snapshot.path.isClone() ||
+        !snapshot.changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation)) {
+        return;
+    }
+
+    const auto layerProps = scheduler::LayerProps{
+            .visible = snapshot.isVisible,
+            .bounds = snapshot.geomLayerBounds,
+            .transform = snapshot.geomLayerTransform,
+            .setFrameRateVote = snapshot.frameRate,
+            .frameRateSelectionPriority = snapshot.frameRateSelectionPriority,
+    };
+
+    auto it = mLegacyLayers.find(snapshot.sequence);
+    LOG_ALWAYS_FATAL_IF(it == mLegacyLayers.end(), "Couldnt find layer object for %s",
+                        snapshot.getDebugString().c_str());
+
+    if (snapshot.changes.test(Changes::Animation)) {
+        it->second->recordLayerHistoryAnimationTx(layerProps);
+    }
+
+    if (snapshot.changes.test(Changes::FrameRate)) {
+        it->second->setFrameRateForLayerTree(snapshot.frameRate, layerProps);
+    }
+
+    if (snapshot.changes.test(Changes::Buffer)) {
+        it->second->recordLayerHistoryBufferUpdate(layerProps);
+    }
+}
+
 bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, LifecycleUpdate& update,
                                           bool transactionsFlushed, bool& outTransactionsAreEmpty) {
     using Changes = frontend::RequestedLayerState::Changes;
@@ -2219,7 +2268,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, LifecycleUpdate& upda
     }
 
     if (mLayerLifecycleManager.getGlobalChanges().any(Changes::Geometry | Changes::Input |
-                                                      Changes::Hierarchy)) {
+                                                      Changes::Hierarchy | Changes::Visibility)) {
         mUpdateInputInfo = true;
     }
     if (mLayerLifecycleManager.getGlobalChanges().any(Changes::VisibleRegion | Changes::Hierarchy |
@@ -2257,6 +2306,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, LifecycleUpdate& upda
         }
 
         for (auto& snapshot : mLayerSnapshotBuilder.getSnapshots()) {
+            updateLayerHistory(*snapshot);
             if (!snapshot->hasReadyFrame) continue;
             newDataLatched = true;
             if (!snapshot->isVisible) break;
@@ -4441,10 +4491,14 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
         }
         if ((flags & eAnimation) && resolvedState.state.surface) {
             if (const auto layer = LayerHandle::getLayer(resolvedState.state.surface)) {
-                using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
-                mScheduler->recordLayerHistory(layer.get(),
-                                               isAutoTimestamp ? 0 : desiredPresentTime,
-                                               LayerUpdateType::AnimationTX);
+                const auto layerProps = scheduler::LayerProps{
+                        .visible = layer->isVisible(),
+                        .bounds = layer->getBounds(),
+                        .transform = layer->getTransform(),
+                        .setFrameRateVote = layer->getFrameRateForLayerTree(),
+                        .frameRateSelectionPriority = layer->getFrameRateSelectionPriority(),
+                };
+                layer->recordLayerHistoryAnimationTx(layerProps);
             }
         }
     }
@@ -4905,6 +4959,10 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
         layer->setFrameTimelineVsyncForBufferlessTransaction(frameTimelineInfo, postTime);
     }
 
+    if ((what & layer_state_t::eBufferChanged) == 0) {
+        layer->setDesiredPresentTime(desiredPresentTime, isAutoTimestamp);
+    }
+
     if (what & layer_state_t::eTrustedPresentationInfoChanged) {
         if (layer->setTrustedPresentationInfo(s.trustedPresentationThresholds,
                                               s.trustedPresentationListener)) {
@@ -5013,6 +5071,10 @@ uint32_t SurfaceFlinger::updateLayerCallbacksAndStats(const FrameTimelineInfo& f
         layer->setFrameTimelineVsyncForBufferlessTransaction(frameTimelineInfo, postTime);
     }
 
+    if ((what & layer_state_t::eBufferChanged) == 0) {
+        layer->setDesiredPresentTime(desiredPresentTime, isAutoTimestamp);
+    }
+
     if (what & layer_state_t::eTrustedPresentationInfoChanged) {
         if (layer->setTrustedPresentationInfo(s.trustedPresentationThresholds,
                                               s.trustedPresentationListener)) {
@@ -5025,16 +5087,6 @@ uint32_t SurfaceFlinger::updateLayerCallbacksAndStats(const FrameTimelineInfo& f
             requestedLayerState && requestedLayerState->hasReadyFrame();
     if (layer->setTransactionCompletedListeners(callbackHandles, willPresentCurrentTransaction))
         flags |= eTraversalNeeded;
-
-    for (auto& snapshot : mLayerSnapshotBuilder.getSnapshots()) {
-        if (snapshot->path.isClone() ||
-            !snapshot->changes.test(frontend::RequestedLayerState::Changes::FrameRate))
-            continue;
-        auto it = mLegacyLayers.find(snapshot->sequence);
-        LOG_ALWAYS_FATAL_IF(it == mLegacyLayers.end(), "Couldnt find layer object for %s",
-                            snapshot->getDebugString().c_str());
-        it->second->setFrameRateForLayerTree(snapshot->frameRate);
-    }
 
     return flags;
 }
@@ -7531,10 +7583,20 @@ status_t SurfaceFlinger::setOverrideFrameRate(uid_t uid, float frameRate) {
 }
 
 void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
+    bool setByHwc = getHwComposer().hasCapability(Capability::REFRESH_RATE_CHANGED_CALLBACK_DEBUG);
     for (const auto& [id, display] : mPhysicalDisplays) {
         if (display.snapshot().connectionType() == ui::DisplayConnectionType::Internal) {
+            if (setByHwc) {
+                const auto status =
+                        getHwComposer().setRefreshRateChangedCallbackDebugEnabled(id, enable);
+                if (status != NO_ERROR) {
+                    ALOGE("Error updating the refresh rate changed callback debug enabled");
+                    return;
+                }
+            }
+
             if (const auto device = getDisplayDeviceLocked(id)) {
-                device->enableRefreshRateOverlay(enable, mRefreshRateOverlaySpinner,
+                device->enableRefreshRateOverlay(enable, setByHwc, mRefreshRateOverlaySpinner,
                                                  mRefreshRateOverlayRenderRate,
                                                  mRefreshRateOverlayShowInMiddle);
             }
