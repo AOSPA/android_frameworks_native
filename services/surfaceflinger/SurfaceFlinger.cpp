@@ -4256,7 +4256,6 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
 void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& activeDisplay) {
     mVsyncConfiguration->reset();
     const Fps refreshRate = activeDisplay->refreshRateConfigs().getActiveMode()->getFps();
-    updatePhaseConfiguration(refreshRate);
     mRefreshRateStats->setRefreshRate(refreshRate);
     if (mUseAdvanceSfOffset && mComposerExtnIntf) {
         const auto& supportedModes = getDefaultDisplayDeviceLocked()->getSupportedModes();
@@ -4277,6 +4276,7 @@ void SurfaceFlinger::updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& a
             mVsyncConfiguration->UpdateSfOffsets(&mAdvancedSfOffsets);
         }
     }
+    updatePhaseConfiguration(refreshRate);
 }
 
 void SurfaceFlinger::setFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
