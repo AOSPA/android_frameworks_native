@@ -29,9 +29,7 @@ using testing::SetArgPointee;
 
 using android::hardware::graphics::composer::hal::HWDisplayId;
 
-using FakeDisplayDeviceInjector = TestableSurfaceFlinger::FakeDisplayDeviceInjector;
-
-DisplayTransactionTest::DisplayTransactionTest() {
+DisplayTransactionTest::DisplayTransactionTest(bool withMockScheduler) {
     const ::testing::TestInfo* const test_info =
             ::testing::UnitTest::GetInstance()->current_test_info();
     ALOGD("**** Setting up for %s.%s\n", test_info->test_case_name(), test_info->name());
@@ -48,7 +46,10 @@ DisplayTransactionTest::DisplayTransactionTest() {
         return nullptr;
     });
 
-    injectMockScheduler();
+    if (withMockScheduler) {
+        injectMockScheduler(PhysicalDisplayId::fromPort(0));
+    }
+
     mFlinger.setupRenderEngine(std::unique_ptr<renderengine::RenderEngine>(mRenderEngine));
 
     injectMockComposer(0);
@@ -61,7 +62,9 @@ DisplayTransactionTest::~DisplayTransactionTest() {
     mFlinger.resetScheduler(nullptr);
 }
 
-void DisplayTransactionTest::injectMockScheduler() {
+void DisplayTransactionTest::injectMockScheduler(PhysicalDisplayId displayId) {
+    LOG_ALWAYS_FATAL_IF(mFlinger.scheduler());
+
     EXPECT_CALL(*mEventThread, registerDisplayEventConnection(_));
     EXPECT_CALL(*mEventThread, createEventConnection(_, _))
             .WillOnce(Return(sp<EventThreadConnection>::make(mEventThread,
@@ -74,10 +77,11 @@ void DisplayTransactionTest::injectMockScheduler() {
                                                              mock::EventThread::kCallingUid,
                                                              ResyncCallback())));
 
-    mFlinger.setupScheduler(std::unique_ptr<scheduler::VsyncController>(mVsyncController),
-                            std::unique_ptr<scheduler::VSyncTracker>(mVSyncTracker),
+    mFlinger.setupScheduler(std::make_unique<mock::VsyncController>(),
+                            std::make_shared<mock::VSyncTracker>(),
                             std::unique_ptr<EventThread>(mEventThread),
                             std::unique_ptr<EventThread>(mSFEventThread),
+                            TestableSurfaceFlinger::DefaultDisplayMode{displayId},
                             TestableSurfaceFlinger::SchedulerCallbackImpl::kMock);
 }
 

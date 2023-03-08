@@ -581,6 +581,7 @@ void Layer::prepareBasicGeometryCompositionState() {
                                         : Hwc2::IComposerClient::BlendMode::COVERAGE;
     }
 
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
     snapshot->outputFilter = getOutputFilter();
     snapshot->isVisible = isVisible();
@@ -607,6 +608,7 @@ void Layer::prepareGeometryCompositionState() {
     const auto& drawingState{getDrawingState()};
     auto* snapshot = editLayerSnapshot();
 
+    // Please keep in sync with LayerSnapshotBuilder
     snapshot->geomBufferSize = getBufferSize(drawingState);
     snapshot->geomContentCrop = getBufferCrop();
     snapshot->geomCrop = getCrop(drawingState);
@@ -646,6 +648,7 @@ void Layer::prepareGeometryCompositionState() {
 
 void Layer::preparePerFrameCompositionState() {
     const auto& drawingState{getDrawingState()};
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
 
     snapshot->forceClientComposition = false;
@@ -659,6 +662,7 @@ void Layer::preparePerFrameCompositionState() {
     snapshot->dimmingEnabled = isDimmingEnabled();
     snapshot->currentSdrHdrRatio = getCurrentSdrHdrRatio();
     snapshot->desiredSdrHdrRatio = getDesiredSdrHdrRatio();
+    snapshot->cachingHint = getCachingHint();
 
     const bool usesRoundedCorners = hasRoundedCorners();
 
@@ -688,8 +692,9 @@ void Layer::preparePerFrameCompositionState() {
 }
 
 void Layer::preparePerFrameBufferCompositionState() {
-    // Sideband layers
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
+    // Sideband layers
     if (snapshot->sidebandStream.get() && !snapshot->sidebandStreamHasFrame) {
         snapshot->compositionType =
                 aidl::android::hardware::graphics::composer3::Composition::SIDEBAND;
@@ -712,6 +717,7 @@ void Layer::preparePerFrameBufferCompositionState() {
 }
 
 void Layer::preparePerFrameEffectsCompositionState() {
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
     snapshot->color = getColor();
     snapshot->compositionType =
@@ -720,6 +726,7 @@ void Layer::preparePerFrameEffectsCompositionState() {
 
 void Layer::prepareCursorCompositionState() {
     const State& drawingState{getDrawingState()};
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
 
     // Apply the layer's transform, followed by the display's global transform
@@ -805,7 +812,7 @@ void Layer::transferAvailableJankData(const std::deque<sp<CallbackHandle>>& hand
 // transaction
 // ----------------------------------------------------------------------------
 
-uint32_t Layer::doTransaction(uint32_t flags, nsecs_t latchTime) {
+uint32_t Layer::doTransaction(uint32_t flags) {
     ATRACE_CALL();
 
     // TODO: This is unfortunate.
@@ -833,12 +840,12 @@ uint32_t Layer::doTransaction(uint32_t flags, nsecs_t latchTime) {
         mFlinger->mUpdateInputInfo = true;
     }
 
-    commitTransaction(mDrawingState, latchTime);
+    commitTransaction(mDrawingState);
 
     return flags;
 }
 
-void Layer::commitTransaction(State&, nsecs_t currentLatchTime) {
+void Layer::commitTransaction(State&) {
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
     for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
@@ -850,7 +857,6 @@ void Layer::commitTransaction(State&, nsecs_t currentLatchTime) {
         }
     }
     mDrawingState.bufferlessSurfaceFramesTX.clear();
-    mLastLatchTime = currentLatchTime;
 }
 
 uint32_t Layer::clearTransactionFlags(uint32_t mask) {
@@ -1396,7 +1402,7 @@ void Layer::addSurfaceFramePresentedForBuffer(
     surfaceFrame->setAcquireFenceTime(acquireFenceTime);
     surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
     mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
-    mLastLatchTime = currentLatchTime;
+    updateLastLatchTime(currentLatchTime);
 }
 
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransaction(
@@ -2112,15 +2118,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
-
-        // Only populate for the primary display.
-        if (const auto display = mFlinger->getDefaultDisplayDeviceLocked()) {
-            const auto compositionType = getCompositionType(*display);
-            layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
-            LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
-                                           [&]() { return layerProto->mutable_visible_region(); });
-        }
+        writeCompositionStateToProto(layerProto);
     }
 
     for (const sp<Layer>& layer : mDrawingChildren) {
@@ -2128,6 +2126,18 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     }
 
     return layerProto;
+}
+
+void Layer::writeCompositionStateToProto(LayerProto* layerProto) {
+    ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
+
+    // Only populate for the primary display.
+    if (const auto display = mFlinger->getDefaultDisplayDeviceLocked()) {
+        const auto compositionType = getCompositionType(*display);
+        layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
+        LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
+                                       [&]() { return layerProto->mutable_visible_region(); });
+    }
 }
 
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
@@ -2527,7 +2537,20 @@ bool Layer::hasInputInfo() const {
 compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
         const DisplayDevice* display) const {
     if (!display) return nullptr;
-    return display->getCompositionDisplay()->getOutputLayerForLayer(getCompositionEngineLayerFE());
+    if (!mFlinger->mLayerLifecycleManagerEnabled) {
+        return display->getCompositionDisplay()->getOutputLayerForLayer(
+                getCompositionEngineLayerFE());
+    }
+    sp<LayerFE> layerFE;
+    frontend::LayerHierarchy::TraversalPath path{.id = static_cast<uint32_t>(sequence)};
+    for (auto& [p, layer] : mLayerFEs) {
+        if (p == path) {
+            layerFE = layer;
+        }
+    }
+
+    if (!layerFE) return nullptr;
+    return display->getCompositionDisplay()->getOutputLayerForLayer(layerFE);
 }
 
 Region Layer::getVisibleRegion(const DisplayDevice* display) const {
@@ -3113,6 +3136,14 @@ bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRa
     return true;
 }
 
+bool Layer::setCachingHint(gui::CachingHint cachingHint) {
+    if (mDrawingState.cachingHint == cachingHint) return false;
+    mDrawingState.cachingHint = cachingHint;
+    mDrawingState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
 bool Layer::setHdrMetadata(const HdrMetadata& hdrMetadata) {
     if (mDrawingState.hdrMetadata == hdrMetadata) return false;
     mDrawingState.hdrMetadata = hdrMetadata;
@@ -3282,11 +3313,11 @@ bool Layer::hasFrameUpdate() const {
             (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
-void Layer::updateTexImage(nsecs_t latchTime) {
+void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
     const State& s(getDrawingState());
 
     if (!s.buffer) {
-        if (s.bgColorLayer) {
+        if (bgColorOnly) {
             for (auto& handle : mDrawingState.callbackHandles) {
                 handle->latchTime = latchTime;
             }
@@ -3483,7 +3514,7 @@ bool Layer::simpleBufferUpdate(const layer_state_t& s) const {
     }
 
     if (s.what & layer_state_t::eBackgroundColorChanged) {
-        if (mDrawingState.bgColorLayer || s.bgColorAlpha != 0) {
+        if (mDrawingState.bgColorLayer || s.bgColor.a != 0) {
             ALOGV("%s: false [eBackgroundColorChanged changed]", __func__);
             return false;
         }
@@ -3807,6 +3838,11 @@ void Layer::onPostComposition(const DisplayDevice* display,
 }
 
 bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
+    const bool bgColorOnly = mDrawingState.bgColorLayer != nullptr;
+    return latchBufferImpl(recomputeVisibleRegions, latchTime, bgColorOnly);
+}
+
+bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly) {
     ATRACE_FORMAT_INSTANT("latchBuffer %s - %" PRIu64, getDebugName(),
                           getDrawingState().frameNumber);
 
@@ -3823,8 +3859,7 @@ bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
         mFlinger->onLayerUpdate();
         return false;
     }
-
-    updateTexImage(latchTime);
+    updateTexImage(latchTime, bgColorOnly);
     if (mDrawingState.buffer == nullptr) {
         return false;
     }
@@ -4028,7 +4063,6 @@ void Layer::updateSnapshot(bool updateGeometry) {
     snapshot->bufferSize = getBufferSize(mDrawingState);
     snapshot->externalTexture = mBufferInfo.mBuffer;
     snapshot->hasReadyFrame = hasReadyFrame();
-    snapshot->isInternalDisplayOverlay = isInternalDisplayOverlay();
     preparePerFrameCompositionState();
 }
 
@@ -4071,7 +4105,7 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
     }
 }
 
-void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
+bool Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                        TrustedPresentationListener const& listener) {
     bool hadTrustedPresentationListener = hasTrustedPresentationListener();
     mTrustedPresentationListener = listener;
@@ -4082,6 +4116,20 @@ void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thre
     } else if (hadTrustedPresentationListener && !haveTrustedPresentationListener) {
         mFlinger->mNumTrustedPresentationListeners--;
     }
+
+    // Reset trusted presentation states to ensure we start the time again.
+    mEnteredTrustedPresentationStateTime = -1;
+    mLastReportedTrustedPresentationState = false;
+    mLastComputedTrustedPresentationState = false;
+
+    // If there's a new trusted presentation listener, the code needs to go through the composite
+    // path to ensure it recomutes the current state and invokes the TrustedPresentationListener if
+    // we're already in the requested state.
+    return haveTrustedPresentationListener;
+}
+
+void Layer::updateLastLatchTime(nsecs_t latchTime) {
+    mLastLatchTime = latchTime;
 }
 
 // ---------------------------------------------------------------------------

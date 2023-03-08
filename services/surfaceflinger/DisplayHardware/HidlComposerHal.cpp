@@ -1382,7 +1382,7 @@ Error HidlComposer::getHdrConversionCapabilities(std::vector<HdrConversionCapabi
     return Error::UNSUPPORTED;
 }
 
-Error HidlComposer::setHdrConversionStrategy(HdrConversionStrategy) {
+Error HidlComposer::setHdrConversionStrategy(HdrConversionStrategy, Hdr*) {
     return Error::UNSUPPORTED;
 }
 
