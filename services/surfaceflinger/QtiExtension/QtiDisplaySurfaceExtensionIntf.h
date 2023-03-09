@@ -3,11 +3,15 @@
  */
 #pragma once
 
+#include "../DisplayHardware/FramebufferSurface.h"
 #include "../DisplayHardware/VirtualDisplaySurface.h"
 
 namespace android {
 
+class FramebufferSurface;
 class VirtualDisplaySurface;
+
+using FramebufferSurface = android::FramebufferSurface;
 using VirtualDisplaySurface = android::VirtualDisplaySurface;
 
 namespace surfaceflingerextension {
@@ -16,10 +20,19 @@ class QtiDisplaySurfaceExtensionIntf {
 public:
     virtual ~QtiDisplaySurfaceExtensionIntf() {}
 
+    virtual int getClientTargetCurrentSlot() = 0;
+    virtual ui::Dataspace getClientTargetCurrentDataspace() = 0;
+
+    /* Methods used by VirtualDisplaySurface */
     virtual uint64_t qtiSetOutputUsage() = 0;
     virtual uint64_t qtiSetOutputUsage(uint64_t flag) = 0;
     virtual uint64_t qtiExcludeVideoFromScratchBuffer(std::string source, uint64_t usage) = 0;
 };
+
+QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
+                                                                 VirtualDisplaySurface* vds,
+                                                                 bool secure, uint64_t sinkUsage,
+                                                                 FramebufferSurface* fbs);
 
 } // namespace surfaceflingerextension
 } // namespace android

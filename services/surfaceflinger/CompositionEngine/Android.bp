@@ -61,7 +61,10 @@ cc_defaults {
 
 cc_library {
     name: "libcompositionengine",
-    defaults: ["libcompositionengine_defaults"],
+    defaults: [
+        "libcompositionengine_defaults",
+        "libqtisurfaceflingerextension_defaults",
+    ],
     srcs: [
         "src/planner/CachedSet.cpp",
         "src/planner/Flattener.cpp",
@@ -167,4 +170,3 @@ cc_test {
         address: true,
     },
 }
-

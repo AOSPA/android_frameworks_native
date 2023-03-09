@@ -30,6 +30,10 @@ namespace android {
 
 class GraphicBuffer;
 
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+}
+
 namespace compositionengine {
 
 /**
@@ -96,6 +100,14 @@ public:
 
     // Returns true if the render surface supports client composition prediction.
     virtual bool supportsCompositionStrategyPrediction() const = 0;
+
+    //QTI_BEGIN
+    // TODO - check if we really need this here
+#ifdef QTI_DISPLAY_EXTENSION
+    virtual android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
+    qtiGetDisplaySurfaceExtension() = 0;
+#endif
+    //QTI_END
 };
 
 } // namespace compositionengine

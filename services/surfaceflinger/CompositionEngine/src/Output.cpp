@@ -59,6 +59,11 @@
 
 #include "TracedOrdinal.h"
 
+// QTI_BEGIN
+#include "../QtiExtension/QtiOutputExtension.h"
+using android::compositionengineextension::QtiOutputExtension;
+// QTI_END
+
 using aidl::android::hardware::graphics::composer3::Composition;
 
 namespace android::compositionengine {
@@ -108,9 +113,6 @@ std::shared_ptr<Output> createOutput(
 }
 
 Output::Output() {
-    /* QTI_BEGIN */
-    mQtiOutputExtnIntf = android::compositionengineextension::qtiCreateOutputExtension(this);
-    /* QTI_END */
 }
 
 Output::~Output() = default;
@@ -907,6 +909,10 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
                     z, includeGeometry, overrideZ, isPeekingThrough,
                     layer->requiresClientComposition());
         }
+
+        // QTI_BEGIN
+        QtiOutputExtension::qtiWriteLayerFlagToHWC(layer->getHwcLayer(), this);
+        // QTI_END
     }
     editState().outputLayerHash = outputLayerHash;
 }
@@ -1024,7 +1030,7 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     }
 
     /* QTI_BEGIN */
-    if (mQtiOutputExtnIntf && mQtiOutputExtnIntf->qtiHasSecureDisplay()) {
+    if (QtiOutputExtension::qtiHasSecureDisplay(this)) {
         bestDataSpace = ui::Dataspace::V0_SRGB;
         isHdr = false;
     }
@@ -1228,10 +1234,8 @@ void Output::updateProtectedContentState() {
     bool supportsProtectedContent = renderEngine.supportsProtectedContent();
 
     /* QTI_BEGIN */
-    if (mQtiOutputExtnIntf) {
         supportsProtectedContent = supportsProtectedContent && outputState.isSecure &&
-                mQtiOutputExtnIntf->qtiHasSecureContent();
-    }
+                QtiOutputExtension::qtiIsProtectedContent(this);
     /* QTI_END */
 
     // If we the display is secure, protected content support is enabled, and at
@@ -1307,7 +1311,9 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     OutputCompositionState& outputCompositionState = editState();
     // Check if the client composition requests were rendered into the provided graphic buffer. If
     // so, we can reuse the buffer and avoid client composition.
-    if (mClientCompositionRequestCache) {
+    if (mClientCompositionRequestCache
+        /* QTI_BEGIN */
+        && mLayerRequestingBackgroundBlur != nullptr /* QTI_END */) {
         if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
                                                    clientCompositionDisplay,
                                                    clientCompositionLayers)) {

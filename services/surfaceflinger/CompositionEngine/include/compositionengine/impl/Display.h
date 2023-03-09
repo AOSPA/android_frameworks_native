@@ -89,12 +89,23 @@ public:
     virtual void setConfiguration(const compositionengine::DisplayCreationArgs&);
     std::unique_ptr<compositionengine::OutputLayer> createOutputLayer(const sp<LayerFE>&) const;
 
+    /* QTI_BEGIN */
+    void qtiBeginDraw();
+    void qtiEndDraw();
+    /* QTI_END */
+
 private:
     bool isPowerHintSessionEnabled() override;
     void setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) override;
     DisplayId mId;
     bool mIsDisconnected = false;
     Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
+
+    /* QTI_BEGIN */
+    bool mQtiIsColorModeChanged = false;
+    ColorProfile mQtiColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
+                                     ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
+    /* QTI_END */
 };
 
 // This template factory function standardizes the implementation details of the

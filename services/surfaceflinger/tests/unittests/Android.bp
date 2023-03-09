@@ -205,7 +205,6 @@ cc_defaults {
         "libui",
         "libutils",
         "server_configurable_flags",
-        "vendor.qti.hardware.display.composer@3.0",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer",

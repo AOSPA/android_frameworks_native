@@ -386,6 +386,13 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
                                      ui::Dataspace dataspace) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
+    /* QTI_BEGIN */
+    auto& displayData = mDisplayData[displayId];
+    if (displayData.validateWasSkipped) {
+        return NO_ERROR;
+    }
+    /* QTI_END */
+
     ALOGV("%s for display %s", __FUNCTION__, to_string(displayId).c_str());
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
     auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
@@ -394,7 +401,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 }
 
 status_t HWComposer::getDeviceCompositionChanges(
-        HalDisplayId displayId, bool frameUsesClientComposition,
+        HalDisplayId displayId, bool /* QTI_BEGIN frameUsesClientComposition QTI_END */,
         std::chrono::steady_clock::time_point earliestPresentTime,
         const std::shared_ptr<FenceTime>& previousPresentFence, nsecs_t expectedPresentTime,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
@@ -420,9 +427,11 @@ status_t HWComposer::getDeviceCompositionChanges(
     // client target buffer.
     const bool canSkipValidate = [&] {
         // We must call validate if we have client composition
-        if (frameUsesClientComposition) {
-            return false;
-        }
+        /* QTI_BEGIN */
+        //        if (frameUsesClientComposition) {
+        //            return false;
+        //        }
+        /* QTI_END */
 
         // If composer supports getting the expected present time, we can skip
         // as composer will make sure to prevent early presentation
@@ -432,11 +441,15 @@ status_t HWComposer::getDeviceCompositionChanges(
 
         // composer doesn't support getting the expected present time. We can only
         // skip validate if we know that we are not going to present early.
-        return std::chrono::steady_clock::now() >= earliestPresentTime ||
-                previousPresentFence->getSignalTime() == Fence::SIGNAL_TIME_PENDING;
+        /* QTI_BEGIN */
+        //        return std::chrono::steady_clock::now() >= earliestPresentTime ||
+        //                previousPresentFence->getSignalTime() == Fence::SIGNAL_TIME_PENDING;
+        return true;
+        /* QTI_END */
     }();
 
     displayData.validateWasSkipped = false;
+    bool acceptChanges = true;
     if (canSkipValidate) {
         sp<Fence> outPresentFence;
         uint32_t state = UINT32_MAX;
@@ -445,15 +458,26 @@ status_t HWComposer::getDeviceCompositionChanges(
         if (!hasChangesError(error)) {
             RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
         }
-        if (state == 1) { //Present Succeeded.
+        // state = 0 --> Only Validate.
+        // state = 1 --> Validate and commit succeeded. Skip validate case. No comp changes.
+        // state = 2 --> Validate and commit succeeded. Query Comp changes.
+        if (state == 1 || state == 2) { // Present Succeeded.
             std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
             error = hwcDisplay->getReleaseFences(&releaseFences);
             displayData.releaseFences = std::move(releaseFences);
             displayData.lastPresentFence = outPresentFence;
             displayData.validateWasSkipped = true;
             displayData.presentError = error;
+            ALOGV("Retrieving fences");
+            //            return NO_ERROR;
+        }
+
+        if (state == 1) {
+            ALOGV("skip validate case present succeeded");
             return NO_ERROR;
         }
+
+        acceptChanges = (state != 2);
         // Present failed but Validate ran.
     } else {
         error = hwcDisplay->validate(expectedPresentTime, &numTypes, &numRequests);
@@ -480,8 +504,10 @@ status_t HWComposer::getDeviceCompositionChanges(
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
                                                std::move(clientTargetProperty)});
-    error = hwcDisplay->acceptChanges();
-    RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
+    if (acceptChanges) {
+        error = hwcDisplay->acceptChanges();
+        RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
+    }
 
     return NO_ERROR;
 }

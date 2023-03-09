@@ -78,6 +78,16 @@ namespace display {
 class DisplaySnapshot;
 } // namespace display
 
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+} // namespace surfaceflingerextension
+
+namespace compositionengineextension {
+class QtiDisplayExtension;
+} // namespace compositionengineextension
+/* QTI_END */
+
 class DisplayDevice : public RefBase {
 public:
     constexpr static float sDefaultMinLumiance = 0.0;
@@ -381,6 +391,9 @@ struct DisplayDeviceCreationArgs {
     std::optional<hardware::graphics::composer::hal::PowerMode> initialPowerMode;
     bool isPrimary{false};
     DisplayModeId activeModeId;
+    // QTI_BEGIN
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    // QTI_END
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
 };

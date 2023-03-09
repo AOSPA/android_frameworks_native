@@ -48,12 +48,14 @@ private:
     bool mQtiAsyncVdsCreationSupported = false;
     bool mQtiEnableDynamicSfIdle = false;
     bool mQtiEnableEarlyWakeUp = false;
+    bool mQtiEnableSmomo = false;
     bool mQtiLatchMediaContent = false;
     bool mQtiPluggableVsyncPrioritized = false;
     bool mQtiUseAdvanceSfOffset = false;
     bool mQtiUseFbScaling = false;
     bool mQtiUseLayerExt = false;
     bool mQtiUseQsyncIdle = false;
+    bool mQtiUseSplitLayerExt = false;
     bool mQtiUseWorkDurations = false;
     bool mQtiVsyncSourceReliableOnDoze = false;
 };

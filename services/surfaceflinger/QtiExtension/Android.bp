@@ -93,6 +93,7 @@ qtidisplayextension_cc_library_static {
         displayextension: {
             srcs: [
                 "QtiFeatureManager.cpp",
+                "QtiFramebufferSurfaceExtension.cpp",
                 "QtiHidlComposerHalExtension.cpp",
                 "QtiAidlComposerHalExtension.cpp",
                 "QtiHWComposerExtension.cpp",

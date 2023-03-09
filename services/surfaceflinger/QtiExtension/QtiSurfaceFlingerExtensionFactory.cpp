@@ -7,6 +7,7 @@
 
 #ifdef QTI_DISPLAY_EXTENSION
 #include "QtiVirtualDisplaySurfaceExtension.h"
+#include "QtiFramebufferSurfaceExtension.h"
 #include "QtiSurfaceFlingerExtension.h"
 #endif
 
@@ -26,23 +27,24 @@ QtiSurfaceFlingerExtensionIntf* qtiCreateSurfaceFlingerExtension(SurfaceFlinger*
     return new QtiNullExtension(flinger);
 }
 
-QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual __unused,
+QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
                                                                  VirtualDisplaySurface* vds,
-                                                                 bool secure, uint64_t sinkUsage) {
+                                                                 bool secure, uint64_t sinkUsage,
+                                                                 FramebufferSurface* fbs) {
 #ifdef QTI_DISPLAY_EXTENSION
-    bool qtiEnableDisplayExtn =
+    bool mQtiEnableDisplayExtn =
             base::GetBoolProperty("vendor.display.enable_display_extensions", false);
-    if (qtiEnableDisplayExtn) {
+    if (mQtiEnableDisplayExtn) {
         if (isVirtual) {
             ALOGV("Enabling QtiVirtualDisplaySurfaceExtension ...");
             return new QtiVirtualDisplaySurfaceExtension(vds, secure, sinkUsage);
         }
         // TODO(rmedel): else, createa QtiFramebufferSurfaceExtension for real displays
+        return new QtiFramebufferSurfaceExtension(fbs);
     }
 #endif
 
     ALOGI("Enabling QtiNullDisplaySurfaceExtension in QSSI ...");
     return new QtiNullDisplaySurfaceExtension(vds, secure, sinkUsage);
 }
-
 }

@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #include <android-base/stringprintf.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/CompositionRefreshArgs.h>
@@ -28,6 +34,7 @@
 #include <gui/TraceUtils.h>
 
 #include <utils/Trace.h>
+#include <string>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -40,8 +47,27 @@
 
 #include "DisplayHardware/PowerAdvisor.h"
 
+// QTI_BEGIN
+#include "../../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
+#include "../../QtiExtension/QtiExtensionContext.h"
+#include "../QtiExtension/QtiOutputExtension.h"
+#include <composer_extn_intf.h>
+// QTI_END
+
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
+
+namespace composer {
+struct FBTLayerInfo;
+}
+
+// QTI_BEGIN
+namespace android::surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+}
+
+using android::compositionengineextension::QtiOutputExtension;
+//QTI_END
 
 namespace android::compositionengine::impl {
 
@@ -125,6 +151,19 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
 
     Output::setColorProfile(colorProfile);
 
+    /* QTI_BEGIN */
+    if (colorProfile.mode != mQtiColorProfile.mode ||
+        colorProfile.dataspace != mQtiColorProfile.dataspace ||
+        colorProfile.renderIntent != mQtiColorProfile.renderIntent) {
+        mQtiIsColorModeChanged = true;
+    }
+
+    mQtiColorProfile.mode = colorProfile.mode;
+    mQtiColorProfile.dataspace = colorProfile.dataspace;
+    mQtiColorProfile.renderIntent = colorProfile.renderIntent;
+    mQtiColorProfile.colorSpaceAgnosticDataspace = colorProfile.colorSpaceAgnosticDataspace;
+    /* QTI_END */
+
     const auto physicalId = PhysicalDisplayId::tryCast(mId);
     LOG_FATAL_IF(!physicalId);
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,
@@ -164,6 +203,12 @@ std::unique_ptr<compositionengine::OutputLayer> Display::createOutputLayer(
         ALOGE_IF(!hwcLayer, "Failed to create a HWC layer for a HWC supported display %s",
                  getName().c_str());
         outputLayer->setHwcLayer(std::move(hwcLayer));
+
+        /* QTI_BEGIN */
+        if (layerFE->getCompositionState()->outputFilter.toInternalDisplay) {
+            QtiOutputExtension::qtiSetLayerAsMask(mId, outputLayer->getHwcLayer()->getId());
+        }
+        /* QTI_END */
     }
     return outputLayer;
 }
@@ -248,6 +293,10 @@ bool Display::chooseCompositionStrategy(
     if (!halDisplayId) {
         return false;
     }
+
+    // QTI_BEGIN
+    qtiBeginDraw();
+    // QTI_END
 
     // Get any composition changes requested by the HWC device, and apply them.
     std::optional<android::HWComposer::DeviceRequestedChanges> changes;
@@ -376,6 +425,10 @@ compositionengine::Output::FrameFences Display::presentAndGetFrameFences() {
         return fences;
     }
 
+    /* QTI_BEGIN */
+    qtiEndDraw();
+    /* QTI_END */
+
     auto& hwc = getCompositionEngine().getHwComposer();
 
     const TimePoint startTime = TimePoint::now();
@@ -440,5 +493,115 @@ void Display::finishFrame(GpuCompositionResult&& result) {
 
     impl::Output::finishFrame(std::move(result));
 }
+
+/* QTI_BEGIN */
+void Display::qtiBeginDraw() {
+#ifdef QTI_DISPLAY_EXTENSION
+    auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
+    auto hwcextn = surfaceflingerextension::QtiExtensionContext::instance().getQtiHWComposerExtension();
+    if (displayext && hwcextn) {
+        ATRACE_CALL();
+        const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
+        if (!physicalDisplayId.has_value() || isVirtual()) {
+            if (!physicalDisplayId.has_value())
+                ATRACE_NAME("Specfence_noPhysicalDisplayId");
+            else
+                ATRACE_NAME("Specfence_isVirtual");
+            return;
+        }
+        composer::FBTLayerInfo fbtLayerInfo;
+        composer::FBTSlotInfo current;
+        composer::FBTSlotInfo future;
+        std::vector<composer::LayerFlags> displayLayerFlags;
+        ui::Dataspace dataspace = ui::Dataspace::UNKNOWN;
+        auto& hwc = getCompositionEngine().getHwComposer();
+        const auto hwcDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
+        for (const auto& layer : getOutputLayersOrderedByZ()) {
+            composer::LayerFlags layerFlags;
+            auto layerCompositionState = layer->getLayerFE().getCompositionState();
+            layerFlags.secure_camera = layerCompositionState->qtiIsSecureCamera;
+            layerFlags.secure_ui = layerCompositionState->qtiIsSecureDisplay;
+            layerFlags.secure_video = layerCompositionState->hasProtectedContent;
+            layerFlags.blur = (layerCompositionState->backgroundBlurRadius > 0) ||
+                    (layerCompositionState->blurRegions.size() > 0);
+            displayLayerFlags.push_back(layerFlags);
+        }
+        fbtLayerInfo.width = getState().orientedDisplaySpace.getBounds().width;
+        fbtLayerInfo.height = getState().orientedDisplaySpace.getBounds().height;
+        auto renderSurface = getRenderSurface();
+        fbtLayerInfo.secure = renderSurface->isProtected();
+        fbtLayerInfo.dataspace = static_cast<int>(
+                renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace());
+
+        // Reset cache if there is a color mode change
+        if (mQtiIsColorModeChanged) {
+            fbtLayerInfo.dataspace = static_cast<int>(ui::Dataspace::UNKNOWN);
+            mQtiIsColorModeChanged = false;
+        }
+
+        current.index =
+                renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentSlot();
+        dataspace =
+                renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace();
+
+        if (current.index < 0) {
+            std::string temp = "Specfence_currentIndex_" + std::to_string(current.index);
+            ATRACE_NAME(temp.c_str());
+            return;
+        }
+
+        ATRACE_NAME("Specfence_callQtiBeginDraw");
+        const auto halDisplayId = HalDisplayId::tryCast(mId);
+        if (!displayext->BeginDraw(static_cast<uint32_t>(*hwcDisplayId), displayLayerFlags,
+                                   fbtLayerInfo, current, future)) {
+            hwcextn->qtiSetClientTarget_3_1(*halDisplayId, future.index, future.fence,
+                                            static_cast<uint32_t>(dataspace));
+            ALOGV("Slot predicted %d", future.index);
+        } else {
+            ALOGV("Slot not predicted");
+        }
+    }
+#else
+    ATRACE_NAME("Specfence_macroisundefined");
+#endif
+}
+
+void Display::qtiEndDraw() {
+#ifdef QTI_DISPLAY_EXTENSION
+    auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
+    if (displayext) {
+        ATRACE_CALL();
+        auto& outputState = editState();
+        if (!outputState.usesClientComposition || isVirtual()) {
+            return;
+        }
+
+        auto displayId = getDisplayId();
+        if (!displayId.has_value()) {
+            return;
+        }
+
+        auto const physicalDisplayId = PhysicalDisplayId::tryCast(*displayId);
+        if (!physicalDisplayId) {
+            return;
+        }
+
+        auto& hwc = getCompositionEngine().getHwComposer();
+        auto const halDisplayId = hwc.fromPhysicalDisplayId(*physicalDisplayId);
+        if (!halDisplayId.has_value()) {
+            return;
+        }
+
+        composer::FBTSlotInfo info;
+        auto renderSurface = getRenderSurface();
+        info.index = renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentSlot();
+        info.fence = renderSurface->getClientTargetAcquireFence();
+
+        uint32_t hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
+        displayext->EndDraw(hwcDisplayId, info);
+    }
+#endif
+}
+/* QTI_END */
 
 } // namespace android::compositionengine::impl

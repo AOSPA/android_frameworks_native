@@ -6,6 +6,7 @@
 #include "QtiAidlComposerHalExtension.h"
 #include "QtiHWComposerExtensionIntf.h"
 #include "QtiHidlComposerHalExtension.h"
+#include "utils/Errors.h"
 
 #define LOG_DISPLAY_ERROR(displayId, msg) \
     ALOGE("%s failed for display %s: %s", __FUNCTION__, to_string(displayId).c_str(), msg)
@@ -45,6 +46,10 @@ std::optional<hal::HWDisplayId> QtiHWComposerExtension::qtiFromVirtualDisplayId(
 
 status_t QtiHWComposerExtension::qtiSetDisplayElapseTime(HalDisplayId displayId,
                                                          uint64_t timeStamp) {
+    if (!mQtiComposerHalExtn) {
+        return NO_ERROR;
+    }
+
     if (mQtiHWComposer.mDisplayData.empty()) {
         ALOGV("HWComposer's displayData is empty");
         return BAD_VALUE;
@@ -70,6 +75,14 @@ status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t ty
         return NO_ERROR;
     }
 
+    if (!mQtiComposerHalExtn) {
+        return NO_ERROR;
+    }
+
+    if (layer == nullptr) {
+        return BAD_VALUE;
+    }
+
     HWC2::impl::Layer* implLayer = static_cast<HWC2::impl::Layer*>(layer);
     auto intError = mQtiComposerHalExtn->qtiSetLayerType(implLayer->qtiGetDisplayId(),
                                                          implLayer->getId(), type);
@@ -84,11 +97,20 @@ status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t ty
 }
 
 status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
-                                                 IQtiComposerClient::LayerFlag flags) {
+                                                 uint32_t flags) {
+    if (!mQtiComposerHalExtn) {
+        return NO_ERROR;
+    }
+    if (layer == nullptr) {
+        return BAD_VALUE;
+    }
+
     HWC2::impl::Layer* implLayer = static_cast<HWC2::impl::Layer*>(layer);
-    auto error = mQtiComposerHalExtn->qtiSetLayerFlag(implLayer->qtiGetDisplayId(),
-                                                      implLayer->getId(), flags);
+    auto intError = mQtiComposerHalExtn->qtiSetLayerFlag(implLayer->qtiGetDisplayId(),
+                                                         implLayer->getId(), flags);
+    Error error = static_cast<Error>(intError);
     if (error != hal::Error::NONE) {
+        ALOGW("Failed to send SET_LAYER_TYPE command to HWC");
         return BAD_VALUE;
     }
 
@@ -97,7 +119,11 @@ status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
 
 status_t QtiHWComposerExtension::qtiSetClientTarget_3_1(HalDisplayId displayId, int32_t slot,
                                                         const sp<Fence>& acquireFence,
-                                                        ui::Dataspace dataspace) {
+                                                        uint32_t dataspace) {
+    if (!mQtiComposerHalExtn) {
+        return NO_ERROR;
+    }
+
     if (mQtiHWComposer.mDisplayData.empty()) {
         ALOGV("HWComposer's displayData is empty");
         return BAD_VALUE;
@@ -116,12 +142,15 @@ status_t QtiHWComposerExtension::qtiSetClientTarget_3_1(HalDisplayId displayId, 
     if (error != hal::Error::NONE) {
         return BAD_VALUE;
     }
-
     return NO_ERROR;
 }
 
 status_t QtiHWComposerExtension::qtiTryDrawMethod(HalDisplayId displayId,
-                                                  IQtiComposerClient::DrawMethod drawMethod) {
+                                                  uint32_t drawMethod) {
+    if (!mQtiComposerHalExtn) {
+        return NO_ERROR;
+    }
+
     if (mQtiHWComposer.mDisplayData.empty()) {
         ALOGV("HWComposer's displayData is empty");
         return BAD_VALUE;

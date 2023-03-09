@@ -44,6 +44,15 @@ void QtiNullExtension::qtiUpdateOnComposerHalHotplug(
         std::optional<DisplayIdentificationInfo> info) {}
 void QtiNullExtension::qtiUpdateInternalDisplaysPresentationMode() {}
 
+QtiHWComposerExtensionIntf* QtiNullExtension::qtiGetHWComposerExtensionIntf() {
+    return nullptr;
+}
+
+bool QtiNullExtension::qtiLatchMediaContent(sp<Layer> layer) {
+    return false;
+}
+void QtiNullExtension::qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) {}
+
 /*
  * Methods that call the FeatureManager APIs.
  */
@@ -103,6 +112,7 @@ status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, in
 android::VirtualDisplayId QtiNullExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
                                                                      ui::PixelFormat format,
                                                                      bool canAllocateHwcForVDS) {
+    // Fix thread safety analysis
     return mQtiFlinger->acquireVirtualDisplay(resolution, format);
 }
 bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) {
@@ -125,5 +135,39 @@ void QtiNullExtension::qtiSetPowerMode(const sp<IBinder>& displayToken, int mode
     mQtiFlinger->setPowerMode(displayToken, mode);
 }
 void QtiNullExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) {}
+
+/*
+ * Methods for SmoMo Interface
+ */
+void QtiNullExtension::qtiCreateSmomoInstance(const DisplayDeviceState& state) {}
+void QtiNullExtension::qtiDestroySmomoInstance(const sp<DisplayDevice>& display) {}
+void QtiNullExtension::qtiSetRefreshRates(PhysicalDisplayId displayId) {}
+void QtiNullExtension::qtiSetRefreshRates(const sp<DisplayDevice>& display) {}
+void QtiNullExtension::qtiSetRefreshRateTo(int32_t refreshRate) {}
+void QtiNullExtension::qtiSyncToDisplayHardware() {}
+void QtiNullExtension::qtiUpdateSmomoState() {}
+void QtiNullExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts, int64_t desiredPresentTime,
+                                               bool isAutoTimestamp, uint64_t transactionId) {}
+void QtiNullExtension::qtiScheduleCompositeImmed() {}
+void QtiNullExtension::qtiSetPresentTime(uint32_t layerStackId, int sequence,
+                                         nsecs_t desiredPresentTime) {}
+void QtiNullExtension::qtiOnVsync(nsecs_t expectedVsyncTime) {}
+bool QtiNullExtension::qtiIsFrameEarly(uint32_t layerStackId, int sequence,
+                                       nsecs_t desiredPresentTime) {
+    return false;
+}
+void QtiNullExtension::qtiUpdateLayerState(int numLayers) {}
+void QtiNullExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId,
+                                                  uint32_t curLayerStackId,
+                                                  uint32_t drawLayerStackId) {}
+uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
+    return 0;
+}
+
+/*
+ * Methods for speculative fence
+ */
+void QtiNullExtension::qtiStartUnifiedDraw() {}
+void QtiNullExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {}
 
 } // namespace android::surfaceflingerextension

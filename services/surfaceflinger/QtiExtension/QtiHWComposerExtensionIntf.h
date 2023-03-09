@@ -10,16 +10,15 @@
 #pragma clang diagnostic ignored "-Wconversion"
 #pragma clang diagnostic ignored "-Wextra"
 
-#undef LOG_TAG
-#define LOG_TAG "QtiHWComposerExtension"
-
 #include "../DisplayHardware/ComposerHal.h"
 
 #include <ui/DisplayId.h>
 #include "QtiComposerHalExtensionIntf.h"
+
 #pragma clang diagnostic pop
 
 namespace android {
+
 
 namespace impl {
 class HWComposer;
@@ -43,12 +42,12 @@ public:
     virtual status_t qtiSetDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) = 0;
     virtual status_t qtiSetLayerType(HWC2::Layer* layer, uint32_t type) = 0;
     virtual status_t qtiTryDrawMethod(HalDisplayId displayId,
-                                      IQtiComposerClient::DrawMethod drawMethod) = 0;
+                                      uint32_t drawMethod) = 0;
     virtual status_t qtiSetClientTarget_3_1(HalDisplayId displayId, int32_t slot,
                                             const sp<Fence>& acquireFence,
-                                            ui::Dataspace dataspace) = 0;
+                                            uint32_t dataspace) = 0;
     virtual status_t qtiSetLayerFlag(HWC2::Layer* layer,
-                                     IQtiComposerClient::LayerFlag layerFlag) = 0;
+                                     uint32_t layerFlag) = 0;
 };
 
 QtiHWComposerExtensionIntf* qtiCreateHWComposerExtension(android::impl::HWComposer& hwc,
@@ -63,12 +62,12 @@ public:
     std::optional<hal::HWDisplayId> qtiFromVirtualDisplayId(HalVirtualDisplayId) const override;
     status_t qtiSetDisplayElapseTime(HalDisplayId displayId, uint64_t timeStamp) override;
     status_t qtiSetLayerType(HWC2::Layer* layer, uint32_t type) override;
-    status_t qtiSetLayerFlag(HWC2::Layer* layer, IQtiComposerClient::LayerFlag layerFlag) override;
+    status_t qtiSetLayerFlag(HWC2::Layer* layer, uint32_t layerFlag) override;
     status_t qtiSetClientTarget_3_1(HalDisplayId displayId, int32_t slot,
                                     const sp<Fence>& acquireFence,
-                                    ui::Dataspace dataspace) override;
+                                    uint32_t dataspace) override;
     status_t qtiTryDrawMethod(HalDisplayId displayId,
-                              IQtiComposerClient::DrawMethod drawMethod) override;
+                              uint32_t drawMethod) override;
 
 private:
     android::impl::HWComposer& mQtiHWComposer;

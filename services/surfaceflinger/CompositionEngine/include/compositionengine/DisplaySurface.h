@@ -83,8 +83,10 @@ public:
     virtual bool supportsCompositionStrategyPrediction() const;
 
     /* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
     virtual surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* qtiGetDisplaySurfaceExtn() = 0;
     /* QTI_END */
+#endif
 };
 
 } // namespace compositionengine
