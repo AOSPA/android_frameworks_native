@@ -137,6 +137,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     dataspace = ui::Dataspace::V0_SRGB;
     gameMode = gui::GameMode::Unsupported;
     requestedFrameRate = {};
+    cachingHint = gui::CachingHint::Enabled;
 }
 
 void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerState) {
@@ -144,7 +145,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     const half oldAlpha = color.a;
     const bool hadBufferOrSideStream = hasValidBuffer() || sidebandStream != nullptr;
     const layer_state_t& clientState = resolvedComposerState.state;
-
+    const bool hadBlur = hasBlur();
     uint64_t clientChanges = what | layer_state_t::diff(clientState);
     layer_state_t::merge(clientState);
     what = clientChanges;
@@ -164,12 +165,23 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         if (hadBufferOrSideStream != hasBufferOrSideStream) {
             changes |= RequestedLayerState::Changes::Geometry |
                     RequestedLayerState::Changes::VisibleRegion |
-                    RequestedLayerState::Changes::Visibility | RequestedLayerState::Changes::Input |
-                    RequestedLayerState::Changes::Buffer;
+                    RequestedLayerState::Changes::Visibility | RequestedLayerState::Changes::Input;
+        }
+        if (clientState.what & layer_state_t::eBufferChanged) {
+            changes |= RequestedLayerState::Changes::Buffer;
+        }
+        if (clientState.what & layer_state_t::eSidebandStreamChanged) {
+            changes |= RequestedLayerState::Changes::SidebandStream;
         }
     }
     if (what & (layer_state_t::eAlphaChanged)) {
         if (oldAlpha == 0 || color.a == 0) {
+            changes |= RequestedLayerState::Changes::Visibility |
+                    RequestedLayerState::Changes::VisibleRegion;
+        }
+    }
+    if (what & (layer_state_t::eBackgroundBlurRadiusChanged | layer_state_t::eBlurRegionsChanged)) {
+        if (hadBlur != hasBlur()) {
             changes |= RequestedLayerState::Changes::Visibility |
                     RequestedLayerState::Changes::VisibleRegion;
         }
@@ -190,7 +202,9 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         static const mat4 identityMatrix = mat4();
         hasColorTransform = colorTransform != identityMatrix;
     }
-    if (clientState.what & (layer_state_t::eLayerChanged | layer_state_t::eRelativeLayerChanged)) {
+    if (clientState.what &
+        (layer_state_t::eLayerChanged | layer_state_t::eRelativeLayerChanged |
+         layer_state_t::eLayerStackChanged)) {
         changes |= RequestedLayerState::Changes::Z;
     }
     if (clientState.what & layer_state_t::eReparent) {
@@ -319,11 +333,11 @@ ui::Transform RequestedLayerState::getTransform(uint32_t displayRotationFlags) c
 }
 
 std::string RequestedLayerState::getDebugString() const {
-    return "[" + std::to_string(id) + "]" + name + ",parent=" + layerIdToString(parentId) +
-            ",relativeParent=" + layerIdToString(relativeParentId) +
-            ",isRelativeOf=" + std::to_string(isRelativeOf) +
-            ",mirrorIds=" + layerIdsToString(mirrorIds) +
-            ",handleAlive=" + std::to_string(handleAlive) + ",z=" + std::to_string(z);
+    std::stringstream debug;
+    debug << "RequestedLayerState{" << name << " parent=" << layerIdToString(parentId)
+          << " relativeParent=" << layerIdToString(relativeParentId)
+          << " mirrorId=" << layerIdsToString(mirrorIds) << " handle=" << handleAlive << " z=" << z;
+    return debug.str();
 }
 
 std::string RequestedLayerState::getDebugStringShort() const {
@@ -440,6 +454,28 @@ bool RequestedLayerState::hasInputInfo() const {
     const auto windowInfo = windowInfoHandle->getInfo();
     return windowInfo->token != nullptr ||
             windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+}
+
+bool RequestedLayerState::hasBlur() const {
+    return backgroundBlurRadius > 0 || blurRegions.size() > 0;
+}
+
+bool RequestedLayerState::hasFrameUpdate() const {
+    return what & layer_state_t::CONTENT_DIRTY &&
+            (externalTexture || bgColorLayerId != UNASSIGNED_LAYER_ID);
+}
+
+bool RequestedLayerState::hasReadyFrame() const {
+    return hasFrameUpdate() || changes.test(Changes::SidebandStream) || autoRefresh;
+}
+
+bool RequestedLayerState::hasSidebandStreamFrame() const {
+    return hasFrameUpdate() && sidebandStream.get();
+}
+
+void RequestedLayerState::clearChanges() {
+    what = 0;
+    changes.clear();
 }
 
 } // namespace android::surfaceflinger::frontend

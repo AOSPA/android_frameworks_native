@@ -106,11 +106,8 @@ public:
     virtual sp<EventThreadConnection> createEventConnection(
             ResyncCallback, EventRegistrationFlags eventRegistration = {}) const = 0;
 
-    // called before the screen is turned off from main thread
-    virtual void onScreenReleased() = 0;
-
-    // called after the screen is turned on from main thread
-    virtual void onScreenAcquired() = 0;
+    // Feed clients with fake VSYNC, e.g. while the display is off.
+    virtual void enableSyntheticVsync(bool) = 0;
 
     virtual void onHotplugReceived(PhysicalDisplayId displayId, bool connected) = 0;
 
@@ -136,6 +133,8 @@ public:
 
     // Retrieves the number of event connections tracked by this EventThread.
     virtual size_t getEventThreadConnectionCount() = 0;
+
+    virtual void onNewVsyncSchedule(std::shared_ptr<scheduler::VsyncSchedule>) = 0;
 };
 
 namespace impl {
@@ -145,8 +144,8 @@ public:
     using ThrottleVsyncCallback = std::function<bool(nsecs_t, uid_t)>;
     using GetVsyncPeriodFunction = std::function<nsecs_t(uid_t)>;
 
-    EventThread(const char* name, scheduler::VsyncSchedule&, frametimeline::TokenManager*,
-                ThrottleVsyncCallback, GetVsyncPeriodFunction,
+    EventThread(const char* name, std::shared_ptr<scheduler::VsyncSchedule>,
+                frametimeline::TokenManager*, ThrottleVsyncCallback, GetVsyncPeriodFunction,
                 std::chrono::nanoseconds workDuration, std::chrono::nanoseconds readyDuration);
     ~EventThread();
 
@@ -159,11 +158,7 @@ public:
     VsyncEventData getLatestVsyncEventData(
             const sp<EventThreadConnection>& connection) const override;
 
-    // called before the screen is turned off from main thread
-    void onScreenReleased() override;
-
-    // called after the screen is turned on from main thread
-    void onScreenAcquired() override;
+    void enableSyntheticVsync(bool) override;
 
     void onHotplugReceived(PhysicalDisplayId displayId, bool connected) override;
 
@@ -178,6 +173,8 @@ public:
                      std::chrono::nanoseconds readyDuration) override;
 
     size_t getEventThreadConnectionCount() override;
+
+    void onNewVsyncSchedule(std::shared_ptr<scheduler::VsyncSchedule>) override;
 
 private:
     friend EventThreadTest;
@@ -202,11 +199,13 @@ private:
                                nsecs_t timestamp, nsecs_t preferredExpectedPresentationTime,
                                nsecs_t preferredDeadlineTimestamp) const;
 
+    scheduler::VSyncDispatch::Callback createDispatchCallback();
+
     const char* const mThreadName;
     TracedOrdinal<int> mVsyncTracer;
     TracedOrdinal<std::chrono::nanoseconds> mWorkDuration GUARDED_BY(mMutex);
     std::chrono::nanoseconds mReadyDuration GUARDED_BY(mMutex);
-    scheduler::VsyncSchedule& mVsyncSchedule;
+    std::shared_ptr<scheduler::VsyncSchedule> mVsyncSchedule;
     TimePoint mLastVsyncCallbackTime GUARDED_BY(mMutex) = TimePoint::now();
     scheduler::VSyncCallbackRegistration mVsyncRegistration GUARDED_BY(mMutex);
     frametimeline::TokenManager* const mTokenManager;

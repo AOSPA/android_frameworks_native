@@ -27,14 +27,22 @@ using namespace ftl::flag_operators;
 LayerSnapshot::LayerSnapshot(const RequestedLayerState& state,
                              const LayerHierarchy::TraversalPath& path)
       : path(path) {
+    static uint32_t sUniqueSequenceId = 0;
+    // Provide a unique id for clones otherwise keeping using the sequence id.
+    // The seq id can still be useful for debugging if its available.
+    uniqueSequence = (path.isClone()) ? sUniqueSequenceId++ : state.id;
     sequence = static_cast<int32_t>(state.id);
     name = state.name;
     textureName = state.textureName;
     premultipliedAlpha = state.premultipliedAlpha;
     inputInfo.name = state.name;
-    inputInfo.id = static_cast<int32_t>(state.id);
+    inputInfo.id = static_cast<int32_t>(uniqueSequence);
     inputInfo.ownerUid = static_cast<int32_t>(state.ownerUid);
     inputInfo.ownerPid = state.ownerPid;
+    changes = RequestedLayerState::Changes::Created;
+    mirrorRootPath = path.variant == LayerHierarchy::Variant::Mirror
+            ? path
+            : LayerHierarchy::TraversalPath::ROOT;
 }
 
 // As documented in libhardware header, formats in the range
@@ -139,7 +147,8 @@ std::string LayerSnapshot::getIsVisibleReason() const {
     // visible
     std::stringstream reason;
     if (sidebandStream != nullptr) reason << " sidebandStream";
-    if (externalTexture != nullptr) reason << " buffer";
+    if (externalTexture != nullptr)
+        reason << " buffer:" << externalTexture->getId() << " frame:" << frameNumber;
     if (fillsColor() || color.a > 0.0f) reason << " color{" << color << "}";
     if (drawShadows()) reason << " shadowSettings.length=" << shadowSettings.length;
     if (backgroundBlurRadius > 0) reason << " backgroundBlurRadius=" << backgroundBlurRadius;
@@ -164,7 +173,8 @@ bool LayerSnapshot::hasInputInfo() const {
 std::string LayerSnapshot::getDebugString() const {
     std::stringstream debug;
     debug << "Snapshot{" << path.toString() << name << " isVisible=" << isVisible << " {"
-          << getIsVisibleReason() << "} changes=" << changes.string() << "}";
+          << getIsVisibleReason() << "} changes=" << changes.string()
+          << " layerStack=" << outputFilter.layerStack.id << "}";
     return debug.str();
 }
 

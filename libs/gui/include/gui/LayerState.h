@@ -172,7 +172,7 @@ struct layer_state_t {
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
         eFlushJankData = 0x00000100,
-        /* unused = 0x00000200, */
+        eCachingHintChanged = 0x00000200,
         eDimmingEnabledChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
         eRenderBorderChanged = 0x00001000,
@@ -211,7 +211,8 @@ struct layer_state_t {
         eStretchChanged = 0x2000'00000000,
         eTrustedOverlayChanged = 0x4000'00000000,
         eDropInputModeChanged = 0x8000'00000000,
-        eExtendedRangeBrightnessChanged = 0x10000'00000000
+        eExtendedRangeBrightnessChanged = 0x10000'00000000,
+
     };
 
     layer_state_t();
@@ -225,9 +226,9 @@ struct layer_state_t {
     bool hasBufferChanges() const;
 
     // Layer hierarchy updates.
-    static constexpr uint64_t HIERARCHY_CHANGES = layer_state_t::eBackgroundColorChanged |
-            layer_state_t::eLayerChanged | layer_state_t::eRelativeLayerChanged |
-            layer_state_t::eReparent;
+    static constexpr uint64_t HIERARCHY_CHANGES = layer_state_t::eLayerChanged |
+            layer_state_t::eRelativeLayerChanged | layer_state_t::eReparent |
+            layer_state_t::eLayerStackChanged;
 
     // Geometry updates.
     static constexpr uint64_t GEOMETRY_CHANGES = layer_state_t::eBufferCropChanged |
@@ -263,9 +264,8 @@ struct layer_state_t {
     static constexpr uint64_t AFFECTS_CHILDREN = layer_state_t::GEOMETRY_CHANGES |
             layer_state_t::HIERARCHY_CHANGES | layer_state_t::eAlphaChanged |
             layer_state_t::eColorTransformChanged | layer_state_t::eCornerRadiusChanged |
-            layer_state_t::eFlagsChanged | layer_state_t::eLayerStackChanged |
-            layer_state_t::eTrustedOverlayChanged | layer_state_t::eFrameRateChanged |
-            layer_state_t::eFixedTransformHintChanged;
+            layer_state_t::eFlagsChanged | layer_state_t::eTrustedOverlayChanged |
+            layer_state_t::eFrameRateChanged | layer_state_t::eFixedTransformHintChanged;
 
     // Changes affecting data sent to input.
     static constexpr uint64_t INPUT_CHANGES = layer_state_t::GEOMETRY_CHANGES |
@@ -332,7 +332,7 @@ struct layer_state_t {
 
     // The following refer to the alpha, and dataspace, respectively of
     // the background color layer
-    float bgColorAlpha;
+    half4 bgColor;
     ui::Dataspace bgColorDataspace;
 
     // A color space agnostic layer means the color of this layer can be
@@ -390,6 +390,8 @@ struct layer_state_t {
     bool dimmingEnabled;
     float currentSdrHdrRatio = 1.f;
     float desiredSdrHdrRatio = 1.f;
+
+    gui::CachingHint cachingHint = gui::CachingHint::Enabled;
 
     TrustedPresentationThresholds trustedPresentationThresholds;
     TrustedPresentationListener trustedPresentationListener;
