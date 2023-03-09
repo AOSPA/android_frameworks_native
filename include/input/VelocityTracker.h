@@ -159,6 +159,8 @@ public:
  */
 class AccumulatingVelocityTrackerStrategy : public VelocityTrackerStrategy {
 public:
+    AccumulatingVelocityTrackerStrategy(nsecs_t horizonNanos, bool maintainHorizonDuringAdd);
+
     void addMovement(nsecs_t eventTime, int32_t pointerId, float position) override;
     void clearPointer(int32_t pointerId) override;
 
@@ -173,6 +175,16 @@ protected:
     // protected const field.
     static constexpr uint32_t HISTORY_SIZE = 20;
 
+    /**
+     * Duration, in nanoseconds, since the latest movement where a movement may be considered for
+     * velocity calculation.
+     */
+    const nsecs_t mHorizonNanos;
+    /**
+     * If true, data points outside of horizon (see `mHorizonNanos`) will be cleared after each
+     * addition of a new movement.
+     */
+    const bool mMaintainHorizonDuringAdd;
     std::map<int32_t /*pointerId*/, RingBuffer<Movement>> mMovements;
 };
 
@@ -209,6 +221,13 @@ private:
     static const nsecs_t HORIZON = 100 * 1000000; // 100 ms
 
     float chooseWeight(int32_t pointerId, uint32_t index) const;
+    /**
+     * An optimized least-squares solver for degree 2 and no weight (i.e. `Weighting.NONE`).
+     * The provided container of movements shall NOT be empty, and shall have the movements in
+     * chronological order.
+     */
+    std::optional<float> solveUnweightedLeastSquaresDeg2(
+            const RingBuffer<Movement>& movements) const;
 
     const uint32_t mDegree;
     const Weighting mWeighting;
