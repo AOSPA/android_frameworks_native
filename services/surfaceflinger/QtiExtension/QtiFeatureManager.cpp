@@ -72,6 +72,14 @@ void QtiFeatureManager::qtiInit() {
         mQtiAidl->controlIdleStatusCallback(mQtiUseQsyncIdle);
         ALOGI("Enable Qsync Idle");
     }
+
+    propName = qtiGetPropName(kSmomo);
+    mQtiEnableSmomo = base::GetBoolProperty(propName, false);
+    ALOGI_IF(mQtiEnableSmomo, "Allow Smomo on displays");
+
+    propName = qtiGetPropName(kSplitLayerExtension);
+    mQtiUseSplitLayerExt = base::GetBoolProperty(propName, false);
+    ALOGI_IF(mQtiUseSplitLayerExt, "Enable Split Layer Extension");
 }
 
 void QtiFeatureManager::qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl) {
@@ -118,6 +126,10 @@ bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
             return mQtiPluggableVsyncPrioritized;
         case QtiFeature::kQsyncIdle:
             return mQtiUseQsyncIdle;
+        case kSmomo:
+            return mQtiEnableSmomo;
+        case kSplitLayerExtension:
+            return mQtiUseSplitLayerExt;
         case QtiFeature::kVsyncSourceReliableOnDoze:
             return mQtiVsyncSourceReliableOnDoze;
         case QtiFeature::kWorkDurations:
@@ -150,6 +162,10 @@ string QtiFeatureManager::qtiGetPropName(QtiFeature feature) {
             return "vendor.display.pluggable_vsync_prioritized";
         case QtiFeature::kQsyncIdle:
             return "vendor.display.enable_qsync_idle";
+        case kSmomo:
+            return "vendor.display.use_smooth_motion";
+        case kSplitLayerExtension:
+            return "vendor.display.split_layer_ext";
         case QtiFeature::kVsyncSourceReliableOnDoze:
             return "vendor.display.vsync_reliable_on_doze";
         case QtiFeature::kWorkDurations:

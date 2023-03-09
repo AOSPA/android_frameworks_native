@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <android/gui/DropInputMode.h>
@@ -227,6 +233,7 @@ public:
         bool dimmingEnabled = true;
         float currentSdrHdrRatio = 1.f;
         float desiredSdrHdrRatio = 1.f;
+        gui::CachingHint cachingHint = gui::CachingHint::Enabled;
     };
 
     explicit Layer(const LayerCreationArgs& args);
@@ -296,6 +303,7 @@ public:
     virtual bool isDimmingEnabled() const { return getDrawingState().dimmingEnabled; }
     float getDesiredSdrHdrRatio() const { return getDrawingState().desiredSdrHdrRatio; }
     float getCurrentSdrHdrRatio() const { return getDrawingState().currentSdrHdrRatio; }
+    gui::CachingHint getCachingHint() const { return getDrawingState().cachingHint; }
 
     bool setTransform(uint32_t /*transform*/);
     bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/);
@@ -305,6 +313,7 @@ public:
                    std::optional<nsecs_t> /* dequeueTime */, const FrameTimelineInfo& /*info*/);
     bool setDataspace(ui::Dataspace /*dataspace*/);
     bool setExtendedRangeBrightness(float currentBufferRatio, float desiredRatio);
+    bool setCachingHint(gui::CachingHint cachingHint);
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
     bool setApi(int32_t /*api*/);
@@ -344,6 +353,7 @@ public:
     void useSurfaceDamage();
     void useEmptyDamage();
     Region getVisibleRegion(const DisplayDevice*) const;
+    void updateLastLatchTime(nsecs_t latchtime);
 
     /*
      * isOpaque - true if this surface is opaque
@@ -423,6 +433,9 @@ public:
      * to figure out if the content or size of a surface has changed.
      */
     bool latchBuffer(bool& /*recomputeVisibleRegions*/, nsecs_t /*latchTime*/);
+
+    bool latchBufferImpl(bool& /*recomputeVisibleRegions*/, nsecs_t /*latchTime*/,
+                         bool bgColorOnly);
 
     /*
      * Calls latchBuffer if the buffer has a frame queued and then releases the buffer.
@@ -601,6 +614,7 @@ public:
     bool isRemovedFromCurrentState() const;
 
     LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags);
+    void writeCompositionStateToProto(LayerProto* layerProto);
 
     // Write states that are modified by the main thread. This includes drawing
     // state as well as buffer data. This should be called in the main or tracing
@@ -620,7 +634,7 @@ public:
      * doTransaction - process the transaction. This is a good place to figure
      * out which attributes of the surface have changed.
      */
-    virtual uint32_t doTransaction(uint32_t transactionFlags, nsecs_t currentLatchTime);
+    virtual uint32_t doTransaction(uint32_t transactionFlags);
 
     /*
      * Remove relative z for the layer if its relative parent is not part of the
@@ -754,7 +768,7 @@ public:
     std::shared_ptr<frametimeline::SurfaceFrame> createSurfaceFrameForBuffer(
             const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName);
 
-    void setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
+    bool setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                     TrustedPresentationListener const& listener);
 
     // Creates a new handle each time, so we only expect
@@ -843,6 +857,12 @@ public:
     void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                    const sp<GraphicBuffer>& buffer, uint64_t framenumber,
                                    const sp<Fence>& releaseFence);
+    bool setFrameRateForLayerTree(FrameRate);
+
+    /* QTI_BEGIN */
+    void qtiSetSmomoLayerStackId();
+    uint32_t qtiGetSmomoLayerStackId();
+    /* QTI_END */
 
 protected:
     // For unit tests
@@ -857,7 +877,7 @@ protected:
     void preparePerFrameCompositionState();
     void preparePerFrameBufferCompositionState();
     void preparePerFrameEffectsCompositionState();
-    virtual void commitTransaction(State& stateToCommit, nsecs_t currentLatchTime = 0);
+    virtual void commitTransaction(State& stateToCommit);
     void gatherBufferInfo();
     void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&);
 
@@ -933,6 +953,10 @@ protected:
 
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mFrameTracker;
+
+    /* QTI_BEGIN */
+    uint32_t mQtiLayerClass{0};
+    /* QTI_END */
 
     // main thread
     sp<NativeHandle> mSidebandStream;
@@ -1015,7 +1039,6 @@ private:
 
     void updateTreeHasFrameRateVote();
     bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded);
-    bool setFrameRateForLayerTree(FrameRate);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
     bool isTrustedOverlay() const;
     gui::DropInputMode getDropInputMode() const;
@@ -1043,7 +1066,7 @@ private:
 
     bool hasFrameUpdate() const;
 
-    void updateTexImage(nsecs_t latchTime);
+    void updateTexImage(nsecs_t latchTime, bool bgColorOnly = false);
 
     // Crop that applies to the buffer
     Rect computeBufferCrop(const State& s);
@@ -1164,10 +1187,15 @@ private:
     // not specify a destination frame.
     ui::Transform mRequestedTransform;
 
+    /* QTI_BEGIN */
+    uint32_t qtiSmomoLayerStackId = UINT32_MAX;
+    /* QTI_END */
+
     sp<LayerFE> mLegacyLayerFE;
     std::vector<std::pair<frontend::LayerHierarchy::TraversalPath, sp<LayerFE>>> mLayerFEs;
     std::unique_ptr<frontend::LayerSnapshot> mSnapshot =
             std::make_unique<frontend::LayerSnapshot>();
+
 };
 
 std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate);

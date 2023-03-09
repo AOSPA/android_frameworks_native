@@ -1560,8 +1560,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBackg
     }
 
     s->what |= layer_state_t::eBackgroundColorChanged;
-    s->color.rgb = color;
-    s->bgColorAlpha = alpha;
+    s->bgColor.rgb = color;
+    s->bgColor.a = alpha;
     s->bgColorDataspace = dataspace;
 
     registerSurfaceControlForCallback(sc);
@@ -1724,6 +1724,20 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setExten
     s->what |= layer_state_t::eExtendedRangeBrightnessChanged;
     s->currentSdrHdrRatio = currentBufferRatio;
     s->desiredSdrHdrRatio = desiredRatio;
+
+    registerSurfaceControlForCallback(sc);
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCachingHint(
+        const sp<SurfaceControl>& sc, gui::CachingHint cachingHint) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    s->what |= layer_state_t::eCachingHintChanged;
+    s->cachingHint = cachingHint;
 
     registerSurfaceControlForCallback(sc);
     return *this;
@@ -2657,9 +2671,11 @@ status_t SurfaceComposerClient::getHdrConversionCapabilities(
 }
 
 status_t SurfaceComposerClient::setHdrConversionStrategy(
-        gui::HdrConversionStrategy hdrConversionStrategy) {
-    binder::Status status = ComposerServiceAIDL::getComposerService()->setHdrConversionStrategy(
-            hdrConversionStrategy);
+        gui::HdrConversionStrategy hdrConversionStrategy, ui::Hdr* outPreferredHdrOutputType) {
+    int hdrType;
+    binder::Status status = ComposerServiceAIDL::getComposerService()
+                                    ->setHdrConversionStrategy(hdrConversionStrategy, &hdrType);
+    *outPreferredHdrOutputType = static_cast<ui::Hdr>(hdrType);
     return statusTFromBinderStatus(status);
 }
 

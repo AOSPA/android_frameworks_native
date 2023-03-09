@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <binder/IPCThreadState.h>
@@ -47,6 +53,14 @@ void MessageQueue::Handler::handleMessage(const Message&) {
     mQueue.onFrameSignal(mQueue.mCompositor, mVsyncId, mExpectedVsyncTime);
 }
 
+/* QTI_BEGIN */
+void MessageQueue::Handler::qtiDispatchFrameImmed() {
+    if (!mFramePending.exchange(true)) {
+        mQueue.mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), Message());
+    }
+}
+/* QTI_END */
+
 MessageQueue::MessageQueue(ICompositor& compositor)
       : MessageQueue(compositor, sp<Handler>::make(*this)) {}
 
@@ -75,19 +89,36 @@ void MessageQueue::vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, ns
     mHandler->dispatchFrame(vsyncId, expectedVsyncTime);
 }
 
-void MessageQueue::initVsync(scheduler::VSyncDispatch& dispatch,
+void MessageQueue::initVsync(std::shared_ptr<scheduler::VSyncDispatch> dispatch,
                              frametimeline::TokenManager& tokenManager,
                              std::chrono::nanoseconds workDuration) {
     std::lock_guard lock(mVsync.mutex);
     mVsync.workDuration = workDuration;
     mVsync.tokenManager = &tokenManager;
+    onNewVsyncScheduleLocked(std::move(dispatch));
+}
+
+void MessageQueue::onNewVsyncSchedule(std::shared_ptr<scheduler::VSyncDispatch> dispatch) {
+    std::lock_guard lock(mVsync.mutex);
+    onNewVsyncScheduleLocked(std::move(dispatch));
+}
+
+void MessageQueue::onNewVsyncScheduleLocked(std::shared_ptr<scheduler::VSyncDispatch> dispatch) {
+    const bool reschedule = mVsync.registration &&
+            mVsync.registration->cancel() == scheduler::CancelResult::Cancelled;
     mVsync.registration = std::make_unique<
-            scheduler::VSyncCallbackRegistration>(dispatch,
+            scheduler::VSyncCallbackRegistration>(std::move(dispatch),
                                                   std::bind(&MessageQueue::vsyncCallback, this,
                                                             std::placeholders::_1,
                                                             std::placeholders::_2,
                                                             std::placeholders::_3),
                                                   "sf");
+    if (reschedule) {
+        mVsync.scheduledFrameTime =
+                mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
+                                               .readyDuration = 0,
+                                               .earliestVsync = mVsync.lastCallbackTime.ns()});
+    }
 }
 
 void MessageQueue::destroyVsync() {
@@ -171,5 +202,12 @@ auto MessageQueue::getScheduledFrameTime() const -> std::optional<Clock::time_po
 
     return std::nullopt;
 }
+
+/* QTI_BEGIN */
+void MessageQueue::qtiScheduleFrameImmed() {
+    ATRACE_CALL();
+    mHandler->qtiDispatchFrameImmed();
+}
+/* QTI_END */
 
 } // namespace android::impl

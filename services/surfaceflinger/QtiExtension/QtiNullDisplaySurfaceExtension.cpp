@@ -35,4 +35,12 @@ uint64_t QtiNullDisplaySurfaceExtension::qtiExcludeVideoFromScratchBuffer(std::s
     return usage;
 }
 
+int QtiNullDisplaySurfaceExtension::getClientTargetCurrentSlot() {
+    return -1;
+}
+
+ui::Dataspace QtiNullDisplaySurfaceExtension::getClientTargetCurrentDataspace() {
+    return ui::Dataspace::UNKNOWN;
+}
+
 } // namespace android::surfaceflingerextension

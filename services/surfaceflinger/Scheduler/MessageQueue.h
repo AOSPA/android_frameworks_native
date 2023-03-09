@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #pragma once
 
 #include <cstdint>
@@ -65,7 +71,7 @@ class MessageQueue {
 public:
     virtual ~MessageQueue() = default;
 
-    virtual void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
+    virtual void initVsync(std::shared_ptr<scheduler::VSyncDispatch>, frametimeline::TokenManager&,
                            std::chrono::nanoseconds workDuration) = 0;
     virtual void destroyVsync() = 0;
     virtual void setDuration(std::chrono::nanoseconds workDuration) = 0;
@@ -74,6 +80,10 @@ public:
     virtual void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) = 0;
     virtual void scheduleConfigure() = 0;
     virtual void scheduleFrame() = 0;
+
+    /* QTI_BEGIN */
+    virtual void qtiScheduleFrameImmed() = 0;
+    /* QTI_END */
 
     using Clock = std::chrono::steady_clock;
     virtual std::optional<Clock::time_point> getScheduledFrameTime() const = 0;
@@ -97,6 +107,10 @@ protected:
         bool isFramePending() const;
 
         virtual void dispatchFrame(VsyncId, TimePoint expectedVsyncTime);
+
+        /* QTI_BEGIN */
+        virtual void qtiDispatchFrameImmed();
+        /* QTI_END */
     };
 
     friend class Handler;
@@ -105,6 +119,8 @@ protected:
     MessageQueue(ICompositor&, sp<Handler>);
 
     void vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, nsecs_t readyTime);
+
+    void onNewVsyncSchedule(std::shared_ptr<scheduler::VSyncDispatch>) EXCLUDES(mVsync.mutex);
 
 private:
     virtual void onFrameSignal(ICompositor&, VsyncId, TimePoint expectedVsyncTime) = 0;
@@ -127,10 +143,12 @@ private:
 
     Vsync mVsync;
 
+    void onNewVsyncScheduleLocked(std::shared_ptr<scheduler::VSyncDispatch>) REQUIRES(mVsync.mutex);
+
 public:
     explicit MessageQueue(ICompositor&);
 
-    void initVsync(scheduler::VSyncDispatch&, frametimeline::TokenManager&,
+    void initVsync(std::shared_ptr<scheduler::VSyncDispatch>, frametimeline::TokenManager&,
                    std::chrono::nanoseconds workDuration) override;
     void destroyVsync() override;
     void setDuration(std::chrono::nanoseconds workDuration) override;
@@ -141,6 +159,10 @@ public:
 
     void scheduleConfigure() override;
     void scheduleFrame() override;
+
+    /* QTI_BEGIN */
+    void qtiScheduleFrameImmed() override;
+    /* QTI_END */
 
     std::optional<Clock::time_point> getScheduledFrameTime() const override;
 };

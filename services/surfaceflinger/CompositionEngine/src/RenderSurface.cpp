@@ -66,6 +66,8 @@ RenderSurface::RenderSurface(const CompositionEngine& compositionEngine, Display
         mDisplaySurface(args.displaySurface),
         mSize(args.displayWidth, args.displayHeight),
         mMaxTextureCacheSize(args.maxTextureCacheSize) {
+    mQtiDSExtnIntf = args.mQtiDSExtnIntf;
+
     LOG_ALWAYS_FATAL_IF(!mNativeWindow);
 }
 

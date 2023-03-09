@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
+#define LOG_TAG "InputDispatcher"
+
 #include "Entry.h"
 
 #include "Connection.h"
+#include "DebugConfig.h"
 
-#include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <cutils/atomic.h>
 #include <inttypes.h>
 
-using android::base::GetBoolProperty;
 using android::base::StringPrintf;
 
 namespace android::inputdispatcher {
@@ -172,7 +173,7 @@ KeyEntry::KeyEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32_t sou
 KeyEntry::~KeyEntry() {}
 
 std::string KeyEntry::getDescription() const {
-    if (!GetBoolProperty("ro.debuggable", false)) {
+    if (!IS_DEBUGGABLE_BUILD) {
         return "KeyEvent";
     }
     return StringPrintf("KeyEvent(deviceId=%d, eventTime=%" PRIu64 ", source=%s, displayId=%" PRId32
@@ -242,7 +243,7 @@ MotionEntry::MotionEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32
 MotionEntry::~MotionEntry() {}
 
 std::string MotionEntry::getDescription() const {
-    if (!GetBoolProperty("ro.debuggable", false)) {
+    if (!IS_DEBUGGABLE_BUILD) {
         return "MotionEvent";
     }
     std::string msg;
@@ -292,7 +293,7 @@ std::string SensorEntry::getDescription() const {
                         deviceId, inputEventSourceToString(source).c_str(),
                         ftl::enum_string(sensorType).c_str(), accuracy, hwTimestamp);
 
-    if (!GetBoolProperty("ro.debuggable", false)) {
+    if (IS_DEBUGGABLE_BUILD) {
         for (size_t i = 0; i < values.size(); i++) {
             if (i > 0) {
                 msg += ", ";

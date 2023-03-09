@@ -106,6 +106,7 @@ cc_test {
         "SurfaceFlinger_DisplayTransactionCommitTest.cpp",
         "SurfaceFlinger_GetDisplayNativePrimariesTest.cpp",
         "SurfaceFlinger_HotplugTest.cpp",
+        "SurfaceFlinger_MultiDisplayLeaderTest.cpp",
         "SurfaceFlinger_NotifyPowerBoostTest.cpp",
         "SurfaceFlinger_OnInitializeDisplaysTest.cpp",
         "SurfaceFlinger_PowerHintTest.cpp",
@@ -134,6 +135,7 @@ cc_test {
         "VSyncPredictorTest.cpp",
         "VSyncReactorTest.cpp",
         "VsyncConfigurationTest.cpp",
+        "VsyncScheduleTest.cpp",
     ],
 }
 
@@ -203,7 +205,6 @@ cc_defaults {
         "libui",
         "libutils",
         "server_configurable_flags",
-        "vendor.qti.hardware.display.composer@3.0",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer",

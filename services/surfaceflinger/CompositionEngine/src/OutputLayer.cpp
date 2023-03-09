@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #include <DisplayHardware/Hal.h>
 #include <android-base/stringprintf.h>
 #include <compositionengine/DisplayColorProfile.h>
@@ -33,6 +39,11 @@
 #pragma clang diagnostic ignored "-Wconversion"
 
 #include "DisplayHardware/HWComposer.h"
+
+// QTI_BEGIN
+#include "../QtiExtension/QtiOutputExtension.h"
+using android::compositionengineextension::QtiOutputExtension;
+// QTI_END
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
@@ -593,6 +604,11 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
             // Ignored
             break;
     }
+
+    /* QTI_BEGIN */
+    QtiOutputExtension::qtiSetLayerType(hwcLayer, outputIndependentState.qtiLayerClass,
+                              getLayerFE().getDebugName());
+    /* QTI_END */
 }
 
 void OutputLayer::writeSolidColorStateToHWC(HWC2::Layer* hwcLayer,
