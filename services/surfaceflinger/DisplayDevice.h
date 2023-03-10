@@ -253,8 +253,9 @@ public:
     }
 
     // Enables an overlay to be displayed with the current refresh rate
-    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate,
+    void enableRefreshRateOverlay(bool enable, bool setByHwc, bool showSpinner, bool showRenderRate,
                                   bool showInMiddle) REQUIRES(kMainThreadContext);
+    void updateRefreshRateOverlayRate(Fps displayFps, Fps renderFps, bool setByHwc = false);
     bool isRefreshRateOverlayEnabled() const { return mRefreshRateOverlay != nullptr; }
     bool onKernelTimerChanged(std::optional<DisplayModeId>, bool timerExpired);
     void animateRefreshRateOverlay();
@@ -263,9 +264,9 @@ public:
 
     Fps getAdjustedRefreshRate() const { return mAdjustedRefreshRate; }
 
-    // Round the requested refresh rate to match a divisor of the leader
+    // Round the requested refresh rate to match a divisor of the pacesetter
     // display's refresh rate. Only supported for virtual displays.
-    void adjustRefreshRate(Fps leaderDisplayRefreshRate);
+    void adjustRefreshRate(Fps pacesetterDisplayRefreshRate);
 
     // release HWC resources (if any) for removable displays
     void disconnect();
@@ -312,7 +313,7 @@ private:
     // for virtual displays to match this requested refresh rate.
     const Fps mRequestedRefreshRate;
 
-    // Adjusted refresh rate, rounded to match a divisor of the leader
+    // Adjusted refresh rate, rounded to match a divisor of the pacesetter
     // display's refresh rate. Only supported for virtual displays.
     Fps mAdjustedRefreshRate = 0_Hz;
 
