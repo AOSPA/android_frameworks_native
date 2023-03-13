@@ -22,6 +22,7 @@
 #include <sys/types.h>
 
 #include <android/gui/IWindowInfosReportedListener.h>
+#include <android/gui/TrustedPresentationThresholds.h>
 #include <android/native_window.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/ITransactionCompletedListener.h>
@@ -56,6 +57,8 @@ class Parcel;
 using gui::ISurfaceComposerClient;
 using gui::LayerMetadata;
 
+using gui::TrustedPresentationThresholds;
+
 struct client_cache_t {
     wp<IBinder> token = nullptr;
     uint64_t id;
@@ -63,6 +66,19 @@ struct client_cache_t {
     bool operator==(const client_cache_t& other) const { return id == other.id; }
 
     bool isValid() const { return token != nullptr; }
+};
+
+class TrustedPresentationListener : public Parcelable {
+public:
+    sp<ITransactionCompletedListener> callbackInterface;
+    int callbackId = -1;
+
+    void invoke(bool presentedWithinThresholds) {
+        callbackInterface->onTrustedPresentationChanged(callbackId, presentedWithinThresholds);
+    }
+
+    status_t writeToParcel(Parcel* parcel) const;
+    status_t readFromParcel(const Parcel* parcel);
 };
 
 class BufferData : public Parcelable {
@@ -95,6 +111,7 @@ public:
     uint64_t frameNumber = 0;
     bool hasBarrier = false;
     uint64_t barrierFrameNumber = 0;
+    uint32_t producerId = 0;
 
     // Listens to when the buffer is safe to be released. This is used for blast
     // layers only. The callback includes a release fence as well as the graphic
@@ -148,13 +165,13 @@ struct layer_state_t {
     enum {
         ePositionChanged = 0x00000001,
         eLayerChanged = 0x00000002,
-        /* unused = 0x00000004, */
+        eTrustedPresentationInfoChanged = 0x00000004,
         eAlphaChanged = 0x00000008,
         eMatrixChanged = 0x00000010,
         eTransparentRegionChanged = 0x00000020,
         eFlagsChanged = 0x00000040,
         eLayerStackChanged = 0x00000080,
-        /* unused = 0x00000100, */
+        eFlushJankData = 0x00000100,
         /* unused = 0x00000200, */
         eDimmingEnabledChanged = 0x00000400,
         eShadowRadiusChanged = 0x00000800,
@@ -193,7 +210,8 @@ struct layer_state_t {
         eAutoRefreshChanged = 0x1000'00000000,
         eStretchChanged = 0x2000'00000000,
         eTrustedOverlayChanged = 0x4000'00000000,
-        eDropInputModeChanged = 0x8000'00000000
+        eDropInputModeChanged = 0x8000'00000000,
+        eExtendedRangeBrightnessChanged = 0x10000'00000000
     };
 
     layer_state_t();
@@ -224,7 +242,8 @@ struct layer_state_t {
             layer_state_t::eBufferTransformChanged | layer_state_t::eDataspaceChanged |
             layer_state_t::eSidebandStreamChanged | layer_state_t::eSurfaceDamageRegionChanged |
             layer_state_t::eTransformToDisplayInverseChanged |
-            layer_state_t::eTransparentRegionChanged;
+            layer_state_t::eTransparentRegionChanged |
+            layer_state_t::eExtendedRangeBrightnessChanged;
 
     // Content updates.
     static constexpr uint64_t CONTENT_CHANGES = layer_state_t::BUFFER_CHANGES |
@@ -232,9 +251,9 @@ struct layer_state_t {
             layer_state_t::eBackgroundBlurRadiusChanged | layer_state_t::eBackgroundColorChanged |
             layer_state_t::eBlurRegionsChanged | layer_state_t::eColorChanged |
             layer_state_t::eColorSpaceAgnosticChanged | layer_state_t::eColorTransformChanged |
-            layer_state_t::eCornerRadiusChanged | layer_state_t::eHdrMetadataChanged |
-            layer_state_t::eRenderBorderChanged | layer_state_t::eShadowRadiusChanged |
-            layer_state_t::eStretchChanged;
+            layer_state_t::eCornerRadiusChanged | layer_state_t::eDimmingEnabledChanged |
+            layer_state_t::eHdrMetadataChanged | layer_state_t::eRenderBorderChanged |
+            layer_state_t::eShadowRadiusChanged | layer_state_t::eStretchChanged;
 
     // Changes which invalidates the layer's visible region in CE.
     static constexpr uint64_t CONTENT_DIRTY = layer_state_t::CONTENT_CHANGES |
@@ -245,7 +264,17 @@ struct layer_state_t {
             layer_state_t::HIERARCHY_CHANGES | layer_state_t::eAlphaChanged |
             layer_state_t::eColorTransformChanged | layer_state_t::eCornerRadiusChanged |
             layer_state_t::eFlagsChanged | layer_state_t::eLayerStackChanged |
-            layer_state_t::eTrustedOverlayChanged;
+            layer_state_t::eTrustedOverlayChanged | layer_state_t::eFrameRateChanged |
+            layer_state_t::eFixedTransformHintChanged;
+
+    // Changes affecting data sent to input.
+    static constexpr uint64_t INPUT_CHANGES = layer_state_t::GEOMETRY_CHANGES |
+            layer_state_t::HIERARCHY_CHANGES | layer_state_t::eInputInfoChanged |
+            layer_state_t::eDropInputModeChanged | layer_state_t::eTrustedOverlayChanged;
+
+    // Changes that affect the visible region on a display.
+    static constexpr uint64_t VISIBLE_REGION_CHANGES =
+            layer_state_t::GEOMETRY_CHANGES | layer_state_t::HIERARCHY_CHANGES;
 
     bool hasValidBuffer() const;
     void sanitize(int32_t permissions);
@@ -359,6 +388,11 @@ struct layer_state_t {
     gui::DropInputMode dropInputMode;
 
     bool dimmingEnabled;
+    float currentSdrHdrRatio = 1.f;
+    float desiredSdrHdrRatio = 1.f;
+
+    TrustedPresentationThresholds trustedPresentationThresholds;
+    TrustedPresentationListener trustedPresentationListener;
 };
 
 class ComposerState {

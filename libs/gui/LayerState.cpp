@@ -185,6 +185,10 @@ status_t layer_state_t::write(Parcel& output) const
     if (hasBufferData) {
         SAFE_PARCEL(output.writeParcelable, *bufferData);
     }
+    SAFE_PARCEL(output.writeParcelable, trustedPresentationThresholds);
+    SAFE_PARCEL(output.writeParcelable, trustedPresentationListener);
+    SAFE_PARCEL(output.writeFloat, currentSdrHdrRatio);
+    SAFE_PARCEL(output.writeFloat, desiredSdrHdrRatio);
     return NO_ERROR;
 }
 
@@ -315,6 +319,15 @@ status_t layer_state_t::read(const Parcel& input)
     } else {
         bufferData = nullptr;
     }
+
+    SAFE_PARCEL(input.readParcelable, &trustedPresentationThresholds);
+    SAFE_PARCEL(input.readParcelable, &trustedPresentationListener);
+
+    SAFE_PARCEL(input.readFloat, &tmpFloat);
+    currentSdrHdrRatio = tmpFloat;
+    SAFE_PARCEL(input.readFloat, &tmpFloat);
+    desiredSdrHdrRatio = tmpFloat;
+
     return NO_ERROR;
 }
 
@@ -553,9 +566,19 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eBufferChanged;
         bufferData = other.bufferData;
     }
+    if (other.what & eTrustedPresentationInfoChanged) {
+        what |= eTrustedPresentationInfoChanged;
+        trustedPresentationListener = other.trustedPresentationListener;
+        trustedPresentationThresholds = other.trustedPresentationThresholds;
+    }
     if (other.what & eDataspaceChanged) {
         what |= eDataspaceChanged;
         dataspace = other.dataspace;
+    }
+    if (other.what & eExtendedRangeBrightnessChanged) {
+        what |= eExtendedRangeBrightnessChanged;
+        desiredSdrHdrRatio = other.desiredSdrHdrRatio;
+        currentSdrHdrRatio = other.currentSdrHdrRatio;
     }
     if (other.what & eHdrMetadataChanged) {
         what |= eHdrMetadataChanged;
@@ -661,6 +684,9 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eDimmingEnabledChanged;
         dimmingEnabled = other.dimmingEnabled;
     }
+    if (other.what & eFlushJankData) {
+        what |= eFlushJankData;
+    }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "
               "other.what=0x%" PRIX64 " what=0x%" PRIX64 " unmerged flags=0x%" PRIX64,
@@ -703,6 +729,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eCropChanged, other, crop);
     if (other.what & eBufferChanged) diff |= eBufferChanged;
     CHECK_DIFF(diff, eDataspaceChanged, other, dataspace);
+    CHECK_DIFF2(diff, eExtendedRangeBrightnessChanged, other, currentSdrHdrRatio,
+                desiredSdrHdrRatio);
     CHECK_DIFF(diff, eHdrMetadataChanged, other, hdrMetadata);
     if (other.what & eSurfaceDamageRegionChanged &&
         (!surfaceDamageRegion.hasSameRects(other.surfaceDamageRegion))) {
@@ -956,6 +984,7 @@ status_t BufferData::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(output->writeUint64, cachedBuffer.id);
     SAFE_PARCEL(output->writeBool, hasBarrier);
     SAFE_PARCEL(output->writeUint64, barrierFrameNumber);
+    SAFE_PARCEL(output->writeUint32, producerId);
 
     return NO_ERROR;
 }
@@ -994,7 +1023,24 @@ status_t BufferData::readFromParcel(const Parcel* input) {
 
     SAFE_PARCEL(input->readBool, &hasBarrier);
     SAFE_PARCEL(input->readUint64, &barrierFrameNumber);
+    SAFE_PARCEL(input->readUint32, &producerId);
 
+    return NO_ERROR;
+}
+
+status_t TrustedPresentationListener::writeToParcel(Parcel* parcel) const {
+    SAFE_PARCEL(parcel->writeStrongBinder, callbackInterface);
+    SAFE_PARCEL(parcel->writeInt32, callbackId);
+    return NO_ERROR;
+}
+
+status_t TrustedPresentationListener::readFromParcel(const Parcel* parcel) {
+    sp<IBinder> tmpBinder = nullptr;
+    SAFE_PARCEL(parcel->readNullableStrongBinder, &tmpBinder);
+    if (tmpBinder) {
+        callbackInterface = checked_interface_cast<ITransactionCompletedListener>(tmpBinder);
+    }
+    SAFE_PARCEL(parcel->readInt32, &callbackId);
     return NO_ERROR;
 }
 

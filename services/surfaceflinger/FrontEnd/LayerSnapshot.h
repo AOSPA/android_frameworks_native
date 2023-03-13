@@ -20,6 +20,7 @@
 #include <renderengine/LayerSettings.h>
 #include "LayerHierarchy.h"
 #include "RequestedLayerState.h"
+#include "Scheduler/LayerInfo.h"
 #include "android-base/stringprintf.h"
 
 namespace android::surfaceflinger::frontend {
@@ -37,6 +38,10 @@ struct RoundedCornerState {
     bool operator==(RoundedCornerState const& rhs) const {
         return cropRect == rhs.cropRect && radius == rhs.radius;
     }
+};
+
+struct ChildState {
+    bool hasValidFrameRate = false;
 };
 
 // LayerSnapshot stores Layer state used by CompositionEngine and RenderEngine. Composition
@@ -59,10 +64,10 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     bool layerOpaqueFlagSet;
     RoundedCornerState roundedCorner;
     FloatRect transformedBounds;
+    Rect transformedBoundsWithoutTransparentRegion;
     renderengine::ShadowSettings shadowSettings;
     bool premultipliedAlpha;
     bool isHdrY410;
-    bool bufferNeedsFiltering;
     ui::Transform parentTransform;
     Rect bufferSize;
     Rect croppedBufferSize;
@@ -75,6 +80,11 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     ui::Transform localTransform;
     gui::DropInputMode dropInputMode;
     bool isTrustedOverlay;
+    gui::GameMode gameMode;
+    scheduler::LayerInfo::FrameRate frameRate;
+    ui::Transform::RotationFlags fixedTransformHint;
+    bool handleSkipScreenshotFlag = false;
+    ChildState childState;
 
     static bool isOpaqueFormat(PixelFormat format);
     static bool isTransformValid(const ui::Transform& t);
@@ -91,6 +101,8 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     bool isHiddenByPolicy() const;
     std::string getDebugString() const;
     std::string getIsVisibleReason() const;
+    bool hasInputInfo() const;
+    FloatRect sourceBounds() const;
 };
 
 } // namespace android::surfaceflinger::frontend

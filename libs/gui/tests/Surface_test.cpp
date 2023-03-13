@@ -701,7 +701,7 @@ public:
                                  const sp<IBinder>& /*applyToken*/,
                                  const InputWindowCommands& /*inputWindowCommands*/,
                                  int64_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
-                                 const client_cache_t& /*cachedBuffer*/,
+                                 const std::vector<client_cache_t>& /*cachedBuffer*/,
                                  bool /*hasListenerCallbacks*/,
                                  const std::vector<ListenerCallbacks>& /*listenerCallbacks*/,
                                  uint64_t /*transactionId*/) override {
@@ -725,6 +725,7 @@ public:
 
     binder::Status createDisplayEventConnection(
             VsyncSource /*vsyncSource*/, EventRegistration /*eventRegistration*/,
+            const sp<IBinder>& /*layerHandle*/,
             sp<gui::IDisplayEventConnection>* outConnection) override {
         *outConnection = nullptr;
         return binder::Status::ok();
@@ -736,6 +737,7 @@ public:
     }
 
     binder::Status createDisplay(const std::string& /*displayName*/, bool /*secure*/,
+                                 float /*requestedRefreshRate*/,
                                  sp<IBinder>* /*outDisplay*/) override {
         return binder::Status::ok();
     }

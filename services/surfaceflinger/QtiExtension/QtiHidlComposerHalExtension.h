@@ -3,16 +3,10 @@
  */
 #pragma once
 
-#include "../DisplayHardware/ComposerHal.h"
 #include "../DisplayHardware/HidlComposerHal.h"
+#include "QtiComposerHalExtensionIntf.h"
 
 namespace android {
-
-namespace types = hardware::graphics::common;
-namespace V2_1 = hardware::graphics::composer::V2_1;
-
-using Hwc2::Error;
-using V2_1::Display;
 
 namespace Hwc2 {
 class HidlComposer;
@@ -20,11 +14,24 @@ class HidlComposer;
 
 namespace surfaceflingerextension {
 
-class QtiHidlComposerHalExtension {
+class QtiHidlComposerHalExtension : public QtiComposerHalExtension {
 public:
-    QtiHidlComposerHalExtension(Hwc2::HidlComposer* composerHal);
+    QtiHidlComposerHalExtension(Hwc2::Composer* composerHal);
 
-    Error qtiSetDisplayElapseTime(Display display, uint64_t timeStamp);
+    Error qtiSetDisplayElapseTime(Display display, uint64_t timeStamp) override;
+    Error qtiSetLayerType(Display display, V2_1_Layer layer, uint32_t type) { return Error::NONE; }
+
+    Error qtiTryDrawMethod(Display display, IQtiComposerClient::DrawMethod drawMethod) {
+        return Error::NONE;
+    }
+    Error qtiSetClientTarget_3_1(Display display, int32_t slot, int acquireFence,
+                                 ui::Dataspace dataspace) {
+        return Error::NONE;
+    }
+    Error qtiSetLayerFlag(Display display, V2_1_Layer layer,
+                          IQtiComposerClient::LayerFlag layerFlag) {
+        return Error::NONE;
+    }
 
 private:
     Hwc2::HidlComposer* mQtiHidlComposer = nullptr;

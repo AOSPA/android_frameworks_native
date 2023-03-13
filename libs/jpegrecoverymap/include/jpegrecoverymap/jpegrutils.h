@@ -14,17 +14,31 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_JPEGRECOVERYMAP_RECOVERYMAPUTILS_H
-#define ANDROID_JPEGRECOVERYMAP_RECOVERYMAPUTILS_H
+#ifndef ANDROID_JPEGRECOVERYMAP_JPEGRUTILS_H
+#define ANDROID_JPEGRECOVERYMAP_JPEGRUTILS_H
+
+#include <jpegrecoverymap/jpegr.h>
 
 #include <sstream>
 #include <stdint.h>
 #include <string>
 #include <cstdio>
 
-namespace android::recoverymap {
+namespace android::jpegrecoverymap {
 
 struct jpegr_metadata;
+
+/*
+ * Helper function used for writing data to destination.
+ *
+ * @param destination destination of the data to be written.
+ * @param source source of data being written.
+ * @param length length of the data to be written.
+ * @param position cursor in desitination where the data is to be written.
+ * @return status of succeed or error code.
+ */
+status_t Write(jr_compressed_ptr destination, const void* source, size_t length, int &position);
+
 
 /*
  * Parses XMP packet and fills metadata with data from XMP
@@ -41,7 +55,7 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  *
  * below is an example of the XMP metadata that this function generates where
  * secondary_image_length = 1000
- * range_scaling_factor = 1.25
+ * max_content_boost = 8.0
  *
  * <x:xmpmeta
  *   xmlns:x="adobe:ns:meta/"
@@ -49,31 +63,26 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  *   <rdf:RDF
  *     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
  *     <rdf:Description
- *       xmlns:GContainer="http://ns.google.com/photos/1.0/container/"
+ *       xmlns:Container="http://ns.google.com/photos/1.0/container/"
+ *       xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
  *       xmlns:RecoveryMap="http://ns.google.com/photos/1.0/recoverymap/">
- *       <GContainer:Version>1</GContainer:Version>
- *       <GContainer:Directory>
+ *       <Container:Directory>
  *         <rdf:Seq>
  *           <rdf:li>
- *             <GContainer:Item
- *               Item:Semantic="Primary"
- *               Item:Mime="image/jpeg"
- *               RecoveryMap:Version=”1”
- *               RecoveryMap:RangeScalingFactor=”1.25”
- *               RecoveryMap:TransferFunction=”2”/>
- *               <RecoveryMap:HDR10Metadata
- *                 // some attributes
- *                 // some elements
- *               </RecoveryMap:HDR10Metadata>
+ *             <Container:Item
+ *              Item:Semantic="Primary"
+ *              Item:Mime="image/jpeg"
+ *              RecoveryMap:Version="1"
+ *              RecoveryMap:MaxContentBoost="8.0"/>
  *           </rdf:li>
  *           <rdf:li>
- *             <GContainer:Item
+ *             <Container:Item
  *               Item:Semantic="RecoveryMap"
  *               Item:Mime="image/jpeg"
  *               Item:Length="1000"/>
  *           </rdf:li>
  *         </rdf:Seq>
- *       </GContainer:Directory>
+ *       </Container:Directory>
  *     </rdf:Description>
  *   </rdf:RDF>
  * </x:xmpmeta>
@@ -83,6 +92,6 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  * @return XMP metadata in type of string
  */
 std::string generateXmp(int secondary_image_length, jpegr_metadata& metadata);
-}
+}  // namespace android::jpegrecoverymap
 
-#endif //ANDROID_JPEGRECOVERYMAP_RECOVERYMAPUTILS_H
+#endif //ANDROID_JPEGRECOVERYMAP_JPEGRUTILS_H

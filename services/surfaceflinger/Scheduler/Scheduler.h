@@ -36,17 +36,20 @@
 #include <ftl/optional.h>
 #include <scheduler/Features.h>
 #include <scheduler/Time.h>
+#include <scheduler/VsyncConfig.h>
 #include <ui/DisplayId.h>
 
 #include "Display/DisplayMap.h"
 #include "Display/DisplayModeRequest.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
+#include "ISchedulerCallback.h"
 #include "LayerHistory.h"
 #include "MessageQueue.h"
 #include "OneShotTimer.h"
 #include "RefreshRateSelector.h"
 #include "Utils/Dumper.h"
+#include "VsyncModulator.h"
 #include "VsyncSchedule.h"
 
 namespace android::scheduler {
@@ -90,21 +93,11 @@ namespace scheduler {
 
 using GlobalSignals = RefreshRateSelector::GlobalSignals;
 
-struct ISchedulerCallback {
-    virtual void setVsyncEnabled(bool) = 0;
-    virtual void requestDisplayModes(std::vector<display::DisplayModeRequest>) = 0;
-    virtual void kernelTimerChanged(bool expired) = 0;
-    virtual void triggerOnFrameRateOverridesChanged() = 0;
-
-protected:
-    ~ISchedulerCallback() = default;
-};
-
 class Scheduler : android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
 public:
-    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags);
+    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>);
     virtual ~Scheduler();
 
     void startTimers();
@@ -139,12 +132,25 @@ public:
         return std::move(future);
     }
 
-    ConnectionHandle createConnection(const char* connectionName, frametimeline::TokenManager*,
-                                      std::chrono::nanoseconds workDuration,
-                                      std::chrono::nanoseconds readyDuration);
+    template <typename F, typename T = std::invoke_result_t<F>>
+    [[nodiscard]] std::future<T> scheduleDelayed(F&& f, nsecs_t uptimeDelay) {
+        auto [task, future] = makeTask(std::move(f));
+        postMessageDelayed(std::move(task), uptimeDelay);
+        return std::move(future);
+    }
+
+    enum class Cycle {
+        Render,       // Surface rendering.
+        LastComposite // Ahead of display compositing by one refresh period.
+    };
+
+    ConnectionHandle createEventThread(Cycle, frametimeline::TokenManager*,
+                                       std::chrono::nanoseconds workDuration,
+                                       std::chrono::nanoseconds readyDuration);
 
     sp<IDisplayEventConnection> createDisplayEventConnection(
-            ConnectionHandle, EventRegistrationFlags eventRegistration = {});
+            ConnectionHandle, EventRegistrationFlags eventRegistration = {},
+            const sp<IBinder>& layerHandle = nullptr);
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -161,24 +167,36 @@ public:
     void setDuration(ConnectionHandle, std::chrono::nanoseconds workDuration,
                      std::chrono::nanoseconds readyDuration);
 
+    const VsyncModulator& vsyncModulator() const { return *mVsyncModulator; }
+
+    template <typename... Args,
+              typename Handler = std::optional<VsyncConfig> (VsyncModulator::*)(Args...)>
+    void modulateVsync(Handler handler, Args... args) {
+        if (const auto config = (*mVsyncModulator.*handler)(args...)) {
+            setVsyncConfig(*config, getLeaderVsyncPeriod());
+        }
+    }
+
+    void setVsyncConfigSet(const VsyncConfigSet&, Period vsyncPeriod);
+
     // Sets the render rate for the scheduler to run at.
     void setRenderRate(Fps);
 
     void enableHardwareVsync();
-    void disableHardwareVsync(bool makeUnavailable);
+    void disableHardwareVsync(bool disallow);
 
     // Resyncs the scheduler to hardware vsync.
-    // If makeAvailable is true, then hardware vsync will be turned on.
+    // If allowToEnable is true, then hardware vsync will be turned on.
     // Otherwise, if hardware vsync is not already enabled then this method will
     // no-op.
-    void resyncToHardwareVsync(bool makeAvailable, Fps refreshRate);
+    void resyncToHardwareVsync(bool allowToEnable, Fps refreshRate);
     void resync() EXCLUDES(mDisplayLock);
     void forceNextResync() { mLastResyncTime = 0; }
 
-    // Passes a vsync sample to VsyncController. periodFlushed will be true if
-    // VsyncController detected that the vsync period changed, and false otherwise.
-    void addResyncSample(nsecs_t timestamp, std::optional<nsecs_t> hwcVsyncPeriod,
-                         bool* periodFlushed);
+    // Passes a vsync sample to VsyncController. Returns true if
+    // VsyncController detected that the vsync period changed and false
+    // otherwise.
+    bool addResyncSample(nsecs_t timestamp, std::optional<nsecs_t> hwcVsyncPeriod);
     void addPresentFence(std::shared_ptr<FenceTime>);
 
     // Layers are registered on creation, and unregistered when the weak reference expires.
@@ -204,6 +222,9 @@ public:
     // Returns true if a given vsync timestamp is considered valid vsync
     // for a given uid
     bool isVsyncValid(TimePoint expectedVsyncTimestamp, uid_t uid) const;
+
+    // Checks if a vsync timestamp is in phase for a frame rate
+    bool isVsyncInPhase(TimePoint timePoint, const Fps frameRate) const;
 
     void dump(utils::Dumper&) const;
     void dump(ConnectionHandle, std::string&) const;
@@ -232,8 +253,12 @@ public:
     // Retrieves the overridden refresh rate for a given uid.
     std::optional<Fps> getFrameRateOverride(uid_t) const EXCLUDES(mDisplayLock);
 
-    nsecs_t getLeaderVsyncPeriod() const EXCLUDES(mDisplayLock) {
-        return leaderSelectorPtr()->getActiveMode().fps.getPeriodNsecs();
+    Period getLeaderVsyncPeriod() const EXCLUDES(mDisplayLock) {
+        return leaderSelectorPtr()->getActiveMode().fps.getPeriod();
+    }
+
+    Fps getLeaderRefreshRate() const EXCLUDES(mDisplayLock) {
+        return leaderSelectorPtr()->getActiveMode().fps;
     }
 
     // Returns the framerate of the layer with the given sequence ID
@@ -254,7 +279,8 @@ private:
     // Create a connection on the given EventThread.
     ConnectionHandle createConnection(std::unique_ptr<EventThread>);
     sp<EventThreadConnection> createConnectionInternal(
-            EventThread*, EventRegistrationFlags eventRegistration = {});
+            EventThread*, EventRegistrationFlags eventRegistration = {},
+            const sp<IBinder>& layerHandle = nullptr);
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState) EXCLUDES(mDisplayLock);
@@ -262,7 +288,7 @@ private:
     void touchTimerCallback(TimerState);
     void displayPowerTimerCallback(TimerState);
 
-    void setVsyncPeriod(nsecs_t period);
+    void setVsyncConfig(const VsyncConfig&, Period vsyncPeriod);
 
     // Chooses a leader among the registered displays, unless `leaderIdOpt` is specified. The new
     // `mLeaderDisplayId` is never `std::nullopt`.
@@ -323,14 +349,16 @@ private:
     mutable std::mutex mConnectionsLock;
     std::unordered_map<ConnectionHandle, Connection> mConnections GUARDED_BY(mConnectionsLock);
 
-    mutable std::mutex mHWVsyncLock;
-    bool mPrimaryHWVsyncEnabled GUARDED_BY(mHWVsyncLock) = false;
-    bool mHWVsyncAvailable GUARDED_BY(mHWVsyncLock) = false;
+    ConnectionHandle mAppConnectionHandle;
+    ConnectionHandle mSfConnectionHandle;
 
     std::atomic<nsecs_t> mLastResyncTime = 0;
 
     const FeatureFlags mFeatures;
-    std::optional<VsyncSchedule> mVsyncSchedule;
+    std::unique_ptr<VsyncSchedule> mVsyncSchedule;
+
+    // Shifts the VSYNC phase during certain transactions and refresh rate changes.
+    const sp<VsyncModulator> mVsyncModulator;
 
     // Used to choose refresh rate if content detection is enabled.
     LayerHistory mLayerHistory;
@@ -397,9 +425,6 @@ private:
     static constexpr std::chrono::nanoseconds MAX_VSYNC_APPLIED_TIME = 200ms;
 
     FrameRateOverrideMappings mFrameRateOverrideMappings;
-
-    // Keeps track of whether the screen is acquired for debug
-    std::atomic<bool> mScreenAcquired = false;
 };
 
 } // namespace scheduler

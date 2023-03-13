@@ -76,7 +76,7 @@ private:
 
     FuzzedDataProvider mFdp;
 
-    std::optional<scheduler::VsyncSchedule> mVsyncSchedule;
+    std::unique_ptr<scheduler::VsyncSchedule> mVsyncSchedule;
 };
 
 PhysicalDisplayId SchedulerFuzzer::getPhysicalDisplayId() {
@@ -90,9 +90,9 @@ PhysicalDisplayId SchedulerFuzzer::getPhysicalDisplayId() {
 }
 
 void SchedulerFuzzer::fuzzEventThread() {
-    mVsyncSchedule.emplace(scheduler::VsyncSchedule(std::make_unique<mock::VSyncTracker>(),
-                                                    std::make_unique<mock::VSyncDispatch>(),
-                                                    nullptr));
+    mVsyncSchedule = std::unique_ptr<scheduler::VsyncSchedule>(
+            new scheduler::VsyncSchedule(std::make_unique<mock::VSyncTracker>(),
+                                         std::make_unique<mock::VSyncDispatch>(), nullptr));
     const auto getVsyncPeriod = [](uid_t /* uid */) { return kSyncPeriod.count(); };
     std::unique_ptr<android::impl::EventThread> thread = std::make_unique<
             android::impl::EventThread>("fuzzer", *mVsyncSchedule, nullptr, nullptr, getVsyncPeriod,
@@ -280,17 +280,14 @@ void SchedulerFuzzer::fuzzVSyncModulator() {
     };
     using Schedule = scheduler::TransactionSchedule;
     using nanos = std::chrono::nanoseconds;
-    using VsyncModulator = scheduler::VsyncModulator;
     using FuzzImplVsyncModulator = scheduler::FuzzImplVsyncModulator;
-    const VsyncModulator::VsyncConfig early{SF_OFFSET_EARLY, APP_OFFSET_EARLY,
-                                            nanos(SF_DURATION_LATE), nanos(APP_DURATION_LATE)};
-    const VsyncModulator::VsyncConfig earlyGpu{SF_OFFSET_EARLY_GPU, APP_OFFSET_EARLY_GPU,
-                                               nanos(SF_DURATION_EARLY), nanos(APP_DURATION_EARLY)};
-    const VsyncModulator::VsyncConfig late{SF_OFFSET_LATE, APP_OFFSET_LATE,
-                                           nanos(SF_DURATION_EARLY_GPU),
-                                           nanos(APP_DURATION_EARLY_GPU)};
-    const VsyncModulator::VsyncConfigSet offsets = {early, earlyGpu, late,
-                                                    nanos(HWC_MIN_WORK_DURATION)};
+    const scheduler::VsyncConfig early{SF_OFFSET_EARLY, APP_OFFSET_EARLY, nanos(SF_DURATION_LATE),
+                                       nanos(APP_DURATION_LATE)};
+    const scheduler::VsyncConfig earlyGpu{SF_OFFSET_EARLY_GPU, APP_OFFSET_EARLY_GPU,
+                                          nanos(SF_DURATION_EARLY), nanos(APP_DURATION_EARLY)};
+    const scheduler::VsyncConfig late{SF_OFFSET_LATE, APP_OFFSET_LATE, nanos(SF_DURATION_EARLY_GPU),
+                                      nanos(APP_DURATION_EARLY_GPU)};
+    const scheduler::VsyncConfigSet offsets = {early, earlyGpu, late, nanos(HWC_MIN_WORK_DURATION)};
     sp<FuzzImplVsyncModulator> vSyncModulator =
             sp<FuzzImplVsyncModulator>::make(offsets, scheduler::Now);
     (void)vSyncModulator->setVsyncConfigSet(offsets);

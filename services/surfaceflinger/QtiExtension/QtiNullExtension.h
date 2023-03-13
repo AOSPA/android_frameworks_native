@@ -3,7 +3,7 @@
  */
 #pragma once
 
-#include "../SurfaceFlinger.h"
+#include <SurfaceFlinger.h>
 #include "QtiSurfaceFlingerExtensionIntf.h"
 
 namespace android {

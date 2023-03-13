@@ -33,8 +33,15 @@ enum class Tag : uint32_t {
     ON_TRANSACTION_COMPLETED = IBinder::FIRST_CALL_TRANSACTION,
     ON_RELEASE_BUFFER,
     ON_TRANSACTION_QUEUE_STALLED,
-    LAST = ON_TRANSACTION_QUEUE_STALLED,
+    ON_TRUSTED_PRESENTATION_CHANGED,
+    LAST = ON_TRUSTED_PRESENTATION_CHANGED,
 };
+
+} // Anonymous namespace
+
+namespace { // Anonymous
+
+constexpr int32_t kSerializedCallbackTypeOnCompelteWithJankData = 2;
 
 } // Anonymous namespace
 
@@ -302,6 +309,11 @@ public:
                                  onTransactionQueueStalled)>(Tag::ON_TRANSACTION_QUEUE_STALLED,
                                                              reason);
     }
+
+    void onTrustedPresentationChanged(int id, bool inTrustedPresentationState) override {
+        callRemoteAsync<decltype(&ITransactionCompletedListener::onTrustedPresentationChanged)>(
+                Tag::ON_TRUSTED_PRESENTATION_CHANGED, id, inTrustedPresentationState);
+    }
 };
 
 // Out-of-line virtual method definitions to trigger vtable emission in this translation unit (see
@@ -325,6 +337,9 @@ status_t BnTransactionCompletedListener::onTransact(uint32_t code, const Parcel&
         case Tag::ON_TRANSACTION_QUEUE_STALLED:
             return callLocalAsync(data, reply,
                                   &ITransactionCompletedListener::onTransactionQueueStalled);
+        case Tag::ON_TRUSTED_PRESENTATION_CHANGED:
+            return callLocalAsync(data, reply,
+                                  &ITransactionCompletedListener::onTrustedPresentationChanged);
     }
 }
 
@@ -340,7 +355,11 @@ ListenerCallbacks ListenerCallbacks::filter(CallbackId::Type type) const {
 
 status_t CallbackId::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(output->writeInt64, id);
-    SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(type));
+    if (type == Type::ON_COMPLETE && includeJankData) {
+        SAFE_PARCEL(output->writeInt32, kSerializedCallbackTypeOnCompelteWithJankData);
+    } else {
+        SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(type));
+    }
     return NO_ERROR;
 }
 
@@ -348,7 +367,13 @@ status_t CallbackId::readFromParcel(const Parcel* input) {
     SAFE_PARCEL(input->readInt64, &id);
     int32_t typeAsInt;
     SAFE_PARCEL(input->readInt32, &typeAsInt);
-    type = static_cast<CallbackId::Type>(typeAsInt);
+    if (typeAsInt == kSerializedCallbackTypeOnCompelteWithJankData) {
+        type = Type::ON_COMPLETE;
+        includeJankData = true;
+    } else {
+        type = static_cast<CallbackId::Type>(typeAsInt);
+        includeJankData = false;
+    }
     return NO_ERROR;
 }
 

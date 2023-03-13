@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2022 The Android Open Source Project
  *
@@ -15,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_JPEGRECOVERYMAP_JPEGDECODER_H
-#define ANDROID_JPEGRECOVERYMAP_JPEGDECODER_H
+#ifndef ANDROID_JPEGRECOVERYMAP_JPEGDECODERHELPER_H
+#define ANDROID_JPEGRECOVERYMAP_JPEGDECODERHELPER_H
 
 // We must include cstdio before jpeglib.h. It is a requirement of libjpeg.
 #include <cstdio>
@@ -26,15 +25,15 @@ extern "C" {
 }
 #include <utils/Errors.h>
 #include <vector>
-namespace android::recoverymap {
+namespace android::jpegrecoverymap {
 /*
  * Encapsulates a converter from JPEG to raw image (YUV420planer or grey-scale) format.
  * This class is not thread-safe.
  */
-class JpegDecoder {
+class JpegDecoderHelper {
 public:
-    JpegDecoder();
-    ~JpegDecoder();
+    JpegDecoderHelper();
+    ~JpegDecoderHelper();
     /*
      * Decompresses JPEG image to raw image (YUV420planer, grey-scale or RGBA) format. After
      * calling this method, call getDecompressedImage() to get the image.
@@ -47,7 +46,7 @@ public:
      */
     void* getDecompressedImagePtr();
     /*
-     * Returns the decompressed raw image buffer size. This mgit ethod must be called only after
+     * Returns the decompressed raw image buffer size. This method must be called only after
      * calling decompressImage().
      */
     size_t getDecompressedImageSize();
@@ -92,10 +91,6 @@ public:
                                       size_t* pWidth, size_t* pHeight,
                                       std::vector<uint8_t>* iccData,
                                       std::vector<uint8_t>* exifData);
-    /*
-     * Extracts EXIF package and updates the EXIF position / length without decoding the image.
-     */
-    bool extractEXIF(const void* image, int length);
 
 private:
     bool decode(const void* image, int length, bool decodeToRGBA);
@@ -120,6 +115,6 @@ private:
     // Position of EXIF package, default value is -1 which means no EXIF package appears.
     size_t mExifPos;
 };
-} /* namespace android  */
+} /* namespace android::jpegrecoverymap  */
 
-#endif // ANDROID_JPEGRECOVERYMAP_JPEGDECODER_H
+#endif // ANDROID_JPEGRECOVERYMAP_JPEGDECODERHELPER_H

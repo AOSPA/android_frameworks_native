@@ -25,12 +25,12 @@ cc_test {
     name: "libjpegrecoverymap_test",
     test_suites: ["device-tests"],
     srcs: [
-        "recoverymap_test.cpp",
+        "jpegr_test.cpp",
         "recoverymapmath_test.cpp",
     ],
     shared_libs: [
-        "libjpeg",
         "libimage_io",
+        "libjpeg",
         "liblog",
     ],
     static_libs: [
@@ -39,37 +39,38 @@ cc_test {
         "libjpegdecoder",
         "libjpegencoder",
         "libjpegrecoverymap",
+        "libskia",
     ],
 }
 
 cc_test {
-    name: "libjpegencoder_test",
+    name: "libjpegencoderhelper_test",
     test_suites: ["device-tests"],
     srcs: [
-        "jpegencoder_test.cpp",
+        "jpegencoderhelper_test.cpp",
     ],
     shared_libs: [
         "libjpeg",
         "liblog",
     ],
     static_libs: [
+        "libgtest",
         "libjpegencoder",
-        "libgtest",
     ],
 }
 
 cc_test {
-    name: "libjpegdecoder_test",
+    name: "libjpegdecoderhelper_test",
     test_suites: ["device-tests"],
     srcs: [
-        "jpegdecoder_test.cpp",
+        "jpegdecoderhelper_test.cpp",
     ],
     shared_libs: [
         "libjpeg",
         "liblog",
     ],
     static_libs: [
-        "libjpegdecoder",
         "libgtest",
+        "libjpegdecoder",
     ],
 }

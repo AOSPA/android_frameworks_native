@@ -113,6 +113,10 @@ TEST_P(BinderRpc, TransactionsMustBeMarkedRpc) {
 }
 
 TEST_P(BinderRpc, AppendSeparateFormats) {
+    if (socketType() == SocketType::TIPC) {
+        GTEST_SKIP() << "Trusty does not support multiple server processes";
+    }
+
     auto proc1 = createRpcTestSocketServerProcess({});
     auto proc2 = createRpcTestSocketServerProcess({});
 
@@ -155,7 +159,9 @@ TEST_P(BinderRpc, SendAndGetResultBack) {
 
 TEST_P(BinderRpc, SendAndGetResultBackBig) {
     auto proc = createRpcTestSocketServerProcess({});
-    std::string single = std::string(1024, 'a');
+    // Trusty has a limit of 4096 bytes for the entire RPC Binder message
+    size_t singleLen = socketType() == SocketType::TIPC ? 512 : 4096;
+    std::string single = std::string(singleLen, 'a');
     std::string doubled;
     EXPECT_OK(proc.rootIface->doubleString(single, &doubled));
     EXPECT_EQ(single + single, doubled);
@@ -259,6 +265,10 @@ TEST_P(BinderRpc, HoldBinder) {
 // aren't supported.
 
 TEST_P(BinderRpc, CannotMixBindersBetweenUnrelatedSocketSessions) {
+    if (socketType() == SocketType::TIPC) {
+        GTEST_SKIP() << "Trusty does not support multiple server processes";
+    }
+
     auto proc1 = createRpcTestSocketServerProcess({});
     auto proc2 = createRpcTestSocketServerProcess({});
 
@@ -319,12 +329,16 @@ TEST_P(BinderRpc, RepeatRootObject) {
 }
 
 TEST_P(BinderRpc, NestedTransactions) {
+    auto fileDescriptorTransportMode = RpcSession::FileDescriptorTransportMode::UNIX;
+    if (socketType() == SocketType::TIPC) {
+        // TIPC does not support file descriptors yet
+        fileDescriptorTransportMode = RpcSession::FileDescriptorTransportMode::NONE;
+    }
     auto proc = createRpcTestSocketServerProcess({
             // Enable FD support because it uses more stack space and so represents
             // something closer to a worst case scenario.
-            .clientFileDescriptorTransportMode = RpcSession::FileDescriptorTransportMode::UNIX,
-            .serverSupportedFileDescriptorTransportModes =
-                    {RpcSession::FileDescriptorTransportMode::UNIX},
+            .clientFileDescriptorTransportMode = fileDescriptorTransportMode,
+            .serverSupportedFileDescriptorTransportModes = {fileDescriptorTransportMode},
     });
 
     auto nastyNester = sp<MyBinderRpcTestDefault>::make();
@@ -372,11 +386,11 @@ TEST_P(BinderRpc, SameBinderEqualityWeak) {
     EXPECT_EQ(b, weak.promote());
 }
 
-#define expectSessions(expected, iface)                   \
+#define EXPECT_SESSIONS(expected, iface)                  \
     do {                                                  \
         int session;                                      \
         EXPECT_OK((iface)->getNumOpenSessions(&session)); \
-        EXPECT_EQ(expected, session);                     \
+        EXPECT_EQ(static_cast<int>(expected), session);   \
     } while (false)
 
 TEST_P(BinderRpc, SingleSession) {
@@ -388,9 +402,9 @@ TEST_P(BinderRpc, SingleSession) {
     EXPECT_OK(session->getName(&out));
     EXPECT_EQ("aoeu", out);
 
-    expectSessions(1, proc.rootIface);
+    EXPECT_SESSIONS(1, proc.rootIface);
     session = nullptr;
-    expectSessions(0, proc.rootIface);
+    EXPECT_SESSIONS(0, proc.rootIface);
 }
 
 TEST_P(BinderRpc, ManySessions) {
@@ -399,24 +413,24 @@ TEST_P(BinderRpc, ManySessions) {
     std::vector<sp<IBinderRpcSession>> sessions;
 
     for (size_t i = 0; i < 15; i++) {
-        expectSessions(i, proc.rootIface);
+        EXPECT_SESSIONS(i, proc.rootIface);
         sp<IBinderRpcSession> session;
         EXPECT_OK(proc.rootIface->openSession(std::to_string(i), &session));
         sessions.push_back(session);
     }
-    expectSessions(sessions.size(), proc.rootIface);
+    EXPECT_SESSIONS(sessions.size(), proc.rootIface);
     for (size_t i = 0; i < sessions.size(); i++) {
         std::string out;
         EXPECT_OK(sessions.at(i)->getName(&out));
         EXPECT_EQ(std::to_string(i), out);
     }
-    expectSessions(sessions.size(), proc.rootIface);
+    EXPECT_SESSIONS(sessions.size(), proc.rootIface);
 
     while (!sessions.empty()) {
         sessions.pop_back();
-        expectSessions(sessions.size(), proc.rootIface);
+        EXPECT_SESSIONS(sessions.size(), proc.rootIface);
     }
-    expectSessions(0, proc.rootIface);
+    EXPECT_SESSIONS(0, proc.rootIface);
 }
 
 TEST_P(BinderRpc, OnewayCallDoesNotWait) {
@@ -469,7 +483,7 @@ TEST_P(BinderRpc, Callbacks) {
                     cb->mCv.wait_for(_l, 1s, [&] { return !cb->mValues.empty(); });
                 }
 
-                EXPECT_EQ(cb->mValues.size(), 1)
+                EXPECT_EQ(cb->mValues.size(), 1UL)
                         << "callIsOneway: " << callIsOneway
                         << " callbackIsOneway: " << callbackIsOneway << " delayed: " << delayed;
                 if (cb->mValues.empty()) continue;

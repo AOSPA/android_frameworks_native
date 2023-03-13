@@ -74,9 +74,11 @@ cc_defaults {
     name: "libbinder_common_defaults",
     host_supported: true,
 
+    // for vndbinder and binderRpcTest
+    vendor_available: true,
+
     srcs: [
         "Binder.cpp",
-        "BinderRecordReplay.cpp",
         "BpBinder.cpp",
         "Debug.cpp",
         "FdTrigger.cpp",
@@ -84,6 +86,7 @@ cc_defaults {
         "IResultReceiver.cpp",
         "Parcel.cpp",
         "ParcelFileDescriptor.cpp",
+        "RecordedTransaction.cpp",
         "RpcSession.cpp",
         "RpcServer.cpp",
         "RpcState.cpp",
@@ -197,6 +200,7 @@ cc_defaults {
 
 cc_library_headers {
     name: "trusty_mock_headers",
+    vendor_available: true,
     host_supported: true,
 
     export_include_dirs: [
@@ -211,6 +215,8 @@ cc_library_headers {
 
 cc_defaults {
     name: "trusty_mock_defaults",
+    vendor_available: true,
+    host_supported: true,
 
     header_libs: [
         "trusty_mock_headers",
@@ -283,6 +289,14 @@ cc_defaults {
     cflags: [
         "-DBINDER_WITH_KERNEL_IPC",
     ],
+    arch: {
+        // TODO(b/254713216): undefined symbol in BufferedTextOutput::getBuffer
+        riscv64: {
+            lto: {
+                thin: false,
+            },
+        },
+    },
 }
 
 cc_library {
@@ -295,8 +309,6 @@ cc_library {
 
     version_script: "libbinder.map",
 
-    // for vndbinder
-    vendor_available: true,
     vndk: {
         enabled: true,
     },
@@ -455,6 +467,7 @@ cc_library_shared {
 cc_library_static {
     name: "libbinder_tls_static",
     defaults: ["libbinder_tls_defaults"],
+    vendor_available: true,
     visibility: [
         ":__subpackages__",
     ],
@@ -505,6 +518,10 @@ aidl_interface {
             enabled: false,
         },
     },
+    visibility: [
+        ":__subpackages__",
+        "//system/tools/aidl:__subpackages__",
+    ],
 }
 
 // TODO(b/184872979): remove once the Rust API is created.

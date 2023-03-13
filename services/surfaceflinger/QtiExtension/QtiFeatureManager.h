@@ -1,6 +1,8 @@
 /* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
+#pragma once
+
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
 #include <android/binder_manager.h>

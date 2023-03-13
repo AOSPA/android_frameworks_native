@@ -58,6 +58,7 @@ class HdrCapabilities;
 class IGraphicBufferProducer;
 class ITunnelModeEnabledListener;
 class Region;
+class TransactionCompletedListener;
 
 using gui::DisplayCaptureArgs;
 using gui::IRegionSamplingListener;
@@ -105,6 +106,8 @@ using SurfaceStatsCallback =
         std::function<void(void* /*context*/, nsecs_t /*latchTime*/,
                            const sp<Fence>& /*presentFence*/,
                            const SurfaceStats& /*stats*/)>;
+
+using TrustedPresentationCallback = std::function<void(void*, bool)>;
 
 // ---------------------------------------------------------------------------
 
@@ -191,6 +194,8 @@ public:
     static status_t getHdrConversionCapabilities(std::vector<gui::HdrConversionCapability>*);
     // Sets the HDR conversion strategy for the device
     static status_t setHdrConversionStrategy(gui::HdrConversionStrategy hdrConversionStrategy);
+    // Returns whether HDR conversion is supported by the device.
+    static status_t getHdrOutputConversionSupport(bool* isSupported);
 
     // Sets the frame rate of a particular app (uid). This is currently called
     // by GameManager.
@@ -352,7 +357,8 @@ public:
     sp<SurfaceControl> mirrorDisplay(DisplayId displayId);
 
     //! Create a virtual display
-    static sp<IBinder> createDisplay(const String8& displayName, bool secure);
+    static sp<IBinder> createDisplay(const String8& displayName, bool secure,
+                                     float requestedRefereshRate = 0);
 
     //! Destroy a virtual display
     static void destroyDisplay(const sp<IBinder>& display);
@@ -390,6 +396,13 @@ public:
         std::unordered_set<sp<SurfaceControl>, SCHash> surfaceControls;
     };
 
+    struct PresentationCallbackRAII : public RefBase {
+        sp<TransactionCompletedListener> mTcl;
+        int mId;
+        PresentationCallbackRAII(TransactionCompletedListener* tcl, int id);
+        virtual ~PresentationCallbackRAII();
+    };
+
     class Transaction : public Parcelable {
     private:
         static sp<IBinder> sApplyToken;
@@ -402,6 +415,7 @@ public:
         SortedVector<DisplayState> mDisplayStates;
         std::unordered_map<sp<ITransactionCompletedListener>, CallbackInfo, TCLHash>
                 mListenerCallbacks;
+        std::vector<client_cache_t> mUncacheBuffers;
 
         uint64_t mId;
 
@@ -524,7 +538,7 @@ public:
         Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
                                const std::optional<sp<Fence>>& fence = std::nullopt,
                                const std::optional<uint64_t>& frameNumber = std::nullopt,
-                               ReleaseBufferCallback callback = nullptr);
+                               uint32_t producerId = 0, ReleaseBufferCallback callback = nullptr);
         std::shared_ptr<BufferData> getAndClearBuffer(const sp<SurfaceControl>& sc);
 
         /**
@@ -548,6 +562,8 @@ public:
         Transaction& setBufferHasBarrier(const sp<SurfaceControl>& sc,
                                          uint64_t barrierFrameNumber);
         Transaction& setDataspace(const sp<SurfaceControl>& sc, ui::Dataspace dataspace);
+        Transaction& setExtendedRangeBrightness(const sp<SurfaceControl>& sc,
+                                                float currentBufferRatio, float desiredRatio);
         Transaction& setHdrMetadata(const sp<SurfaceControl>& sc, const HdrMetadata& hdrMetadata);
         Transaction& setSurfaceDamageRegion(const sp<SurfaceControl>& sc,
                                             const Region& surfaceDamageRegion);
@@ -568,6 +584,59 @@ public:
 
         Transaction& addTransactionCommittedCallback(
                 TransactionCompletedCallbackTakesContext callback, void* callbackContext);
+
+        /**
+         * Set a callback to receive feedback about the presentation of a layer.
+         * When the layer is presented according to the passed in Thresholds,
+         * it is said to "enter the state", and receives the callback with true.
+         * When the conditions fall out of thresholds, it is then said to leave the
+         * state.
+         *
+         * There are a few simple thresholds:
+         *    minAlpha: Lower bound on computed alpha
+         *    minFractionRendered: Lower bounds on fraction of pixels that
+         *    were rendered.
+         *    stabilityThresholdMs: A time that alpha and fraction rendered
+         *    must remain within bounds before we can "enter the state"
+         *
+         * The fraction of pixels rendered is a computation based on scale, crop
+         * and occlusion. The calculation may be somewhat counterintuitive, so we
+         * can work through an example. Imagine we have a layer with a 100x100 buffer
+         * which is occluded by (10x100) pixels on the left, and cropped by (100x10) pixels
+         * on the top. Furthermore imagine this layer is scaled by 0.9 in both dimensions.
+         * (c=crop,o=occluded,b=both,x=none
+         *      b c c c
+         *      o x x x
+         *      o x x x
+         *      o x x x
+         *
+         * We first start by computing fr=xscale*yscale=0.9*0.9=0.81, indicating
+         * that "81%" of the pixels were rendered. This corresponds to what was 100
+         * pixels being displayed in 81 pixels. This is somewhat of an abuse of
+         * language, as the information of merged pixels isn't totally lost, but
+         * we err on the conservative side.
+         *
+         * We then repeat a similar process for the crop and covered regions and
+         * accumulate the results: fr = fr * (fractionNotCropped) * (fractionNotCovered)
+         * So for this example we would get 0.9*0.9*0.9*0.9=0.65...
+         *
+         * Notice that this is not completely accurate, as we have double counted
+         * the region marked as b. However we only wanted a "lower bound" and so it
+         * is ok to err in this direction. Selection of the threshold will ultimately
+         * be somewhat arbitrary, and so there are some somewhat arbitrary decisions in
+         * this API as well.
+         *
+         * The caller must keep "PresentationCallbackRAII" alive, or the callback
+         * in SurfaceComposerClient will be unregistered.
+         */
+        Transaction& setTrustedPresentationCallback(const sp<SurfaceControl>& sc,
+                                                    TrustedPresentationCallback callback,
+                                                    const TrustedPresentationThresholds& thresholds,
+                                                    void* context,
+                                                    sp<PresentationCallbackRAII>& outCallbackOwner);
+
+        // Clear local memory in SCC
+        Transaction& clearTrustedPresentationCallback(const sp<SurfaceControl>& sc);
 
         // ONLY FOR BLAST ADAPTER
         Transaction& notifyProducerDisconnect(const sp<SurfaceControl>& sc);
@@ -675,6 +744,8 @@ public:
 
         static sp<IBinder> getDefaultApplyToken();
         static void setDefaultApplyToken(sp<IBinder> applyToken);
+
+        static status_t sendSurfaceFlushJankDataTransaction(const sp<SurfaceControl>& sc);
     };
 
     status_t clearLayerFrameStats(const sp<IBinder>& token) const;
@@ -795,6 +866,9 @@ protected:
     std::multimap<int32_t, SurfaceStatsCallbackEntry> mSurfaceStatsListeners;
     std::unordered_map<void*, std::function<void(const std::string&)>> mQueueStallListeners;
 
+    std::unordered_map<int, std::tuple<TrustedPresentationCallback, void*>>
+            mTrustedPresentationCallbacks;
+
 public:
     static sp<TransactionCompletedListener> getInstance();
     static sp<ITransactionCompletedListener> getIInstance();
@@ -806,13 +880,21 @@ public:
             const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
                     surfaceControls,
             CallbackId::Type callbackType);
+    CallbackId addCallbackFunctionLocked(
+            const TransactionCompletedCallback& callbackFunction,
+            const std::unordered_set<sp<SurfaceControl>, SurfaceComposerClient::SCHash>&
+                    surfaceControls,
+            CallbackId::Type callbackType) REQUIRES(mMutex);
 
-    void addSurfaceControlToCallbacks(
-            const sp<SurfaceControl>& surfaceControl,
-            const std::unordered_set<CallbackId, CallbackIdHash>& callbackIds);
+    void addSurfaceControlToCallbacks(SurfaceComposerClient::CallbackInfo& callbackInfo,
+                                      const sp<SurfaceControl>& surfaceControl);
 
     void addQueueStallListener(std::function<void(const std::string&)> stallListener, void* id);
     void removeQueueStallListener(void *id);
+
+    sp<SurfaceComposerClient::PresentationCallbackRAII> addTrustedPresentationCallback(
+            TrustedPresentationCallback tpc, int id, void* context);
+    void clearTrustedPresentationCallback(int id);
 
     /*
      * Adds a jank listener to be informed about SurfaceFlinger's jank classification for a specific
@@ -844,8 +926,10 @@ public:
 
     void onTransactionQueueStalled(const String8& reason) override;
 
+    void onTrustedPresentationChanged(int id, bool presentedWithinThresholds) override;
+
 private:
-    ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&);
+    ReleaseBufferCallback popReleaseBufferCallbackLocked(const ReleaseCallbackId&) REQUIRES(mMutex);
     static sp<TransactionCompletedListener> sInstance;
 };
 

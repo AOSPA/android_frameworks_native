@@ -34,12 +34,14 @@
 #include <ftl/enum.h>
 #include <ftl/fake_guard.h>
 #include <ftl/small_map.h>
+#include <gui/TraceUtils.h>
 #include <gui/WindowInfo.h>
 #include <system/window.h>
 #include <utils/Timers.h>
-#include <utils/Trace.h>
 
 #include <FrameTimeline/FrameTimeline.h>
+#include <scheduler/interface/ICompositor.h>
+
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
@@ -51,6 +53,7 @@
 #include "Display/DisplayMap.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
+#include "FrontEnd/LayerHandle.h"
 #include "OneShotTimer.h"
 #include "SurfaceFlingerProperties.h"
 #include "VSyncPredictor.h"
@@ -66,8 +69,12 @@
 
 namespace android::scheduler {
 
-Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features)
-      : impl::MessageQueue(compositor), mFeatures(features), mSchedulerCallback(callback) {}
+Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features,
+                     sp<VsyncModulator> modulatorPtr)
+      : impl::MessageQueue(compositor),
+        mFeatures(features),
+        mVsyncModulator(std::move(modulatorPtr)),
+        mSchedulerCallback(callback) {}
 
 Scheduler::~Scheduler() {
     // MessageQueue depends on VsyncSchedule, so first destroy it.
@@ -127,6 +134,11 @@ void Scheduler::unregisterDisplay(PhysicalDisplayId displayId) {
     std::scoped_lock lock(mDisplayLock);
     mRefreshRateSelectors.erase(displayId);
 
+    // Do not allow removing the final display. Code in the scheduler expects
+    // there to be at least one display. (This may be relaxed in the future with
+    // headless virtual display.)
+    LOG_ALWAYS_FATAL_IF(mRefreshRateSelectors.empty(), "Cannot unregister all displays!");
+
     promoteLeaderDisplay();
 }
 
@@ -149,7 +161,7 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
 }
 
 void Scheduler::createVsyncSchedule(FeatureFlags features) {
-    mVsyncSchedule.emplace(features);
+    mVsyncSchedule = std::make_unique<VsyncSchedule>(features);
 }
 
 std::optional<Fps> Scheduler::getFrameRateOverride(uid_t uid) const {
@@ -165,7 +177,12 @@ bool Scheduler::isVsyncValid(TimePoint expectedVsyncTimestamp, uid_t uid) const 
         return true;
     }
 
+    ATRACE_FORMAT("%s uid: %d frameRate: %s", __func__, uid, to_string(*frameRate).c_str());
     return mVsyncSchedule->getTracker().isVSyncInPhase(expectedVsyncTimestamp.ns(), *frameRate);
+}
+
+bool Scheduler::isVsyncInPhase(TimePoint timePoint, const Fps frameRate) const {
+    return mVsyncSchedule->getTracker().isVSyncInPhase(timePoint.ns(), frameRate);
 }
 
 impl::EventThread::ThrottleVsyncCallback Scheduler::makeThrottleVsyncCallback() const {
@@ -192,17 +209,19 @@ impl::EventThread::GetVsyncPeriodFunction Scheduler::makeGetVsyncPeriodFunction(
     };
 }
 
-ConnectionHandle Scheduler::createConnection(const char* connectionName,
-                                             frametimeline::TokenManager* tokenManager,
-                                             std::chrono::nanoseconds workDuration,
-                                             std::chrono::nanoseconds readyDuration) {
-    auto throttleVsync = makeThrottleVsyncCallback();
-    auto getVsyncPeriod = makeGetVsyncPeriodFunction();
-    auto eventThread =
-            std::make_unique<impl::EventThread>(connectionName, *mVsyncSchedule, tokenManager,
-                                                std::move(throttleVsync), std::move(getVsyncPeriod),
-                                                workDuration, readyDuration);
-    return createConnection(std::move(eventThread));
+ConnectionHandle Scheduler::createEventThread(Cycle cycle,
+                                              frametimeline::TokenManager* tokenManager,
+                                              std::chrono::nanoseconds workDuration,
+                                              std::chrono::nanoseconds readyDuration) {
+    auto eventThread = std::make_unique<impl::EventThread>(cycle == Cycle::Render ? "app" : "appSf",
+                                                           *mVsyncSchedule, tokenManager,
+                                                           makeThrottleVsyncCallback(),
+                                                           makeGetVsyncPeriodFunction(),
+                                                           workDuration, readyDuration);
+
+    auto& handle = cycle == Cycle::Render ? mAppConnectionHandle : mSfConnectionHandle;
+    handle = createConnection(std::move(eventThread));
+    return handle;
 }
 
 ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventThread) {
@@ -217,15 +236,21 @@ ConnectionHandle Scheduler::createConnection(std::unique_ptr<EventThread> eventT
 }
 
 sp<EventThreadConnection> Scheduler::createConnectionInternal(
-        EventThread* eventThread, EventRegistrationFlags eventRegistration) {
-    return eventThread->createEventConnection([&] { resync(); }, eventRegistration);
+        EventThread* eventThread, EventRegistrationFlags eventRegistration,
+        const sp<IBinder>& layerHandle) {
+    int32_t layerId = static_cast<int32_t>(LayerHandle::getLayerId(layerHandle));
+    auto connection = eventThread->createEventConnection([&] { resync(); }, eventRegistration);
+    mLayerHistory.attachChoreographer(layerId, connection);
+    return connection;
 }
 
 sp<IDisplayEventConnection> Scheduler::createDisplayEventConnection(
-        ConnectionHandle handle, EventRegistrationFlags eventRegistration) {
+        ConnectionHandle handle, EventRegistrationFlags eventRegistration,
+        const sp<IBinder>& layerHandle) {
     std::lock_guard<std::mutex> lock(mConnectionsLock);
     RETURN_IF_INVALID_HANDLE(handle, nullptr);
-    return createConnectionInternal(mConnections[handle].thread.get(), eventRegistration);
+    return createConnectionInternal(mConnections[handle].thread.get(), eventRegistration,
+                                    layerHandle);
 }
 
 sp<EventThreadConnection> Scheduler::getEventConnection(ConnectionHandle handle) {
@@ -254,7 +279,6 @@ void Scheduler::onScreenAcquired(ConnectionHandle handle) {
         thread = mConnections[handle].thread.get();
     }
     thread->onScreenAcquired();
-    mScreenAcquired = true;
 }
 
 void Scheduler::onScreenReleased(ConnectionHandle handle) {
@@ -265,7 +289,6 @@ void Scheduler::onScreenReleased(ConnectionHandle handle) {
         thread = mConnections[handle].thread.get();
     }
     thread->onScreenReleased();
-    mScreenAcquired = false;
 }
 
 void Scheduler::onFrameRateOverridesChanged(ConnectionHandle handle, PhysicalDisplayId displayId) {
@@ -362,39 +385,32 @@ void Scheduler::setDuration(ConnectionHandle handle, std::chrono::nanoseconds wo
     thread->setDuration(workDuration, readyDuration);
 }
 
+void Scheduler::setVsyncConfigSet(const VsyncConfigSet& configs, Period vsyncPeriod) {
+    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(configs), vsyncPeriod);
+}
+
+void Scheduler::setVsyncConfig(const VsyncConfig& config, Period vsyncPeriod) {
+    setDuration(mAppConnectionHandle,
+                /* workDuration */ config.appWorkDuration,
+                /* readyDuration */ config.sfWorkDuration);
+    setDuration(mSfConnectionHandle,
+                /* workDuration */ vsyncPeriod,
+                /* readyDuration */ config.sfWorkDuration);
+    setDuration(config.sfWorkDuration);
+}
+
 void Scheduler::enableHardwareVsync() {
-    std::lock_guard<std::mutex> lock(mHWVsyncLock);
-    if (!mPrimaryHWVsyncEnabled && mHWVsyncAvailable) {
-        mVsyncSchedule->getTracker().resetModel();
-        mSchedulerCallback.setVsyncEnabled(true);
-        mPrimaryHWVsyncEnabled = true;
-    }
+    mVsyncSchedule->enableHardwareVsync(mSchedulerCallback);
 }
 
-void Scheduler::disableHardwareVsync(bool makeUnavailable) {
-    std::lock_guard<std::mutex> lock(mHWVsyncLock);
-    if (mPrimaryHWVsyncEnabled) {
-        mSchedulerCallback.setVsyncEnabled(false);
-        mPrimaryHWVsyncEnabled = false;
-    }
-    if (makeUnavailable) {
-        mHWVsyncAvailable = false;
-    }
+void Scheduler::disableHardwareVsync(bool disallow) {
+    mVsyncSchedule->disableHardwareVsync(mSchedulerCallback, disallow);
 }
 
-void Scheduler::resyncToHardwareVsync(bool makeAvailable, Fps refreshRate) {
-    {
-        std::lock_guard<std::mutex> lock(mHWVsyncLock);
-        if (makeAvailable) {
-            mHWVsyncAvailable = makeAvailable;
-        } else if (!mHWVsyncAvailable) {
-            // Hardware vsync is not currently available, so abort the resync
-            // attempt for now
-            return;
-        }
+void Scheduler::resyncToHardwareVsync(bool allowToEnable, Fps refreshRate) {
+    if (mVsyncSchedule->isHardwareVsyncAllowed(allowToEnable) && refreshRate.isValid()) {
+        mVsyncSchedule->startPeriodTransition(mSchedulerCallback, refreshRate.getPeriod());
     }
-
-    setVsyncPeriod(refreshRate.getPeriodNsecs());
 }
 
 void Scheduler::setRenderRate(Fps renderFrameRate) {
@@ -427,37 +443,12 @@ void Scheduler::resync() {
     }
 }
 
-void Scheduler::setVsyncPeriod(nsecs_t period) {
-    if (period <= 0) return;
-
-    std::lock_guard<std::mutex> lock(mHWVsyncLock);
-    mVsyncSchedule->getController().startPeriodTransition(period);
-
-    if (!mPrimaryHWVsyncEnabled) {
-        mVsyncSchedule->getTracker().resetModel();
-        mSchedulerCallback.setVsyncEnabled(true);
-        mPrimaryHWVsyncEnabled = true;
-    }
-}
-
-void Scheduler::addResyncSample(nsecs_t timestamp, std::optional<nsecs_t> hwcVsyncPeriod,
-                                bool* periodFlushed) {
-    bool needsHwVsync = false;
-    *periodFlushed = false;
-    { // Scope for the lock
-        std::lock_guard<std::mutex> lock(mHWVsyncLock);
-        if (mPrimaryHWVsyncEnabled) {
-            needsHwVsync =
-                    mVsyncSchedule->getController().addHwVsyncTimestamp(timestamp, hwcVsyncPeriod,
-                                                                        periodFlushed);
-        }
-    }
-
-    if (needsHwVsync) {
-        enableHardwareVsync();
-    } else {
-        disableHardwareVsync(false);
-    }
+bool Scheduler::addResyncSample(nsecs_t timestamp, std::optional<nsecs_t> hwcVsyncPeriodIn) {
+    const auto hwcVsyncPeriod = ftl::Optional(hwcVsyncPeriodIn).transform([](nsecs_t nanos) {
+        return Period::fromNs(nanos);
+    });
+    return mVsyncSchedule->addResyncSample(mSchedulerCallback, TimePoint::fromNs(timestamp),
+                                           hwcVsyncPeriod);
 }
 
 void Scheduler::addPresentFence(std::shared_ptr<FenceTime> fence) {
@@ -605,15 +596,6 @@ void Scheduler::dump(utils::Dumper& dumper) const {
 
     mFrameRateOverrideMappings.dump(dumper);
     dumper.eol();
-
-    {
-        utils::Dumper::Section section(dumper, "Hardware VSYNC"sv);
-
-        std::lock_guard lock(mHWVsyncLock);
-        dumper.dump("screenAcquired"sv, mScreenAcquired.load());
-        dumper.dump("hwVsyncAvailable"sv, mHWVsyncAvailable);
-        dumper.dump("hwVsyncEnabled"sv, mPrimaryHWVsyncEnabled);
-    }
 }
 
 void Scheduler::dumpVsync(std::string& out) const {

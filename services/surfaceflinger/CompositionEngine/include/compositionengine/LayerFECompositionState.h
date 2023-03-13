@@ -215,6 +215,11 @@ struct LayerFECompositionState {
     // The dimming flag
     bool dimmingEnabled{true};
 
+    float currentSdrHdrRatio = 1.f;
+    float desiredSdrHdrRatio = 1.f;
+
+    bool isInternalDisplayOverlay = false;
+
     virtual ~LayerFECompositionState();
 
     // Debugging
