@@ -111,8 +111,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    virtual VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
-                                                      bool canAllocateHwcForVDS) = 0;
+    virtual std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                                     bool canAllocateHwcForVDS) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) = 0;
     virtual void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) = 0;

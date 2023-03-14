@@ -33,25 +33,36 @@ public:
     QtiAidlCommandWriter& operator=(const QtiAidlCommandWriter&) = delete;
 
     void qtiSetLayerType(int64_t display, int64_t layer, uint32_t type) {
-        qtiGetLayerCommand(display, layer).qtiLayerType = static_cast<QtiLayerType>(type);
+        auto qtiLayerCommand = qtiGetLayerCommand(display, layer);
+        if (qtiLayerCommand) {
+            qtiLayerCommand->qtiLayerType = static_cast<QtiLayerType>(type);
+        }
     }
 
     void qtiSetDisplayElapseTime(int64_t display, uint64_t time) {
-        qtiGetDisplayCommand(display).time = static_cast<int64_t>(time);
+        auto qtiDisplayCommand = qtiGetDisplayCommand(display);
+        if (qtiDisplayCommand) {
+            qtiDisplayCommand->time = static_cast<int64_t>(time);
+        }
     }
 
     void qtiSetClientTarget_3_1(int64_t display, uint32_t slot, int acquireFence,
                                 uint32_t dataspace) {
+        auto qtiDisplayCommand = qtiGetDisplayCommand(display);
         ClientTarget clientTargetCommand;
         clientTargetCommand.buffer = qtiGetBuffer(slot, nullptr, acquireFence);
         clientTargetCommand.dataspace =
                 static_cast<aidl::android::hardware::graphics::common::Dataspace>(dataspace);
-        qtiGetDisplayCommand(display).clientTarget_3_1.emplace(std::move(clientTargetCommand));
+        if (qtiDisplayCommand) {
+            qtiDisplayCommand->clientTarget_3_1.emplace(std::move(clientTargetCommand));
+        }
     }
 
-    void qtiSetLayerFlag(int64_t display, int64_t layer,
-                                               QtiLayerFlags flags) {
-        qtiGetLayerCommand(display, layer).qtiLayerFlags = flags;
+    void qtiSetLayerFlag(int64_t display, int64_t layer, QtiLayerFlags flags) {
+        auto qtiLayerCommand = qtiGetLayerCommand(display, layer);
+        if (qtiLayerCommand) {
+            qtiLayerCommand->qtiLayerFlags = flags;
+        }
     }
 
     void qtiReset() {
@@ -94,26 +105,31 @@ private:
         return bufferCommand;
     }
 
-    QtiDisplayCommand& qtiGetDisplayCommand(int64_t display) {
+    QtiDisplayCommand* qtiGetDisplayCommand(int64_t display) {
         if (!mQtiDisplayCommand.has_value() || mQtiDisplayCommand->display != display) {
-            LOG_ALWAYS_FATAL_IF(display != mDisplay);
+            if (display != mDisplay) {
+                ALOGW("Incorrect display id, skipping QTI command");
+                return nullptr;
+            }
             qtiFlushLayerCommand();
             qtiFlushDisplayCommand();
             mQtiDisplayCommand.emplace();
             mQtiDisplayCommand->display = display;
         }
-        return *mQtiDisplayCommand;
+        return &(*mQtiDisplayCommand);
     }
 
-    QtiLayerCommand& qtiGetLayerCommand(int64_t display, int64_t layer) {
-        qtiGetDisplayCommand(display);
+    QtiLayerCommand* qtiGetLayerCommand(int64_t display, int64_t layer) {
+        auto qtiDisplayCommand = qtiGetDisplayCommand(display);
+        if (!qtiDisplayCommand) return nullptr;
+
         if (!mQtiLayerCommand.has_value() || mQtiLayerCommand->layer != layer) {
             qtiFlushLayerCommand();
             mQtiLayerCommand.emplace();
             mQtiLayerCommand->layer = layer;
         }
-        return *mQtiLayerCommand;
+        return &(*mQtiLayerCommand);
     }
 };
-}
+} // namespace android::Hwc2
 #endif
