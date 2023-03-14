@@ -496,6 +496,7 @@ void Display::finishFrame(GpuCompositionResult&& result) {
 
 /* QTI_BEGIN */
 void Display::qtiBeginDraw() {
+    mQtiSpecFenceFlipRequest = false;
 #ifdef QTI_DISPLAY_EXTENSION
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     auto hwcextn = surfaceflingerextension::QtiExtensionContext::instance().getQtiHWComposerExtension();
@@ -538,25 +539,29 @@ void Display::qtiBeginDraw() {
             fbtLayerInfo.dataspace = static_cast<int>(ui::Dataspace::UNKNOWN);
             mQtiIsColorModeChanged = false;
         }
-
         current.index =
                 renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentSlot();
         dataspace =
                 renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace();
 
-        if (current.index < 0) {
-            std::string temp = "Specfence_currentIndex_" + std::to_string(current.index);
+        if (ATRACE_ENABLED()) {
+            std::string temp =
+                    "Specfence_QtiBeginDraw_currentIndex_" + std::to_string(current.index);
             ATRACE_NAME(temp.c_str());
+        }
+
+        if (current.index < 0) {
             return;
         }
 
-        ATRACE_NAME("Specfence_callQtiBeginDraw");
         const auto halDisplayId = HalDisplayId::tryCast(mId);
         if (!displayext->BeginDraw(static_cast<uint32_t>(*hwcDisplayId), displayLayerFlags,
                                    fbtLayerInfo, current, future)) {
             hwcextn->qtiSetClientTarget_3_1(*halDisplayId, future.index, future.fence,
                                             static_cast<uint32_t>(dataspace));
             ALOGV("Slot predicted %d", future.index);
+            // Force a client target slot switch - required to cycle through buffers
+            mQtiSpecFenceFlipRequest = true;
         } else {
             ALOGV("Slot not predicted");
         }
@@ -591,6 +596,7 @@ void Display::qtiEndDraw() {
         if (!halDisplayId.has_value()) {
             return;
         }
+        outputState.flipClientTarget |= mQtiSpecFenceFlipRequest;
 
         composer::FBTSlotInfo info;
         auto renderSurface = getRenderSurface();
