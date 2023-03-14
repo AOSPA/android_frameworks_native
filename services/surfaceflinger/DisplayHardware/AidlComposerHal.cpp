@@ -1081,13 +1081,19 @@ Error AidlComposer::execute(Display display) {
     /* QTI_BEGIN */
 #ifdef QTI_COMPOSER3_EXTENSIONS
     const auto& qtiCommands = writer->get().getPendingQtiCommands();
-#endif
-    /* QTI_END */
 
+    if (commands.empty() && qtiCommands.empty()) {
+        writer->get().reset();
+        writer->get().qtiReset();
+        return Error::NONE;
+    }
+#else
     if (commands.empty()) {
         writer->get().reset();
         return Error::NONE;
     }
+#endif
+    /* QTI_END */
 
     { // scope for results
         std::vector<CommandResultPayload> results;

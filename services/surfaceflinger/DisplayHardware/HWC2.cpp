@@ -545,6 +545,15 @@ Error Display::presentOrValidate(nsecs_t expectedPresentTime, uint32_t* outNumTy
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
     }
+
+    // QTI_BEGIN
+    // Validate and present display succeeded with comp changes.
+    if (*state == 2) {
+        *outNumTypes = numTypes;
+        *outNumRequests = numRequests;
+        *outPresentFence = sp<Fence>::make(presentFenceFd);
+    }
+    // QTI_END
     return error;
 }
 
