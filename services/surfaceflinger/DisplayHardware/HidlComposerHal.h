@@ -367,6 +367,7 @@ public:
             override;
     Error setHdrConversionStrategy(aidl::android::hardware::graphics::common::HdrConversionStrategy,
                                    Hdr*) override;
+    Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) override;
 
 private:
     /* QTI_BEGIN */

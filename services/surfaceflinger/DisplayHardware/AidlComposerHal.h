@@ -252,6 +252,7 @@ public:
     void onHotplugDisconnect(Display) override;
     Error getHdrConversionCapabilities(std::vector<HdrConversionCapability>*) override;
     Error setHdrConversionStrategy(HdrConversionStrategy, Hdr*) override;
+    Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) override;
 
 private:
     /* QTI_BEGIN */
