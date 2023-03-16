@@ -170,4 +170,12 @@ uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
 void QtiNullExtension::qtiStartUnifiedDraw() {}
 void QtiNullExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {}
 
+/*
+ * Methods for Dolphin Interface
+ */
+void QtiNullExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {}
+void QtiNullExtension::qtiDolphinTrackBufferIncrement(const char *name) {}
+void QtiNullExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {}
+void QtiNullExtension::qtiDolphinTrackVsyncSignal() {}
+
 } // namespace android::surfaceflingerextension

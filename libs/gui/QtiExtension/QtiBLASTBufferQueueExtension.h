@@ -11,10 +11,11 @@ namespace libguiextension {
 
 class QtiBLASTBufferQueueExtension {
 public:
-    QtiBLASTBufferQueueExtension(BLASTBufferQueue* blastBufferQueue);
+    QtiBLASTBufferQueueExtension(BLASTBufferQueue* blastBufferQueue, const std::string& name);
     ~QtiBLASTBufferQueueExtension() = default;
 
     void qtiSetConsumerUsageBitsForRC(std::string name, sp<SurfaceControl> sc);
+    bool qtiIsGame();
 
 private:
     BLASTBufferQueue* mQtiBlastBufferQueue = nullptr;

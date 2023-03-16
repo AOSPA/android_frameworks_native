@@ -198,7 +198,7 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
 
     /* QTI_BEGIN */
     if (!mQtiBBQExtn) {
-        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this);
+        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this, name);
     }
     /* QTI_END */
 }
@@ -208,7 +208,7 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceCont
       : BLASTBufferQueue(name) {
     /* QTI_BEGIN */
     if (!mQtiBBQExtn) {
-        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this);
+        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this, name);
     }
     /* QTI_END */
     update(surface, width, height, format);
@@ -678,8 +678,17 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
 
     mergePendingTransactions(t, bufferItem.mFrameNumber);
     if (applyTransaction) {
-        // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
-        t->setApplyToken(mApplyToken).apply(false, true);
+        /* QTI_BEGIN */
+        if (mQtiBBQExtn && mQtiBBQExtn->qtiIsGame()) {
+            t->setApplyToken(mApplyToken).apply(false, false);
+        } else {
+        /* QTI_END */
+            // All transactions on our apply token are one-way.
+            // See comment on mAppliedLastTransaction
+            t->setApplyToken(mApplyToken).apply(false, true);
+        /* QTI_BEGIN */
+        }
+        /* QTI_END */
         mAppliedLastTransaction = true;
         mLastAppliedFrameNumber = bufferItem.mFrameNumber;
     } else {

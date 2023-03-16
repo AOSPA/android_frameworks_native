@@ -104,6 +104,8 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
         }
     }
 
+    mQtiDolphinWrapper = new QtiDolphinWrapper();
+
     if (mQtiComposerExtnIntf) {
         if (mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kAdvanceSfOffset)) {
             int ret = mQtiComposerExtnIntf->CreatePhaseOffsetExtn(
@@ -1506,6 +1508,30 @@ void QtiSurfaceFlingerExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {
 void QtiSurfaceFlingerExtension::qtiEndUnifiedDraw(uint32_t hwcDisplayId) {
     if (mQtiDisplayExtnIntf) {
         mQtiDisplayExtnIntf->EndUnifiedDraw(hwcDisplayId);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinSetVsyncPeriod) {
+        mQtiDolphinWrapper->qtiDolphinSetVsyncPeriod(vsyncPeriod);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char *name) {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement) {
+        mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement(name);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement) {
+        mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement(name, count);
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiDolphinTrackVsyncSignal() {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackVsyncSignal) {
+        mQtiDolphinWrapper->qtiDolphinTrackVsyncSignal();
     }
 }
 

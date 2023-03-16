@@ -123,6 +123,14 @@ public:
     void qtiStartUnifiedDraw() override;
     void qtiTryDrawMethod(sp<DisplayDevice> display) override;
 
+    /*
+     * Methods for Dolphin APIs
+     */
+    void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    void qtiDolphinTrackBufferIncrement(const char *name);
+    void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    void qtiDolphinTrackVsyncSignal();
+
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;
 };

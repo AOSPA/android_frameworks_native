@@ -22,6 +22,7 @@
 #include "QtiPhaseOffsetsExtension.h"
 #include "QtiPowerAdvisorExtension.h"
 #include "QtiWorkDurationsExtension.h"
+#include "QtiDolphinWrapper.h"
 #include "TransactionState.h"
 #include "layer_extn_intf.h"
 
@@ -173,6 +174,14 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
 
     /*
+     * Methods for Dolphin APIs
+     */
+    void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    void qtiDolphinTrackBufferIncrement(const char *name);
+    void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    void qtiDolphinTrackVsyncSignal();
+
+    /*
      * Methods for speculative fence
      */
     void qtiStartUnifiedDraw() override;
@@ -193,6 +202,7 @@ private:
     QtiPowerAdvisorExtension* mQtiPowerAdvisorExtn = nullptr;
     QtiPhaseOffsetsExtension* mQtiPhaseOffsetsExtn = nullptr;
     QtiWorkDurationsExtension* mQtiWorkDurationsExtn = nullptr;
+    QtiDolphinWrapper* mQtiDolphinWrapper = nullptr;
 
     bool mQtiEnabledIDC = false;
     bool mQtiInitVsyncConfigurationExtn = false;
