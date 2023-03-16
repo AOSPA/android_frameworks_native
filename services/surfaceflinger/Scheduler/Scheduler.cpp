@@ -913,7 +913,9 @@ FrameRateMode Scheduler::getPreferredDisplayMode() {
                     .frameRateMode;
 
     // Make sure the stored mode is up to date.
-    mPolicy.modeOpt = frameRateMode;
+    if (mPolicy.modeOpt) {
+        mPolicy.modeOpt = frameRateMode;
+    }
 
     return frameRateMode;
 }
