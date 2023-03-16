@@ -1479,7 +1479,7 @@ void QtiSurfaceFlingerExtension::qtiStartUnifiedDraw() {
 }
 
 void QtiSurfaceFlingerExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {
-    if (!mQtiHWComposerExtnIntf) {
+    if (!mQtiHWComposerExtnIntf || !mQtiDisplayExtnIntf) {
         return;
     }
 

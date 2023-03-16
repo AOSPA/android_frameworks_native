@@ -59,15 +59,16 @@ Error QtiAidlComposerHalExtension::qtiSetClientTarget_3_1(Display display, int32
 Error QtiAidlComposerHalExtension::qtiTryDrawMethod(Display display,
                                                     uint32_t drawMethod) {
 #ifdef QTI_COMPOSER3_EXTENSIONS
-    auto status =
-            mQtiAidlComposer->qtiComposer3Client->qtiTryDrawMethod(static_cast<int64_t>(display),
-                                                                   static_cast<QtiDrawMethod>(
-                                                                           drawMethod));
-
-    if (!status.isOk()) {
-        ALOGE("tryDrawMethod failed %s", status.getDescription().c_str());
-        return static_cast<Error>(status.getServiceSpecificError());
+    if (mQtiAidlComposer->qtiComposer3Client) {
+        auto status = mQtiAidlComposer->qtiComposer3Client
+                              ->qtiTryDrawMethod(static_cast<int64_t>(display),
+                                                 static_cast<QtiDrawMethod>(drawMethod));
+        if (!status.isOk()) {
+            ALOGE("tryDrawMethod failed %s", status.getDescription().c_str());
+            return static_cast<Error>(status.getServiceSpecificError());
+        }
     }
+
 #endif
     return Error::NONE;
 }
