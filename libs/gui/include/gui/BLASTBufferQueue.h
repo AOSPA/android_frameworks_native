@@ -70,6 +70,8 @@ public:
                                nsecs_t dequeueReadyTime) EXCLUDES(mMutex);
     void getConnectionEvents(uint64_t frameNumber, bool* needsDisconnect) EXCLUDES(mMutex);
 
+    void resizeFrameEventHistory(size_t newSize);
+
 protected:
     void onSidebandStreamChanged() override EXCLUDES(mMutex);
 
@@ -149,6 +151,7 @@ public:
 
 private:
     friend class BLASTBufferQueueHelper;
+    friend class BBQBufferQueueProducer;
 
     /* QTI_BEGIN */
     friend class libguiextension::QtiBLASTBufferQueueExtension;
@@ -160,6 +163,8 @@ private:
     BLASTBufferQueue(const BLASTBufferQueue& rhs);
     void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
                            sp<IGraphicBufferConsumer>* outConsumer);
+
+    void resizeFrameEventHistory(size_t newSize);
 
     status_t acquireNextBufferLocked(
             const std::optional<SurfaceComposerClient::Transaction*> transaction) REQUIRES(mMutex);
