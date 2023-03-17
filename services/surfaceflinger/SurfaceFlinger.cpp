@@ -493,7 +493,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mLayerLifecycleManagerEnabled =
             base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, false);
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
-            base::GetBoolProperty("debug.sf.enable_legacy_frontend"s, true);
+            base::GetBoolProperty("persist.debug.sf.enable_legacy_frontend"s, false);
 }
 
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
@@ -1630,8 +1630,8 @@ status_t SurfaceFlinger::getHdrConversionCapabilities(
     const auto aidlConversionCapability = getHwComposer().getHdrConversionCapabilities();
     for (auto capability : aidlConversionCapability) {
         gui::HdrConversionCapability tempCapability;
-        tempCapability.sourceType = static_cast<int>(capability.sourceType.hdr);
-        tempCapability.outputType = static_cast<int>(capability.outputType->hdr);
+        tempCapability.sourceType = static_cast<int>(capability.sourceType);
+        tempCapability.outputType = static_cast<int>(capability.outputType);
         tempCapability.addsLatency = capability.addsLatency;
         hdrConversionCapabilities->push_back(tempCapability);
     }
@@ -4333,7 +4333,12 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         const TransactionHandler::TransactionFlushState& flushState) {
     using TransactionReadiness = TransactionHandler::TransactionReadiness;
     auto ready = TransactionReadiness::Ready;
-    flushState.transaction->traverseStatesWithBuffersWhileTrue([&](const layer_state_t& s) -> bool {
+    flushState.transaction->traverseStatesWithBuffersWhileTrue([&](const layer_state_t& s,
+                                                                   const std::shared_ptr<
+                                                                           renderengine::
+                                                                                   ExternalTexture>&
+                                                                           externalTexture)
+                                                                       -> bool {
         sp<Layer> layer = LayerHandle::getLayer(s.surface);
         const auto& transaction = *flushState.transaction;
         // check for barrier frames
@@ -4343,7 +4348,8 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
             // don't wait on the barrier since we know that's stale information.
             if (layer->getDrawingState().producerId > s.bufferData->producerId) {
                 layer->callReleaseBufferCallback(s.bufferData->releaseBufferListener,
-                                                 s.bufferData->buffer, s.bufferData->frameNumber,
+                                                 externalTexture->getBuffer(),
+                                                 s.bufferData->frameNumber,
                                                  s.bufferData->acquireFence);
                 // Delete the entire state at this point and not just release the buffer because
                 // everything associated with the Layer in this Transaction is now out of date.
@@ -5705,7 +5711,8 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
         // Otherwise, SortedVector may have shared ownership during concurrent
         // traversals, which can result in use-after-frees.
         std::string compositionLayers;
-        mScheduler
+        if (flag.size() == 0 && !asProto) {
+            mScheduler
                 ->schedule([&] {
                     StringAppendF(&compositionLayers, "Composition layers\n");
                     mDrawingState.traverseInZOrder([&](Layer* layer) {
@@ -5719,6 +5726,7 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                     });
                 })
                 .get();
+        }
 
         bool dumpLayers = true;
         {
