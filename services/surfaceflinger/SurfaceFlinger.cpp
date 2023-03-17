@@ -2563,6 +2563,7 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         if (!dropFrame) {
             refreshArgs.outputs.push_back(display->getCompositionDisplay());
         }
+        display->tracePowerMode();
         displayIds.push_back(display->getId());
     }
     mPowerAdvisor->setDisplays(displayIds);
@@ -2641,7 +2642,9 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         CompositionResult compositionResult{layerFE->stealCompositionResult()};
         layer->onPreComposition(compositionResult.refreshStartTime);
         for (auto releaseFence : compositionResult.releaseFences) {
-            layer->onLayerDisplayed(releaseFence);
+            Layer* clonedFrom = layer->getClonedFrom().get();
+            auto owningLayer = clonedFrom ? clonedFrom : layer;
+            owningLayer->onLayerDisplayed(releaseFence);
         }
         if (compositionResult.lastClientCompositionFence) {
             layer->setWasClientComposed(compositionResult.lastClientCompositionFence);
@@ -4145,7 +4148,6 @@ void SurfaceFlinger::setTransactionFlags(uint32_t mask, TransactionSchedule sche
     ATRACE_INT("mTransactionFlags", transactionFlags);
 
     if (const bool scheduled = transactionFlags & mask; !scheduled) {
-        mScheduler->resync();
         scheduleCommit(frameHint);
     } else if (frameHint == FrameHint::kActive) {
         // Even if the next frame is already scheduled, we should reset the idle timer
@@ -5789,9 +5791,17 @@ LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
         return layersProto;
     }
 
-    return LayerProtoFromSnapshotGenerator(mLayerSnapshotBuilder, mFrontEndDisplayInfos, {},
-                                           traceFlags)
-            .generate(mLayerHierarchyBuilder.getHierarchy());
+    const frontend::LayerHierarchy& root = mLayerHierarchyBuilder.getHierarchy();
+    LayersProto layersProto;
+    for (auto& [child, variant] : root.mChildren) {
+        if (variant != frontend::LayerHierarchy::Variant::Attached ||
+            stackIdsToSkip.find(child->getLayer()->layerStack.id) != stackIdsToSkip.end()) {
+            continue;
+        }
+        LayerProtoHelper::writeHierarchyToProto(layersProto, *child, mLayerSnapshotBuilder,
+                                                mLegacyLayers, traceFlags);
+    }
+    return layersProto;
 }
 
 google::protobuf::RepeatedPtrField<DisplayProto> SurfaceFlinger::dumpDisplayProto() const {

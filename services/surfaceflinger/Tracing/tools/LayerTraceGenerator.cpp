@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <ios>
 #include <memory>
 #include <vector>
 #include "FrontEnd/LayerCreationArgs.h"
@@ -62,8 +63,11 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
 
     LayerTracing layerTracing;
     layerTracing.setTraceFlags(LayerTracing::TRACE_INPUT | LayerTracing::TRACE_BUFFERS);
-    layerTracing.setBufferSize(512 * 1024 * 1024); // 512MB buffer size
+    // 10MB buffer size (large enough to hold a single entry)
+    layerTracing.setBufferSize(10 * 1024 * 1024);
     layerTracing.enable();
+    layerTracing.writeToFile(outputLayersTracePath);
+    std::ofstream out(outputLayersTracePath, std::ios::binary | std::ios::app);
 
     ALOGD("Generating %d transactions...", traceFile.entry_size());
     for (int i = 0; i < traceFile.entry_size(); i++) {
@@ -134,15 +138,36 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
               lifecycleManager.getGlobalChanges().string().c_str());
 
         lifecycleManager.commitChanges();
+        // write layers trace
+        auto tracingFlags = LayerTracing::TRACE_INPUT | LayerTracing::TRACE_BUFFERS;
+        std::unordered_set<uint64_t> stackIdsToSkip;
+        if ((tracingFlags & LayerTracing::TRACE_VIRTUAL_DISPLAYS) == 0) {
+            for (const auto& displayInfo : displayInfos) {
+                if (displayInfo.second.isVirtual) {
+                    stackIdsToSkip.insert(displayInfo.first.id);
+                }
+            }
+        }
 
-        LayersProto layersProto = LayerProtoFromSnapshotGenerator(snapshotBuilder, displayInfos, {},
-                                                                  layerTracing.getFlags())
-                                          .generate(hierarchyBuilder.getHierarchy());
+        const frontend::LayerHierarchy& root = hierarchyBuilder.getHierarchy();
+
+        LayersProto layersProto;
+        for (auto& [child, variant] : root.mChildren) {
+            if (variant != frontend::LayerHierarchy::Variant::Attached ||
+                stackIdsToSkip.find(child->getLayer()->layerStack.id) != stackIdsToSkip.end()) {
+                continue;
+            }
+            LayerProtoHelper::writeHierarchyToProto(layersProto, *child, snapshotBuilder, {},
+                                                    tracingFlags);
+        }
+
         auto displayProtos = LayerProtoHelper::writeDisplayInfoToProto(displayInfos);
         layerTracing.notify(visibleRegionsDirty, entry.elapsed_realtime_nanos(), entry.vsync_id(),
                             &layersProto, {}, &displayProtos);
+        layerTracing.appendToStream(out);
     }
-    layerTracing.disable(outputLayersTracePath);
+    layerTracing.disable("", /*writeToFile=*/false);
+    out.close();
     ALOGD("End of generating trace file. File written to %s", outputLayersTracePath);
     return true;
 }
