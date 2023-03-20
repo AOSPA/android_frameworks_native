@@ -560,8 +560,8 @@ void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>
 
 void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 #ifdef PHASE_OFFSET_EXTN
-    if (!g_comp_ext_intf_.phaseOffsetExtnIntf || !mQtiFlinger || !mQtiFlinger->mVsyncModulator ||
-      !mQtiFlinger->mVsyncConfiguration) {
+    if (!g_comp_ext_intf_.phaseOffsetExtnIntf || !mQtiFlinger || !mQtiFlinger->mScheduler ||
+        !mQtiFlinger->mVsyncConfiguration) {
         return;
     }
     bool useAdvancedSfOffsets =
@@ -615,8 +615,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
-
-    const sp<Fence>& fence = mQtiFlinger->mScheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
+    auto scheduler = mQtiFlinger->mScheduler;
+    const sp<Fence>& fence = scheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
             ? mQtiFlinger->mPreviousPresentFences[0].fence
             : mQtiFlinger->mPreviousPresentFences[1].fence;
 
@@ -631,12 +631,13 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     }
 
     const nsecs_t period = mQtiFlinger->getVsyncPeriodFromHWC();
-    mQtiFlinger->mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(period)/*,
+    const auto displayId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getPhysicalId();
+    scheduler->resyncToHardwareVsync(displayId ,true, Fps::fromPeriodNsecs(period)/*,
                                       true force resync */);
     if (timeStamp > 0) {
-        bool periodFlushed = mQtiFlinger->mScheduler->addResyncSample(timeStamp, period);
+        bool periodFlushed = scheduler->addResyncSample(displayId, timeStamp, period);
         if (periodFlushed) {
-            mQtiFlinger->mScheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
+            scheduler->modulateVsync(displayId, &VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
 }
@@ -1263,7 +1264,8 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANA
     if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
         // Get the previous frame fence since AOSP deprecated the previousFrameFence() API
-        auto prevFrameFence = mQtiFlinger->mVsyncModulator->getVsyncConfig().sfOffset >= 0
+        auto scheduler = mQtiFlinger->mScheduler;
+        auto prevFrameFence = scheduler->vsyncModulator().getVsyncConfig().sfOffset >= 0
                 ? mQtiFlinger->mPreviousPresentFences[0]
                 : mQtiFlinger->mPreviousPresentFences[1];
         bool needResync = smoMo->SyncToDisplay(prevFrameFence.fence, &timestamp);
@@ -1389,7 +1391,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts,
 
             const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
             auto vsyncTime =
-                    schedule.getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+                    schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
 
             if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
                 qtiScheduleCompositeImmed();
