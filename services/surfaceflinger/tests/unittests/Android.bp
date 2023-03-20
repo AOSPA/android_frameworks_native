@@ -48,7 +48,6 @@ cc_test {
         "libsurfaceflinger_mocks_defaults",
         "skia_renderengine_deps",
         "surfaceflinger_defaults",
-        "libqtisurfaceflingerextension_defaults",
     ],
     test_suites: ["device-tests"],
     sanitize: {
