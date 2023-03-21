@@ -127,7 +127,6 @@ public:
     virtual void qtiCreateSmomoInstance(const DisplayDeviceState& state) = 0;
     virtual void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) = 0;
     virtual void qtiSetRefreshRates(PhysicalDisplayId displayId) = 0;
-    virtual void qtiSetRefreshRates(const sp<DisplayDevice>& display) = 0;
     virtual void qtiSetRefreshRateTo(int32_t refreshRate) = 0;
     virtual void qtiSyncToDisplayHardware() = 0;
     virtual void qtiUpdateSmomoState() = 0;

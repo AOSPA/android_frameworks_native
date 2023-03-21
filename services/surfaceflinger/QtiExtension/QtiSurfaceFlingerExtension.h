@@ -156,7 +156,6 @@ public:
     void qtiCreateSmomoInstance(const DisplayDeviceState& state) override;
     void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
-    void qtiSetRefreshRates(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;

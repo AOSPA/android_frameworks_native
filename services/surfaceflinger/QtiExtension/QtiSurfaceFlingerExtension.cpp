@@ -1151,7 +1151,7 @@ void QtiSurfaceFlingerExtension::qtiCreateSmomoInstance(const DisplayDeviceState
             [this](int32_t refreshRate) { qtiSetRefreshRateTo(refreshRate); });
 
     const auto display = mQtiFlinger->getDefaultDisplayDeviceLocked();
-    qtiSetRefreshRates(display);
+    qtiSetRefreshRates(display->getPhysicalId());
 
     if (mQtiSmomoInstances.size() > 1) {
         // Disable DRC on all instances.
@@ -1203,18 +1203,25 @@ SmomoIntf* QtiSurfaceFlingerExtension::qtiGetSmomoInstance(const uint32_t layerS
 }
 
 void QtiSurfaceFlingerExtension::qtiSetRefreshRates(PhysicalDisplayId displayId) {
-    auto display = mQtiFlinger->getDisplayDeviceLocked(displayId);
-    qtiSetRefreshRates(display);
-}
-
-void QtiSurfaceFlingerExtension::qtiSetRefreshRates(const sp<DisplayDevice>& display) {
-    // Get Primary Smomo Instance.
     std::vector<float> refreshRates;
-    auto rankedRefreshRates = display->refreshRateSelector().getRankedFrameRates({}, {});
-    for (const auto& [frameRateMode, score] : rankedRefreshRates.ranking) {
-        if (display->refreshRateSelector().isModeAllowed(frameRateMode)) {
-            refreshRates.push_back(frameRateMode.fps.getValue());
-        }
+
+    const auto modeOpt = [&]() {
+        ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+        return mQtiFlinger->mPhysicalDisplays.get(displayId)
+                .transform(&display::PhysicalDisplay::snapshotRef)
+                .and_then([&](const display::DisplaySnapshot& snapshot) {
+                    const auto& displayModes = snapshot.displayModes();
+                    for (const auto& [id, mode] : displayModes) {
+                        refreshRates.push_back(mode->getFps().getValue());
+                    }
+                    return std::optional<bool>(true);
+                });
+    }();
+
+    if (!modeOpt) {
+        ALOGW("qtiSetRefreshRates failed on: %s", to_string(displayId).c_str());
+        return;
     }
 
     SmomoIntf* smoMo = nullptr;
@@ -1228,31 +1235,41 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRates(const sp<DisplayDevice>& dis
 }
 
 void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
-    const auto defaultDisplay = [&]() {
+    sp<display::DisplayToken> displayToken;
+
+    const auto modeIdOpt = [&]() {
         ConditionalLock lock(mQtiFlinger->mStateLock,
                              std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
-        return mQtiFlinger->getDefaultDisplayDeviceLocked();
+
+        auto setRefreshRate = Fps::fromValue(refreshRate);
+        PhysicalDisplayId displayId = mQtiFlinger->getPrimaryDisplayIdLocked();
+        displayToken = mQtiFlinger->getPrimaryDisplayTokenLocked();
+
+        return mQtiFlinger->mPhysicalDisplays.get(displayId)
+                .transform(&display::PhysicalDisplay::snapshotRef)
+                .and_then([&](const display::DisplaySnapshot& snapshot)
+                                  -> std::optional<DisplayModeId> {
+                    const auto& displayModes = snapshot.displayModes();
+                    for (const auto& [id, mode] : displayModes) {
+                        if (isApproxEqual(mode->getFps(), setRefreshRate)) {
+                            return id;
+                        }
+                    }
+                    return std::nullopt;
+                });
     }();
 
-    auto currentRefreshRate = defaultDisplay->refreshRateSelector().getActiveMode();
-    auto policy = defaultDisplay->refreshRateSelector().getCurrentPolicy();
-    auto setRefreshRate = Fps::fromValue(refreshRate);
-    if (!policy.primaryRanges.physical.includes(setRefreshRate)) {
+    if (!modeIdOpt) {
+        ALOGW("qtiSetRefreshRateTo: Invalid Mode ID");
         return;
     }
 
-    auto rankedRefreshRates = defaultDisplay->refreshRateSelector().getRankedFrameRates({}, {});
-    for (const auto& [frameRateMode, score] : rankedRefreshRates.ranking) {
-        if (isApproxEqual(frameRateMode.fps, setRefreshRate)) {
-            if (currentRefreshRate.modePtr->getId() != frameRateMode.modePtr->getId()) {
-                std::vector<display::DisplayModeRequest> modeRequests;
-
-                modeRequests.push_back(display::DisplayModeRequest{.mode = std::move(frameRateMode),
-                                                                   .emitEvent = true});
-                mQtiFlinger->requestDisplayModes(modeRequests);
-            }
-        }
+    const status_t result = mQtiFlinger->setActiveModeFromBackdoor(displayToken, *modeIdOpt);
+    if (result != NO_ERROR) {
+        ALOGW("qtiSetRefreshRateTo: Failed to setActiveMode");
     }
+
+    return;
 }
 
 void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {

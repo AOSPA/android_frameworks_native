@@ -142,7 +142,6 @@ void QtiNullExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) 
 void QtiNullExtension::qtiCreateSmomoInstance(const DisplayDeviceState& state) {}
 void QtiNullExtension::qtiDestroySmomoInstance(const sp<DisplayDevice>& display) {}
 void QtiNullExtension::qtiSetRefreshRates(PhysicalDisplayId displayId) {}
-void QtiNullExtension::qtiSetRefreshRates(const sp<DisplayDevice>& display) {}
 void QtiNullExtension::qtiSetRefreshRateTo(int32_t refreshRate) {}
 void QtiNullExtension::qtiSyncToDisplayHardware() {}
 void QtiNullExtension::qtiUpdateSmomoState() {}
