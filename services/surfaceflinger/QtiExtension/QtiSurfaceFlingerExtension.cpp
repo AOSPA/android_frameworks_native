@@ -615,7 +615,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
-    auto scheduler = mQtiFlinger->mScheduler;
+    auto &scheduler = mQtiFlinger->mScheduler;
     const sp<Fence>& fence = scheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
             ? mQtiFlinger->mPreviousPresentFences[0].fence
             : mQtiFlinger->mPreviousPresentFences[1].fence;
@@ -631,13 +631,11 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     }
 
     const nsecs_t period = mQtiFlinger->getVsyncPeriodFromHWC();
-    const auto displayId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getPhysicalId();
-    scheduler->resyncToHardwareVsync(displayId ,true, Fps::fromPeriodNsecs(period)/*,
-                                      true force resync */);
+    scheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(period));
     if (timeStamp > 0) {
-        bool periodFlushed = scheduler->addResyncSample(displayId, timeStamp, period);
+        bool periodFlushed = scheduler->addResyncSample(timeStamp, period);
         if (periodFlushed) {
-            scheduler->modulateVsync(displayId, &VsyncModulator::onRefreshRateChangeCompleted);
+            scheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
 }
@@ -1264,7 +1262,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANA
     if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
         // Get the previous frame fence since AOSP deprecated the previousFrameFence() API
-        auto scheduler = mQtiFlinger->mScheduler;
+        auto &scheduler = mQtiFlinger->mScheduler;
         auto prevFrameFence = scheduler->vsyncModulator().getVsyncConfig().sfOffset >= 0
                 ? mQtiFlinger->mPreviousPresentFences[0]
                 : mQtiFlinger->mPreviousPresentFences[1];
@@ -1389,9 +1387,9 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts,
 #endif
             smoMo->CollectLayerStats(bufferStats);
 
-            const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+            const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
             auto vsyncTime =
-                    schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+                    schedule.getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
 
             if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
                 qtiScheduleCompositeImmed();
