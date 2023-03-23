@@ -205,7 +205,7 @@ public:
         }
     };
 
-    bool setDesiredActiveMode(const ActiveModeInfo&) EXCLUDES(mActiveModeLock);
+    bool setDesiredActiveMode(const ActiveModeInfo&, bool force = false) EXCLUDES(mActiveModeLock);
     std::optional<ActiveModeInfo> getDesiredActiveMode() const EXCLUDES(mActiveModeLock);
     void clearDesiredActiveModeState() EXCLUDES(mActiveModeLock);
     ActiveModeInfo getUpcomingActiveMode() const REQUIRES(kMainThreadContext) {
