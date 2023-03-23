@@ -103,6 +103,7 @@ private:
 
     /* QTI_BEGIN */
     bool mQtiIsColorModeChanged = false;
+    bool mQtiSpecFenceFlipRequest = false;
     ColorProfile mQtiColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
                                      ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
     /* QTI_END */

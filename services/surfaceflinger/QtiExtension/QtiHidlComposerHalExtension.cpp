@@ -13,6 +13,7 @@ QtiHidlComposerHalExtension::QtiHidlComposerHalExtension(Hwc2::Composer* compose
     }
 
     mQtiHidlComposer = static_cast<Hwc2::HidlComposer*>(composerHal);
+    mClient_3_1 = mQtiHidlComposer->mClient_3_1;
     ALOGV("Successfully created QtiHidlComposerHalExtension %p", mQtiHidlComposer);
 }
 
