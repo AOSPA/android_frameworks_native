@@ -758,7 +758,6 @@ void SurfaceFlinger::bootFinished() {
     // TODO(naseer) set compeng object
     surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
-    mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
 

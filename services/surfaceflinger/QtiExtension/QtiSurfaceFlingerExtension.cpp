@@ -541,6 +541,10 @@ void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
 
 void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display,
                                                          hal::PowerMode mode) {
+    if (!display) {
+        return;
+    }
+
     bool earlyWakeUpEnabled =
             mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kEarlyWakeUp);
     if (earlyWakeUpEnabled && qtiIsInternalDisplay(display)) {
