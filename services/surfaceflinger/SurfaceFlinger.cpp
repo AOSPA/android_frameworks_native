@@ -758,7 +758,6 @@ void SurfaceFlinger::bootFinished() {
     // TODO(naseer) set compeng object
     surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
-    mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
 
@@ -1239,6 +1238,7 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request,
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiSetContentFps(request.mode.fps.getValue());
+    mQtiSFExtnIntf->qtiDolphinSetVsyncPeriod(request.mode.fps.getPeriodNsecs());
     /* QTI_END */
 }
 
@@ -2382,6 +2382,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, LifecycleUpdate& upda
 
 bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expectedVsyncTime)
         FTL_FAKE_GUARD(kMainThreadContext) {
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiDolphinTrackVsyncSignal();
+    /* QTI_END */
+
     // The expectedVsyncTime, which was predicted when this frame was scheduled, is normally in the
     // future relative to frameTime, but may not be for delayed frames. Adjust mExpectedPresentTime
     // accordingly, but not mScheduledPresentTime.
@@ -4202,6 +4206,10 @@ bool SurfaceFlinger::latchBuffers() {
 
         for (const auto& layer : mLayersWithQueuedFrames) {
             if (layer->latchBuffer(visibleRegions, latchTime)) {
+                /* QTI_BEGIN */
+                mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(layer->getDebugName(),
+                        *layer->getPendingBufferCounter());
+                /* QTI_END */
                 mLayersPendingRefresh.push_back(layer);
                 newDataLatched = true;
             }
@@ -4614,6 +4622,9 @@ status_t SurfaceFlinger::setTransactionState(
             resolvedState.externalTexture =
                     getExternalTextureFromBufferData(*resolvedState.state.bufferData,
                                                      layerName.c_str(), transactionId);
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
+            /* QTI_END */
             mBufferCountTracker.increment(resolvedState.state.surface->localBinder());
         }
     }
