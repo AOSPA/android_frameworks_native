@@ -144,6 +144,14 @@ public:
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
 
     /*
+     * Methods for Dolphin APIs
+     */
+    virtual void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    virtual void qtiDolphinTrackBufferIncrement(const char *name);
+    virtual void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    virtual void qtiDolphinTrackVsyncSignal();
+
+    /*
      * Methods for speculative fence
      */
     virtual void qtiStartUnifiedDraw() = 0;
