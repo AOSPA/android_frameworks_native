@@ -631,11 +631,12 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
     }
 
     const nsecs_t period = mQtiFlinger->getVsyncPeriodFromHWC();
-    scheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(period));
+    const auto displayId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getPhysicalId();
+    scheduler->resyncToHardwareVsync(displayId, true, Fps::fromPeriodNsecs(period));
     if (timeStamp > 0) {
-        bool periodFlushed = scheduler->addResyncSample(timeStamp, period);
+        bool periodFlushed = scheduler->addResyncSample(displayId, timeStamp, period);
         if (periodFlushed) {
-            scheduler->modulateVsync(&VsyncModulator::onRefreshRateChangeCompleted);
+            scheduler->modulateVsync(displayId, &VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
 }
@@ -1389,7 +1390,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts,
 
             const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
             auto vsyncTime =
-                    schedule.getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+                    schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
 
             if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
                 qtiScheduleCompositeImmed();
