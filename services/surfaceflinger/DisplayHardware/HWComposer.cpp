@@ -403,8 +403,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 
 status_t HWComposer::getDeviceCompositionChanges(
         HalDisplayId displayId, bool /*frameUsesClientComposition */,
-        std::chrono::steady_clock::time_point earliestPresentTime __attribute__((unused)),
-        const std::shared_ptr<FenceTime>& previousPresentFence __attribute__((unused)),
+        std::optional<chrono::steady_clock::time_point> earliestPresentTime __attribute__((unused)),
         nsecs_t expectedPresentTime,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
@@ -516,8 +515,8 @@ sp<Fence> HWComposer::getLayerReleaseFence(HalDisplayId displayId, HWC2::Layer* 
 }
 
 status_t HWComposer::presentAndGetReleaseFences(
-        HalDisplayId displayId, std::chrono::steady_clock::time_point earliestPresentTime,
-        const std::shared_ptr<FenceTime>& previousPresentFence) {
+        HalDisplayId displayId,
+        std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) {
     ATRACE_CALL();
 
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
@@ -539,13 +538,9 @@ status_t HWComposer::presentAndGetReleaseFences(
     }
 
     displayData.lastPresentFence = Fence::NO_FENCE;
-    const bool waitForEarliestPresent =
-            !mComposer->isSupported(Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
-            previousPresentFence->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
-
-    if (waitForEarliestPresent) {
+    if (earliestPresentTime) {
         ATRACE_NAME("wait for earliest present time");
-        std::this_thread::sleep_until(earliestPresentTime);
+        std::this_thread::sleep_until(*earliestPresentTime);
     }
 
     auto error = hwcDisplay->present(&displayData.lastPresentFence);
