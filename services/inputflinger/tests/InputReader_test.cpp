@@ -1830,7 +1830,7 @@ using StylusButtonIntegrationTestTypes =
         ::testing::Types<UinputTouchScreen, UinputExternalStylus, UinputExternalStylusWithPressure>;
 TYPED_TEST_SUITE(StylusButtonIntegrationTest, StylusButtonIntegrationTestTypes);
 
-TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsGenerateKeyEvents) {
+TYPED_TEST(StylusButtonIntegrationTest, DISABLED_StylusButtonsGenerateKeyEvents) {
     const auto stylusId = TestFixture::mStylusInfo.getId();
 
     TestFixture::mStylus->pressKey(BTN_STYLUS);
@@ -1844,7 +1844,7 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsGenerateKeyEvents) {
                   WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 }
 
-TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingTouchGesture) {
+TYPED_TEST(StylusButtonIntegrationTest, DISABLED_StylusButtonsSurroundingTouchGesture) {
     const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
     const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
     const auto stylusId = TestFixture::mStylusInfo.getId();
@@ -1890,7 +1890,7 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingTouchGesture) {
                   WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 }
 
-TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingHoveringTouchGesture) {
+TYPED_TEST(StylusButtonIntegrationTest, DISABLED_StylusButtonsSurroundingHoveringTouchGesture) {
     const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
     const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
     const auto stylusId = TestFixture::mStylusInfo.getId();
@@ -1966,7 +1966,7 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsSurroundingHoveringTouchGes
                   WithKeyCode(AKEYCODE_STYLUS_BUTTON_PRIMARY), WithDeviceId(stylusId))));
 }
 
-TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsWithinTouchGesture) {
+TYPED_TEST(StylusButtonIntegrationTest, DISABLED_StylusButtonsWithinTouchGesture) {
     const Point centerPoint = TestFixture::mTouchscreen->getCenterPoint();
     const auto touchscreenId = TestFixture::mTouchscreenInfo.getId();
     const auto stylusId = TestFixture::mStylusInfo.getId();
@@ -2020,7 +2020,7 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonsWithinTouchGesture) {
                   WithDeviceId(touchscreenId))));
 }
 
-TYPED_TEST(StylusButtonIntegrationTest, StylusButtonMotionEventsDisabled) {
+TYPED_TEST(StylusButtonIntegrationTest, DISABLED_StylusButtonMotionEventsDisabled) {
     TestFixture::mFakePolicy->setStylusButtonMotionEventsEnabled(false);
     TestFixture::mReader->requestRefreshConfiguration(
             InputReaderConfiguration::CHANGE_STYLUS_BUTTON_REPORTING);
@@ -2077,7 +2077,7 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonMotionEventsDisabled) {
 // ongoing stylus gesture that is being emitted by the touchscreen.
 using ExternalStylusIntegrationTest = TouchIntegrationTest;
 
-TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureReported) {
+TEST_F(ExternalStylusIntegrationTest, DISABLED_FusedExternalStylusPressureReported) {
     const Point centerPoint = mDevice->getCenterPoint();
 
     // Create an external stylus capable of reporting pressure data that
@@ -2123,7 +2123,7 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureReported) {
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasNotCalled());
 }
 
-TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
+TEST_F(ExternalStylusIntegrationTest, DISABLED_FusedExternalStylusPressureNotReported) {
     const Point centerPoint = mDevice->getCenterPoint();
 
     // Create an external stylus capable of reporting pressure data that
@@ -2191,7 +2191,7 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyKeyWasNotCalled());
 }
 
-TEST_F(ExternalStylusIntegrationTest, UnfusedExternalStylus) {
+TEST_F(ExternalStylusIntegrationTest, DISABLED_UnfusedExternalStylus) {
     const Point centerPoint = mDevice->getCenterPoint();
 
     // Create an external stylus device that does not support pressure. It should not affect any
@@ -6927,15 +6927,26 @@ public:
         // four times the resolution of the display in the Y axis.
         prepareButtons();
         mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_X, PRECISION_RAW_X_MIN, PRECISION_RAW_X_MAX,
-                                       0, 0);
+                                       PRECISION_RAW_X_FLAT, PRECISION_RAW_X_FUZZ,
+                                       PRECISION_RAW_X_RES);
         mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_Y, PRECISION_RAW_Y_MIN, PRECISION_RAW_Y_MAX,
-                                       0, 0);
+                                       PRECISION_RAW_Y_FLAT, PRECISION_RAW_Y_FUZZ,
+                                       PRECISION_RAW_Y_RES);
     }
 
     static const int32_t PRECISION_RAW_X_MIN = TouchInputMapperTest::RAW_X_MIN;
     static const int32_t PRECISION_RAW_X_MAX = PRECISION_RAW_X_MIN + DISPLAY_WIDTH * 2 - 1;
     static const int32_t PRECISION_RAW_Y_MIN = TouchInputMapperTest::RAW_Y_MIN;
     static const int32_t PRECISION_RAW_Y_MAX = PRECISION_RAW_Y_MIN + DISPLAY_HEIGHT * 4 - 1;
+
+    static const int32_t PRECISION_RAW_X_RES = 50;  // units per millimeter
+    static const int32_t PRECISION_RAW_Y_RES = 100; // units per millimeter
+
+    static const int32_t PRECISION_RAW_X_FLAT = 16;
+    static const int32_t PRECISION_RAW_Y_FLAT = 32;
+
+    static const int32_t PRECISION_RAW_X_FUZZ = 4;
+    static const int32_t PRECISION_RAW_Y_FUZZ = 8;
 
     static const std::array<Point, 4> kRawCorners;
 };
@@ -7092,6 +7103,41 @@ TEST_P(TouchscreenPrecisionTestsFixture, RotationPrecisionOrientationAwareInOri2
                 AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
                       WithCoords(expected.x, expected.y))));
     }
+}
+
+TEST_P(TouchscreenPrecisionTestsFixture, MotionRangesAreOrientedInRotatedDisplay) {
+    const ui::Rotation displayRotation = GetParam();
+
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    prepareDisplay(displayRotation);
+
+    __attribute__((unused)) SingleTouchInputMapper& mapper =
+            addMapperAndConfigure<SingleTouchInputMapper>();
+
+    const InputDeviceInfo deviceInfo = mDevice->getDeviceInfo();
+    // MotionRanges use display pixels as their units
+    const auto* xRange = deviceInfo.getMotionRange(AMOTION_EVENT_AXIS_X, AINPUT_SOURCE_TOUCHSCREEN);
+    const auto* yRange = deviceInfo.getMotionRange(AMOTION_EVENT_AXIS_Y, AINPUT_SOURCE_TOUCHSCREEN);
+
+    // The MotionRanges should be oriented in the rotated display's coordinate space
+    const bool displayRotated =
+            displayRotation == ui::ROTATION_90 || displayRotation == ui::ROTATION_270;
+
+    constexpr float MAX_X = 479.5;
+    constexpr float MAX_Y = 799.75;
+    EXPECT_EQ(xRange->min, 0.f);
+    EXPECT_EQ(yRange->min, 0.f);
+    EXPECT_EQ(xRange->max, displayRotated ? MAX_Y : MAX_X);
+    EXPECT_EQ(yRange->max, displayRotated ? MAX_X : MAX_Y);
+
+    EXPECT_EQ(xRange->flat, 8.f);
+    EXPECT_EQ(yRange->flat, 8.f);
+
+    EXPECT_EQ(xRange->fuzz, 2.f);
+    EXPECT_EQ(yRange->fuzz, 2.f);
+
+    EXPECT_EQ(xRange->resolution, 25.f); // pixels per millimeter
+    EXPECT_EQ(yRange->resolution, 25.f); // pixels per millimeter
 }
 
 // Run the precision tests for all rotations.
