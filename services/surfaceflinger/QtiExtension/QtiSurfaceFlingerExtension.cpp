@@ -359,6 +359,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnComposerHalHotplug(
     // QTI: Update QTI Extension's displays list when a display is disconnected
     if (connection != hal::Connection::CONNECTED) {
         if (info) {
+            ConditionalLock lock(mQtiFlinger->mStateLock,
+                                 std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
             qtiUpdateDisplaysList(mQtiFlinger->getDisplayDeviceLocked(info->id), /*add*/ false);
         }
     }
@@ -581,6 +583,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
         }
 
         // Populate the fps supported on device in mOffsetCache
+        ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
         const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(
                 mQtiFlinger->getDefaultDisplayDeviceLocked()->getPhysicalId());
 
@@ -617,7 +621,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 /*
  * Methods that call FrameScheduler APIs.
  */
-void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANALYSIS {
+void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
@@ -636,6 +640,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() NO_THREAD_SAFETY_ANAL
         return;
     }
 
+    ConditionalLock lock(mQtiFlinger->mStateLock,
+                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const nsecs_t period = mQtiFlinger->getVsyncPeriodFromHWC();
     const auto displayId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getPhysicalId();
     scheduler->resyncToHardwareVsync(displayId, true, Fps::fromPeriodNsecs(period));
@@ -1125,6 +1131,9 @@ bool QtiSurfaceFlingerExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffe
  * Methods for SmoMo Interface
  */
 void QtiSurfaceFlingerExtension::qtiCreateSmomoInstance(const DisplayDeviceState& state) {
+    ConditionalLock lock(mQtiFlinger->mStateLock,
+                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+
     const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(state.physical->id);
     const auto& displayObject = displayOpt->get();
     const auto& snapshot = displayObject.snapshot();
@@ -1279,9 +1288,11 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
     return;
 }
 
-void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANALYSIS {
+void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     ATRACE_CALL();
 
+    ConditionalLock lock(mQtiFlinger->mStateLock,
+                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const uint32_t layerStackId = mQtiFlinger->getDefaultDisplayDeviceLocked()->getLayerStack().id;
     if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
@@ -1346,10 +1357,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
                 }
             }
 
-            fps = device->getActiveMode().fps.getIntValue();
+            fps = device->refreshRateSelector().getActiveMode().fps.getIntValue();
         }
 
-        smoMo->UpdateSmomoState(layers, fps);
+        smoMo->UpdateSmomoState(layers, (float)fps);
 
         content_fps = smoMo->GetFrameRate();
         numActiveDisplays++;
@@ -1562,6 +1573,8 @@ void QtiSurfaceFlingerExtension::qtiDolphinTrackVsyncSignal() {
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
     if (display) {
+        ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
         const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
         const auto& physicalDisplay = displayOpt->get();
         const auto& snapshot = physicalDisplay.snapshot();

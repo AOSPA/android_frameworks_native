@@ -101,10 +101,12 @@ public:
 
     /* QTI_BEGIN */
     void qtiSetUndequeuedBufferCount(int count) {
+        std::lock_guard _lock{mMutex};
         mNumUndequeued = count;
     }
 
     int qtiGetUndequeuedBufferCount() const {
+        std::lock_guard _lock{mMutex};
         return mNumUndequeued;
     }
     /* QTI_END */

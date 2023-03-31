@@ -829,6 +829,7 @@ void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::lock_guard _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
     /* QTI_BEGIN */
+    std::lock_guard _lock2{mMutex};
     mNumUndequeued--;
     /* QTI_END */
 };
