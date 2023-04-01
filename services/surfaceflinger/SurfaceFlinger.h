@@ -164,9 +164,9 @@ class RenderEngine;
 
 /* QTI_BEGIN */
 namespace surfaceflingerextension {
-class QtiSurfaceFlingerExtensionIntf;
 class QtiSurfaceFlingerExtension;
 class QtiNullExtension;
+class QtiSurfaceFlingerExtensionIntf;
 } // namespace surfaceflingerextension
 /* QTI_END */
 
@@ -176,7 +176,8 @@ enum {
     eDisplayTransactionNeeded = 0x04,
     eTransformHintUpdateNeeded = 0x08,
     eTransactionFlushNeeded = 0x10,
-    eTransactionMask = 0x1f,
+    eInputInfoUpdateNeeded = 0x20,
+    eTransactionMask = 0x3f,
 };
 
 // Latch Unsignaled buffer behaviours
@@ -577,7 +578,8 @@ private:
     status_t clearBootDisplayMode(const sp<IBinder>& displayToken);
     status_t getHdrConversionCapabilities(
             std::vector<gui::HdrConversionCapability>* hdrConversionCapaabilities) const;
-    status_t setHdrConversionStrategy(const gui::HdrConversionStrategy& hdrConversionStrategy);
+    status_t setHdrConversionStrategy(const gui::HdrConversionStrategy& hdrConversionStrategy,
+                                      int32_t*);
     status_t getHdrOutputConversionSupport(bool* outSupport) const;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
@@ -636,7 +638,7 @@ private:
 
     status_t getMaxAcquiredBufferCount(int* buffers) const;
 
-    status_t addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener) const;
+    status_t addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener);
     status_t removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) const;
 
@@ -664,7 +666,7 @@ private:
 
     // Toggles hardware VSYNC by calling into HWC.
     // TODO(b/241286146): Rename for self-explanatory API.
-    void setVsyncEnabled(bool) override;
+    void setVsyncEnabled(PhysicalDisplayId, bool) override;
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
@@ -743,6 +745,7 @@ private:
             REQUIRES(kMainThreadContext);
     bool updateLayerSnapshots(VsyncId vsyncId, LifecycleUpdate& update, bool transactionsFlushed,
                               bool& out) REQUIRES(kMainThreadContext);
+    void updateLayerHistory(const frontend::LayerSnapshot& snapshot);
     LifecycleUpdate flushLifecycleUpdates() REQUIRES(kMainThreadContext);
 
     void updateInputFlinger();
@@ -999,7 +1002,9 @@ private:
             std::shared_ptr<compositionengine::Display> compositionDisplay,
             const DisplayDeviceState& state,
             const sp<compositionengine::DisplaySurface>& displaySurface,
-            const sp<IGraphicBufferProducer>& producer) REQUIRES(mStateLock);
+            const sp<IGraphicBufferProducer>& producer,
+            surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr)
+            REQUIRES(mStateLock);
     void processDisplayChangesLocked() REQUIRES(mStateLock, kMainThreadContext);
     void processDisplayRemoved(const wp<IBinder>& displayToken)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -1067,13 +1072,11 @@ private:
     VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat) REQUIRES(mStateLock);
     void releaseVirtualDisplay(VirtualDisplayId);
 
-    // TODO(b/255635821): Replace pointers with references. `inactiveDisplay` is only ever `nullptr`
-    // in tests, and `activeDisplay` must not be `nullptr` as a precondition.
-    void onActiveDisplayChangedLocked(const sp<DisplayDevice>& inactiveDisplay,
-                                      const sp<DisplayDevice>& activeDisplay)
+    void onActiveDisplayChangedLocked(const DisplayDevice* inactiveDisplayPtr,
+                                      const DisplayDevice& activeDisplay)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void onActiveDisplaySizeChanged(const sp<const DisplayDevice>&);
+    void onActiveDisplaySizeChanged(const DisplayDevice&);
 
     /*
      * Debugging & dumpsys
@@ -1139,20 +1142,29 @@ private:
                                                std::chrono::nanoseconds presentLatency);
     int getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const;
 
-    void updateInternalDisplayVsyncLocked(const sp<DisplayDevice>& activeDisplay)
+    void updateActiveDisplayVsyncLocked(const DisplayDevice& activeDisplay)
             REQUIRES(mStateLock, kMainThreadContext);
 
     bool isHdrLayer(const frontend::LayerSnapshot& snapshot) const;
 
     ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
+    void traverseLegacyLayers(const LayerVector::Visitor& visitor) const;
 
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
     pid_t mPid;
     std::future<void> mRenderEnginePrimeCacheFuture;
 
-    // access must be protected by mStateLock
+    // mStateLock has conventions related to the current thread, because only
+    // the main thread should modify variables protected by mStateLock.
+    // - read access from a non-main thread must lock mStateLock, since the main
+    // thread may modify these variables.
+    // - write access from a non-main thread is not permitted.
+    // - read access from the main thread can use an ftl::FakeGuard, since other
+    // threads must not modify these variables.
+    // - write access from the main thread must lock mStateLock, since another
+    // thread may be reading these variables.
     mutable Mutex mStateLock;
     State mCurrentState{LayerVector::StateSet::Current};
     std::atomic<int32_t> mTransactionFlags = 0;
@@ -1406,7 +1418,9 @@ private:
                 [](const auto& display) { return display.isRefreshRateOverlayEnabled(); });
     }
     std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> getLayerSnapshotsForScreenshots(
-            std::optional<ui::LayerStack> layerStack, uint32_t uid);
+            std::optional<ui::LayerStack> layerStack, uint32_t uid,
+            std::function<bool(const frontend::LayerSnapshot&, bool& outStopTraversal)>
+                    snapshotFilterFn);
     std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> getLayerSnapshotsForScreenshots(
             uint32_t rootLayerId, uint32_t uid, std::unordered_set<uint32_t> excludeLayerIds,
             bool childrenOnly, const FloatRect& parentCrop);
@@ -1439,13 +1453,12 @@ private:
         bool early = false;
     } mPowerHintSessionMode;
 
-    TransactionHandler mTransactionHandler;
-    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
-
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
     /* QTI_END */
 
+    TransactionHandler mTransactionHandler;
+    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
     bool mFrontEndDisplayInfosChanged = false;
 };
 
@@ -1485,8 +1498,8 @@ public:
     binder::Status getOverlaySupport(gui::OverlayProperties* outProperties) override;
     binder::Status getHdrConversionCapabilities(
             std::vector<gui::HdrConversionCapability>*) override;
-    binder::Status setHdrConversionStrategy(
-            const gui::HdrConversionStrategy& hdrConversionStrategy) override;
+    binder::Status setHdrConversionStrategy(const gui::HdrConversionStrategy& hdrConversionStrategy,
+                                            int32_t*) override;
     binder::Status getHdrOutputConversionSupport(bool* outSupport) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;

@@ -28,6 +28,10 @@
 
 #include <ui/DisplayIdentification.h>
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
+/* QTI_END */
+
 // ---------------------------------------------------------------------------
 namespace android {
 // ---------------------------------------------------------------------------
@@ -35,6 +39,13 @@ namespace android {
 class Rect;
 class String8;
 class HWComposer;
+
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+class QtiFramebufferSurfaceExtension;
+} // namespace surfaceflingerextension
+/* QTI_END */
 
 // ---------------------------------------------------------------------------
 
@@ -56,7 +67,7 @@ public:
 
     /* QTI_BEGIN */
     virtual surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* qtiGetDisplaySurfaceExtn() {
-        return nullptr;
+        return mQtiDSExtnIntf;
     }
     /* QTI_END */
 
@@ -111,6 +122,11 @@ private:
     bool mHasPendingRelease;
     int mPreviousBufferSlot;
     sp<GraphicBuffer> mPreviousBuffer;
+
+    /* QTI_BEGIN */
+    friend class android::surfaceflingerextension::QtiFramebufferSurfaceExtension;
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    /* QTI_END */
 };
 
 // ---------------------------------------------------------------------------

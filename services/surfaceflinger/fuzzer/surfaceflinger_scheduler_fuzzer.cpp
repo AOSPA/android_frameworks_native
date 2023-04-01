@@ -48,6 +48,7 @@ constexpr PowerMode kPowerModes[] = {PowerMode::ON, PowerMode::DOZE, PowerMode::
 
 constexpr uint16_t kRandomStringLength = 256;
 constexpr std::chrono::duration kSyncPeriod(16ms);
+constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID = PhysicalDisplayId::fromPort(42u);
 
 template <typename T>
 void dump(T* component, FuzzedDataProvider* fdp) {
@@ -76,7 +77,7 @@ private:
 
     FuzzedDataProvider mFdp;
 
-    std::unique_ptr<scheduler::VsyncSchedule> mVsyncSchedule;
+    std::shared_ptr<scheduler::VsyncSchedule> mVsyncSchedule;
 };
 
 PhysicalDisplayId SchedulerFuzzer::getPhysicalDisplayId() {
@@ -90,12 +91,13 @@ PhysicalDisplayId SchedulerFuzzer::getPhysicalDisplayId() {
 }
 
 void SchedulerFuzzer::fuzzEventThread() {
-    mVsyncSchedule = std::unique_ptr<scheduler::VsyncSchedule>(
-            new scheduler::VsyncSchedule(std::make_unique<mock::VSyncTracker>(),
-                                         std::make_unique<mock::VSyncDispatch>(), nullptr));
+    mVsyncSchedule = std::shared_ptr<scheduler::VsyncSchedule>(
+            new scheduler::VsyncSchedule(getPhysicalDisplayId(),
+                                         std::make_shared<mock::VSyncTracker>(),
+                                         std::make_shared<mock::VSyncDispatch>(), nullptr));
     const auto getVsyncPeriod = [](uid_t /* uid */) { return kSyncPeriod.count(); };
     std::unique_ptr<android::impl::EventThread> thread = std::make_unique<
-            android::impl::EventThread>("fuzzer", *mVsyncSchedule, nullptr, nullptr, getVsyncPeriod,
+            android::impl::EventThread>("fuzzer", mVsyncSchedule, nullptr, nullptr, getVsyncPeriod,
                                         (std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>(),
                                         (std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>());
 
@@ -109,8 +111,7 @@ void SchedulerFuzzer::fuzzEventThread() {
     thread->setDuration((std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>(),
                         (std::chrono::nanoseconds)mFdp.ConsumeIntegral<uint64_t>());
     thread->registerDisplayEventConnection(connection);
-    thread->onScreenAcquired();
-    thread->onScreenReleased();
+    thread->enableSyntheticVsync(mFdp.ConsumeBool());
     dump<android::impl::EventThread>(thread.get(), &mFdp);
 }
 
@@ -132,7 +133,7 @@ void SchedulerFuzzer::fuzzCallbackToken(scheduler::VSyncDispatchTimerQueue* disp
 }
 
 void SchedulerFuzzer::fuzzVSyncDispatchTimerQueue() {
-    FuzzImplVSyncTracker stubTracker{mFdp.ConsumeIntegral<nsecs_t>()};
+    auto stubTracker = std::make_shared<FuzzImplVSyncTracker>(mFdp.ConsumeIntegral<nsecs_t>());
     scheduler::VSyncDispatchTimerQueue
             mDispatch{std::make_unique<scheduler::ControllableClock>(), stubTracker,
                       mFdp.ConsumeIntegral<nsecs_t>() /*dispatchGroupThreshold*/,
@@ -145,17 +146,17 @@ void SchedulerFuzzer::fuzzVSyncDispatchTimerQueue() {
     scheduler::VSyncDispatchTimerQueueEntry entry(
             "fuzz", [](auto, auto, auto) {},
             mFdp.ConsumeIntegral<nsecs_t>() /*vSyncMoveThreshold*/);
-    entry.update(stubTracker, 0);
+    entry.update(*stubTracker, 0);
     entry.schedule({.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()},
-                   stubTracker, 0);
+                   *stubTracker, 0);
     entry.disarm();
     entry.ensureNotRunning();
     entry.schedule({.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()},
-                   stubTracker, 0);
+                   *stubTracker, 0);
     auto const wakeup = entry.wakeupTime();
     auto const ready = entry.readyTime();
     entry.callback(entry.executing(), *wakeup, *ready);
@@ -169,7 +170,8 @@ void SchedulerFuzzer::fuzzVSyncPredictor() {
     uint16_t now = mFdp.ConsumeIntegral<uint16_t>();
     uint16_t historySize = mFdp.ConsumeIntegralInRange<uint16_t>(1, UINT16_MAX);
     uint16_t minimumSamplesForPrediction = mFdp.ConsumeIntegralInRange<uint16_t>(1, UINT16_MAX);
-    scheduler::VSyncPredictor tracker{mFdp.ConsumeIntegral<uint16_t>() /*period*/, historySize,
+    scheduler::VSyncPredictor tracker{DEFAULT_DISPLAY_ID,
+                                      mFdp.ConsumeIntegral<uint16_t>() /*period*/, historySize,
                                       minimumSamplesForPrediction,
                                       mFdp.ConsumeIntegral<uint32_t>() /*outlierTolerancePercent*/};
     uint16_t period = mFdp.ConsumeIntegral<uint16_t>();
@@ -218,9 +220,9 @@ void SchedulerFuzzer::fuzzLayerHistory() {
     sp<FuzzImplLayer> layer2 = sp<FuzzImplLayer>::make(flinger.flinger());
 
     for (int i = 0; i < historySize; ++i) {
-        historyV1.record(layer1.get(), time1, time1,
+        historyV1.record(layer1->getSequence(), layer1->getLayerProps(), time1, time1,
                          scheduler::LayerHistory::LayerUpdateType::Buffer);
-        historyV1.record(layer2.get(), time2, time2,
+        historyV1.record(layer2->getSequence(), layer2->getLayerProps(), time2, time2,
                          scheduler::LayerHistory::LayerUpdateType::Buffer);
         time1 += mFdp.PickValueInArray(kVsyncPeriods);
         time2 += mFdp.PickValueInArray(kVsyncPeriods);
@@ -242,13 +244,15 @@ void SchedulerFuzzer::fuzzLayerHistory() {
 
 void SchedulerFuzzer::fuzzVSyncReactor() {
     std::shared_ptr<FuzzImplVSyncTracker> vSyncTracker = std::make_shared<FuzzImplVSyncTracker>();
-    scheduler::VSyncReactor reactor(std::make_unique<ClockWrapper>(
+    scheduler::VSyncReactor reactor(DEFAULT_DISPLAY_ID,
+                                    std::make_unique<ClockWrapper>(
                                             std::make_shared<FuzzImplClock>()),
                                     *vSyncTracker, mFdp.ConsumeIntegral<uint8_t>() /*pendingLimit*/,
                                     false);
 
-    reactor.startPeriodTransition(mFdp.ConsumeIntegral<nsecs_t>());
-    bool periodFlushed = mFdp.ConsumeBool();
+    reactor.startPeriodTransition(mFdp.ConsumeIntegral<nsecs_t>(), mFdp.ConsumeBool());
+    bool periodFlushed = false; // Value does not matter, since this is an out
+                                // param from addHwVsyncTimestamp.
     reactor.addHwVsyncTimestamp(0, std::nullopt, &periodFlushed);
     reactor.addHwVsyncTimestamp(mFdp.ConsumeIntegral<nsecs_t>() /*newPeriod*/, std::nullopt,
                                 &periodFlushed);

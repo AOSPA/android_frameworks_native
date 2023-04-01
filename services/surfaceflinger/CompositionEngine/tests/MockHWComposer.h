@@ -115,8 +115,9 @@ public:
     MOCK_CONST_METHOD0(
             getHdrConversionCapabilities,
             std::vector<aidl::android::hardware::graphics::common::HdrConversionCapability>());
-    MOCK_METHOD1(setHdrConversionStrategy,
-                 status_t(aidl::android::hardware::graphics::common::HdrConversionStrategy));
+    MOCK_METHOD2(setHdrConversionStrategy,
+                 status_t(aidl::android::hardware::graphics::common::HdrConversionStrategy,
+                          aidl::android::hardware::graphics::common::Hdr*));
     MOCK_METHOD2(setAutoLowLatencyMode, status_t(PhysicalDisplayId, bool));
     MOCK_METHOD(status_t, getSupportedContentTypes,
                 (PhysicalDisplayId, std::vector<hal::ContentType>*), (const, override));
@@ -146,6 +147,7 @@ public:
     MOCK_METHOD(bool, getValidateSkipped, (HalDisplayId), (const, override));
     MOCK_METHOD(const aidl::android::hardware::graphics::composer3::OverlayProperties&,
                 getOverlaySupport, (), (const, override));
+    MOCK_METHOD(status_t, setRefreshRateChangedCallbackDebugEnabled, (PhysicalDisplayId, bool));
 };
 
 } // namespace mock

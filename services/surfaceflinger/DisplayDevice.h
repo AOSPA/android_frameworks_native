@@ -78,6 +78,16 @@ namespace display {
 class DisplaySnapshot;
 } // namespace display
 
+/* QTI_BEGIN */
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+} // namespace surfaceflingerextension
+
+namespace compositionengineextension {
+class QtiDisplayExtension;
+} // namespace compositionengineextension
+/* QTI_END */
+
 class DisplayDevice : public RefBase {
 public:
     constexpr static float sDefaultMinLumiance = 0.0;
@@ -243,8 +253,9 @@ public:
     }
 
     // Enables an overlay to be displayed with the current refresh rate
-    void enableRefreshRateOverlay(bool enable, bool showSpinner, bool showRenderRate,
+    void enableRefreshRateOverlay(bool enable, bool setByHwc, bool showSpinner, bool showRenderRate,
                                   bool showInMiddle) REQUIRES(kMainThreadContext);
+    void updateRefreshRateOverlayRate(Fps displayFps, Fps renderFps, bool setByHwc = false);
     bool isRefreshRateOverlayEnabled() const { return mRefreshRateOverlay != nullptr; }
     bool onKernelTimerChanged(std::optional<DisplayModeId>, bool timerExpired);
     void animateRefreshRateOverlay();
@@ -253,9 +264,9 @@ public:
 
     Fps getAdjustedRefreshRate() const { return mAdjustedRefreshRate; }
 
-    // Round the requested refresh rate to match a divisor of the leader
+    // Round the requested refresh rate to match a divisor of the pacesetter
     // display's refresh rate. Only supported for virtual displays.
-    void adjustRefreshRate(Fps leaderDisplayRefreshRate);
+    void adjustRefreshRate(Fps pacesetterDisplayRefreshRate);
 
     // release HWC resources (if any) for removable displays
     void disconnect();
@@ -302,7 +313,7 @@ private:
     // for virtual displays to match this requested refresh rate.
     const Fps mRequestedRefreshRate;
 
-    // Adjusted refresh rate, rounded to match a divisor of the leader
+    // Adjusted refresh rate, rounded to match a divisor of the pacesetter
     // display's refresh rate. Only supported for virtual displays.
     Fps mAdjustedRefreshRate = 0_Hz;
 
@@ -381,6 +392,9 @@ struct DisplayDeviceCreationArgs {
     std::optional<hardware::graphics::composer::hal::PowerMode> initialPowerMode;
     bool isPrimary{false};
     DisplayModeId activeModeId;
+    // QTI_BEGIN
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    // QTI_END
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
 };

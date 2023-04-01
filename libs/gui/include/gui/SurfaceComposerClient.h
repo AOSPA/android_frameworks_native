@@ -192,8 +192,10 @@ public:
 
     // Gets the HDR conversion capabilities of the device
     static status_t getHdrConversionCapabilities(std::vector<gui::HdrConversionCapability>*);
-    // Sets the HDR conversion strategy for the device
-    static status_t setHdrConversionStrategy(gui::HdrConversionStrategy hdrConversionStrategy);
+    // Sets the HDR conversion strategy for the device. in case when HdrConversionStrategy has
+    // autoAllowedHdrTypes set. Returns Hdr::INVALID in other cases.
+    static status_t setHdrConversionStrategy(gui::HdrConversionStrategy hdrConversionStrategy,
+                                             ui::Hdr* outPreferredHdrOutputType);
     // Returns whether HDR conversion is supported by the device.
     static status_t getHdrOutputConversionSupport(bool* isSupported);
 
@@ -564,6 +566,7 @@ public:
         Transaction& setDataspace(const sp<SurfaceControl>& sc, ui::Dataspace dataspace);
         Transaction& setExtendedRangeBrightness(const sp<SurfaceControl>& sc,
                                                 float currentBufferRatio, float desiredRatio);
+        Transaction& setCachingHint(const sp<SurfaceControl>& sc, gui::CachingHint cachingHint);
         Transaction& setHdrMetadata(const sp<SurfaceControl>& sc, const HdrMetadata& hdrMetadata);
         Transaction& setSurfaceDamageRegion(const sp<SurfaceControl>& sc,
                                             const Region& surfaceDamageRegion);

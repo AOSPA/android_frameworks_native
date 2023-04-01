@@ -47,6 +47,7 @@ cc_library {
         "Input.cpp",
         "InputDevice.cpp",
         "InputEventLabels.cpp",
+        "InputVerifier.cpp",
         "Keyboard.cpp",
         "KeyCharacterMap.cpp",
         "KeyLayoutMap.cpp",
@@ -57,6 +58,7 @@ cc_library {
         "TouchVideoFrame.cpp",
         "VelocityControl.cpp",
         "VelocityTracker.cpp",
+        "VirtualInputDevice.cpp",
         "VirtualKeyMap.cpp",
     ],
 
@@ -66,6 +68,10 @@ cc_library {
         "tensorflow_headers",
     ],
     export_header_lib_headers: ["jni_headers"],
+
+    generated_headers: [
+        "toolbox_input_labels",
+    ],
 
     shared_libs: [
         "libbase",
@@ -124,6 +130,8 @@ cc_library {
                 enabled: false,
             },
             include_dirs: [
+                "bionic/libc/kernel/android/uapi/",
+                "bionic/libc/kernel/uapi",
                 "frameworks/native/libs/arect/include",
             ],
         },
@@ -159,6 +167,7 @@ cc_library {
 
 cc_defaults {
     name: "libinput_fuzz_defaults",
+    cpp_std: "c++20",
     host_supported: true,
     shared_libs: [
         "libutils",

@@ -45,9 +45,13 @@ std::string BinderRpc::PrintParamInfo(const testing::TestParamInfo<ParamType>& i
             std::to_string(serverVersion);
     if (singleThreaded) {
         ret += "_single_threaded";
+    } else {
+        ret += "_multi_threaded";
     }
     if (noKernel) {
         ret += "_no_kernel";
+    } else {
+        ret += "_with_kernel";
     }
     return ret;
 }
@@ -71,7 +75,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
         auto session = android::RpcSession::make(std::move(factory));
 
         EXPECT_TRUE(session->setProtocolVersion(clientVersion));
-        session->setMaxOutgoingThreads(options.numOutgoingConnections);
+        session->setMaxOutgoingConnections(options.numOutgoingConnections);
         session->setFileDescriptorTransportMode(options.clientFileDescriptorTransportMode);
 
         status = session->setupPreconnectedClient({}, [&]() {

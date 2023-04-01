@@ -50,7 +50,7 @@ public:
         mFlinger.configureAndCommit();
 
         mDisplay = PrimaryDisplayVariant::makeFakeExistingDisplayInjector(this)
-                           .setDisplayModes(kModes, kModeId60, std::move(selectorPtr))
+                           .setRefreshRateSelector(std::move(selectorPtr))
                            .inject();
 
         // isVsyncPeriodSwitchSupported should return true, otherwise the SF's HWC proxy
@@ -100,7 +100,7 @@ void DisplayModeSwitchingTest::setupScheduler(
                                                              ResyncCallback())));
 
     auto vsyncController = std::make_unique<mock::VsyncController>();
-    auto vsyncTracker = std::make_unique<mock::VSyncTracker>();
+    auto vsyncTracker = std::make_shared<mock::VSyncTracker>();
 
     EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
     EXPECT_CALL(*vsyncTracker, currentPeriod())
@@ -109,8 +109,8 @@ void DisplayModeSwitchingTest::setupScheduler(
     EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
     mFlinger.setupScheduler(std::move(vsyncController), std::move(vsyncTracker),
                             std::move(eventThread), std::move(sfEventThread),
-                            TestableSurfaceFlinger::SchedulerCallbackImpl::kNoOp,
-                            std::move(selectorPtr));
+                            std::move(selectorPtr),
+                            TestableSurfaceFlinger::SchedulerCallbackImpl::kNoOp);
 }
 
 TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithRefreshRequired) {
@@ -119,7 +119,7 @@ TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithRefreshRe
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getActiveMode().modePtr->getId(), kModeId60);
 
-    mFlinger.onActiveDisplayChanged(mDisplay);
+    mFlinger.onActiveDisplayChanged(*mDisplay);
 
     mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
                                         mock::createDisplayModeSpecs(kModeId90.value(), false, 0,
@@ -159,7 +159,7 @@ TEST_F(DisplayModeSwitchingTest, changeRefreshRate_OnActiveDisplay_WithoutRefres
 
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
 
-    mFlinger.onActiveDisplayChanged(mDisplay);
+    mFlinger.onActiveDisplayChanged(*mDisplay);
 
     mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
                                         mock::createDisplayModeSpecs(kModeId90.value(), true, 0,
@@ -195,7 +195,7 @@ TEST_F(DisplayModeSwitchingTest, twoConsecutiveSetDesiredDisplayModeSpecs) {
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getActiveMode().modePtr->getId(), kModeId60);
 
-    mFlinger.onActiveDisplayChanged(mDisplay);
+    mFlinger.onActiveDisplayChanged(*mDisplay);
 
     mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
                                         mock::createDisplayModeSpecs(kModeId90.value(), false, 0,
@@ -238,7 +238,7 @@ TEST_F(DisplayModeSwitchingTest, changeResolution_OnActiveDisplay_WithoutRefresh
     ASSERT_FALSE(mDisplay->getDesiredActiveMode().has_value());
     ASSERT_EQ(mDisplay->getActiveMode().modePtr->getId(), kModeId60);
 
-    mFlinger.onActiveDisplayChanged(mDisplay);
+    mFlinger.onActiveDisplayChanged(*mDisplay);
 
     mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
                                         mock::createDisplayModeSpecs(kModeId90_4K.value(), false, 0,
@@ -315,7 +315,7 @@ TEST_F(DisplayModeSwitchingTest, multiDisplay) {
     EXPECT_EQ(innerDisplay->getActiveMode().modePtr->getId(), kModeId60);
     EXPECT_EQ(outerDisplay->getActiveMode().modePtr->getId(), kModeId120);
 
-    mFlinger.onActiveDisplayChanged(innerDisplay);
+    mFlinger.onActiveDisplayChanged(*innerDisplay);
 
     EXPECT_EQ(NO_ERROR,
               mFlinger.setDesiredDisplayModeSpecs(innerDisplay->getDisplayToken().promote(),
@@ -359,7 +359,7 @@ TEST_F(DisplayModeSwitchingTest, multiDisplay) {
     EXPECT_FALSE(outerDisplay->getDesiredActiveMode());
     EXPECT_EQ(outerDisplay->getActiveMode().modePtr->getId(), kModeId120);
 
-    mFlinger.onActiveDisplayChanged(outerDisplay);
+    mFlinger.onActiveDisplayChanged(*outerDisplay);
 
     // No transition on the inner display.
     EXPECT_FALSE(innerDisplay->getDesiredActiveMode());

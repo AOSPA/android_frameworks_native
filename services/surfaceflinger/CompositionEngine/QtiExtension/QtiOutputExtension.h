@@ -3,23 +3,24 @@
  */
 #pragma once
 
-#include "QtiOutputExtensionIntf.h"
+#include "DisplayHardware/HWC2.h"
+#include "compositionengine/impl/Output.h"
 
-namespace android {
+using android::compositionengine::impl::Output;
 
-namespace compositionengineextension {
+namespace android::compositionengineextension {
 
-class QtiOutputExtension : public QtiOutputExtensionIntf {
+class QtiOutputExtension {
 public:
-    QtiOutputExtension(compositionengine::impl::Output* output);
+    QtiOutputExtension() = default;
     ~QtiOutputExtension() = default;
 
-    bool qtiHasSecureContent() override;
-    bool qtiHasSecureDisplay() override;
-
-private:
-    compositionengine::impl::Output* mQtiOutput = nullptr;
+    static bool qtiIsProtectedContent(const Output* output);
+    static bool qtiHasSecureDisplay(const Output* output);
+    static bool qtiHasSecureOrProtectedContent(const Output* output);
+    static void qtiWriteLayerFlagToHWC(HWC2::Layer* layer, const Output* output);
+    static void qtiSetLayerAsMask(DisplayId id, uint64_t layerId);
+    static void qtiSetLayerType(HWC2::Layer* layerId, uint32_t type, const char* debugName);
 };
 
-} // namespace compositionengineextension
-} // namespace android
+} // namespace android::compositionengineextension

@@ -38,14 +38,6 @@
 #include <utility>
 #include <vector>
 
-/* QTI_BEGIN */
-#include "../../../QtiExtension/QtiOutputExtensionIntf.h"
-
-namespace android::compositionengineextension {
-class QtiOutputExtensionIntf;
-class QtiOutputExtension;
-} // namespace android::compositionengineextension
-/* QTI_END */
 
 namespace android::compositionengine::impl {
 
@@ -172,11 +164,6 @@ protected:
     const std::string& getNamePlusId() const { return mNamePlusId; }
 
 private:
-    /* QTI_BEGIN */
-    friend class android::compositionengineextension::QtiOutputExtension;
-    android::compositionengineextension::QtiOutputExtensionIntf* mQtiOutputExtnIntf = nullptr;
-    /* QTI_END */
-
     void dirtyEntireOutput();
     void updateCompositionStateForBorder(const compositionengine::CompositionRefreshArgs&);
     compositionengine::OutputLayer* findLayerRequestingBackgroundComposition() const;

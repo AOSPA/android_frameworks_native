@@ -52,6 +52,13 @@
 namespace android::surfaceflingerextension {
 class QtiHidlComposerHalExtension;
 }
+
+#ifdef QTI_DISPLAY_EXTENSION
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposer.h>
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposer;
+#endif
 /* QTI_END */
 
 namespace android::Hwc2 {
@@ -358,8 +365,9 @@ public:
     Error getHdrConversionCapabilities(
             std::vector<aidl::android::hardware::graphics::common::HdrConversionCapability>*)
             override;
-    Error setHdrConversionStrategy(
-            aidl::android::hardware::graphics::common::HdrConversionStrategy) override;
+    Error setHdrConversionStrategy(aidl::android::hardware::graphics::common::HdrConversionStrategy,
+                                   Hdr*) override;
+    Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) override;
 
 private:
     /* QTI_BEGIN */
@@ -373,6 +381,9 @@ private:
 
         /* QTI_BEGIN */
         void qtiSetDisplayElapseTime(uint64_t time);
+        void qtiSetLayerType(uint32_t type);
+        void qtiSetClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
+        void qtiSetLayerFlag(uint32_t type);
         /* QTI_END */
     };
 
@@ -389,6 +400,11 @@ private:
     sp<V2_2::IComposerClient> mClient_2_2;
     sp<V2_3::IComposerClient> mClient_2_3;
     sp<IComposerClient> mClient_2_4;
+    /* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+    sp<IQtiComposerClient> mClient_3_1;
+#endif
+    /* QTI_END */
 
     // Buffer slots for layers are cleared by setting the slot buffer to this buffer.
     sp<GraphicBuffer> mClearSlotBuffer;

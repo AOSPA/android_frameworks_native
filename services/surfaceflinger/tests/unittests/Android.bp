@@ -48,7 +48,6 @@ cc_test {
         "libsurfaceflinger_mocks_defaults",
         "skia_renderengine_deps",
         "surfaceflinger_defaults",
-        "libqtisurfaceflingerextension_defaults",
     ],
     test_suites: ["device-tests"],
     sanitize: {
@@ -104,8 +103,11 @@ cc_test {
         "SurfaceFlinger_DestroyDisplayTest.cpp",
         "SurfaceFlinger_DisplayModeSwitching.cpp",
         "SurfaceFlinger_DisplayTransactionCommitTest.cpp",
+        "SurfaceFlinger_ExcludeDolbyVisionTest.cpp",
         "SurfaceFlinger_GetDisplayNativePrimariesTest.cpp",
+        "SurfaceFlinger_HdrOutputControlTest.cpp",
         "SurfaceFlinger_HotplugTest.cpp",
+        "SurfaceFlinger_MultiDisplayPacesetterTest.cpp",
         "SurfaceFlinger_NotifyPowerBoostTest.cpp",
         "SurfaceFlinger_OnInitializeDisplaysTest.cpp",
         "SurfaceFlinger_PowerHintTest.cpp",
@@ -113,7 +115,6 @@ cc_test {
         "SurfaceFlinger_SetPowerModeInternalTest.cpp",
         "SurfaceFlinger_SetupNewDisplayDeviceInternalTest.cpp",
         "SurfaceFlinger_UpdateLayerMetadataSnapshotTest.cpp",
-        "SurfaceFlinger_ExcludeDolbyVisionTest.cpp",
         "SchedulerTest.cpp",
         "SetFrameRateTest.cpp",
         "RefreshRateSelectorTest.cpp",
@@ -134,6 +135,7 @@ cc_test {
         "VSyncPredictorTest.cpp",
         "VSyncReactorTest.cpp",
         "VsyncConfigurationTest.cpp",
+        "VsyncScheduleTest.cpp",
     ],
 }
 
@@ -203,7 +205,6 @@ cc_defaults {
         "libui",
         "libutils",
         "server_configurable_flags",
-        "vendor.qti.hardware.display.composer@3.0",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer",

@@ -177,6 +177,7 @@ cc_library_shared {
     static_libs: [
         "libgui_aidl_static",
         "libgui_window_info_static",
+        "libqtiguiextension",
     ],
     export_static_lib_headers: [
         "libgui_aidl_static",
@@ -412,5 +413,38 @@ cc_library_static {
         "mock/GraphicBufferProducer.cpp",
     ],
 }
+
+// QTI_BEGIN
+soong_config_module_type_import {
+    from: "frameworks/native/services/surfaceflinger/QtiExtension/Android.bp",
+    module_types: ["qtidisplayextension_cc_library_static"],
+}
+
+qtidisplayextension_cc_library_static {
+    name: "libqtiguiextension",
+    vendor_available: true,
+    defaults: [
+        "libgui_bufferqueue-defaults",
+    ],
+    header_libs: [
+        "libgui_aidl_headers",
+    ],
+    static_libs: [
+        "libgui_window_info_static"
+    ],
+    soong_config_variables: {
+        displayextension: {
+            cflags: [
+                "-DQTI_DISPLAY_EXTENSION",
+            ],
+       },
+    },
+    srcs: [
+        "QtiExtension/QtiBLASTBufferQueueExtension.cpp",
+    ],
+    local_include_dirs: ["QtiExtension"],
+    export_include_dirs: ["QtiExtension"],
+}
+// QTI_END
 
 subdirs = ["tests"]

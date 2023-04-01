@@ -100,10 +100,11 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId d
     sink->query(NATIVE_WINDOW_CONSUMER_USAGE_BITS, &sinkUsage);
 
     /* QTI_BEGIN */
-    mQtiDSExtnIntf =
-            surfaceflingerextension::qtiCreateDisplaySurfaceExtension(/* isVirtual */ true, this,
-                                                                      qtiSecure, sinkUsage);
-
+    if (!mQtiDSExtnIntf) {
+        mQtiDSExtnIntf = surfaceflingerextension::
+                qtiCreateDisplaySurfaceExtension(/* isVirtual */ true, this, qtiSecure, sinkUsage,
+                                                 /* FramebufferSurface */ nullptr);
+    }
     mOutputUsage = mQtiDSExtnIntf->qtiSetOutputUsage();
     /* QTI_ END */
 

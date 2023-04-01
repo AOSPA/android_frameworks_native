@@ -35,11 +35,6 @@ public:
     MOCK_CONST_METHOD1(dumpAsString, void(String8& result));
     MOCK_METHOD1(resizeBuffers, void(const ui::Size&));
     MOCK_CONST_METHOD0(getClientTargetAcquireFence, const sp<Fence>&());
-
-    /* QTI_BEGIN */
-    MOCK_METHOD0(qtiGetDisplaySurfaceExtn,
-                 surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*());
-    /* QTI_END */
 };
 
 } // namespace android::compositionengine::mock

@@ -20,6 +20,7 @@
 
 #include <dlfcn.h>
 #include <inttypes.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -90,16 +91,16 @@ size_t RpcSession::getMaxIncomingThreads() {
     return mMaxIncomingThreads;
 }
 
-void RpcSession::setMaxOutgoingThreads(size_t threads) {
+void RpcSession::setMaxOutgoingConnections(size_t connections) {
     RpcMutexLockGuard _l(mMutex);
     LOG_ALWAYS_FATAL_IF(mStartedSetup,
                         "Must set max outgoing threads before setting up connections");
-    mMaxOutgoingThreads = threads;
+    mMaxOutgoingConnections = connections;
 }
 
 size_t RpcSession::getMaxOutgoingThreads() {
     RpcMutexLockGuard _l(mMutex);
-    return mMaxOutgoingThreads;
+    return mMaxOutgoingConnections;
 }
 
 bool RpcSession::setProtocolVersionInternal(uint32_t version, bool checkStarted) {
@@ -558,11 +559,11 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
         return status;
     }
 
-    size_t outgoingThreads = std::min(numThreadsAvailable, mMaxOutgoingThreads);
-    ALOGI_IF(outgoingThreads != numThreadsAvailable,
+    size_t outgoingConnections = std::min(numThreadsAvailable, mMaxOutgoingConnections);
+    ALOGI_IF(outgoingConnections != numThreadsAvailable,
              "Server hints client to start %zu outgoing threads, but client will only start %zu "
              "because it is preconfigured to start at most %zu outgoing threads.",
-             numThreadsAvailable, outgoingThreads, mMaxOutgoingThreads);
+             numThreadsAvailable, outgoingConnections, mMaxOutgoingConnections);
 
     // TODO(b/189955605): we should add additional sessions dynamically
     // instead of all at once - the other side should be responsible for setting
@@ -571,10 +572,10 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
     // any requests at all.
 
     // we've already setup one client
-    LOG_RPC_DETAIL("RpcSession::setupClient() instantiating %zu outgoing (server max: %zu) and %zu "
-                   "incoming threads",
-                   outgoingThreads, numThreadsAvailable, mMaxIncomingThreads);
-    for (size_t i = 0; i + 1 < outgoingThreads; i++) {
+    LOG_RPC_DETAIL("RpcSession::setupClient() instantiating %zu outgoing connections (server max: "
+                   "%zu) and %zu incoming threads",
+                   outgoingConnections, numThreadsAvailable, mMaxIncomingThreads);
+    for (size_t i = 0; i + 1 < outgoingConnections; i++) {
         if (status_t status = connectAndInit(mId, false /*incoming*/); status != OK) return status;
     }
 
@@ -606,6 +607,18 @@ status_t RpcSession::setupOneSocketConnection(const RpcSocketAddress& addr,
             ALOGE("Could not create socket at %s: %s", addr.toString().c_str(),
                   strerror(savedErrno));
             return -savedErrno;
+        }
+
+        if (addr.addr()->sa_family == AF_INET || addr.addr()->sa_family == AF_INET6) {
+            int noDelay = 1;
+            int result =
+                    setsockopt(serverFd.get(), IPPROTO_TCP, TCP_NODELAY, &noDelay, sizeof(noDelay));
+            if (result < 0) {
+                int savedErrno = errno;
+                ALOGE("Could not set TCP_NODELAY on %s: %s", addr.toString().c_str(),
+                      strerror(savedErrno));
+                return -savedErrno;
+            }
         }
 
         RpcTransportFd transportFd(std::move(serverFd));
@@ -932,7 +945,8 @@ status_t RpcSession::ExclusiveConnection::find(const sp<RpcSession>& session, Co
                   (session->server()
                            ? "This is a server session, so see RpcSession::setMaxIncomingThreads "
                              "for the corresponding client"
-                           : "This is a client session, so see RpcSession::setMaxOutgoingThreads "
+                           : "This is a client session, so see "
+                             "RpcSession::setMaxOutgoingConnections "
                              "for this client or RpcServer::setMaxThreads for the corresponding "
                              "server"));
             return WOULD_BLOCK;

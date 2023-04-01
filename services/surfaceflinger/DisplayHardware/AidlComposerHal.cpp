@@ -1462,10 +1462,25 @@ Error AidlComposer::getHdrConversionCapabilities(
     return Error::NONE;
 }
 
-Error AidlComposer::setHdrConversionStrategy(AidlHdrConversionStrategy hdrConversionStrategy) {
-    const auto status = mAidlComposerClient->setHdrConversionStrategy(hdrConversionStrategy);
+Error AidlComposer::setHdrConversionStrategy(AidlHdrConversionStrategy hdrConversionStrategy,
+                                             Hdr* outPreferredHdrOutputType) {
+    const auto status = mAidlComposerClient->setHdrConversionStrategy(hdrConversionStrategy,
+                                                                      outPreferredHdrOutputType);
     if (!status.isOk()) {
         ALOGE("setHdrConversionStrategy failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    return Error::NONE;
+}
+
+Error AidlComposer::setRefreshRateChangedCallbackDebugEnabled(Display displayId, bool enabled) {
+    const auto status =
+            mAidlComposerClient->setRefreshRateChangedCallbackDebugEnabled(translate<int64_t>(
+                                                                                   displayId),
+                                                                           enabled);
+    if (!status.isOk()) {
+        ALOGE("setRefreshRateChangedCallbackDebugEnabled failed %s",
+              status.getDescription().c_str());
         return static_cast<Error>(status.getServiceSpecificError());
     }
     return Error::NONE;

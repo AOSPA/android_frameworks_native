@@ -6,9 +6,7 @@
 #include <SurfaceFlinger.h>
 #include "QtiSurfaceFlingerExtensionIntf.h"
 
-namespace android {
-
-namespace surfaceflingerextension {
+namespace android::surfaceflingerextension {
 
 class QtiNullExtension : public QtiSurfaceFlingerExtensionIntf {
 public:
@@ -19,9 +17,9 @@ public:
     void qtiInit(SurfaceFlinger* flinger) override;
     QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
                                                 Hwc2::impl::PowerAdvisor* powerAdvisor,
-                                                scheduler::VsyncConfiguration* vsyncConfig,
+                                                VsyncConfiguration* vsyncConfig,
                                                 Hwc2::Composer* composerHal) override;
-    void qtiSetVsyncConfiguration(scheduler::VsyncConfiguration* vsyncConfig) override;
+    void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) override;
     void qtiSetTid() override;
     bool qtiGetHwcDisplayId(const sp<DisplayDevice>& display, uint32_t* hwcDisplayId) override;
     void qtiHandlePresentationDisplaysEarlyWakeup(size_t updatingDisplays,
@@ -37,6 +35,10 @@ public:
     void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId, hal::Connection connection,
                                        std::optional<DisplayIdentificationInfo> info) override;
     void qtiUpdateInternalDisplaysPresentationMode() override;
+    QtiHWComposerExtensionIntf* qtiGetHWComposerExtensionIntf() override;
+    composer::DisplayExtnIntf* qtiGetDisplayExtn() { return nullptr; }
+    bool qtiLatchMediaContent(sp<Layer> layer) override;
+    void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -76,6 +78,9 @@ public:
     status_t qtiBinderSetWideModePreference(uint64_t displayId, int32_t pref) override;
     void qtiSetPowerMode(const sp<IBinder>& displayToken, int mode) override;
     void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) override;
+    void qtiSetLayerAsMask(uint32_t hwcDisplayId __unused, uint64_t layerId __unused) override{};
+
+
 
     /*
      * Methods for Virtual, WiFi, and Secure Displays
@@ -90,9 +95,36 @@ public:
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
 
+    /*
+     * Methods for SmoMo Interface
+     */
+    void qtiCreateSmomoInstance(const DisplayDeviceState& state) override;
+    void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
+    void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
+    void qtiSetRefreshRates(const sp<DisplayDevice>& display) override;
+    void qtiSetRefreshRateTo(int32_t refreshRate) override;
+    void qtiSyncToDisplayHardware() override;
+    void qtiUpdateSmomoState() override;
+    void qtiUpdateSmomoLayerInfo(TransactionState& ts, int64_t desiredPresentTime,
+                                 bool isAutoTimestamp, uint64_t transactionId) override;
+    void qtiScheduleCompositeImmed() override;
+    void qtiSetPresentTime(uint32_t layerStackId, int sequence,
+                           nsecs_t desiredPresentTime) override;
+    void qtiOnVsync(nsecs_t expectedVsyncTime) override;
+    bool qtiIsFrameEarly(uint32_t layerStackId, int sequence, nsecs_t desiredPresentTime) override;
+    void qtiUpdateLayerState(int numLayers) override;
+    void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
+                                    uint32_t drawLayerStackId) override;
+    uint32_t qtiGetLayerClass(std::string mName) override;
+
+    /*
+     * Methods for speculative fence
+     */
+    void qtiStartUnifiedDraw() override;
+    void qtiTryDrawMethod(sp<DisplayDevice> display) override;
+
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;
 };
 
-} // namespace surfaceflingerextension
-} // namespace android
+} // namespace android::surfaceflingerextension

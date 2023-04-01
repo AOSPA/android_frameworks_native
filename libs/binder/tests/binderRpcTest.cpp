@@ -129,7 +129,7 @@ private:
 static std::string allocateSocketAddress() {
     static size_t id = 0;
     std::string temp = getenv("TMPDIR") ?: "/tmp";
-    auto ret = temp + "/binderRpcTest_" + std::to_string(id++);
+    auto ret = temp + "/binderRpcTest_" + std::to_string(getpid()) + "_" + std::to_string(id++);
     unlink(ret.c_str());
     return ret;
 };
@@ -237,9 +237,13 @@ std::string BinderRpc::PrintParamInfo(const testing::TestParamInfo<ParamType>& i
             std::to_string(clientVersion) + "_serverV" + std::to_string(serverVersion);
     if (singleThreaded) {
         ret += "_single_threaded";
+    } else {
+        ret += "_multi_threaded";
     }
     if (noKernel) {
         ret += "_no_kernel";
+    } else {
+        ret += "_with_kernel";
     }
     return ret;
 }
@@ -350,7 +354,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
     for (const auto& session : sessions) {
         CHECK(session->setProtocolVersion(clientVersion));
         session->setMaxIncomingThreads(options.numIncomingConnections);
-        session->setMaxOutgoingThreads(options.numOutgoingConnections);
+        session->setMaxOutgoingConnections(options.numOutgoingConnections);
         session->setFileDescriptorTransportMode(options.clientFileDescriptorTransportMode);
 
         switch (socketType) {
@@ -435,8 +439,7 @@ TEST_P(BinderRpc, ThreadPoolGreaterThanEqualRequested) {
     for (auto& t : ts) t.join();
 }
 
-static void testThreadPoolOverSaturated(sp<IBinderRpcTest> iface, size_t numCalls,
-                                        size_t sleepMs = 500) {
+static void testThreadPoolOverSaturated(sp<IBinderRpcTest> iface, size_t numCalls, size_t sleepMs) {
     size_t epochMsBefore = epochMillis();
 
     std::vector<std::thread> ts;
@@ -462,7 +465,7 @@ TEST_P(BinderRpc, ThreadPoolOverSaturated) {
     constexpr size_t kNumThreads = 10;
     constexpr size_t kNumCalls = kNumThreads + 3;
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls);
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 250 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
@@ -475,7 +478,7 @@ TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
     constexpr size_t kNumCalls = kNumOutgoingConnections + 3;
     auto proc = createRpcTestSocketServerProcess(
             {.numThreads = kNumThreads, .numOutgoingConnections = kNumOutgoingConnections});
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls);
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 250 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadingStressTest) {
@@ -483,9 +486,9 @@ TEST_P(BinderRpc, ThreadingStressTest) {
         GTEST_SKIP() << "This test requires multiple threads";
     }
 
-    constexpr size_t kNumClientThreads = 10;
-    constexpr size_t kNumServerThreads = 10;
-    constexpr size_t kNumCalls = 100;
+    constexpr size_t kNumClientThreads = 5;
+    constexpr size_t kNumServerThreads = 5;
+    constexpr size_t kNumCalls = 50;
 
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumServerThreads});
 
@@ -544,6 +547,8 @@ TEST_P(BinderRpc, OnewayCallQueueingWithFds) {
         GTEST_SKIP() << "This test requires multiple threads";
     }
 
+    constexpr size_t kNumServerThreads = 3;
+
     // This test forces a oneway transaction to be queued by issuing two
     // `blockingSendFdOneway` calls, then drains the queue by issuing two
     // `blockingRecvFd` calls.
@@ -552,7 +557,7 @@ TEST_P(BinderRpc, OnewayCallQueueingWithFds) {
     // https://developer.android.com/reference/android/os/IBinder#FLAG_ONEWAY
 
     auto proc = createRpcTestSocketServerProcess({
-            .numThreads = 3,
+            .numThreads = kNumServerThreads,
             .clientFileDescriptorTransportMode = RpcSession::FileDescriptorTransportMode::UNIX,
             .serverSupportedFileDescriptorTransportModes =
                     {RpcSession::FileDescriptorTransportMode::UNIX},
@@ -573,6 +578,8 @@ TEST_P(BinderRpc, OnewayCallQueueingWithFds) {
     EXPECT_OK(proc.rootIface->blockingRecvFd(&fdB));
     CHECK(android::base::ReadFdToString(fdB.get(), &result));
     EXPECT_EQ(result, "b");
+
+    saturateThreadPool(kNumServerThreads, proc.rootIface);
 }
 
 TEST_P(BinderRpc, OnewayCallQueueing) {

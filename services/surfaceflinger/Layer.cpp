@@ -211,7 +211,8 @@ Layer::Layer(const LayerCreationArgs& args)
         mDrawingState.color.b = -1.0_hf;
     }
 
-    mFrameTracker.setDisplayRefreshPeriod(args.flinger->mScheduler->getLeaderVsyncPeriod().ns());
+    mFrameTracker.setDisplayRefreshPeriod(
+            args.flinger->mScheduler->getPacesetterVsyncPeriod().ns());
 
     mOwnerUid = args.ownerUid;
     mOwnerPid = args.ownerPid;
@@ -220,6 +221,10 @@ Layer::Layer(const LayerCreationArgs& args)
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
     mDrawingState.dataspace = ui::Dataspace::V0_SRGB;
+
+    /* QTI_BEGIN */
+    mQtiLayerClass = mFlinger->mQtiSFExtnIntf->qtiGetLayerClass(mName);
+    /* QTI_END */
 
     mSnapshot->sequence = sequence;
     mSnapshot->name = getDebugName();
@@ -581,6 +586,7 @@ void Layer::prepareBasicGeometryCompositionState() {
                                         : Hwc2::IComposerClient::BlendMode::COVERAGE;
     }
 
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
     snapshot->outputFilter = getOutputFilter();
     snapshot->isVisible = isVisible();
@@ -607,6 +613,7 @@ void Layer::prepareGeometryCompositionState() {
     const auto& drawingState{getDrawingState()};
     auto* snapshot = editLayerSnapshot();
 
+    // Please keep in sync with LayerSnapshotBuilder
     snapshot->geomBufferSize = getBufferSize(drawingState);
     snapshot->geomContentCrop = getBufferCrop();
     snapshot->geomCrop = getCrop(drawingState);
@@ -620,6 +627,7 @@ void Layer::prepareGeometryCompositionState() {
             static_cast<sp<const GraphicBuffer>>(getBuffer()));
     snapshot->qtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
             static_cast<sp<const GraphicBuffer>>(getBuffer()));
+    snapshot->qtiLayerClass = mQtiLayerClass;
     /* QTI_END */
 
     snapshot->metadata.clear();
@@ -646,6 +654,7 @@ void Layer::prepareGeometryCompositionState() {
 
 void Layer::preparePerFrameCompositionState() {
     const auto& drawingState{getDrawingState()};
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
 
     snapshot->forceClientComposition = false;
@@ -659,6 +668,7 @@ void Layer::preparePerFrameCompositionState() {
     snapshot->dimmingEnabled = isDimmingEnabled();
     snapshot->currentSdrHdrRatio = getCurrentSdrHdrRatio();
     snapshot->desiredSdrHdrRatio = getDesiredSdrHdrRatio();
+    snapshot->cachingHint = getCachingHint();
 
     const bool usesRoundedCorners = hasRoundedCorners();
 
@@ -688,8 +698,9 @@ void Layer::preparePerFrameCompositionState() {
 }
 
 void Layer::preparePerFrameBufferCompositionState() {
-    // Sideband layers
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
+    // Sideband layers
     if (snapshot->sidebandStream.get() && !snapshot->sidebandStreamHasFrame) {
         snapshot->compositionType =
                 aidl::android::hardware::graphics::composer3::Composition::SIDEBAND;
@@ -697,6 +708,9 @@ void Layer::preparePerFrameBufferCompositionState() {
     } else if ((mDrawingState.flags & layer_state_t::eLayerIsDisplayDecoration) != 0) {
         snapshot->compositionType =
                 aidl::android::hardware::graphics::composer3::Composition::DISPLAY_DECORATION;
+    } else if ((mDrawingState.flags & layer_state_t::eLayerIsRefreshRateIndicator) != 0) {
+        snapshot->compositionType =
+                aidl::android::hardware::graphics::composer3::Composition::REFRESH_RATE_INDICATOR;
     } else {
         // Normal buffer layers
         snapshot->hdrMetadata = mBufferInfo.mHdrMetadata;
@@ -712,6 +726,7 @@ void Layer::preparePerFrameBufferCompositionState() {
 }
 
 void Layer::preparePerFrameEffectsCompositionState() {
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
     snapshot->color = getColor();
     snapshot->compositionType =
@@ -720,6 +735,7 @@ void Layer::preparePerFrameEffectsCompositionState() {
 
 void Layer::prepareCursorCompositionState() {
     const State& drawingState{getDrawingState()};
+    // Please keep in sync with LayerSnapshotBuilder
     auto* snapshot = editLayerSnapshot();
 
     // Apply the layer's transform, followed by the display's global transform
@@ -805,7 +821,7 @@ void Layer::transferAvailableJankData(const std::deque<sp<CallbackHandle>>& hand
 // transaction
 // ----------------------------------------------------------------------------
 
-uint32_t Layer::doTransaction(uint32_t flags, nsecs_t latchTime) {
+uint32_t Layer::doTransaction(uint32_t flags) {
     ATRACE_CALL();
 
     // TODO: This is unfortunate.
@@ -833,12 +849,12 @@ uint32_t Layer::doTransaction(uint32_t flags, nsecs_t latchTime) {
         mFlinger->mUpdateInputInfo = true;
     }
 
-    commitTransaction(mDrawingState, latchTime);
+    commitTransaction(mDrawingState);
 
     return flags;
 }
 
-void Layer::commitTransaction(State&, nsecs_t currentLatchTime) {
+void Layer::commitTransaction(State&) {
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
     for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
@@ -850,7 +866,6 @@ void Layer::commitTransaction(State&, nsecs_t currentLatchTime) {
         }
     }
     mDrawingState.bufferlessSurfaceFramesTX.clear();
-    mLastLatchTime = currentLatchTime;
 }
 
 uint32_t Layer::clearTransactionFlags(uint32_t mask) {
@@ -1269,7 +1284,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
         return parentFrameRate;
     }();
 
-    *transactionNeeded |= setFrameRateForLayerTree(frameRate);
+    *transactionNeeded |= setFrameRateForLayerTreeLegacy(frameRate);
 
     // The frame rate is propagated to the children
     bool childrenHaveFrameRate = false;
@@ -1283,7 +1298,7 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
     if (!frameRate.rate.isValid() && frameRate.type != FrameRateCompatibility::NoVote &&
         childrenHaveFrameRate) {
         *transactionNeeded |=
-                setFrameRateForLayerTree(FrameRate(Fps(), FrameRateCompatibility::NoVote));
+                setFrameRateForLayerTreeLegacy(FrameRate(Fps(), FrameRateCompatibility::NoVote));
     }
 
     // We return whether this layer ot its children has a vote. We ignore ExactOrMultiple votes for
@@ -1396,7 +1411,7 @@ void Layer::addSurfaceFramePresentedForBuffer(
     surfaceFrame->setAcquireFenceTime(acquireFenceTime);
     surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
     mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
-    mLastLatchTime = currentLatchTime;
+    updateLastLatchTime(currentLatchTime);
 }
 
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransaction(
@@ -1435,7 +1450,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
     return surfaceFrame;
 }
 
-bool Layer::setFrameRateForLayerTree(FrameRate frameRate) {
+bool Layer::setFrameRateForLayerTreeLegacy(FrameRate frameRate) {
     if (mDrawingState.frameRateForLayerTree == frameRate) {
         return false;
     }
@@ -1448,9 +1463,21 @@ bool Layer::setFrameRateForLayerTree(FrameRate frameRate) {
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
-    using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
-    mFlinger->mScheduler->recordLayerHistory(this, systemTime(), LayerUpdateType::SetFrameRate);
+    mFlinger->mScheduler
+            ->recordLayerHistory(sequence, getLayerProps(), systemTime(),
+                                 scheduler::LayerHistory::LayerUpdateType::SetFrameRate);
+    return true;
+}
 
+bool Layer::setFrameRateForLayerTree(FrameRate frameRate, const scheduler::LayerProps& layerProps) {
+    if (mDrawingState.frameRateForLayerTree == frameRate) {
+        return false;
+    }
+
+    mDrawingState.frameRateForLayerTree = frameRate;
+    mFlinger->mScheduler
+            ->recordLayerHistory(sequence, layerProps, systemTime(),
+                                 scheduler::LayerHistory::LayerUpdateType::SetFrameRate);
     return true;
 }
 
@@ -1561,6 +1588,9 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
+    /* QTI_BEGIN */
+    result.append(" Layer Class |");
+    /* QTI_END */
     result.append(" Comp Type | ");
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
@@ -1598,6 +1628,9 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
         StringAppendF(&result, "  %10d | ", layerState.z);
     }
     StringAppendF(&result, "  %10d | ", mWindowType);
+    /* QTI_BEGIN */
+    StringAppendF(&result, "  %10d | ", mQtiLayerClass);
+    /* QTI_END */
     StringAppendF(&result, "%10s | ", toString(getCompositionType(display)).c_str());
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
     const Rect& frame = outputLayerState.displayFrame;
@@ -2112,15 +2145,7 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
-
-        // Only populate for the primary display.
-        if (const auto display = mFlinger->getDefaultDisplayDeviceLocked()) {
-            const auto compositionType = getCompositionType(*display);
-            layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
-            LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
-                                           [&]() { return layerProto->mutable_visible_region(); });
-        }
+        writeCompositionStateToProto(layerProto);
     }
 
     for (const sp<Layer>& layer : mDrawingChildren) {
@@ -2128,6 +2153,18 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     }
 
     return layerProto;
+}
+
+void Layer::writeCompositionStateToProto(LayerProto* layerProto) {
+    ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
+
+    // Only populate for the primary display.
+    if (const auto display = mFlinger->getDefaultDisplayDeviceLocked()) {
+        const auto compositionType = getCompositionType(*display);
+        layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
+        LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
+                                       [&]() { return layerProto->mutable_visible_region(); });
+    }
 }
 
 void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
@@ -2527,7 +2564,20 @@ bool Layer::hasInputInfo() const {
 compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
         const DisplayDevice* display) const {
     if (!display) return nullptr;
-    return display->getCompositionDisplay()->getOutputLayerForLayer(getCompositionEngineLayerFE());
+    if (!mFlinger->mLayerLifecycleManagerEnabled) {
+        return display->getCompositionDisplay()->getOutputLayerForLayer(
+                getCompositionEngineLayerFE());
+    }
+    sp<LayerFE> layerFE;
+    frontend::LayerHierarchy::TraversalPath path{.id = static_cast<uint32_t>(sequence)};
+    for (auto& [p, layer] : mLayerFEs) {
+        if (p == path) {
+            layerFE = layer;
+        }
+    }
+
+    if (!layerFE) return nullptr;
+    return display->getCompositionDisplay()->getOutputLayerForLayer(layerFE);
 }
 
 Region Layer::getVisibleRegion(const DisplayDevice* display) const {
@@ -3012,6 +3062,14 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             frameNumberChanged ? bufferData.frameNumber : mDrawingState.frameNumber + 1;
     ATRACE_FORMAT_INSTANT("setBuffer %s - %" PRIu64, getDebugName(), frameNumber);
 
+    /* QTI_BEGIN */
+    if (bufferData.qtiInvalid) {
+        callReleaseBufferCallback(bufferData.releaseBufferListener, buffer->getBuffer(),
+                                  bufferData.frameNumber, bufferData.acquireFence);
+        return false;
+    }
+    /* QTI_END */
+
     if (mDrawingState.buffer) {
         mReleasePreviousBuffer = true;
         if (!mBufferInfo.mBuffer ||
@@ -3036,6 +3094,10 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                                       mLastClientCompositionFence);
             mLastClientCompositionFence = nullptr;
         }
+    } else {
+        // if we are latching a buffer for the first time then clear the mLastLatchTime since
+        // we don't want to incorrectly classify a frame if we miss the desired present time.
+        updateLastLatchTime(0);
     }
 
     mDrawingState.producerId = bufferData.producerId;
@@ -3055,7 +3117,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     } else {
         mCallbackHandleAcquireTimeOrFence = mDrawingState.acquireFenceTime->getSignalTime();
     }
-
+    mDrawingState.latchedVsyncId = info.vsyncId;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
@@ -3065,18 +3127,9 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     mDrawingState.desiredPresentTime = desiredPresentTime;
     mDrawingState.isAutoTimestamp = isAutoTimestamp;
 
-    const nsecs_t presentTime = [&] {
-        if (!isAutoTimestamp) return desiredPresentTime;
-
-        const auto prediction =
-                mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(info.vsyncId);
-        if (prediction.has_value()) return prediction->presentTime;
-
-        return static_cast<nsecs_t>(0);
-    }();
-
-    using LayerUpdateType = scheduler::LayerHistory::LayerUpdateType;
-    mFlinger->mScheduler->recordLayerHistory(this, presentTime, LayerUpdateType::Buffer);
+    if (mFlinger->mLegacyFrontEndEnabled) {
+        recordLayerHistoryBufferUpdate(getLayerProps());
+    }
 
     setFrameTimelineVsyncForBufferTransaction(info, postTime);
 
@@ -3091,6 +3144,32 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
 
     mDrawingState.releaseBufferEndpoint = bufferData.releaseBufferEndpoint;
     return true;
+}
+
+void Layer::setDesiredPresentTime(nsecs_t desiredPresentTime, bool isAutoTimestamp) {
+    mDrawingState.desiredPresentTime = desiredPresentTime;
+    mDrawingState.isAutoTimestamp = isAutoTimestamp;
+}
+
+void Layer::recordLayerHistoryBufferUpdate(const scheduler::LayerProps& layerProps) {
+    const nsecs_t presentTime = [&] {
+        if (!mDrawingState.isAutoTimestamp) return mDrawingState.desiredPresentTime;
+
+        const auto prediction = mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(
+                mDrawingState.latchedVsyncId);
+        if (prediction.has_value()) return prediction->presentTime;
+
+        return static_cast<nsecs_t>(0);
+    }();
+    mFlinger->mScheduler->recordLayerHistory(sequence, layerProps, presentTime,
+                                             scheduler::LayerHistory::LayerUpdateType::Buffer);
+}
+
+void Layer::recordLayerHistoryAnimationTx(const scheduler::LayerProps& layerProps) {
+    const nsecs_t presentTime =
+            mDrawingState.isAutoTimestamp ? 0 : mDrawingState.desiredPresentTime;
+    mFlinger->mScheduler->recordLayerHistory(sequence, layerProps, presentTime,
+                                             scheduler::LayerHistory::LayerUpdateType::AnimationTX);
 }
 
 bool Layer::setDataspace(ui::Dataspace dataspace) {
@@ -3108,6 +3187,14 @@ bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRa
         return false;
     mDrawingState.currentSdrHdrRatio = currentBufferRatio;
     mDrawingState.desiredSdrHdrRatio = desiredRatio;
+    mDrawingState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+bool Layer::setCachingHint(gui::CachingHint cachingHint) {
+    if (mDrawingState.cachingHint == cachingHint) return false;
+    mDrawingState.cachingHint = cachingHint;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -3282,11 +3369,11 @@ bool Layer::hasFrameUpdate() const {
             (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
-void Layer::updateTexImage(nsecs_t latchTime) {
+void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
     const State& s(getDrawingState());
 
     if (!s.buffer) {
-        if (s.bgColorLayer) {
+        if (bgColorOnly) {
             for (auto& handle : mDrawingState.callbackHandles) {
                 handle->latchTime = latchTime;
             }
@@ -3483,7 +3570,7 @@ bool Layer::simpleBufferUpdate(const layer_state_t& s) const {
     }
 
     if (s.what & layer_state_t::eBackgroundColorChanged) {
-        if (mDrawingState.bgColorLayer || s.bgColorAlpha != 0) {
+        if (mDrawingState.bgColorLayer || s.bgColor.a != 0) {
             ALOGV("%s: false [eBackgroundColorChanged changed]", __func__);
             return false;
         }
@@ -3807,6 +3894,11 @@ void Layer::onPostComposition(const DisplayDevice* display,
 }
 
 bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
+    const bool bgColorOnly = mDrawingState.bgColorLayer != nullptr;
+    return latchBufferImpl(recomputeVisibleRegions, latchTime, bgColorOnly);
+}
+
+bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly) {
     ATRACE_FORMAT_INSTANT("latchBuffer %s - %" PRIu64, getDebugName(),
                           getDrawingState().frameNumber);
 
@@ -3823,8 +3915,7 @@ bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
         mFlinger->onLayerUpdate();
         return false;
     }
-
-    updateTexImage(latchTime);
+    updateTexImage(latchTime, bgColorOnly);
     if (mDrawingState.buffer == nullptr) {
         return false;
     }
@@ -3861,6 +3952,11 @@ bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
     if (oldOpacity != isOpaque(mDrawingState)) {
         recomputeVisibleRegions = true;
     }
+
+    /* QTI_BEGIN */
+    mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(getLayerStack().id, getSequence(),
+                                                mBufferInfo.mDesiredPresentTime);
+    /* QTI_END */
 
     return true;
 }
@@ -4028,7 +4124,6 @@ void Layer::updateSnapshot(bool updateGeometry) {
     snapshot->bufferSize = getBufferSize(mDrawingState);
     snapshot->externalTexture = mBufferInfo.mBuffer;
     snapshot->hasReadyFrame = hasReadyFrame();
-    snapshot->isInternalDisplayOverlay = isInternalDisplayOverlay();
     preparePerFrameCompositionState();
 }
 
@@ -4071,7 +4166,7 @@ void Layer::updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMet
     }
 }
 
-void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
+bool Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                        TrustedPresentationListener const& listener) {
     bool hadTrustedPresentationListener = hasTrustedPresentationListener();
     mTrustedPresentationListener = listener;
@@ -4082,7 +4177,31 @@ void Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thre
     } else if (hadTrustedPresentationListener && !haveTrustedPresentationListener) {
         mFlinger->mNumTrustedPresentationListeners--;
     }
+
+    // Reset trusted presentation states to ensure we start the time again.
+    mEnteredTrustedPresentationStateTime = -1;
+    mLastReportedTrustedPresentationState = false;
+    mLastComputedTrustedPresentationState = false;
+
+    // If there's a new trusted presentation listener, the code needs to go through the composite
+    // path to ensure it recomutes the current state and invokes the TrustedPresentationListener if
+    // we're already in the requested state.
+    return haveTrustedPresentationListener;
 }
+
+void Layer::updateLastLatchTime(nsecs_t latchTime) {
+    mLastLatchTime = latchTime;
+}
+
+/* QTI_BEGIN */
+void Layer::qtiSetSmomoLayerStackId() {
+    qtiSmomoLayerStackId = getLayerStack().id;
+}
+
+uint32_t Layer::qtiGetSmomoLayerStackId() {
+    return qtiSmomoLayerStackId;
+}
+/* QTI_END */
 
 // ---------------------------------------------------------------------------
 

@@ -15,9 +15,13 @@ public:
     QtiVirtualDisplaySurfaceExtension(VirtualDisplaySurface* vds, bool secure, uint64_t sinkUsage);
     ~QtiVirtualDisplaySurfaceExtension() = default;
 
-    uint64_t qtiSetOutputUsage();
-    uint64_t qtiSetOutputUsage(uint64_t flag);
-    uint64_t qtiExcludeVideoFromScratchBuffer(std::string source, uint64_t usage);
+    int getClientTargetCurrentSlot() override;
+    ui::Dataspace getClientTargetCurrentDataspace() override;
+
+    /* Methods used by VirtualDisplaySurface */
+    uint64_t qtiSetOutputUsage() override;
+    uint64_t qtiSetOutputUsage(uint64_t flag) override;
+    uint64_t qtiExcludeVideoFromScratchBuffer(std::string source, uint64_t usage) override;
 
 private:
     VirtualDisplaySurface* mQtiVDS = nullptr;

@@ -148,8 +148,9 @@ public:
     MOCK_METHOD1(getHdrConversionCapabilities,
                  Error(std::vector<
                          aidl::android::hardware::graphics::common::HdrConversionCapability>*));
-    MOCK_METHOD1(setHdrConversionStrategy,
-                 Error(aidl::android::hardware::graphics::common::HdrConversionStrategy));
+    MOCK_METHOD2(setHdrConversionStrategy,
+                 Error(aidl::android::hardware::graphics::common::HdrConversionStrategy,
+                       aidl::android::hardware::graphics::common::Hdr*));
     MOCK_METHOD2(getSupportedContentTypes,
                  V2_4::Error(Display, std::vector<IComposerClient::ContentType>*));
     MOCK_METHOD2(setContentType, V2_4::Error(Display, IComposerClient::ContentType));
@@ -174,6 +175,7 @@ public:
                  Error(aidl::android::hardware::graphics::composer3::OverlayProperties*));
     MOCK_METHOD1(onHotplugConnect, void(Display));
     MOCK_METHOD1(onHotplugDisconnect, void(Display));
+    MOCK_METHOD(Error, setRefreshRateChangedCallbackDebugEnabled, (Display, bool));
 };
 
 } // namespace Hwc2::mock

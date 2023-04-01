@@ -293,7 +293,10 @@ std::list<NotifyArgs> TouchInputMapper::configure(nsecs_t when,
 
     mConfig = *config;
 
-    if (!changes) { // first time only
+    // Full configuration should happen the first time configure is called and
+    // when the device type is changed. Changing a device type can affect
+    // various other parameters so should result in a reconfiguration.
+    if (!changes || (changes & InputReaderConfiguration::CHANGE_DEVICE_TYPE)) {
         // Configure basic parameters.
         configureParameters();
 
@@ -328,7 +331,8 @@ std::list<NotifyArgs> TouchInputMapper::configure(nsecs_t when,
           InputReaderConfiguration::CHANGE_POINTER_CAPTURE |
           InputReaderConfiguration::CHANGE_POINTER_GESTURE_ENABLEMENT |
           InputReaderConfiguration::CHANGE_SHOW_TOUCHES |
-          InputReaderConfiguration::CHANGE_EXTERNAL_STYLUS_PRESENCE))) {
+          InputReaderConfiguration::CHANGE_EXTERNAL_STYLUS_PRESENCE |
+          InputReaderConfiguration::CHANGE_DEVICE_TYPE))) {
         // Configure device sources, display dimensions, orientation and
         // scaling factors.
         configureInputDevice(when, &resetNeeded);
@@ -838,38 +842,60 @@ void TouchInputMapper::initializeOrientedRanges() {
 }
 
 void TouchInputMapper::computeInputTransforms() {
-    const ui::Size rawSize{mRawPointerAxes.getRawWidth(), mRawPointerAxes.getRawHeight()};
+    constexpr auto isRotated = [](const ui::Transform::RotationFlags& rotation) {
+        return rotation == ui::Transform::ROT_90 || rotation == ui::Transform::ROT_270;
+    };
 
-    ui::Size rotatedRawSize = rawSize;
-    if (mInputDeviceOrientation == ui::ROTATION_270 || mInputDeviceOrientation == ui::ROTATION_90) {
-        std::swap(rotatedRawSize.width, rotatedRawSize.height);
-    }
-    const auto rotationFlags = ui::Transform::toRotationFlags(-mInputDeviceOrientation);
-    mRawRotation = ui::Transform{rotationFlags};
+    // See notes about input coordinates in the inputflinger docs:
+    // //frameworks/native/services/inputflinger/docs/input_coordinates.md
 
     // Step 1: Undo the raw offset so that the raw coordinate space now starts at (0, 0).
-    ui::Transform undoRawOffset;
-    undoRawOffset.set(-mRawPointerAxes.x.minValue, -mRawPointerAxes.y.minValue);
+    ui::Transform undoOffsetInRaw;
+    undoOffsetInRaw.set(-mRawPointerAxes.x.minValue, -mRawPointerAxes.y.minValue);
 
-    // Step 2: Rotate the raw coordinates to the expected orientation.
-    ui::Transform rotate;
-    // When rotating raw coordinates, the raw size will be used as an offset.
-    // Account for the extra unit added to the raw range when the raw size was calculated.
-    rotate.set(rotationFlags, rotatedRawSize.width - 1, rotatedRawSize.height - 1);
+    // Step 2: Rotate the raw coordinates to account for input device orientation. The coordinates
+    // will now be in the same orientation as the display in ROTATION_0.
+    // Note: Negating an ui::Rotation value will give its inverse rotation.
+    const auto inputDeviceOrientation = ui::Transform::toRotationFlags(-mParameters.orientation);
+    const ui::Size orientedRawSize = isRotated(inputDeviceOrientation)
+            ? ui::Size{mRawPointerAxes.getRawHeight(), mRawPointerAxes.getRawWidth()}
+            : ui::Size{mRawPointerAxes.getRawWidth(), mRawPointerAxes.getRawHeight()};
+    // When rotating raw values, account for the extra unit added when calculating the raw range.
+    const auto orientInRaw = ui::Transform(inputDeviceOrientation, orientedRawSize.width - 1,
+                                           orientedRawSize.height - 1);
 
-    // Step 3: Scale the raw coordinates to the display space.
-    ui::Transform scaleToDisplay;
-    const float xScale = static_cast<float>(mDisplayBounds.width) / rotatedRawSize.width;
-    const float yScale = static_cast<float>(mDisplayBounds.height) / rotatedRawSize.height;
-    scaleToDisplay.set(xScale, 0, 0, yScale);
+    // Step 3: Rotate the raw coordinates to account for the display rotation. The coordinates will
+    // now be in the same orientation as the rotated display. There is no need to rotate the
+    // coordinates to the display rotation if the device is not orientation-aware.
+    const auto viewportRotation = ui::Transform::toRotationFlags(-mViewport.orientation);
+    const auto rotatedRawSize = mParameters.orientationAware && isRotated(viewportRotation)
+            ? ui::Size{orientedRawSize.height, orientedRawSize.width}
+            : orientedRawSize;
+    // When rotating raw values, account for the extra unit added when calculating the raw range.
+    const auto rotateInRaw = mParameters.orientationAware
+            ? ui::Transform(viewportRotation, rotatedRawSize.width - 1, rotatedRawSize.height - 1)
+            : ui::Transform();
 
-    mRawToDisplay = (scaleToDisplay * (rotate * undoRawOffset));
+    // Step 4: Scale the raw coordinates to the display space.
+    // - Here, we assume that the raw surface of the touch device maps perfectly to the surface
+    //   of the display panel. This is usually true for touchscreens.
+    // - From this point onward, we are no longer in the discrete space of the raw coordinates but
+    //   are in the continuous space of the logical display.
+    ui::Transform scaleRawToDisplay;
+    const float xScale = static_cast<float>(mViewport.deviceWidth) / rotatedRawSize.width;
+    const float yScale = static_cast<float>(mViewport.deviceHeight) / rotatedRawSize.height;
+    scaleRawToDisplay.set(xScale, 0, 0, yScale);
 
-    // Calculate the transform that takes raw coordinates to the rotated display space.
-    ui::Transform displayToRotatedDisplay;
-    displayToRotatedDisplay.set(ui::Transform::toRotationFlags(-mViewport.orientation),
-                                mViewport.deviceWidth, mViewport.deviceHeight);
-    mRawToRotatedDisplay = displayToRotatedDisplay * mRawToDisplay;
+    // Step 5: Undo the display rotation to bring us back to the un-rotated display coordinate space
+    // that InputReader uses.
+    const auto undoRotateInDisplay =
+            ui::Transform(viewportRotation, mViewport.deviceWidth, mViewport.deviceHeight)
+                    .inverse();
+
+    // Now put it all together!
+    mRawToRotatedDisplay = (scaleRawToDisplay * (rotateInRaw * (orientInRaw * undoOffsetInRaw)));
+    mRawToDisplay = (undoRotateInDisplay * mRawToRotatedDisplay);
+    mRawRotation = ui::Transform{mRawToDisplay.getOrientation()};
 }
 
 void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) {
@@ -945,6 +971,9 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
             mPhysicalFrameInRotatedDisplay = {mViewport.physicalLeft, mViewport.physicalTop,
                                               mViewport.physicalRight, mViewport.physicalBottom};
 
+            // TODO(b/257118693): Remove the dependence on the old orientation/rotation logic that
+            //     uses mInputDeviceOrientation. The new logic uses the transforms calculated in
+            //     computeInputTransforms().
             // InputReader works in the un-rotated display coordinate space, so we don't need to do
             // anything if the device is already orientation-aware. If the device is not
             // orientation-aware, then we need to apply the inverse rotation of the display so that
@@ -1446,7 +1475,7 @@ std::list<NotifyArgs> TouchInputMapper::sync(nsecs_t when, nsecs_t readTime) {
         assignPointerIds(last, next);
     }
 
-    ALOGD_IF(DEBUG_RAW_EVENTS,
+    ALOGD_IF(debugRawEvents(),
              "syncTouch: pointerCount %d -> %d, touching ids 0x%08x -> 0x%08x, "
              "hovering ids 0x%08x -> 0x%08x, canceled ids 0x%08x",
              last.rawPointerData.pointerCount, next.rawPointerData.pointerCount,
@@ -1650,7 +1679,8 @@ void TouchInputMapper::updateTouchSpots() {
     mPointerController->setButtonState(mCurrentRawState.buttonState);
     mPointerController->setSpots(mCurrentCookedState.cookedPointerData.pointerCoords.cbegin(),
                                  mCurrentCookedState.cookedPointerData.idToIndex.cbegin(),
-                                 mCurrentCookedState.cookedPointerData.touchingIdBits,
+                                 mCurrentCookedState.cookedPointerData.touchingIdBits |
+                                         mCurrentCookedState.cookedPointerData.hoveringIdBits,
                                  mViewport.displayId);
 }
 

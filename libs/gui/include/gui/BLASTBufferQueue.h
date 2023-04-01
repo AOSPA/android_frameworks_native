@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #ifndef ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 #define ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 
@@ -30,7 +36,17 @@
 #include <thread>
 #include <queue>
 
+/* QTI_BEGIN */
+#include "../../QtiExtension/QtiBLASTBufferQueueExtension.h"
+/* QTI_END */
+
 namespace android {
+
+/* QTI_BEGIN */
+namespace libguiextension {
+class QtiBLASTBufferQueueExtension;
+};
+/* QTI_END */
 
 class BLASTBufferQueue;
 class BufferItemConsumer;
@@ -53,6 +69,8 @@ public:
                                CompositorTiming compositorTiming, nsecs_t latchTime,
                                nsecs_t dequeueReadyTime) EXCLUDES(mMutex);
     void getConnectionEvents(uint64_t frameNumber, bool* needsDisconnect) EXCLUDES(mMutex);
+
+    void resizeFrameEventHistory(size_t newSize);
 
 protected:
     void onSidebandStreamChanged() override EXCLUDES(mMutex);
@@ -133,12 +151,20 @@ public:
 
 private:
     friend class BLASTBufferQueueHelper;
+    friend class BBQBufferQueueProducer;
+
+    /* QTI_BEGIN */
+    friend class libguiextension::QtiBLASTBufferQueueExtension;
+    libguiextension::QtiBLASTBufferQueueExtension* mQtiBBQExtn = nullptr;
+    /* QTI_END */
 
     // can't be copied
     BLASTBufferQueue& operator = (const BLASTBufferQueue& rhs);
     BLASTBufferQueue(const BLASTBufferQueue& rhs);
     void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
                            sp<IGraphicBufferConsumer>* outConsumer);
+
+    void resizeFrameEventHistory(size_t newSize);
 
     status_t acquireNextBufferLocked(
             const std::optional<SurfaceComposerClient::Transaction*> transaction) REQUIRES(mMutex);

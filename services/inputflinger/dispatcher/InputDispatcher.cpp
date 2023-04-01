@@ -1207,7 +1207,7 @@ void InputDispatcher::dropInboundEventLocked(const EventEntry& entry, DropReason
     const char* reason;
     switch (dropReason) {
         case DropReason::POLICY:
-            if (DEBUG_INBOUND_EVENT_DETAILS) {
+            if (debugInboundEventDetails()) {
                 ALOGD("Dropped event because policy consumed it.");
             }
             reason = "inbound event was dropped because the policy consumed it";
@@ -1596,7 +1596,7 @@ bool InputDispatcher::dispatchKeyLocked(nsecs_t currentTime, std::shared_ptr<Key
         } else if (entry->action == AKEY_EVENT_ACTION_UP && mKeyRepeatState.lastKeyEntry &&
                    mKeyRepeatState.lastKeyEntry->deviceId != entry->deviceId) {
             // The key on device 'deviceId' is still down, do not stop key repeat
-            if (DEBUG_INBOUND_EVENT_DETAILS) {
+            if (debugInboundEventDetails()) {
                 ALOGD("deviceId=%d got KEY_UP as stale", entry->deviceId);
             }
         } else if (!entry->syntheticRepeat) {
@@ -2184,18 +2184,20 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     const bool newGesture = isDown || maskedAction == AMOTION_EVENT_ACTION_SCROLL || isHoverAction;
     const bool isFromMouse = isFromSource(entry.source, AINPUT_SOURCE_MOUSE);
 
+    // If pointers are already down, let's finish the current gesture and ignore the new events
+    // from another device. However, if the new event is a down event, let's cancel the current
+    // touch and let the new one take over.
+    if (switchedDevice && wasDown && !isDown) {
+        LOG(INFO) << "Dropping event because a pointer for device " << oldState->deviceId
+                  << " is already down in display " << displayId << ": " << entry.getDescription();
+        // TODO(b/211379801): test multiple simultaneous input streams.
+        outInjectionResult = InputEventInjectionResult::FAILED;
+        return {}; // wrong device
+    }
+
     if (newGesture) {
-        // If pointers are already down, let's finish the current gesture and ignore the new events
-        // from another device.
-        if (switchedDevice && wasDown) {
-            ALOGI("Dropping event because a pointer for a different device is already down "
-                  "in display %" PRId32,
-                  displayId);
-            // TODO: test multiple simultaneous input streams.
-            outInjectionResult = InputEventInjectionResult::FAILED;
-            return {}; // wrong device
-        }
-        tempTouchState.clearWindowsWithoutPointers();
+        // If a new gesture is starting, clear the touch state completely.
+        tempTouchState.reset();
         tempTouchState.deviceId = entry.deviceId;
         tempTouchState.source = entry.source;
         isSplit = false;
@@ -2203,7 +2205,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         ALOGI("Dropping move event because a pointer for a different device is already active "
               "in display %" PRId32,
               displayId);
-        // TODO: test multiple simultaneous input streams.
+        // TODO(b/211379801): test multiple simultaneous input streams.
         outInjectionResult = InputEventInjectionResult::FAILED;
         return {}; // wrong device
     }
@@ -2317,6 +2319,10 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             const bool isDownOrPointerDown = maskedAction == AMOTION_EVENT_ACTION_DOWN ||
                     maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN;
 
+            // TODO(b/211379801): Currently, even if pointerIds are empty (hover case), we would
+            // still add a window to the touch state. We should avoid doing that, but some of the
+            // later checks ("at least one foreground window") rely on this in order to dispatch
+            // the event properly, so that needs to be updated, possibly by looking at InputTargets.
             tempTouchState.addOrUpdateWindow(windowHandle, targetFlags, pointerIds,
                                              isDownOrPointerDown
                                                      ? std::make_optional(entry.eventTime)
@@ -2369,10 +2375,9 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
 
         // If the pointer is not currently down, then ignore the event.
         if (!tempTouchState.isDown()) {
-            ALOGD_IF(DEBUG_FOCUS,
-                     "Dropping event because the pointer is not down or we previously "
-                     "dropped the pointer down event in display %" PRId32 ": %s",
-                     displayId, entry.getDescription().c_str());
+            LOG(INFO) << "Dropping event because the pointer is not down or we previously "
+                         "dropped the pointer down event in display "
+                      << displayId << ": " << entry.getDescription();
             outInjectionResult = InputEventInjectionResult::FAILED;
             return {};
         }
@@ -2530,7 +2535,6 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     }
 
     // Success!  Output targets from the touch state.
-    tempTouchState.clearWindowsWithoutPointers();
     for (const TouchedWindow& touchedWindow : tempTouchState.windows) {
         if (touchedWindow.pointerIds.none() && !touchedWindow.hasHoveringPointers(entry.deviceId)) {
             // Windows with hovering pointers are getting persisted inside TouchState.
@@ -2570,14 +2574,13 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     } else if (maskedAction == AMOTION_EVENT_ACTION_UP) {
         // Pointer went up.
         tempTouchState.removeTouchedPointer(entry.pointerProperties[0].id);
-        tempTouchState.clearWindowsWithoutPointers();
     } else if (maskedAction == AMOTION_EVENT_ACTION_CANCEL) {
         // All pointers up or canceled.
         tempTouchState.reset();
     } else if (maskedAction == AMOTION_EVENT_ACTION_DOWN) {
         // First pointer went down.
-        if (oldState && oldState->isDown()) {
-            ALOGD("Conflicting pointer actions: Down received while already down.");
+        if (oldState && (oldState->isDown() || oldState->hasHoveringPointers())) {
+            ALOGD("Conflicting pointer actions: Down received while already down or hovering.");
             *outConflictingPointerActions = true;
         }
     } else if (maskedAction == AMOTION_EVENT_ACTION_POINTER_UP) {
@@ -2600,6 +2603,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     // state was only valid for this one action.
     if (maskedAction != AMOTION_EVENT_ACTION_SCROLL) {
         if (displayId >= 0) {
+            tempTouchState.clearWindowsWithoutPointers();
             mTouchStatesByDisplay[displayId] = tempTouchState;
         } else {
             mTouchStatesByDisplay.erase(displayId);
@@ -2741,7 +2745,8 @@ void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHa
         if (displayInfoIt != mDisplayInfos.end()) {
             inputTarget.displayTransform = displayInfoIt->second.transform;
         } else {
-            ALOGE("DisplayInfo not found for window on display: %d", windowInfo->displayId);
+            // DisplayInfo not found for this window on display windowInfo->displayId.
+            // TODO(b/198444055): Make this an error message after 'setInputWindows' API is removed.
         }
         inputTargets.push_back(inputTarget);
         it = inputTargets.end() - 1;
@@ -3048,9 +3053,13 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
 
         const MotionEntry& originalMotionEntry = static_cast<const MotionEntry&>(*eventEntry);
         if (inputTarget.pointerIds.count() != originalMotionEntry.pointerCount) {
-            LOG_ALWAYS_FATAL_IF(!inputTarget.firstDownTimeInTarget.has_value(),
-                                "Splitting motion events requires a down time to be set for the "
-                                "target");
+            if (!inputTarget.firstDownTimeInTarget.has_value()) {
+                logDispatchStateLocked();
+                LOG(FATAL) << "Splitting motion events requires a down time to be set for the "
+                              "target on connection "
+                           << connection->getInputChannelName() << " for "
+                           << originalMotionEntry.getDescription();
+            }
             std::unique_ptr<MotionEntry> splitMotionEntry =
                     splitMotionEvent(originalMotionEntry, inputTarget.pointerIds,
                                      inputTarget.firstDownTimeInTarget.value());
@@ -3931,8 +3940,8 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
         // in this way.
         ALOGW("Dropping split motion event because the pointer count is %d but "
               "we expected there to be %zu pointers.  This probably means we received "
-              "a broken sequence of pointer ids from the input device.",
-              splitPointerCount, pointerIds.count());
+              "a broken sequence of pointer ids from the input device: %s",
+              splitPointerCount, pointerIds.count(), originalMotionEntry.getDescription().c_str());
         return nullptr;
     }
 
@@ -4007,7 +4016,7 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
 }
 
 void InputDispatcher::notifyConfigurationChanged(const NotifyConfigurationChangedArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifyConfigurationChanged - eventTime=%" PRId64, args->eventTime);
     }
 
@@ -4027,18 +4036,20 @@ void InputDispatcher::notifyConfigurationChanged(const NotifyConfigurationChange
 
 /**
  * If one of the meta shortcuts is detected, process them here:
- *     Meta + Backspace -> generate BACK
- *     Meta + Enter -> generate HOME
- * This will potentially overwrite keyCode and metaState.
+ *     Meta + Backspace; Meta + Grave; Meta + Left arrow -> generate BACK
+ * Most System shortcuts are handled in PhoneWindowManager.java except 'Back' shortcuts. Unlike
+ * Back, other shortcuts DO NOT need to be sent to applications and are fully handled by the system.
+ * But for Back key and Back shortcuts, we need to send KEYCODE_BACK to applications which can
+ * potentially handle the back key presses.
+ * Note: We don't send any Meta based KeyEvents to applications, so we need to convert to a KeyEvent
+ * where meta modifier is off before sending. Currently only use case is 'Back'.
  */
 void InputDispatcher::accelerateMetaShortcuts(const int32_t deviceId, const int32_t action,
                                               int32_t& keyCode, int32_t& metaState) {
     if (metaState & AMETA_META_ON && action == AKEY_EVENT_ACTION_DOWN) {
         int32_t newKeyCode = AKEYCODE_UNKNOWN;
-        if (keyCode == AKEYCODE_DEL) {
+        if (keyCode == AKEYCODE_DEL || keyCode == AKEYCODE_GRAVE || keyCode == AKEYCODE_DPAD_LEFT) {
             newKeyCode = AKEYCODE_BACK;
-        } else if (keyCode == AKEYCODE_ENTER) {
-            newKeyCode = AKEYCODE_HOME;
         }
         if (newKeyCode != AKEYCODE_UNKNOWN) {
             std::scoped_lock _l(mLock);
@@ -4063,14 +4074,15 @@ void InputDispatcher::accelerateMetaShortcuts(const int32_t deviceId, const int3
 }
 
 void InputDispatcher::notifyKey(const NotifyKeyArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
-        ALOGD("notifyKey - eventTime=%" PRId64 ", deviceId=%d, source=0x%x, displayId=%" PRId32
-              "policyFlags=0x%x, action=0x%x, "
-              "flags=0x%x, keyCode=0x%x, scanCode=0x%x, metaState=0x%x, downTime=%" PRId64,
-              args->eventTime, args->deviceId, args->source, args->displayId, args->policyFlags,
-              args->action, args->flags, args->keyCode, args->scanCode, args->metaState,
-              args->downTime);
-    }
+    ALOGD_IF(debugInboundEventDetails(),
+             "notifyKey - id=%" PRIx32 ", eventTime=%" PRId64
+             ", deviceId=%d, source=%s, displayId=%" PRId32
+             "policyFlags=0x%x, action=%s, flags=0x%x, keyCode=%s, scanCode=0x%x, metaState=0x%x, "
+             "downTime=%" PRId64,
+             args->id, args->eventTime, args->deviceId,
+             inputEventSourceToString(args->source).c_str(), args->displayId, args->policyFlags,
+             KeyEvent::actionToString(args->action), args->flags, KeyEvent::getLabel(args->keyCode),
+             args->scanCode, args->metaState, args->downTime);
     if (!validateKeyEvent(args->action)) {
         return;
     }
@@ -4141,23 +4153,22 @@ bool InputDispatcher::shouldSendKeyToInputFilterLocked(const NotifyKeyArgs* args
 }
 
 void InputDispatcher::notifyMotion(const NotifyMotionArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
-        ALOGD("notifyMotion - id=%" PRIx32 " eventTime=%" PRId64 ", deviceId=%d, source=0x%x, "
+    if (debugInboundEventDetails()) {
+        ALOGD("notifyMotion - id=%" PRIx32 " eventTime=%" PRId64 ", deviceId=%d, source=%s, "
               "displayId=%" PRId32 ", policyFlags=0x%x, "
               "action=%s, actionButton=0x%x, flags=0x%x, metaState=0x%x, buttonState=0x%x, "
               "edgeFlags=0x%x, xPrecision=%f, yPrecision=%f, xCursorPosition=%f, "
               "yCursorPosition=%f, downTime=%" PRId64,
-              args->id, args->eventTime, args->deviceId, args->source, args->displayId,
-              args->policyFlags, MotionEvent::actionToString(args->action).c_str(),
-              args->actionButton, args->flags, args->metaState, args->buttonState, args->edgeFlags,
-              args->xPrecision, args->yPrecision, args->xCursorPosition, args->yCursorPosition,
-              args->downTime);
+              args->id, args->eventTime, args->deviceId,
+              inputEventSourceToString(args->source).c_str(), args->displayId, args->policyFlags,
+              MotionEvent::actionToString(args->action).c_str(), args->actionButton, args->flags,
+              args->metaState, args->buttonState, args->edgeFlags, args->xPrecision,
+              args->yPrecision, args->xCursorPosition, args->yCursorPosition, args->downTime);
         for (uint32_t i = 0; i < args->pointerCount; i++) {
-            ALOGD("  Pointer %d: id=%d, toolType=%d, "
-                  "x=%f, y=%f, pressure=%f, size=%f, "
-                  "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, "
-                  "orientation=%f",
-                  i, args->pointerProperties[i].id, args->pointerProperties[i].toolType,
+            ALOGD("  Pointer %d: id=%d, toolType=%s, x=%f, y=%f, pressure=%f, size=%f, "
+                  "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, orientation=%f",
+                  i, args->pointerProperties[i].id,
+                  motionToolTypeToString(args->pointerProperties[i].toolType),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_X),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_Y),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_PRESSURE),
@@ -4169,9 +4180,12 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs* args) {
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION));
         }
     }
-    LOG_ALWAYS_FATAL_IF(!validateMotionEvent(args->action, args->actionButton, args->pointerCount,
-                                             args->pointerProperties),
-                        "Invalid event: %s", args->dump().c_str());
+
+    if (!validateMotionEvent(args->action, args->actionButton, args->pointerCount,
+                             args->pointerProperties)) {
+        LOG(ERROR) << "Invalid event: " << args->dump();
+        return;
+    }
 
     uint32_t policyFlags = args->policyFlags;
     policyFlags |= POLICY_FLAG_TRUSTED;
@@ -4252,7 +4266,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs* args) {
 }
 
 void InputDispatcher::notifySensor(const NotifySensorArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifySensor - id=%" PRIx32 " eventTime=%" PRId64 ", deviceId=%d, source=0x%x, "
               " sensorType=%s",
               args->id, args->eventTime, args->deviceId, args->source,
@@ -4280,7 +4294,7 @@ void InputDispatcher::notifySensor(const NotifySensorArgs* args) {
 }
 
 void InputDispatcher::notifyVibratorState(const NotifyVibratorStateArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifyVibratorState - eventTime=%" PRId64 ", device=%d,  isOn=%d", args->eventTime,
               args->deviceId, args->isOn);
     }
@@ -4292,7 +4306,7 @@ bool InputDispatcher::shouldSendMotionToInputFilterLocked(const NotifyMotionArgs
 }
 
 void InputDispatcher::notifySwitch(const NotifySwitchArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifySwitch - eventTime=%" PRId64 ", policyFlags=0x%x, switchValues=0x%08x, "
               "switchMask=0x%08x",
               args->eventTime, args->policyFlags, args->switchValues, args->switchMask);
@@ -4304,7 +4318,7 @@ void InputDispatcher::notifySwitch(const NotifySwitchArgs* args) {
 }
 
 void InputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifyDeviceReset - eventTime=%" PRId64 ", deviceId=%d", args->eventTime,
               args->deviceId);
     }
@@ -4324,7 +4338,7 @@ void InputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs* args) {
 }
 
 void InputDispatcher::notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs* args) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("notifyPointerCaptureChanged - eventTime=%" PRId64 ", enabled=%s", args->eventTime,
               args->request.enable ? "true" : "false");
     }
@@ -4347,7 +4361,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                                                             InputEventInjectionSync syncMode,
                                                             std::chrono::milliseconds timeout,
                                                             uint32_t policyFlags) {
-    if (DEBUG_INBOUND_EVENT_DETAILS) {
+    if (debugInboundEventDetails()) {
         ALOGD("injectInputEvent - eventType=%d, targetUid=%s, syncMode=%d, timeout=%lld, "
               "policyFlags=0x%08x",
               event->getType(), targetUid ? std::to_string(*targetUid).c_str() : "none", syncMode,
