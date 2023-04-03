@@ -397,7 +397,7 @@ bool QtiSurfaceFlingerExtension::qtiLatchMediaContent(sp<Layer> layer) {
     bool cameraOrVideo = ((usage & GRALLOC_USAGE_HW_CAMERA_WRITE) != 0) ||
             ((usage & GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0);
 
-    return mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLatchMediaContent) ||
+    return mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLatchMediaContent) &&
             cameraOrVideo;
 }
 
