@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Center
+ */
+
 #ifndef ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 #define ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 
@@ -21,6 +27,14 @@
 #include <gui/IGraphicBufferProducer.h>
 
 namespace android {
+
+/* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+namespace libguiextension {
+class QtiBufferQueueProducerExtension;
+};
+#endif
+/* QTI_END */
 
 class IBinder;
 struct BufferSlot;
@@ -33,6 +47,13 @@ class BufferQueueProducer : public BnGraphicBufferProducer {
 #endif
 public:
     friend class BufferQueue; // Needed to access binderDied
+
+/* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+    friend class libguiextension::QtiBufferQueueProducerExtension;
+    sp<libguiextension::QtiBufferQueueProducerExtension> mQtiBQPExtn;
+#endif
+/* QTI_END */
 
     explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
                                  bool consumerIsSurfaceFlinger = false);
