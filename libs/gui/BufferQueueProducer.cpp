@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Center
+ */
+
 #include <inttypes.h>
 
 #define LOG_TAG "BufferQueueProducer"
@@ -41,6 +47,12 @@
 #include <utils/Trace.h>
 
 #include <system/window.h>
+
+/* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+#include "QtiExtension/QtiBufferQueueProducerExtension.h"
+#endif
+/* QTI_END */
 
 namespace android {
 
@@ -83,7 +95,15 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
     mCurrentCallbackTicket(0),
     mCallbackCondition(),
     mDequeueTimeout(-1),
-    mDequeueWaitingForAllocation(false) {}
+    mDequeueWaitingForAllocation(false) {
+/* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+    if (!mQtiBQPExtn) {
+        mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
+    }
+#endif
+/* QTI_END */
+}
 
 BufferQueueProducer::~BufferQueueProducer() {}
 
@@ -850,6 +870,15 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             BQ_LOGE("queueBuffer: unknown scaling mode %d", scalingMode);
             return BAD_VALUE;
     }
+
+/* QTI_BEGIN */
+#ifdef QTI_DISPLAY_EXTENSION
+    if (mQtiBQPExtn) {
+        mQtiBQPExtn->qtiQueueBuffer(isAutoTimestamp, requestedPresentTimestamp,
+                                    mCore->mConnectedApi);
+    }
+#endif
+/* QTI_END */
 
     sp<IConsumerListener> frameAvailableListener;
     sp<IConsumerListener> frameReplacedListener;
