@@ -4,8 +4,6 @@
 #include "QtiNullExtension.h"
 #include <ui/DisplayId.h>
 
-#include "MutexUtils.h"
-
 namespace android::surfaceflingerextension {
 
 QtiNullExtension::QtiNullExtension() {
@@ -114,8 +112,7 @@ status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, in
 android::VirtualDisplayId QtiNullExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
                                                                      ui::PixelFormat format,
                                                                      bool canAllocateHwcForVDS) {
-    ConditionalLock lock(mQtiFlinger->mStateLock,
-                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+    // Fix thread safety analysis
     return mQtiFlinger->acquireVirtualDisplay(resolution, format);
 }
 bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) {
