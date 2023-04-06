@@ -156,6 +156,8 @@ public:
      */
     virtual void qtiStartUnifiedDraw() = 0;
     virtual void qtiTryDrawMethod(sp<DisplayDevice> display) = 0;
+
+    virtual bool qtiIsFpsDeferNeeded(float newFpsRequest) = 0;
 };
 
 } // namespace android::surfaceflingerextension

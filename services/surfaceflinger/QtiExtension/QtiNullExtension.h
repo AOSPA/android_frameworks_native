@@ -130,6 +130,8 @@ public:
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
 
+    bool qtiIsFpsDeferNeeded(float newFpsRequest) { return false; }
+
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;
 };

@@ -1205,6 +1205,12 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request,
         return;
     }
 
+    /* QTI_BEGIN */
+    if (mQtiSFExtnIntf->qtiIsFpsDeferNeeded(request.mode.fps.getValue())) {
+        return;
+    }
+    /* QTI_END */
+
     const auto mode = request.mode;
     const bool emitEvent = request.emitEvent;
 

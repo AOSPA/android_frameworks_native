@@ -187,6 +187,12 @@ public:
     void qtiTryDrawMethod(sp<DisplayDevice> display) override;
     void qtiEndUnifiedDraw(uint32_t hwcDisplayId);
 
+    std::optional<PhysicalDisplayId> qtiGetInternalDisplayId();
+    void qtiSetDesiredModeByThermalLevel(float newLevelFps);
+    bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
+    DisplayModePtr qtiGetModeFromFps(float fps);
+    void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
+
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
     bool qtiIsInternalDisplay(const sp<DisplayDevice>& display);
@@ -216,6 +222,9 @@ private:
     int mQtiSFTid = 0;
     int mQtiUiLayerFrameCount = 180;
     uint32_t mQtiCurrentFps = 0;
+    float mQtiThermalLevelFps = 0;
+    float mQtiLastCachedFps = 0;
+    bool mQtiAllowThermalFpsChange = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
