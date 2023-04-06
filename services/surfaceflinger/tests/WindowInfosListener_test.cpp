@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 #include <gui/SurfaceComposerClient.h>
 #include <private/android_filesystem_config.h>
+#include <cstdint>
 #include <future>
 
 namespace android {
@@ -65,14 +66,14 @@ protected:
     }
 };
 
-std::optional<WindowInfo> findMatchingWindowInfo(WindowInfo targetWindowInfo,
-                                                 std::vector<WindowInfo> windowInfos) {
-    for (WindowInfo windowInfo : windowInfos) {
+const WindowInfo* findMatchingWindowInfo(const WindowInfo& targetWindowInfo,
+                                         const std::vector<WindowInfo>& windowInfos) {
+    for (const WindowInfo& windowInfo : windowInfos) {
         if (windowInfo.token == targetWindowInfo.token) {
-            return windowInfo;
+            return &windowInfo;
         }
     }
-    return std::nullopt;
+    return nullptr;
 }
 
 TEST_F(WindowInfosListenerTest, WindowInfoAddedAndRemoved) {
@@ -93,14 +94,14 @@ TEST_F(WindowInfosListenerTest, WindowInfoAddedAndRemoved) {
             .apply();
 
     auto windowPresent = [&](const std::vector<WindowInfo>& windowInfos) {
-        return findMatchingWindowInfo(windowInfo, windowInfos).has_value();
+        return findMatchingWindowInfo(windowInfo, windowInfos);
     };
     ASSERT_TRUE(waitForWindowInfosPredicate(windowPresent));
 
     Transaction().reparent(surfaceControl, nullptr).apply();
 
     auto windowNotPresent = [&](const std::vector<WindowInfo>& windowInfos) {
-        return !findMatchingWindowInfo(windowInfo, windowInfos).has_value();
+        return !findMatchingWindowInfo(windowInfo, windowInfos);
     };
     ASSERT_TRUE(waitForWindowInfosPredicate(windowNotPresent));
 }
@@ -132,8 +133,7 @@ TEST_F(WindowInfosListenerTest, WindowInfoChanged) {
     };
     ASSERT_TRUE(waitForWindowInfosPredicate(windowIsPresentAndTouchableRegionEmpty));
 
-    Rect touchableRegions(0, 0, 50, 50);
-    windowInfo.addTouchableRegion(Rect(0, 0, 50, 50));
+    windowInfo.addTouchableRegion({0, 0, 50, 50});
     Transaction().setInputWindowInfo(surfaceControl, windowInfo).apply();
 
     auto windowIsPresentAndTouchableRegionMatches =
@@ -142,7 +142,10 @@ TEST_F(WindowInfosListenerTest, WindowInfoChanged) {
                 if (!foundWindowInfo) {
                     return false;
                 }
-                return foundWindowInfo->touchableRegion.hasSameRects(windowInfo.touchableRegion);
+
+                auto touchableRegion =
+                        foundWindowInfo->transform.transform(foundWindowInfo->touchableRegion);
+                return touchableRegion.hasSameRects(windowInfo.touchableRegion);
             };
     ASSERT_TRUE(waitForWindowInfosPredicate(windowIsPresentAndTouchableRegionMatches));
 }

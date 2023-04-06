@@ -107,7 +107,7 @@ status_t JpegR::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
     return ERROR_JPEGR_INVALID_INPUT_TYPE;
   }
 
-  jpegr_metadata metadata;
+  jpegr_metadata_struct metadata;
   metadata.version = kJpegrVersion;
 
   jpegr_uncompressed_struct uncompressed_yuv_420_image;
@@ -176,7 +176,7 @@ status_t JpegR::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
     return ERROR_JPEGR_INVALID_INPUT_TYPE;
   }
 
-  jpegr_metadata metadata;
+  jpegr_metadata_struct metadata;
   metadata.version = kJpegrVersion;
 
   jpegr_uncompressed_struct map;
@@ -235,7 +235,7 @@ status_t JpegR::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
     return ERROR_JPEGR_INVALID_INPUT_TYPE;
   }
 
-  jpegr_metadata metadata;
+  jpegr_metadata_struct metadata;
   metadata.version = kJpegrVersion;
 
   jpegr_uncompressed_struct map;
@@ -288,7 +288,7 @@ status_t JpegR::encodeJPEGR(jr_uncompressed_ptr uncompressed_p010_image,
     return ERROR_JPEGR_RESOLUTION_MISMATCH;
   }
 
-  jpegr_metadata metadata;
+  jpegr_metadata_struct metadata;
   metadata.version = kJpegrVersion;
 
   jpegr_uncompressed_struct map;
@@ -330,9 +330,11 @@ status_t JpegR::getJPEGRInfo(jr_compressed_ptr compressed_jpegr_image, jr_info_p
 /* Decode API */
 status_t JpegR::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
                             jr_uncompressed_ptr dest,
+                            float max_display_boost,
                             jr_exif_ptr exif,
                             jpegr_output_format output_format,
-                            jr_uncompressed_ptr recovery_map) {
+                            jr_uncompressed_ptr recovery_map,
+                            jr_metadata_ptr metadata) {
   if (compressed_jpegr_image == nullptr || dest == nullptr) {
     return ERROR_JPEGR_INVALID_NULL_PTR;
   }
@@ -387,6 +389,18 @@ status_t JpegR::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
     memcpy(recovery_map->data, recovery_map_decoder.getDecompressedImagePtr(), size);
   }
 
+  jpegr_metadata_struct jr_metadata;
+  if (!getMetadataFromXMP(static_cast<uint8_t*>(recovery_map_decoder.getXMPPtr()),
+                          recovery_map_decoder.getXMPSize(), &jr_metadata)) {
+    return ERROR_JPEGR_DECODE_ERROR;
+  }
+
+  if (metadata != nullptr) {
+      metadata->version = jr_metadata.version;
+      metadata->minContentBoost = jr_metadata.minContentBoost;
+      metadata->maxContentBoost = jr_metadata.maxContentBoost;
+  }
+
   if (output_format == JPEGR_OUTPUT_SDR) {
     return NO_ERROR;
   }
@@ -417,13 +431,8 @@ status_t JpegR::decodeJPEGR(jr_compressed_ptr compressed_jpegr_image,
   uncompressed_yuv_420_image.width = jpeg_decoder.getDecompressedImageWidth();
   uncompressed_yuv_420_image.height = jpeg_decoder.getDecompressedImageHeight();
 
-  jpegr_metadata metadata;
-  if (!getMetadataFromXMP(static_cast<uint8_t*>(recovery_map_decoder.getXMPPtr()),
-                          recovery_map_decoder.getXMPSize(), &metadata)) {
-    return ERROR_JPEGR_DECODE_ERROR;
-  }
-
-  JPEGR_CHECK(applyRecoveryMap(&uncompressed_yuv_420_image, &map, &metadata, output_format, dest));
+  JPEGR_CHECK(applyRecoveryMap(&uncompressed_yuv_420_image, &map, &jr_metadata, output_format,
+                               max_display_boost, dest));
   return NO_ERROR;
 }
 
@@ -659,6 +668,7 @@ status_t JpegR::applyRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_420_image,
                                  jr_uncompressed_ptr uncompressed_recovery_map,
                                  jr_metadata_ptr metadata,
                                  jpegr_output_format output_format,
+                                 float max_display_boost,
                                  jr_uncompressed_ptr dest) {
   if (uncompressed_yuv_420_image == nullptr
    || uncompressed_recovery_map == nullptr
@@ -670,13 +680,15 @@ status_t JpegR::applyRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_420_image,
   dest->width = uncompressed_yuv_420_image->width;
   dest->height = uncompressed_yuv_420_image->height;
   ShepardsIDW idwTable(kMapDimensionScaleFactor);
-  RecoveryLUT recoveryLUT(metadata);
+  float display_boost = max_display_boost > 0 ?
+          std::min(max_display_boost, metadata->maxContentBoost)
+          : metadata->maxContentBoost;
+  RecoveryLUT recoveryLUT(metadata, display_boost);
 
   JobQueue jobQueue;
   std::function<void()> applyRecMap = [uncompressed_yuv_420_image, uncompressed_recovery_map,
                                        metadata, dest, &jobQueue, &idwTable, output_format,
-                                       &recoveryLUT]() -> void {
-    const float hdr_ratio = metadata->maxContentBoost;
+                                       &recoveryLUT, display_boost]() -> void {
     size_t width = uncompressed_yuv_420_image->width;
     size_t height = uncompressed_yuv_420_image->height;
 
@@ -702,12 +714,13 @@ status_t JpegR::applyRecoveryMap(jr_uncompressed_ptr uncompressed_yuv_420_image,
           } else {
             recovery = sampleMap(uncompressed_recovery_map, map_scale_factor, x, y, idwTable);
           }
+
 #if USE_APPLY_RECOVERY_LUT
           Color rgb_hdr = applyRecoveryLUT(rgb_sdr, recovery, recoveryLUT);
 #else
-          Color rgb_hdr = applyRecovery(rgb_sdr, recovery, metadata);
+          Color rgb_hdr = applyRecovery(rgb_sdr, recovery, metadata, display_boost);
 #endif
-          rgb_hdr = rgb_hdr / metadata->maxContentBoost;
+          rgb_hdr = rgb_hdr / display_boost;
           size_t pixel_idx = x + y * width;
 
           switch (output_format) {
