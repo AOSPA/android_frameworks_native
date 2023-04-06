@@ -712,6 +712,9 @@ void Scheduler::promotePacesetterDisplay(std::optional<PhysicalDisplayId> pacese
             connection.thread->onNewVsyncSchedule(vsyncSchedule);
         }
     }
+    for (auto* thread : threads) {
+        thread->onNewVsyncSchedule(vsyncSchedule);
+    }
 }
 
 void Scheduler::demotePacesetterDisplay() {
