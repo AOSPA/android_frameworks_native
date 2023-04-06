@@ -15,7 +15,6 @@ cc_defaults {
         "-Wextra",
         "-Wformat",
         "-Wthread-safety",
-        "-Wthread-safety-analysis",
         "-Wunused",
         "-Wunreachable-code",
         "-Wconversion",
