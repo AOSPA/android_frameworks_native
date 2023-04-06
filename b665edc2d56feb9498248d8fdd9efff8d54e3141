@@ -16,6 +16,23 @@
       "message": "needed to fix display on op7 (potentially on more 4.14 devices)",
       "revId": "b665edc2d56feb9498248d8fdd9efff8d54e3141",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "1f370e75_da145b59",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000481
+      },
+      "writtenOn": "2023-04-06T19:20:29Z",
+      "side": 1,
+      "message": "not required on vayu (4.14)",
+      "revId": "b665edc2d56feb9498248d8fdd9efff8d54e3141",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
