@@ -85,18 +85,18 @@ int32_t KeyboardInputMapper::getDisplayId() {
     return ADISPLAY_ID_NONE;
 }
 
-void KeyboardInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
+void KeyboardInputMapper::populateDeviceInfo(InputDeviceInfo& info) {
     InputMapper::populateDeviceInfo(info);
 
-    info->setKeyboardType(mKeyboardType);
-    info->setKeyCharacterMap(getDeviceContext().getKeyCharacterMap());
+    info.setKeyboardType(mKeyboardType);
+    info.setKeyCharacterMap(getDeviceContext().getKeyCharacterMap());
 
     if (mKeyboardLayoutInfo) {
-        info->setKeyboardLayoutInfo(*mKeyboardLayoutInfo);
+        info.setKeyboardLayoutInfo(*mKeyboardLayoutInfo);
     } else {
         std::optional<RawLayoutInfo> layoutInfo = getDeviceContext().getRawLayoutInfo();
         if (layoutInfo) {
-            info->setKeyboardLayoutInfo(
+            info.setKeyboardLayoutInfo(
                     KeyboardLayoutInfo(layoutInfo->languageTag, layoutInfo->layoutType));
         }
     }
@@ -154,15 +154,10 @@ std::list<NotifyArgs> KeyboardInputMapper::configure(nsecs_t when,
 }
 
 void KeyboardInputMapper::configureParameters() {
-    mParameters.orientationAware = false;
     const PropertyMap& config = getDeviceContext().getConfiguration();
-    config.tryGetProperty("keyboard.orientationAware", mParameters.orientationAware);
-
-    mParameters.handlesKeyRepeat = false;
-    config.tryGetProperty("keyboard.handlesKeyRepeat", mParameters.handlesKeyRepeat);
-
-    mParameters.doNotWakeByDefault = false;
-    config.tryGetProperty("keyboard.doNotWakeByDefault", mParameters.doNotWakeByDefault);
+    mParameters.orientationAware = config.getBool("keyboard.orientationAware").value_or(false);
+    mParameters.handlesKeyRepeat = config.getBool("keyboard.handlesKeyRepeat").value_or(false);
+    mParameters.doNotWakeByDefault = config.getBool("keyboard.doNotWakeByDefault").value_or(false);
 }
 
 void KeyboardInputMapper::dumpParameters(std::string& dump) const {

@@ -21,6 +21,7 @@
 #include <memory>
 
 #include <PointerControllerInterface.h>
+#include <android/input.h>
 #include <utils/Timers.h>
 
 #include "EventHub.h"
@@ -43,7 +44,9 @@ public:
     std::string dump() const;
 
     void setOrientation(ui::Rotation orientation) { mOrientation = orientation; }
-    void reset();
+    [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when);
+
+    void populateMotionRanges(InputDeviceInfo& info) const;
 
     [[nodiscard]] std::list<NotifyArgs> handleGesture(nsecs_t when, nsecs_t readTime,
                                                       const Gesture& gesture);
@@ -52,15 +55,19 @@ private:
     [[nodiscard]] NotifyArgs handleMove(nsecs_t when, nsecs_t readTime, const Gesture& gesture);
     [[nodiscard]] std::list<NotifyArgs> handleButtonsChange(nsecs_t when, nsecs_t readTime,
                                                             const Gesture& gesture);
+    [[nodiscard]] std::list<NotifyArgs> releaseAllButtons(nsecs_t when, nsecs_t readTime);
     [[nodiscard]] std::list<NotifyArgs> handleScroll(nsecs_t when, nsecs_t readTime,
                                                      const Gesture& gesture);
     [[nodiscard]] NotifyArgs handleFling(nsecs_t when, nsecs_t readTime, const Gesture& gesture);
+    [[nodiscard]] NotifyArgs endScroll(nsecs_t when, nsecs_t readTime);
+
     [[nodiscard]] std::list<NotifyArgs> handleMultiFingerSwipe(nsecs_t when, nsecs_t readTime,
                                                                uint32_t fingerCount, float dx,
                                                                float dy);
     [[nodiscard]] std::list<NotifyArgs> handleMultiFingerSwipeLift(nsecs_t when, nsecs_t readTime);
     [[nodiscard]] std::list<NotifyArgs> handlePinch(nsecs_t when, nsecs_t readTime,
                                                     const Gesture& gesture);
+    [[nodiscard]] std::list<NotifyArgs> endPinch(nsecs_t when, nsecs_t readTime);
 
     NotifyMotionArgs makeMotionArgs(nsecs_t when, nsecs_t readTime, int32_t action,
                                     int32_t actionButton, int32_t buttonState,
@@ -98,6 +105,9 @@ private:
             {.id = 3, .toolType = AMOTION_EVENT_TOOL_TYPE_FINGER},
     }};
     std::array<PointerCoords, MAX_FAKE_FINGERS> mFakeFingerCoords = {};
+
+    // TODO(b/260226362): consider what the appropriate source for these events is.
+    static constexpr uint32_t SOURCE = AINPUT_SOURCE_MOUSE;
 };
 
 } // namespace android

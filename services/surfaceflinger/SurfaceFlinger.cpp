@@ -2626,6 +2626,7 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         if (!dropFrame) {
             refreshArgs.outputs.push_back(display->getCompositionDisplay());
         }
+        display->tracePowerMode();
         displayIds.push_back(display->getId());
     }
     mPowerAdvisor->setDisplays(displayIds);
@@ -2708,7 +2709,9 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         CompositionResult compositionResult{layerFE->stealCompositionResult()};
         layer->onPreComposition(compositionResult.refreshStartTime);
         for (auto releaseFence : compositionResult.releaseFences) {
-            layer->onLayerDisplayed(releaseFence);
+            Layer* clonedFrom = layer->getClonedFrom().get();
+            auto owningLayer = clonedFrom ? clonedFrom : layer;
+            owningLayer->onLayerDisplayed(releaseFence);
         }
         if (compositionResult.lastClientCompositionFence) {
             layer->setWasClientComposed(compositionResult.lastClientCompositionFence);
@@ -3867,8 +3870,11 @@ void SurfaceFlinger::updateInputFlinger() {
         ATRACE_NAME("BackgroundExecutor::updateInputFlinger");
         if (updateWindowInfo) {
             mWindowInfosListenerInvoker
-                    ->windowInfosChanged(windowInfos, displayInfos,
-                                         inputWindowCommands.windowInfosReportedListeners);
+                    ->windowInfosChanged(std::move(windowInfos), std::move(displayInfos),
+                                         std::move(
+                                                 inputWindowCommands.windowInfosReportedListeners),
+                                         /* forceImmediateCall= */
+                                         !inputWindowCommands.focusRequests.empty());
         } else {
             // If there are listeners but no changes to input windows, call the listeners
             // immediately.
@@ -4269,8 +4275,34 @@ status_t SurfaceFlinger::addClientLayer(LayerCreationArgs& args, const sp<IBinde
         ALOGE("AddClientLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers.load(),
               MAX_LAYERS);
         static_cast<void>(mScheduler->schedule([=] {
+            ALOGE("Dumping layer keeping > 20 children alive:");
+            bool leakingParentLayerFound = false;
+            mDrawingState.traverse([&](Layer* layer) {
+                if (leakingParentLayerFound) {
+                    return;
+                }
+                if (layer->getChildrenCount() > 20) {
+                    leakingParentLayerFound = true;
+                    sp<Layer> parent = sp<Layer>::fromExisting(layer);
+                    while (parent) {
+                        ALOGE("Parent Layer: %s handleIsAlive: %s", parent->getName().c_str(),
+                              std::to_string(parent->isHandleAlive()).c_str());
+                        parent = parent->getParent();
+                    }
+                    // Sample up to 100 layers
+                    ALOGE("Dumping random sampling of child layers total(%zu): ",
+                          layer->getChildrenCount());
+                    int sampleSize = (layer->getChildrenCount() / 100) + 1;
+                    layer->traverseChildren([&](Layer* layer) {
+                        if (rand() % sampleSize == 0) {
+                            ALOGE("Child Layer: %s", layer->getName().c_str());
+                        }
+                    });
+                }
+            });
+
             ALOGE("Dumping random sampling of on-screen layers: ");
-            mDrawingState.traverse([&](Layer *layer) {
+            mDrawingState.traverse([&](Layer* layer) {
                 // Aim to dump about 200 layers to avoid totally trashing
                 // logcat. On the other hand, if there really are 4096 layers
                 // something has gone totally wrong its probably the most
@@ -4279,6 +4311,8 @@ status_t SurfaceFlinger::addClientLayer(LayerCreationArgs& args, const sp<IBinde
                     ALOGE("Layer: %s", layer->getName().c_str());
                 }
             });
+            ALOGE("Dumping random sampling of off-screen layers total(%zu): ",
+                  mOffscreenLayers.size());
             for (Layer* offscreenLayer : mOffscreenLayers) {
                 if (rand() % 20 == 13) {
                     ALOGE("Offscreen-layer: %s", offscreenLayer->getName().c_str());
@@ -4324,7 +4358,6 @@ void SurfaceFlinger::setTransactionFlags(uint32_t mask, TransactionSchedule sche
     ATRACE_INT("mTransactionFlags", transactionFlags);
 
     if (const bool scheduled = transactionFlags & mask; !scheduled) {
-        mScheduler->resync();
         scheduleCommit(frameHint);
     } else if (frameHint == FrameHint::kActive) {
         // Even if the next frame is already scheduled, we should reset the idle timer
@@ -5314,6 +5347,12 @@ uint32_t SurfaceFlinger::updateLayerCallbacksAndStats(const FrameTimelineInfo& f
         if (layer->setSidebandStream(s.sidebandStream)) flags |= eTraversalNeeded;
     }
     if (what & layer_state_t::eBufferChanged) {
+        std::optional<ui::Transform::RotationFlags> transformHint = std::nullopt;
+        frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(layer->sequence);
+        if (snapshot) {
+            transformHint = snapshot->transformHint;
+        }
+        layer->setTransformHint(transformHint);
         if (layer->setBuffer(composerState.externalTexture, *s.bufferData, postTime,
                              desiredPresentTime, isAutoTimestamp, dequeueBufferTimestamp,
                              frameTimelineInfo)) {
@@ -5515,6 +5554,7 @@ void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32
     /* QTI_END */
 
     markLayerPendingRemovalLocked(layer);
+    layer->onHandleDestroyed();
     mBufferCountTracker.remove(handle);
     layer.clear();
 
@@ -7322,13 +7362,34 @@ status_t SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
 
     bool childrenOnly = args.childrenOnly;
     RenderAreaFuture renderAreaFuture = ftl::defer([=]() -> std::unique_ptr<RenderArea> {
+        ui::Transform layerTransform;
+        Rect layerBufferSize;
+        if (mLayerLifecycleManagerEnabled) {
+            frontend::LayerSnapshot* snapshot =
+                    mLayerSnapshotBuilder.getSnapshot(parent->getSequence());
+            if (!snapshot) {
+                ALOGW("Couldn't find layer snapshot for %d", parent->getSequence());
+            } else {
+                layerTransform = snapshot->localTransform;
+                layerBufferSize = snapshot->bufferSize;
+            }
+        } else {
+            layerTransform = parent->getTransform();
+            layerBufferSize = parent->getBufferSize(parent->getDrawingState());
+        }
+
         return std::make_unique<LayerRenderArea>(*this, parent, crop, reqSize, dataspace,
-                                                 childrenOnly, args.captureSecureLayers);
+                                                 childrenOnly, args.captureSecureLayers,
+                                                 layerTransform, layerBufferSize);
     });
     GetLayerSnapshotsFunction getLayerSnapshots;
     if (mLayerLifecycleManagerEnabled) {
-        FloatRect parentCrop = crop.isEmpty() ? FloatRect(0, 0, reqSize.width, reqSize.height)
-                                              : crop.toFloatRect();
+        std::optional<FloatRect> parentCrop = std::nullopt;
+        if (args.childrenOnly) {
+            parentCrop = crop.isEmpty() ? FloatRect(0, 0, reqSize.width, reqSize.height)
+                                        : crop.toFloatRect();
+        }
+
         getLayerSnapshots = getLayerSnapshotsForScreenshots(parent->sequence, args.uid,
                                                             std::move(excludeLayerIds),
                                                             args.childrenOnly, parentCrop);
@@ -8298,7 +8359,7 @@ SurfaceFlinger::getLayerSnapshotsForScreenshots(
                     if (layerStack && snapshot->outputFilter.layerStack != *layerStack) {
                         return;
                     }
-                    if (uid != CaptureArgs::UNSET_UID && snapshot->inputInfo.ownerUid != uid) {
+                    if (uid != CaptureArgs::UNSET_UID && snapshot->uid != uid) {
                         return;
                     }
                     if (!snapshot->hasSomethingToDraw()) {
@@ -8325,7 +8386,8 @@ SurfaceFlinger::getLayerSnapshotsForScreenshots(
 std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()>
 SurfaceFlinger::getLayerSnapshotsForScreenshots(uint32_t rootLayerId, uint32_t uid,
                                                 std::unordered_set<uint32_t> excludeLayerIds,
-                                                bool childrenOnly, const FloatRect& parentCrop) {
+                                                bool childrenOnly,
+                                                const std::optional<FloatRect>& parentCrop) {
     return [&, rootLayerId, uid, excludeLayerIds = std::move(excludeLayerIds), childrenOnly,
             parentCrop]() {
         auto root = mLayerHierarchyBuilder.getPartialHierarchy(rootLayerId, childrenOnly);
@@ -8338,7 +8400,7 @@ SurfaceFlinger::getLayerSnapshotsForScreenshots(uint32_t rootLayerId, uint32_t u
                      .globalShadowSettings = mDrawingState.globalShadowSettings,
                      .supportsBlur = mSupportsBlur,
                      .forceFullDamage = mForceFullDamage,
-                     .parentCrop = {parentCrop},
+                     .parentCrop = parentCrop,
                      .excludeLayerIds = std::move(excludeLayerIds),
                      .supportedLayerGenericMetadata =
                              getHwComposer().getSupportedLayerGenericMetadata(),

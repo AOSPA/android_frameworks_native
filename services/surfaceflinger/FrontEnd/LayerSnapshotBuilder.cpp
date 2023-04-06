@@ -21,10 +21,16 @@
 
 #include "LayerSnapshotBuilder.h"
 #include <gui/TraceUtils.h>
+#include <ui/FloatRect.h>
+
 #include <numeric>
+#include <optional>
+
+#include <gui/TraceUtils.h>
 #include "DisplayHardware/HWC2.h"
 #include "DisplayHardware/Hal.h"
 #include "LayerLog.h"
+#include "LayerSnapshotBuilder.h"
 #include "TimeStats/TimeStats.h"
 #include "ftl/small_map.h"
 
@@ -101,43 +107,52 @@ ui::Transform getInputTransform(const LayerSnapshot& snapshot) {
 }
 
 /**
+ * Returns the bounds used to fill the input frame and the touchable region.
+ *
  * Similar to getInputTransform, we need to update the bounds to include the transform.
  * This is because bounds don't include the buffer transform, where the input assumes
  * that's already included.
  */
-Rect getInputBounds(const LayerSnapshot& snapshot) {
-    if (!snapshot.hasBufferOrSidebandStream()) {
-        return snapshot.croppedBufferSize;
+std::pair<FloatRect, bool> getInputBounds(const LayerSnapshot& snapshot, bool fillParentBounds) {
+    FloatRect inputBounds = snapshot.croppedBufferSize.toFloatRect();
+    if (snapshot.hasBufferOrSidebandStream() && snapshot.croppedBufferSize.isValid() &&
+        snapshot.localTransform.getType() != ui::Transform::IDENTITY) {
+        inputBounds = snapshot.localTransform.transform(inputBounds);
     }
 
-    if (snapshot.localTransform.getType() == ui::Transform::IDENTITY ||
-        !snapshot.croppedBufferSize.isValid()) {
-        return snapshot.croppedBufferSize;
+    bool inputBoundsValid = snapshot.croppedBufferSize.isValid();
+    if (!inputBoundsValid) {
+        /**
+         * Input bounds are based on the layer crop or buffer size. But if we are using
+         * the layer bounds as the input bounds (replaceTouchableRegionWithCrop flag) then
+         * we can use the parent bounds as the input bounds if the layer does not have buffer
+         * or a crop. We want to unify this logic but because of compat reasons we cannot always
+         * use the parent bounds. A layer without a buffer can get input. So when a window is
+         * initially added, its touchable region can fill its parent layer bounds and that can
+         * have negative consequences.
+         */
+        inputBounds = fillParentBounds ? snapshot.geomLayerBounds : FloatRect{};
     }
-    return snapshot.localTransform.transform(snapshot.croppedBufferSize);
+
+    // Clamp surface inset to the input bounds.
+    const float inset = static_cast<float>(snapshot.inputInfo.surfaceInset);
+    const float xSurfaceInset = std::clamp(inset, 0.f, inputBounds.getWidth() / 2.f);
+    const float ySurfaceInset = std::clamp(inset, 0.f, inputBounds.getHeight() / 2.f);
+
+    // Apply the insets to the input bounds.
+    inputBounds.left += xSurfaceInset;
+    inputBounds.top += ySurfaceInset;
+    inputBounds.right -= xSurfaceInset;
+    inputBounds.bottom -= ySurfaceInset;
+    return {inputBounds, inputBoundsValid};
 }
 
-void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& screenToDisplay,
-                        const LayerSnapshot& snapshot) {
-    Rect tmpBounds = getInputBounds(snapshot);
-    if (!tmpBounds.isValid()) {
-        info.touchableRegion.clear();
-        // A layer could have invalid input bounds and still expect to receive touch input if it has
-        // replaceTouchableRegionWithCrop. For that case, the input transform needs to be calculated
-        // correctly to determine the coordinate space for input events. Use an empty rect so that
-        // the layer will receive input in its own layer space.
-        tmpBounds = Rect::EMPTY_RECT;
-    }
-
+Rect getInputBoundsInDisplaySpace(const LayerSnapshot& snapshot, const FloatRect& insetBounds,
+                                  const ui::Transform& screenToDisplay) {
     // InputDispatcher works in the display device's coordinate space. Here, we calculate the
     // frame and transform used for the layer, which determines the bounds and the coordinate space
     // within which the layer will receive input.
-    //
-    // The coordinate space within which each of the bounds are specified is explicitly documented
-    // in the variable name. For example "inputBoundsInLayer" is specified in layer space. A
-    // Transform converts one coordinate space to another, which is apparent in its naming. For
-    // example, "layerToDisplay" transforms layer space to display space.
-    //
+
     // Coordinate space definitions:
     //   - display: The display device's coordinate space. Correlates to pixels on the display.
     //   - screen: The post-rotation coordinate space for the display, a.k.a. logical display space.
@@ -145,37 +160,34 @@ void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& screenToDisp
     //   - input: The coordinate space in which this layer will receive input events. This could be
     //            different than layer space if a surfaceInset is used, which changes the origin
     //            of the input space.
-    const FloatRect inputBoundsInLayer = tmpBounds.toFloatRect();
-
-    // Clamp surface inset to the input bounds.
-    const auto surfaceInset = static_cast<float>(info.surfaceInset);
-    const float xSurfaceInset =
-            std::max(0.f, std::min(surfaceInset, inputBoundsInLayer.getWidth() / 2.f));
-    const float ySurfaceInset =
-            std::max(0.f, std::min(surfaceInset, inputBoundsInLayer.getHeight() / 2.f));
-
-    // Apply the insets to the input bounds.
-    const FloatRect insetBoundsInLayer(inputBoundsInLayer.left + xSurfaceInset,
-                                       inputBoundsInLayer.top + ySurfaceInset,
-                                       inputBoundsInLayer.right - xSurfaceInset,
-                                       inputBoundsInLayer.bottom - ySurfaceInset);
 
     // Crop the input bounds to ensure it is within the parent's bounds.
-    const FloatRect croppedInsetBoundsInLayer =
-            snapshot.geomLayerBounds.intersect(insetBoundsInLayer);
+    const FloatRect croppedInsetBoundsInLayer = snapshot.geomLayerBounds.intersect(insetBounds);
 
     const ui::Transform layerToScreen = getInputTransform(snapshot);
     const ui::Transform layerToDisplay = screenToDisplay * layerToScreen;
 
-    const Rect roundedFrameInDisplay{layerToDisplay.transform(croppedInsetBoundsInLayer)};
+    return Rect{layerToDisplay.transform(croppedInsetBoundsInLayer)};
+}
+
+void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& screenToDisplay,
+                        const LayerSnapshot& snapshot) {
+    auto [inputBounds, inputBoundsValid] = getInputBounds(snapshot, /*fillParentBounds=*/false);
+    if (!inputBoundsValid) {
+        info.touchableRegion.clear();
+    }
+
+    const Rect roundedFrameInDisplay =
+            getInputBoundsInDisplaySpace(snapshot, inputBounds, screenToDisplay);
     info.frameLeft = roundedFrameInDisplay.left;
     info.frameTop = roundedFrameInDisplay.top;
     info.frameRight = roundedFrameInDisplay.right;
     info.frameBottom = roundedFrameInDisplay.bottom;
 
     ui::Transform inputToLayer;
-    inputToLayer.set(insetBoundsInLayer.left, insetBoundsInLayer.top);
-    const ui::Transform inputToDisplay = layerToDisplay * inputToLayer;
+    inputToLayer.set(inputBounds.left, inputBounds.top);
+    const ui::Transform layerToScreen = getInputTransform(snapshot);
+    const ui::Transform inputToDisplay = screenToDisplay * layerToScreen * inputToLayer;
 
     // InputDispatcher expects a display-to-input transform.
     info.transform = inputToDisplay.inverse();
@@ -642,12 +654,14 @@ void LayerSnapshotBuilder::resetRelativeState(LayerSnapshot& snapshot) {
     snapshot.relativeLayerMetadata.mMap.clear();
 }
 
-uint32_t getDisplayRotationFlags(
-        const display::DisplayMap<ui::LayerStack, frontend::DisplayInfo>& displays,
-        const ui::LayerStack& layerStack) {
-    static frontend::DisplayInfo sDefaultDisplayInfo = {.isPrimary = false};
-    auto display = displays.get(layerStack).value_or(sDefaultDisplayInfo).get();
-    return display.isPrimary ? display.rotationFlags : 0;
+uint32_t getPrimaryDisplayRotationFlags(
+        const display::DisplayMap<ui::LayerStack, frontend::DisplayInfo>& displays) {
+    for (auto& [_, display] : displays) {
+        if (display.isPrimary) {
+            return display.rotationFlags;
+        }
+    }
+    return 0;
 }
 
 void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& args,
@@ -674,8 +688,7 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
             ? requested.layerStack
             : parentSnapshot.outputFilter.layerStack;
 
-    uint32_t displayRotationFlags =
-            getDisplayRotationFlags(args.displays, snapshot.outputFilter.layerStack);
+    uint32_t primaryDisplayRotationFlags = getPrimaryDisplayRotationFlags(args.displays);
     const bool forceUpdate = args.forceUpdate == ForceUpdateFlags::ALL ||
             snapshot.changes.any(RequestedLayerState::Changes::Visibility |
                                  RequestedLayerState::Changes::Created);
@@ -689,7 +702,7 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
                 : Fence::NO_FENCE;
         snapshot.buffer =
                 requested.externalTexture ? requested.externalTexture->getBuffer() : nullptr;
-        snapshot.bufferSize = requested.getBufferSize(displayRotationFlags);
+        snapshot.bufferSize = requested.getBufferSize(primaryDisplayRotationFlags);
         snapshot.geomBufferSize = snapshot.bufferSize;
         snapshot.croppedBufferSize = requested.getCroppedBufferSize(snapshot.bufferSize);
         snapshot.dataspace = requested.dataspace;
@@ -744,13 +757,26 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
         snapshot.gameMode = requested.metadata.has(gui::METADATA_GAME_MODE)
                 ? requested.gameMode
                 : parentSnapshot.gameMode;
-        snapshot.fixedTransformHint = requested.fixedTransformHint != ui::Transform::ROT_INVALID
-                ? requested.fixedTransformHint
-                : parentSnapshot.fixedTransformHint;
         // Display mirrors are always placed in a VirtualDisplay so we never want to capture layers
         // marked as skip capture
         snapshot.handleSkipScreenshotFlag = parentSnapshot.handleSkipScreenshotFlag ||
                 (requested.layerStackToMirror != ui::INVALID_LAYER_STACK);
+    }
+
+    if (forceUpdate || snapshot.changes.any(RequestedLayerState::Changes::AffectsChildren) ||
+        args.displayChanges) {
+        snapshot.fixedTransformHint = requested.fixedTransformHint != ui::Transform::ROT_INVALID
+                ? requested.fixedTransformHint
+                : parentSnapshot.fixedTransformHint;
+
+        if (snapshot.fixedTransformHint != ui::Transform::ROT_INVALID) {
+            snapshot.transformHint = snapshot.fixedTransformHint;
+        } else {
+            const auto display = args.displays.get(snapshot.outputFilter.layerStack);
+            snapshot.transformHint = display.has_value()
+                    ? std::make_optional<>(display->get().transformHint)
+                    : std::nullopt;
+        }
     }
 
     if (forceUpdate ||
@@ -792,7 +818,7 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     if (forceUpdate ||
         snapshot.changes.any(RequestedLayerState::Changes::Hierarchy |
                              RequestedLayerState::Changes::Geometry)) {
-        updateLayerBounds(snapshot, requested, parentSnapshot, displayRotationFlags);
+        updateLayerBounds(snapshot, requested, parentSnapshot, primaryDisplayRotationFlags);
         updateRoundedCorner(snapshot, requested, parentSnapshot);
     }
 
@@ -863,10 +889,10 @@ void LayerSnapshotBuilder::updateRoundedCorner(LayerSnapshot& snapshot,
 void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
                                              const RequestedLayerState& requested,
                                              const LayerSnapshot& parentSnapshot,
-                                             uint32_t displayRotationFlags) {
+                                             uint32_t primaryDisplayRotationFlags) {
     snapshot.croppedBufferSize = requested.getCroppedBufferSize(snapshot.bufferSize);
     snapshot.geomCrop = requested.crop;
-    snapshot.localTransform = requested.getTransform(displayRotationFlags);
+    snapshot.localTransform = requested.getTransform(primaryDisplayRotationFlags);
     snapshot.localTransformInverse = snapshot.localTransform.inverse();
     snapshot.geomLayerTransform = parentSnapshot.geomLayerTransform * snapshot.localTransform;
     const bool transformWasInvalid = snapshot.invalidTransform;
@@ -880,14 +906,14 @@ void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
                                    requestedT.dsdy(), requestedT.dtdx(), requestedT.dtdy());
         std::string bufferDebug;
         if (requested.externalTexture) {
-            auto unRotBuffer = requested.getUnrotatedBufferSize(displayRotationFlags);
+            auto unRotBuffer = requested.getUnrotatedBufferSize(primaryDisplayRotationFlags);
             auto& destFrame = requested.destinationFrame;
             bufferDebug = base::StringPrintf(" buffer={%d,%d}  displayRot=%d"
                                              " destFrame={%d,%d,%d,%d} unRotBuffer={%d,%d}",
                                              requested.externalTexture->getWidth(),
                                              requested.externalTexture->getHeight(),
-                                             displayRotationFlags, destFrame.left, destFrame.top,
-                                             destFrame.right, destFrame.bottom,
+                                             primaryDisplayRotationFlags, destFrame.left,
+                                             destFrame.top, destFrame.right, destFrame.bottom,
                                              unRotBuffer.getHeight(), unRotBuffer.getWidth());
         }
         ALOGW("Resetting transform for %s because it is invalid.%s%s",
@@ -1008,12 +1034,26 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
 
     auto cropLayerSnapshot = getSnapshot(requested.touchCropId);
     if (snapshot.inputInfo.replaceTouchableRegionWithCrop) {
-        const Rect bounds(cropLayerSnapshot ? cropLayerSnapshot->transformedBounds
-                                            : snapshot.transformedBounds);
-        snapshot.inputInfo.touchableRegion = Region(displayInfo.transform.transform(bounds));
+        Rect inputBoundsInDisplaySpace;
+        if (!cropLayerSnapshot) {
+            FloatRect inputBounds = getInputBounds(snapshot, /*fillParentBounds=*/true).first;
+            inputBoundsInDisplaySpace =
+                    getInputBoundsInDisplaySpace(snapshot, inputBounds, displayInfo.transform);
+        } else {
+            FloatRect inputBounds =
+                    getInputBounds(*cropLayerSnapshot, /*fillParentBounds=*/true).first;
+            inputBoundsInDisplaySpace =
+                    getInputBoundsInDisplaySpace(*cropLayerSnapshot, inputBounds,
+                                                 displayInfo.transform);
+        }
+        snapshot.inputInfo.touchableRegion = Region(inputBoundsInDisplaySpace);
     } else if (cropLayerSnapshot) {
+        FloatRect inputBounds = getInputBounds(*cropLayerSnapshot, /*fillParentBounds=*/true).first;
+        Rect inputBoundsInDisplaySpace =
+                getInputBoundsInDisplaySpace(*cropLayerSnapshot, inputBounds,
+                                             displayInfo.transform);
         snapshot.inputInfo.touchableRegion = snapshot.inputInfo.touchableRegion.intersect(
-                displayInfo.transform.transform(Rect{cropLayerSnapshot->transformedBounds}));
+                displayInfo.transform.transform(inputBoundsInDisplaySpace));
     }
 
     // Inherit the trusted state from the parent hierarchy, but don't clobber the trusted state

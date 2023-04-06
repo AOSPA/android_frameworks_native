@@ -28,10 +28,10 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 
-#ifdef __ANDROID_VENDOR__
+#ifdef BINDER_RPC_TO_TRUSTY_TEST
 #include <binder/RpcTransportTipcAndroid.h>
 #include <trusty/tipc.h>
-#endif // __ANDROID_VENDOR__
+#endif // BINDER_RPC_TO_TRUSTY_TEST
 
 #include "binderRpcTestCommon.h"
 #include "binderRpcTestFixture.h"
@@ -50,7 +50,7 @@ constexpr bool kEnableSharedLibs = false;
 constexpr bool kEnableSharedLibs = true;
 #endif
 
-#ifdef __ANDROID_VENDOR__
+#ifdef BINDER_RPC_TO_TRUSTY_TEST
 constexpr char kTrustyIpcDevice[] = "/dev/trusty-ipc-dev0";
 #endif
 
@@ -214,6 +214,7 @@ static base::unique_fd connectTo(const RpcSocketAddress& addr) {
     return serverFd;
 }
 
+#ifndef BINDER_RPC_TO_TRUSTY_TEST
 static base::unique_fd connectToUnixBootstrap(const RpcTransportFd& transportFd) {
     base::unique_fd sockClient, sockServer;
     if (!base::Socketpair(SOCK_STREAM, &sockClient, &sockServer)) {
@@ -232,22 +233,10 @@ static base::unique_fd connectToUnixBootstrap(const RpcTransportFd& transportFd)
     }
     return std::move(sockClient);
 }
+#endif // BINDER_RPC_TO_TRUSTY_TEST
 
-std::string BinderRpc::PrintParamInfo(const testing::TestParamInfo<ParamType>& info) {
-    auto [type, security, clientVersion, serverVersion, singleThreaded, noKernel] = info.param;
-    auto ret = PrintToString(type) + "_" + newFactory(security)->toCString() + "_clientV" +
-            std::to_string(clientVersion) + "_serverV" + std::to_string(serverVersion);
-    if (singleThreaded) {
-        ret += "_single_threaded";
-    } else {
-        ret += "_multi_threaded";
-    }
-    if (noKernel) {
-        ret += "_no_kernel";
-    } else {
-        ret += "_with_kernel";
-    }
-    return ret;
+std::unique_ptr<RpcTransportCtxFactory> BinderRpc::newFactory(RpcSecurity rpcSecurity) {
+    return newTlsFactory(rpcSecurity);
 }
 
 // This creates a new process serving an interface on a certain number of
@@ -321,13 +310,13 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
     for (size_t i = 0; i < options.numSessions; i++) {
         std::unique_ptr<RpcTransportCtxFactory> factory;
         if (socketType == SocketType::TIPC) {
-#ifdef __ANDROID_VENDOR__
+#ifdef BINDER_RPC_TO_TRUSTY_TEST
             factory = RpcTransportCtxFactoryTipcAndroid::make();
 #else
             LOG_ALWAYS_FATAL("TIPC socket type only supported on vendor");
 #endif
         } else {
-            factory = newFactory(rpcSecurity, certVerifier);
+            factory = newTlsFactory(rpcSecurity, certVerifier);
         }
         sessions.emplace_back(RpcSession::make(std::move(factory)));
     }
@@ -391,7 +380,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                 break;
             case SocketType::TIPC:
                 status = session->setupPreconnectedClient({}, [=]() {
-#ifdef __ANDROID_VENDOR__
+#ifdef BINDER_RPC_TO_TRUSTY_TEST
                     auto port = trustyIpcPort(serverVersion);
                     int tipcFd = tipc_connect(kTrustyIpcDevice, port.c_str());
                     return tipcFd >= 0 ? android::base::unique_fd(tipcFd)
@@ -477,7 +466,9 @@ TEST_P(BinderRpc, ThreadPoolOverSaturated) {
     constexpr size_t kNumThreads = 10;
     constexpr size_t kNumCalls = kNumThreads + 3;
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 250 /*ms*/);
+
+    // b/272429574 - below 500ms, the test fails
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 500 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
@@ -490,7 +481,9 @@ TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
     constexpr size_t kNumCalls = kNumOutgoingConnections + 3;
     auto proc = createRpcTestSocketServerProcess(
             {.numThreads = kNumThreads, .numOutgoingConnections = kNumOutgoingConnections});
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 250 /*ms*/);
+
+    // b/272429574 - below 500ms, the test fails
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 500 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadingStressTest) {
@@ -1111,6 +1104,15 @@ TEST_P(BinderRpc, Fds) {
     ASSERT_EQ(beforeFds, countFds()) << (system("ls -l /proc/self/fd/"), "fd leak?");
 }
 
+#ifdef BINDER_RPC_TO_TRUSTY_TEST
+INSTANTIATE_TEST_CASE_P(Trusty, BinderRpc,
+                        ::testing::Combine(::testing::Values(SocketType::TIPC),
+                                           ::testing::Values(RpcSecurity::RAW),
+                                           ::testing::ValuesIn(testVersions()),
+                                           ::testing::ValuesIn(testVersions()),
+                                           ::testing::Values(true), ::testing::Values(true)),
+                        BinderRpc::PrintParamInfo);
+#else // BINDER_RPC_TO_TRUSTY_TEST
 static bool testSupportVsockLoopback() {
     // We don't need to enable TLS to know if vsock is supported.
     unsigned int vsockPort = allocateVsockPort();
@@ -1215,21 +1217,6 @@ static std::vector<SocketType> testSocketTypes(bool hasPreconnected = true) {
     return ret;
 }
 
-static std::vector<SocketType> testTipcSocketTypes() {
-#ifdef __ANDROID_VENDOR__
-    auto port = trustyIpcPort(RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL);
-    int tipcFd = tipc_connect(kTrustyIpcDevice, port.c_str());
-    if (tipcFd >= 0) {
-        close(tipcFd);
-        return {SocketType::TIPC};
-    }
-#endif // __ANDROID_VENDOR__
-
-    // TIPC is not supported on this device, most likely
-    // because /dev/trusty-ipc-dev0 is missing
-    return {};
-}
-
 INSTANTIATE_TEST_CASE_P(PerSocket, BinderRpc,
                         ::testing::Combine(::testing::ValuesIn(testSocketTypes()),
                                            ::testing::ValuesIn(RpcSecurityValues()),
@@ -1237,14 +1224,6 @@ INSTANTIATE_TEST_CASE_P(PerSocket, BinderRpc,
                                            ::testing::ValuesIn(testVersions()),
                                            ::testing::Values(false, true),
                                            ::testing::Values(false, true)),
-                        BinderRpc::PrintParamInfo);
-
-INSTANTIATE_TEST_CASE_P(Trusty, BinderRpc,
-                        ::testing::Combine(::testing::ValuesIn(testTipcSocketTypes()),
-                                           ::testing::Values(RpcSecurity::RAW),
-                                           ::testing::ValuesIn(testVersions()),
-                                           ::testing::ValuesIn(testVersions()),
-                                           ::testing::Values(true), ::testing::Values(true)),
                         BinderRpc::PrintParamInfo);
 
 class BinderRpcServerRootObject
@@ -1257,7 +1236,7 @@ TEST_P(BinderRpcServerRootObject, WeakRootObject) {
     };
 
     auto [isStrong1, isStrong2, rpcSecurity] = GetParam();
-    auto server = RpcServer::make(newFactory(rpcSecurity));
+    auto server = RpcServer::make(newTlsFactory(rpcSecurity));
     auto binder1 = sp<BBinder>::make();
     IBinder* binderRaw1 = binder1.get();
     setRootObject(isStrong1)(server.get(), binder1);
@@ -1353,7 +1332,7 @@ TEST(BinderRpc, Java) {
 class BinderRpcServerOnly : public ::testing::TestWithParam<std::tuple<RpcSecurity, uint32_t>> {
 public:
     static std::string PrintTestParam(const ::testing::TestParamInfo<ParamType>& info) {
-        return std::string(newFactory(std::get<0>(info.param))->toCString()) + "_serverV" +
+        return std::string(newTlsFactory(std::get<0>(info.param))->toCString()) + "_serverV" +
                 std::to_string(std::get<1>(info.param));
     }
 };
@@ -1361,7 +1340,7 @@ public:
 TEST_P(BinderRpcServerOnly, SetExternalServerTest) {
     base::unique_fd sink(TEMP_FAILURE_RETRY(open("/dev/null", O_RDWR)));
     int sinkFd = sink.get();
-    auto server = RpcServer::make(newFactory(std::get<0>(GetParam())));
+    auto server = RpcServer::make(newTlsFactory(std::get<0>(GetParam())));
     server->setProtocolVersion(std::get<1>(GetParam()));
     ASSERT_FALSE(server->hasServer());
     ASSERT_EQ(OK, server->setupExternalServer(std::move(sink)));
@@ -1377,7 +1356,7 @@ TEST_P(BinderRpcServerOnly, Shutdown) {
     }
 
     auto addr = allocateSocketAddress();
-    auto server = RpcServer::make(newFactory(std::get<0>(GetParam())));
+    auto server = RpcServer::make(newTlsFactory(std::get<0>(GetParam())));
     server->setProtocolVersion(std::get<1>(GetParam()));
     ASSERT_EQ(OK, server->setupUnixDomainServer(addr.c_str()));
     auto joinEnds = std::make_shared<OneOffSignal>();
@@ -1426,7 +1405,7 @@ public:
                 const Param& param,
                 std::unique_ptr<RpcAuth> auth = std::make_unique<RpcAuthSelfSigned>()) {
             auto [socketType, rpcSecurity, certificateFormat, serverVersion] = param;
-            auto rpcServer = RpcServer::make(newFactory(rpcSecurity));
+            auto rpcServer = RpcServer::make(newTlsFactory(rpcSecurity));
             rpcServer->setProtocolVersion(serverVersion);
             switch (socketType) {
                 case SocketType::PRECONNECTED: {
@@ -1505,7 +1484,7 @@ public:
             }
             mFd = rpcServer->releaseServer();
             if (!mFd.fd.ok()) return AssertionFailure() << "releaseServer returns invalid fd";
-            mCtx = newFactory(rpcSecurity, mCertVerifier, std::move(auth))->newServerCtx();
+            mCtx = newTlsFactory(rpcSecurity, mCertVerifier, std::move(auth))->newServerCtx();
             if (mCtx == nullptr) return AssertionFailure() << "newServerCtx";
             mSetup = true;
             return AssertionSuccess();
@@ -1610,7 +1589,7 @@ public:
             auto [socketType, rpcSecurity, certificateFormat, serverVersion] = param;
             (void)serverVersion;
             mFdTrigger = FdTrigger::make();
-            mCtx = newFactory(rpcSecurity, mCertVerifier)->newClientCtx();
+            mCtx = newTlsFactory(rpcSecurity, mCertVerifier)->newClientCtx();
             if (mCtx == nullptr) return AssertionFailure() << "newClientCtx";
             return AssertionSuccess();
         }
@@ -1682,7 +1661,7 @@ public:
     using Client = RpcTransportTestUtils::Client;
     static inline std::string PrintParamInfo(const testing::TestParamInfo<ParamType>& info) {
         auto [socketType, rpcSecurity, certificateFormat, serverVersion] = info.param;
-        auto ret = PrintToString(socketType) + "_" + newFactory(rpcSecurity)->toCString();
+        auto ret = PrintToString(socketType) + "_" + newTlsFactory(rpcSecurity)->toCString();
         if (certificateFormat.has_value()) ret += "_" + PrintToString(*certificateFormat);
         ret += "_serverV" + std::to_string(serverVersion);
         return ret;
@@ -2015,6 +1994,7 @@ INSTANTIATE_TEST_CASE_P(
                          testing::Values(RpcKeyFormat::PEM, RpcKeyFormat::DER),
                          testing::ValuesIn(testVersions())),
         RpcTransportTlsKeyTest::PrintParamInfo);
+#endif // BINDER_RPC_TO_TRUSTY_TEST
 
 } // namespace android
 
