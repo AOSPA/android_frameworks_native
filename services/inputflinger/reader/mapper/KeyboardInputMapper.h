@@ -29,9 +29,9 @@ public:
     uint32_t getSources() const override;
     void populateDeviceInfo(InputDeviceInfo& deviceInfo) override;
     void dump(std::string& dump) override;
-    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
-                                                  const InputReaderConfiguration* config,
-                                                  uint32_t changes) override;
+    [[nodiscard]] std::list<NotifyArgs> reconfigure(nsecs_t when,
+                                                    const InputReaderConfiguration* config,
+                                                    uint32_t changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
@@ -54,6 +54,7 @@ private:
         nsecs_t downTime{};
         int32_t keyCode{};
         int32_t scanCode{};
+        int32_t flags{};
     };
 
     uint32_t mSource{};
