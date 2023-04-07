@@ -79,9 +79,7 @@ qtidisplayextension_cc_library_static {
     ],
     cflags: [
         "-DLOG_TAG=\"QtiSurfaceFlingerExtension\"",
-        "-Wno-macro-redefined",
-        "-Wthread-safety",
-        "-Wthread-safety-analysis"
+        "-Wno-macro-redefined"
     ],
     header_libs: [
         "libsurfaceflinger_headers",
