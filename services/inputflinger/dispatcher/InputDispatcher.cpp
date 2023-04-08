@@ -31,6 +31,7 @@
 #endif
 #include <input/InputDevice.h>
 #include <input/PrintTools.h>
+#include <openssl/mem.h>
 #include <powermanager/PowerManager.h>
 #include <unistd.h>
 #include <utils/Trace.h>
@@ -1862,11 +1863,12 @@ void InputDispatcher::logOutboundMotionDetails(const char* prefix, const MotionE
               entry.yPrecision, entry.downTime);
 
         for (uint32_t i = 0; i < entry.pointerCount; i++) {
-            ALOGD("  Pointer %d: id=%d, toolType=%d, "
+            ALOGD("  Pointer %d: id=%d, toolType=%s, "
                   "x=%f, y=%f, pressure=%f, size=%f, "
                   "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, "
                   "orientation=%f",
-                  i, entry.pointerProperties[i].id, entry.pointerProperties[i].toolType,
+                  i, entry.pointerProperties[i].id,
+                  ftl::enum_string(entry.pointerProperties[i].toolType).c_str(),
                   entry.pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_X),
                   entry.pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_Y),
                   entry.pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_PRESSURE),
@@ -4178,7 +4180,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs* args) {
             ALOGD("  Pointer %d: id=%d, toolType=%s, x=%f, y=%f, pressure=%f, size=%f, "
                   "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, orientation=%f",
                   i, args->pointerProperties[i].id,
-                  motionToolTypeToString(args->pointerProperties[i].toolType),
+                  ftl::enum_string(args->pointerProperties[i].toolType).c_str(),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_X),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_Y),
                   args->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_PRESSURE),
@@ -4629,7 +4631,7 @@ std::unique_ptr<VerifiedInputEvent> InputDispatcher::verifyInputEvent(const Inpu
     if (calculatedHmac == INVALID_HMAC) {
         return nullptr;
     }
-    if (calculatedHmac != event.getHmac()) {
+    if (0 != CRYPTO_memcmp(calculatedHmac.data(), event.getHmac().data(), calculatedHmac.size())) {
         return nullptr;
     }
     return result;

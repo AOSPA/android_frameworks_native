@@ -81,6 +81,7 @@
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/LayerHandle.h"
 #include "LayerProtoHelper.h"
+#include "MutexUtils.h"
 /* QTI_BEGIN */
 #include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
 /* QTI_END */
@@ -324,10 +325,12 @@ void Layer::onRemovedFromCurrentState() {
     auto layersInTree = getRootLayer()->getLayersInTree(LayerVector::StateSet::Current);
     std::sort(layersInTree.begin(), layersInTree.end());
 
-    traverse(LayerVector::StateSet::Current, [&](Layer* layer) {
-        layer->removeFromCurrentState();
-        layer->removeRelativeZ(layersInTree);
-    });
+    REQUIRE_MUTEX(mFlinger->mStateLock);
+    traverse(LayerVector::StateSet::Current,
+             [&](Layer* layer) REQUIRES(layer->mFlinger->mStateLock) {
+                 layer->removeFromCurrentState();
+                 layer->removeRelativeZ(layersInTree);
+             });
 }
 
 void Layer::addToCurrentState() {
@@ -670,8 +673,8 @@ void Layer::preparePerFrameCompositionState() {
     snapshot->surfaceDamage = surfaceDamageRegion;
     snapshot->hasProtectedContent = isProtected();
     snapshot->dimmingEnabled = isDimmingEnabled();
-    snapshot->currentSdrHdrRatio = getCurrentSdrHdrRatio();
-    snapshot->desiredSdrHdrRatio = getDesiredSdrHdrRatio();
+    snapshot->currentHdrSdrRatio = getCurrentHdrSdrRatio();
+    snapshot->desiredHdrSdrRatio = getDesiredHdrSdrRatio();
     snapshot->cachingHint = getCachingHint();
 
     const bool usesRoundedCorners = hasRoundedCorners();
@@ -1036,10 +1039,12 @@ bool Layer::setBackgroundColor(const half3& color, float alpha, ui::Dataspace da
         mFlinger->mLayersAdded = true;
         // set up SF to handle added color layer
         if (isRemovedFromCurrentState()) {
+            MUTEX_ALIAS(mFlinger->mStateLock, mDrawingState.bgColorLayer->mFlinger->mStateLock);
             mDrawingState.bgColorLayer->onRemovedFromCurrentState();
         }
         mFlinger->setTransactionFlags(eTransactionNeeded);
     } else if (mDrawingState.bgColorLayer && alpha == 0) {
+        MUTEX_ALIAS(mFlinger->mStateLock, mDrawingState.bgColorLayer->mFlinger->mStateLock);
         mDrawingState.bgColorLayer->reparent(nullptr);
         mDrawingState.bgColorLayer = nullptr;
         return true;
@@ -2155,7 +2160,9 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
     if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        writeCompositionStateToProto(layerProto);
+        ui::LayerStack layerStack =
+                (mSnapshot) ? mSnapshot->outputFilter.layerStack : ui::INVALID_LAYER_STACK;
+        writeCompositionStateToProto(layerProto, layerStack);
     }
 
     for (const sp<Layer>& layer : mDrawingChildren) {
@@ -2165,14 +2172,15 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     return layerProto;
 }
 
-void Layer::writeCompositionStateToProto(LayerProto* layerProto) {
+void Layer::writeCompositionStateToProto(LayerProto* layerProto, ui::LayerStack layerStack) {
     ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
+    ftl::FakeGuard mainThreadGuard(kMainThreadContext);
 
     // Only populate for the primary display.
-    if (const auto display = mFlinger->getDefaultDisplayDeviceLocked()) {
+    if (const auto display = mFlinger->getDisplayFromLayerStack(layerStack)) {
         const auto compositionType = getCompositionType(*display);
         layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
-        LayerProtoHelper::writeToProto(getVisibleRegion(display.get()),
+        LayerProtoHelper::writeToProto(getVisibleRegion(display),
                                        [&]() { return layerProto->mutable_visible_region(); });
     }
 }
@@ -3186,11 +3194,11 @@ bool Layer::setDataspace(ui::Dataspace dataspace) {
 }
 
 bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRatio) {
-    if (mDrawingState.currentSdrHdrRatio == currentBufferRatio &&
-        mDrawingState.desiredSdrHdrRatio == desiredRatio)
+    if (mDrawingState.currentHdrSdrRatio == currentBufferRatio &&
+        mDrawingState.desiredHdrSdrRatio == desiredRatio)
         return false;
-    mDrawingState.currentSdrHdrRatio = currentBufferRatio;
-    mDrawingState.desiredSdrHdrRatio = desiredRatio;
+    mDrawingState.currentHdrSdrRatio = currentBufferRatio;
+    mDrawingState.desiredHdrSdrRatio = desiredRatio;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
@@ -3445,8 +3453,8 @@ void Layer::gatherBufferInfo() {
     if (lastDataspace != mBufferInfo.mDataspace) {
         mFlinger->mHdrLayerInfoChanged = true;
     }
-    if (mBufferInfo.mDesiredSdrHdrRatio != mDrawingState.desiredSdrHdrRatio) {
-        mBufferInfo.mDesiredSdrHdrRatio = mDrawingState.desiredSdrHdrRatio;
+    if (mBufferInfo.mDesiredHdrSdrRatio != mDrawingState.desiredHdrSdrRatio) {
+        mBufferInfo.mDesiredHdrSdrRatio = mDrawingState.desiredHdrSdrRatio;
         mFlinger->mHdrLayerInfoChanged = true;
     }
     mBufferInfo.mCrop = computeBufferCrop(mDrawingState);
@@ -3732,9 +3740,9 @@ bool Layer::simpleBufferUpdate(const layer_state_t& s) const {
     }
 
     if (s.what & layer_state_t::eExtendedRangeBrightnessChanged) {
-        if (mDrawingState.currentSdrHdrRatio != s.currentSdrHdrRatio ||
-            mDrawingState.desiredSdrHdrRatio != s.desiredSdrHdrRatio) {
-            ALOGV("%s: false [eDimmingEnabledChanged changed]", __func__);
+        if (mDrawingState.currentHdrSdrRatio != s.currentHdrSdrRatio ||
+            mDrawingState.desiredHdrSdrRatio != s.desiredHdrSdrRatio) {
+            ALOGV("%s: false [eExtendedRangeBrightnessChanged changed]", __func__);
             return false;
         }
     }
