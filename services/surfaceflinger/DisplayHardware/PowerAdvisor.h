@@ -33,6 +33,7 @@
 
 #include <android/hardware/power/IPower.h>
 #include <compositionengine/impl/OutputCompositionState.h>
+#include <powermanager/PowerHalController.h>
 #include <scheduler/Time.h>
 #include <ui/DisplayIdentification.h>
 #include "../Scheduler/OneShotTimer.h"
@@ -68,15 +69,14 @@ public:
     // Checks both if it supports and if it's enabled
     virtual bool usePowerHintSession() = 0;
     virtual bool supportsPowerHintSession() = 0;
-    virtual bool isPowerHintSessionRunning() = 0;
+
+    virtual bool ensurePowerHintSessionRunning() = 0;
     // Sends a power hint that updates to the target work duration for the frame
-    virtual void setTargetWorkDuration(Duration targetDuration) = 0;
+    virtual void updateTargetWorkDuration(Duration targetDuration) = 0;
     // Sends a power hint for the actual known work duration at the end of the frame
-    virtual void sendActualWorkDuration() = 0;
-    // Sends a power hint for the upcoming frame predicted from previous frame timing
-    virtual void sendPredictedWorkDuration() = 0;
+    virtual void reportActualWorkDuration() = 0;
     // Sets whether the power hint session is enabled
-    virtual void enablePowerHint(bool enabled) = 0;
+    virtual void enablePowerHintSession(bool enabled) = 0;
     // Initializes the power hint session
     virtual bool startPowerHintSession(const std::vector<int32_t>& threadIds) = 0;
     // Provides PowerAdvisor with a copy of the gpu fence so it can determine the gpu end time
@@ -117,24 +117,6 @@ namespace impl {
 // full state of the system when sending out power hints to things like the GPU.
 class PowerAdvisor final : public Hwc2::PowerAdvisor {
 public:
-    class HalWrapper {
-    public:
-        virtual ~HalWrapper() = default;
-
-        virtual bool setExpensiveRendering(bool enabled) = 0;
-        virtual bool notifyDisplayUpdateImminentAndCpuReset() = 0;
-        virtual bool supportsPowerHintSession() = 0;
-        virtual bool isPowerHintSessionRunning() = 0;
-        virtual void restartPowerHintSession() = 0;
-        virtual void setPowerHintSessionThreadIds(const std::vector<int32_t>& threadIds) = 0;
-        virtual bool startPowerHintSession() = 0;
-        virtual void setTargetWorkDuration(Duration targetDuration) = 0;
-        virtual void sendActualWorkDuration(Duration actualDuration, TimePoint timestamp) = 0;
-        virtual bool shouldReconnectHAL() = 0;
-        virtual std::vector<int32_t> getPowerHintSessionThreadIds() = 0;
-        virtual std::optional<Duration> getTargetWorkDuration() = 0;
-    };
-
     PowerAdvisor(SurfaceFlinger& flinger);
     ~PowerAdvisor() override;
 
@@ -145,11 +127,10 @@ public:
     void notifyDisplayUpdateImminentAndCpuReset() override;
     bool usePowerHintSession() override;
     bool supportsPowerHintSession() override;
-    bool isPowerHintSessionRunning() override;
-    void setTargetWorkDuration(Duration targetDuration) override;
-    void sendActualWorkDuration() override;
-    void sendPredictedWorkDuration() override;
-    void enablePowerHint(bool enabled) override;
+    bool ensurePowerHintSessionRunning() override;
+    void updateTargetWorkDuration(Duration targetDuration) override;
+    void reportActualWorkDuration() override;
+    void enablePowerHintSession(bool enabled) override;
     bool startPowerHintSession(const std::vector<int32_t>& threadIds) override;
     void setGpuFenceTime(DisplayId displayId, std::unique_ptr<FenceTime>&& fenceTime);
     void setHwcValidateTiming(DisplayId displayId, TimePoint validateStartTime,
@@ -175,15 +156,7 @@ private:
     friend class android::surfaceflingerextension::QtiPowerAdvisorExtension;
     /* QTI_END */
 
-    // Tracks if powerhal exists
-    bool mHasHal = true;
-    // Holds the hal wrapper for getPowerHal
-    std::unique_ptr<HalWrapper> mHalWrapper GUARDED_BY(mPowerHalMutex) = nullptr;
-
-    HalWrapper* getPowerHal() REQUIRES(mPowerHalMutex);
-    bool mReconnectPowerHal GUARDED_BY(mPowerHalMutex) = false;
-    std::mutex mPowerHalMutex;
-
+    std::unique_ptr<power::PowerHalController> mPowerHal;
     std::atomic_bool mBootFinished = false;
 
     std::unordered_set<DisplayId> mExpensiveDisplays;
@@ -209,9 +182,6 @@ private:
         Duration postPresentFenceHwcPresentDuration{0ns};
         // Are we likely to have waited for the present fence during composition
         bool probablyWaitsForPresentFence = false;
-        // Estimate one frame's timeline from that of a previous frame
-        DisplayTimeline estimateTimelineFromReference(TimePoint fenceTime,
-                                                      TimePoint displayStartTime);
     };
 
     struct GpuTimeline {
@@ -263,8 +233,7 @@ private:
     std::vector<DisplayId> getOrderedDisplayIds(
             std::optional<TimePoint> DisplayTimingData::*sortBy);
     // Estimates a frame's total work duration including gpu time.
-    // Runs either at the beginning or end of a frame, using the most recent data available
-    std::optional<Duration> estimateWorkDuration(bool earlyHint);
+    std::optional<Duration> estimateWorkDuration();
     // There are two different targets and actual work durations we care about,
     // this normalizes them together and takes the max of the two
     Duration combineTimingEstimates(Duration totalDuration, Duration flingerDuration);
@@ -288,67 +257,41 @@ private:
     // Updated list of display IDs
     std::vector<DisplayId> mDisplayIds;
 
-    std::optional<bool> mPowerHintEnabled;
-    std::optional<bool> mSupportsPowerHint;
-    bool mPowerHintSessionRunning = false;
+    // Ensure powerhal connection is initialized
+    power::PowerHalController& getPowerHal();
 
-    // An adjustable safety margin which pads the "actual" value sent to PowerHAL,
-    // encouraging more aggressive boosting to give SurfaceFlinger a larger margin for error
-    static constexpr const Duration kTargetSafetyMargin{1ms};
+    std::optional<bool> mHintSessionEnabled;
+    std::optional<bool> mSupportsHintSession;
+    bool mHintSessionRunning = false;
 
-    // How long we expect hwc to run after the present call until it waits for the fence
-    static constexpr const Duration kFenceWaitStartDelayValidated{150us};
-    static constexpr const Duration kFenceWaitStartDelaySkippedValidate{250us};
-};
+    std::mutex mHintSessionMutex;
+    sp<hardware::power::IPowerHintSession> mHintSession GUARDED_BY(mHintSessionMutex) = nullptr;
 
-class AidlPowerHalWrapper : public PowerAdvisor::HalWrapper {
-public:
-    explicit AidlPowerHalWrapper(sp<hardware::power::IPower> powerHal);
-    ~AidlPowerHalWrapper() override;
-
-    static std::unique_ptr<HalWrapper> connect();
-
-    bool setExpensiveRendering(bool enabled) override;
-    bool notifyDisplayUpdateImminentAndCpuReset() override;
-    bool supportsPowerHintSession() override;
-    bool isPowerHintSessionRunning() override;
-    void restartPowerHintSession() override;
-    void setPowerHintSessionThreadIds(const std::vector<int32_t>& threadIds) override;
-    bool startPowerHintSession() override;
-    void setTargetWorkDuration(Duration targetDuration) override;
-    void sendActualWorkDuration(Duration actualDuration, TimePoint timestamp) override;
-    bool shouldReconnectHAL() override;
-    std::vector<int32_t> getPowerHintSessionThreadIds() override;
-    std::optional<Duration> getTargetWorkDuration() override;
-
-private:
-    friend class AidlPowerHalWrapperTest;
-
-    bool checkPowerHintSessionSupported();
-    void closePowerHintSession();
-
-    const sp<hardware::power::IPower> mPowerHal = nullptr;
-    bool mHasExpensiveRendering = false;
-    bool mHasDisplayUpdateImminent = false;
-    // Used to indicate an error state and need for reconstruction
-    bool mShouldReconnectHal = false;
-
-    // Power hint session data
-
-    // Concurrent access for this is protected by mPowerHalMutex
-    sp<hardware::power::IPowerHintSession> mPowerHintSession = nullptr;
+    // Initialize to true so we try to call, to check if it's supported
+    bool mHasExpensiveRendering = true;
+    bool mHasDisplayUpdateImminent = true;
     // Queue of actual durations saved to report
-    std::vector<hardware::power::WorkDuration> mPowerHintQueue;
+    std::vector<hardware::power::WorkDuration> mHintSessionQueue;
     // The latest values we have received for target and actual
     Duration mTargetDuration = kDefaultTargetDuration;
     std::optional<Duration> mActualDuration;
     // The list of thread ids, stored so we can restart the session from this class if needed
-    std::vector<int32_t> mPowerHintThreadIds;
-    bool mSupportsPowerHint = false;
+    std::vector<int32_t> mHintSessionThreadIds;
     Duration mLastTargetDurationSent = kDefaultTargetDuration;
     // Whether we should emit ATRACE_INT data for hint sessions
     static const bool sTraceHintSessionData;
-    static constexpr Duration kDefaultTargetDuration{16ms};
+
+    // Default target duration for the hint session
+    static constexpr const Duration kDefaultTargetDuration{16ms};
+
+    // An adjustable safety margin which pads the "actual" value sent to PowerHAL,
+    // encouraging more aggressive boosting to give SurfaceFlinger a larger margin for error
+    static const Duration sTargetSafetyMargin;
+    static constexpr const Duration kDefaultTargetSafetyMargin{1ms};
+
+    // How long we expect hwc to run after the present call until it waits for the fence
+    static constexpr const Duration kFenceWaitStartDelayValidated{150us};
+    static constexpr const Duration kFenceWaitStartDelaySkippedValidate{250us};
 };
 
 } // namespace impl

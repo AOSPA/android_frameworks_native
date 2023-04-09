@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 
+#include <LayerProtoHelper.h>
 #include <LayerTraceGenerator.h>
 #include <Tracing/TransactionProtoParser.h>
 #include <layerproto/LayerProtoHeader.h>
@@ -94,11 +95,14 @@ struct LayerInfo {
     float y;
     uint32_t bufferWidth;
     uint32_t bufferHeight;
+    Rect touchableRegionBounds;
 };
 
 bool operator==(const LayerInfo& lh, const LayerInfo& rh) {
-    return std::make_tuple(lh.id, lh.name, lh.parent, lh.z, lh.curr_frame) ==
-            std::make_tuple(rh.id, rh.name, rh.parent, rh.z, rh.curr_frame);
+    return std::make_tuple(lh.id, lh.name, lh.parent, lh.z, lh.curr_frame, lh.bufferWidth,
+                           lh.bufferHeight, lh.touchableRegionBounds) ==
+            std::make_tuple(rh.id, rh.name, rh.parent, rh.z, rh.curr_frame, rh.bufferWidth,
+                            rh.bufferHeight, rh.touchableRegionBounds);
 }
 
 bool compareById(const LayerInfo& a, const LayerInfo& b) {
@@ -109,7 +113,9 @@ inline void PrintTo(const LayerInfo& info, ::std::ostream* os) {
     *os << "Layer [" << info.id << "] name=" << info.name << " parent=" << info.parent
         << " z=" << info.z << " curr_frame=" << info.curr_frame << " x=" << info.x
         << " y=" << info.y << " bufferWidth=" << info.bufferWidth
-        << " bufferHeight=" << info.bufferHeight;
+        << " bufferHeight=" << info.bufferHeight << "touchableRegionBounds={"
+        << info.touchableRegionBounds.left << "," << info.touchableRegionBounds.top << ","
+        << info.touchableRegionBounds.right << "," << info.touchableRegionBounds.bottom << "}";
 }
 
 struct find_id : std::unary_function<LayerInfo, bool> {
@@ -119,6 +125,17 @@ struct find_id : std::unary_function<LayerInfo, bool> {
 };
 
 static LayerInfo getLayerInfoFromProto(::android::surfaceflinger::LayerProto& proto) {
+    Rect touchableRegionBounds = Rect::INVALID_RECT;
+    // ignore touchable region for layers without buffers, the new fe aggressively avoids
+    // calculating state for layers that are not visible which could lead to mismatches
+    if (proto.has_input_window_info() && proto.input_window_info().has_touchable_region() &&
+        proto.has_active_buffer()) {
+        Region touchableRegion;
+        LayerProtoHelper::readFromProto(proto.input_window_info().touchable_region(),
+                                        touchableRegion);
+        touchableRegionBounds = touchableRegion.bounds();
+    }
+
     return {proto.id(),
             proto.name(),
             proto.parent(),
@@ -127,7 +144,37 @@ static LayerInfo getLayerInfoFromProto(::android::surfaceflinger::LayerProto& pr
             proto.has_position() ? proto.position().x() : -1,
             proto.has_position() ? proto.position().y() : -1,
             proto.has_active_buffer() ? proto.active_buffer().width() : 0,
-            proto.has_active_buffer() ? proto.active_buffer().height() : 0};
+            proto.has_active_buffer() ? proto.active_buffer().height() : 0,
+            touchableRegionBounds};
+}
+
+static std::vector<LayerInfo> getLayerInfosFromProto(
+        android::surfaceflinger::LayersTraceProto& entry) {
+    std::unordered_map<int32_t /* snapshotId*/, int32_t /*layerId*/> snapshotIdToLayerId;
+    std::vector<LayerInfo> layers;
+    layers.reserve(static_cast<size_t>(entry.layers().layers_size()));
+    bool mapSnapshotIdToLayerId = false;
+    for (int i = 0; i < entry.layers().layers_size(); i++) {
+        auto layer = entry.layers().layers(i);
+        LayerInfo layerInfo = getLayerInfoFromProto(layer);
+
+        snapshotIdToLayerId[layerInfo.id] = static_cast<int32_t>(layer.original_id());
+        if (layer.original_id() != 0) {
+            mapSnapshotIdToLayerId = true;
+        }
+        layers.push_back(layerInfo);
+    }
+    std::sort(layers.begin(), layers.end(), compareById);
+
+    if (!mapSnapshotIdToLayerId) {
+        return layers;
+    }
+    for (auto& layer : layers) {
+        layer.id = snapshotIdToLayerId[layer.id];
+        auto it = snapshotIdToLayerId.find(layer.parent);
+        layer.parent = it == snapshotIdToLayerId.end() ? -1 : it->second;
+    }
+    return layers;
 }
 
 TEST_P(TransactionTraceTestSuite, validateEndState) {
@@ -140,32 +187,9 @@ TEST_P(TransactionTraceTestSuite, validateEndState) {
 
     EXPECT_EQ(expectedLastEntry.layers().layers_size(), actualLastEntry.layers().layers_size());
 
-    std::vector<LayerInfo> expectedLayers;
-    expectedLayers.reserve(static_cast<size_t>(expectedLastEntry.layers().layers_size()));
-    for (int i = 0; i < expectedLastEntry.layers().layers_size(); i++) {
-        auto layer = expectedLastEntry.layers().layers(i);
-        LayerInfo layerInfo = getLayerInfoFromProto(layer);
-        expectedLayers.push_back(layerInfo);
-    }
-    std::sort(expectedLayers.begin(), expectedLayers.end(), compareById);
-
-    std::unordered_map<int32_t /* snapshotId*/, int32_t /*layerId*/> snapshotIdToLayerId;
-    std::vector<LayerInfo> actualLayers;
-    actualLayers.reserve(static_cast<size_t>(actualLastEntry.layers().layers_size()));
-    for (int i = 0; i < actualLastEntry.layers().layers_size(); i++) {
-        auto layer = actualLastEntry.layers().layers(i);
-        LayerInfo layerInfo = getLayerInfoFromProto(layer);
-        snapshotIdToLayerId[layerInfo.id] = static_cast<int32_t>(layer.original_id());
-        actualLayers.push_back(layerInfo);
-    }
-
-    for (auto& layer : actualLayers) {
-        layer.id = snapshotIdToLayerId[layer.id];
-        auto it = snapshotIdToLayerId.find(layer.parent);
-        layer.parent = it == snapshotIdToLayerId.end() ? -1 : it->second;
-    }
-
-    std::sort(actualLayers.begin(), actualLayers.end(), compareById);
+    std::vector<LayerInfo> expectedLayers = getLayerInfosFromProto(expectedLastEntry);
+    std::vector<LayerInfo> actualLayers = getLayerInfosFromProto(actualLastEntry);
+    ;
 
     size_t i = 0;
     for (; i < actualLayers.size() && i < expectedLayers.size(); i++) {

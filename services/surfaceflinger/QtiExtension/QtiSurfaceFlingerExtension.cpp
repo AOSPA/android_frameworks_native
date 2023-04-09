@@ -421,7 +421,7 @@ bool QtiSurfaceFlingerExtension::qtiIsExtensionFeatureEnabled(QtiFeature feature
  * Methods used by SurfaceFlinger DisplayHardware.
  */
 status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
-        std::chrono::steady_clock::time_point earliestPresentTime) const {
+        std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const {
     if (!mQtiFlinger->mBootFinished || !mQtiSFExtnBootComplete || !mQtiHWComposerExtnIntf) {
         return OK;
     }
@@ -444,7 +444,7 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
         }
 
         auto timeStamp =
-                std::chrono::time_point_cast<std::chrono::nanoseconds>(earliestPresentTime);
+                std::chrono::time_point_cast<std::chrono::nanoseconds>(*earliestPresentTime);
         const auto id = HalDisplayId::tryCast(display->getId());
         if (!id) {
             return BAD_VALUE;

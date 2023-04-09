@@ -64,7 +64,7 @@ bool QtiNullExtension::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
  * Methods used by SurfaceFlinger DisplayHardware.
  */
 status_t QtiNullExtension::qtiSetDisplayElapseTime(
-        std::chrono::steady_clock::time_point earliestPresentTime) const {
+        std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const {
     return OK;
 }
 

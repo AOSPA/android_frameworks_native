@@ -77,7 +77,7 @@ public:
      * Methods used by SurfaceFlinger DisplayHardware.
      */
     virtual status_t qtiSetDisplayElapseTime(
-            std::chrono::steady_clock::time_point earliestPresentTime) const = 0;
+            std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const = 0;
 
     /*
      * Methods that call the DisplayExtension APIs.

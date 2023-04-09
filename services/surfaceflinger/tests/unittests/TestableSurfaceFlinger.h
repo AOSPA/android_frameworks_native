@@ -344,10 +344,6 @@ public:
         layer->mDrawingParent = drawingParent;
     }
 
-    void setPowerHintSessionMode(bool early, bool late) {
-        mFlinger->mPowerHintSessionMode = {.late = late, .early = early};
-    }
-
     /* ------------------------------------------------------------------------
      * Forwarding for functions being tested
      */
@@ -446,8 +442,10 @@ public:
     }
 
     auto traverseLayersInLayerStack(ui::LayerStack layerStack, int32_t uid,
+                                    std::unordered_set<uint32_t> excludeLayerIds,
                                     const LayerVector::Visitor& visitor) {
-        return mFlinger->SurfaceFlinger::traverseLayersInLayerStack(layerStack, uid, visitor);
+        return mFlinger->SurfaceFlinger::traverseLayersInLayerStack(layerStack, uid,
+                                                                    excludeLayerIds, visitor);
     }
 
     auto getDisplayNativePrimaries(const sp<IBinder>& displayToken,
