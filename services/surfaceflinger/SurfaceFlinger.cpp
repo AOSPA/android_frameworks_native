@@ -5591,6 +5591,7 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
 }
 
 void SurfaceFlinger::checkVirtualDisplayHint(const Vector<DisplayState>& displays) {
+    Mutex::Autolock lock(mStateLock);
     for (const DisplayState& s : displays) {
         const ssize_t index = mCurrentState.displays.indexOfKey(s.token);
         if (index < 0)
