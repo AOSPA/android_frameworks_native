@@ -344,7 +344,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDi
     }
 
     if (qtiIsInternalDisplay) {
-        LOG_ALWAYS_FATAL_IF(!qtiActiveConfigId, "HWC returned no active config");
+        if (!qtiActiveConfigId) {
+            ALOGW("HWC returned no active config");
+            return;
+        }
         qtiUpdateDisplayExtension(hwcDisplayId, *qtiActiveConfigId, qtiIsConnected);
     }
 
@@ -946,9 +949,8 @@ void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64
 /*
  * Methods for Virtual, WiFi, and Secure Displays
  */
-VirtualDisplayId QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
-                                                                      ui::PixelFormat format,
-                                                                      bool canAllocateHwcForVDS) {
+std::optional<VirtualDisplayId> QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(
+        ui::Size resolution, ui::PixelFormat format, bool canAllocateHwcForVDS) {
     auto& generator = mQtiFlinger->mVirtualDisplayIdGenerators.hal;
     if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {
@@ -965,7 +967,10 @@ VirtualDisplayId QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(ui::Size r
     }
 
     const auto id = mQtiFlinger->mVirtualDisplayIdGenerators.gpu.generateId();
-    LOG_ALWAYS_FATAL_IF(!id, "Failed to generate ID for GPU virtual display");
+    if (!id) {
+        ALOGE("Failed to generate ID for GPU virtual display");
+        return std::nullopt;
+    }
     return *id;
 }
 
@@ -1588,7 +1593,10 @@ void QtiSurfaceFlingerExtension::qtiSetupDisplayExtnFeatures() {
                     if (displayId) {
                         auto configId =
                                 mQtiFlinger->getHwComposer().getActiveMode(displayId.value());
-                        LOG_ALWAYS_FATAL_IF(!configId, "HWC returned no active config");
+                        if (!configId) {
+                            ALOGW("HWC returned no active config");
+                            return;
+                        }
                         qtiUpdateDisplayExtension(hwcDisplayId, *configId, true);
                         if (enableDynamicSfIdle && display->isPrimary()) {
                             // TODO(rmedel): setupIdleTimeoutHandling(hwcDisplayId);

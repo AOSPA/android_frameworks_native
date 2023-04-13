@@ -109,9 +109,8 @@ status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, in
  * Methods for Virtual, WiFi, and Secure Displays
  */
 
-android::VirtualDisplayId QtiNullExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
-                                                                     ui::PixelFormat format,
-                                                                     bool canAllocateHwcForVDS) {
+std::optional<android::VirtualDisplayId> QtiNullExtension::qtiAcquireVirtualDisplay(
+        ui::Size resolution, ui::PixelFormat format, bool canAllocateHwcForVDS) {
     // Fix thread safety analysis
     return mQtiFlinger->acquireVirtualDisplay(resolution, format);
 }

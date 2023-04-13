@@ -141,8 +141,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
-                                              bool canAllocateHwcForVDS) override;
+    std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                             bool canAllocateHwcForVDS) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
     void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;

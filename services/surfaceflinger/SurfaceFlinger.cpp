@@ -3478,8 +3478,14 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         builder.setId(physical->id);
     } else {
         /* QTI_BEGIN */
-        builder.setId(mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat,
-                                                               qtiCanAllocateHwcForVDS));
+        auto qtiVirtualDisplayId =
+                mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat,
+                                                         qtiCanAllocateHwcForVDS);
+        if (!qtiVirtualDisplayId.has_value()) {
+            ALOGE("%s: Failed to retrieve virtual display id, returning.", __func__);
+            return;
+        }
+        builder.setId(*qtiVirtualDisplayId);
         /* QTI_END */
     }
 
