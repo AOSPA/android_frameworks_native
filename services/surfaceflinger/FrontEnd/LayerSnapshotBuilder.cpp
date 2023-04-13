@@ -817,8 +817,7 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
         snapshot.frameRateSelectionPriority = requested.frameRateSelectionPriority;
     }
 
-    if (forceUpdate || snapshot.changes.any(RequestedLayerState::Changes::Content) ||
-        snapshot.changes.any(RequestedLayerState::Changes::AffectsChildren)) {
+    if (forceUpdate || snapshot.changes.any(RequestedLayerState::Changes::Content)) {
         snapshot.color.rgb = requested.getColor().rgb;
         snapshot.isColorspaceAgnostic = requested.colorSpaceAgnostic;
         snapshot.backgroundBlurRadius = args.supportsBlur
@@ -1070,10 +1069,6 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     // touches from going outside the cloned area.
     if (path.isClone()) {
         snapshot.inputInfo.inputConfig |= gui::WindowInfo::InputConfig::CLONE;
-        // Cloned layers shouldn't handle watch outside since their z order is not determined by
-        // WM or the client.
-        snapshot.inputInfo.inputConfig.clear(gui::WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH);
-
         mNeedsTouchableRegionCrop.insert(path);
     }
 }
