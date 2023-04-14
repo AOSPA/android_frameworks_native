@@ -16,7 +16,7 @@
 
 #include <cmath>
 #include <vector>
-#include <jpegrecoverymap/recoverymapmath.h>
+#include <jpegrecoverymap/gainmapmath.h>
 
 namespace android::jpegrecoverymap {
 
@@ -441,14 +441,14 @@ ColorTransformFn getHdrConversionFn(jpegr_color_gamut sdr_gamut, jpegr_color_gam
 
 
 ////////////////////////////////////////////////////////////////////////////////
-// Recovery map calculations
-uint8_t encodeRecovery(float y_sdr, float y_hdr, jr_metadata_ptr metadata) {
-  return encodeRecovery(y_sdr, y_hdr, metadata,
-                        log2(metadata->minContentBoost), log2(metadata->maxContentBoost));
+// Gain map calculations
+uint8_t encodeGain(float y_sdr, float y_hdr, jr_metadata_ptr metadata) {
+  return encodeGain(y_sdr, y_hdr, metadata,
+                    log2(metadata->minContentBoost), log2(metadata->maxContentBoost));
 }
 
-uint8_t encodeRecovery(float y_sdr, float y_hdr, jr_metadata_ptr metadata,
-                       float log2MinContentBoost, float log2MaxContentBoost) {
+uint8_t encodeGain(float y_sdr, float y_hdr, jr_metadata_ptr metadata,
+                   float log2MinContentBoost, float log2MaxContentBoost) {
   float gain = 1.0f;
   if (y_sdr > 0.0f) {
     gain = y_hdr / y_sdr;
@@ -462,23 +462,23 @@ uint8_t encodeRecovery(float y_sdr, float y_hdr, jr_metadata_ptr metadata,
                             * 255.0f);
 }
 
-Color applyRecovery(Color e, float recovery, jr_metadata_ptr metadata) {
-  float logBoost = log2(metadata->minContentBoost) * (1.0f - recovery)
-                 + log2(metadata->maxContentBoost) * recovery;
-  float recoveryFactor = exp2(logBoost);
-  return e * recoveryFactor;
+Color applyGain(Color e, float gain, jr_metadata_ptr metadata) {
+  float logBoost = log2(metadata->minContentBoost) * (1.0f - gain)
+                 + log2(metadata->maxContentBoost) * gain;
+  float gainFactor = exp2(logBoost);
+  return e * gainFactor;
 }
 
-Color applyRecovery(Color e, float recovery, jr_metadata_ptr metadata, float displayBoost) {
-  float logBoost = log2(metadata->minContentBoost) * (1.0f - recovery)
-                 + log2(metadata->maxContentBoost) * recovery;
-  float recoveryFactor = exp2(logBoost * displayBoost / metadata->maxContentBoost);
-  return e * recoveryFactor;
+Color applyGain(Color e, float gain, jr_metadata_ptr metadata, float displayBoost) {
+  float logBoost = log2(metadata->minContentBoost) * (1.0f - gain)
+                 + log2(metadata->maxContentBoost) * gain;
+  float gainFactor = exp2(logBoost * displayBoost / metadata->maxContentBoost);
+  return e * gainFactor;
 }
 
-Color applyRecoveryLUT(Color e, float recovery, RecoveryLUT& recoveryLUT) {
-  float recoveryFactor = recoveryLUT.getRecoveryFactor(recovery);
-  return e * recoveryFactor;
+Color applyGainLUT(Color e, float gain, GainLUT& gainLUT) {
+  float gainFactor = gainLUT.getGainFactor(gain);
+  return e * gainFactor;
 }
 
 Color getYuv420Pixel(jr_uncompressed_ptr image, size_t x, size_t y) {
@@ -499,17 +499,28 @@ Color getYuv420Pixel(jr_uncompressed_ptr image, size_t x, size_t y) {
 }
 
 Color getP010Pixel(jr_uncompressed_ptr image, size_t x, size_t y) {
-  size_t pixel_count = image->width * image->height;
+  size_t luma_stride = image->luma_stride;
+  size_t chroma_stride = image->chroma_stride;
+  uint16_t* luma_data = reinterpret_cast<uint16_t*>(image->data);
+  uint16_t* chroma_data = reinterpret_cast<uint16_t*>(image->chroma_data);
 
-  size_t pixel_y_idx = x + y * image->width;
-  size_t pixel_uv_idx = x / 2 + (y / 2) * (image->width / 2);
+  if (luma_stride == 0) {
+    luma_stride = image->width;
+  }
+  if (chroma_stride == 0) {
+    chroma_stride = luma_stride;
+  }
+  if (chroma_data == nullptr) {
+    chroma_data = &reinterpret_cast<uint16_t*>(image->data)[image->luma_stride * image->height];
+  }
 
-  uint16_t y_uint = reinterpret_cast<uint16_t*>(image->data)[pixel_y_idx]
-                  >> 6;
-  uint16_t u_uint = reinterpret_cast<uint16_t*>(image->data)[pixel_count + pixel_uv_idx * 2]
-                  >> 6;
-  uint16_t v_uint = reinterpret_cast<uint16_t*>(image->data)[pixel_count + pixel_uv_idx * 2 + 1]
-                  >> 6;
+  size_t pixel_y_idx = y * luma_stride + x;
+  size_t pixel_u_idx = (y >> 1) * chroma_stride + (x & ~0x1);
+  size_t pixel_v_idx = pixel_u_idx + 1;
+
+  uint16_t y_uint = luma_data[pixel_y_idx] >> 6;
+  uint16_t u_uint = chroma_data[pixel_u_idx] >> 6;
+  uint16_t v_uint = chroma_data[pixel_v_idx] >> 6;
 
   // Conversions include taking narrow-range into account.
   return {{{ (static_cast<float>(y_uint) - 64.0f) / 876.0f,
