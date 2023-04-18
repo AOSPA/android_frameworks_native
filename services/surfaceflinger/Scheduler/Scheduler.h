@@ -300,6 +300,10 @@ public:
         return mLayerHistory.getLayerFramerate(now, id);
     }
 
+    /* QTI_BEGIN */
+    void qtiUpdateThermalFps(float fps);
+    /* QTI_END */
+
 private:
     friend class TestableScheduler;
 
@@ -489,6 +493,11 @@ private:
     static constexpr std::chrono::nanoseconds MAX_VSYNC_APPLIED_TIME = 200ms;
 
     FrameRateOverrideMappings mFrameRateOverrideMappings;
+
+    /* QTI_BEGIN */
+    // Cache thermal Fps, and limit to the given level
+    float mQtiThermalFps = 90.0f;
+    /* QTI_END */
 };
 
 } // namespace scheduler
