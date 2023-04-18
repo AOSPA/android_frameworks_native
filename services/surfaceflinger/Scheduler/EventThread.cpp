@@ -167,7 +167,8 @@ EventThreadConnection::EventThreadConnection(EventThread* eventThread, uid_t cal
         mOwnerUid(callingUid),
         mEventRegistration(eventRegistration),
         mEventThread(eventThread),
-        mChannel(gui::BitTube::DefaultSize) {}
+        mChannel(/* QTI_BEGIN */ gui::BitTube(
+                8 * 1024 /* default size is 4KB, double it */) /* QTI_END */) {}
 
 EventThreadConnection::~EventThreadConnection() {
     // do nothing here -- clean-up will happen automatically
@@ -620,6 +621,9 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
+    /* QTI_BEGIN */
+    const uint8_t num_attempts = 3;
+    /* QTI_END */
     for (const auto& consumer : consumers) {
         DisplayEventReceiver::Event copy = event;
         if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
@@ -629,20 +633,30 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                   event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                   event.vsync.vsyncData.preferredDeadlineTimestamp());
         }
-        switch (consumer->postEvent(copy)) {
-            case NO_ERROR:
-                break;
+        /* QTI_BEGIN */
+        bool qtiNeedsRetry = true;
+        for (uint8_t attempt = 0; qtiNeedsRetry && (attempt < num_attempts); attempt++) {
+            /* QTI_END */
+            switch (consumer->postEvent(copy)) {
+                case NO_ERROR:
+                    /* QTI_BEGIN */ qtiNeedsRetry = false; /* QTI_END */
+                    break;
 
-            case -EAGAIN:
-                // TODO: Try again if pipe is full.
-                ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
-                      toString(*consumer).c_str());
-                break;
+                case -EAGAIN:
+                    // TODO: Try again if pipe is full.
+                    ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
+                          toString(*consumer).c_str());
+                    /* QTI_BEGIN */ qtiNeedsRetry = true; /* QTI_END */
+                    break;
 
-            default:
-                // Treat EPIPE and other errors as fatal.
-                removeDisplayEventConnectionLocked(consumer);
+                default:
+                    // Treat EPIPE and other errors as fatal.
+                    removeDisplayEventConnectionLocked(consumer);
+                    /* QTI_BEGIN */ qtiNeedsRetry = false; /* QTI_END */
+            }
+            /* QTI_BEGIN */
         }
+        /* QTI_END */
     }
 }
 
