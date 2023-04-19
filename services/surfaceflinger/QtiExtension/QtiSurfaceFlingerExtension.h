@@ -22,6 +22,7 @@
 #include "QtiPhaseOffsetsExtension.h"
 #include "QtiPowerAdvisorExtension.h"
 #include "QtiWorkDurationsExtension.h"
+#include "QtiDolphinWrapper.h"
 #include "TransactionState.h"
 #include "layer_extn_intf.h"
 
@@ -156,7 +157,6 @@ public:
     void qtiCreateSmomoInstance(const DisplayDeviceState& state) override;
     void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
-    void qtiSetRefreshRates(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
@@ -171,6 +171,14 @@ public:
     void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
                                     uint32_t drawLayerStackId) override;
     uint32_t qtiGetLayerClass(std::string mName) override;
+
+    /*
+     * Methods for Dolphin APIs
+     */
+    void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    void qtiDolphinTrackBufferIncrement(const char *name);
+    void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    void qtiDolphinTrackVsyncSignal();
 
     /*
      * Methods for speculative fence
@@ -193,6 +201,7 @@ private:
     QtiPowerAdvisorExtension* mQtiPowerAdvisorExtn = nullptr;
     QtiPhaseOffsetsExtension* mQtiPhaseOffsetsExtn = nullptr;
     QtiWorkDurationsExtension* mQtiWorkDurationsExtn = nullptr;
+    QtiDolphinWrapper* mQtiDolphinWrapper = nullptr;
 
     bool mQtiEnabledIDC = false;
     bool mQtiInitVsyncConfigurationExtn = false;

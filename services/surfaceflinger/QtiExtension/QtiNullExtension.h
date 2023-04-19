@@ -101,7 +101,6 @@ public:
     void qtiCreateSmomoInstance(const DisplayDeviceState& state) override;
     void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
-    void qtiSetRefreshRates(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
@@ -122,6 +121,14 @@ public:
      */
     void qtiStartUnifiedDraw() override;
     void qtiTryDrawMethod(sp<DisplayDevice> display) override;
+
+    /*
+     * Methods for Dolphin APIs
+     */
+    void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    void qtiDolphinTrackBufferIncrement(const char *name);
+    void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    void qtiDolphinTrackVsyncSignal();
 
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;

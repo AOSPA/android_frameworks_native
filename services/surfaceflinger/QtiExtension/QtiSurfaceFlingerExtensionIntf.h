@@ -127,7 +127,6 @@ public:
     virtual void qtiCreateSmomoInstance(const DisplayDeviceState& state) = 0;
     virtual void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) = 0;
     virtual void qtiSetRefreshRates(PhysicalDisplayId displayId) = 0;
-    virtual void qtiSetRefreshRates(const sp<DisplayDevice>& display) = 0;
     virtual void qtiSetRefreshRateTo(int32_t refreshRate) = 0;
     virtual void qtiSyncToDisplayHardware() = 0;
     virtual void qtiUpdateSmomoState() = 0;
@@ -143,6 +142,14 @@ public:
     virtual void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
                                             uint32_t drawLayerStackId) = 0;
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
+
+    /*
+     * Methods for Dolphin APIs
+     */
+    virtual void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
+    virtual void qtiDolphinTrackBufferIncrement(const char *name);
+    virtual void qtiDolphinTrackBufferDecrement(const char *name, int count);
+    virtual void qtiDolphinTrackVsyncSignal();
 
     /*
      * Methods for speculative fence
