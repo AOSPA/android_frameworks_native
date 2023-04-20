@@ -1371,16 +1371,14 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
 
         std::vector<smomo::SmomoLayerStats> layers;
         if (enableSmomo) {
-            bool visibleLayersInfo = (mQtiFlinger->mLayersWithQueuedFrames.size() != 0);
-
-            if (visibleLayersInfo) {
-                for (const auto& layer : mQtiFlinger->mLayersWithQueuedFrames) {
+            mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
+                if (layer->isVisible()) {
                     smomo::SmomoLayerStats layerStats;
                     layerStats.name = layer->getDebugName();
                     layerStats.id = layer->getSequence();
                     layers.push_back(layerStats);
                 }
-            }
+            });
 
             fps = device->getActiveMode().fps.getIntValue();
         }
