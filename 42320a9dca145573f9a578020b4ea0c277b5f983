@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "88a63532_4b919367",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000541
+      },
+      "writtenOn": "2023-04-21T14:49:28Z",
+      "side": 1,
+      "message": "replaces https://gerrit.aospa.co/c/AOSPA/android_frameworks_native/+/26637",
+      "revId": "42320a9dca145573f9a578020b4ea0c277b5f983",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
