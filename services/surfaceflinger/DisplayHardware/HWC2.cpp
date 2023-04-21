@@ -865,10 +865,18 @@ Error Layer::setPerFrameMetadata(const int32_t supportedPerFrameMetadata,
 
         perFrameMetadataBlobs.push_back(
                 {Hwc2::PerFrameMetadataKey::HDR10_PLUS_SEI, mHdrMetadata.hdr10plus});
-    }
+        // QTI_BEGIN
+        const Error error = static_cast<Error>(
+           mComposer.setLayerPerFrameMetadataBlobs(mDisplay->getId(), mId, perFrameMetadataBlobs));
+        if (error != Error::NONE) {
+            return error;
+        }
+        // QTI_END
 
-    return static_cast<Error>(
-            mComposer.setLayerPerFrameMetadataBlobs(mDisplay->getId(), mId, perFrameMetadataBlobs));
+    }
+    // QTI_BEGIN
+    return Error::NONE;
+    // QTI_END
 }
 
 Error Layer::setDisplayFrame(const Rect& frame)
