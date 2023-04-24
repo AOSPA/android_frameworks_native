@@ -1334,6 +1334,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() NO_THREAD_SAFETY_ANA
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
     Mutex::Autolock lock(mQtiFlinger->mStateLock);
+
     // Check if smomo instances exist.
     if (!mQtiSmomoInstances.size()) {
         return;
@@ -1372,7 +1373,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
         std::vector<smomo::SmomoLayerStats> layers;
         if (enableSmomo) {
             mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
-                if (layer->isVisible()) {
+                if (layer->isVisible() &&
+                        instance.layerStackId == layer->qtiGetSmomoLayerStackId()) {
                     smomo::SmomoLayerStats layerStats;
                     layerStats.name = layer->getDebugName();
                     layerStats.id = layer->getSequence();
