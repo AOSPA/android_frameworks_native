@@ -506,7 +506,7 @@ void BLASTBufferQueue::releaseBuffer(const ReleaseCallbackId& callbackId,
     }
     mNumAcquired--;
     /* QTI_BEGIN */
-    mNumUndequeued++;
+    mQtiNumUndequeued++;
     /* QTI_END */
     BBQ_TRACE("frame=%" PRIu64, callbackId.framenumber);
     BQA_LOGV("released %s", callbackId.to_string().c_str());
@@ -829,7 +829,7 @@ void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::lock_guard _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
     /* QTI_BEGIN */
-    mNumUndequeued--;
+    mQtiNumUndequeued--;
     /* QTI_END */
 };
 

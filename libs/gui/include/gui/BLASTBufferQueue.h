@@ -101,11 +101,11 @@ public:
 
     /* QTI_BEGIN */
     void qtiSetUndequeuedBufferCount(int count) {
-        mNumUndequeued = count;
+        mQtiNumUndequeued = count;
     }
 
     int qtiGetUndequeuedBufferCount() const {
-        return mNumUndequeued;
+        return mQtiNumUndequeued;
     }
     /* QTI_END */
 
@@ -196,7 +196,7 @@ private:
     int32_t mMaxAcquiredBuffers = 1;
 
     /* QTI_BEGIN */
-    int mNumUndequeued GUARDED_BY(mMutex) = 0;
+    int mQtiNumUndequeued = 0;
     /* QTI_END */
     int32_t mNumFrameAvailable GUARDED_BY(mMutex) = 0;
     int32_t mNumAcquired GUARDED_BY(mMutex) = 0;
