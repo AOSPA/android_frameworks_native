@@ -878,6 +878,7 @@ Error AidlComposer::execute() {
         auto status = mAidlComposerClient->executeCommands(commands, &results);
         if (!status.isOk()) {
             ALOGE("executeCommands failed %s", status.getDescription().c_str());
+            mWriter.reset();
             return static_cast<Error>(status.getServiceSpecificError());
         }
 
@@ -889,6 +890,7 @@ Error AidlComposer::execute() {
         const auto index = static_cast<size_t>(cmdErr.commandIndex);
         if (index < 0 || index >= commands.size()) {
             ALOGE("invalid command index %zu", index);
+            mWriter.reset();
             return Error::BAD_PARAMETER;
         }
 
