@@ -1666,16 +1666,16 @@ void Output::finishPrepareFrame() {
     mRenderSurface->prepareFrame(state.usesClientComposition, state.usesDeviceComposition);
 }
 
-bool Output::mustRecompose() const {
-    return mMustRecompose;
-}
-
 void Output::getVisibleLayerInfo(std::vector<std::string> *layerName,
                                  std::vector<int32_t> *layerSequence) const {
     for (auto* layer: getOutputLayersOrderedByZ()) {
         layerName->push_back(layer->getLayerFE().getDebugName());
         layerSequence->push_back(layer->getLayerFE().getSequence());
     }
+}
+
+bool Output::mustRecompose() const {
+    return mMustRecompose;
 }
 
 } // namespace impl
