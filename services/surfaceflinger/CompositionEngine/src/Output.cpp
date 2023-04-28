@@ -1610,9 +1610,10 @@ void Output::postFramebuffer() {
 }
 
 void Output::renderCachedSets(const CompositionRefreshArgs& refreshArgs) {
-    if (mPlanner) {
-        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime,
-                                   getState().usesDeviceComposition || getSkipColorTransform());
+    const auto& outputState = getState();
+    if (mPlanner && outputState.isEnabled) {
+        mPlanner->renderCachedSets(outputState, refreshArgs.scheduledFrameTime,
+                                   outputState.usesDeviceComposition || getSkipColorTransform());
     }
 }
 

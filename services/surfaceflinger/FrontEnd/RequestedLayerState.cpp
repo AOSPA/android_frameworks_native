@@ -32,10 +32,6 @@ using ftl::Flags;
 using namespace ftl::flag_operators;
 
 namespace {
-std::string layerIdToString(uint32_t layerId) {
-    return layerId == UNASSIGNED_LAYER_ID ? "none" : std::to_string(layerId);
-}
-
 std::string layerIdsToString(const std::vector<uint32_t>& layerIds) {
     std::stringstream stream;
     stream << "{";
@@ -158,12 +154,15 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
                     RequestedLayerState::Changes::VisibleRegion |
                     RequestedLayerState::Changes::Visibility | RequestedLayerState::Changes::Input;
         }
-        if (clientState.what & layer_state_t::eBufferChanged) {
-            changes |= RequestedLayerState::Changes::Buffer;
-        }
-        if (clientState.what & layer_state_t::eSidebandStreamChanged) {
-            changes |= RequestedLayerState::Changes::SidebandStream;
-        }
+    }
+    if (clientState.what & layer_state_t::eBufferChanged) {
+        barrierProducerId = std::max(bufferData->producerId, barrierProducerId);
+        barrierFrameNumber = std::max(bufferData->frameNumber, barrierFrameNumber);
+        // TODO(b/277265947) log and flush transaction trace when we detect out of order updates
+        changes |= RequestedLayerState::Changes::Buffer;
+    }
+    if (clientState.what & layer_state_t::eSidebandStreamChanged) {
+        changes |= RequestedLayerState::Changes::SidebandStream;
     }
     if (what & (layer_state_t::eAlphaChanged)) {
         if (oldAlpha == 0 || color.a == 0) {
@@ -323,9 +322,13 @@ ui::Transform RequestedLayerState::getTransform(uint32_t displayRotationFlags) c
 
 std::string RequestedLayerState::getDebugString() const {
     std::stringstream debug;
-    debug << "RequestedLayerState{" << name << " parent=" << layerIdToString(parentId)
-          << " relativeParent=" << layerIdToString(relativeParentId)
-          << " mirrorId=" << layerIdsToString(mirrorIds) << " handle=" << handleAlive << " z=" << z;
+    debug << "RequestedLayerState{" << name;
+    if (parentId != UNASSIGNED_LAYER_ID) debug << " parentId=" << parentId;
+    if (relativeParentId != UNASSIGNED_LAYER_ID) debug << " relativeParentId=" << relativeParentId;
+    if (!mirrorIds.empty()) debug << " mirrorId=" << layerIdsToString(mirrorIds);
+    if (!handleAlive) debug << " !handle";
+    if (z != 0) debug << " z=" << z;
+    if (layerStack.id != 0) debug << " layerStack=" << layerStack.id;
     return debug.str();
 }
 
