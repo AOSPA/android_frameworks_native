@@ -22,14 +22,15 @@ namespace android {
 
 class JoystickInputMapper : public InputMapper {
 public:
-    explicit JoystickInputMapper(InputDeviceContext& deviceContext);
+    explicit JoystickInputMapper(InputDeviceContext& deviceContext,
+                                 const InputReaderConfiguration& readerConfig);
     virtual ~JoystickInputMapper();
 
     virtual uint32_t getSources() const override;
     virtual void populateDeviceInfo(InputDeviceInfo& deviceInfo) override;
     virtual void dump(std::string& dump) override;
     [[nodiscard]] std::list<NotifyArgs> reconfigure(nsecs_t when,
-                                                    const InputReaderConfiguration* config,
+                                                    const InputReaderConfiguration& config,
                                                     uint32_t changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;

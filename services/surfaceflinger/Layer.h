@@ -145,9 +145,16 @@ public:
         ui::Dataspace dataspace;
 
         uint64_t frameNumber;
+        // high watermark framenumber to use to check for barriers to protect ourselves
+        // from out of order transactions
+        uint64_t barrierFrameNumber;
         ui::Transform transform;
 
         uint32_t producerId = 0;
+        // high watermark producerId to use to check for barriers to protect ourselves
+        // from out of order transactions
+        uint32_t barrierProducerId = 0;
+
         uint32_t bufferTransform;
         bool transformToDisplayInverse;
         Region transparentRegionHint;
@@ -369,6 +376,21 @@ public:
      * Returns whether this layer can receive input.
      */
     bool canReceiveInput() const;
+
+    /*
+     * Whether or not the layer should be considered visible for input calculations.
+     */
+    virtual bool isVisibleForInput() const {
+        // For compatibility reasons we let layers which can receive input
+        // receive input before they have actually submitted a buffer. Because
+        // of this we use canReceiveInput instead of isVisible to check the
+        // policy-visibility, ignoring the buffer state. However for layers with
+        // hasInputInfo()==false we can use the real visibility state.
+        // We are just using these layers for occlusion detection in
+        // InputDispatcher, and obviously if they aren't visible they can't occlude
+        // anything.
+        return hasInputInfo() ? canReceiveInput() : isVisible();
+    }
 
     /*
      * isProtected - true if the layer may contain protected contents in the
