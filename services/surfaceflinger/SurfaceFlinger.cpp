@@ -5558,46 +5558,56 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
 }
 
 void SurfaceFlinger::checkVirtualDisplayHint(const Vector<DisplayState>& displays) {
-    Mutex::Autolock lock(mStateLock);
-    for (const DisplayState& s : displays) {
-        const ssize_t index = mCurrentState.displays.indexOfKey(s.token);
-        if (index < 0)
-            continue;
+    bool createVirtualDisplay = false;
+    int width = 0, height = 0, format = 0;
+    {
+        Mutex::Autolock lock(mStateLock);
+        for (const DisplayState& s : displays) {
+            const ssize_t index = mCurrentState.displays.indexOfKey(s.token);
+            if (index < 0)
+                continue;
 
-        DisplayDeviceState& state = mCurrentState.displays.editValueAt(index);
-        const uint32_t what = s.what;
-        if (what & DisplayState::eSurfaceChanged) {
-            if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
-                if (state.isVirtual() && s.surface != nullptr) {
-                    int width = 0;
-                    int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
-                    int height = 0;
-                    status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
-                    int format = 0;
-                    status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
-#ifdef QTI_DISPLAY_CONFIG_ENABLED
-                    size_t maxVirtualDisplaySize =
-                        getHwComposer().getMaxVirtualDisplayDimension();
-                    if ((mDisplayConfigIntf) && (maxVirtualDisplaySize == 0 ||
-                        ((uint64_t)width <= maxVirtualDisplaySize &&
-                        (uint64_t)height <= maxVirtualDisplaySize))) {
-                        uint64_t usage = 0;
-                        // Replace with native_window_get_consumer_usage ?
-                        status = s.surface->getConsumerUsage(&usage);
-                        ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
-                        if ((status == NO_ERROR) && canAllocateHwcDisplayIdForVDS(usage)) {
-                            mDisplayConfigIntf->CreateVirtualDisplay(width, height, format);
-                            return;
+            DisplayDeviceState& state = mCurrentState.displays.editValueAt(index);
+            const uint32_t what = s.what;
+            if (what & DisplayState::eSurfaceChanged) {
+                if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
+                    if (state.isVirtual() && s.surface != nullptr) {
+                        width = 0;
+                        int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
+                        height = 0;
+                        status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
+                        format = 0;
+                        status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
+    #ifdef QTI_DISPLAY_CONFIG_ENABLED
+                        size_t maxVirtualDisplaySize =
+                            getHwComposer().getMaxVirtualDisplayDimension();
+                        if ((mDisplayConfigIntf) && (maxVirtualDisplaySize == 0 ||
+                            ((uint64_t)width <= maxVirtualDisplaySize &&
+                            (uint64_t)height <= maxVirtualDisplaySize))) {
+                            uint64_t usage = 0;
+                            // Replace with native_window_get_consumer_usage ?
+                            status = s.surface->getConsumerUsage(&usage);
+                            ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
+                            if ((status == NO_ERROR) && canAllocateHwcDisplayIdForVDS(usage)) {
+                                createVirtualDisplay = true;
+                                break;
+                            }
                         }
+    #endif
                     }
-#endif
                 }
             }
         }
     }
+
+    #ifdef QTI_DISPLAY_CONFIG_ENABLED
+    if (createVirtualDisplay) {
+        mDisplayConfigIntf->CreateVirtualDisplay(width, height, format);
+    }
+    #endif
 }
 
 uint32_t SurfaceFlinger::setDisplayStateLocked(const DisplayState& s) {
