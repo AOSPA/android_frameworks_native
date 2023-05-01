@@ -352,14 +352,12 @@ status_t Gralloc5Mapper::validateBufferSize(buffer_handle_t bufferHandle, uint32
         }
     }
     {
-        (void)stride;
-        // TODO(b/261856851): Add StandardMetadataType::STRIDE && enable this
-        //        auto value = getStandardMetadata<StandardMetadataType::STRIDE>(mMapper,
-        //        bufferHandle); if (static_cast<BufferUsage>(usage) != value) {
-        //            ALOGW("Layer count didn't match, expected %" PRIu64 " got %" PRId64, usage,
-        //                  static_cast<int64_t>(value.value_or(BufferUsage::CPU_READ_NEVER)));
-        //            return BAD_VALUE;
-        //        }
+        auto value = getStandardMetadata<StandardMetadataType::STRIDE>(mMapper, bufferHandle);
+        if (stride != value) {
+            ALOGW("Stride didn't match, expected %" PRIu32 " got %" PRId32, stride,
+                  value.value_or(-1));
+            return BAD_VALUE;
+        }
     }
     return OK;
 }
@@ -829,75 +827,6 @@ status_t Gralloc5Mapper::setSmpte2094_10(buffer_handle_t bufferHandle,
                                          std::optional<std::vector<uint8_t>> smpte2094_10) const {
     return setStandardMetadata<StandardMetadataType::SMPTE2094_10>(mMapper, bufferHandle,
                                                                    smpte2094_10);
-}
-
-status_t Gralloc5Mapper::getDefaultPixelFormatFourCC(uint32_t, uint32_t, PixelFormat, uint32_t,
-                                                     uint64_t, uint32_t *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultPixelFormatModifier(uint32_t, uint32_t, PixelFormat, uint32_t,
-                                                       uint64_t, uint64_t *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultAllocationSize(uint32_t, uint32_t, PixelFormat, uint32_t,
-                                                  uint64_t, uint64_t *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultProtectedContent(uint32_t, uint32_t, PixelFormat, uint32_t,
-                                                    uint64_t, uint64_t *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultCompression(
-        uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-        aidl::android::hardware::graphics::common::ExtendableType *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultCompression(uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-                                               ui::Compression *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultInterlaced(
-        uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-        aidl::android::hardware::graphics::common::ExtendableType *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultInterlaced(uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-                                              ui::Interlaced *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultChromaSiting(
-        uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-        aidl::android::hardware::graphics::common::ExtendableType *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultChromaSiting(uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-                                                ui::ChromaSiting *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
-}
-
-status_t Gralloc5Mapper::getDefaultPlaneLayouts(uint32_t, uint32_t, PixelFormat, uint32_t, uint64_t,
-                                                std::vector<ui::PlaneLayout> *) const {
-    // TODO(b/261857910): Remove
-    return UNKNOWN_TRANSACTION;
 }
 
 } // namespace android

@@ -187,7 +187,7 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
               layerFocused ? "" : "not");
 
         ATRACE_FORMAT("%s", info->getName().c_str());
-        const auto vote = info->getRefreshRateVote(selector, now);
+        auto vote = info->getRefreshRateVote(selector, now);
         // Skip NoVote layer as those don't have any requirements
         if (vote.type == LayerVoteType::NoVote) {
             continue;
@@ -203,6 +203,13 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
         float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
         ATRACE_FORMAT_INSTANT("%s %s (%d%)", ftl::enum_string(vote.type).c_str(),
                               to_string(vote.fps).c_str(), weight * 100);
+
+        /* QTI_BEGIN */
+        if (mQtiThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mQtiThermalFps) {
+            vote.fps = Fps::fromValue(mQtiThermalFps);
+        }
+        /* QTI_END */
+
         summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
                            vote.seamlessness, weight, layerFocused});
 

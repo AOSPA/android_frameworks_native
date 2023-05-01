@@ -272,8 +272,6 @@ public:
         FocusRequest request;
         request.token = mInputInfo.token;
         request.windowName = mInputInfo.name;
-        request.focusedToken = nullptr;
-        request.focusedWindowName = "";
         request.timestamp = systemTime(SYSTEM_TIME_MONOTONIC);
         request.displayId = displayId;
         t.setFocusedWindow(request);
@@ -503,6 +501,22 @@ TEST_F(InputSurfacesTest, input_respects_surface_insets) {
     bgSurface->showAt(100, 100);
 
     fgSurface->mInputInfo.surfaceInset = 5;
+    fgSurface->showAt(100, 100);
+
+    injectTap(106, 106);
+    fgSurface->expectTap(1, 1);
+
+    injectTap(101, 101);
+    bgSurface->expectTap(1, 1);
+}
+
+TEST_F(InputSurfacesTest, input_respects_surface_insets_with_replaceTouchableRegionWithCrop) {
+    std::unique_ptr<InputSurface> bgSurface = makeSurface(100, 100);
+    std::unique_ptr<InputSurface> fgSurface = makeSurface(100, 100);
+    bgSurface->showAt(100, 100);
+
+    fgSurface->mInputInfo.surfaceInset = 5;
+    fgSurface->mInputInfo.replaceTouchableRegionWithCrop = true;
     fgSurface->showAt(100, 100);
 
     injectTap(106, 106);

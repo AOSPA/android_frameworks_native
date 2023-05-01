@@ -105,8 +105,8 @@ public:
     /*
      * Methods used by SurfaceFlinger DisplayHardware.
      */
-    status_t qtiSetDisplayElapseTime(
-            std::chrono::steady_clock::time_point earliestPresentTime) const override;
+    status_t qtiSetDisplayElapseTime(std::optional<std::chrono::steady_clock::time_point>
+                                             earliestPresentTime) const override;
 
     /*
      * Methods that call the DisplayExtension APIs.
@@ -141,8 +141,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
-                                              bool canAllocateHwcForVDS) override;
+    std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                             bool canAllocateHwcForVDS) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
     void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
@@ -187,6 +187,12 @@ public:
     void qtiTryDrawMethod(sp<DisplayDevice> display) override;
     void qtiEndUnifiedDraw(uint32_t hwcDisplayId);
 
+    std::optional<PhysicalDisplayId> qtiGetInternalDisplayId();
+    void qtiSetDesiredModeByThermalLevel(float newLevelFps);
+    bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
+    DisplayModePtr qtiGetModeFromFps(float fps);
+    void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
+
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
     bool qtiIsInternalDisplay(const sp<DisplayDevice>& display);
@@ -216,6 +222,9 @@ private:
     int mQtiSFTid = 0;
     int mQtiUiLayerFrameCount = 180;
     uint32_t mQtiCurrentFps = 0;
+    float mQtiThermalLevelFps = 0;
+    float mQtiLastCachedFps = 0;
+    bool mQtiAllowThermalFpsChange = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;

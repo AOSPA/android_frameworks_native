@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
+
 #include <stdint.h>
 #include <ui/Rotation.h>
 
@@ -75,8 +78,8 @@ struct RawPointerData {
         int32_t distance{};
         int32_t tiltX{};
         int32_t tiltY{};
-        // A fully decoded AMOTION_EVENT_TOOL_TYPE constant.
-        int32_t toolType{AMOTION_EVENT_TOOL_TYPE_UNKNOWN};
+        // A fully decoded ToolType constant.
+        ToolType toolType{ToolType::UNKNOWN};
         bool isHovering{false};
     };
 
@@ -147,11 +150,11 @@ public:
     ~TouchInputMapper() override;
 
     uint32_t getSources() const override;
-    void populateDeviceInfo(InputDeviceInfo* deviceInfo) override;
+    void populateDeviceInfo(InputDeviceInfo& deviceInfo) override;
     void dump(std::string& dump) override;
-    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
-                                                  const InputReaderConfiguration* config,
-                                                  uint32_t changes) override;
+    [[nodiscard]] std::list<NotifyArgs> reconfigure(nsecs_t when,
+                                                    const InputReaderConfiguration* config,
+                                                    uint32_t changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
 
@@ -786,7 +789,7 @@ private:
 
     [[nodiscard]] std::list<NotifyArgs> dispatchPointerSimple(nsecs_t when, nsecs_t readTime,
                                                               uint32_t policyFlags, bool down,
-                                                              bool hovering);
+                                                              bool hovering, int32_t displayId);
     [[nodiscard]] std::list<NotifyArgs> abortPointerSimple(nsecs_t when, nsecs_t readTime,
                                                            uint32_t policyFlags);
 
@@ -818,6 +821,7 @@ private:
 
     static void assignPointerIds(const RawState& last, RawState& current);
 
+    // Compute input transforms for DIRECT and POINTER modes.
     void computeInputTransforms();
 
     void configureDeviceType();

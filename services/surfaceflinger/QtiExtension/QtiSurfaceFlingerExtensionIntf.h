@@ -77,7 +77,7 @@ public:
      * Methods used by SurfaceFlinger DisplayHardware.
      */
     virtual status_t qtiSetDisplayElapseTime(
-            std::chrono::steady_clock::time_point earliestPresentTime) const = 0;
+            std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const = 0;
 
     /*
      * Methods that call the DisplayExtension APIs.
@@ -111,8 +111,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    virtual VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
-                                                      bool canAllocateHwcForVDS) = 0;
+    virtual std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                                     bool canAllocateHwcForVDS) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) = 0;
     virtual void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) = 0;
@@ -156,6 +156,8 @@ public:
      */
     virtual void qtiStartUnifiedDraw() = 0;
     virtual void qtiTryDrawMethod(sp<DisplayDevice> display) = 0;
+
+    virtual bool qtiIsFpsDeferNeeded(float newFpsRequest) = 0;
 };
 
 } // namespace android::surfaceflingerextension

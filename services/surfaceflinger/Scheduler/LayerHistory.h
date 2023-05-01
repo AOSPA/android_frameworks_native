@@ -87,6 +87,10 @@ public:
     void attachChoreographer(int32_t layerId,
                              const sp<EventThreadConnection>& choreographerConnection);
 
+    /* QTI_BEGIN */
+    void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }
+    /* QTI_END */
+
 private:
     friend class LayerHistoryTest;
     friend class TestableScheduler;
@@ -138,6 +142,11 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
+
+    /* QTI_BEGIN */
+    // If Thermal mitigation enabled, limit to thermal Fps
+    float mQtiThermalFps = 0.0f;
+    /* QTI_END */
 };
 
 } // namespace scheduler

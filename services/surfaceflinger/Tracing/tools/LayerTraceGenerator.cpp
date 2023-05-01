@@ -14,13 +14,6 @@
  * limitations under the License.
  */
 
-#include <memory>
-#include <vector>
-#include "FrontEnd/LayerCreationArgs.h"
-#include "FrontEnd/RequestedLayerState.h"
-#include "Tracing/LayerTracing.h"
-#include "TransactionState.h"
-#include "cutils/properties.h"
 #undef LOG_TAG
 #define LOG_TAG "LayerTraceGenerator"
 //#define LOG_NDEBUG 0
@@ -32,8 +25,15 @@
 #include <utils/String16.h>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <string>
+#include <vector>
+#include "FrontEnd/LayerCreationArgs.h"
+#include "FrontEnd/RequestedLayerState.h"
 #include "LayerProtoHelper.h"
+#include "Tracing/LayerTracing.h"
+#include "TransactionState.h"
+#include "cutils/properties.h"
 
 #include "LayerTraceGenerator.h"
 
@@ -62,8 +62,11 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
 
     LayerTracing layerTracing;
     layerTracing.setTraceFlags(LayerTracing::TRACE_INPUT | LayerTracing::TRACE_BUFFERS);
-    layerTracing.setBufferSize(512 * 1024 * 1024); // 512MB buffer size
+    // 10MB buffer size (large enough to hold a single entry)
+    layerTracing.setBufferSize(10 * 1024 * 1024);
     layerTracing.enable();
+    layerTracing.writeToFile(outputLayersTracePath);
+    std::ofstream out(outputLayersTracePath, std::ios::binary | std::ios::app);
 
     ALOGD("Generating %d transactions...", traceFile.entry_size());
     for (int i = 0; i < traceFile.entry_size(); i++) {
@@ -80,6 +83,7 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
         for (int j = 0; j < entry.added_layers_size(); j++) {
             LayerCreationArgs args;
             parser.fromProto(entry.added_layers(j), args);
+            ALOGV("       %s", args.getDebugString().c_str());
             addedLayers.emplace_back(std::make_unique<frontend::RequestedLayerState>(args));
         }
 
@@ -88,12 +92,27 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
         for (int j = 0; j < entry.transactions_size(); j++) {
             // apply transactions
             TransactionState transaction = parser.fromProto(entry.transactions(j));
+            for (auto& resolvedComposerState : transaction.states) {
+                if (resolvedComposerState.state.what & layer_state_t::eInputInfoChanged) {
+                    if (!resolvedComposerState.state.windowInfoHandle->getInfo()->inputConfig.test(
+                                gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL)) {
+                        // create a fake token since the FE expects a valid token
+                        resolvedComposerState.state.windowInfoHandle->editInfo()->token =
+                                sp<BBinder>::make();
+                    }
+                }
+            }
             transactions.emplace_back(std::move(transaction));
+        }
+
+        for (int j = 0; j < entry.destroyed_layers_size(); j++) {
+            ALOGV("       destroyedHandles=%d", entry.destroyed_layers(j));
         }
 
         std::vector<uint32_t> destroyedHandles;
         destroyedHandles.reserve((size_t)entry.destroyed_layer_handles_size());
         for (int j = 0; j < entry.destroyed_layer_handles_size(); j++) {
+            ALOGV("       destroyedHandles=%d", entry.destroyed_layer_handles(j));
             destroyedHandles.push_back(entry.destroyed_layer_handles(j));
         }
 
@@ -104,7 +123,7 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
 
         // apply updates
         lifecycleManager.addLayers(std::move(addedLayers));
-        lifecycleManager.applyTransactions(transactions);
+        lifecycleManager.applyTransactions(transactions, /*ignoreUnknownHandles=*/true);
         lifecycleManager.onHandlesDestroyed(destroyedHandles, /*ignoreUnknownHandles=*/true);
 
         if (lifecycleManager.getGlobalChanges().test(
@@ -141,8 +160,10 @@ bool LayerTraceGenerator::generate(const proto::TransactionTraceFile& traceFile,
         auto displayProtos = LayerProtoHelper::writeDisplayInfoToProto(displayInfos);
         layerTracing.notify(visibleRegionsDirty, entry.elapsed_realtime_nanos(), entry.vsync_id(),
                             &layersProto, {}, &displayProtos);
+        layerTracing.appendToStream(out);
     }
-    layerTracing.disable(outputLayersTracePath);
+    layerTracing.disable("", /*writeToFile=*/false);
+    out.close();
     ALOGD("End of generating trace file. File written to %s", outputLayersTracePath);
     return true;
 }

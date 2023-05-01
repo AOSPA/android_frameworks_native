@@ -20,6 +20,8 @@
 
 #include "RotaryEncoderInputMapper.h"
 
+#include <optional>
+
 #include "CursorScrollAccumulator.h"
 
 namespace android {
@@ -35,22 +37,23 @@ uint32_t RotaryEncoderInputMapper::getSources() const {
     return mSource;
 }
 
-void RotaryEncoderInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
+void RotaryEncoderInputMapper::populateDeviceInfo(InputDeviceInfo& info) {
     InputMapper::populateDeviceInfo(info);
 
     if (mRotaryEncoderScrollAccumulator.haveRelativeVWheel()) {
-        float res = 0.0f;
-        if (!getDeviceContext().getConfiguration().tryGetProperty("device.res", res)) {
+        const PropertyMap& config = getDeviceContext().getConfiguration();
+        std::optional<float> res = config.getFloat("device.res");
+        if (!res.has_value()) {
             ALOGW("Rotary Encoder device configuration file didn't specify resolution!\n");
         }
-        if (!getDeviceContext().getConfiguration().tryGetProperty("device.scalingFactor",
-                                                                  mScalingFactor)) {
+        std::optional<float> scalingFactor = config.getFloat("device.scalingFactor");
+        if (!scalingFactor.has_value()) {
             ALOGW("Rotary Encoder device configuration file didn't specify scaling factor,"
                   "default to 1.0!\n");
-            mScalingFactor = 1.0f;
         }
-        info->addMotionRange(AMOTION_EVENT_AXIS_SCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f,
-                             res * mScalingFactor);
+        mScalingFactor = scalingFactor.value_or(1.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_SCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f,
+                            res.value_or(0.0f) * mScalingFactor);
     }
 }
 
@@ -60,10 +63,10 @@ void RotaryEncoderInputMapper::dump(std::string& dump) {
                          toString(mRotaryEncoderScrollAccumulator.haveRelativeVWheel()));
 }
 
-std::list<NotifyArgs> RotaryEncoderInputMapper::configure(nsecs_t when,
-                                                          const InputReaderConfiguration* config,
-                                                          uint32_t changes) {
-    std::list<NotifyArgs> out = InputMapper::configure(when, config, changes);
+std::list<NotifyArgs> RotaryEncoderInputMapper::reconfigure(nsecs_t when,
+                                                            const InputReaderConfiguration* config,
+                                                            uint32_t changes) {
+    std::list<NotifyArgs> out = InputMapper::reconfigure(when, config, changes);
     if (!changes) {
         mRotaryEncoderScrollAccumulator.configure(getDeviceContext());
     }
@@ -118,7 +121,7 @@ std::list<NotifyArgs> RotaryEncoderInputMapper::sync(nsecs_t when, nsecs_t readT
         PointerProperties pointerProperties;
         pointerProperties.clear();
         pointerProperties.id = 0;
-        pointerProperties.toolType = AMOTION_EVENT_TOOL_TYPE_UNKNOWN;
+        pointerProperties.toolType = ToolType::UNKNOWN;
 
         uint32_t policyFlags = 0;
         if (getDeviceContext().isExternal()) {

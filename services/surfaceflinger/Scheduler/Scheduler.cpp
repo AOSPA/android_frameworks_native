@@ -976,4 +976,11 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     mFrameRateOverrideMappings.setPreferredRefreshRateForUid(frameRateOverride);
 }
 
+/* QTI_BEGIN */
+void Scheduler::qtiUpdateThermalFps(float fps) {
+    mQtiThermalFps = fps;
+    mLayerHistory.qtiUpdateThermalFps(fps);
+}
+/* QTI_END */
+
 } // namespace android::scheduler

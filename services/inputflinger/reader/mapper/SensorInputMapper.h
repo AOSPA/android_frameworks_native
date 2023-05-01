@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
+
 #include "InputMapper.h"
 
 namespace android {
@@ -28,11 +31,11 @@ public:
     ~SensorInputMapper() override;
 
     uint32_t getSources() const override;
-    void populateDeviceInfo(InputDeviceInfo* deviceInfo) override;
+    void populateDeviceInfo(InputDeviceInfo& deviceInfo) override;
     void dump(std::string& dump) override;
-    [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
-                                                  const InputReaderConfiguration* config,
-                                                  uint32_t changes) override;
+    [[nodiscard]] std::list<NotifyArgs> reconfigure(nsecs_t when,
+                                                    const InputReaderConfiguration* config,
+                                                    uint32_t changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
     bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
@@ -119,9 +122,6 @@ private:
     std::unordered_map<InputDeviceSensorType, Sensor> mSensors;
 
     [[nodiscard]] std::list<NotifyArgs> sync(nsecs_t when, bool force);
-
-    template <typename T>
-    bool tryGetProperty(std::string keyName, T& outValue);
 
     void parseSensorConfiguration(InputDeviceSensorType sensorType, int32_t absCode,
                                   int32_t sensorDataIndex, const Axis& axis);

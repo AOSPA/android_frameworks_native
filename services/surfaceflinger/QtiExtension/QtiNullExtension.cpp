@@ -64,7 +64,7 @@ bool QtiNullExtension::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
  * Methods used by SurfaceFlinger DisplayHardware.
  */
 status_t QtiNullExtension::qtiSetDisplayElapseTime(
-        std::chrono::steady_clock::time_point earliestPresentTime) const {
+        std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const {
     return OK;
 }
 
@@ -109,9 +109,8 @@ status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, in
  * Methods for Virtual, WiFi, and Secure Displays
  */
 
-android::VirtualDisplayId QtiNullExtension::qtiAcquireVirtualDisplay(ui::Size resolution,
-                                                                     ui::PixelFormat format,
-                                                                     bool canAllocateHwcForVDS) {
+std::optional<android::VirtualDisplayId> QtiNullExtension::qtiAcquireVirtualDisplay(
+        ui::Size resolution, ui::PixelFormat format, bool canAllocateHwcForVDS) {
     // Fix thread safety analysis
     return mQtiFlinger->acquireVirtualDisplay(resolution, format);
 }

@@ -152,7 +152,8 @@ void JpegRBenchmark::BenchmarkApplyRecoveryMap(jr_uncompressed_ptr yuv420Image,
 
   timerStart(&applyRecMapTime);
   for (auto i = 0; i < kProfileCount; i++) {
-      ASSERT_EQ(OK, applyRecoveryMap(yuv420Image, map, metadata, JPEGR_OUTPUT_HDR_HLG, dest));
+      ASSERT_EQ(OK, applyRecoveryMap(yuv420Image, map, metadata, JPEGR_OUTPUT_HDR_HLG,
+                                     metadata->maxContentBoost /* displayBoost */, dest));
   }
   timerStop(&applyRecMapTime);
 
@@ -170,11 +171,11 @@ TEST_F(JpegRTest, build) {
   jpegRCodec.encodeJPEGR(nullptr, nullptr, nullptr, static_cast<jpegr_transfer_function>(0),
                          nullptr);
   jpegRCodec.encodeJPEGR(nullptr, nullptr, static_cast<jpegr_transfer_function>(0), nullptr);
-  jpegRCodec.decodeJPEGR(nullptr, nullptr, nullptr);
+  jpegRCodec.decodeJPEGR(nullptr, nullptr);
 }
 
 TEST_F(JpegRTest, writeXmpThenRead) {
-  jpegr_metadata metadata_expected;
+  jpegr_metadata_struct metadata_expected;
   metadata_expected.maxContentBoost = 1.25;
   metadata_expected.minContentBoost = 0.75;
   const std::string nameSpace = "http://ns.adobe.com/xap/1.0/\0";
@@ -189,10 +190,10 @@ TEST_F(JpegRTest, writeXmpThenRead) {
   xmpData.insert(xmpData.end(), reinterpret_cast<const uint8_t*>(xmp.c_str()),
                   reinterpret_cast<const uint8_t*>(xmp.c_str()) + xmp.size());
 
-  jpegr_metadata metadata_read;
+  jpegr_metadata_struct metadata_read;
   EXPECT_TRUE(getMetadataFromXMP(xmpData.data(), xmpData.size(), &metadata_read));
-  ASSERT_EQ(metadata_expected.maxContentBoost, metadata_read.maxContentBoost);
-  ASSERT_EQ(metadata_expected.minContentBoost, metadata_read.minContentBoost);
+  EXPECT_FLOAT_EQ(metadata_expected.maxContentBoost, metadata_read.maxContentBoost);
+  EXPECT_FLOAT_EQ(metadata_expected.minContentBoost, metadata_read.minContentBoost);
 }
 
 /* Test Encode API-0 and decode */
@@ -476,7 +477,7 @@ TEST_F(JpegRTest, ProfileRecoveryMapFuncs) {
 
   JpegRBenchmark benchmark;
 
-  jpegr_metadata metadata = { .version = 1,
+  jpegr_metadata_struct metadata = { .version = 1,
                               .maxContentBoost = 8.0f,
                               .minContentBoost = 1.0f / 8.0f };
 

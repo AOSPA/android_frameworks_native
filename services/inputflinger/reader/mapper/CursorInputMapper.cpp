@@ -20,6 +20,8 @@
 
 #include "CursorInputMapper.h"
 
+#include <optional>
+
 #include "CursorButtonAccumulator.h"
 #include "CursorScrollAccumulator.h"
 #include "PointerControllerInterface.h"
@@ -79,31 +81,31 @@ uint32_t CursorInputMapper::getSources() const {
     return mSource;
 }
 
-void CursorInputMapper::populateDeviceInfo(InputDeviceInfo* info) {
+void CursorInputMapper::populateDeviceInfo(InputDeviceInfo& info) {
     InputMapper::populateDeviceInfo(info);
 
     if (mParameters.mode == Parameters::Mode::POINTER) {
         if (const auto bounds = mPointerController->getBounds(); bounds) {
-            info->addMotionRange(AMOTION_EVENT_AXIS_X, mSource, bounds->left, bounds->right, 0.0f,
-                                 0.0f, 0.0f);
-            info->addMotionRange(AMOTION_EVENT_AXIS_Y, mSource, bounds->top, bounds->bottom, 0.0f,
-                                 0.0f, 0.0f);
+            info.addMotionRange(AMOTION_EVENT_AXIS_X, mSource, bounds->left, bounds->right, 0.0f,
+                                0.0f, 0.0f);
+            info.addMotionRange(AMOTION_EVENT_AXIS_Y, mSource, bounds->top, bounds->bottom, 0.0f,
+                                0.0f, 0.0f);
         }
     } else {
-        info->addMotionRange(AMOTION_EVENT_AXIS_X, mSource, -1.0f, 1.0f, 0.0f, mXScale, 0.0f);
-        info->addMotionRange(AMOTION_EVENT_AXIS_Y, mSource, -1.0f, 1.0f, 0.0f, mYScale, 0.0f);
-        info->addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_X, mSource, -1.0f, 1.0f, 0.0f, mXScale,
-                             0.0f);
-        info->addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_Y, mSource, -1.0f, 1.0f, 0.0f, mYScale,
-                             0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_X, mSource, -1.0f, 1.0f, 0.0f, mXScale, 0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_Y, mSource, -1.0f, 1.0f, 0.0f, mYScale, 0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_X, mSource, -1.0f, 1.0f, 0.0f, mXScale,
+                            0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_RELATIVE_Y, mSource, -1.0f, 1.0f, 0.0f, mYScale,
+                            0.0f);
     }
-    info->addMotionRange(AMOTION_EVENT_AXIS_PRESSURE, mSource, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+    info.addMotionRange(AMOTION_EVENT_AXIS_PRESSURE, mSource, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
 
     if (mCursorScrollAccumulator.haveRelativeVWheel()) {
-        info->addMotionRange(AMOTION_EVENT_AXIS_VSCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_VSCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
     }
     if (mCursorScrollAccumulator.haveRelativeHWheel()) {
-        info->addMotionRange(AMOTION_EVENT_AXIS_HSCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        info.addMotionRange(AMOTION_EVENT_AXIS_HSCROLL, mSource, -1.0f, 1.0f, 0.0f, 0.0f, 0.0f);
     }
 }
 
@@ -131,10 +133,10 @@ void CursorInputMapper::dump(std::string& dump) {
     dump += StringPrintf(INDENT3 "DownTime: %" PRId64 "\n", mDownTime);
 }
 
-std::list<NotifyArgs> CursorInputMapper::configure(nsecs_t when,
-                                                   const InputReaderConfiguration* config,
-                                                   uint32_t changes) {
-    std::list<NotifyArgs> out = InputMapper::configure(when, config, changes);
+std::list<NotifyArgs> CursorInputMapper::reconfigure(nsecs_t when,
+                                                     const InputReaderConfiguration* config,
+                                                     uint32_t changes) {
+    std::list<NotifyArgs> out = InputMapper::reconfigure(when, config, changes);
 
     if (!changes) { // first time only
         mCursorScrollAccumulator.configure(getDeviceContext());
@@ -251,18 +253,17 @@ std::list<NotifyArgs> CursorInputMapper::configure(nsecs_t when,
 
 void CursorInputMapper::configureParameters() {
     mParameters.mode = Parameters::Mode::POINTER;
-    std::string cursorModeString;
-    if (getDeviceContext().getConfiguration().tryGetProperty("cursor.mode", cursorModeString)) {
-        if (cursorModeString == "navigation") {
+    const PropertyMap& config = getDeviceContext().getConfiguration();
+    std::optional<std::string> cursorModeString = config.getString("cursor.mode");
+    if (cursorModeString.has_value()) {
+        if (*cursorModeString == "navigation") {
             mParameters.mode = Parameters::Mode::NAVIGATION;
-        } else if (cursorModeString != "pointer" && cursorModeString != "default") {
-            ALOGW("Invalid value for cursor.mode: '%s'", cursorModeString.c_str());
+        } else if (*cursorModeString != "pointer" && *cursorModeString != "default") {
+            ALOGW("Invalid value for cursor.mode: '%s'", cursorModeString->c_str());
         }
     }
 
-    mParameters.orientationAware = false;
-    getDeviceContext().getConfiguration().tryGetProperty("cursor.orientationAware",
-                                                         mParameters.orientationAware);
+    mParameters.orientationAware = config.getBool("cursor.orientationAware").value_or(false);
 
     mParameters.hasAssociatedDisplay = false;
     if (mParameters.mode == Parameters::Mode::POINTER || mParameters.orientationAware) {
@@ -349,7 +350,7 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
     PointerProperties pointerProperties;
     pointerProperties.clear();
     pointerProperties.id = 0;
-    pointerProperties.toolType = AMOTION_EVENT_TOOL_TYPE_MOUSE;
+    pointerProperties.toolType = ToolType::MOUSE;
 
     PointerCoords pointerCoords;
     pointerCoords.clear();
@@ -372,11 +373,6 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
             if (moved) {
                 mPointerController->move(deltaX, deltaY);
             }
-
-            if (buttonsChanged) {
-                mPointerController->setButtonState(currentButtonState);
-            }
-
             mPointerController->unfade(PointerControllerInterface::Transition::IMMEDIATE);
         }
 

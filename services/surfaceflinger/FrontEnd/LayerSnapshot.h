@@ -89,10 +89,14 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     gui::GameMode gameMode;
     scheduler::LayerInfo::FrameRate frameRate;
     ui::Transform::RotationFlags fixedTransformHint;
+    std::optional<ui::Transform::RotationFlags> transformHint;
     bool handleSkipScreenshotFlag = false;
     int32_t frameRateSelectionPriority;
     LayerHierarchy::TraversalPath mirrorRootPath;
     bool unreachable = true;
+    uint32_t touchCropId;
+    uid_t uid;
+    pid_t pid;
     ChildState childState;
 
     static bool isOpaqueFormat(PixelFormat format);

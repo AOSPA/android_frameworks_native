@@ -188,10 +188,15 @@ enum class LatchUnsignaledConfig {
     // Latch unsignaled is permitted when a single layer is updated in a frame,
     // and the update includes just a buffer update (i.e. no sync transactions
     // or geometry changes).
+    // Latch unsignaled is also only permitted when a single transaction is ready
+    // to be applied. If we pass an unsignaled fence to HWC, HWC might miss presenting
+    // the frame if the fence does not fire in time. If we apply another transaction,
+    // we may penalize the other transaction unfairly.
     AutoSingleLayer,
 
     // All buffers are latched unsignaled. This behaviour is discouraged as it
     // can break sync transactions, stall the display and cause undesired side effects.
+    // This is equivalent to ignoring the acquire fence when applying transactions.
     Always,
 };
 
@@ -337,6 +342,8 @@ public:
     bool mIgnoreHwcPhysicalDisplayOrientation = false;
 
     void forceFutureUpdate(int delayInMs);
+    const DisplayDevice* getDisplayFromLayerStack(ui::LayerStack)
+            REQUIRES(mStateLock, kMainThreadContext);
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -816,7 +823,7 @@ private:
     status_t mirrorDisplay(DisplayId displayId, const LayerCreationArgs& args,
                            gui::CreateSurfaceResult& outResult);
 
-    void markLayerPendingRemovalLocked(const sp<Layer>& layer);
+    void markLayerPendingRemovalLocked(const sp<Layer>& layer) REQUIRES(mStateLock);
 
     // add a layer to SurfaceFlinger
     status_t addClientLayer(LayerCreationArgs& args, const sp<IBinder>& handle,
@@ -845,7 +852,9 @@ private:
 
     // If the uid provided is not UNSET_UID, the traverse will skip any layers that don't have a
     // matching ownerUid
-    void traverseLayersInLayerStack(ui::LayerStack, const int32_t uid, const LayerVector::Visitor&);
+    void traverseLayersInLayerStack(ui::LayerStack, const int32_t uid,
+                                    std::unordered_set<uint32_t> excludeLayerIds,
+                                    const LayerVector::Visitor&);
 
     void readPersistentProperties();
 
@@ -1402,8 +1411,11 @@ private:
             std::function<bool(const frontend::LayerSnapshot&, bool& outStopTraversal)>
                     snapshotFilterFn);
     std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> getLayerSnapshotsForScreenshots(
+            std::optional<ui::LayerStack> layerStack, uint32_t uid,
+            std::unordered_set<uint32_t> excludeLayerIds);
+    std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> getLayerSnapshotsForScreenshots(
             uint32_t rootLayerId, uint32_t uid, std::unordered_set<uint32_t> excludeLayerIds,
-            bool childrenOnly, const FloatRect& parentCrop);
+            bool childrenOnly, const std::optional<FloatRect>& optionalParentCrop);
 
     const sp<WindowInfosListenerInvoker> mWindowInfosListenerInvoker;
 
@@ -1429,10 +1441,6 @@ private:
     // These classes do not store any client state but help with managing transaction callbacks
     // and stats.
     std::unordered_map<uint32_t, sp<Layer>> mLegacyLayers;
-    struct {
-        bool late = false;
-        bool early = false;
-    } mPowerHintSessionMode;
 
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;

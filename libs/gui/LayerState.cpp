@@ -190,8 +190,8 @@ status_t layer_state_t::write(Parcel& output) const
     }
     SAFE_PARCEL(output.writeParcelable, trustedPresentationThresholds);
     SAFE_PARCEL(output.writeParcelable, trustedPresentationListener);
-    SAFE_PARCEL(output.writeFloat, currentSdrHdrRatio);
-    SAFE_PARCEL(output.writeFloat, desiredSdrHdrRatio);
+    SAFE_PARCEL(output.writeFloat, currentHdrSdrRatio);
+    SAFE_PARCEL(output.writeFloat, desiredHdrSdrRatio);
     SAFE_PARCEL(output.writeInt32, static_cast<int32_t>(cachingHint))
     return NO_ERROR;
 }
@@ -335,9 +335,9 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readParcelable, &trustedPresentationListener);
 
     SAFE_PARCEL(input.readFloat, &tmpFloat);
-    currentSdrHdrRatio = tmpFloat;
+    currentHdrSdrRatio = tmpFloat;
     SAFE_PARCEL(input.readFloat, &tmpFloat);
-    desiredSdrHdrRatio = tmpFloat;
+    desiredHdrSdrRatio = tmpFloat;
 
     int32_t tmpInt32;
     SAFE_PARCEL(input.readInt32, &tmpInt32);
@@ -592,8 +592,8 @@ void layer_state_t::merge(const layer_state_t& other) {
     }
     if (other.what & eExtendedRangeBrightnessChanged) {
         what |= eExtendedRangeBrightnessChanged;
-        desiredSdrHdrRatio = other.desiredSdrHdrRatio;
-        currentSdrHdrRatio = other.currentSdrHdrRatio;
+        desiredHdrSdrRatio = other.desiredHdrSdrRatio;
+        currentHdrSdrRatio = other.currentHdrSdrRatio;
     }
     if (other.what & eCachingHintChanged) {
         what |= eCachingHintChanged;
@@ -747,8 +747,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eCropChanged, other, crop);
     if (other.what & eBufferChanged) diff |= eBufferChanged;
     CHECK_DIFF(diff, eDataspaceChanged, other, dataspace);
-    CHECK_DIFF2(diff, eExtendedRangeBrightnessChanged, other, currentSdrHdrRatio,
-                desiredSdrHdrRatio);
+    CHECK_DIFF2(diff, eExtendedRangeBrightnessChanged, other, currentHdrSdrRatio,
+                desiredHdrSdrRatio);
     CHECK_DIFF(diff, eCachingHintChanged, other, cachingHint);
     CHECK_DIFF(diff, eHdrMetadataChanged, other, hdrMetadata);
     if (other.what & eSurfaceDamageRegionChanged &&
@@ -897,6 +897,11 @@ status_t CaptureArgs::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(output->writeInt32, static_cast<int32_t>(dataspace));
     SAFE_PARCEL(output->writeBool, allowProtected);
     SAFE_PARCEL(output->writeBool, grayscale);
+
+    SAFE_PARCEL(output->writeInt32, excludeHandles.size());
+    for (auto& excludeHandle : excludeHandles) {
+        SAFE_PARCEL(output->writeStrongBinder, excludeHandle);
+    }
     return NO_ERROR;
 }
 
@@ -913,6 +918,15 @@ status_t CaptureArgs::readFromParcel(const Parcel* input) {
     dataspace = static_cast<ui::Dataspace>(value);
     SAFE_PARCEL(input->readBool, &allowProtected);
     SAFE_PARCEL(input->readBool, &grayscale);
+
+    int32_t numExcludeHandles = 0;
+    SAFE_PARCEL_READ_SIZE(input->readInt32, &numExcludeHandles, input->dataSize());
+    excludeHandles.reserve(numExcludeHandles);
+    for (int i = 0; i < numExcludeHandles; i++) {
+        sp<IBinder> binder;
+        SAFE_PARCEL(input->readStrongBinder, &binder);
+        excludeHandles.emplace(binder);
+    }
     return NO_ERROR;
 }
 
@@ -940,10 +954,6 @@ status_t LayerCaptureArgs::writeToParcel(Parcel* output) const {
     SAFE_PARCEL(CaptureArgs::writeToParcel, output);
 
     SAFE_PARCEL(output->writeStrongBinder, layerHandle);
-    SAFE_PARCEL(output->writeInt32, excludeHandles.size());
-    for (auto el : excludeHandles) {
-        SAFE_PARCEL(output->writeStrongBinder, el);
-    }
     SAFE_PARCEL(output->writeBool, childrenOnly);
     return NO_ERROR;
 }
@@ -952,15 +962,6 @@ status_t LayerCaptureArgs::readFromParcel(const Parcel* input) {
     SAFE_PARCEL(CaptureArgs::readFromParcel, input);
 
     SAFE_PARCEL(input->readStrongBinder, &layerHandle);
-
-    int32_t numExcludeHandles = 0;
-    SAFE_PARCEL_READ_SIZE(input->readInt32, &numExcludeHandles, input->dataSize());
-    excludeHandles.reserve(numExcludeHandles);
-    for (int i = 0; i < numExcludeHandles; i++) {
-        sp<IBinder> binder;
-        SAFE_PARCEL(input->readStrongBinder, &binder);
-        excludeHandles.emplace(binder);
-    }
 
     SAFE_PARCEL(input->readBool, &childrenOnly);
     return NO_ERROR;

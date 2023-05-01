@@ -45,7 +45,7 @@ static inline uint16_t EndianSwap16(uint16_t value) {
     #define Endian_SwapBE16(n) (n)
 #endif
 
-struct jpegr_metadata;
+struct jpegr_metadata_struct;
 /*
  * Mutable data structure. Holds information for metadata.
  */
@@ -87,7 +87,7 @@ status_t Write(jr_compressed_ptr destination, const void* source, size_t length,
  * @param metadata place to store HDR metadata values
  * @return true if metadata is successfully retrieved, false otherwise
 */
-bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* metadata);
+bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata_struct* metadata);
 
 /*
  * This method generates XMP metadata for the primary image.
@@ -105,14 +105,16 @@ bool getMetadataFromXMP(uint8_t* xmp_data, size_t xmp_size, jpegr_metadata* meta
  *       xmlns:Item="http://ns.google.com/photos/1.0/container/item/">
  *       <Container:Directory>
  *         <rdf:Seq>
- *           <rdf:li>
+ *           <rdf:li
+ *             rdf:parseType="Resource">
  *             <Container:Item
  *               Item:Semantic="Primary"
  *               Item:Mime="image/jpeg"/>
  *           </rdf:li>
- *           <rdf:li>
+ *           <rdf:li
+ *             rdf:parseType="Resource">
  *             <Container:Item
- *               Item:Semantic="RecoveryMap"
+ *               Item:Semantic="GainMap"
  *               Item:Mime="image/jpeg"
  *               Item:Length="1000"/>
  *           </rdf:li>
@@ -142,21 +144,21 @@ std::string generateXmpForPrimaryImage(int secondary_image_length);
  *     <rdf:Description
  *       xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
  *       hdrgm:Version="1"
- *       hdrgm:GainMapMin="0.5"
- *       hdrgm:GainMapMax="8.5"
+ *       hdrgm:GainMapMin="-1"
+ *       hdrgm:GainMapMax="3"
  *       hdrgm:Gamma="1"
  *       hdrgm:OffsetSDR="0"
  *       hdrgm:OffsetHDR="0"
- *       hdrgm:HDRCapacityMin="0.5"
- *       hdrgm:HDRCapacityMax="8.5"
- *       hdrgm:BaseRendition="SDR"/>
+ *       hdrgm:HDRCapacityMin="0"
+ *       hdrgm:HDRCapacityMax="3"
+ *       hdrgm:BaseRenditionIsHDR="False"/>
  *   </rdf:RDF>
  * </x:xmpmeta>
  *
  * @param metadata JPEG/R metadata to encode as XMP
  * @return XMP metadata in type of string
  */
- std::string generateXmpForSecondaryImage(jpegr_metadata& metadata);
+ std::string generateXmpForSecondaryImage(jpegr_metadata_struct& metadata);
 }  // namespace android::jpegrecoverymap
 
 #endif //ANDROID_JPEGRECOVERYMAP_JPEGRUTILS_H

@@ -49,7 +49,7 @@ public:
      * Methods used by SurfaceFlinger DisplayHardware.
      */
     status_t qtiSetDisplayElapseTime(
-            std::chrono::steady_clock::time_point earliestPresentTime) const override;
+            std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) const override;
 
     /*
      * Methods that call the DisplayExtension APIs.
@@ -85,8 +85,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    VirtualDisplayId qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
-                                              bool canAllocateHwcForVDS) override;
+    std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat,
+                                                             bool canAllocateHwcForVDS) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) override;
     bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
     void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
@@ -129,6 +129,8 @@ public:
     void qtiDolphinTrackBufferIncrement(const char *name);
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
+
+    bool qtiIsFpsDeferNeeded(float newFpsRequest) { return false; }
 
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;

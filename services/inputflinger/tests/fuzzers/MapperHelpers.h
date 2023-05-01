@@ -66,6 +66,14 @@ constexpr size_t kMaxSize = 256;
 
 namespace android {
 
+template<class Fdp>
+ToolType getFuzzedToolType(Fdp& fdp) {
+    const int32_t toolType = fdp.template ConsumeIntegralInRange<int32_t>(
+                            static_cast<int32_t>(ToolType::ftl_first),
+                            static_cast<int32_t>(ToolType::ftl_last));
+    return static_cast<ToolType>(toolType);
+}
+
 class FuzzEventHub : public EventHubInterface {
     InputDeviceIdentifier mIdentifier;
     std::vector<TouchVideoFrame> mVideoFrames;
@@ -217,6 +225,7 @@ public:
     bool isDeviceEnabled(int32_t deviceId) const override { return mFdp->ConsumeBool(); }
     status_t enableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
     status_t disableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
+    void sysfsNodeChanged(const std::string& sysfsNodePath) override {}
 };
 
 class FuzzPointerController : public PointerControllerInterface {
@@ -236,8 +245,6 @@ public:
         }
     }
     void move(float deltaX, float deltaY) override {}
-    void setButtonState(int32_t buttonState) override {}
-    int32_t getButtonState() const override { return mFdp->ConsumeIntegral<int32_t>(); }
     void setPosition(float x, float y) override {}
     FloatPoint getPosition() const override {
         return {mFdp->ConsumeFloatingPoint<float>(), mFdp->ConsumeFloatingPoint<float>()};

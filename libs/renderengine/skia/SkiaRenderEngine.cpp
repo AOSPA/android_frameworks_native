@@ -264,14 +264,11 @@ void SkiaRenderEngine::setEnableTracing(bool tracingEnabled) {
     SkAndroidFrameworkTraceUtil::setEnableTracing(tracingEnabled);
 }
 
-SkiaRenderEngine::SkiaRenderEngine(
-    RenderEngineType type,
-    PixelFormat pixelFormat,
-    bool useColorManagement,
-    bool supportsBackgroundBlur) :
-    RenderEngine(type),
-    mDefaultPixelFormat(pixelFormat),
-    mUseColorManagement(useColorManagement) {
+SkiaRenderEngine::SkiaRenderEngine(RenderEngineType type, PixelFormat pixelFormat,
+                                   bool useColorManagement, bool supportsBackgroundBlur)
+      : RenderEngine(type),
+        mDefaultPixelFormat(pixelFormat),
+        mUseColorManagement(useColorManagement) {
     if (supportsBackgroundBlur) {
         ALOGD("Background Blurs Enabled");
         mBlurFilter = new KawaseBlurFilter();
@@ -395,10 +392,14 @@ void SkiaRenderEngine::mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer,
         mRenderEngineType != RenderEngineType::SKIA_VK_THREADED) {
         return;
     }
-    // We currently don't attempt to map a buffer if the buffer contains protected content
-    // because GPU resources for protected buffers is much more limited.
+    // We don't attempt to map a buffer if the buffer contains protected content. In GL this is
+    // important because GPU resources for protected buffers are much more limited. (In Vk we
+    // simply match the existing behavior for protected buffers.)  In Vk, we never cache any
+    // buffers while in a protected context, since Vk cannot share across contexts, and protected
+    // is less common.
     const bool isProtectedBuffer = buffer->getUsage() & GRALLOC_USAGE_PROTECTED;
-    if (isProtectedBuffer) {
+    if (isProtectedBuffer ||
+        (mRenderEngineType == RenderEngineType::SKIA_VK_THREADED && isProtected())) {
         return;
     }
     ATRACE_CALL();
@@ -461,6 +462,20 @@ void SkiaRenderEngine::unmapExternalTextureBuffer(sp<GraphicBuffer>&& buffer) {
     }
 }
 
+std::shared_ptr<AutoBackendTexture::LocalRef> SkiaRenderEngine::getOrCreateBackendTexture(
+        const sp<GraphicBuffer>& buffer, bool isOutputBuffer) {
+    // Do not lookup the buffer in the cache for protected contexts with the SkiaVk back-end
+    if (mRenderEngineType == RenderEngineType::SKIA_GL_THREADED ||
+        (mRenderEngineType == RenderEngineType::SKIA_VK_THREADED && !isProtected())) {
+        if (const auto& it = mTextureCache.find(buffer->getId()); it != mTextureCache.end()) {
+            return it->second;
+        }
+    }
+    return std::make_shared<AutoBackendTexture::LocalRef>(getActiveGrContext(),
+                                                          buffer->toAHardwareBuffer(),
+                                                          isOutputBuffer, mTextureCleanupMgr);
+}
+
 bool SkiaRenderEngine::canSkipPostRenderCleanup() const {
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     return mTextureCleanupMgr.isEmpty();
@@ -489,15 +504,9 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     }
 
     if (parameters.requiresLinearEffect) {
-        const ui::Dataspace inputDataspace = mUseColorManagement ? parameters.layer.sourceDataspace
-                                                                 : ui::Dataspace::V0_SRGB_LINEAR;
-        const ui::Dataspace outputDataspace = mUseColorManagement
-                ? parameters.display.outputDataspace
-                : ui::Dataspace::V0_SRGB_LINEAR;
-
         auto effect =
-                shaders::LinearEffect{.inputDataspace = inputDataspace,
-                                      .outputDataspace = outputDataspace,
+                shaders::LinearEffect{.inputDataspace = parameters.layer.sourceDataspace,
+                                      .outputDataspace = parameters.outputDataSpace,
                                       .undoPremultipliedAlpha = parameters.undoPremultipliedAlpha};
 
         auto effectIter = mRuntimeEffects.find(effect);
@@ -651,28 +660,17 @@ void SkiaRenderEngine::drawLayersInternal(
     validateOutputBufferUsage(buffer->getBuffer());
 
     auto grContext = getActiveGrContext();
-    auto& cache = mTextureCache;
 
     // any AutoBackendTexture deletions will now be deferred until cleanupPostRender is called
     DeferTextureCleanup dtc(mTextureCleanupMgr);
 
-    std::shared_ptr<AutoBackendTexture::LocalRef> surfaceTextureRef;
-    if (const auto& it = cache.find(buffer->getBuffer()->getId()); it != cache.end()) {
-        surfaceTextureRef = it->second;
-    } else {
-        surfaceTextureRef =
-                std::make_shared<AutoBackendTexture::LocalRef>(grContext,
-                                                               buffer->getBuffer()
-                                                                       ->toAHardwareBuffer(),
-                                                               true, mTextureCleanupMgr);
-    }
+    auto surfaceTextureRef = getOrCreateBackendTexture(buffer->getBuffer(), true);
 
     // wait on the buffer to be ready to use prior to using it
     waitFence(grContext, bufferFence);
 
-    const ui::Dataspace dstDataspace =
-            mUseColorManagement ? display.outputDataspace : ui::Dataspace::V0_SRGB_LINEAR;
-    sk_sp<SkSurface> dstSurface = surfaceTextureRef->getOrCreateSurface(dstDataspace, grContext);
+    sk_sp<SkSurface> dstSurface =
+            surfaceTextureRef->getOrCreateSurface(display.outputDataspace, grContext);
 
     SkCanvas* dstCanvas = mCapture->tryCapture(dstSurface.get());
     if (dstCanvas == nullptr) {
@@ -880,10 +878,31 @@ void SkiaRenderEngine::drawLayersInternal(
         const bool dimInLinearSpace = display.dimmingStage !=
                 aidl::android::hardware::graphics::composer3::DimmingStage::GAMMA_OETF;
 
+        const bool isExtendedHdr = (layer.sourceDataspace & ui::Dataspace::RANGE_MASK) ==
+                        static_cast<int32_t>(ui::Dataspace::RANGE_EXTENDED) &&
+                (display.outputDataspace & ui::Dataspace::TRANSFER_MASK) ==
+                        static_cast<int32_t>(ui::Dataspace::TRANSFER_SRGB);
+
+        const ui::Dataspace runtimeEffectDataspace = !dimInLinearSpace && isExtendedHdr
+                ? static_cast<ui::Dataspace>(
+                          (display.outputDataspace & ui::Dataspace::STANDARD_MASK) |
+                          ui::Dataspace::TRANSFER_GAMMA2_2 |
+                          (display.outputDataspace & ui::Dataspace::RANGE_MASK))
+                : display.outputDataspace;
+
+        // If the input dataspace is range extended, the output dataspace transfer is sRGB
+        // and dimmingStage is GAMMA_OETF, dim in linear space instead, and
+        // set the output dataspace's transfer to be GAMMA2_2.
+        // This allows DPU side to use oetf_gamma_2p2 for extended HDR layer
+        // to avoid tone shift.
+        // The reason of tone shift here is because HDR layers manage white point
+        // luminance in linear space, which color pipelines request GAMMA_OETF break
+        // without a gamma 2.2 fixup.
         const bool requiresLinearEffect = layer.colorTransform != mat4() ||
                 (mUseColorManagement &&
                  needsToneMapping(layer.sourceDataspace, display.outputDataspace)) ||
-                (dimInLinearSpace && !equalsWithinMargin(1.f, layerDimmingRatio));
+                (dimInLinearSpace && !equalsWithinMargin(1.f, layerDimmingRatio)) ||
+                (!dimInLinearSpace && isExtendedHdr);
 
         // quick abort from drawing the remaining portion of the layer
         if (layer.skipContentDraw ||
@@ -896,7 +915,7 @@ void SkiaRenderEngine::drawLayersInternal(
         // image with the same colorspace as the destination surface so that Skia's color
         // management is a no-op.
         const ui::Dataspace layerDataspace = (!mUseColorManagement || requiresLinearEffect)
-                ? dstDataspace
+                ? display.outputDataspace
                 : layer.sourceDataspace;
 
         SkPaint paint;
@@ -904,21 +923,7 @@ void SkiaRenderEngine::drawLayersInternal(
             ATRACE_NAME("DrawImage");
             validateInputBufferUsage(layer.source.buffer.buffer->getBuffer());
             const auto& item = layer.source.buffer;
-            std::shared_ptr<AutoBackendTexture::LocalRef> imageTextureRef = nullptr;
-
-            if (const auto& iter = cache.find(item.buffer->getBuffer()->getId());
-                iter != cache.end()) {
-                imageTextureRef = iter->second;
-            } else {
-                // If we didn't find the image in the cache, then create a local ref but don't cache
-                // it. If we're using skia, we're guaranteed to run on a dedicated GPU thread so if
-                // we didn't find anything in the cache then we intentionally did not cache this
-                // buffer's resources.
-                imageTextureRef = std::make_shared<
-                        AutoBackendTexture::LocalRef>(grContext,
-                                                      item.buffer->getBuffer()->toAHardwareBuffer(),
-                                                      false, mTextureCleanupMgr);
-            }
+            auto imageTextureRef = getOrCreateBackendTexture(item.buffer->getBuffer(), false);
 
             // if the layer's buffer has a fence, then we must must respect the fence prior to using
             // the buffer.
@@ -991,7 +996,8 @@ void SkiaRenderEngine::drawLayersInternal(
                                                   .requiresLinearEffect = requiresLinearEffect,
                                                   .layerDimmingRatio = dimInLinearSpace
                                                           ? layerDimmingRatio
-                                                          : 1.f}));
+                                                          : 1.f,
+                                                  .outputDataSpace = runtimeEffectDataspace}));
 
             // Turn on dithering when dimming beyond this (arbitrary) threshold...
             static constexpr float kDimmingThreshold = 0.2f;
@@ -1054,7 +1060,8 @@ void SkiaRenderEngine::drawLayersInternal(
                                                   .display = display,
                                                   .undoPremultipliedAlpha = false,
                                                   .requiresLinearEffect = requiresLinearEffect,
-                                                  .layerDimmingRatio = layerDimmingRatio}));
+                                                  .layerDimmingRatio = layerDimmingRatio,
+                                                  .outputDataSpace = runtimeEffectDataspace}));
         }
 
         if (layer.disableBlending) {
