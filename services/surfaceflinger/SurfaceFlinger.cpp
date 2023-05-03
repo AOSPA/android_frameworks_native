@@ -759,9 +759,7 @@ void SurfaceFlinger::bootFinished() {
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
                                         mVsyncConfiguration.get(), getHwComposer().getComposer());
-    // TODO(naseer) set compeng object
-    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
-            &getCompositionEngine());
+    mQtiSFExtnIntf->qtiSetTid();
     /* QTI_END */
 }
 
@@ -941,6 +939,8 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
                                         mVsyncConfiguration.get(), getHwComposer().getComposer());
+   surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
+            &getCompositionEngine());
     mQtiSFExtnIntf->qtiStartUnifiedDraw();
     /* QTI_END */
     ALOGV("Done initializing");
