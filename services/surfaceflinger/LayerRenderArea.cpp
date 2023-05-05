@@ -40,8 +40,9 @@ void reparentForDrawing(const sp<Layer>& oldParent, const sp<Layer>& newParent,
 LayerRenderArea::LayerRenderArea(SurfaceFlinger& flinger, sp<Layer> layer, const Rect& crop,
                                  ui::Size reqSize, ui::Dataspace reqDataSpace, bool childrenOnly,
                                  bool allowSecureLayers, const ui::Transform& layerTransform,
-                                 const Rect& layerBufferSize)
-      : RenderArea(reqSize, CaptureFill::CLEAR, reqDataSpace, allowSecureLayers),
+                                 const Rect& layerBufferSize, bool hintForSeamlessTransition)
+      : RenderArea(reqSize, CaptureFill::CLEAR, reqDataSpace, hintForSeamlessTransition,
+                   allowSecureLayers),
         mLayer(std::move(layer)),
         mLayerTransform(layerTransform),
         mLayerBufferSize(layerBufferSize),
@@ -84,7 +85,7 @@ void LayerRenderArea::render(std::function<void()> drawLayers) {
     // If layer is offscreen, update mirroring info if it exists
     if (mLayer->isRemovedFromCurrentState()) {
         mLayer->traverse(LayerVector::StateSet::Drawing,
-                         [&](Layer* layer) { layer->updateMirrorInfo(); });
+                         [&](Layer* layer) { layer->updateMirrorInfo({}); });
         mLayer->traverse(LayerVector::StateSet::Drawing,
                          [&](Layer* layer) { layer->updateCloneBufferInfo(); });
     }

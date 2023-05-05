@@ -54,6 +54,7 @@
 #define INDENT4 "        "
 
 using namespace android::ftl::flag_operators;
+using android::base::Error;
 using android::base::HwTimeoutMultiplier;
 using android::base::Result;
 using android::base::StringPrintf;
@@ -129,48 +130,68 @@ inline int32_t getMotionEventActionPointerIndex(int32_t action) {
             AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
 }
 
-bool isValidKeyAction(int32_t action) {
+Result<void> checkKeyAction(int32_t action) {
     switch (action) {
         case AKEY_EVENT_ACTION_DOWN:
         case AKEY_EVENT_ACTION_UP:
-            return true;
+            return {};
         default:
-            return false;
+            return Error() << "Key event has invalid action code " << action;
     }
 }
 
-bool validateKeyEvent(int32_t action) {
-    if (!isValidKeyAction(action)) {
-        ALOGE("Key event has invalid action code 0x%x", action);
-        return false;
-    }
-    return true;
+Result<void> validateKeyEvent(int32_t action) {
+    return checkKeyAction(action);
 }
 
-bool isValidMotionAction(int32_t action, int32_t actionButton, int32_t pointerCount) {
+Result<void> checkMotionAction(int32_t action, int32_t actionButton, int32_t pointerCount) {
     switch (MotionEvent::getActionMasked(action)) {
         case AMOTION_EVENT_ACTION_DOWN:
-        case AMOTION_EVENT_ACTION_UP:
-            return pointerCount == 1;
+        case AMOTION_EVENT_ACTION_UP: {
+            if (pointerCount != 1) {
+                return Error() << "invalid pointer count " << pointerCount;
+            }
+            return {};
+        }
         case AMOTION_EVENT_ACTION_MOVE:
         case AMOTION_EVENT_ACTION_HOVER_ENTER:
         case AMOTION_EVENT_ACTION_HOVER_MOVE:
-        case AMOTION_EVENT_ACTION_HOVER_EXIT:
-            return pointerCount >= 1;
+        case AMOTION_EVENT_ACTION_HOVER_EXIT: {
+            if (pointerCount < 1) {
+                return Error() << "invalid pointer count " << pointerCount;
+            }
+            return {};
+        }
         case AMOTION_EVENT_ACTION_CANCEL:
         case AMOTION_EVENT_ACTION_OUTSIDE:
         case AMOTION_EVENT_ACTION_SCROLL:
-            return true;
+            return {};
         case AMOTION_EVENT_ACTION_POINTER_DOWN:
         case AMOTION_EVENT_ACTION_POINTER_UP: {
             const int32_t index = MotionEvent::getActionIndex(action);
-            return index >= 0 && index < pointerCount && pointerCount > 1;
+            if (index < 0) {
+                return Error() << "invalid index " << index << " for "
+                               << MotionEvent::actionToString(action);
+            }
+            if (index >= pointerCount) {
+                return Error() << "invalid index " << index << " for pointerCount " << pointerCount;
+            }
+            if (pointerCount <= 1) {
+                return Error() << "invalid pointer count " << pointerCount << " for "
+                               << MotionEvent::actionToString(action);
+            }
+            return {};
         }
         case AMOTION_EVENT_ACTION_BUTTON_PRESS:
-        case AMOTION_EVENT_ACTION_BUTTON_RELEASE:
-            return actionButton != 0;
+        case AMOTION_EVENT_ACTION_BUTTON_RELEASE: {
+            if (actionButton == 0) {
+                return Error() << "action button should be nonzero for "
+                               << MotionEvent::actionToString(action);
+            }
+            return {};
+        }
         default:
-            return false;
+            return Error() << "invalid action " << action;
     }
 }
 
@@ -178,32 +199,50 @@ int64_t millis(std::chrono::nanoseconds t) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(t).count();
 }
 
-bool validateMotionEvent(int32_t action, int32_t actionButton, size_t pointerCount,
-                         const PointerProperties* pointerProperties) {
-    if (!isValidMotionAction(action, actionButton, pointerCount)) {
-        ALOGE("Motion event has invalid action code 0x%x", action);
-        return false;
+Result<void> validateMotionEvent(int32_t action, int32_t actionButton, size_t pointerCount,
+                                 const PointerProperties* pointerProperties) {
+    Result<void> actionCheck = checkMotionAction(action, actionButton, pointerCount);
+    if (!actionCheck.ok()) {
+        return actionCheck;
     }
     if (pointerCount < 1 || pointerCount > MAX_POINTERS) {
-        ALOGE("Motion event has invalid pointer count %zu; value must be between 1 and %zu.",
-              pointerCount, MAX_POINTERS);
-        return false;
+        return Error() << "Motion event has invalid pointer count " << pointerCount
+                       << "; value must be between 1 and " << MAX_POINTERS << ".";
     }
     std::bitset<MAX_POINTER_ID + 1> pointerIdBits;
     for (size_t i = 0; i < pointerCount; i++) {
         int32_t id = pointerProperties[i].id;
         if (id < 0 || id > MAX_POINTER_ID) {
-            ALOGE("Motion event has invalid pointer id %d; value must be between 0 and %d", id,
-                  MAX_POINTER_ID);
-            return false;
+            return Error() << "Motion event has invalid pointer id " << id
+                           << "; value must be between 0 and " << MAX_POINTER_ID;
         }
         if (pointerIdBits.test(id)) {
-            ALOGE("Motion event has duplicate pointer id %d", id);
-            return false;
+            return Error() << "Motion event has duplicate pointer id " << id;
         }
         pointerIdBits.set(id);
     }
-    return true;
+    return {};
+}
+
+Result<void> validateInputEvent(const InputEvent& event) {
+    switch (event.getType()) {
+        case InputEventType::KEY: {
+            const KeyEvent& key = static_cast<const KeyEvent&>(event);
+            const int32_t action = key.getAction();
+            return validateKeyEvent(action);
+        }
+        case InputEventType::MOTION: {
+            const MotionEvent& motion = static_cast<const MotionEvent&>(event);
+            const int32_t action = motion.getAction();
+            const size_t pointerCount = motion.getPointerCount();
+            const PointerProperties* pointerProperties = motion.getPointerProperties();
+            const int32_t actionButton = motion.getActionButton();
+            return validateMotionEvent(action, actionButton, pointerCount, pointerProperties);
+        }
+        default: {
+            return {};
+        }
+    }
 }
 
 std::string dumpRegion(const Region& region) {
@@ -676,7 +715,6 @@ InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& polic
     SurfaceComposerClient::getDefault()->addWindowInfosListener(mWindowInfoListener);
 #endif
     mKeyRepeatState.lastKeyEntry = nullptr;
-    policy->getDispatcherConfiguration(&mConfig);
 }
 
 InputDispatcher::~InputDispatcher() {
@@ -688,7 +726,7 @@ InputDispatcher::~InputDispatcher() {
     mCommandQueue.clear();
 
     while (!mConnectionsByToken.empty()) {
-        sp<Connection> connection = mConnectionsByToken.begin()->second;
+        std::shared_ptr<Connection> connection = mConnectionsByToken.begin()->second;
         removeInputChannelLocked(connection->inputChannel->getConnectionToken(), /*notify=*/false);
     }
 }
@@ -802,7 +840,7 @@ nsecs_t InputDispatcher::processAnrsLocked() {
     }
 
     // If we reached here, we have an unresponsive connection.
-    sp<Connection> connection = getConnectionLocked(mAnrTracker.firstToken());
+    std::shared_ptr<Connection> connection = getConnectionLocked(mAnrTracker.firstToken());
     if (connection == nullptr) {
         ALOGE("Could not find connection for entry %" PRId64, mAnrTracker.firstTimeout());
         return nextAnrCheck;
@@ -815,7 +853,7 @@ nsecs_t InputDispatcher::processAnrsLocked() {
 }
 
 std::chrono::nanoseconds InputDispatcher::getDispatchingTimeoutLocked(
-        const sp<Connection>& connection) {
+        const std::shared_ptr<Connection>& connection) {
     if (connection->monitor) {
         return mMonitorDispatchingTimeout;
     }
@@ -1058,7 +1096,8 @@ bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEnt
         const std::vector<sp<WindowInfoHandle>> touchedSpies =
                 findTouchedSpyWindowsAtLocked(displayId, x, y, isStylus);
         for (const auto& windowHandle : touchedSpies) {
-            const sp<Connection> connection = getConnectionLocked(windowHandle->getToken());
+            const std::shared_ptr<Connection> connection =
+                    getConnectionLocked(windowHandle->getToken());
             if (connection != nullptr && connection->responsive) {
                 // This spy window could take more input. Drop all events preceding this
                 // event, so that the spy window can get a chance to receive the stream.
@@ -1297,7 +1336,7 @@ bool InputDispatcher::isAppSwitchKeyEvent(const KeyEntry& keyEntry) {
             (keyEntry.policyFlags & POLICY_FLAG_PASS_TO_USER);
 }
 
-bool InputDispatcher::isAppSwitchPendingLocked() {
+bool InputDispatcher::isAppSwitchPendingLocked() const {
     return mAppSwitchDueTime != LLONG_MAX;
 }
 
@@ -1895,7 +1934,7 @@ void InputDispatcher::dispatchEventLocked(nsecs_t currentTime,
     pokeUserActivityLocked(*eventEntry);
 
     for (const InputTarget& inputTarget : inputTargets) {
-        sp<Connection> connection =
+        std::shared_ptr<Connection> connection =
                 getConnectionLocked(inputTarget.inputChannel->getConnectionToken());
         if (connection != nullptr) {
             prepareDispatchCycleLocked(currentTime, connection, eventEntry, inputTarget);
@@ -1909,7 +1948,7 @@ void InputDispatcher::dispatchEventLocked(nsecs_t currentTime,
     }
 }
 
-void InputDispatcher::cancelEventsForAnrLocked(const sp<Connection>& connection) {
+void InputDispatcher::cancelEventsForAnrLocked(const std::shared_ptr<Connection>& connection) {
     // We will not be breaking any connections here, even if the policy wants us to abort dispatch.
     // If the policy decides to close the app, we will get a channel removal event via
     // unregisterInputChannel, and will clean up the connection that way. We are already not
@@ -2101,7 +2140,7 @@ std::vector<Monitor> InputDispatcher::selectResponsiveMonitorsLocked(
     std::vector<Monitor> responsiveMonitors;
     std::copy_if(monitors.begin(), monitors.end(), std::back_inserter(responsiveMonitors),
                  [this](const Monitor& monitor) REQUIRES(mLock) {
-                     sp<Connection> connection =
+                     std::shared_ptr<Connection> connection =
                              getConnectionLocked(monitor.inputChannel->getConnectionToken());
                      if (connection == nullptr) {
                          ALOGE("Could not find connection for monitor %s",
@@ -2401,6 +2440,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             const bool isStylus = isPointerFromStylus(entry, /*pointerIndex=*/0);
             sp<WindowInfoHandle> oldTouchedWindowHandle =
                     tempTouchState.getFirstForegroundWindowHandle();
+            LOG_ALWAYS_FATAL_IF(oldTouchedWindowHandle == nullptr);
             auto [newTouchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus);
 
             // Verify targeted injection.
@@ -2416,13 +2456,11 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
                 newTouchedWindowHandle = nullptr;
             }
 
-            if (oldTouchedWindowHandle != newTouchedWindowHandle &&
-                oldTouchedWindowHandle != nullptr && newTouchedWindowHandle != nullptr) {
-                if (DEBUG_FOCUS) {
-                    ALOGD("Touch is slipping out of window %s into window %s in display %" PRId32,
-                          oldTouchedWindowHandle->getName().c_str(),
-                          newTouchedWindowHandle->getName().c_str(), displayId);
-                }
+            if (!haveSameToken(oldTouchedWindowHandle, newTouchedWindowHandle)) {
+                ALOGD("Touch is slipping out of window %s into window %s in display %" PRId32,
+                      oldTouchedWindowHandle->getName().c_str(),
+                      newTouchedWindowHandle->getName().c_str(), displayId);
+
                 // Make a slippery exit from the old window.
                 std::bitset<MAX_POINTER_ID + 1> pointerIds;
                 const int32_t pointerId = entry.pointerProperties[0].id;
@@ -3027,7 +3065,7 @@ void InputDispatcher::pokeUserActivityLocked(const EventEntry& eventEntry) {
 }
 
 void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
-                                                 const sp<Connection>& connection,
+                                                 const std::shared_ptr<Connection>& connection,
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget) {
     if (ATRACE_ENABLED()) {
@@ -3097,7 +3135,7 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
 }
 
 void InputDispatcher::enqueueDispatchEntriesLocked(nsecs_t currentTime,
-                                                   const sp<Connection>& connection,
+                                                   const std::shared_ptr<Connection>& connection,
                                                    std::shared_ptr<EventEntry> eventEntry,
                                                    const InputTarget& inputTarget) {
     if (ATRACE_ENABLED()) {
@@ -3131,7 +3169,7 @@ void InputDispatcher::enqueueDispatchEntriesLocked(nsecs_t currentTime,
     }
 }
 
-void InputDispatcher::enqueueDispatchEntryLocked(const sp<Connection>& connection,
+void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connection>& connection,
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget,
                                                  ftl::Flags<InputTarget::Flags> dispatchMode) {
@@ -3316,14 +3354,14 @@ void InputDispatcher::updateInteractionTokensLocked(const EventEntry& entry,
     }
 
     std::unordered_set<sp<IBinder>, StrongPointerHash<IBinder>> newConnectionTokens;
-    std::vector<sp<Connection>> newConnections;
+    std::vector<std::shared_ptr<Connection>> newConnections;
     for (const InputTarget& target : targets) {
         if (target.flags.test(InputTarget::Flags::DISPATCH_AS_OUTSIDE)) {
             continue; // Skip windows that receive ACTION_OUTSIDE
         }
 
         sp<IBinder> token = target.inputChannel->getConnectionToken();
-        sp<Connection> connection = getConnectionLocked(token);
+        std::shared_ptr<Connection> connection = getConnectionLocked(token);
         if (connection == nullptr) {
             continue;
         }
@@ -3336,7 +3374,7 @@ void InputDispatcher::updateInteractionTokensLocked(const EventEntry& entry,
     mInteractionConnectionTokens = newConnectionTokens;
 
     std::string targetList;
-    for (const sp<Connection>& connection : newConnections) {
+    for (const std::shared_ptr<Connection>& connection : newConnections) {
         targetList += connection->getWindowName() + ", ";
     }
     std::string message = "Interaction with: " + targetList;
@@ -3416,7 +3454,7 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
 }
 
 void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
-                                               const sp<Connection>& connection) {
+                                               const std::shared_ptr<Connection>& connection) {
     if (ATRACE_ENABLED()) {
         std::string message = StringPrintf("startDispatchCycleLocked(inputChannel=%s)",
                                            connection->getInputChannelName().c_str());
@@ -3596,8 +3634,8 @@ const std::array<uint8_t, 32> InputDispatcher::getSignature(
 }
 
 void InputDispatcher::finishDispatchCycleLocked(nsecs_t currentTime,
-                                                const sp<Connection>& connection, uint32_t seq,
-                                                bool handled, nsecs_t consumeTime) {
+                                                const std::shared_ptr<Connection>& connection,
+                                                uint32_t seq, bool handled, nsecs_t consumeTime) {
     if (DEBUG_DISPATCH_CYCLE) {
         ALOGD("channel '%s' ~ finishDispatchCycle - seq=%u, handled=%s",
               connection->getInputChannelName().c_str(), seq, toString(handled));
@@ -3616,7 +3654,7 @@ void InputDispatcher::finishDispatchCycleLocked(nsecs_t currentTime,
 }
 
 void InputDispatcher::abortBrokenDispatchCycleLocked(nsecs_t currentTime,
-                                                     const sp<Connection>& connection,
+                                                     const std::shared_ptr<Connection>& connection,
                                                      bool notify) {
     if (DEBUG_DISPATCH_CYCLE) {
         LOG(DEBUG) << "channel '" << connection->getInputChannelName() << "'~ " << __func__
@@ -3665,7 +3703,7 @@ void InputDispatcher::releaseDispatchEntry(DispatchEntry* dispatchEntry) {
 
 int InputDispatcher::handleReceiveCallback(int events, sp<IBinder> connectionToken) {
     std::scoped_lock _l(mLock);
-    sp<Connection> connection = getConnectionLocked(connectionToken);
+    std::shared_ptr<Connection> connection = getConnectionLocked(connectionToken);
     if (connection == nullptr) {
         ALOGW("Received looper callback for unknown input channel token %p.  events=0x%x",
               connectionToken.get(), events);
@@ -3757,7 +3795,7 @@ void InputDispatcher::synthesizeCancelationEventsForMonitorsLocked(
 
 void InputDispatcher::synthesizeCancelationEventsForInputChannelLocked(
         const std::shared_ptr<InputChannel>& channel, const CancelationOptions& options) {
-    sp<Connection> connection = getConnectionLocked(channel->getConnectionToken());
+    std::shared_ptr<Connection> connection = getConnectionLocked(channel->getConnectionToken());
     if (connection == nullptr) {
         return;
     }
@@ -3766,7 +3804,7 @@ void InputDispatcher::synthesizeCancelationEventsForInputChannelLocked(
 }
 
 void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
-        const sp<Connection>& connection, const CancelationOptions& options) {
+        const std::shared_ptr<Connection>& connection, const CancelationOptions& options) {
     if (connection->status == Connection::Status::BROKEN) {
         return;
     }
@@ -3844,7 +3882,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
 }
 
 void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
-        const nsecs_t downTime, const sp<Connection>& connection,
+        const nsecs_t downTime, const std::shared_ptr<Connection>& connection,
         ftl::Flags<InputTarget::Flags> targetFlags) {
     if (connection->status == Connection::Status::BROKEN) {
         return;
@@ -3909,7 +3947,8 @@ void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
 void InputDispatcher::synthesizeCancelationEventsForWindowLocked(
         const sp<WindowInfoHandle>& windowHandle, const CancelationOptions& options) {
     if (windowHandle != nullptr) {
-        sp<Connection> wallpaperConnection = getConnectionLocked(windowHandle->getToken());
+        std::shared_ptr<Connection> wallpaperConnection =
+                getConnectionLocked(windowHandle->getToken());
         if (wallpaperConnection != nullptr) {
             synthesizeCancelationEventsForConnectionLocked(wallpaperConnection, options);
         }
@@ -4092,7 +4131,9 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs& args) {
              args.id, args.eventTime, args.deviceId, inputEventSourceToString(args.source).c_str(),
              args.displayId, args.policyFlags, KeyEvent::actionToString(args.action), args.flags,
              KeyEvent::getLabel(args.keyCode), args.scanCode, args.metaState, args.downTime);
-    if (!validateKeyEvent(args.action)) {
+    Result<void> keyCheck = validateKeyEvent(args.action);
+    if (!keyCheck.ok()) {
+        LOG(ERROR) << "invalid key event: " << keyCheck.error();
         return;
     }
 
@@ -4189,9 +4230,10 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
         }
     }
 
-    if (!validateMotionEvent(args.action, args.actionButton, args.pointerCount,
-                             args.pointerProperties)) {
-        LOG(ERROR) << "Invalid event: " << args.dump();
+    Result<void> motionCheck = validateMotionEvent(args.action, args.actionButton,
+                                                   args.pointerCount, args.pointerProperties);
+    if (!motionCheck.ok()) {
+        LOG(ERROR) << "Invalid event: " << args.dump() << "; reason: " << motionCheck.error();
         return;
     }
 
@@ -4367,6 +4409,12 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                                                             InputEventInjectionSync syncMode,
                                                             std::chrono::milliseconds timeout,
                                                             uint32_t policyFlags) {
+    Result<void> eventValidation = validateInputEvent(*event);
+    if (!eventValidation.ok()) {
+        LOG(INFO) << "Injection failed: invalid event: " << eventValidation.error();
+        return InputEventInjectionResult::FAILED;
+    }
+
     if (debugInboundEventDetails()) {
         LOG(DEBUG) << __func__ << ": targetUid=" << toString(targetUid)
                    << ", syncMode=" << ftl::enum_string(syncMode) << ", timeout=" << timeout.count()
@@ -4392,11 +4440,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
     switch (event->getType()) {
         case InputEventType::KEY: {
             const KeyEvent& incomingKey = static_cast<const KeyEvent&>(*event);
-            int32_t action = incomingKey.getAction();
-            if (!validateKeyEvent(action)) {
-                return InputEventInjectionResult::FAILED;
-            }
-
+            const int32_t action = incomingKey.getAction();
             int32_t flags = incomingKey.getFlags();
             if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
                 flags |= AKEY_EVENT_FLAG_IS_ACCESSIBILITY_EVENT;
@@ -4438,20 +4482,13 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
         case InputEventType::MOTION: {
             const MotionEvent& motionEvent = static_cast<const MotionEvent&>(*event);
-            const int32_t action = motionEvent.getAction();
             const bool isPointerEvent =
                     isFromSource(event->getSource(), AINPUT_SOURCE_CLASS_POINTER);
             // If a pointer event has no displayId specified, inject it to the default display.
             const uint32_t displayId = isPointerEvent && (event->getDisplayId() == ADISPLAY_ID_NONE)
                     ? ADISPLAY_ID_DEFAULT
                     : event->getDisplayId();
-            const size_t pointerCount = motionEvent.getPointerCount();
-            const PointerProperties* pointerProperties = motionEvent.getPointerProperties();
-            const int32_t actionButton = motionEvent.getActionButton();
             int32_t flags = motionEvent.getFlags();
-            if (!validateMotionEvent(action, actionButton, pointerCount, pointerProperties)) {
-                return InputEventInjectionResult::FAILED;
-            }
 
             if (!(policyFlags & POLICY_FLAG_FILTERED)) {
                 nsecs_t eventTime = motionEvent.getEventTime();
@@ -4473,8 +4510,9 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
             std::unique_ptr<MotionEntry> injectedEntry =
                     std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
                                                   resolvedDeviceId, motionEvent.getSource(),
-                                                  displayId, policyFlags, action, actionButton,
-                                                  flags, motionEvent.getMetaState(),
+                                                  displayId, policyFlags, motionEvent.getAction(),
+                                                  motionEvent.getActionButton(), flags,
+                                                  motionEvent.getMetaState(),
                                                   motionEvent.getButtonState(),
                                                   motionEvent.getClassification(),
                                                   motionEvent.getEdgeFlags(),
@@ -4482,18 +4520,22 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                                                   motionEvent.getYPrecision(),
                                                   motionEvent.getRawXCursorPosition(),
                                                   motionEvent.getRawYCursorPosition(),
-                                                  motionEvent.getDownTime(), uint32_t(pointerCount),
-                                                  pointerProperties, samplePointerCoords);
+                                                  motionEvent.getDownTime(),
+                                                  motionEvent.getPointerCount(),
+                                                  motionEvent.getPointerProperties(),
+                                                  samplePointerCoords);
             transformMotionEntryForInjectionLocked(*injectedEntry, motionEvent.getTransform());
             injectedEntries.push(std::move(injectedEntry));
             for (size_t i = motionEvent.getHistorySize(); i > 0; i--) {
                 sampleEventTimes += 1;
-                samplePointerCoords += pointerCount;
+                samplePointerCoords += motionEvent.getPointerCount();
                 std::unique_ptr<MotionEntry> nextInjectedEntry =
                         std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
                                                       resolvedDeviceId, motionEvent.getSource(),
-                                                      displayId, policyFlags, action, actionButton,
-                                                      flags, motionEvent.getMetaState(),
+                                                      displayId, policyFlags,
+                                                      motionEvent.getAction(),
+                                                      motionEvent.getActionButton(), flags,
+                                                      motionEvent.getMetaState(),
                                                       motionEvent.getButtonState(),
                                                       motionEvent.getClassification(),
                                                       motionEvent.getEdgeFlags(),
@@ -4502,7 +4544,8 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                                                       motionEvent.getRawXCursorPosition(),
                                                       motionEvent.getRawYCursorPosition(),
                                                       motionEvent.getDownTime(),
-                                                      uint32_t(pointerCount), pointerProperties,
+                                                      motionEvent.getPointerCount(),
+                                                      motionEvent.getPointerProperties(),
                                                       samplePointerCoords);
                 transformMotionEntryForInjectionLocked(*nextInjectedEntry,
                                                        motionEvent.getTransform());
@@ -4796,7 +4839,7 @@ bool InputDispatcher::canWindowReceiveMotionLocked(const sp<WindowInfoHandle>& w
         return false;
     }
 
-    sp<Connection> connection = getConnectionLocked(window->getToken());
+    std::shared_ptr<Connection> connection = getConnectionLocked(window->getToken());
     if (connection == nullptr) {
         ALOGW("Not sending touch to %s because there's no corresponding connection",
               window->getName().c_str());
@@ -5318,8 +5361,8 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         }
 
         // Synthesize cancel for old window and down for new window.
-        sp<Connection> fromConnection = getConnectionLocked(fromToken);
-        sp<Connection> toConnection = getConnectionLocked(toToken);
+        std::shared_ptr<Connection> fromConnection = getConnectionLocked(fromToken);
+        std::shared_ptr<Connection> toConnection = getConnectionLocked(toToken);
         if (fromConnection != nullptr && toConnection != nullptr) {
             fromConnection->inputState.mergePointerStateTo(toConnection->inputState);
             CancelationOptions
@@ -5411,7 +5454,7 @@ void InputDispatcher::resetAndDropEverythingLocked(const char* reason) {
     mReplacedKeys.clear();
 }
 
-void InputDispatcher::logDispatchStateLocked() {
+void InputDispatcher::logDispatchStateLocked() const {
     std::string dump;
     dumpDispatchStateLocked(dump);
 
@@ -5423,7 +5466,7 @@ void InputDispatcher::logDispatchStateLocked() {
     }
 }
 
-std::string InputDispatcher::dumpPointerCaptureStateLocked() {
+std::string InputDispatcher::dumpPointerCaptureStateLocked() const {
     std::string dump;
 
     dump += StringPrintf(INDENT "Pointer Capture Requested: %s\n",
@@ -5441,7 +5484,7 @@ std::string InputDispatcher::dumpPointerCaptureStateLocked() {
     return dump;
 }
 
-void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
+void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
     dump += StringPrintf(INDENT "DispatchEnabled: %s\n", toString(mDispatchEnabled));
     dump += StringPrintf(INDENT "DispatchFrozen: %s\n", toString(mDispatchFrozen));
     dump += StringPrintf(INDENT "InputFilterEnabled: %s\n", toString(mInputFilterEnabled));
@@ -5544,7 +5587,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
     // Dump recently dispatched or dropped events from oldest to newest.
     if (!mRecentQueue.empty()) {
         dump += StringPrintf(INDENT "RecentQueue: length=%zu\n", mRecentQueue.size());
-        for (std::shared_ptr<EventEntry>& entry : mRecentQueue) {
+        for (const std::shared_ptr<EventEntry>& entry : mRecentQueue) {
             dump += INDENT2;
             dump += entry->getDescription();
             dump += StringPrintf(", age=%" PRId64 "ms\n", ns2ms(currentTime - entry->eventTime));
@@ -5567,7 +5610,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
     // Dump inbound events from oldest to newest.
     if (!mInboundQueue.empty()) {
         dump += StringPrintf(INDENT "InboundQueue: length=%zu\n", mInboundQueue.size());
-        for (std::shared_ptr<EventEntry>& entry : mInboundQueue) {
+        for (const std::shared_ptr<EventEntry>& entry : mInboundQueue) {
             dump += INDENT2;
             dump += entry->getDescription();
             dump += StringPrintf(", age=%" PRId64 "ms\n", ns2ms(currentTime - entry->eventTime));
@@ -5649,7 +5692,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) {
     dump += mLatencyAggregator.dump(INDENT2);
 }
 
-void InputDispatcher::dumpMonitors(std::string& dump, const std::vector<Monitor>& monitors) {
+void InputDispatcher::dumpMonitors(std::string& dump, const std::vector<Monitor>& monitors) const {
     const size_t numMonitors = monitors.size();
     for (size_t i = 0; i < numMonitors; i++) {
         const Monitor& monitor = monitors[i];
@@ -5685,8 +5728,9 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
         std::scoped_lock _l(mLock);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
         int fd = serverChannel->getFd();
-        sp<Connection> connection =
-                sp<Connection>::make(std::move(serverChannel), /*monitor=*/false, mIdGenerator);
+        std::shared_ptr<Connection> connection =
+                std::make_shared<Connection>(std::move(serverChannel), /*monitor=*/false,
+                                             mIdGenerator);
 
         if (mConnectionsByToken.find(token) != mConnectionsByToken.end()) {
             ALOGE("Created a new connection, but the token %p is already known", token.get());
@@ -5723,8 +5767,8 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
                                           << " without a specified display.";
         }
 
-        sp<Connection> connection =
-                sp<Connection>::make(serverChannel, /*monitor=*/true, mIdGenerator);
+        std::shared_ptr<Connection> connection =
+                std::make_shared<Connection>(serverChannel, /*monitor=*/true, mIdGenerator);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
         const int fd = serverChannel->getFd();
 
@@ -5764,7 +5808,7 @@ status_t InputDispatcher::removeInputChannel(const sp<IBinder>& connectionToken)
 
 status_t InputDispatcher::removeInputChannelLocked(const sp<IBinder>& connectionToken,
                                                    bool notify) {
-    sp<Connection> connection = getConnectionLocked(connectionToken);
+    std::shared_ptr<Connection> connection = getConnectionLocked(connectionToken);
     if (connection == nullptr) {
         // Connection can be removed via socket hang up or an explicit call to 'removeInputChannel'
         return BAD_VALUE;
@@ -5910,7 +5954,8 @@ std::optional<int32_t> InputDispatcher::findMonitorPidByTokenLocked(const sp<IBi
     return std::nullopt;
 }
 
-sp<Connection> InputDispatcher::getConnectionLocked(const sp<IBinder>& inputConnectionToken) const {
+std::shared_ptr<Connection> InputDispatcher::getConnectionLocked(
+        const sp<IBinder>& inputConnectionToken) const {
     if (inputConnectionToken == nullptr) {
         return nullptr;
     }
@@ -5925,21 +5970,22 @@ sp<Connection> InputDispatcher::getConnectionLocked(const sp<IBinder>& inputConn
 }
 
 std::string InputDispatcher::getConnectionNameLocked(const sp<IBinder>& connectionToken) const {
-    sp<Connection> connection = getConnectionLocked(connectionToken);
+    std::shared_ptr<Connection> connection = getConnectionLocked(connectionToken);
     if (connection == nullptr) {
         return "<nullptr>";
     }
     return connection->getInputChannelName();
 }
 
-void InputDispatcher::removeConnectionLocked(const sp<Connection>& connection) {
+void InputDispatcher::removeConnectionLocked(const std::shared_ptr<Connection>& connection) {
     mAnrTracker.eraseToken(connection->inputChannel->getConnectionToken());
     mConnectionsByToken.erase(connection->inputChannel->getConnectionToken());
 }
 
 void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
-                                                     const sp<Connection>& connection, uint32_t seq,
-                                                     bool handled, nsecs_t consumeTime) {
+                                                     const std::shared_ptr<Connection>& connection,
+                                                     uint32_t seq, bool handled,
+                                                     nsecs_t consumeTime) {
     // Handle post-event policy actions.
     std::deque<DispatchEntry*>::iterator dispatchEntryIt = connection->findWaitQueueEntry(seq);
     if (dispatchEntryIt == connection->waitQueue.end()) {
@@ -6017,7 +6063,7 @@ void InputDispatcher::sendDropWindowCommandLocked(const sp<IBinder>& token, floa
     postCommandLocked(std::move(command));
 }
 
-void InputDispatcher::onAnrLocked(const sp<Connection>& connection) {
+void InputDispatcher::onAnrLocked(const std::shared_ptr<Connection>& connection) {
     if (connection == nullptr) {
         LOG_ALWAYS_FATAL("Caller must check for nullness");
     }
@@ -6179,9 +6225,9 @@ void InputDispatcher::processConnectionResponsiveLocked(const Connection& connec
     sendWindowResponsiveCommandLocked(connectionToken, pid);
 }
 
-bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& connection,
-                                                       DispatchEntry* dispatchEntry,
-                                                       KeyEntry& keyEntry, bool handled) {
+bool InputDispatcher::afterKeyEventLockedInterruptable(
+        const std::shared_ptr<Connection>& connection, DispatchEntry* dispatchEntry,
+        KeyEntry& keyEntry, bool handled) {
     if (keyEntry.flags & AKEY_EVENT_FLAG_FALLBACK) {
         if (!handled) {
             // Report the key as unhandled, since the fallback was not handled.
@@ -6193,7 +6239,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
     // Get the fallback key state.
     // Clear it out after dispatching the UP.
     int32_t originalKeyCode = keyEntry.keyCode;
-    int32_t fallbackKeyCode = connection->inputState.getFallbackKey(originalKeyCode);
+    std::optional<int32_t> fallbackKeyCode = connection->inputState.getFallbackKey(originalKeyCode);
     if (keyEntry.action == AKEY_EVENT_ACTION_UP) {
         connection->inputState.removeFallbackKey(originalKeyCode);
     }
@@ -6202,7 +6248,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
         // If the application handles the original key for which we previously
         // generated a fallback or if the window is not a foreground window,
         // then cancel the associated fallback key, if any.
-        if (fallbackKeyCode != -1) {
+        if (fallbackKeyCode) {
             // Dispatch the unhandled key to the policy with the cancel flag.
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 ALOGD("Unhandled key event: Asking policy to cancel fallback action.  "
@@ -6221,12 +6267,12 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
             mLock.lock();
 
             // Cancel the fallback key.
-            if (fallbackKeyCode != AKEYCODE_UNKNOWN) {
+            if (*fallbackKeyCode != AKEYCODE_UNKNOWN) {
                 CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
                                            "application handled the original non-fallback key "
                                            "or is no longer a foreground target, "
                                            "canceling previously dispatched fallback key");
-                options.keyCode = fallbackKeyCode;
+                options.keyCode = *fallbackKeyCode;
                 synthesizeCancelationEventsForConnectionLocked(connection, options);
             }
             connection->inputState.removeFallbackKey(originalKeyCode);
@@ -6236,7 +6282,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
         // that we are in a good state to perform unhandled key event processing
         // Then ask the policy what to do with it.
         bool initialDown = keyEntry.action == AKEY_EVENT_ACTION_DOWN && keyEntry.repeatCount == 0;
-        if (fallbackKeyCode == -1 && !initialDown) {
+        if (!fallbackKeyCode && !initialDown) {
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 ALOGD("Unhandled key event: Skipping unhandled key event processing "
                       "since this is not an initial down.  "
@@ -6271,53 +6317,53 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
         // The fallback keycode cannot change at any other point in the lifecycle.
         if (initialDown) {
             if (fallback) {
-                fallbackKeyCode = event.getKeyCode();
+                *fallbackKeyCode = event.getKeyCode();
             } else {
-                fallbackKeyCode = AKEYCODE_UNKNOWN;
+                *fallbackKeyCode = AKEYCODE_UNKNOWN;
             }
-            connection->inputState.setFallbackKey(originalKeyCode, fallbackKeyCode);
+            connection->inputState.setFallbackKey(originalKeyCode, *fallbackKeyCode);
         }
 
-        ALOG_ASSERT(fallbackKeyCode != -1);
+        ALOG_ASSERT(fallbackKeyCode);
 
         // Cancel the fallback key if the policy decides not to send it anymore.
         // We will continue to dispatch the key to the policy but we will no
         // longer dispatch a fallback key to the application.
-        if (fallbackKeyCode != AKEYCODE_UNKNOWN &&
-            (!fallback || fallbackKeyCode != event.getKeyCode())) {
+        if (*fallbackKeyCode != AKEYCODE_UNKNOWN &&
+            (!fallback || *fallbackKeyCode != event.getKeyCode())) {
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 if (fallback) {
                     ALOGD("Unhandled key event: Policy requested to send key %d"
                           "as a fallback for %d, but on the DOWN it had requested "
                           "to send %d instead.  Fallback canceled.",
-                          event.getKeyCode(), originalKeyCode, fallbackKeyCode);
+                          event.getKeyCode(), originalKeyCode, *fallbackKeyCode);
                 } else {
                     ALOGD("Unhandled key event: Policy did not request fallback for %d, "
                           "but on the DOWN it had requested to send %d.  "
                           "Fallback canceled.",
-                          originalKeyCode, fallbackKeyCode);
+                          originalKeyCode, *fallbackKeyCode);
                 }
             }
 
             CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
                                        "canceling fallback, policy no longer desires it");
-            options.keyCode = fallbackKeyCode;
+            options.keyCode = *fallbackKeyCode;
             synthesizeCancelationEventsForConnectionLocked(connection, options);
 
             fallback = false;
-            fallbackKeyCode = AKEYCODE_UNKNOWN;
+            *fallbackKeyCode = AKEYCODE_UNKNOWN;
             if (keyEntry.action != AKEY_EVENT_ACTION_UP) {
-                connection->inputState.setFallbackKey(originalKeyCode, fallbackKeyCode);
+                connection->inputState.setFallbackKey(originalKeyCode, *fallbackKeyCode);
             }
         }
 
         if (DEBUG_OUTBOUND_EVENT_DETAILS) {
             {
                 std::string msg;
-                const KeyedVector<int32_t, int32_t>& fallbackKeys =
+                const std::map<int32_t, int32_t>& fallbackKeys =
                         connection->inputState.getFallbackKeys();
-                for (size_t i = 0; i < fallbackKeys.size(); i++) {
-                    msg += StringPrintf(", %d->%d", fallbackKeys.keyAt(i), fallbackKeys.valueAt(i));
+                for (const auto& [key, value] : fallbackKeys) {
+                    msg += StringPrintf(", %d->%d", key, value);
                 }
                 ALOGD("Unhandled key event: %zu currently tracked fallback keys%s.",
                       fallbackKeys.size(), msg.c_str());
@@ -6331,7 +6377,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
             keyEntry.source = event.getSource();
             keyEntry.displayId = event.getDisplayId();
             keyEntry.flags = event.getFlags() | AKEY_EVENT_FLAG_FALLBACK;
-            keyEntry.keyCode = fallbackKeyCode;
+            keyEntry.keyCode = *fallbackKeyCode;
             keyEntry.scanCode = event.getScanCode();
             keyEntry.metaState = event.getMetaState();
             keyEntry.repeatCount = event.getRepeatCount();
@@ -6341,7 +6387,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 ALOGD("Unhandled key event: Dispatching fallback key.  "
                       "originalKeyCode=%d, fallbackKeyCode=%d, fallbackMetaState=%08x",
-                      originalKeyCode, fallbackKeyCode, keyEntry.metaState);
+                      originalKeyCode, *fallbackKeyCode, keyEntry.metaState);
             }
             return true; // restart the event
         } else {
@@ -6356,9 +6402,9 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(const sp<Connection>& con
     return false;
 }
 
-bool InputDispatcher::afterMotionEventLockedInterruptable(const sp<Connection>& connection,
-                                                          DispatchEntry* dispatchEntry,
-                                                          MotionEntry& motionEntry, bool handled) {
+bool InputDispatcher::afterMotionEventLockedInterruptable(
+        const std::shared_ptr<Connection>& connection, DispatchEntry* dispatchEntry,
+        MotionEntry& motionEntry, bool handled) {
     return false;
 }
 
@@ -6602,6 +6648,14 @@ void InputDispatcher::cancelCurrentTouch() {
     mLooper->wake();
 }
 
+void InputDispatcher::requestRefreshConfiguration() {
+    InputDispatcherConfiguration config;
+    mPolicy->getDispatcherConfiguration(&config);
+
+    std::scoped_lock _l(mLock);
+    mConfig = config;
+}
+
 void InputDispatcher::setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout) {
     std::scoped_lock _l(mLock);
     mMonitorDispatchingTimeout = timeout;
@@ -6680,9 +6734,11 @@ void InputDispatcher::transferWallpaperTouch(ftl::Flags<InputTarget::Flags> oldT
         wallpaperFlags |= InputTarget::Flags::WINDOW_IS_OBSCURED |
                 InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED;
         state.addOrUpdateWindow(newWallpaper, wallpaperFlags, pointerIds, downTimeInTarget);
-        sp<Connection> wallpaperConnection = getConnectionLocked(newWallpaper->getToken());
+        std::shared_ptr<Connection> wallpaperConnection =
+                getConnectionLocked(newWallpaper->getToken());
         if (wallpaperConnection != nullptr) {
-            sp<Connection> toConnection = getConnectionLocked(toWindowHandle->getToken());
+            std::shared_ptr<Connection> toConnection =
+                    getConnectionLocked(toWindowHandle->getToken());
             toConnection->inputState.mergePointerStateTo(wallpaperConnection->inputState);
             synthesizePointerDownEventsForConnectionLocked(downTimeInTarget, wallpaperConnection,
                                                            wallpaperFlags);
