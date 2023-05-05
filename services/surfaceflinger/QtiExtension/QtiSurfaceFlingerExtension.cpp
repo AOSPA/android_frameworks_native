@@ -1385,13 +1385,17 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
         std::vector<smomo::SmomoLayerStats> layers;
         if (enableSmomo) {
             mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
-                if (layer->isVisible() &&
-                        instance.layerStackId == layer->qtiGetSmomoLayerStackId()) {
-                    smomo::SmomoLayerStats layerStats;
-                    layerStats.name = layer->getDebugName();
-                    layerStats.id = layer->getSequence();
-                    layers.push_back(layerStats);
+                if (mQtiSmomoInstances.size() > 1 &&
+                        instance.layerStackId != layer->qtiGetSmomoLayerStackId()) {
+                    return;
                 }
+                if (!layer->isVisible()) {
+                    return;
+                }
+                smomo::SmomoLayerStats layerStats;
+                layerStats.name = layer->getDebugName();
+                layerStats.id = layer->getSequence();
+                layers.push_back(layerStats);
             });
 
             fps = device->refreshRateSelector().getActiveMode().fps.getIntValue();
@@ -1430,44 +1434,34 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(TransactionState& ts,
-                                                         int64_t desiredPresentTime,
-                                                         bool isAutoTimestamp,
-                                                         uint64_t transactionId) {
-    ts.traverseStatesWithBuffers([&](const layer_state_t& state) {
-        sp<Layer> layer = LayerHandle::getLayer(state.surface);
+void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(sp<Layer> layer,
+                                         int64_t desiredPresentTime, bool isAutoTimestamp,
+                                         std::shared_ptr<renderengine::ExternalTexture> buffer) {
+    if (!layer) {
+        return;
+    }
 
-        SmomoIntf* smoMo = nullptr;
-        if (layer != nullptr) {
-            smoMo = qtiGetSmomoInstance(layer->qtiGetSmomoLayerStackId());
+    SmomoIntf* smoMo = qtiGetSmomoInstance(layer->qtiGetSmomoLayerStackId());
+    if (smoMo) {
+        smomo::SmomoBufferStats bufferStats;
+        bufferStats.id = layer->getSequence();
+        bufferStats.auto_timestamp = isAutoTimestamp;
+        bufferStats.timestamp = desiredPresentTime;
+        bufferStats.dequeue_latency = 0;
+        bufferStats.key = desiredPresentTime;
+        if (buffer && buffer->getBuffer()) {
+            bufferStats.buffer_hnd = buffer->getBuffer()->handle;
         }
+        smoMo->CollectLayerStats(bufferStats);
 
-        if (smoMo) {
-            smomo::SmomoBufferStats bufferStats;
-            bufferStats.id = layer->getSequence();
-            bufferStats.auto_timestamp = isAutoTimestamp;
-            bufferStats.timestamp = desiredPresentTime;
-            bufferStats.dequeue_latency = 0;
-            bufferStats.key = desiredPresentTime;
-#ifdef TIMED_RENDERING_METADATA_FEATURE
-            auto buffer = mQtiFlinger->getExternalTextureFromBufferData(*state.bufferData,
-                                                                        layer->getDebugName(),
-                                                                        transactionId);
-            if (buffer && buffer->getBuffer()) {
-                bufferStats.buffer_hnd = buffer->getBuffer()->handle;
-            }
-#endif
-            smoMo->CollectLayerStats(bufferStats);
+        const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+        auto vsyncTime =
+                schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
 
-            const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
-            auto vsyncTime =
-                    schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
-
-            if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
-                qtiScheduleCompositeImmed();
-            }
+        if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
+            qtiScheduleCompositeImmed();
         }
-    });
+    }
 }
 
 void QtiSurfaceFlingerExtension::qtiScheduleCompositeImmed() {
