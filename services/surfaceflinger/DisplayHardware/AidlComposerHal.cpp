@@ -353,14 +353,6 @@ void AidlComposer::registerCallback(HWC2::ComposerCallback& callback) {
     }
 }
 
-void AidlComposer::resetCommands(Display display) {
-    mMutex.lock_shared();
-    if (auto writer = getWriter(display)) {
-        writer->get().reset();
-    }
-    mMutex.unlock_shared();
-}
-
 Error AidlComposer::executeCommands(Display display) {
     mMutex.lock_shared();
     auto error = execute(display);
@@ -1077,19 +1069,17 @@ Error AidlComposer::execute(Display display) {
     if (!writer || !reader) {
         return Error::BAD_DISPLAY;
     }
-    const auto& commands = writer->get().getPendingCommands();
+    auto commands = writer->get().takePendingCommands();
     /* QTI_BEGIN */
 #ifdef QTI_COMPOSER3_EXTENSIONS
     const auto& qtiCommands = writer->get().getPendingQtiCommands();
 
     if (commands.empty() && qtiCommands.empty()) {
-        writer->get().reset();
         writer->get().qtiReset();
         return Error::NONE;
     }
 #else
     if (commands.empty()) {
-        writer->get().reset();
         return Error::NONE;
     }
 #endif
@@ -1134,7 +1124,6 @@ Error AidlComposer::execute(Display display) {
         }
     }
 
-    writer->get().reset();
     /* QTI_BEGIN */
 #ifdef QTI_COMPOSER3_EXTENSIONS
     writer->get().qtiReset();

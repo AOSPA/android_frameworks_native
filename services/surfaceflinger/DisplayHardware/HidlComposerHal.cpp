@@ -365,10 +365,6 @@ void HidlComposer::registerCallback(const sp<IComposerCallback>& callback) {
     }
 }
 
-void HidlComposer::resetCommands(Display) {
-    mWriter.reset();
-}
-
 Error HidlComposer::executeCommands(Display) {
     return execute();
 }
