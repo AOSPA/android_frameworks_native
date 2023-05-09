@@ -62,6 +62,7 @@ static constexpr int32_t ACTION_DOWN = AMOTION_EVENT_ACTION_DOWN;
 static constexpr int32_t ACTION_MOVE = AMOTION_EVENT_ACTION_MOVE;
 static constexpr int32_t ACTION_UP = AMOTION_EVENT_ACTION_UP;
 static constexpr int32_t ACTION_HOVER_ENTER = AMOTION_EVENT_ACTION_HOVER_ENTER;
+static constexpr int32_t ACTION_HOVER_MOVE = AMOTION_EVENT_ACTION_HOVER_MOVE;
 static constexpr int32_t ACTION_HOVER_EXIT = AMOTION_EVENT_ACTION_HOVER_EXIT;
 static constexpr int32_t ACTION_OUTSIDE = AMOTION_EVENT_ACTION_OUTSIDE;
 static constexpr int32_t ACTION_CANCEL = AMOTION_EVENT_ACTION_CANCEL;
@@ -205,11 +206,9 @@ class FakeInputDispatcherPolicy : public InputDispatcherPolicyInterface {
 
     using AnrResult = std::pair<sp<IBinder>, int32_t /*pid*/>;
 
-protected:
-    virtual ~FakeInputDispatcherPolicy() {}
-
 public:
-    FakeInputDispatcherPolicy() {}
+    FakeInputDispatcherPolicy() = default;
+    virtual ~FakeInputDispatcherPolicy() = default;
 
     void assertFilterInputEventWasCalled(const NotifyKeyArgs& args) {
         assertFilterInputEventWasCalledInternal([&args](const InputEvent& event) {
@@ -404,6 +403,16 @@ public:
         mInterceptKeyTimeout = timeout;
     }
 
+    void assertUserActivityPoked() {
+        std::scoped_lock lock(mLock);
+        ASSERT_TRUE(mPokedUserActivity) << "Expected user activity to have been poked";
+    }
+
+    void assertUserActivityNotPoked() {
+        std::scoped_lock lock(mLock);
+        ASSERT_FALSE(mPokedUserActivity) << "Expected user activity not to have been poked";
+    }
+
 private:
     std::mutex mLock;
     std::unique_ptr<InputEvent> mFilteredEvent GUARDED_BY(mLock);
@@ -425,6 +434,7 @@ private:
 
     sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
     bool mNotifyDropWindowWasCalled GUARDED_BY(mLock) = false;
+    bool mPokedUserActivity GUARDED_BY(mLock) = false;
 
     std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
 
@@ -523,22 +533,20 @@ private:
 
     void notifyVibratorState(int32_t deviceId, bool isOn) override {}
 
-    void getDispatcherConfiguration(InputDispatcherConfiguration* outConfig) override {
-        *outConfig = mConfig;
-    }
+    InputDispatcherConfiguration getDispatcherConfiguration() override { return mConfig; }
 
-    bool filterInputEvent(const InputEvent* inputEvent, uint32_t policyFlags) override {
+    bool filterInputEvent(const InputEvent& inputEvent, uint32_t policyFlags) override {
         std::scoped_lock lock(mLock);
-        switch (inputEvent->getType()) {
+        switch (inputEvent.getType()) {
             case InputEventType::KEY: {
-                const KeyEvent* keyEvent = static_cast<const KeyEvent*>(inputEvent);
-                mFilteredEvent = std::make_unique<KeyEvent>(*keyEvent);
+                const KeyEvent& keyEvent = static_cast<const KeyEvent&>(inputEvent);
+                mFilteredEvent = std::make_unique<KeyEvent>(keyEvent);
                 break;
             }
 
             case InputEventType::MOTION: {
-                const MotionEvent* motionEvent = static_cast<const MotionEvent*>(inputEvent);
-                mFilteredEvent = std::make_unique<MotionEvent>(*motionEvent);
+                const MotionEvent& motionEvent = static_cast<const MotionEvent&>(inputEvent);
+                mFilteredEvent = std::make_unique<MotionEvent>(motionEvent);
                 break;
             }
             default: {
@@ -549,8 +557,8 @@ private:
         return true;
     }
 
-    void interceptKeyBeforeQueueing(const KeyEvent* inputEvent, uint32_t&) override {
-        if (inputEvent->getAction() == AKEY_EVENT_ACTION_UP) {
+    void interceptKeyBeforeQueueing(const KeyEvent& inputEvent, uint32_t&) override {
+        if (inputEvent.getAction() == AKEY_EVENT_ACTION_UP) {
             // Clear intercept state when we handled the event.
             mInterceptKeyTimeout = 0ms;
         }
@@ -558,15 +566,16 @@ private:
 
     void interceptMotionBeforeQueueing(int32_t, nsecs_t, uint32_t&) override {}
 
-    nsecs_t interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent*, uint32_t) override {
+    nsecs_t interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent&, uint32_t) override {
         nsecs_t delay = std::chrono::nanoseconds(mInterceptKeyTimeout).count();
         // Clear intercept state so we could dispatch the event in next wake.
         mInterceptKeyTimeout = 0ms;
         return delay;
     }
 
-    bool dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent*, uint32_t, KeyEvent*) override {
-        return false;
+    std::optional<KeyEvent> dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent&,
+                                                 uint32_t) override {
+        return {};
     }
 
     void notifySwitch(nsecs_t when, uint32_t switchValues, uint32_t switchMask,
@@ -578,7 +587,10 @@ private:
         mLastNotifySwitch = NotifySwitchArgs(/*id=*/1, when, policyFlags, switchValues, switchMask);
     }
 
-    void pokeUserActivity(nsecs_t, int32_t, int32_t) override {}
+    void pokeUserActivity(nsecs_t, int32_t, int32_t) override {
+        std::scoped_lock lock(mLock);
+        mPokedUserActivity = true;
+    }
 
     void onPointerDownOutsideFocus(const sp<IBinder>& newToken) override {
         std::scoped_lock lock(mLock);
@@ -610,12 +622,12 @@ private:
 
 class InputDispatcherTest : public testing::Test {
 protected:
-    sp<FakeInputDispatcherPolicy> mFakePolicy;
+    std::unique_ptr<FakeInputDispatcherPolicy> mFakePolicy;
     std::unique_ptr<InputDispatcher> mDispatcher;
 
     void SetUp() override {
-        mFakePolicy = sp<FakeInputDispatcherPolicy>::make();
-        mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy, STALE_EVENT_TIMEOUT);
+        mFakePolicy = std::make_unique<FakeInputDispatcherPolicy>();
+        mDispatcher = std::make_unique<InputDispatcher>(*mFakePolicy, STALE_EVENT_TIMEOUT);
         mDispatcher->setInputDispatchMode(/*enabled*/ true, /*frozen*/ false);
         // Start InputDispatcher thread
         ASSERT_EQ(OK, mDispatcher->start());
@@ -623,7 +635,7 @@ protected:
 
     void TearDown() override {
         ASSERT_EQ(OK, mDispatcher->stop());
-        mFakePolicy.clear();
+        mFakePolicy.reset();
         mDispatcher.reset();
     }
 
@@ -1190,6 +1202,10 @@ public:
         mInfo.setInputConfig(WindowInfo::InputConfig::NO_INPUT_CHANNEL, noInputChannel);
     }
 
+    void setDisableUserActivity(bool disableUserActivity) {
+        mInfo.setInputConfig(WindowInfo::InputConfig::DISABLE_USER_ACTIVITY, disableUserActivity);
+    }
+
     void setAlpha(float alpha) { mInfo.alpha = alpha; }
 
     void setTouchOcclusionMode(TouchOcclusionMode mode) { mInfo.touchOcclusionMode = mode; }
@@ -1738,6 +1754,28 @@ static NotifyKeyArgs generateKeyArgs(int32_t action, int32_t displayId = ADISPLA
     NotifyKeyArgs args(/*id=*/0, currentTime, /*readTime=*/0, DEVICE_ID, AINPUT_SOURCE_KEYBOARD,
                        displayId, POLICY_FLAG_PASS_TO_USER, action, /* flags */ 0, AKEYCODE_A,
                        KEY_A, AMETA_NONE, currentTime);
+
+    return args;
+}
+
+static NotifyKeyArgs generateSystemShortcutArgs(int32_t action,
+                                                int32_t displayId = ADISPLAY_ID_NONE) {
+    nsecs_t currentTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    // Define a valid key event.
+    NotifyKeyArgs args(/*id=*/0, currentTime, /*readTime=*/0, DEVICE_ID, AINPUT_SOURCE_KEYBOARD,
+                       displayId, 0, action, /* flags */ 0, AKEYCODE_C, KEY_C, AMETA_META_ON,
+                       currentTime);
+
+    return args;
+}
+
+static NotifyKeyArgs generateAssistantKeyArgs(int32_t action,
+                                              int32_t displayId = ADISPLAY_ID_NONE) {
+    nsecs_t currentTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    // Define a valid key event.
+    NotifyKeyArgs args(/*id=*/0, currentTime, /*readTime=*/0, DEVICE_ID, AINPUT_SOURCE_KEYBOARD,
+                       displayId, 0, action, /* flags */ 0, AKEYCODE_ASSIST, KEY_ASSISTANT,
+                       AMETA_NONE, currentTime);
 
     return args;
 }
@@ -2415,6 +2453,116 @@ TEST_F(InputDispatcherTest, HoverFromLeftToRightAndTap) {
     // No more events
     leftWindow->assertNoEvents();
     rightWindow->assertNoEvents();
+}
+
+/**
+ * Start hovering in a window. While this hover is still active, make another window appear on top.
+ * The top, obstructing window has no input channel, so it's not supposed to receive input.
+ * While the top window is present, the hovering is stopped.
+ * Later, hovering gets resumed again.
+ * Ensure that new hover gesture is handled correctly.
+ * This test reproduces a crash where the HOVER_EXIT event wasn't getting dispatched correctly
+ * to the window that's currently being hovered over.
+ */
+TEST_F(InputDispatcherTest, HoverWhileWindowAppears) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 200, 200));
+
+    // Only a single window is present at first
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // Start hovering in the window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    // Now, an obscuring window appears!
+    sp<FakeWindowHandle> obscuringWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Obscuring window",
+                                       ADISPLAY_ID_DEFAULT,
+                                       /*token=*/std::make_optional<sp<IBinder>>(nullptr));
+    obscuringWindow->setFrame(Rect(0, 0, 200, 200));
+    obscuringWindow->setTouchOcclusionMode(TouchOcclusionMode::BLOCK_UNTRUSTED);
+    obscuringWindow->setOwnerInfo(SECONDARY_WINDOW_PID, SECONDARY_WINDOW_UID);
+    obscuringWindow->setNoInputChannel(true);
+    obscuringWindow->setFocusable(false);
+    obscuringWindow->setAlpha(1.0);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {obscuringWindow, window}}});
+
+    // While this new obscuring window is present, the hovering is stopped
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_EXIT, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+
+    // Now the obscuring window goes away.
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // And a new hover gesture starts.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+}
+
+/**
+ * Same test as 'HoverWhileWindowAppears' above, but here, we also send some HOVER_MOVE events to
+ * the obscuring window.
+ */
+TEST_F(InputDispatcherTest, HoverMoveWhileWindowAppears) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 200, 200));
+
+    // Only a single window is present at first
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // Start hovering in the window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    // Now, an obscuring window appears!
+    sp<FakeWindowHandle> obscuringWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Obscuring window",
+                                       ADISPLAY_ID_DEFAULT,
+                                       /*token=*/std::make_optional<sp<IBinder>>(nullptr));
+    obscuringWindow->setFrame(Rect(0, 0, 200, 200));
+    obscuringWindow->setTouchOcclusionMode(TouchOcclusionMode::BLOCK_UNTRUSTED);
+    obscuringWindow->setOwnerInfo(SECONDARY_WINDOW_PID, SECONDARY_WINDOW_UID);
+    obscuringWindow->setNoInputChannel(true);
+    obscuringWindow->setFocusable(false);
+    obscuringWindow->setAlpha(1.0);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {obscuringWindow, window}}});
+
+    // While this new obscuring window is present, the hovering continues. The event can't go to the
+    // bottom window due to obstructed touches, so it should generate HOVER_EXIT for that window.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    obscuringWindow->assertNoEvents();
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+
+    // Now the obscuring window goes away.
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    // Hovering continues in the same position. The hovering pointer re-enters the bottom window,
+    // so it should generate a HOVER_ENTER
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(100))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    // Now the MOVE should be getting dispatched normally
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(110).y(110))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_MOVE));
 }
 
 /**
@@ -3409,7 +3557,9 @@ TEST_F(InputDispatcherTest, HoverEnterMouseClickAndHoverExit) {
                                         .build()));
     window->consumeMotionUp(ADISPLAY_ID_DEFAULT);
 
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+    // We already canceled the hovering implicitly by injecting the "DOWN" event without lifting the
+    // hover first. Therefore, injection of HOVER_EXIT is inconsistent, and should fail.
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
               injectMotionEvent(mDispatcher,
                                 MotionEventBuilder(AMOTION_EVENT_ACTION_HOVER_EXIT,
                                                    AINPUT_SOURCE_MOUSE)
@@ -3641,6 +3791,30 @@ TEST_F(InputDispatcherTest, NotifyDeviceReset_CancelsMotionStream) {
             AllOf(WithMotionAction(ACTION_CANCEL), WithDisplayId(ADISPLAY_ID_DEFAULT)));
 }
 
+TEST_F(InputDispatcherTest, NotifyDeviceResetCancelsHoveringStream) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(10).y(10))
+                                      .build());
+
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    // When device reset happens, that hover stream should be terminated with ACTION_HOVER_EXIT
+    mDispatcher->notifyDeviceReset({/*id=*/10, /*eventTime=*/20, DEVICE_ID});
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+
+    // After the device has been reset, a new hovering stream can be sent to the window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(15).y(15))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+}
+
 TEST_F(InputDispatcherTest, InterceptKeyByPolicy) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
@@ -3771,7 +3945,7 @@ TEST_F(InputDispatcherTest, OnWindowInfosChanged_RemoveAllWindowsOnDisplay) {
                                                              "Fake Window", ADISPLAY_ID_DEFAULT);
     window->setFocusable(true);
 
-    mDispatcher->onWindowInfosChanged({*window->getInfo()}, {});
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {}, 0, 0});
     setFocusedWindow(window);
 
     window->consumeFocusEvent(true);
@@ -3785,7 +3959,7 @@ TEST_F(InputDispatcherTest, OnWindowInfosChanged_RemoveAllWindowsOnDisplay) {
     window->consumeKeyUp(ADISPLAY_ID_DEFAULT);
 
     // All windows are removed from the display. Ensure that we can no longer dispatch to it.
-    mDispatcher->onWindowInfosChanged({}, {});
+    mDispatcher->onWindowInfosChanged({{}, {}, 0, 0});
 
     window->consumeFocusEvent(false);
 
@@ -3801,7 +3975,7 @@ TEST_F(InputDispatcherTest, NonSplitTouchableWindowReceivesMultiTouch) {
     // Ensure window is non-split and have some transform.
     window->setPreventSplitting(true);
     window->setWindowOffset(20, 40);
-    mDispatcher->onWindowInfosChanged({*window->getInfo()}, {});
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {}, 0, 0});
 
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
               injectMotionDown(mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
@@ -3848,12 +4022,12 @@ public:
         info.displayId = displayId;
         info.transform = transform;
         mDisplayInfos.push_back(std::move(info));
-        mDispatcher->onWindowInfosChanged(mWindowInfos, mDisplayInfos);
+        mDispatcher->onWindowInfosChanged({mWindowInfos, mDisplayInfos, 0, 0});
     }
 
     void addWindow(const sp<WindowInfoHandle>& windowHandle) {
         mWindowInfos.push_back(*windowHandle->getInfo());
-        mDispatcher->onWindowInfosChanged(mWindowInfos, mDisplayInfos);
+        mDispatcher->onWindowInfosChanged({mWindowInfos, mDisplayInfos, 0, 0});
     }
 
     void removeAllWindowsAndDisplays() {
@@ -3957,6 +4131,7 @@ TEST_F(InputDispatcherDisplayProjectionTest, WindowGetsEventsInCorrectCoordinate
 
     firstWindow->assertNoEvents();
     const MotionEvent* event = secondWindow->consumeMotion();
+    ASSERT_NE(nullptr, event);
     EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, event->getAction());
 
     // Ensure that the events from the "getRaw" API are in logical display coordinates.
@@ -4530,6 +4705,94 @@ TEST_F(InputDispatcherTest, FocusedWindow_ReceivesFocusEventAndKeyEvent) {
 
     // Window should receive key down event.
     window->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityPoked();
+}
+
+TEST_F(InputDispatcherTest, FocusedWindow_DisableUserActivity) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    window->setDisableUserActivity(true);
+    window->setFocusable(true);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    mDispatcher->notifyKey(generateKeyArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT));
+
+    // Window should receive key down event.
+    window->consumeKeyDown(ADISPLAY_ID_DEFAULT);
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityNotPoked();
+}
+
+TEST_F(InputDispatcherTest, FocusedWindow_DoesNotReceiveSystemShortcut) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    window->setFocusable(true);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    mDispatcher->notifyKey(generateSystemShortcutArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT));
+    mDispatcher->waitForIdle();
+
+    // System key is not passed down
+    window->assertNoEvents();
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityPoked();
+}
+
+TEST_F(InputDispatcherTest, FocusedWindow_DoesNotReceiveAssistantKey) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    window->setFocusable(true);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    mDispatcher->notifyKey(generateAssistantKeyArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT));
+    mDispatcher->waitForIdle();
+
+    // System key is not passed down
+    window->assertNoEvents();
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityPoked();
+}
+
+TEST_F(InputDispatcherTest, FocusedWindow_SystemKeyIgnoresDisableUserActivity) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher,
+                                                             "Fake Window", ADISPLAY_ID_DEFAULT);
+
+    window->setDisableUserActivity(true);
+    window->setFocusable(true);
+    mDispatcher->setInputWindows({{ADISPLAY_ID_DEFAULT, {window}}});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    mDispatcher->notifyKey(generateSystemShortcutArgs(AKEY_EVENT_ACTION_DOWN, ADISPLAY_ID_DEFAULT));
+    mDispatcher->waitForIdle();
+
+    // System key is not passed down
+    window->assertNoEvents();
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityPoked();
 }
 
 TEST_F(InputDispatcherTest, UnfocusedWindow_DoesNotReceiveFocusEventOrKeyEvent) {
@@ -4952,7 +5215,7 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_MotionEvent) {
     displayInfo.displayId = ADISPLAY_ID_DEFAULT;
     displayInfo.transform = transform;
 
-    mDispatcher->onWindowInfosChanged({*window->getInfo()}, {displayInfo});
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {displayInfo}, 0, 0});
 
     const NotifyMotionArgs motionArgs =
             generateMotionArgs(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
@@ -5281,9 +5544,9 @@ protected:
     sp<FakeWindowHandle> mWindow;
 
     virtual void SetUp() override {
-        mFakePolicy = sp<FakeInputDispatcherPolicy>::make();
+        mFakePolicy = std::make_unique<FakeInputDispatcherPolicy>();
         mFakePolicy->setKeyRepeatConfiguration(KEY_REPEAT_TIMEOUT, KEY_REPEAT_DELAY);
-        mDispatcher = std::make_unique<InputDispatcher>(mFakePolicy);
+        mDispatcher = std::make_unique<InputDispatcher>(*mFakePolicy);
         mDispatcher->requestRefreshConfiguration();
         mDispatcher->setInputDispatchMode(/*enabled*/ true, /*frozen*/ false);
         ASSERT_EQ(OK, mDispatcher->start());
@@ -5722,7 +5985,7 @@ TEST_F(InputFilterTest, MotionEvent_UsesLogicalDisplayCoordinates_notifyMotion) 
     displayInfos[1].displayId = SECOND_DISPLAY_ID;
     displayInfos[1].transform = secondDisplayTransform;
 
-    mDispatcher->onWindowInfosChanged({}, displayInfos);
+    mDispatcher->onWindowInfosChanged({{}, displayInfos, 0, 0});
 
     // Enable InputFilter
     mDispatcher->setInputFilterEnabled(true);
