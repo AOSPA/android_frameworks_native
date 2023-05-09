@@ -4754,9 +4754,14 @@ status_t SurfaceFlinger::setTransactionState(
             resolvedState.externalTexture =
                     getExternalTextureFromBufferData(*resolvedState.state.bufferData,
                                                      layerName.c_str(), transactionId);
+
             /* QTI_BEGIN */
             mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
+
+            mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
+                                            resolvedState.externalTexture);
             /* QTI_END */
+
             mBufferCountTracker.increment(resolvedState.state.surface->localBinder());
         }
         resolvedState.layerId = LayerHandle::getLayerId(resolvedState.state.surface);
@@ -4804,11 +4809,6 @@ status_t SurfaceFlinger::setTransactionState(
     }(state.flags);
 
     const auto frameHint = state.isFrameActive() ? FrameHint::kActive : FrameHint::kNone;
-
-    /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(state, desiredPresentTime, isAutoTimestamp,
-                                            transactionId);
-    /* QTI_END */
 
     mTransactionHandler.queueTransaction(std::move(state));
     setTransactionFlags(eTransactionFlushNeeded, schedule, applyToken, frameHint);
