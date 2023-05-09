@@ -1449,9 +1449,14 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(sp<Layer> layer,
         bufferStats.timestamp = desiredPresentTime;
         bufferStats.dequeue_latency = 0;
         bufferStats.key = desiredPresentTime;
+#ifdef FRC_FRAME_PACING_FEATURE
+        bufferStats.frame_number = state.bufferData->frameNumber;
+#endif
+#ifdef TIMED_RENDERING_METADATA_FEATURE
         if (buffer && buffer->getBuffer()) {
             bufferStats.buffer_hnd = buffer->getBuffer()->handle;
         }
+#endif
         smoMo->CollectLayerStats(bufferStats);
 
         const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
