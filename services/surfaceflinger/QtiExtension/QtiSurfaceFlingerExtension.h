@@ -240,6 +240,13 @@ public:
     void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                    int32_t vsyncPeriod) override;
+    void qtiSetFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
+                                         DisplayDeviceState& currentState,
+                                         const DisplayDeviceState& drawingState) override;
+    void qtiFbScalingOnBoot() override;
+    bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
+                                     const DisplayDeviceState& drawingState) override;
+    void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
 
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
@@ -265,6 +272,7 @@ private:
     bool mQtiSFExtnBootComplete = false;
     bool mQtiTidSentSuccessfully = false;
     bool mQtiWakeUpPresentationDisplays = false;
+    bool mQtiDisplaySizeChanged = false;
     int mQtiFirstApiLevel = 0;
     int mQtiRETid = 0;
     int mQtiSFTid = 0;

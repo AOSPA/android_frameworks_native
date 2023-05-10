@@ -42,4 +42,11 @@ int32_t QtiRenderSurfaceExtension::qtiGetClientTargetFormat() {
     return ANativeWindow_getFormat(mQtiRenderSurface->mNativeWindow.get());
 }
 
+void QtiRenderSurfaceExtension::qtiSetViewportAndProjection() {
+    Rect sourceCrop = Rect(mQtiRenderSurface->mSize);
+    Rect viewPort = Rect(mQtiRenderSurface->mSize.width, mQtiRenderSurface->mSize.height);
+    auto& renderEngine = mQtiRenderSurface->mCompositionEngine.getRenderEngine();
+    renderEngine.setViewportAndProjection(viewPort, sourceCrop);
+}
+
 } // namespace android::compositionengineextension
