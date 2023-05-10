@@ -2609,7 +2609,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     }
 
     updateCursorAsync();
-    updateInputFlinger();
+    updateInputFlinger(vsyncId);
 
     if (mLayerTracingEnabled && !mLayerTracing.flagIsSet(LayerTracing::TRACE_COMPOSITION)) {
         // This will block and tracing should only be enabled for debugging.
@@ -3889,7 +3889,7 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
     doCommitTransactions();
 }
 
-void SurfaceFlinger::updateInputFlinger() {
+void SurfaceFlinger::updateInputFlinger(VsyncId vsyncId) {
     if (!mInputFlinger || (!mUpdateInputInfo && mInputWindowCommands.empty())) {
         return;
     }
@@ -3901,6 +3901,8 @@ void SurfaceFlinger::updateInputFlinger() {
     if (mUpdateInputInfo) {
         mUpdateInputInfo = false;
         updateWindowInfo = true;
+        mLastInputFlingerUpdateVsyncId = vsyncId;
+        mLastInputFlingerUpdateTimestamp = systemTime();
         buildWindowInfos(windowInfos, displayInfos);
     }
 
@@ -3930,7 +3932,9 @@ void SurfaceFlinger::updateInputFlinger() {
                                          std::move(
                                                  inputWindowCommands.windowInfosReportedListeners),
                                          /* forceImmediateCall= */ visibleWindowsChanged ||
-                                                 !inputWindowCommands.focusRequests.empty());
+                                                 !inputWindowCommands.focusRequests.empty(),
+                                         mLastInputFlingerUpdateVsyncId,
+                                         mLastInputFlingerUpdateTimestamp);
         } else {
             // If there are listeners but no changes to input windows, call the listeners
             // immediately.
@@ -4184,21 +4188,8 @@ void SurfaceFlinger::doCommitTransactions() {
     }
 
     commitOffscreenLayers();
-    if (mLayerMirrorRoots.size() > 0) {
-        std::deque<Layer*> pendingUpdates;
-        pendingUpdates.insert(pendingUpdates.end(), mLayerMirrorRoots.begin(),
-                              mLayerMirrorRoots.end());
-        std::vector<Layer*> needsUpdating;
-        for (Layer* cloneRoot : mLayerMirrorRoots) {
-            pendingUpdates.pop_front();
-            if (cloneRoot->updateMirrorInfo(pendingUpdates)) {
-            } else {
-                needsUpdating.push_back(cloneRoot);
-            }
-        }
-        for (Layer* cloneRoot : needsUpdating) {
-            cloneRoot->updateMirrorInfo({});
-        }
+    if (mNumClones > 0) {
+        mDrawingState.traverse([&](Layer* layer) { layer->updateMirrorInfo(); });
     }
 }
 
@@ -4332,7 +4323,7 @@ bool SurfaceFlinger::latchBuffers() {
         mBootStage = BootStage::BOOTANIMATION;
     }
 
-    if (mLayerMirrorRoots.size() > 0) {
+    if (mNumClones > 0) {
         mDrawingState.traverse([&](Layer* layer) { layer->updateCloneBufferInfo(); });
     }
 
@@ -4630,10 +4621,8 @@ bool SurfaceFlinger::frameIsEarly(TimePoint expectedPresentTime, VsyncId vsyncId
 
     const auto predictedPresentTime = TimePoint::fromNs(prediction->presentTime);
 
-    // The duration for which SF can delay a frame if it is considered early based on the
-    // VsyncConfig::appWorkDuration.
-    if (constexpr std::chrono::nanoseconds kEarlyLatchMaxThreshold = 100ms;
-        std::chrono::abs(predictedPresentTime - expectedPresentTime) >= kEarlyLatchMaxThreshold) {
+    if (std::chrono::abs(predictedPresentTime - expectedPresentTime) >=
+        scheduler::VsyncConfig::kEarlyLatchMaxThreshold) {
         return false;
     }
 
@@ -6370,6 +6359,29 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
 
     result.append(mTimeStats->miniDump());
     result.append("\n");
+
+    result.append("Window Infos:\n");
+    StringAppendF(&result, "  input flinger update vsync id: %" PRId64 "\n",
+                  mLastInputFlingerUpdateVsyncId.value);
+    StringAppendF(&result, "  input flinger update timestamp (ns): %" PRId64 "\n",
+                  mLastInputFlingerUpdateTimestamp);
+    result.append("\n");
+
+    if (int64_t unsentVsyncId = mWindowInfosListenerInvoker->getUnsentMessageVsyncId().value;
+        unsentVsyncId != -1) {
+        StringAppendF(&result, "  unsent input flinger update vsync id: %" PRId64 "\n",
+                      unsentVsyncId);
+        StringAppendF(&result, "  unsent input flinger update timestamp (ns): %" PRId64 "\n",
+                      mWindowInfosListenerInvoker->getUnsentMessageTimestamp());
+        result.append("\n");
+    }
+
+    if (uint32_t pendingMessages = mWindowInfosListenerInvoker->getPendingMessageCount();
+        pendingMessages != 0) {
+        StringAppendF(&result, "  pending input flinger calls: %" PRIu32 "\n",
+                      mWindowInfosListenerInvoker->getPendingMessageCount());
+        result.append("\n");
+    }
 }
 
 mat4 SurfaceFlinger::calculateColorMatrix(float saturation) {
