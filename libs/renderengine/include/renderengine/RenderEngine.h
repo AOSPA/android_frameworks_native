@@ -194,6 +194,10 @@ public:
 
     virtual void setEnableTracing(bool /*tracingEnabled*/) {}
 
+    /* QTI_BEGIN */
+    virtual void setViewportAndProjection(Rect viewPort, Rect sourceCrop) = 0;
+    /* QTI_END */
+
 protected:
     RenderEngine() : RenderEngine(Threaded::NO) {}
 

@@ -62,6 +62,10 @@ public:
     std::optional<pid_t> getRenderEngineTid() const override;
     void setEnableTracing(bool tracingEnabled) override;
 
+    /* QTI_BEGIN */
+    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
+    /* QTI_END */
+
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(sp<GraphicBuffer>&& buffer) override;

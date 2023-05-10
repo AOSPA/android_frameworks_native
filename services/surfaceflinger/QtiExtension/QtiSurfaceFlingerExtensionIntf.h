@@ -170,6 +170,14 @@ public:
     virtual bool qtiIsFpsDeferNeeded(float newFpsRequest) = 0;
     virtual void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                            int32_t vsyncPeriod) = 0;
+    virtual void qtiSetFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
+                                                 DisplayDeviceState& currentState,
+                                                 const DisplayDeviceState& drawingState) = 0;
+    virtual void qtiFbScalingOnBoot() = 0;
+    virtual bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken,
+                                             sp<DisplayDevice> display,
+                                             const DisplayDeviceState& drawingState) = 0;
+    virtual void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) = 0;
 };
 
 } // namespace android::surfaceflingerextension
