@@ -36,7 +36,6 @@ using VsyncModulator = android::scheduler::VsyncModulator;
 using VsyncTracker = android::scheduler::VsyncTracker;
 using DisplayStatInfo = android::DisplayStatInfo;
 
-
 namespace android::scheduler::impl {
 
 class VsyncConfiguration;
@@ -56,7 +55,6 @@ composer::ComposerExtnLib composer::ComposerExtnLib::g_composer_ext_lib_;
 namespace android::surfaceflingerextension {
 
 bool QtiSurfaceFlingerExtension::mQtiSDirectStreaming;
-
 
 QtiSurfaceFlingerExtension::QtiSurfaceFlingerExtension() {}
 QtiSurfaceFlingerExtension::~QtiSurfaceFlingerExtension() = default;
@@ -135,6 +133,17 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
             ALOGE("Failed to retrieve DisplayConfig AIDL binder");
         } else {
             ALOGI("Initialized DisplayConfig AIDL %p successfully", mQtiDisplayConfigAidl.get());
+
+            // Initialize IDC AIDL callback
+            mQtiAidlCallbackHandler =
+                    ndk::SharedRefBase::make<DisplayConfigAidlCallbackHandler>(this);
+            mQtiDisplayConfigAidl->registerCallback(mQtiAidlCallbackHandler, &mQtiCallbackClientId);
+            if (mQtiCallbackClientId >= 0) {
+                ALOGI("Registered to displayconfig aidl service and enabled callback");
+            } else {
+                ALOGW("Failed to register displayconfig aidl service and callback");
+            }
+
             if (mQtiFeatureManager) mQtiFeatureManager->qtiSetIDisplayConfig(mQtiDisplayConfigAidl);
             mQtiEnabledIDC = true;
         }
@@ -574,7 +583,8 @@ void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
             mQtiCurrentFps = contentFps;
             ALOGV("Successfully sent content fps %d", contentFps);
         } else {
-            ALOGW("Failed to send content fps %d", contentFps);
+            // This floods the log with warning. Changed it to verbose
+            ALOGV("Failed to send content fps %d", contentFps);
         }
     }
 }
@@ -645,12 +655,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
             mQtiPhaseOffsetsExtn->qtiUpdateSfOffsets(&mQtiAdvancedSfOffsets);
         }
 
-        /*
-        const auto vsyncConfig = mQtiFlinger->mVsyncModulator->setVsyncConfigSet(
+        const auto vsyncConfig = mQtiFlinger->mScheduler->vsyncModulator().setVsyncConfigSet(
                 mQtiFlinger->mVsyncConfiguration->getCurrentConfigs());
         ALOGV("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
         ALOGV("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
-        */
     }
 #endif
 }
@@ -1799,6 +1807,56 @@ void QtiSurfaceFlingerExtension::qtiHandleNewLevelFps(float currFps, float newLe
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_t width,
+                                                           int32_t height, int32_t vsyncPeriod) {
+    const auto dispId = qtiGetInternalDisplayId();
+    if (!dispId) {
+        ALOGE("No internal display found.");
+        return;
+    }
+
+    sp<IBinder> displayToken = mQtiFlinger->getPhysicalDisplayToken(*dispId);
+    sp<DisplayDevice> displayDevice = nullptr;
+    DisplayModes supportedModes;
+    {
+        Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        displayDevice = (mQtiFlinger->getDisplayDeviceLocked(displayToken));
+
+        if (!displayDevice) {
+            ALOGE("Attempt to notify resolution switch for invalid display token %p",
+                  displayToken.get());
+            return;
+        }
+
+        const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(displayDevice->getPhysicalId());
+        const auto& display = displayOpt->get();
+        const auto& snapshot = display.snapshot();
+        supportedModes = snapshot.displayModes();
+    }
+
+    int32_t newModeId;
+    for (const auto& [id, mode] : supportedModes) {
+        auto modeWidth = mode->getWidth();
+        auto modeHeight = mode->getHeight();
+        const int32_t modePeriod = static_cast<int32_t>(mode->getVsyncPeriod());
+
+        if (modeWidth == width && modeHeight == height && vsyncPeriod == modePeriod) {
+            newModeId = static_cast<int32_t>(mode->getId().value());
+            break;
+        }
+    }
+
+    if (qtiIsSupportedConfigSwitch(displayToken, newModeId) != NO_ERROR) {
+        return;
+    }
+
+    status_t result =
+            mQtiFlinger->setActiveModeFromBackdoor(displayToken, DisplayModeId{newModeId});
+    if (result != NO_ERROR) {
+        return;
+    }
+}
+
 /*
  * LayerExtWrapper class
  */
@@ -1837,6 +1895,55 @@ LayerExtWrapper::~LayerExtWrapper() {
     if (mLayerExtLibHandle) {
         dlclose(mLayerExtLibHandle);
     }
+}
+
+/*
+ * IDisplayConfig AIDL Callback handler
+ */
+DisplayConfigAidlCallbackHandler::DisplayConfigAidlCallbackHandler(
+        android::surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* sfext)
+      : mQtiSFExtnIntf(sfext) {
+    if (!mQtiSFExtnIntf) {
+        ALOGW("%s: QtiSFExtension is null", __func__);
+    }
+}
+
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyCameraSmoothInfo(CameraSmoothOp op,
+                                                                            int fps) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyCWBBufferDone(
+        int32_t in_error, const ::aidl::android::hardware::common::NativeHandle& in_buffer) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyQsyncChange(
+        bool in_qsyncEnabled, int32_t in_refreshRate, int32_t in_qsyncRefreshRate) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyIdleStatus(bool in_isIdle) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyResolutionChange(
+        int32_t displayId, const Attributes& attr) {
+    ATRACE_CALL();
+    ALOGI("%s: Received notification for resolution change", __func__);
+
+    if (mQtiSFExtnIntf) {
+        mQtiSFExtnIntf->qtiNotifyResolutionSwitch(displayId, attr.xRes, attr.yRes,
+                                                  attr.vsyncPeriod);
+    }
+    return ndk::ScopedAStatus::ok();
+}
+
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyFpsMitigation(int32_t displayId,
+                                                                         const Attributes& attr,
+                                                                         Concurrency concurrency) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyTUIEventDone(int32_t in_error,
+                                                                        DisplayType in_disp_type,
+                                                                        TUIEventType in_eventType) {
+    return ndk::ScopedAStatus::ok();
 }
 
 } // namespace android::surfaceflingerextension
