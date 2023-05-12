@@ -9,6 +9,7 @@
 
 #include "QtiSurfaceFlingerExtensionIntf.h"
 
+#include <aidl/vendor/qti/hardware/display/config/BnDisplayConfigCallback.h>
 #include <binder/IBinder.h>
 #include <composer_extn_intf.h>
 #include <list>
@@ -38,11 +39,23 @@ namespace smomo {
 class SmomoIntf;
 } // namespace smomo
 
+using aidl::vendor::qti::hardware::display::config::Attributes;
+using aidl::vendor::qti::hardware::display::config::BnDisplayConfigCallback;
+using aidl::vendor::qti::hardware::display::config::CameraSmoothOp;
+using aidl::vendor::qti::hardware::display::config::Concurrency;
+using aidl::vendor::qti::hardware::display::config::DisplayType;
+using aidl::vendor::qti::hardware::display::config::TUIEventType;
+
 using composer::LayerExtnIntf;
 using smomo::SmomoIntf;
 
 namespace android::surfaceflingerextension {
 
+class QtiSurfaceFlingerExtension;
+
+/*
+ * LayerExtWrapper class
+ */
 class LayerExtWrapper {
 public:
     LayerExtWrapper() {}
@@ -66,6 +79,36 @@ private:
     DestroyLayerExtnFuncPtr mLayerExtDestroyFunc;
 };
 
+/*
+ * IDisplayConfig AIDL Callback handler
+ */
+class DisplayConfigAidlCallbackHandler : public BnDisplayConfigCallback {
+public:
+    DisplayConfigAidlCallbackHandler(
+            android::surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* sfext);
+
+    virtual ndk::ScopedAStatus notifyCameraSmoothInfo(CameraSmoothOp op, int fps) override;
+    virtual ndk::ScopedAStatus notifyCWBBufferDone(
+            int32_t in_error,
+            const ::aidl::android::hardware::common::NativeHandle& in_buffer) override;
+    virtual ndk::ScopedAStatus notifyQsyncChange(bool in_qsyncEnabled, int32_t in_refreshRate,
+                                                 int32_t in_qsyncRefreshRate) override;
+    virtual ndk::ScopedAStatus notifyIdleStatus(bool in_isIdle) override;
+    virtual ndk::ScopedAStatus notifyResolutionChange(int32_t displayId,
+                                                      const Attributes& attr) override;
+
+    virtual ndk::ScopedAStatus notifyFpsMitigation(int32_t displayId, const Attributes& attr,
+                                                   Concurrency concurrency) override;
+    virtual ndk::ScopedAStatus notifyTUIEventDone(int32_t in_error, DisplayType in_disp_type,
+                                                  TUIEventType in_eventType) override;
+
+private:
+    android::surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf;
+};
+
+/*
+ * QtiSurfaceFlingerExtension class
+ */
 class QtiSurfaceFlingerExtension : public QtiSurfaceFlingerExtensionIntf {
 public:
     QtiSurfaceFlingerExtension();
@@ -192,6 +235,8 @@ public:
     bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
     DisplayModePtr qtiGetModeFromFps(float fps);
     void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
+    void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
+                                   int32_t vsyncPeriod) override;
 
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
@@ -227,6 +272,8 @@ private:
     bool mQtiAllowThermalFpsChange = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
+    std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;
+    int64_t mQtiCallbackClientId = -1;
     ::DisplayConfig::ClientInterface* mQtiDisplayConfigHidl = nullptr;
 
     static bool mQtiSDirectStreaming;
