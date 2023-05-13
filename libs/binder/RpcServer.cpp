@@ -81,6 +81,7 @@ status_t RpcServer::setupInetServer(const char* address, unsigned int port,
     auto aiStart = InetSocketAddress::getAddrInfo(address, port);
     if (aiStart == nullptr) return UNKNOWN_ERROR;
     for (auto ai = aiStart.get(); ai != nullptr; ai = ai->ai_next) {
+        if (ai->ai_addr == nullptr) continue;
         InetSocketAddress socketAddress(ai->ai_addr, ai->ai_addrlen, address, port);
         if (status_t status = setupSocketServer(socketAddress); status != OK) {
             continue;
@@ -159,6 +160,12 @@ void RpcServer::setConnectionFilter(std::function<bool(const void*, size_t)>&& f
     RpcMutexLockGuard _l(mLock);
     LOG_ALWAYS_FATAL_IF(mShutdownTrigger != nullptr, "Already joined");
     mConnectionFilter = std::move(filter);
+}
+
+void RpcServer::setServerSocketModifier(std::function<void(base::borrowed_fd)>&& modifier) {
+    RpcMutexLockGuard _l(mLock);
+    LOG_ALWAYS_FATAL_IF(mServer.fd != -1, "Already started");
+    mServerSocketModifier = std::move(modifier);
 }
 
 sp<IBinder> RpcServer::getRootObject() {
@@ -334,6 +341,8 @@ bool RpcServer::shutdown() {
         mJoinThread->join();
         mJoinThread.reset();
     }
+
+    mServer = RpcTransportFd();
 
     LOG_RPC_DETAIL("Finished waiting on shutdown.");
 
@@ -556,6 +565,14 @@ status_t RpcServer::setupSocketServer(const RpcSocketAddress& addr) {
         ALOGE("Could not create socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));
         return -savedErrno;
     }
+
+    {
+        RpcMutexLockGuard _l(mLock);
+        if (mServerSocketModifier != nullptr) {
+            mServerSocketModifier(socket_fd);
+        }
+    }
+
     if (0 != TEMP_FAILURE_RETRY(bind(socket_fd.get(), addr.addr(), addr.addrSize()))) {
         int savedErrno = errno;
         ALOGE("Could not bind socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));
