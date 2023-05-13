@@ -61,8 +61,8 @@ extern "C" int LLVMFuzzerTestOneInput(uint8_t* data, size_t size) {
             std::make_shared<ThreadSafeFuzzedDataProvider>(data, size);
     FuzzContainer fuzzer(fdp);
 
-    MultiTouchInputMapper& mapper = fuzzer.getMapper<MultiTouchInputMapper>();
     auto policyConfig = fuzzer.getPolicyConfig();
+    MultiTouchInputMapper& mapper = fuzzer.getMapper<MultiTouchInputMapper>(policyConfig);
 
     // Loop through mapper operations until randomness is exhausted.
     while (fdp->remaining_bytes() > 0) {
@@ -79,7 +79,7 @@ extern "C" int LLVMFuzzerTestOneInput(uint8_t* data, size_t size) {
                 [&]() -> void { mapper.getSources(); },
                 [&]() -> void {
                     std::list<NotifyArgs> unused =
-                            mapper.reconfigure(fdp->ConsumeIntegral<nsecs_t>(), &policyConfig,
+                            mapper.reconfigure(fdp->ConsumeIntegral<nsecs_t>(), policyConfig,
                                                fdp->ConsumeIntegral<uint32_t>());
                 },
                 [&]() -> void {

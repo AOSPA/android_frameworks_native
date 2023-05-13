@@ -1232,11 +1232,6 @@ void Output::updateProtectedContentState() {
 
     bool supportsProtectedContent = renderEngine.supportsProtectedContent();
 
-    /* QTI_BEGIN */
-        supportsProtectedContent = supportsProtectedContent && outputState.isSecure &&
-                QtiOutputExtension::qtiIsProtectedContent(this);
-    /* QTI_END */
-
     // If we the display is secure, protected content support is enabled, and at
     // least one layer has protected content, we need to use a secure back
     // buffer.
@@ -1245,6 +1240,10 @@ void Output::updateProtectedContentState() {
         bool needsProtected = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
             return layer->getLayerFE().getCompositionState()->hasProtectedContent;
         });
+
+        /* QTI_BEGIN */
+        needsProtected = needsProtected && QtiOutputExtension::qtiIsProtectedContent(this);
+        /* QTI_END */
         if (needsProtected != mRenderSurface->isProtected()) {
             mRenderSurface->setProtected(needsProtected);
         }
@@ -1610,9 +1609,10 @@ void Output::postFramebuffer() {
 }
 
 void Output::renderCachedSets(const CompositionRefreshArgs& refreshArgs) {
-    if (mPlanner) {
-        mPlanner->renderCachedSets(getState(), refreshArgs.scheduledFrameTime,
-                                   getState().usesDeviceComposition || getSkipColorTransform());
+    const auto& outputState = getState();
+    if (mPlanner && outputState.isEnabled) {
+        mPlanner->renderCachedSets(outputState, refreshArgs.scheduledFrameTime,
+                                   outputState.usesDeviceComposition || getSkipColorTransform());
     }
 }
 

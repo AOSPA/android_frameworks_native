@@ -3872,17 +3872,33 @@ void SurfaceFlinger::updateInputFlinger() {
         return;
     }
 
+    std::unordered_set<Layer*> visibleLayers;
+    mDrawingState.traverse([&visibleLayers](Layer* layer) {
+        if (layer->isVisibleForInput()) {
+            visibleLayers.insert(layer);
+        }
+    });
+    bool visibleLayersChanged = false;
+    if (visibleLayers != mVisibleLayers) {
+        visibleLayersChanged = true;
+        mVisibleLayers = std::move(visibleLayers);
+    }
+
     BackgroundExecutor::getInstance().sendCallbacks({[updateWindowInfo,
                                                       windowInfos = std::move(windowInfos),
                                                       displayInfos = std::move(displayInfos),
                                                       inputWindowCommands =
                                                               std::move(mInputWindowCommands),
-                                                      inputFlinger = mInputFlinger, this]() {
+                                                      inputFlinger = mInputFlinger, this,
+                                                      visibleLayersChanged]() {
         ATRACE_NAME("BackgroundExecutor::updateInputFlinger");
         if (updateWindowInfo) {
             mWindowInfosListenerInvoker
-                    ->windowInfosChanged(windowInfos, displayInfos,
-                                         inputWindowCommands.windowInfosReportedListeners);
+                    ->windowInfosChanged(std::move(windowInfos), std::move(displayInfos),
+                                         std::move(
+                                                 inputWindowCommands.windowInfosReportedListeners),
+                                         /* forceImmediateCall= */ visibleLayersChanged ||
+                                                 !inputWindowCommands.focusRequests.empty());
         } else {
             // If there are listeners but no changes to input windows, call the listeners
             // immediately.
@@ -4422,7 +4438,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
             // The current producerId is already a newer producer than the buffer that has a
             // barrier. This means the incoming buffer is older and we can release it here. We
             // don't wait on the barrier since we know that's stale information.
-            if (layer->getDrawingState().producerId > s.bufferData->producerId) {
+            if (layer->getDrawingState().barrierProducerId > s.bufferData->producerId) {
                 layer->callReleaseBufferCallback(s.bufferData->releaseBufferListener,
                                                  externalTexture->getBuffer(),
                                                  s.bufferData->frameNumber,
@@ -4433,7 +4449,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                 return TraverseBuffersReturnValues::DELETE_AND_CONTINUE_TRAVERSAL;
             }
 
-            if (layer->getDrawingState().frameNumber < s.bufferData->barrierFrameNumber) {
+            if (layer->getDrawingState().barrierFrameNumber < s.bufferData->barrierFrameNumber) {
                 const bool willApplyBarrierFrame =
                         flushState.bufferLayersReadyToPresent.contains(s.surface.get()) &&
                         ((flushState.bufferLayersReadyToPresent.get(s.surface.get()) >=

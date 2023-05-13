@@ -101,11 +101,11 @@ public:
 
     /* QTI_BEGIN */
     void qtiSetUndequeuedBufferCount(int count) {
-        mNumUndequeued = count;
+        mQtiNumUndequeued = count;
     }
 
     int qtiGetUndequeuedBufferCount() const {
-        return mNumUndequeued;
+        return mQtiNumUndequeued;
     }
     /* QTI_END */
 
@@ -123,9 +123,10 @@ public:
     void releaseBufferCallbackLocked(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
                                      std::optional<uint32_t> currentMaxAcquiredBufferCount,
                                      bool fakeRelease) REQUIRES(mMutex);
-    void syncNextTransaction(std::function<void(SurfaceComposerClient::Transaction*)> callback,
+    bool syncNextTransaction(std::function<void(SurfaceComposerClient::Transaction*)> callback,
                              bool acquireSingleBuffer = true);
     void stopContinuousSyncTransaction();
+    void clearSyncTransaction();
 
     void mergeWithNextTransaction(SurfaceComposerClient::Transaction* t, uint64_t frameNumber);
     void applyPendingTransactions(uint64_t frameNumber);
@@ -196,7 +197,7 @@ private:
     int32_t mMaxAcquiredBuffers = 1;
 
     /* QTI_BEGIN */
-    int mNumUndequeued GUARDED_BY(mMutex) = 0;
+    int mQtiNumUndequeued = 0;
     /* QTI_END */
     int32_t mNumFrameAvailable GUARDED_BY(mMutex) = 0;
     int32_t mNumAcquired GUARDED_BY(mMutex) = 0;
