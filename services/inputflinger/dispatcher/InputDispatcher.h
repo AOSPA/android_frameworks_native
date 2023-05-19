@@ -245,9 +245,16 @@ private:
     // to transfer focus to a new application.
     std::shared_ptr<EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
 
+#ifdef DISABLE_DEVICE_INTEGRATION
     std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
     findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus = false,
                               bool ignoreDragWindow = false) const REQUIRES(mLock);
+#else
+    // Device Integration: add a new param into this method
+    std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
+    findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus = false,
+                              bool ignoreDragWindow = false, bool isFromCrossDevice = false) const REQUIRES(mLock);
+#endif
 
     std::vector<sp<android::gui::WindowInfoHandle>> findTouchedSpyWindowsAtLocked(
             int32_t displayId, float x, float y, bool isStylus) const REQUIRES(mLock);
@@ -567,7 +574,13 @@ private:
     // Enqueue a drag event if needed, and update the touch state.
     // Uses findTouchedWindowTargetsLocked to make the decision
     void addDragEventLocked(const MotionEntry& entry) REQUIRES(mLock);
+
+#ifdef DISABLE_DEVICE_INTEGRATION
     void finishDragAndDrop(int32_t displayId, float x, float y) REQUIRES(mLock);
+#else
+    // Device Integration: add a new param into this method
+    void finishDragAndDrop(int32_t displayId, float x, float y, bool isFromCrossDevice = false) REQUIRES(mLock);
+#endif
 
     struct TouchOcclusionInfo {
         bool hasBlockingOcclusion;
