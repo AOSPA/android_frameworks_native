@@ -30,6 +30,12 @@ struct ANativeWindow;
 
 namespace android {
 
+/* QTI_BEGIN */
+namespace compositionengineextension {
+class QtiRenderSurfaceExtension;
+} // namespace compositionengineextension
+/* QTI_END */
+
 namespace compositionengine {
 
 class CompositionEngine;
@@ -77,6 +83,11 @@ public:
     qtiGetDisplaySurfaceExtension() {
         return mQtiDSExtnIntf;
     }
+
+    std::shared_ptr<android::compositionengineextension::QtiRenderSurfaceExtension>
+    qtiGetRenderSurfaceExtension() {
+        return mQtiRSExtnIntf;
+    }
     /* QTI_END */
 
 private:
@@ -95,7 +106,10 @@ private:
     bool mProtected{false};
 
     /* QTI_BEGIN */
+    friend class android::compositionengineextension::QtiRenderSurfaceExtension;
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    std::shared_ptr<android::compositionengineextension::QtiRenderSurfaceExtension> mQtiRSExtnIntf =
+            nullptr;
     /* QTI_END */
 };
 
