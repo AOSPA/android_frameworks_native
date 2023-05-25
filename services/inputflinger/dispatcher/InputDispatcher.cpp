@@ -681,6 +681,25 @@ std::vector<T>& operator+=(std::vector<T>& left, const std::vector<T>& right) {
     return left;
 }
 
+// Filter windows in a TouchState and targets in a vector to remove untrusted windows/targets from
+// both.
+void filterUntrustedTargets(TouchState& touchState, std::vector<InputTarget>& targets) {
+    std::erase_if(touchState.windows, [&](const TouchedWindow& window) {
+        if (!window.windowHandle->getInfo()->inputConfig.test(
+                    WindowInfo::InputConfig::TRUSTED_OVERLAY)) {
+            // In addition to TouchState, erase this window from the input targets! We don't have a
+            // good way to do this today except by adding a nested loop.
+            // TODO(b/282025641): simplify this code once InputTargets are being identified
+            // separately from TouchedWindows.
+            std::erase_if(targets, [&](const InputTarget& target) {
+                return target.inputChannel->getConnectionToken() == window.windowHandle->getToken();
+            });
+            return true;
+        }
+        return false;
+    });
+}
+
 } // namespace
 
 // --- InputDispatcher ---
@@ -2616,6 +2635,14 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         }
     }
 
+    // If this is a touchpad navigation gesture, it needs to only be sent to trusted targets, as we
+    // only want the system UI to handle these gestures.
+    const bool isTouchpadNavGesture = isFromSource(entry.source, AINPUT_SOURCE_MOUSE) &&
+            entry.classification == MotionClassification::MULTI_FINGER_SWIPE;
+    if (isTouchpadNavGesture) {
+        filterUntrustedTargets(/* byref */ tempTouchState, /* byref */ targets);
+    }
+
     // Output targets from the touch state.
     for (const TouchedWindow& touchedWindow : tempTouchState.windows) {
         if (touchedWindow.pointerIds.none() && !touchedWindow.hasHoveringPointers(entry.deviceId)) {
@@ -2623,6 +2650,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             // Do not send this event to those windows.
             continue;
         }
+
         addWindowTargetLocked(touchedWindow.windowHandle, touchedWindow.targetFlags,
                               touchedWindow.pointerIds, touchedWindow.firstDownTimeInTarget,
                               targets);
@@ -2834,6 +2862,30 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
     }
 }
 
+std::optional<InputTarget> InputDispatcher::createInputTargetLocked(
+        const sp<android::gui::WindowInfoHandle>& windowHandle,
+        ftl::Flags<InputTarget::Flags> targetFlags,
+        std::optional<nsecs_t> firstDownTimeInTarget) const {
+    std::shared_ptr<InputChannel> inputChannel = getInputChannelLocked(windowHandle->getToken());
+    if (inputChannel == nullptr) {
+        ALOGW("Not creating InputTarget for %s, no input channel", windowHandle->getName().c_str());
+        return {};
+    }
+    InputTarget inputTarget;
+    inputTarget.inputChannel = inputChannel;
+    inputTarget.flags = targetFlags;
+    inputTarget.globalScaleFactor = windowHandle->getInfo()->globalScaleFactor;
+    inputTarget.firstDownTimeInTarget = firstDownTimeInTarget;
+    const auto& displayInfoIt = mDisplayInfos.find(windowHandle->getInfo()->displayId);
+    if (displayInfoIt != mDisplayInfos.end()) {
+        inputTarget.displayTransform = displayInfoIt->second.transform;
+    } else {
+        // DisplayInfo not found for this window on display windowInfo->displayId.
+        // TODO(b/198444055): Make this an error message after 'setInputWindows' API is removed.
+    }
+    return inputTarget;
+}
+
 void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHandle,
                                             ftl::Flags<InputTarget::Flags> targetFlags,
                                             std::bitset<MAX_POINTER_ID + 1> pointerIds,
@@ -2849,25 +2901,12 @@ void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHa
     const WindowInfo* windowInfo = windowHandle->getInfo();
 
     if (it == inputTargets.end()) {
-        InputTarget inputTarget;
-        std::shared_ptr<InputChannel> inputChannel =
-                getInputChannelLocked(windowHandle->getToken());
-        if (inputChannel == nullptr) {
-            ALOGW("Window %s already unregistered input channel", windowHandle->getName().c_str());
+        std::optional<InputTarget> target =
+                createInputTargetLocked(windowHandle, targetFlags, firstDownTimeInTarget);
+        if (!target) {
             return;
         }
-        inputTarget.inputChannel = inputChannel;
-        inputTarget.flags = targetFlags;
-        inputTarget.globalScaleFactor = windowInfo->globalScaleFactor;
-        inputTarget.firstDownTimeInTarget = firstDownTimeInTarget;
-        const auto& displayInfoIt = mDisplayInfos.find(windowInfo->displayId);
-        if (displayInfoIt != mDisplayInfos.end()) {
-            inputTarget.displayTransform = displayInfoIt->second.transform;
-        } else {
-            // DisplayInfo not found for this window on display windowInfo->displayId.
-            // TODO(b/198444055): Make this an error message after 'setInputWindows' API is removed.
-        }
-        inputTargets.push_back(inputTarget);
+        inputTargets.push_back(*target);
         it = inputTargets.end() - 1;
     }
 
