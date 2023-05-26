@@ -31,7 +31,6 @@ soong_config_module_type {
     ],
 }
 
-
 qtidisplayextension_cc_defaults {
     name: "displaycommonsys_defaults",
     soong_config_variables: {
@@ -94,11 +93,11 @@ qtidisplayextension_cc_library_static {
     soong_config_variables: {
         displayextension: {
             srcs: [
+                "QtiAidlComposerHalExtension.cpp",
                 "QtiFeatureManager.cpp",
                 "QtiDolphinWrapper.cpp",
                 "QtiFramebufferSurfaceExtension.cpp",
                 "QtiHidlComposerHalExtension.cpp",
-                "QtiAidlComposerHalExtension.cpp",
                 "QtiHWComposerExtension.cpp",
                 "QtiPhaseOffsetsExtension.cpp",
                 "QtiPowerAdvisorExtension.cpp",

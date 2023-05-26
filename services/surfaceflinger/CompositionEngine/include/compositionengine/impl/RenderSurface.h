@@ -72,10 +72,12 @@ public:
     std::shared_ptr<renderengine::ExternalTexture>& mutableTextureForTest();
     base::unique_fd& mutableBufferReadyForTest();
 
+    /* QTI_BEGIN */
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
     qtiGetDisplaySurfaceExtension() {
         return mQtiDSExtnIntf;
     }
+    /* QTI_END */
 
 private:
     const compositionengine::CompositionEngine& mCompositionEngine;
@@ -92,7 +94,9 @@ private:
     const size_t mMaxTextureCacheSize;
     bool mProtected{false};
 
+    /* QTI_BEGIN */
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    /* QTI_END */
 };
 
 std::unique_ptr<compositionengine::RenderSurface> createRenderSurface(

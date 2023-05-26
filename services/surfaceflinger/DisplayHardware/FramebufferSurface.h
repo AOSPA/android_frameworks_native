@@ -28,10 +28,6 @@
 
 #include <ui/DisplayIdentification.h>
 
-/* QTI_BEGIN */
-#include "../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
-/* QTI_END */
-
 // ---------------------------------------------------------------------------
 namespace android {
 // ---------------------------------------------------------------------------

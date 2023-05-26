@@ -21,7 +21,7 @@ public:
     }
 
     void setCompositionEngine(CompositionEngine* val) { mQtiCompEngine = val; }
-    CompositionEngine*  getCompositionEngine() { return mQtiCompEngine; }
+    CompositionEngine* getCompositionEngine() { return mQtiCompEngine; }
 
     void setQtiSurfaceFlingerExtn(QtiSurfaceFlingerExtensionIntf* val) {
         mQtiSurfaceFlingerExtn = val;
@@ -50,10 +50,6 @@ private:
 
     CompositionEngine* mQtiCompEngine = nullptr;
     QtiSurfaceFlingerExtensionIntf* mQtiSurfaceFlingerExtn = nullptr;
-
 };
-
-
-
 
 } // namespace android::surfaceflingerextension

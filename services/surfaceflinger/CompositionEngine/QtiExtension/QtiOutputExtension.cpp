@@ -15,7 +15,6 @@ using android::surfaceflingerextension::QtiExtensionContext;
 
 namespace android::compositionengineextension {
 
-
 bool QtiOutputExtension::qtiIsProtectedContent(const compositionengine::impl::Output* output) {
     if (!output) {
         return false;
