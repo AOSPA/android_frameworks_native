@@ -66,6 +66,11 @@ public:
     virtual bool needsReleaseNotify() = 0;
 
     virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& buffers) = 0;
+    // MIUI ADD: START
+    virtual void onBufferDetached(int /**slot**/) {
+        //default do nothing
+    }
+    // MIUI ADD: END
 };
 
 /*
@@ -427,6 +432,12 @@ protected:
         }
 
         virtual void onBuffersDiscarded(const std::vector<int32_t>& slots);
+
+        // MIUI ADD: START
+        virtual void onBufferDetached(int slot) {
+            mSurfaceListener->onBufferDetached(slot);
+        }
+        // MIUI ADD: END
     private:
         wp<Surface> mParent;
         sp<SurfaceListener> mSurfaceListener;

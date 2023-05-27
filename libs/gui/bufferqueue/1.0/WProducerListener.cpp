@@ -49,4 +49,9 @@ bool LWProducerListener::needsReleaseNotify() {
 void LWProducerListener::onBuffersDiscarded(const std::vector<int32_t>& /*slots*/) {
 }
 
+// MIUI ADD: START
+void LWProducerListener::onBufferDetached(int /*slot*/) {
+}
+// MIUI ADD: END
+
 }  // namespace android
