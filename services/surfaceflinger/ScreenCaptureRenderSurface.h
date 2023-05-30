@@ -70,10 +70,12 @@ public:
 
     void dump(std::string& /* result */) const override {}
 
+    /* QTI_BEGIN */
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
     qtiGetDisplaySurfaceExtension() {
         return nullptr;
     }
+    /* QTI_END */
 
 private:
     std::shared_ptr<renderengine::ExternalTexture> mBuffer;

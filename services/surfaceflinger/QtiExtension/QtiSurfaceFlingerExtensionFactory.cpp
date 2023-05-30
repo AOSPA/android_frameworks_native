@@ -41,7 +41,6 @@ QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
             ALOGV("Enabling QtiVirtualDisplaySurfaceExtension ...");
             return new QtiVirtualDisplaySurfaceExtension(vds, secure, sinkUsage);
         }
-        // TODO(rmedel): else, createa QtiFramebufferSurfaceExtension for real displays
         return new QtiFramebufferSurfaceExtension(fbs);
     }
 #endif
@@ -49,4 +48,5 @@ QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
     ALOGI("Enabling QtiNullDisplaySurfaceExtension in QSSI ...");
     return new QtiNullDisplaySurfaceExtension(vds, secure, sinkUsage);
 }
+
 } // namespace android::surfaceflingerextension

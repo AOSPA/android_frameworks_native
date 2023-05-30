@@ -29,10 +29,5 @@ public:
     virtual uint64_t qtiExcludeVideoFromScratchBuffer(std::string source, uint64_t usage) = 0;
 };
 
-QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
-                                                                 VirtualDisplaySurface* vds,
-                                                                 bool secure, uint64_t sinkUsage,
-                                                                 FramebufferSurface* fbs);
-
 } // namespace surfaceflingerextension
 } // namespace android
