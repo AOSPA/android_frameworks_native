@@ -142,9 +142,11 @@ public:
     virtual bool qtiIsFrameEarly(uint32_t layerStackId, int sequence,
                                  nsecs_t desiredPresentTime) = 0;
     virtual void qtiUpdateLayerState(int numLayers) = 0;
-    virtual void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
-                                            uint32_t drawLayerStackId) = 0;
+    virtual void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId,
+                                 uint32_t curLayerStackId, uint32_t drawLayerStackId) = 0;
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
+    virtual void qtiSetVisibleLayerInfo(DisplayId displayId,
+                                 const char* name, int32_t sequence) = 0;
 
     /*
      * Methods for Dolphin APIs
