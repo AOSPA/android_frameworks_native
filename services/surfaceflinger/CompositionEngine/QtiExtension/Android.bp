@@ -11,6 +11,7 @@ qtidisplayextension_cc_library_static {
     ],
     srcs: [
         "QtiOutputExtension.cpp",
+        "QtiRenderSurfaceExtension.cpp",
     ],
     cflags: [
         "-Wno-macro-redefined"

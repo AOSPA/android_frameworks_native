@@ -34,6 +34,10 @@ class GraphicBuffer;
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
 }
+
+namespace compositionengineextension {
+class QtiRenderSurfaceExtension;
+}
 /* QTI_END */
 
 namespace compositionengine {
@@ -107,7 +111,14 @@ public:
     // TODO - check if we really need this here
 #ifdef QTI_DISPLAY_EXTENSION
     virtual android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
-    qtiGetDisplaySurfaceExtension() = 0;
+    qtiGetDisplaySurfaceExtension() {
+        return nullptr;
+    }
+
+    virtual std::shared_ptr<android::compositionengineextension::QtiRenderSurfaceExtension>
+    qtiGetRenderSurfaceExtension() {
+        return nullptr;
+    }
 #endif
     //QTI_END
 };

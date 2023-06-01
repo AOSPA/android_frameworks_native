@@ -34,6 +34,10 @@
 #include <ui/Rect.h>
 #include <utils/Trace.h>
 
+/* QTI_BEGIN */
+#include "QtiExtension/QtiRenderSurfaceExtension.h"
+/* QTI_END */
+
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -67,6 +71,8 @@ RenderSurface::RenderSurface(const CompositionEngine& compositionEngine, Display
         mSize(args.displayWidth, args.displayHeight),
         mMaxTextureCacheSize(args.maxTextureCacheSize) {
     mQtiDSExtnIntf = args.mQtiDSExtnIntf;
+    mQtiRSExtnIntf =
+            std::make_shared<android::compositionengineextension::QtiRenderSurfaceExtension>(this);
 
     LOG_ALWAYS_FATAL_IF(!mNativeWindow);
 }
