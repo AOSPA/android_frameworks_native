@@ -21,6 +21,7 @@
 #include <config/client_interface.h>
 #include <ftl/non_null.h>
 
+#include <compositionengine/impl/Display.h>
 #include <Scheduler/VSyncPredictor.h>
 #include <Scheduler/VsyncConfiguration.h>
 #include <ui/DisplayStatInfo.h>
@@ -1385,26 +1386,22 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
             }
         }
 
-        instance.active = device->getPowerMode() != hal::PowerMode::OFF;
+        instance.active = device ? device->getPowerMode() != hal::PowerMode::OFF : false;
         if (!instance.active) {
             continue;
         }
 
         std::vector<smomo::SmomoLayerStats> layers;
         if (enableSmomo) {
-            mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
-                if (mQtiSmomoInstances.size() > 1 &&
-                        instance.layerStackId != layer->qtiGetSmomoLayerStackId()) {
-                    return;
+            auto& visibleLayerInfo = mQtiVisibleLayerInfoMap[device->getId()];
+            if (visibleLayerInfo.layerName.size() != 0) {
+                for (size_t i = 0; i < visibleLayerInfo.layerName.size(); i++) {
+                    smomo::SmomoLayerStats layerStats;
+                    layerStats.name = visibleLayerInfo.layerName.at(i);
+                    layerStats.id = visibleLayerInfo.layerSequence.at(i);
+                    layers.push_back(layerStats);
                 }
-                if (!layer->isVisible()) {
-                    return;
-                }
-                smomo::SmomoLayerStats layerStats;
-                layerStats.name = layer->getDebugName();
-                layerStats.id = layer->getSequence();
-                layers.push_back(layerStats);
-            });
+            }
 
             fps = device->refreshRateSelector().getActiveMode().fps.getIntValue();
         }
@@ -1513,16 +1510,29 @@ bool QtiSurfaceFlingerExtension::qtiIsFrameEarly(uint32_t layerStackId, int sequ
     return isEarly;
 }
 
+void QtiSurfaceFlingerExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
+        const char* name, int32_t sequence) {
+    auto& visibleLayerInfo = mQtiVisibleLayerInfoMap[displayId];
+    visibleLayerInfo.layerName.push_back(name);
+    visibleLayerInfo.layerSequence.push_back(sequence);
+}
+
 void QtiSurfaceFlingerExtension::qtiUpdateLayerState(int numLayers) {
     bool mSplitLayerExt = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kSplitLayerExtension);
 
-    if (mSplitLayerExt && mQtiLayerExt) {
-        if (mQtiVisibleLayerInfo.layerName.size() != 0) {
-            mQtiLayerExt->UpdateLayerState(mQtiVisibleLayerInfo.layerName, numLayers);
+    ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+    for (const auto& [token, displayDevice] : mQtiFlinger->mDisplays) {
+        auto& VisibleLayerInfo = mQtiVisibleLayerInfoMap[displayDevice->getId()];
+
+        if (mSplitLayerExt && mQtiLayerExt) {
+            if (VisibleLayerInfo.layerName.size() != 0) {
+                mQtiLayerExt->UpdateLayerState(VisibleLayerInfo.layerName, numLayers);
+            }
         }
+        VisibleLayerInfo.layerName.clear();
+        VisibleLayerInfo.layerSequence.clear();
     }
-    mQtiVisibleLayerInfo.layerName.clear();
-    mQtiVisibleLayerInfo.layerSequence.clear();
 }
 
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId,

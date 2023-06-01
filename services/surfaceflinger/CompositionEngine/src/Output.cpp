@@ -935,6 +935,10 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         // QTI_END
     }
     editState().outputLayerHash = outputLayerHash;
+
+    // QTI_BEGIN
+    QtiOutputExtension::qtiGetVisibleLayerInfo(this);
+    // QTI_END
 }
 
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {

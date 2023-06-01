@@ -127,4 +127,24 @@ void QtiOutputExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t type,
     }
 }
 
+void QtiOutputExtension::qtiGetVisibleLayerInfo(
+        const compositionengine::impl::Output* output) {
+    if (!output) {
+        return;
+    }
+
+    auto sfext =  QtiExtensionContext::instance().getQtiSurfaceFlingerExtn();
+    if (sfext) {
+        auto displayId = output->getDisplayId();
+        if (!displayId.has_value()) {
+            return;
+        }
+
+        for (auto* layer: output->getOutputLayersOrderedByZ()) {
+            sfext->qtiSetVisibleLayerInfo(*displayId, layer->getLayerFE().getDebugName(),
+                    layer->getLayerFE().getSequence());
+        }
+    }
+}
+
 } // namespace android::compositionengineextension
