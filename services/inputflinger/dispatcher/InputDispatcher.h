@@ -148,10 +148,10 @@ public:
 
     void cancelCurrentTouch() override;
 
-    void requestRefreshConfiguration() override;
-
     // Public to allow tests to verify that a Monitor can get ANR.
     void setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout);
+
+    void setKeyRepeatConfiguration(nsecs_t timeout, nsecs_t delay) override;
 
 private:
     enum class DropReason {
@@ -203,6 +203,8 @@ private:
     DropReason mLastDropReason GUARDED_BY(mLock);
 
     const IdGenerator mIdGenerator;
+
+    int64_t mWindowInfosVsyncId GUARDED_BY(mLock);
 
     // With each iteration, InputDispatcher nominally processes one queued event,
     // a timeout, or a response from an input consumer.

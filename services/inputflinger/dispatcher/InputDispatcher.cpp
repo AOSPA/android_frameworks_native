@@ -6700,6 +6700,13 @@ void InputDispatcher::onWindowInfosChanged(const gui::WindowInfosUpdate& update)
         for (const auto& [displayId, handles] : handlesPerDisplay) {
             setInputWindowsLocked(handles, displayId);
         }
+
+        if (update.vsyncId < mWindowInfosVsyncId) {
+            ALOGE("Received out of order window infos update. Last update vsync id: %" PRId64
+                  ", current update vsync id: %" PRId64,
+                  mWindowInfosVsyncId, update.vsyncId);
+        }
+        mWindowInfosVsyncId = update.vsyncId;
     }
     // Wake up poll loop since it may need to make new input dispatching choices.
     mLooper->wake();
@@ -6738,13 +6745,6 @@ void InputDispatcher::cancelCurrentTouch() {
     }
     // Wake up poll loop since there might be work to do.
     mLooper->wake();
-}
-
-void InputDispatcher::requestRefreshConfiguration() {
-    InputDispatcherConfiguration config = mPolicy.getDispatcherConfiguration();
-
-    std::scoped_lock _l(mLock);
-    mConfig = config;
 }
 
 void InputDispatcher::setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout) {
@@ -6856,6 +6856,13 @@ sp<WindowInfoHandle> InputDispatcher::findWallpaperWindowBelow(
         }
     }
     return nullptr;
+}
+
+void InputDispatcher::setKeyRepeatConfiguration(nsecs_t timeout, nsecs_t delay) {
+    std::scoped_lock _l(mLock);
+
+    mConfig.keyRepeatTimeout = timeout;
+    mConfig.keyRepeatDelay = delay;
 }
 
 } // namespace android::inputdispatcher
