@@ -48,10 +48,11 @@
 #include "DisplayHardware/PowerAdvisor.h"
 
 // QTI_BEGIN
+#include <composer_extn_intf.h>
 #include "../../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
 #include "../../QtiExtension/QtiExtensionContext.h"
 #include "../QtiExtension/QtiOutputExtension.h"
-#include <composer_extn_intf.h>
+#include "../QtiExtension/QtiRenderSurfaceExtension.h"
 // QTI_END
 
 using aidl::android::hardware::graphics::composer3::Capability;
@@ -67,6 +68,7 @@ class QtiDisplaySurfaceExtensionIntf;
 }
 
 using android::compositionengineextension::QtiOutputExtension;
+using android::compositionengineextension::QtiRenderSurfaceExtension;
 //QTI_END
 
 namespace android::compositionengine::impl {
@@ -525,8 +527,20 @@ void Display::qtiBeginDraw() {
         fbtLayerInfo.height = getState().orientedDisplaySpace.getBounds().height;
         auto renderSurface = getRenderSurface();
         fbtLayerInfo.secure = renderSurface->isProtected();
-        fbtLayerInfo.dataspace = static_cast<int>(
-                renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace());
+
+        if (renderSurface->qtiGetDisplaySurfaceExtension()) {
+            fbtLayerInfo.dataspace = static_cast<int>(renderSurface->qtiGetDisplaySurfaceExtension()
+                                                              ->getClientTargetCurrentDataspace());
+        } else {
+            ALOGV("%s: DisplaySurfaceExtension is null", __func__);
+        }
+
+        if (renderSurface->qtiGetRenderSurfaceExtension()) {
+            fbtLayerInfo.format =
+                    renderSurface->qtiGetRenderSurfaceExtension()->qtiGetClientTargetFormat();
+        } else {
+            ALOGV("%s: RenderSurfaceExtension is null", __func__);
+        }
 
         // Reset cache if there is a color mode change
         if (mQtiIsColorModeChanged) {
