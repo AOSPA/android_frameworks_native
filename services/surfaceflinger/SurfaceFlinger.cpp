@@ -4770,7 +4770,8 @@ status_t SurfaceFlinger::setTransactionState(
             mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
 
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
-                                            resolvedState.externalTexture);
+                                                    resolvedState.externalTexture,
+                                                    *resolvedState.state.bufferData);
             /* QTI_END */
 
             mBufferCountTracker.increment(resolvedState.state.surface->localBinder());

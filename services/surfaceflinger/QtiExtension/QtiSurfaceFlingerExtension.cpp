@@ -1442,9 +1442,9 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(sp<Layer> layer,
-                                         int64_t desiredPresentTime, bool isAutoTimestamp,
-                                         std::shared_ptr<renderengine::ExternalTexture> buffer) {
+void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
+        sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
+        std::shared_ptr<renderengine::ExternalTexture> buffer, BufferData& bufferData) {
     if (!layer) {
         return;
     }
@@ -1458,7 +1458,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(sp<Layer> layer,
         bufferStats.dequeue_latency = 0;
         bufferStats.key = desiredPresentTime;
 #ifdef FRC_FRAME_PACING_FEATURE
-        bufferStats.frame_number = state.bufferData->frameNumber;
+        bufferStats.frame_number = bufferData.frameNumber;
 #endif
 #ifdef TIMED_RENDERING_METADATA_FEATURE
         if (buffer && buffer->getBuffer()) {
