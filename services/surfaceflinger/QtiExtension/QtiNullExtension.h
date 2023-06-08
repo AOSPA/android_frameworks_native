@@ -80,8 +80,6 @@ public:
     void qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) override;
     void qtiSetLayerAsMask(uint32_t hwcDisplayId __unused, uint64_t layerId __unused) override{};
 
-
-
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
@@ -130,7 +128,9 @@ public:
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
 
-    bool qtiIsFpsDeferNeeded(float newFpsRequest) { return false; }
+    bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
+    void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
+                                   int32_t vsyncPeriod) override;
 
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;

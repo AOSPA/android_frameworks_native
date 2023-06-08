@@ -54,7 +54,7 @@ protected:
     void TearDown() override;
 
     void addConfigurationProperty(const char* key, const char* value);
-    std::list<NotifyArgs> configureDevice(uint32_t changes);
+    std::list<NotifyArgs> configureDevice(ConfigurationChanges changes);
     std::shared_ptr<InputDevice> newDevice(int32_t deviceId, const std::string& name,
                                            const std::string& location, int32_t eventHubId,
                                            ftl::Flags<InputDeviceClass> classes, int bus = 0);
@@ -62,7 +62,7 @@ protected:
     T& addMapperAndConfigure(Args... args) {
         T& mapper =
                 mDevice->addMapper<T>(EVENTHUB_ID, mFakePolicy->getReaderConfiguration(), args...);
-        configureDevice(0);
+        configureDevice(/*changes=*/{});
         std::list<NotifyArgs> resetArgList = mDevice->reset(ARBITRARY_TIME);
         resetArgList += mapper.reset(ARBITRARY_TIME);
         // Loop the reader to flush the input listener queue.
@@ -71,6 +71,17 @@ protected:
         }
         mReader->loopOnce();
         return mapper;
+    }
+
+    template <class T, typename... Args>
+    T& constructAndAddMapper(Args... args) {
+        // ensure a device entry exists for this eventHubId
+        mDevice->addEmptyEventHubDevice(EVENTHUB_ID);
+        // configure the empty device
+        configureDevice(/*changes=*/{});
+
+        return mDevice->constructAndAddMapper<T>(EVENTHUB_ID, mFakePolicy->getReaderConfiguration(),
+                                                 args...);
     }
 
     void setDisplayInfoAndReconfigure(int32_t displayId, int32_t width, int32_t height,

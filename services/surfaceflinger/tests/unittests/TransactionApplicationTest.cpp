@@ -73,6 +73,7 @@ public:
         FrameTimelineInfo frameTimelineInfo;
         std::vector<client_cache_t> uncacheBuffers;
         uint64_t id = static_cast<uint64_t>(-1);
+        std::vector<uint64_t> mergedTransactionIds;
         static_assert(0xffffffffffffffff == static_cast<uint64_t>(-1));
     };
 
@@ -108,7 +109,7 @@ public:
                                      transaction.applyToken, transaction.inputWindowCommands,
                                      transaction.desiredPresentTime, transaction.isAutoTimestamp,
                                      transaction.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transaction.id);
+                                     transaction.id, transaction.mergedTransactionIds);
 
         // If transaction is synchronous, SF applyTransactionState should time out (5s) wating for
         // SF to commit the transaction. If this is animation, it should not time out waiting.
@@ -135,7 +136,7 @@ public:
                                      transaction.applyToken, transaction.inputWindowCommands,
                                      transaction.desiredPresentTime, transaction.isAutoTimestamp,
                                      transaction.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transaction.id);
+                                     transaction.id, transaction.mergedTransactionIds);
 
         nsecs_t returnedTime = systemTime();
         EXPECT_LE(returnedTime, applicationSentTime + TRANSACTION_TIMEOUT);
@@ -166,7 +167,7 @@ public:
                                      transactionA.applyToken, transactionA.inputWindowCommands,
                                      transactionA.desiredPresentTime, transactionA.isAutoTimestamp,
                                      transactionA.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transactionA.id);
+                                     transactionA.id, transactionA.mergedTransactionIds);
 
         // This thread should not have been blocked by the above transaction
         // (5s is the timeout period that applyTransactionState waits for SF to
@@ -181,7 +182,7 @@ public:
                                      transactionB.applyToken, transactionB.inputWindowCommands,
                                      transactionB.desiredPresentTime, transactionB.isAutoTimestamp,
                                      transactionB.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transactionB.id);
+                                     transactionB.id, transactionB.mergedTransactionIds);
 
         // this thread should have been blocked by the above transaction
         // if this is an animation, this thread should be blocked for 5s
@@ -218,7 +219,8 @@ TEST_F(TransactionApplicationTest, AddToPendingQueue) {
                                  transactionA.displays, transactionA.flags, transactionA.applyToken,
                                  transactionA.inputWindowCommands, transactionA.desiredPresentTime,
                                  transactionA.isAutoTimestamp, transactionA.uncacheBuffers,
-                                 mHasListenerCallbacks, mCallbacks, transactionA.id);
+                                 mHasListenerCallbacks, mCallbacks, transactionA.id,
+                                 transactionA.mergedTransactionIds);
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_FALSE(transactionQueue.isEmpty());
@@ -238,7 +240,8 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
                                  transactionA.displays, transactionA.flags, transactionA.applyToken,
                                  transactionA.inputWindowCommands, transactionA.desiredPresentTime,
                                  transactionA.isAutoTimestamp, transactionA.uncacheBuffers,
-                                 mHasListenerCallbacks, mCallbacks, transactionA.id);
+                                 mHasListenerCallbacks, mCallbacks, transactionA.id,
+                                 transactionA.mergedTransactionIds);
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_FALSE(transactionQueue.isEmpty());
@@ -251,7 +254,8 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     mFlinger.setTransactionState(empty.frameTimelineInfo, empty.states, empty.displays, empty.flags,
                                  empty.applyToken, empty.inputWindowCommands,
                                  empty.desiredPresentTime, empty.isAutoTimestamp,
-                                 empty.uncacheBuffers, mHasListenerCallbacks, mCallbacks, empty.id);
+                                 empty.uncacheBuffers, mHasListenerCallbacks, mCallbacks, empty.id,
+                                 empty.mergedTransactionIds);
 
     // flush transaction queue should flush as desiredPresentTime has
     // passed
@@ -273,6 +277,34 @@ TEST_F(TransactionApplicationTest, FromHandle) {
     auto ret = mFlinger.fromHandle(badHandle);
     EXPECT_EQ(nullptr, ret.get());
 }
+
+class FakeExternalTexture : public renderengine::ExternalTexture {
+    const sp<GraphicBuffer> mEmptyBuffer = nullptr;
+    uint32_t mWidth;
+    uint32_t mHeight;
+    uint64_t mId;
+    PixelFormat mPixelFormat;
+    uint64_t mUsage;
+
+public:
+    FakeExternalTexture(BufferData& bufferData)
+          : mWidth(bufferData.getWidth()),
+            mHeight(bufferData.getHeight()),
+            mId(bufferData.getId()),
+            mPixelFormat(bufferData.getPixelFormat()),
+            mUsage(bufferData.getUsage()) {}
+    const sp<GraphicBuffer>& getBuffer() const { return mEmptyBuffer; }
+    bool hasSameBuffer(const renderengine::ExternalTexture& other) const override {
+        return getId() == other.getId();
+    }
+    uint32_t getWidth() const override { return mWidth; }
+    uint32_t getHeight() const override { return mHeight; }
+    uint64_t getId() const override { return mId; }
+    PixelFormat getPixelFormat() const override { return mPixelFormat; }
+    uint64_t getUsage() const override { return mUsage; }
+    void remapBuffer() override {}
+    ~FakeExternalTexture() = default;
+};
 
 class LatchUnsignaledTest : public TransactionApplicationTest {
 public:
@@ -346,7 +378,11 @@ public:
             std::vector<ResolvedComposerState> resolvedStates;
             resolvedStates.reserve(transaction.states.size());
             for (auto& state : transaction.states) {
-                resolvedStates.emplace_back(std::move(state));
+                ResolvedComposerState resolvedState;
+                resolvedState.state = std::move(state.state);
+                resolvedState.externalTexture =
+                        std::make_shared<FakeExternalTexture>(*resolvedState.state.bufferData);
+                resolvedStates.emplace_back(resolvedState);
             }
 
             TransactionState transactionState(transaction.frameTimelineInfo, resolvedStates,
@@ -354,9 +390,10 @@ public:
                                               transaction.applyToken,
                                               transaction.inputWindowCommands,
                                               transaction.desiredPresentTime,
-                                              transaction.isAutoTimestamp, {}, systemTime(), 0,
+                                              transaction.isAutoTimestamp, {}, systemTime(),
                                               mHasListenerCallbacks, mCallbacks, getpid(),
-                                              static_cast<int>(getuid()), transaction.id);
+                                              static_cast<int>(getuid()), transaction.id,
+                                              transaction.mergedTransactionIds);
             mFlinger.setTransactionStateInternal(transactionState);
         }
         mFlinger.flushTransactionQueues();
@@ -1049,6 +1086,139 @@ TEST(TransactionHandlerTest, QueueTransaction) {
 
     EXPECT_EQ(transactionsReadyToBeApplied.size(), 1u);
     EXPECT_EQ(transactionsReadyToBeApplied.front().id, 42u);
+}
+
+TEST(TransactionHandlerTest, TransactionsKeepTrackOfDirectMerges) {
+    SurfaceComposerClient::Transaction transaction1, transaction2, transaction3, transaction4;
+
+    uint64_t transaction2Id = transaction2.getId();
+    uint64_t transaction3Id = transaction3.getId();
+    EXPECT_NE(transaction2Id, transaction3Id);
+
+    transaction1.merge(std::move(transaction2));
+    transaction1.merge(std::move(transaction3));
+
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 2u);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[0], transaction3Id);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[1], transaction2Id);
+}
+
+TEST(TransactionHandlerTest, TransactionsKeepTrackOfIndirectMerges) {
+    SurfaceComposerClient::Transaction transaction1, transaction2, transaction3, transaction4;
+
+    uint64_t transaction2Id = transaction2.getId();
+    uint64_t transaction3Id = transaction3.getId();
+    uint64_t transaction4Id = transaction4.getId();
+    EXPECT_NE(transaction2Id, transaction3Id);
+    EXPECT_NE(transaction2Id, transaction4Id);
+    EXPECT_NE(transaction3Id, transaction4Id);
+
+    transaction4.merge(std::move(transaction2));
+    transaction4.merge(std::move(transaction3));
+
+    EXPECT_EQ(transaction4.getMergedTransactionIds().size(), 2u);
+    EXPECT_EQ(transaction4.getMergedTransactionIds()[0], transaction3Id);
+    EXPECT_EQ(transaction4.getMergedTransactionIds()[1], transaction2Id);
+
+    transaction1.merge(std::move(transaction4));
+
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 3u);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[0], transaction4Id);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[1], transaction3Id);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[2], transaction2Id);
+}
+
+TEST(TransactionHandlerTest, TransactionMergesAreCleared) {
+    SurfaceComposerClient::Transaction transaction1, transaction2, transaction3;
+
+    transaction1.merge(std::move(transaction2));
+    transaction1.merge(std::move(transaction3));
+
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 2u);
+
+    transaction1.clear();
+
+    EXPECT_EQ(transaction1.getMergedTransactionIds().empty(), true);
+}
+
+TEST(TransactionHandlerTest, TransactionMergesAreCapped) {
+    SurfaceComposerClient::Transaction transaction;
+    std::vector<uint64_t> mergedTransactionIds;
+
+    for (uint i = 0; i < 20u; i++) {
+        SurfaceComposerClient::Transaction transactionToMerge;
+        mergedTransactionIds.push_back(transactionToMerge.getId());
+        transaction.merge(std::move(transactionToMerge));
+    }
+
+    // Keeps latest 10 merges in order of merge recency
+    EXPECT_EQ(transaction.getMergedTransactionIds().size(), 10u);
+    for (uint i = 0; i < 10u; i++) {
+        EXPECT_EQ(transaction.getMergedTransactionIds()[i],
+                  mergedTransactionIds[mergedTransactionIds.size() - 1 - i]);
+    }
+}
+
+TEST(TransactionHandlerTest, KeepsMergesFromMoreRecentMerge) {
+    SurfaceComposerClient::Transaction transaction1, transaction2, transaction3;
+    std::vector<uint64_t> mergedTransactionIds1, mergedTransactionIds2, mergedTransactionIds3;
+    uint64_t transaction2Id = transaction2.getId();
+    uint64_t transaction3Id = transaction3.getId();
+
+    for (uint i = 0; i < 20u; i++) {
+        SurfaceComposerClient::Transaction transactionToMerge;
+        mergedTransactionIds1.push_back(transactionToMerge.getId());
+        transaction1.merge(std::move(transactionToMerge));
+    }
+
+    for (uint i = 0; i < 5u; i++) {
+        SurfaceComposerClient::Transaction transactionToMerge;
+        mergedTransactionIds2.push_back(transactionToMerge.getId());
+        transaction2.merge(std::move(transactionToMerge));
+    }
+
+    transaction1.merge(std::move(transaction2));
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 10u);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[0], transaction2Id);
+    for (uint i = 0; i < 5u; i++) {
+        EXPECT_EQ(transaction1.getMergedTransactionIds()[i + 1u],
+                  mergedTransactionIds2[mergedTransactionIds2.size() - 1 - i]);
+    }
+    for (uint i = 0; i < 4u; i++) {
+        EXPECT_EQ(transaction1.getMergedTransactionIds()[i + 6u],
+                  mergedTransactionIds1[mergedTransactionIds1.size() - 1 - i]);
+    }
+
+    for (uint i = 0; i < 20u; i++) {
+        SurfaceComposerClient::Transaction transactionToMerge;
+        mergedTransactionIds3.push_back(transactionToMerge.getId());
+        transaction3.merge(std::move(transactionToMerge));
+    }
+
+    transaction1.merge(std::move(transaction3));
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 10u);
+    EXPECT_EQ(transaction1.getMergedTransactionIds()[0], transaction3Id);
+    for (uint i = 0; i < 9u; i++) {
+        EXPECT_EQ(transaction1.getMergedTransactionIds()[i + 1],
+                  mergedTransactionIds3[mergedTransactionIds3.size() - 1 - i]);
+    }
+}
+
+TEST(TransactionHandlerTest, CanAddTransactionWithFullMergedIds) {
+    SurfaceComposerClient::Transaction transaction1, transaction2;
+    for (uint i = 0; i < 20u; i++) {
+        SurfaceComposerClient::Transaction transactionToMerge;
+        transaction1.merge(std::move(transactionToMerge));
+    }
+
+    EXPECT_EQ(transaction1.getMergedTransactionIds().size(), 10u);
+
+    auto transaction1Id = transaction1.getId();
+    transaction2.merge(std::move(transaction1));
+    EXPECT_EQ(transaction2.getMergedTransactionIds().size(), 10u);
+    auto mergedTransactionIds = transaction2.getMergedTransactionIds();
+    EXPECT_TRUE(std::count(mergedTransactionIds.begin(), mergedTransactionIds.end(),
+                           transaction1Id) > 0);
 }
 
 } // namespace android

@@ -27,8 +27,10 @@ static constexpr ssize_t SENSOR_VEC_LEN = 3;
 
 class SensorInputMapper : public InputMapper {
 public:
-    explicit SensorInputMapper(InputDeviceContext& deviceContext,
-                               const InputReaderConfiguration& readerConfig);
+    template <class T, class... Args>
+    friend std::unique_ptr<T> createInputMapper(InputDeviceContext& deviceContext,
+                                                const InputReaderConfiguration& readerConfig,
+                                                Args... args);
     ~SensorInputMapper() override;
 
     uint32_t getSources() const override;
@@ -36,7 +38,7 @@ public:
     void dump(std::string& dump) override;
     [[nodiscard]] std::list<NotifyArgs> reconfigure(nsecs_t when,
                                                     const InputReaderConfiguration& config,
-                                                    uint32_t changes) override;
+                                                    ConfigurationChanges changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
     bool enableSensor(InputDeviceSensorType sensorType, std::chrono::microseconds samplingPeriod,
@@ -105,6 +107,9 @@ private:
             this->lastSampleTimeNs = std::nullopt;
         }
     };
+
+    explicit SensorInputMapper(InputDeviceContext& deviceContext,
+                               const InputReaderConfiguration& readerConfig);
 
     static Axis createAxis(const AxisInfo& AxisInfo, const RawAbsoluteAxisInfo& rawAxisInfo);
 

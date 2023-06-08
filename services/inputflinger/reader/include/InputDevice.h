@@ -85,7 +85,7 @@ public:
     void removeEventHubDevice(int32_t eventHubId);
     [[nodiscard]] std::list<NotifyArgs> configure(nsecs_t when,
                                                   const InputReaderConfiguration& readerConfig,
-                                                  uint32_t changes);
+                                                  ConfigurationChanges changes);
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when);
     [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvents, size_t count);
     [[nodiscard]] std::list<NotifyArgs> timeoutExpired(nsecs_t when);
@@ -147,6 +147,16 @@ public:
         T* mapper = new T(*deviceContext, args...);
         mappers.emplace_back(mapper);
         return *mapper;
+    }
+
+    template <class T, typename... Args>
+    T& constructAndAddMapper(int32_t eventHubId, Args... args) {
+        // create mapper
+        auto& devicePair = mDevices[eventHubId];
+        auto& deviceContext = devicePair.first;
+        auto& mappers = devicePair.second;
+        mappers.push_back(createInputMapper<T>(*deviceContext, args...));
+        return static_cast<T&>(*mappers.back());
     }
 
     // construct and add a controller to the input device
@@ -407,7 +417,7 @@ public:
     inline const std::string getName() const { return mDevice.getName(); }
     inline const std::string getDescriptor() { return mDevice.getDescriptor(); }
     inline const std::string getLocation() { return mDevice.getLocation(); }
-    inline bool isExternal() { return mDevice.isExternal(); }
+    inline bool isExternal() const { return mDevice.isExternal(); }
     inline std::optional<uint8_t> getAssociatedDisplayPort() const {
         return mDevice.getAssociatedDisplayPort();
     }
@@ -424,7 +434,7 @@ public:
         return mDevice.cancelTouch(when, readTime);
     }
     inline void bumpGeneration() { mDevice.bumpGeneration(); }
-    inline const PropertyMap& getConfiguration() { return mDevice.getConfiguration(); }
+    inline const PropertyMap& getConfiguration() const { return mDevice.getConfiguration(); }
 
 private:
     InputDevice& mDevice;

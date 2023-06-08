@@ -19,6 +19,7 @@
 #include <optional>
 #include <ostream>
 #include <unordered_set>
+#include "ui/LayerStack.h"
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -34,6 +35,10 @@
 #include <ui/FenceResult.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
+
+#ifndef DISABLE_DEVICE_INTEGRATION
+#include <gui/WindowInfo.h>
+#endif
 
 namespace android {
 
@@ -140,7 +145,7 @@ public:
             ClientCompositionTargetSettings&) const = 0;
 
     // Called after the layer is displayed to update the presentation fence
-    virtual void onLayerDisplayed(ftl::SharedFuture<FenceResult>) = 0;
+    virtual void onLayerDisplayed(ftl::SharedFuture<FenceResult>, ui::LayerStack layerStack) = 0;
 
     // Gets some kind of identifier for the layer for debug purposes.
     virtual const char* getDebugName() const = 0;
@@ -151,6 +156,16 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
+
+#ifndef DISABLE_DEVICE_INTEGRATION
+     // Device Integration: Gets windows type
+     virtual int getWindowTypeForDIS() { return static_cast<int>(mWindowTypeForDIS); }
+     virtual void setWindowTypeForDIS(gui::WindowInfo::Type windowType) { mWindowTypeForDIS = windowType; }
+
+protected:
+     // Window types from WindowManager.LayoutParams
+     gui::WindowInfo::Type mWindowTypeForDIS;
+#endif
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
 };

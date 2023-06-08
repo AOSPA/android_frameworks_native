@@ -158,6 +158,8 @@ public:
     virtual void qtiTryDrawMethod(sp<DisplayDevice> display) = 0;
 
     virtual bool qtiIsFpsDeferNeeded(float newFpsRequest) = 0;
+    virtual void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
+                                           int32_t vsyncPeriod) = 0;
 };
 
 } // namespace android::surfaceflingerextension

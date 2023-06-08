@@ -54,9 +54,10 @@ struct TransactionState {
                      const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
                      const sp<IBinder>& applyToken, const InputWindowCommands& inputWindowCommands,
                      int64_t desiredPresentTime, bool isAutoTimestamp,
-                     std::vector<uint64_t> uncacheBufferIds, int64_t postTime, uint32_t permissions,
+                     std::vector<uint64_t> uncacheBufferIds, int64_t postTime,
                      bool hasListenerCallbacks, std::vector<ListenerCallbacks> listenerCallbacks,
-                     int originPid, int originUid, uint64_t transactionId)
+                     int originPid, int originUid, uint64_t transactionId,
+                     std::vector<uint64_t> mergedTransactionIds)
           : frameTimelineInfo(frameTimelineInfo),
             states(std::move(composerStates)),
             displays(displayStates),
@@ -67,19 +68,18 @@ struct TransactionState {
             isAutoTimestamp(isAutoTimestamp),
             uncacheBufferIds(std::move(uncacheBufferIds)),
             postTime(postTime),
-            permissions(permissions),
             hasListenerCallbacks(hasListenerCallbacks),
             listenerCallbacks(listenerCallbacks),
             originPid(originPid),
             originUid(originUid),
-            id(transactionId) {}
+            id(transactionId),
+            mergedTransactionIds(std::move(mergedTransactionIds)) {}
 
     // Invokes `void(const layer_state_t&)` visitor for matching layers.
     template <typename Visitor>
     void traverseStatesWithBuffers(Visitor&& visitor) const {
         for (const auto& state : states) {
-            if (state.state.hasBufferChanges() && state.state.hasValidBuffer() &&
-                state.state.surface) {
+            if (state.state.hasBufferChanges() && state.externalTexture && state.state.surface) {
                 visitor(state.state);
             }
         }
@@ -88,8 +88,7 @@ struct TransactionState {
     template <typename Visitor>
     void traverseStatesWithBuffersWhileTrue(Visitor&& visitor) {
         for (auto state = states.begin(); state != states.end();) {
-            if (state->state.hasBufferChanges() && state->state.hasValidBuffer() &&
-                state->state.surface) {
+            if (state->state.hasBufferChanges() && state->externalTexture && state->state.surface) {
                 int result = visitor(state->state, state->externalTexture);
                 if (result == STOP_TRAVERSAL) return;
                 if (result == DELETE_AND_CONTINUE_TRAVERSAL) {
@@ -128,13 +127,13 @@ struct TransactionState {
     bool isAutoTimestamp;
     std::vector<uint64_t> uncacheBufferIds;
     int64_t postTime;
-    uint32_t permissions;
     bool hasListenerCallbacks;
     std::vector<ListenerCallbacks> listenerCallbacks;
     int originPid;
     int originUid;
     uint64_t id;
     bool sentFenceTimeoutWarning = false;
+    std::vector<uint64_t> mergedTransactionIds;
 };
 
 } // namespace android

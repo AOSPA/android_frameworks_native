@@ -42,6 +42,7 @@
 #include <utils/Errors.h>
 #include <utils/Trace.h>
 
+#include <scheduler/VsyncConfig.h>
 #include "DisplayHardware/DisplayMode.h"
 #include "FrameTimeline.h"
 #include "VSyncDispatch.h"
@@ -598,25 +599,57 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
                                         nsecs_t timestamp,
                                         nsecs_t preferredExpectedPresentationTime,
                                         nsecs_t preferredDeadlineTimestamp) const {
+    uint32_t currentIndex = 0;
     // Add 1 to ensure the preferredFrameTimelineIndex entry (when multiplier == 0) is included.
-    for (int64_t multiplier = -VsyncEventData::kFrameTimelinesLength + 1, currentIndex = 0;
-         currentIndex < VsyncEventData::kFrameTimelinesLength; multiplier++) {
+    for (int64_t multiplier = -VsyncEventData::kFrameTimelinesCapacity + 1;
+         currentIndex < VsyncEventData::kFrameTimelinesCapacity; multiplier++) {
         nsecs_t deadlineTimestamp = preferredDeadlineTimestamp + multiplier * frameInterval;
-        // Valid possible frame timelines must have future values.
-        if (deadlineTimestamp > timestamp) {
-            if (multiplier == 0) {
-                outVsyncEventData.preferredFrameTimelineIndex = currentIndex;
-            }
-            nsecs_t expectedPresentationTime =
-                    preferredExpectedPresentationTime + multiplier * frameInterval;
-            outVsyncEventData.frameTimelines[currentIndex] =
-                    {.vsyncId =
-                             generateToken(timestamp, deadlineTimestamp, expectedPresentationTime),
-                     .deadlineTimestamp = deadlineTimestamp,
-                     .expectedPresentationTime = expectedPresentationTime};
-            currentIndex++;
+        // Valid possible frame timelines must have future values, so find a later frame timeline.
+        if (deadlineTimestamp <= timestamp) {
+            continue;
         }
+
+        nsecs_t expectedPresentationTime =
+                preferredExpectedPresentationTime + multiplier * frameInterval;
+        if (expectedPresentationTime >= preferredExpectedPresentationTime +
+                    scheduler::VsyncConfig::kEarlyLatchMaxThreshold.count()) {
+            if (currentIndex == 0) {
+                ALOGW("%s: Expected present time is too far in the future but no timelines are "
+                      "valid. preferred EPT=%" PRId64 ", Calculated EPT=%" PRId64
+                      ", multiplier=%" PRId64 ", frameInterval=%" PRId64 ", threshold=%" PRId64,
+                      __func__, preferredExpectedPresentationTime, expectedPresentationTime,
+                      multiplier, frameInterval,
+                      static_cast<int64_t>(
+                              scheduler::VsyncConfig::kEarlyLatchMaxThreshold.count()));
+            }
+            break;
+        }
+
+        if (multiplier == 0) {
+            outVsyncEventData.preferredFrameTimelineIndex = currentIndex;
+        }
+
+        outVsyncEventData.frameTimelines[currentIndex] =
+                {.vsyncId = generateToken(timestamp, deadlineTimestamp, expectedPresentationTime),
+                 .deadlineTimestamp = deadlineTimestamp,
+                 .expectedPresentationTime = expectedPresentationTime};
+        currentIndex++;
     }
+
+    if (currentIndex == 0) {
+        ALOGW("%s: No timelines are valid. preferred EPT=%" PRId64 ", frameInterval=%" PRId64
+              ", threshold=%" PRId64,
+              __func__, preferredExpectedPresentationTime, frameInterval,
+              static_cast<int64_t>(scheduler::VsyncConfig::kEarlyLatchMaxThreshold.count()));
+        outVsyncEventData.frameTimelines[currentIndex] =
+                {.vsyncId = generateToken(timestamp, preferredDeadlineTimestamp,
+                                          preferredExpectedPresentationTime),
+                 .deadlineTimestamp = preferredDeadlineTimestamp,
+                 .expectedPresentationTime = preferredExpectedPresentationTime};
+        currentIndex++;
+    }
+
+    outVsyncEventData.frameTimelinesLength = currentIndex;
 }
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
@@ -706,17 +739,27 @@ const char* EventThread::toCString(State state) {
 }
 
 void EventThread::onNewVsyncSchedule(std::shared_ptr<scheduler::VsyncSchedule> schedule) {
+    // Hold onto the old registration until after releasing the mutex to avoid deadlock.
+    scheduler::VSyncCallbackRegistration oldRegistration =
+            onNewVsyncScheduleInternal(std::move(schedule));
+}
+
+scheduler::VSyncCallbackRegistration EventThread::onNewVsyncScheduleInternal(
+        std::shared_ptr<scheduler::VsyncSchedule> schedule) {
     std::lock_guard<std::mutex> lock(mMutex);
     const bool reschedule = mVsyncRegistration.cancel() == scheduler::CancelResult::Cancelled;
     mVsyncSchedule = std::move(schedule);
-    mVsyncRegistration =
-            scheduler::VSyncCallbackRegistration(mVsyncSchedule->getDispatch(),
-                                                 createDispatchCallback(), mThreadName);
+    auto oldRegistration =
+            std::exchange(mVsyncRegistration,
+                          scheduler::VSyncCallbackRegistration(mVsyncSchedule->getDispatch(),
+                                                               createDispatchCallback(),
+                                                               mThreadName));
     if (reschedule) {
         mVsyncRegistration.schedule({.workDuration = mWorkDuration.get().count(),
                                      .readyDuration = mReadyDuration.count(),
                                      .earliestVsync = mLastVsyncCallbackTime.ns()});
     }
+    return oldRegistration;
 }
 
 scheduler::VSyncDispatch::Callback EventThread::createDispatchCallback() {

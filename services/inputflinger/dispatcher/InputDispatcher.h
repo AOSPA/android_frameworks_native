@@ -36,7 +36,7 @@
 
 #include <attestation/HmacKeyManager.h>
 #include <gui/InputApplication.h>
-#include <gui/WindowInfo.h>
+#include <gui/WindowInfosUpdate.h>
 #include <input/Input.h>
 #include <input/InputTransport.h>
 #include <limits.h>
@@ -82,8 +82,8 @@ class InputDispatcher : public android::InputDispatcherInterface {
 public:
     static constexpr bool kDefaultInTouchMode = true;
 
-    explicit InputDispatcher(const sp<InputDispatcherPolicyInterface>& policy);
-    explicit InputDispatcher(const sp<InputDispatcherPolicyInterface>& policy,
+    explicit InputDispatcher(InputDispatcherPolicyInterface& policy);
+    explicit InputDispatcher(InputDispatcherPolicyInterface& policy,
                              std::chrono::nanoseconds staleEventTimeout);
     ~InputDispatcher() override;
 
@@ -144,10 +144,11 @@ public:
     void displayRemoved(int32_t displayId) override;
 
     // Public because it's also used by tests to simulate the WindowInfosListener callback
-    void onWindowInfosChanged(const std::vector<android::gui::WindowInfo>& windowInfos,
-                              const std::vector<android::gui::DisplayInfo>& displayInfos);
+    void onWindowInfosChanged(const gui::WindowInfosUpdate&);
 
     void cancelCurrentTouch() override;
+
+    void requestRefreshConfiguration() override;
 
     // Public to allow tests to verify that a Monitor can get ANR.
     void setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout);
@@ -165,8 +166,8 @@ private:
 
     std::unique_ptr<InputThread> mThread;
 
-    sp<InputDispatcherPolicyInterface> mPolicy;
-    android::InputDispatcherConfiguration mConfig;
+    InputDispatcherPolicyInterface& mPolicy;
+    android::InputDispatcherConfiguration mConfig GUARDED_BY(mLock);
 
     std::mutex mLock;
 
@@ -203,6 +204,11 @@ private:
 
     const IdGenerator mIdGenerator;
 
+    int64_t mWindowInfosVsyncId GUARDED_BY(mLock);
+    int64_t mWindowInfosTimestamp GUARDED_BY(mLock);
+    int64_t mMaxWindowInfosDelay GUARDED_BY(mLock) = -1;
+    int64_t mMaxWindowInfosDelayVsyncId GUARDED_BY(mLock) = -1;
+
     // With each iteration, InputDispatcher nominally processes one queued event,
     // a timeout, or a response from an input consumer.
     // This method should only be called on the input dispatcher's own thread.
@@ -232,16 +238,23 @@ private:
     nsecs_t mAppSwitchDueTime GUARDED_BY(mLock);
 
     bool isAppSwitchKeyEvent(const KeyEntry& keyEntry);
-    bool isAppSwitchPendingLocked() REQUIRES(mLock);
+    bool isAppSwitchPendingLocked() const REQUIRES(mLock);
     void resetPendingAppSwitchLocked(bool handled) REQUIRES(mLock);
 
     // Blocked event latency optimization.  Drops old events when the user intends
     // to transfer focus to a new application.
     std::shared_ptr<EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
 
+#ifdef DISABLE_DEVICE_INTEGRATION
     std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
     findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus = false,
                               bool ignoreDragWindow = false) const REQUIRES(mLock);
+#else
+    // Device Integration: add a new param into this method
+    std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
+    findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus = false,
+                              bool ignoreDragWindow = false, bool isFromCrossDevice = false) const REQUIRES(mLock);
+#endif
 
     std::vector<sp<android::gui::WindowInfoHandle>> findTouchedSpyWindowsAtLocked(
             int32_t displayId, float x, float y, bool isStylus) const REQUIRES(mLock);
@@ -249,12 +262,12 @@ private:
     sp<android::gui::WindowInfoHandle> findTouchedForegroundWindowLocked(int32_t displayId) const
             REQUIRES(mLock);
 
-    sp<Connection> getConnectionLocked(const sp<IBinder>& inputConnectionToken) const
+    std::shared_ptr<Connection> getConnectionLocked(const sp<IBinder>& inputConnectionToken) const
             REQUIRES(mLock);
 
     std::string getConnectionNameLocked(const sp<IBinder>& connectionToken) const REQUIRES(mLock);
 
-    void removeConnectionLocked(const sp<Connection>& connection) REQUIRES(mLock);
+    void removeConnectionLocked(const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
 
     status_t pilferPointersLocked(const sp<IBinder>& token) REQUIRES(mLock);
 
@@ -264,8 +277,8 @@ private:
     };
 
     // All registered connections mapped by input channel token.
-    std::unordered_map<sp<IBinder>, sp<Connection>, StrongPointerHash<IBinder>> mConnectionsByToken
-            GUARDED_BY(mLock);
+    std::unordered_map<sp<IBinder>, std::shared_ptr<Connection>, StrongPointerHash<IBinder>>
+            mConnectionsByToken GUARDED_BY(mLock);
 
     // Find a monitor pid by the provided token.
     std::optional<int32_t> findMonitorPidByTokenLocked(const sp<IBinder>& token) REQUIRES(mLock);
@@ -328,8 +341,8 @@ private:
     std::chrono::nanoseconds mMonitorDispatchingTimeout GUARDED_BY(mLock);
 
     nsecs_t processAnrsLocked() REQUIRES(mLock);
-    std::chrono::nanoseconds getDispatchingTimeoutLocked(const sp<Connection>& connection)
-            REQUIRES(mLock);
+    std::chrono::nanoseconds getDispatchingTimeoutLocked(
+            const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
 
     // Input filter processing.
     bool shouldSendKeyToInputFilterLocked(const NotifyKeyArgs& args) REQUIRES(mLock);
@@ -354,9 +367,7 @@ private:
     class DispatcherWindowListener : public gui::WindowInfosListener {
     public:
         explicit DispatcherWindowListener(InputDispatcher& dispatcher) : mDispatcher(dispatcher){};
-        void onWindowInfosChanged(
-                const std::vector<android::gui::WindowInfo>& windowInfos,
-                const std::vector<android::gui::DisplayInfo>& displayInfos) override;
+        void onWindowInfosChanged(const gui::WindowInfosUpdate&) override;
 
     private:
         InputDispatcher& mDispatcher;
@@ -533,7 +544,7 @@ private:
     // prevent unneeded wakeups.
     AnrTracker mAnrTracker GUARDED_BY(mLock);
 
-    void cancelEventsForAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
+    void cancelEventsForAnrLocked(const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
     // If a focused application changes, we should stop counting down the "no focused window" time,
     // because we will have no way of knowing when the previous application actually added a window.
     // This also means that we will miss cases like pulling down notification shade when the
@@ -552,6 +563,10 @@ private:
     std::vector<Monitor> selectResponsiveMonitorsLocked(
             const std::vector<Monitor>& gestureMonitors) const REQUIRES(mLock);
 
+    std::optional<InputTarget> createInputTargetLocked(
+            const sp<android::gui::WindowInfoHandle>& windowHandle,
+            ftl::Flags<InputTarget::Flags> targetFlags,
+            std::optional<nsecs_t> firstDownTimeInTarget) const REQUIRES(mLock);
     void addWindowTargetLocked(const sp<android::gui::WindowInfoHandle>& windowHandle,
                                ftl::Flags<InputTarget::Flags> targetFlags,
                                std::bitset<MAX_POINTER_ID + 1> pointerIds,
@@ -563,7 +578,13 @@ private:
     // Enqueue a drag event if needed, and update the touch state.
     // Uses findTouchedWindowTargetsLocked to make the decision
     void addDragEventLocked(const MotionEntry& entry) REQUIRES(mLock);
+
+#ifdef DISABLE_DEVICE_INTEGRATION
     void finishDragAndDrop(int32_t displayId, float x, float y) REQUIRES(mLock);
+#else
+    // Device Integration: add a new param into this method
+    void finishDragAndDrop(int32_t displayId, float x, float y, bool isFromCrossDevice = false) REQUIRES(mLock);
+#endif
 
     struct TouchOcclusionInfo {
         bool hasBlockingOcclusion;
@@ -594,22 +615,26 @@ private:
     // These methods are deliberately not Interruptible because doing all of the work
     // with the mutex held makes it easier to ensure that connection invariants are maintained.
     // If needed, the methods post commands to run later once the critical bits are done.
-    void prepareDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection,
+    void prepareDispatchCycleLocked(nsecs_t currentTime,
+                                    const std::shared_ptr<Connection>& connection,
                                     std::shared_ptr<EventEntry>, const InputTarget& inputTarget)
             REQUIRES(mLock);
-    void enqueueDispatchEntriesLocked(nsecs_t currentTime, const sp<Connection>& connection,
+    void enqueueDispatchEntriesLocked(nsecs_t currentTime,
+                                      const std::shared_ptr<Connection>& connection,
                                       std::shared_ptr<EventEntry>, const InputTarget& inputTarget)
             REQUIRES(mLock);
-    void enqueueDispatchEntryLocked(const sp<Connection>& connection, std::shared_ptr<EventEntry>,
-                                    const InputTarget& inputTarget,
+    void enqueueDispatchEntryLocked(const std::shared_ptr<Connection>& connection,
+                                    std::shared_ptr<EventEntry>, const InputTarget& inputTarget,
                                     ftl::Flags<InputTarget::Flags> dispatchMode) REQUIRES(mLock);
     status_t publishMotionEvent(Connection& connection, DispatchEntry& dispatchEntry) const;
-    void startDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection)
+    void startDispatchCycleLocked(nsecs_t currentTime,
+                                  const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
+    void finishDispatchCycleLocked(nsecs_t currentTime,
+                                   const std::shared_ptr<Connection>& connection, uint32_t seq,
+                                   bool handled, nsecs_t consumeTime) REQUIRES(mLock);
+    void abortBrokenDispatchCycleLocked(nsecs_t currentTime,
+                                        const std::shared_ptr<Connection>& connection, bool notify)
             REQUIRES(mLock);
-    void finishDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection,
-                                   uint32_t seq, bool handled, nsecs_t consumeTime) REQUIRES(mLock);
-    void abortBrokenDispatchCycleLocked(nsecs_t currentTime, const sp<Connection>& connection,
-                                        bool notify) REQUIRES(mLock);
     void drainDispatchQueue(std::deque<DispatchEntry*>& queue);
     void releaseDispatchEntry(DispatchEntry* dispatchEntry);
     int handleReceiveCallback(int events, sp<IBinder> connectionToken);
@@ -624,14 +649,13 @@ private:
     void synthesizeCancelationEventsForInputChannelLocked(
             const std::shared_ptr<InputChannel>& channel, const CancelationOptions& options)
             REQUIRES(mLock);
-    void synthesizeCancelationEventsForConnectionLocked(const sp<Connection>& connection,
-                                                        const CancelationOptions& options)
+    void synthesizeCancelationEventsForConnectionLocked(
+            const std::shared_ptr<Connection>& connection, const CancelationOptions& options)
             REQUIRES(mLock);
 
-    void synthesizePointerDownEventsForConnectionLocked(const nsecs_t downTime,
-                                                        const sp<Connection>& connection,
-                                                        ftl::Flags<InputTarget::Flags> targetFlags)
-            REQUIRES(mLock);
+    void synthesizePointerDownEventsForConnectionLocked(
+            const nsecs_t downTime, const std::shared_ptr<Connection>& connection,
+            ftl::Flags<InputTarget::Flags> targetFlags) REQUIRES(mLock);
 
     void synthesizeCancelationEventsForWindowLocked(
             const sp<android::gui::WindowInfoHandle>& windowHandle,
@@ -647,10 +671,10 @@ private:
     void resetAndDropEverythingLocked(const char* reason) REQUIRES(mLock);
 
     // Dump state.
-    void dumpDispatchStateLocked(std::string& dump) REQUIRES(mLock);
-    void dumpMonitors(std::string& dump, const std::vector<Monitor>& monitors);
-    void logDispatchStateLocked() REQUIRES(mLock);
-    std::string dumpPointerCaptureStateLocked() REQUIRES(mLock);
+    void dumpDispatchStateLocked(std::string& dump) const REQUIRES(mLock);
+    void dumpMonitors(std::string& dump, const std::vector<Monitor>& monitors) const;
+    void logDispatchStateLocked() const REQUIRES(mLock);
+    std::string dumpPointerCaptureStateLocked() const REQUIRES(mLock);
 
     // Registration.
     void removeMonitorChannelLocked(const sp<IBinder>& connectionToken) REQUIRES(mLock);
@@ -658,16 +682,16 @@ private:
             REQUIRES(mLock);
 
     // Interesting events that we might like to log or tell the framework about.
-    void doDispatchCycleFinishedCommand(nsecs_t finishTime, const sp<Connection>& connection,
-                                        uint32_t seq, bool handled, nsecs_t consumeTime)
-            REQUIRES(mLock);
+    void doDispatchCycleFinishedCommand(nsecs_t finishTime,
+                                        const std::shared_ptr<Connection>& connection, uint32_t seq,
+                                        bool handled, nsecs_t consumeTime) REQUIRES(mLock);
     void doInterceptKeyBeforeDispatchingCommand(const sp<IBinder>& focusedWindowToken,
                                                 KeyEntry& entry) REQUIRES(mLock);
     void onFocusChangedLocked(const FocusResolver::FocusChanges& changes) REQUIRES(mLock);
     void sendFocusChangedCommandLocked(const sp<IBinder>& oldToken, const sp<IBinder>& newToken)
             REQUIRES(mLock);
     void sendDropWindowCommandLocked(const sp<IBinder>& token, float x, float y) REQUIRES(mLock);
-    void onAnrLocked(const sp<Connection>& connection) REQUIRES(mLock);
+    void onAnrLocked(const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
     void onAnrLocked(std::shared_ptr<InputApplicationHandle> application) REQUIRES(mLock);
     void updateLastAnrStateLocked(const sp<android::gui::WindowInfoHandle>& window,
                                   const std::string& reason) REQUIRES(mLock);
@@ -675,10 +699,10 @@ private:
                                   const std::string& reason) REQUIRES(mLock);
     void updateLastAnrStateLocked(const std::string& windowLabel, const std::string& reason)
             REQUIRES(mLock);
-    bool afterKeyEventLockedInterruptable(const sp<Connection>& connection,
+    bool afterKeyEventLockedInterruptable(const std::shared_ptr<Connection>& connection,
                                           DispatchEntry* dispatchEntry, KeyEntry& keyEntry,
                                           bool handled) REQUIRES(mLock);
-    bool afterMotionEventLockedInterruptable(const sp<Connection>& connection,
+    bool afterMotionEventLockedInterruptable(const std::shared_ptr<Connection>& connection,
                                              DispatchEntry* dispatchEntry, MotionEntry& motionEntry,
                                              bool handled) REQUIRES(mLock);
 
@@ -702,8 +726,8 @@ private:
     void slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFlags,
                             const sp<android::gui::WindowInfoHandle>& oldWindowHandle,
                             const sp<android::gui::WindowInfoHandle>& newWindowHandle,
-                            TouchState& state, int32_t pointerId, std::vector<InputTarget>& targets)
-            REQUIRES(mLock);
+                            TouchState& state, int32_t pointerId,
+                            std::vector<InputTarget>& targets) const REQUIRES(mLock);
     void transferWallpaperTouch(ftl::Flags<InputTarget::Flags> oldTargetFlags,
                                 ftl::Flags<InputTarget::Flags> newTargetFlags,
                                 const sp<android::gui::WindowInfoHandle> fromWindowHandle,

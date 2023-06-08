@@ -59,7 +59,7 @@ public:
     void configureDevice() {
         nsecs_t arbitraryTime = mFdp->ConsumeIntegral<nsecs_t>();
         std::list<NotifyArgs> out;
-        out += mFuzzDevice->configure(arbitraryTime, mPolicyConfig, 0);
+        out += mFuzzDevice->configure(arbitraryTime, mPolicyConfig, /*changes=*/{});
         out += mFuzzDevice->reset(arbitraryTime);
         for (const NotifyArgs& args : out) {
             mFuzzListener.notify(args);
@@ -75,9 +75,12 @@ public:
 
     template <class T, typename... Args>
     T& getMapper(Args... args) {
-        T& mapper = mFuzzDevice->addMapper<T>(mFdp->ConsumeIntegral<int32_t>(), args...);
+        int32_t eventhubId = mFdp->ConsumeIntegral<int32_t>();
+        // ensure a device entry exists for this eventHubId
+        mFuzzDevice->addEmptyEventHubDevice(eventhubId);
         configureDevice();
-        return mapper;
+
+        return mFuzzDevice->template constructAndAddMapper<T>(eventhubId, args...);
     }
 };
 

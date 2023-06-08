@@ -25,8 +25,8 @@
 #include <system/window.h>
 #include <utils/Log.h>
 
-#include "DisplayDevice.h"
 #include "LayerFE.h"
+#include "SurfaceFlinger.h"
 
 namespace android {
 
@@ -260,7 +260,7 @@ void LayerFE::prepareBufferStateClientComposition(
          * the code below applies the primary display's inverse transform to
          * the texture transform
          */
-        uint32_t transform = DisplayDevice::getPrimaryDisplayRotationFlags();
+        uint32_t transform = SurfaceFlinger::getActiveDisplayRotationFlags();
         mat4 tr = inverseOrientation(transform);
 
         /**
@@ -325,8 +325,9 @@ void LayerFE::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
     caster.shadow = state;
 }
 
-void LayerFE::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult) {
-    mCompositionResult.releaseFences.emplace_back(std::move(futureFenceResult));
+void LayerFE::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
+                               ui::LayerStack layerStack) {
+    mCompositionResult.releaseFences.emplace_back(std::move(futureFenceResult), layerStack);
 }
 
 CompositionResult&& LayerFE::stealCompositionResult() {

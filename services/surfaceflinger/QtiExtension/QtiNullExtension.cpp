@@ -179,4 +179,10 @@ void QtiNullExtension::qtiDolphinTrackBufferIncrement(const char *name) {}
 void QtiNullExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {}
 void QtiNullExtension::qtiDolphinTrackVsyncSignal() {}
 
+bool QtiNullExtension::qtiIsFpsDeferNeeded(float newFpsRequest) {
+    return false;
+}
+void QtiNullExtension::qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
+                                                 int32_t vsyncPeriod) {}
+
 } // namespace android::surfaceflingerextension

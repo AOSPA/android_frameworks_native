@@ -168,6 +168,11 @@ Layer::Layer(const LayerCreationArgs& args)
         mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
     ALOGV("Creating Layer %s", getDebugName());
 
+#ifndef DISABLE_DEVICE_INTEGRATION
+    // Device Integration: set window type to LayerFE
+    mLegacyLayerFE->setWindowTypeForDIS(mWindowType);
+#endif
+
     uint32_t layerFlags = 0;
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
@@ -273,7 +278,8 @@ Layer::~Layer() {
         mFlinger->mTunnelModeEnabledReporter->decrementTunnelModeCount();
     }
     if (mHadClonedChild) {
-        mFlinger->mNumClones--;
+        auto& roots = mFlinger->mLayerMirrorRoots;
+        roots.erase(std::remove(roots.begin(), roots.end(), this), roots.end());
     }
     if (hasTrustedPresentationListener()) {
         mFlinger->mNumTrustedPresentationListeners--;
@@ -1682,8 +1688,8 @@ void Layer::getFrameStats(FrameStats* outStats) const {
 
 void Layer::dumpOffscreenDebugInfo(std::string& result) const {
     std::string hasBuffer = hasBufferOrSidebandStream() ? " (contains buffer)" : "";
-    StringAppendF(&result, "Layer %s%s pid:%d uid:%d\n", getName().c_str(), hasBuffer.c_str(),
-                  mOwnerPid, mOwnerUid);
+    StringAppendF(&result, "Layer %s%s pid:%d uid:%d%s\n", getName().c_str(), hasBuffer.c_str(),
+                  mOwnerPid, mOwnerUid, isHandleAlive() ? " handleAlive" : "");
 }
 
 void Layer::onDisconnect() {
@@ -2585,7 +2591,10 @@ Region Layer::getVisibleRegion(const DisplayDevice* display) const {
     return outputLayer ? outputLayer->getState().visibleRegion : Region();
 }
 
-void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom) {
+void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom, uint32_t mirrorRootId) {
+    mSnapshot->path.id = clonedFrom->getSequence();
+    mSnapshot->path.mirrorRootId = mirrorRootId;
+
     cloneDrawingState(clonedFrom.get());
     mClonedFrom = clonedFrom;
     mPremultipliedAlpha = clonedFrom->mPremultipliedAlpha;
@@ -2624,7 +2633,7 @@ void Layer::updateCloneBufferInfo() {
     mDrawingState.inputInfo = tmpInputInfo;
 }
 
-void Layer::updateMirrorInfo() {
+bool Layer::updateMirrorInfo(const std::deque<Layer*>& cloneRootsPendingUpdates) {
     if (mClonedChild == nullptr || !mClonedChild->isClonedFromAlive()) {
         // If mClonedChild is null, there is nothing to mirror. If isClonedFromAlive returns false,
         // it means that there is a clone, but the layer it was cloned from has been destroyed. In
@@ -2632,7 +2641,7 @@ void Layer::updateMirrorInfo() {
         // destroyed. The root, this layer, will still be around since the client can continue
         // to hold a reference, but no cloned layers will be displayed.
         mClonedChild = nullptr;
-        return;
+        return true;
     }
 
     std::map<sp<Layer>, sp<Layer>> clonedLayersMap;
@@ -2647,6 +2656,13 @@ void Layer::updateMirrorInfo() {
     mClonedChild->updateClonedDrawingState(clonedLayersMap);
     mClonedChild->updateClonedChildren(sp<Layer>::fromExisting(this), clonedLayersMap);
     mClonedChild->updateClonedRelatives(clonedLayersMap);
+
+    for (Layer* root : cloneRootsPendingUpdates) {
+        if (clonedLayersMap.find(sp<Layer>::fromExisting(root)) != clonedLayersMap.end()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Layer::updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayersMap) {
@@ -2686,7 +2702,7 @@ void Layer::updateClonedChildren(const sp<Layer>& mirrorRoot,
         }
         sp<Layer> clonedChild = clonedLayersMap[child];
         if (clonedChild == nullptr) {
-            clonedChild = child->createClone();
+            clonedChild = child->createClone(mirrorRoot->getSequence());
             clonedLayersMap[child] = clonedChild;
         }
         addChildToDrawing(clonedChild);
@@ -2794,7 +2810,7 @@ bool Layer::isInternalDisplayOverlay() const {
 void Layer::setClonedChild(const sp<Layer>& clonedChild) {
     mClonedChild = clonedChild;
     mHadClonedChild = true;
-    mFlinger->mNumClones++;
+    mFlinger->mLayerMirrorRoots.push_back(this);
 }
 
 bool Layer::setDropInputMode(gui::DropInputMode mode) {
@@ -2828,7 +2844,8 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
                               currentMaxAcquiredBufferCount);
 }
 
-void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult) {
+void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
+                             ui::LayerStack layerStack) {
     // If we are displayed on multiple displays in a single composition cycle then we would
     // need to do careful tracking to enable the use of the mLastClientCompositionFence.
     //  For example we can only use it if all the displays are client comp, and we need
@@ -2858,8 +2875,7 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult) {
     // transaction doesn't need a previous release fence.
     sp<CallbackHandle> ch;
     for (auto& handle : mDrawingState.callbackHandles) {
-        if (handle->releasePreviousBuffer &&
-            mDrawingState.releaseBufferEndpoint == handle->listener) {
+        if (handle->releasePreviousBuffer && mPreviousReleaseBufferEndpoint == handle->listener) {
             ch = handle;
             break;
         }
@@ -2875,6 +2891,7 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult) {
         ch->previousReleaseFences.emplace_back(std::move(futureFenceResult));
         ch->name = mName;
     }
+    mPreviouslyPresentedLayerStacks.push_back(layerStack);
 }
 
 void Layer::onSurfaceFrameCreated(
@@ -2913,8 +2930,7 @@ void Layer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
     }
 
     for (auto& handle : mDrawingState.callbackHandles) {
-        if (handle->releasePreviousBuffer &&
-            mDrawingState.releaseBufferEndpoint == handle->listener) {
+        if (handle->releasePreviousBuffer && mPreviousReleaseBufferEndpoint == handle->listener) {
             handle->previousReleaseCallbackId = mPreviousReleaseCallbackId;
             break;
         }
@@ -3007,7 +3023,7 @@ bool Layer::updateGeometry() {
     if (mDrawingState.bufferTransform & ui::Transform::ROT_90) {
         std::swap(bufferWidth, bufferHeight);
     }
-    uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
+    uint32_t invTransform = SurfaceFlinger::getActiveDisplayRotationFlags();
     if (mDrawingState.transformToDisplayInverse) {
         if (invTransform & ui::Transform::ROT_90) {
             std::swap(bufferWidth, bufferHeight);
@@ -3051,14 +3067,22 @@ bool Layer::setPosition(float x, float y) {
     return true;
 }
 
+void Layer::resetDrawingStateBufferInfo() {
+    mDrawingState.producerId = 0;
+    mDrawingState.frameNumber = 0;
+    mDrawingState.releaseBufferListener = nullptr;
+    mDrawingState.buffer = nullptr;
+    mDrawingState.acquireFence = sp<Fence>::make(-1);
+    mDrawingState.acquireFenceTime = std::make_unique<FenceTime>(mDrawingState.acquireFence);
+    mCallbackHandleAcquireTimeOrFence = mDrawingState.acquireFenceTime->getSignalTime();
+    mDrawingState.releaseBufferEndpoint = nullptr;
+}
+
 bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                       const BufferData& bufferData, nsecs_t postTime, nsecs_t desiredPresentTime,
                       bool isAutoTimestamp, std::optional<nsecs_t> dequeueTime,
                       const FrameTimelineInfo& info) {
     ATRACE_FORMAT("setBuffer %s - hasBuffer=%s", getDebugName(), (buffer ? "true" : "false"));
-    if (!buffer) {
-        return false;
-    }
 
     const bool frameNumberChanged =
             bufferData.flags.test(BufferData::BufferDataChange::frameNumberChanged);
@@ -3098,10 +3122,23 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                                       mLastClientCompositionFence);
             mLastClientCompositionFence = nullptr;
         }
-    } else {
+    } else if (buffer) {
         // if we are latching a buffer for the first time then clear the mLastLatchTime since
         // we don't want to incorrectly classify a frame if we miss the desired present time.
         updateLastLatchTime(0);
+    }
+
+    mDrawingState.desiredPresentTime = desiredPresentTime;
+    mDrawingState.isAutoTimestamp = isAutoTimestamp;
+    mDrawingState.latchedVsyncId = info.vsyncId;
+    mDrawingState.useVsyncIdForRefreshRateSelection = info.useForRefreshRateSelection;
+    mDrawingState.modified = true;
+    if (!buffer) {
+        resetDrawingStateBufferInfo();
+        setTransactionFlags(eTransactionNeeded);
+        mDrawingState.bufferSurfaceFrameTX = nullptr;
+        setFrameTimelineVsyncForBufferlessTransaction(info, postTime);
+        return true;
     }
 
     mDrawingState.producerId = bufferData.producerId;
@@ -3114,7 +3151,6 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     // TODO(b/277265947) log and flush transaction trace when we detect out of order updates
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
     mDrawingState.buffer = std::move(buffer);
-    mDrawingState.clientCacheId = bufferData.cachedBuffer;
     mDrawingState.acquireFence = bufferData.flags.test(BufferData::BufferDataChange::fenceChanged)
             ? bufferData.acquireFence
             : Fence::NO_FENCE;
@@ -3127,15 +3163,11 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     } else {
         mCallbackHandleAcquireTimeOrFence = mDrawingState.acquireFenceTime->getSignalTime();
     }
-    mDrawingState.latchedVsyncId = info.vsyncId;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mDrawingState.frameNumber, getName().c_str(),
                                       mOwnerUid, postTime, getGameMode());
-    mDrawingState.desiredPresentTime = desiredPresentTime;
-    mDrawingState.isAutoTimestamp = isAutoTimestamp;
 
     if (mFlinger->mLegacyFrontEndEnabled) {
         recordLayerHistoryBufferUpdate(getLayerProps());
@@ -3162,15 +3194,31 @@ void Layer::setDesiredPresentTime(nsecs_t desiredPresentTime, bool isAutoTimesta
 }
 
 void Layer::recordLayerHistoryBufferUpdate(const scheduler::LayerProps& layerProps) {
+    ATRACE_CALL();
     const nsecs_t presentTime = [&] {
-        if (!mDrawingState.isAutoTimestamp) return mDrawingState.desiredPresentTime;
+        if (!mDrawingState.isAutoTimestamp) {
+            ATRACE_FORMAT_INSTANT("desiredPresentTime");
+            return mDrawingState.desiredPresentTime;
+        }
 
-        const auto prediction = mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(
-                mDrawingState.latchedVsyncId);
-        if (prediction.has_value()) return prediction->presentTime;
+        if (mDrawingState.useVsyncIdForRefreshRateSelection) {
+            const auto prediction =
+                    mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(
+                            mDrawingState.latchedVsyncId);
+            if (prediction.has_value()) {
+                ATRACE_FORMAT_INSTANT("predictedPresentTime");
+                return prediction->presentTime;
+            }
+        }
 
         return static_cast<nsecs_t>(0);
     }();
+
+    if (ATRACE_ENABLED() && presentTime > 0) {
+        const auto presentIn = TimePoint::fromNs(presentTime) - TimePoint::now();
+        ATRACE_FORMAT_INSTANT("presentIn %s", to_string(presentIn).c_str());
+    }
+
     mFlinger->mScheduler->recordLayerHistory(sequence, layerProps, presentTime,
                                              scheduler::LayerHistory::LayerUpdateType::Buffer);
 }
@@ -3310,7 +3358,7 @@ Rect Layer::getBufferSize(const State& /*s*/) const {
     }
 
     if (getTransformToDisplayInverse()) {
-        uint32_t invTransform = DisplayDevice::getPrimaryDisplayRotationFlags();
+        uint32_t invTransform = SurfaceFlinger::getActiveDisplayRotationFlags();
         if (invTransform & ui::Transform::ROT_90) {
             std::swap(bufWidth, bufHeight);
         }
@@ -3383,7 +3431,7 @@ void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
     const State& s(getDrawingState());
 
     if (!s.buffer) {
-        if (bgColorOnly) {
+        if (bgColorOnly || mBufferInfo.mBuffer) {
             for (auto& handle : mDrawingState.callbackHandles) {
                 handle->latchTime = latchTime;
             }
@@ -3430,12 +3478,19 @@ void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
 }
 
 void Layer::gatherBufferInfo() {
-    if (!mBufferInfo.mBuffer || !mDrawingState.buffer->hasSameBuffer(*mBufferInfo.mBuffer)) {
+    mPreviousReleaseCallbackId = {getCurrentBufferId(), mBufferInfo.mFrameNumber};
+    mPreviousReleaseBufferEndpoint = mBufferInfo.mReleaseBufferEndpoint;
+    if (!mDrawingState.buffer) {
+        mBufferInfo = {};
+        return;
+    }
+
+    if ((!mBufferInfo.mBuffer || !mDrawingState.buffer->hasSameBuffer(*mBufferInfo.mBuffer))) {
         decrementPendingBufferCount();
     }
 
-    mPreviousReleaseCallbackId = {getCurrentBufferId(), mBufferInfo.mFrameNumber};
     mBufferInfo.mBuffer = mDrawingState.buffer;
+    mBufferInfo.mReleaseBufferEndpoint = mDrawingState.releaseBufferEndpoint;
     mBufferInfo.mFence = mDrawingState.acquireFence;
     mBufferInfo.mFrameNumber = mDrawingState.frameNumber;
     mBufferInfo.mPixelFormat =
@@ -3510,11 +3565,11 @@ Rect Layer::computeBufferCrop(const State& s) {
     }
 }
 
-sp<Layer> Layer::createClone() {
+sp<Layer> Layer::createClone(uint32_t mirrorRootId) {
     LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
     args.textureName = mTextureName;
     sp<Layer> layer = mFlinger->getFactory().createBufferStateLayer(args);
-    layer->setInitialValuesForClone(sp<Layer>::fromExisting(this));
+    layer->setInitialValuesForClone(sp<Layer>::fromExisting(this), mirrorRootId);
     return layer;
 }
 
@@ -3965,6 +4020,10 @@ void Layer::onPostComposition(const DisplayDevice* display,
     mBufferInfo.mFrameLatencyNeeded = false;
 }
 
+bool Layer::willReleaseBufferOnLatch() const {
+    return !mDrawingState.buffer && mBufferInfo.mBuffer;
+}
+
 bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
     const bool bgColorOnly = mDrawingState.bgColorLayer != nullptr;
     return latchBufferImpl(recomputeVisibleRegions, latchTime, bgColorOnly);
@@ -3988,9 +4047,6 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
         return false;
     }
     updateTexImage(latchTime, bgColorOnly);
-    if (mDrawingState.buffer == nullptr) {
-        return false;
-    }
 
     // Capture the old state of the layer for comparisons later
     BufferInfo oldBufferInfo = mBufferInfo;
@@ -3998,6 +4054,18 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
     mPreviousFrameNumber = mCurrentFrameNumber;
     mCurrentFrameNumber = mDrawingState.frameNumber;
     gatherBufferInfo();
+
+    if (mBufferInfo.mBuffer) {
+        // We latched a buffer that will be presented soon. Clear the previously presented layer
+        // stack list.
+        mPreviouslyPresentedLayerStacks.clear();
+    }
+
+    if (mDrawingState.buffer == nullptr) {
+        const bool bufferReleased = oldBufferInfo.mBuffer != nullptr;
+        recomputeVisibleRegions = bufferReleased;
+        return bufferReleased;
+    }
 
     if (oldBufferInfo.mBuffer == nullptr) {
         // the first time we receive a buffer, we need to trigger a

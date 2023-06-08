@@ -39,10 +39,10 @@
 #include <SkPath.h>
 #include <SkPoint.h>
 #include <SkPoint3.h>
+#include <SkRRect.h>
 #include <SkRect.h>
 #include <SkRefCnt.h>
 #include <SkRegion.h>
-#include <SkRRect.h>
 #include <SkRuntimeEffect.h>
 #include <SkSamplingOptions.h>
 #include <SkScalar.h>
@@ -51,9 +51,11 @@
 #include <SkString.h>
 #include <SkSurface.h>
 #include <SkTileMode.h>
-#include <src/core/SkTraceEventCommon.h>
 #include <android-base/stringprintf.h>
+#include <gui/FenceMonitor.h>
 #include <gui/TraceUtils.h>
+#include <pthread.h>
+#include <src/core/SkTraceEventCommon.h>
 #include <sync/sync.h>
 #include <ui/BlurRegion.h>
 #include <ui/DataspaceUtils.h>
@@ -63,6 +65,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <numeric>
 
@@ -229,7 +232,6 @@ static inline SkM44 getSkM44(const android::mat4& matrix) {
 static inline SkPoint3 getSkPoint3(const android::vec3& vector) {
     return SkPoint3::Make(vector.x, vector.y, vector.z);
 }
-
 } // namespace
 
 namespace android {
@@ -517,16 +519,18 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         } else {
             runtimeEffect = effectIter->second;
         }
+
         mat4 colorTransform = parameters.layer.colorTransform;
 
         colorTransform *=
                 mat4::scale(vec4(parameters.layerDimmingRatio, parameters.layerDimmingRatio,
                                  parameters.layerDimmingRatio, 1.f));
+
         const auto targetBuffer = parameters.layer.source.buffer.buffer;
         const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
         const auto hardwareBuffer = graphicBuffer ? graphicBuffer->toAHardwareBuffer() : nullptr;
-        return createLinearEffectShader(parameters.shader, effect, runtimeEffect, colorTransform,
-                                        parameters.display.maxLuminance,
+        return createLinearEffectShader(parameters.shader, effect, runtimeEffect,
+                                        std::move(colorTransform), parameters.display.maxLuminance,
                                         parameters.display.currentLuminanceNits,
                                         parameters.layer.source.buffer.maxLuminanceNits,
                                         hardwareBuffer, parameters.display.renderIntent);
@@ -911,12 +915,10 @@ void SkiaRenderEngine::drawLayersInternal(
             continue;
         }
 
-        // If we need to map to linear space or color management is disabled, then mark the source
-        // image with the same colorspace as the destination surface so that Skia's color
-        // management is a no-op.
-        const ui::Dataspace layerDataspace = (!mUseColorManagement || requiresLinearEffect)
-                ? display.outputDataspace
-                : layer.sourceDataspace;
+        // If color management is disabled, then mark the source image with the same colorspace as
+        // the destination surface so that Skia's color management is a no-op.
+        const ui::Dataspace layerDataspace =
+                !mUseColorManagement ? display.outputDataspace : layer.sourceDataspace;
 
         SkPaint paint;
         if (layer.source.buffer.buffer) {
@@ -1134,8 +1136,13 @@ void SkiaRenderEngine::drawLayersInternal(
         activeSurface->flush();
     }
 
-    base::unique_fd drawFence = flushAndSubmit(grContext);
-    resultPromise->set_value(sp<Fence>::make(std::move(drawFence)));
+    auto drawFence = sp<Fence>::make(flushAndSubmit(grContext));
+
+    if (ATRACE_ENABLED()) {
+        static gui::FenceMonitor sMonitor("RE Completion");
+        sMonitor.queueFence(drawFence);
+    }
+    resultPromise->set_value(std::move(drawFence));
 }
 
 size_t SkiaRenderEngine::getMaxTextureSize() const {

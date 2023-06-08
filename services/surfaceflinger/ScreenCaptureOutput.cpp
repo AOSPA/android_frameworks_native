@@ -36,6 +36,7 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
     output->setLayerFilter({args.layerStack});
     output->setRenderSurface(std::make_unique<ScreenCaptureRenderSurface>(std::move(args.buffer)));
     output->setDisplayBrightness(args.sdrWhitePointNits, args.displayBrightnessNits);
+    output->editState().clientTargetBrightness = args.targetBrightness;
 
     output->setDisplayColorProfile(std::make_unique<compositionengine::impl::DisplayColorProfile>(
             compositionengine::DisplayColorProfileCreationArgsBuilder()
@@ -75,7 +76,6 @@ renderengine::DisplaySettings ScreenCaptureOutput::generateClientCompositionDisp
     auto clientCompositionDisplay =
             compositionengine::impl::Output::generateClientCompositionDisplaySettings();
     clientCompositionDisplay.clip = mRenderArea.getSourceCrop();
-    clientCompositionDisplay.targetLuminanceNits = -1;
     return clientCompositionDisplay;
 }
 
@@ -91,6 +91,16 @@ ScreenCaptureOutput::generateClientCompositionRequests(
         for (auto& layer : clientCompositionLayers) {
             layer.backgroundBlurRadius = 0;
             layer.blurRegions.clear();
+        }
+    }
+
+    if (outputDataspace == ui::Dataspace::BT2020_HLG) {
+        for (auto& layer : clientCompositionLayers) {
+            auto transfer = layer.sourceDataspace & ui::Dataspace::TRANSFER_MASK;
+            if (transfer != static_cast<int32_t>(ui::Dataspace::TRANSFER_HLG) &&
+                transfer != static_cast<int32_t>(ui::Dataspace::TRANSFER_ST2084)) {
+                layer.whitePointNits *= (1000.0f / 203.0f);
+            }
         }
     }
 

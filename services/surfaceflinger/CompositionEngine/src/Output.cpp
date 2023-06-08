@@ -48,7 +48,9 @@
 
 #include <renderengine/DisplaySettings.h>
 #include <renderengine/RenderEngine.h>
-
+#ifndef DISABLE_DEVICE_INTEGRATION
+#include <compositionengine/impl/Display.h>
+#endif
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
 
@@ -527,6 +529,13 @@ void Output::collectVisibleLayers(const compositionengine::CompositionRefreshArg
     finalizePendingOutputLayers();
 }
 
+#ifndef DISABLE_DEVICE_INTEGRATION
+// Device Integration: if input window type is black screen
+bool Output::isBlackScreenLayer(int windowType) const {
+    return static_cast<gui::WindowInfo::Type>(windowType) == gui::WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY;
+}
+#endif
+
 void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
                                         compositionengine::Output::CoverageState& coverage) {
     // Ensure we have a snapshot of the basic geometry layer state. Limit the
@@ -540,6 +549,18 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     if (!includesLayer(layerFE)) {
         return;
     }
+
+#ifndef DISABLE_DEVICE_INTEGRATION
+    // Device Integration: make black screen invisible in phone screen also in VD
+    if (isDisplayForDIS()) {
+        Display* display = static_cast<Display*>(this);
+        if (display->isVirtual()) {
+            if (isBlackScreenLayer(layerFE->getWindowTypeForDIS())) {
+                return;
+            }
+        }
+    }
+#endif
 
     // Obtain a read-only pointer to the front-end layer state
     const auto* layerFEState = layerFE->getCompositionState();
@@ -1591,8 +1612,9 @@ void Output::postFramebuffer() {
             releaseFence =
                     Fence::merge("LayerRelease", releaseFence, frame.clientTargetAcquireFence);
         }
-        layer->getLayerFE().onLayerDisplayed(
-                ftl::yield<FenceResult>(std::move(releaseFence)).share());
+        layer->getLayerFE()
+                .onLayerDisplayed(ftl::yield<FenceResult>(std::move(releaseFence)).share(),
+                                  outputState.layerFilter.layerStack);
     }
 
     // We've got a list of layers needing fences, that are disjoint with
@@ -1600,7 +1622,8 @@ void Output::postFramebuffer() {
     // supply them with the present fence.
     for (auto& weakLayer : mReleasedLayers) {
         if (const auto layer = weakLayer.promote()) {
-            layer->onLayerDisplayed(ftl::yield<FenceResult>(frame.presentFence).share());
+            layer->onLayerDisplayed(ftl::yield<FenceResult>(frame.presentFence).share(),
+                                    outputState.layerFilter.layerStack);
         }
     }
 

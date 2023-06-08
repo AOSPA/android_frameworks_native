@@ -180,7 +180,7 @@ void InputDevice::removeEventHubDevice(int32_t eventHubId) {
 
 std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
                                              const InputReaderConfiguration& readerConfig,
-                                             uint32_t changes) {
+                                             ConfigurationChanges changes) {
     std::list<NotifyArgs> out;
     mSources = 0;
     mClasses = ftl::Flags<InputDeviceClass>(0);
@@ -201,12 +201,14 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
     mIsExternal = mClasses.test(InputDeviceClass::EXTERNAL);
     mHasMic = mClasses.test(InputDeviceClass::MIC);
 
-    if (!isIgnored()) {
+    using Change = InputReaderConfiguration::Change;
+
+    if (!changes.any() || !isIgnored()) {
         // Full configuration should happen the first time configure is called
         // and when the device type is changed. Changing a device type can
         // affect various other parameters so should result in a
         // reconfiguration.
-        if (!changes || (changes & InputReaderConfiguration::CHANGE_DEVICE_TYPE)) {
+        if (!changes.any() || changes.test(Change::DEVICE_TYPE)) {
             mConfiguration.clear();
             for_each_subdevice([this](InputDeviceContext& context) {
                 std::optional<PropertyMap> configuration =
@@ -220,7 +222,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
                     getValueByKey(readerConfig.deviceTypeAssociations, mIdentifier.location);
         }
 
-        if (!changes || (changes & InputReaderConfiguration::CHANGE_KEYBOARD_LAYOUTS)) {
+        if (!changes.any() || changes.test(Change::KEYBOARD_LAYOUTS)) {
             if (!mClasses.test(InputDeviceClass::VIRTUAL)) {
                 std::shared_ptr<KeyCharacterMap> keyboardLayout =
                         mContext->getPolicy()->getKeyboardLayoutOverlay(mIdentifier);
@@ -237,7 +239,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
             }
         }
 
-        if (!changes || (changes & InputReaderConfiguration::CHANGE_DEVICE_ALIAS)) {
+        if (!changes.any() || changes.test(Change::DEVICE_ALIAS)) {
             if (!(mClasses.test(InputDeviceClass::VIRTUAL))) {
                 std::string alias = mContext->getPolicy()->getDeviceAlias(mIdentifier);
                 if (mAlias != alias) {
@@ -247,7 +249,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
             }
         }
 
-        if (changes & InputReaderConfiguration::CHANGE_ENABLED_STATE) {
+        if (changes.test(Change::ENABLED_STATE)) {
             // Do not execute this code on the first configure, because 'setEnabled' would call
             // InputMapper::reset, and you can't reset a mapper before it has been configured.
             // The mappers are configured for the first time at the bottom of this function.
@@ -256,7 +258,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
             out += setEnabled(enabled, when);
         }
 
-        if (!changes || (changes & InputReaderConfiguration::CHANGE_DISPLAY_INFO)) {
+        if (!changes.any() || changes.test(Change::DISPLAY_INFO)) {
             // In most situations, no port or name will be specified.
             mAssociatedDisplayPort = std::nullopt;
             mAssociatedDisplayUniqueId = std::nullopt;
@@ -305,7 +307,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
                 }
             }
 
-            if (changes) {
+            if (changes.any()) {
                 // For first-time configuration, only allow device to be disabled after mappers have
                 // finished configuring. This is because we need to read some of the properties from
                 // the device's open fd.
@@ -320,7 +322,7 @@ std::list<NotifyArgs> InputDevice::configure(nsecs_t when,
 
         // If a device is just plugged but it might be disabled, we need to update some info like
         // axis range of touch from each InputMapper first, then disable it.
-        if (!changes) {
+        if (!changes.any()) {
             out += setEnabled(readerConfig.disabledDevices.find(mId) ==
                                       readerConfig.disabledDevices.end(),
                               when);
@@ -444,17 +446,17 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
 
     // Switch-like devices.
     if (classes.test(InputDeviceClass::SWITCH)) {
-        mappers.push_back(std::make_unique<SwitchInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<SwitchInputMapper>(contextPtr, readerConfig));
     }
 
     // Scroll wheel-like devices.
     if (classes.test(InputDeviceClass::ROTARY_ENCODER)) {
-        mappers.push_back(std::make_unique<RotaryEncoderInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<RotaryEncoderInputMapper>(contextPtr, readerConfig));
     }
 
     // Vibrator-like devices.
     if (classes.test(InputDeviceClass::VIBRATOR)) {
-        mappers.push_back(std::make_unique<VibratorInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<VibratorInputMapper>(contextPtr, readerConfig));
     }
 
     // Battery-like devices or light-containing devices.
@@ -486,7 +488,7 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
 
     // Cursor-like devices.
     if (classes.test(InputDeviceClass::CURSOR)) {
-        mappers.push_back(std::make_unique<CursorInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<CursorInputMapper>(contextPtr, readerConfig));
     }
 
     // Touchscreens and touchpad devices.
@@ -499,7 +501,7 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
             (identifier.product == 0x05c4 || identifier.product == 0x09cc);
     if (ENABLE_TOUCHPAD_GESTURES_LIBRARY && classes.test(InputDeviceClass::TOUCHPAD) &&
         classes.test(InputDeviceClass::TOUCH_MT) && !isSonyDualShock4Touchpad) {
-        mappers.push_back(std::make_unique<TouchpadInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<TouchpadInputMapper>(contextPtr, readerConfig));
     } else if (classes.test(InputDeviceClass::TOUCH_MT)) {
         mappers.push_back(std::make_unique<MultiTouchInputMapper>(contextPtr, readerConfig));
     } else if (classes.test(InputDeviceClass::TOUCH)) {
@@ -508,17 +510,17 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
 
     // Joystick-like devices.
     if (classes.test(InputDeviceClass::JOYSTICK)) {
-        mappers.push_back(std::make_unique<JoystickInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<JoystickInputMapper>(contextPtr, readerConfig));
     }
 
     // Motion sensor enabled devices.
     if (classes.test(InputDeviceClass::SENSOR)) {
-        mappers.push_back(std::make_unique<SensorInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<SensorInputMapper>(contextPtr, readerConfig));
     }
 
     // External stylus-like devices.
     if (classes.test(InputDeviceClass::EXTERNAL_STYLUS)) {
-        mappers.push_back(std::make_unique<ExternalStylusInputMapper>(contextPtr, readerConfig));
+        mappers.push_back(createInputMapper<ExternalStylusInputMapper>(contextPtr, readerConfig));
     }
     return mappers;
 }
