@@ -132,7 +132,9 @@ public:
     virtual void qtiSyncToDisplayHardware() = 0;
     virtual void qtiUpdateSmomoState() = 0;
     virtual void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime,
-           bool isAutoTimestamp, std::shared_ptr<renderengine::ExternalTexture> buffer) = 0;
+                                         bool isAutoTimestamp,
+                                         std::shared_ptr<renderengine::ExternalTexture> buffer,
+                                         BufferData& bufferData) = 0;
     virtual void qtiScheduleCompositeImmed() = 0;
     virtual void qtiSetPresentTime(uint32_t layerStackId, int sequence,
                                    nsecs_t desiredPresentTime) = 0;
