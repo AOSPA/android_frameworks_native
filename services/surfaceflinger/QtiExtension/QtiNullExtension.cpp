@@ -147,8 +147,9 @@ void QtiNullExtension::qtiSetRefreshRates(PhysicalDisplayId displayId) {}
 void QtiNullExtension::qtiSetRefreshRateTo(int32_t refreshRate) {}
 void QtiNullExtension::qtiSyncToDisplayHardware() {}
 void QtiNullExtension::qtiUpdateSmomoState() {}
-void QtiNullExtension::qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime,
-           bool isAutoTimestamp, std::shared_ptr<renderengine::ExternalTexture> buffer) {}
+void QtiNullExtension::qtiUpdateSmomoLayerInfo(
+        sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
+        std::shared_ptr<renderengine::ExternalTexture> buffer, BufferData& bufferData) {}
 void QtiNullExtension::qtiScheduleCompositeImmed() {}
 void QtiNullExtension::qtiSetPresentTime(uint32_t layerStackId, int sequence,
                                          nsecs_t desiredPresentTime) {}

@@ -49,6 +49,7 @@ private:
     bool mQtiEnableDynamicSfIdle = false;
     bool mQtiEnableEarlyWakeUp = false;
     bool mQtiEnableSmomo = false;
+    bool mQtiEnableSpecFence = false;
     bool mQtiLatchMediaContent = false;
     bool mQtiPluggableVsyncPrioritized = false;
     bool mQtiUseAdvanceSfOffset = false;
