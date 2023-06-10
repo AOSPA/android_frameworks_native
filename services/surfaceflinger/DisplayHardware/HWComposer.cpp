@@ -435,13 +435,16 @@ status_t HWComposer::getDeviceCompositionChanges(
 
         // If composer supports getting the expected present time, we can skip
         // as composer will make sure to prevent early presentation
-        if (!earliestPresentTime) {
-            return true;
-        }
+        //if (!earliestPresentTime) {
+        //    return true;
+        // }
 
         // composer doesn't support getting the expected present time. We can only
         // skip validate if we know that we are not going to present early.
-        return std::chrono::steady_clock::now() >= *earliestPresentTime;
+        //return std::chrono::steady_clock::now() >= *earliestPresentTime;
+        /* QTI_BEGIN */
+        return true;
+        /* QTI_END */
     }();
 
     displayData.validateWasSkipped = false;
