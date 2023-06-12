@@ -44,6 +44,10 @@
 #include "HWComposer.h"
 #include "../SurfaceFlinger.h"
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
+/* QTI_END */
+
 namespace android {
 
 using ui::Dataspace;

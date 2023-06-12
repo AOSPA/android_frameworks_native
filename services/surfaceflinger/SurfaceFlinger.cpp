@@ -2738,12 +2738,15 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
 
     mTimeStats->recordFrameDuration(frameTime.ns(), systemTime());
 
-    // Send a power hint hint after presentation is finished
+    // Send a power hint after presentation is finished.
     if (mPowerHintSessionEnabled) {
-        const nsecs_t pastPresentTime =
-                getPreviousPresentFence(frameTime, vsyncPeriod)->getSignalTime();
+        // Now that the current frame has been presented above, PowerAdvisor needs the present time
+        // of the previous frame (whose fence is signaled by now) to determine how long the HWC had
+        // waited on that fence to retire before presenting.
+        const auto& previousPresentFence = mPreviousPresentFences[0].fenceTime;
 
-        mPowerAdvisor->setSfPresentTiming(TimePoint::fromNs(pastPresentTime), TimePoint::now());
+        mPowerAdvisor->setSfPresentTiming(TimePoint::fromNs(previousPresentFence->getSignalTime()),
+                                          TimePoint::now());
         mPowerAdvisor->reportActualWorkDuration();
     }
 
@@ -4767,7 +4770,8 @@ status_t SurfaceFlinger::setTransactionState(
             mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
 
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
-                                            resolvedState.externalTexture);
+                                                    resolvedState.externalTexture,
+                                                    *resolvedState.state.bufferData);
             /* QTI_END */
 
             mBufferCountTracker.increment(resolvedState.state.surface->localBinder());
@@ -7354,9 +7358,9 @@ status_t SurfaceFlinger::captureDisplay(const DisplayCaptureArgs& args,
     }
 
     RenderAreaFuture renderAreaFuture = ftl::defer([=] {
-        return DisplayRenderArea::create(displayWeak, args.sourceCrop, reqSize,
-                                         ui::Dataspace::UNKNOWN, args.useIdentityTransform,
-                                         args.hintForSeamlessTransition, args.captureSecureLayers);
+        return DisplayRenderArea::create(displayWeak, args.sourceCrop, reqSize, args.dataspace,
+                                         args.useIdentityTransform, args.hintForSeamlessTransition,
+                                         args.captureSecureLayers);
     });
 
     GetLayerSnapshotsFunction getLayerSnapshots;

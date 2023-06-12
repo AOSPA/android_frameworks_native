@@ -30,9 +30,11 @@ namespace android {
 
 class GraphicBuffer;
 
+/* QTI_BEGIN */
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
 }
+/* QTI_END */
 
 namespace compositionengine {
 
