@@ -165,6 +165,8 @@ void QtiNullExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId,
 uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
     return 0;
 }
+void QtiNullExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
+                                                  const char* name, int32_t sequence) {}
 
 /*
  * Methods for speculative fence
