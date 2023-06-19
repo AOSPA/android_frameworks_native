@@ -21,6 +21,8 @@ public:
     static void qtiWriteLayerFlagToHWC(HWC2::Layer* layer, const Output* output);
     static void qtiSetLayerAsMask(DisplayId id, uint64_t layerId);
     static void qtiSetLayerType(HWC2::Layer* layerId, uint32_t type, const char* debugName);
+    static bool qtiUseSpecFence(void);
+    static void qtiGetVisibleLayerInfo(const Output* output);
 };
 
 } // namespace android::compositionengineextension

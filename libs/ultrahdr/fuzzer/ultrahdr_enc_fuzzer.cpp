@@ -45,7 +45,7 @@ const int kCgMax = ULTRAHDR_COLORGAMUT_MAX;
 
 // Transfer functions for image data, sync with ultrahdr.h
 const int kTfMin = ULTRAHDR_TF_UNSPECIFIED + 1;
-const int kTfMax = ULTRAHDR_TF_MAX;
+const int kTfMax = ULTRAHDR_TF_PQ;
 
 // Transfer functions for image data, sync with ultrahdr.h
 const int kOfMin = ULTRAHDR_OUTPUT_UNSPECIFIED + 1;
@@ -55,12 +55,9 @@ const int kOfMax = ULTRAHDR_OUTPUT_MAX;
 const int kQfMin = 0;
 const int kQfMax = 100;
 
-// seed
-const unsigned kSeed = 0x7ab7;
-
-class JpegHDRFuzzer {
+class UltraHdrEncFuzzer {
 public:
-    JpegHDRFuzzer(const uint8_t* data, size_t size) : mFdp(data, size){};
+    UltraHdrEncFuzzer(const uint8_t* data, size_t size) : mFdp(data, size){};
     void process();
     void fillP010Buffer(uint16_t* data, int width, int height, int stride);
     void fill420Buffer(uint8_t* data, int size);
@@ -69,7 +66,7 @@ private:
     FuzzedDataProvider mFdp;
 };
 
-void JpegHDRFuzzer::fillP010Buffer(uint16_t* data, int width, int height, int stride) {
+void UltraHdrEncFuzzer::fillP010Buffer(uint16_t* data, int width, int height, int stride) {
     uint16_t* tmp = data;
     std::vector<uint16_t> buffer(16);
     for (int i = 0; i < buffer.size(); i++) {
@@ -78,22 +75,24 @@ void JpegHDRFuzzer::fillP010Buffer(uint16_t* data, int width, int height, int st
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i += buffer.size()) {
             memcpy(data + i, buffer.data(), std::min((int)buffer.size(), (width - i)));
-            std::shuffle(buffer.begin(), buffer.end(), std::default_random_engine(kSeed));
+            std::shuffle(buffer.begin(), buffer.end(),
+                         std::default_random_engine(std::random_device{}()));
         }
         tmp += stride;
     }
 }
 
-void JpegHDRFuzzer::fill420Buffer(uint8_t* data, int size) {
+void UltraHdrEncFuzzer::fill420Buffer(uint8_t* data, int size) {
     std::vector<uint8_t> buffer(16);
     mFdp.ConsumeData(buffer.data(), buffer.size());
     for (int i = 0; i < size; i += buffer.size()) {
         memcpy(data + i, buffer.data(), std::min((int)buffer.size(), (size - i)));
-        std::shuffle(buffer.begin(), buffer.end(), std::default_random_engine(kSeed));
+        std::shuffle(buffer.begin(), buffer.end(),
+                     std::default_random_engine(std::random_device{}()));
     }
 }
 
-void JpegHDRFuzzer::process() {
+void UltraHdrEncFuzzer::process() {
     while (mFdp.remaining_bytes()) {
         struct jpegr_uncompressed_struct p010Img {};
         struct jpegr_uncompressed_struct yuv420Img {};
@@ -256,7 +255,7 @@ void JpegHDRFuzzer::process() {
                         } else if (tf == ULTRAHDR_TF_PQ) {
                             metadata.maxContentBoost = kPqMaxNits / kSdrWhiteNits;
                         } else {
-                            metadata.maxContentBoost = 0;
+                            metadata.maxContentBoost = 1.0f;
                         }
                         metadata.minContentBoost = 1.0f;
                         status = jpegHdr.encodeJPEGR(&jpegImg, &jpegGainMap, &metadata, &jpegImgR);
@@ -265,22 +264,35 @@ void JpegHDRFuzzer::process() {
             }
         }
         if (status == android::OK) {
-            jpegr_uncompressed_struct decodedJpegR;
-            auto decodedRaw = std::make_unique<uint8_t[]>(width * height * 8);
-            decodedJpegR.data = decodedRaw.get();
-            jpegHdr.decodeJPEGR(&jpegImgR, &decodedJpegR,
-                                mFdp.ConsumeFloatingPointInRange<float>(1.0, FLT_MAX), nullptr, of,
-                                nullptr, nullptr);
             std::vector<uint8_t> iccData(0);
             std::vector<uint8_t> exifData(0);
             jpegr_info_struct info{0, 0, &iccData, &exifData};
-            jpegHdr.getJPEGRInfo(&jpegImgR, &info);
+            status = jpegHdr.getJPEGRInfo(&jpegImgR, &info);
+            if (status == android::OK) {
+                size_t outSize = info.width * info.height * ((of == ULTRAHDR_OUTPUT_SDR) ? 4 : 8);
+                jpegr_uncompressed_struct decodedJpegR;
+                auto decodedRaw = std::make_unique<uint8_t[]>(outSize);
+                decodedJpegR.data = decodedRaw.get();
+                ultrahdr_metadata_struct metadata;
+                jpegr_uncompressed_struct decodedGainMap{};
+                status = jpegHdr.decodeJPEGR(&jpegImgR, &decodedJpegR,
+                                             mFdp.ConsumeFloatingPointInRange<float>(1.0, FLT_MAX),
+                                             nullptr, of, &decodedGainMap, &metadata);
+                if (status != android::OK) {
+                    ALOGE("encountered error during decoding %d", status);
+                }
+                if (decodedGainMap.data) free(decodedGainMap.data);
+            } else {
+                ALOGE("encountered error during get jpeg info %d", status);
+            }
+        } else {
+            ALOGE("encountered error during encoding %d", status);
         }
     }
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-    JpegHDRFuzzer fuzzHandle(data, size);
+    UltraHdrEncFuzzer fuzzHandle(data, size);
     fuzzHandle.process();
     return 0;
 }

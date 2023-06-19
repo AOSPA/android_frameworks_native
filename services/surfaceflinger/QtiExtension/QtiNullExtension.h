@@ -102,8 +102,9 @@ public:
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
-    void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime,
-           bool isAutoTimestamp, std::shared_ptr<renderengine::ExternalTexture> buffer) override;
+    void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
+                                 std::shared_ptr<renderengine::ExternalTexture> buffer,
+                                 BufferData& bufferData) override;
     void qtiScheduleCompositeImmed() override;
     void qtiSetPresentTime(uint32_t layerStackId, int sequence,
                            nsecs_t desiredPresentTime) override;
@@ -113,6 +114,8 @@ public:
     void qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwcDisplayId, uint32_t curLayerStackId,
                                     uint32_t drawLayerStackId) override;
     uint32_t qtiGetLayerClass(std::string mName) override;
+    void qtiSetVisibleLayerInfo(DisplayId displayId,
+                                    const char* name, int32_t sequence) override;
 
     /*
      * Methods for speculative fence
