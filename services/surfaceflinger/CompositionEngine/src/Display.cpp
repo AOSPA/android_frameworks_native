@@ -492,7 +492,6 @@ void Display::finishFrame(GpuCompositionResult&& result) {
 
 /* QTI_BEGIN */
 void Display::qtiBeginDraw() {
-    mQtiSpecFenceFlipRequest = false;
 #ifdef QTI_DISPLAY_EXTENSION
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     auto hwcextn = surfaceflingerextension::QtiExtensionContext::instance().getQtiHWComposerExtension();
@@ -568,8 +567,6 @@ void Display::qtiBeginDraw() {
             hwcextn->qtiSetClientTarget_3_1(*halDisplayId, future.index, future.fence,
                                             static_cast<uint32_t>(dataspace));
             ALOGV("Slot predicted %d", future.index);
-            // Force a client target slot switch - required to cycle through buffers
-            mQtiSpecFenceFlipRequest = true;
         } else {
             ALOGV("Slot not predicted");
         }
@@ -604,7 +601,6 @@ void Display::qtiEndDraw() {
         if (!halDisplayId.has_value()) {
             return;
         }
-        outputState.flipClientTarget |= mQtiSpecFenceFlipRequest;
 
         composer::FBTSlotInfo info;
         auto renderSurface = getRenderSurface();

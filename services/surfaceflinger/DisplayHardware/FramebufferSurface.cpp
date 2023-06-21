@@ -109,11 +109,15 @@ status_t FramebufferSurface::advanceFrame() {
     BufferItem item;
     status_t err = acquireBufferLocked(&item, 0);
     if (err == BufferQueue::NO_BUFFER_AVAILABLE) {
-        mDataspace = Dataspace::UNKNOWN;
+        /* QTI_BEGIN */
+        // mDataspace = Dataspace::UNKNOWN;
+        /* QTI_END */
         return NO_ERROR;
     } else if (err != NO_ERROR) {
         ALOGE("error acquiring buffer: %s (%d)", strerror(-err), err);
-        mDataspace = Dataspace::UNKNOWN;
+        /* QTI_BEGIN */
+        // mDataspace = Dataspace::UNKNOWN;
+        /* QTI_END */
         return err;
     }
 
