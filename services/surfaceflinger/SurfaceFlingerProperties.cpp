@@ -375,9 +375,5 @@ bool ignore_hdr_camera_layers(bool defaultValue) {
     return SurfaceFlingerProperties::ignore_hdr_camera_layers().value_or(defaultValue);
 }
 
-bool clear_slots_with_set_layer_buffer(bool defaultValue) {
-    return SurfaceFlingerProperties::clear_slots_with_set_layer_buffer().value_or(defaultValue);
-}
-
 } // namespace sysprop
 } // namespace android

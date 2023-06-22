@@ -864,30 +864,6 @@ void EventHub::addDeviceInotify() {
                         strerror(errno));
 }
 
-void EventHub::populateDeviceAbsoluteAxisInfo(Device& device) {
-    for (int axis = 0; axis <= ABS_MAX; axis++) {
-        if (!device.absBitmask.test(axis)) {
-            continue;
-        }
-        struct input_absinfo info {};
-        if (ioctl(device.fd, EVIOCGABS(axis), &info)) {
-            ALOGE("Error reading absolute controller %d for device %s fd %d, errno=%d", axis,
-                  device.identifier.name.c_str(), device.fd, errno);
-            continue;
-        }
-        if (info.minimum == info.maximum) {
-            continue;
-        }
-        RawAbsoluteAxisInfo& outAxisInfo = device.rawAbsoluteAxisInfoCache[axis];
-        outAxisInfo.valid = true;
-        outAxisInfo.minValue = info.minimum;
-        outAxisInfo.maxValue = info.maximum;
-        outAxisInfo.flat = info.flat;
-        outAxisInfo.fuzz = info.fuzz;
-        outAxisInfo.resolution = info.resolution;
-    }
-}
-
 InputDeviceIdentifier EventHub::getDeviceIdentifier(int32_t deviceId) const {
     std::scoped_lock _l(mLock);
     Device* device = getDeviceLocked(deviceId);
@@ -918,20 +894,31 @@ std::optional<PropertyMap> EventHub::getConfiguration(int32_t deviceId) const {
 status_t EventHub::getAbsoluteAxisInfo(int32_t deviceId, int axis,
                                        RawAbsoluteAxisInfo* outAxisInfo) const {
     outAxisInfo->clear();
-    if (axis < 0 || axis > ABS_MAX) {
-        return -1;
+
+    if (axis >= 0 && axis <= ABS_MAX) {
+        std::scoped_lock _l(mLock);
+
+        Device* device = getDeviceLocked(deviceId);
+        if (device != nullptr && device->hasValidFd() && device->absBitmask.test(axis)) {
+            struct input_absinfo info;
+            if (ioctl(device->fd, EVIOCGABS(axis), &info)) {
+                ALOGW("Error reading absolute controller %d for device %s fd %d, errno=%d", axis,
+                      device->identifier.name.c_str(), device->fd, errno);
+                return -errno;
+            }
+
+            if (info.minimum != info.maximum) {
+                outAxisInfo->valid = true;
+                outAxisInfo->minValue = info.minimum;
+                outAxisInfo->maxValue = info.maximum;
+                outAxisInfo->flat = info.flat;
+                outAxisInfo->fuzz = info.fuzz;
+                outAxisInfo->resolution = info.resolution;
+            }
+            return OK;
+        }
     }
-    std::scoped_lock _l(mLock);
-    Device* device = getDeviceLocked(deviceId);
-    if (device == nullptr) {
-        return -1;
-    }
-    auto it = device->rawAbsoluteAxisInfoCache.find(axis);
-    if (it == device->rawAbsoluteAxisInfoCache.end()) {
-        return -1;
-    }
-    *outAxisInfo = it->second;
-    return OK;
+    return -1;
 }
 
 bool EventHub::hasRelativeAxis(int32_t deviceId, int axis) const {
@@ -2447,9 +2434,6 @@ void EventHub::openDeviceLocked(const std::string& devicePath) {
     }
 
     device->configureFd();
-
-    // read absolute axis info for all available axes for the device
-    populateDeviceAbsoluteAxisInfo(*device);
 
     ALOGI("New device: id=%d, fd=%d, path='%s', name='%s', classes=%s, "
           "configuration='%s', keyLayout='%s', keyCharacterMap='%s', builtinKeyboard=%s, ",

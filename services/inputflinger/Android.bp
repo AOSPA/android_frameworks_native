@@ -106,13 +106,6 @@ cc_defaults {
                 "libstatspull",
                 "libstatssocket",
             ],
-            include_dirs: [
-                "bionic/libc/kernel/android/uapi/",
-                "bionic/libc/kernel/uapi",
-            ],
-            cflags: [
-                "-D__ANDROID_HOST__",
-            ],
         },
     },
 }

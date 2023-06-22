@@ -914,29 +914,6 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
         ALOGE("Run StartPropertySetThread failed!");
     }
 
-    if (mTransactionTracing) {
-        TransactionTraceWriter::getInstance().setWriterFunction([&](const std::string& prefix,
-                                                                    bool overwrite) {
-            auto writeFn = [&]() {
-                const std::string filename =
-                        TransactionTracing::DIR_NAME + prefix + TransactionTracing::FILE_NAME;
-                if (overwrite) {
-                    std::ifstream file(filename);
-                    if (file.is_open()) {
-                        return;
-                    }
-                }
-                mTransactionTracing->flush();
-                mTransactionTracing->writeToFile(filename);
-            };
-            if (std::this_thread::get_id() == mMainThreadId) {
-                writeFn();
-            } else {
-                mScheduler->schedule(writeFn).get();
-            }
-        });
-    }
-
     ALOGV("Done initializing");
 }
 
@@ -6756,7 +6733,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                         mTransactionTracing->setBufferSize(
                                 TransactionTracing::ACTIVE_TRACING_BUFFER_SIZE);
                     } else {
-                        TransactionTraceWriter::getInstance().invoke("", /* overwrite= */ true);
+                        mTransactionTracing->writeToFile();
                         mTransactionTracing->setBufferSize(
                                 TransactionTracing::CONTINUOUS_TRACING_BUFFER_SIZE);
                     }

@@ -41,8 +41,7 @@ struct egl_connection_t {
             libEgl(nullptr),
             libGles1(nullptr),
             libGles2(nullptr),
-            systemDriverUnloaded(false),
-            angleLoaded(false) {
+            systemDriverUnloaded(false) {
         const char* const* entries = platform_names;
         EGLFuncPointer* curr = reinterpret_cast<EGLFuncPointer*>(&platform);
         while (*entries) {
@@ -74,7 +73,7 @@ struct egl_connection_t {
     void* libGles2;
 
     bool systemDriverUnloaded;
-    bool angleLoaded; // Was ANGLE successfully loaded
+    bool useAngle; // Was ANGLE successfully loaded
 };
 
 extern gl_hooks_t gHooks[2];
