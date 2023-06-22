@@ -26,11 +26,10 @@
 
 namespace android {
 
-
 /*
  * Input dispatcher policy interface.
  *
- * The input reader policy is used by the input reader to interact with the Window Manager
+ * The input dispatcher policy is used by the input dispatcher to interact with the Window Manager
  * and other system components.
  *
  * The actual implementation is partially supported by callbacks into the DVM
@@ -137,7 +136,7 @@ public:
 
     /* Notifies the policy that there was an input device interaction with apps. */
     virtual void notifyDeviceInteraction(int32_t deviceId, nsecs_t timestamp,
-                                         const std::set<int32_t>& uids) = 0;
+                                         const std::set<gui::Uid>& uids) = 0;
 };
 
 } // namespace android
