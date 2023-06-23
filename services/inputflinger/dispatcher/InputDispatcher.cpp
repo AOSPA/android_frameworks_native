@@ -561,7 +561,7 @@ bool canReceiveForegroundTouches(const WindowInfo& info) {
     return !info.inputConfig.test(gui::WindowInfo::InputConfig::NOT_TOUCHABLE) && !info.isSpy();
 }
 
-bool isWindowOwnedBy(const sp<WindowInfoHandle>& windowHandle, int32_t pid, gui::Uid uid) {
+bool isWindowOwnedBy(const sp<WindowInfoHandle>& windowHandle, gui::Pid pid, gui::Uid uid) {
     if (windowHandle == nullptr) {
         return false;
     }
@@ -4332,7 +4332,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
               args.actionButton, args.flags, args.metaState, args.buttonState, args.edgeFlags,
               args.xPrecision, args.yPrecision, args.xCursorPosition, args.yCursorPosition,
               args.downTime);
-        for (uint32_t i = 0; i < args.pointerCount; i++) {
+        for (uint32_t i = 0; i < args.getPointerCount(); i++) {
             ALOGD("  Pointer %d: id=%d, toolType=%s, x=%f, y=%f, pressure=%f, size=%f, "
                   "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, orientation=%f",
                   i, args.pointerProperties[i].id,
@@ -4349,8 +4349,9 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
         }
     }
 
-    Result<void> motionCheck = validateMotionEvent(args.action, args.actionButton,
-                                                   args.pointerCount, args.pointerProperties);
+    Result<void> motionCheck =
+            validateMotionEvent(args.action, args.actionButton, args.getPointerCount(),
+                                args.pointerProperties.data());
     if (!motionCheck.ok()) {
         LOG(FATAL) << "Invalid event: " << args.dump() << "; reason: " << motionCheck.error();
         return;
@@ -4361,8 +4362,9 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
                 mVerifiersByDisplay.try_emplace(args.displayId,
                                                 StringPrintf("display %" PRId32, args.displayId));
         Result<void> result =
-                it->second.processMovement(args.deviceId, args.action, args.pointerCount,
-                                           args.pointerProperties, args.pointerCoords, args.flags);
+                it->second.processMovement(args.deviceId, args.action, args.getPointerCount(),
+                                           args.pointerProperties.data(), args.pointerCoords.data(),
+                                           args.flags);
         if (!result.ok()) {
             LOG(FATAL) << "Bad stream: " << result.error() << " caused by " << args.dump();
         }
@@ -4407,8 +4409,8 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
                              args.metaState, args.buttonState, args.classification,
                              displayTransform, args.xPrecision, args.yPrecision,
                              args.xCursorPosition, args.yCursorPosition, displayTransform,
-                             args.downTime, args.eventTime, args.pointerCount,
-                             args.pointerProperties, args.pointerCoords);
+                             args.downTime, args.eventTime, args.getPointerCount(),
+                             args.pointerProperties.data(), args.pointerCoords.data());
 
             policyFlags |= POLICY_FLAG_FILTERED;
             if (!mPolicy.filterInputEvent(event, policyFlags)) {
@@ -4426,8 +4428,9 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
                                               args.buttonState, args.classification, args.edgeFlags,
                                               args.xPrecision, args.yPrecision,
                                               args.xCursorPosition, args.yCursorPosition,
-                                              args.downTime, args.pointerCount,
-                                              args.pointerProperties, args.pointerCoords);
+                                              args.downTime, args.getPointerCount(),
+                                              args.pointerProperties.data(),
+                                              args.pointerCoords.data());
 
         if (args.id != android::os::IInputConstants::INVALID_INPUT_EVENT_ID &&
             IdGenerator::getSource(args.id) == IdGenerator::Source::INPUT_READER &&
@@ -5355,16 +5358,16 @@ void InputDispatcher::setInputFilterEnabled(bool enabled) {
     mLooper->wake();
 }
 
-bool InputDispatcher::setInTouchMode(bool inTouchMode, int32_t pid, gui::Uid uid,
+bool InputDispatcher::setInTouchMode(bool inTouchMode, gui::Pid pid, gui::Uid uid,
                                      bool hasPermission, int32_t displayId) {
     bool needWake = false;
     {
         std::scoped_lock lock(mLock);
         ALOGD_IF(DEBUG_TOUCH_MODE,
-                 "Request to change touch mode to %s (calling pid=%d, uid=%s, "
+                 "Request to change touch mode to %s (calling pid=%s, uid=%s, "
                  "hasPermission=%s, target displayId=%d, mTouchModePerDisplay[displayId]=%s)",
-                 toString(inTouchMode), pid, uid.toString().c_str(), toString(hasPermission),
-                 displayId,
+                 toString(inTouchMode), pid.toString().c_str(), uid.toString().c_str(),
+                 toString(hasPermission), displayId,
                  mTouchModePerDisplay.count(displayId) == 0
                          ? "not set"
                          : std::to_string(mTouchModePerDisplay[displayId]).c_str());
@@ -5376,9 +5379,9 @@ bool InputDispatcher::setInTouchMode(bool inTouchMode, int32_t pid, gui::Uid uid
         if (!hasPermission) {
             if (!focusedWindowIsOwnedByLocked(pid, uid) &&
                 !recentWindowsAreOwnedByLocked(pid, uid)) {
-                ALOGD("Touch mode switch rejected, caller (pid=%d, uid=%s) doesn't own the focused "
+                ALOGD("Touch mode switch rejected, caller (pid=%s, uid=%s) doesn't own the focused "
                       "window nor none of the previously interacted window",
-                      pid, uid.toString().c_str());
+                      pid.toString().c_str(), uid.toString().c_str());
                 return false;
             }
         }
@@ -5394,7 +5397,7 @@ bool InputDispatcher::setInTouchMode(bool inTouchMode, int32_t pid, gui::Uid uid
     return true;
 }
 
-bool InputDispatcher::focusedWindowIsOwnedByLocked(int32_t pid, gui::Uid uid) {
+bool InputDispatcher::focusedWindowIsOwnedByLocked(gui::Pid pid, gui::Uid uid) {
     const sp<IBinder> focusedToken = mFocusResolver.getFocusedWindowToken(mFocusedDisplayId);
     if (focusedToken == nullptr) {
         return false;
@@ -5403,7 +5406,7 @@ bool InputDispatcher::focusedWindowIsOwnedByLocked(int32_t pid, gui::Uid uid) {
     return isWindowOwnedBy(windowHandle, pid, uid);
 }
 
-bool InputDispatcher::recentWindowsAreOwnedByLocked(int32_t pid, gui::Uid uid) {
+bool InputDispatcher::recentWindowsAreOwnedByLocked(gui::Pid pid, gui::Uid uid) {
     return std::find_if(mInteractionConnectionTokens.begin(), mInteractionConnectionTokens.end(),
                         [&](const sp<IBinder>& connectionToken) REQUIRES(mLock) {
                             const sp<WindowInfoHandle> windowHandle =
@@ -5688,10 +5691,10 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
                                          windowInfo->applicationInfo.name.c_str(),
                                          binderToString(windowInfo->applicationInfo.token).c_str());
                     dump += dumpRegion(windowInfo->touchableRegion);
-                    dump += StringPrintf(", ownerPid=%d, ownerUid=%s, dispatchingTimeout=%" PRId64
+                    dump += StringPrintf(", ownerPid=%s, ownerUid=%s, dispatchingTimeout=%" PRId64
                                          "ms, hasToken=%s, "
                                          "touchOcclusionMode=%s\n",
-                                         windowInfo->ownerPid,
+                                         windowInfo->ownerPid.toString().c_str(),
                                          windowInfo->ownerUid.toString().c_str(),
                                          millis(windowInfo->dispatchingTimeout),
                                          binderToString(windowInfo->token).c_str(),
@@ -5884,7 +5887,7 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
 
 Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_t displayId,
                                                                           const std::string& name,
-                                                                          int32_t pid) {
+                                                                          gui::Pid pid) {
     std::shared_ptr<InputChannel> serverChannel;
     std::unique_ptr<InputChannel> clientChannel;
     status_t result = openInputChannelPair(name, serverChannel, clientChannel);
@@ -6076,7 +6079,7 @@ void InputDispatcher::setDisplayEligibilityForPointerCapture(int32_t displayId, 
     } // release lock
 }
 
-std::optional<int32_t> InputDispatcher::findMonitorPidByTokenLocked(const sp<IBinder>& token) {
+std::optional<gui::Pid> InputDispatcher::findMonitorPidByTokenLocked(const sp<IBinder>& token) {
     for (const auto& [_, monitors] : mGlobalMonitorsByDisplay) {
         for (const Monitor& monitor : monitors) {
             if (monitor.inputChannel->getConnectionToken() == token) {
@@ -6296,7 +6299,7 @@ void InputDispatcher::doInterceptKeyBeforeDispatchingCommand(const sp<IBinder>& 
 }
 
 void InputDispatcher::sendWindowUnresponsiveCommandLocked(const sp<IBinder>& token,
-                                                          std::optional<int32_t> pid,
+                                                          std::optional<gui::Pid> pid,
                                                           std::string reason) {
     auto command = [this, token, pid, r = std::move(reason)]() REQUIRES(mLock) {
         scoped_unlock unlock(mLock);
@@ -6306,7 +6309,7 @@ void InputDispatcher::sendWindowUnresponsiveCommandLocked(const sp<IBinder>& tok
 }
 
 void InputDispatcher::sendWindowResponsiveCommandLocked(const sp<IBinder>& token,
-                                                        std::optional<int32_t> pid) {
+                                                        std::optional<gui::Pid> pid) {
     auto command = [this, token, pid]() REQUIRES(mLock) {
         scoped_unlock unlock(mLock);
         mPolicy.notifyWindowResponsive(token, pid);
@@ -6322,7 +6325,7 @@ void InputDispatcher::sendWindowResponsiveCommandLocked(const sp<IBinder>& token
 void InputDispatcher::processConnectionUnresponsiveLocked(const Connection& connection,
                                                           std::string reason) {
     const sp<IBinder>& connectionToken = connection.inputChannel->getConnectionToken();
-    std::optional<int32_t> pid;
+    std::optional<gui::Pid> pid;
     if (connection.monitor) {
         ALOGW("Monitor %s is unresponsive: %s", connection.inputChannel->getName().c_str(),
               reason.c_str());
@@ -6344,7 +6347,7 @@ void InputDispatcher::processConnectionUnresponsiveLocked(const Connection& conn
  */
 void InputDispatcher::processConnectionResponsiveLocked(const Connection& connection) {
     const sp<IBinder>& connectionToken = connection.inputChannel->getConnectionToken();
-    std::optional<int32_t> pid;
+    std::optional<gui::Pid> pid;
     if (connection.monitor) {
         pid = findMonitorPidByTokenLocked(connectionToken);
     } else {
@@ -6595,7 +6598,7 @@ void InputDispatcher::monitor() {
  * this method can be safely called from any thread, as long as you've ensured that
  * the work you are interested in completing has already been queued.
  */
-bool InputDispatcher::waitForIdle() {
+bool InputDispatcher::waitForIdle() const {
     /**
      * Timeout should represent the longest possible time that a device might spend processing
      * events and commands.
