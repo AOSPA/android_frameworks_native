@@ -137,7 +137,7 @@ public:
      * used. However, this can be used in order to prevent newer protocol
      * versions from ever being used. This is expected to be useful for testing.
      */
-    void setProtocolVersion(uint32_t version);
+    [[nodiscard]] bool setProtocolVersion(uint32_t version);
 
     /**
      * Set the supported transports for sending and receiving file descriptors.
@@ -163,14 +163,18 @@ public:
      * Allows a root object to be created for each session.
      *
      * Takes one argument: a callable that is invoked once per new session.
-     * The callable takes two arguments: a type-erased pointer to an OS- and
-     * transport-specific address structure, e.g., sockaddr_vm for vsock, and
-     * an integer representing the size in bytes of that structure. The
-     * callable should validate the size, then cast the type-erased pointer
-     * to a pointer to the actual type of the address, e.g., const void* to
-     * const sockaddr_vm*.
+     * The callable takes three arguments:
+     * - a weak pointer to the session. If you want to hold onto this in the root object, then
+     *   you should keep a weak pointer, and promote it when needed. For instance, if you refer
+     *   to this from the root object, then you could get ahold of transport-specific information.
+     * - a type-erased pointer to an OS- and transport-specific address structure, e.g.,
+     *   sockaddr_vm for vsock
+     * - an integer representing the size in bytes of that structure. The callable should
+     *   validate the size, then cast the type-erased pointer to a pointer to the actual type of the
+     *   address, e.g., const void* to const sockaddr_vm*.
      */
-    void setPerSessionRootObject(std::function<sp<IBinder>(const void*, size_t)>&& object);
+    void setPerSessionRootObject(
+            std::function<sp<IBinder>(wp<RpcSession> session, const void*, size_t)>&& object);
     sp<IBinder> getRootObject();
 
     /**
@@ -182,6 +186,13 @@ public:
      * the callable's arguments.
      */
     void setConnectionFilter(std::function<bool(const void*, size_t)>&& filter);
+
+    /**
+     * Set optional modifier of each newly created server socket.
+     *
+     * The only argument is a successfully created file descriptor, not bound to an address yet.
+     */
+    void setServerSocketModifier(std::function<void(base::borrowed_fd)>&& modifier);
 
     /**
      * See RpcTransportCtx::getCertificate
@@ -265,8 +276,9 @@ private:
 
     sp<IBinder> mRootObject;
     wp<IBinder> mRootObjectWeak;
-    std::function<sp<IBinder>(const void*, size_t)> mRootObjectFactory;
+    std::function<sp<IBinder>(wp<RpcSession>, const void*, size_t)> mRootObjectFactory;
     std::function<bool(const void*, size_t)> mConnectionFilter;
+    std::function<void(base::borrowed_fd)> mServerSocketModifier;
     std::map<std::vector<uint8_t>, sp<RpcSession>> mSessions;
     std::unique_ptr<FdTrigger> mShutdownTrigger;
     RpcConditionVariable mShutdownCv;

@@ -44,8 +44,8 @@
 #include <scheduler/Time.h>
 #include <scheduler/VsyncConfig.h>
 #include <ui/DisplayId.h>
+#include <ui/DisplayMap.h>
 
-#include "Display/DisplayMap.h"
 #include "Display/DisplayModeRequest.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
@@ -331,6 +331,9 @@ private:
     void touchTimerCallback(TimerState);
     void displayPowerTimerCallback(TimerState);
 
+    // VsyncSchedule delegate.
+    void onHardwareVsyncRequest(PhysicalDisplayId, bool enable);
+
     void resyncToHardwareVsyncLocked(PhysicalDisplayId, bool allowToEnable,
                                      std::optional<Fps> refreshRate = std::nullopt)
             REQUIRES(kMainThreadContext, mDisplayLock);
@@ -385,7 +388,7 @@ private:
         }
     };
 
-    using DisplayModeChoiceMap = display::PhysicalDisplayMap<PhysicalDisplayId, DisplayModeChoice>;
+    using DisplayModeChoiceMap = ui::PhysicalDisplayMap<PhysicalDisplayId, DisplayModeChoice>;
 
     // See mDisplayLock for thread safety.
     DisplayModeChoiceMap chooseDisplayModes() const
@@ -444,12 +447,14 @@ private:
         // Effectively const except in move constructor.
         RefreshRateSelectorPtr selectorPtr;
         VsyncSchedulePtr schedulePtr;
+
+        hal::PowerMode powerMode = hal::PowerMode::OFF;
     };
 
     using DisplayRef = std::reference_wrapper<Display>;
     using ConstDisplayRef = std::reference_wrapper<const Display>;
 
-    display::PhysicalDisplayMap<PhysicalDisplayId, Display> mDisplays GUARDED_BY(mDisplayLock)
+    ui::PhysicalDisplayMap<PhysicalDisplayId, Display> mDisplays GUARDED_BY(mDisplayLock)
             GUARDED_BY(kMainThreadContext);
 
     ftl::Optional<PhysicalDisplayId> mPacesetterDisplayId GUARDED_BY(mDisplayLock)

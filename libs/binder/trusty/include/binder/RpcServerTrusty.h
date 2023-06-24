@@ -59,14 +59,17 @@ public:
             size_t msgMaxSize,
             std::unique_ptr<RpcTransportCtxFactory> rpcTransportCtxFactory = nullptr);
 
-    void setProtocolVersion(uint32_t version) { mRpcServer->setProtocolVersion(version); }
+    [[nodiscard]] bool setProtocolVersion(uint32_t version) {
+        return mRpcServer->setProtocolVersion(version);
+    }
     void setSupportedFileDescriptorTransportModes(
             const std::vector<RpcSession::FileDescriptorTransportMode>& modes) {
         mRpcServer->setSupportedFileDescriptorTransportModes(modes);
     }
     void setRootObject(const sp<IBinder>& binder) { mRpcServer->setRootObject(binder); }
     void setRootObjectWeak(const wp<IBinder>& binder) { mRpcServer->setRootObjectWeak(binder); }
-    void setPerSessionRootObject(std::function<sp<IBinder>(const void*, size_t)>&& object) {
+    void setPerSessionRootObject(
+            std::function<sp<IBinder>(wp<RpcSession> session, const void*, size_t)>&& object) {
         mRpcServer->setPerSessionRootObject(std::move(object));
     }
     sp<IBinder> getRootObject() { return mRpcServer->getRootObject(); }

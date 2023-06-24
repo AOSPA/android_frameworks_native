@@ -17,6 +17,7 @@
 #pragma once
 
 #include <input/Input.h>
+#include <input/RingBuffer.h>
 #include <utils/BitSet.h>
 #include <utils/Timers.h>
 #include <map>
@@ -31,6 +32,8 @@ class VelocityTrackerStrategy;
  */
 class VelocityTracker {
 public:
+    static const size_t MAX_DEGREE = 4;
+
     enum class Strategy : int32_t {
         DEFAULT = -1,
         MIN = 0,
@@ -45,23 +48,6 @@ public:
         INT2 = 8,
         LEGACY = 9,
         MAX = LEGACY,
-    };
-
-    struct Estimator {
-        static const size_t MAX_DEGREE = 4;
-
-        // Estimator time base.
-        nsecs_t time = 0;
-
-        // Polynomial coefficients describing motion.
-        std::array<float, MAX_DEGREE + 1> coeff{};
-
-        // Polynomial degree (number of coefficients), or zero if no information is
-        // available.
-        uint32_t degree = 0;
-
-        // Confidence (coefficient of determination), between 0 (no fit) and 1 (perfect fit).
-        float confidence = 0;
     };
 
     /*
@@ -124,11 +110,6 @@ public:
     // [-maxVelocity, maxVelocity], inclusive.
     ComputedVelocity getComputedVelocity(int32_t units, float maxVelocity);
 
-    // Gets an estimator for the recent movements of the specified pointer id for the given axis.
-    // Returns false and clears the estimator if there is no information available
-    // about the pointer.
-    std::optional<Estimator> getEstimator(int32_t axis, int32_t pointerId) const;
-
     // Gets the active pointer id, or -1 if none.
     inline int32_t getActivePointerId() const { return mActivePointerId.value_or(-1); }
 
@@ -169,14 +150,48 @@ public:
 
     virtual void clearPointer(int32_t pointerId) = 0;
     virtual void addMovement(nsecs_t eventTime, int32_t pointerId, float position) = 0;
-    virtual std::optional<VelocityTracker::Estimator> getEstimator(int32_t pointerId) const = 0;
+    virtual std::optional<float> getVelocity(int32_t pointerId) const = 0;
 };
 
+/**
+ * A `VelocityTrackerStrategy` that accumulates added data points and processes the accumulated data
+ * points when getting velocity.
+ */
+class AccumulatingVelocityTrackerStrategy : public VelocityTrackerStrategy {
+public:
+    AccumulatingVelocityTrackerStrategy(nsecs_t horizonNanos, bool maintainHorizonDuringAdd);
+
+    void addMovement(nsecs_t eventTime, int32_t pointerId, float position) override;
+    void clearPointer(int32_t pointerId) override;
+
+protected:
+    struct Movement {
+        nsecs_t eventTime;
+        float position;
+    };
+
+    // Number of samples to keep.
+    // If different strategies would like to maintain different history size, we can make this a
+    // protected const field.
+    static constexpr uint32_t HISTORY_SIZE = 20;
+
+    /**
+     * Duration, in nanoseconds, since the latest movement where a movement may be considered for
+     * velocity calculation.
+     */
+    const nsecs_t mHorizonNanos;
+    /**
+     * If true, data points outside of horizon (see `mHorizonNanos`) will be cleared after each
+     * addition of a new movement.
+     */
+    const bool mMaintainHorizonDuringAdd;
+    std::map<int32_t /*pointerId*/, RingBuffer<Movement>> mMovements;
+};
 
 /*
  * Velocity tracker algorithm based on least-squares linear regression.
  */
-class LeastSquaresVelocityTrackerStrategy : public VelocityTrackerStrategy {
+class LeastSquaresVelocityTrackerStrategy : public AccumulatingVelocityTrackerStrategy {
 public:
     enum class Weighting {
         // No weights applied.  All data points are equally reliable.
@@ -193,13 +208,11 @@ public:
         RECENT,
     };
 
-    // Degree must be no greater than Estimator::MAX_DEGREE.
+    // Degree must be no greater than VelocityTracker::MAX_DEGREE.
     LeastSquaresVelocityTrackerStrategy(uint32_t degree, Weighting weighting = Weighting::NONE);
     ~LeastSquaresVelocityTrackerStrategy() override;
 
-    void clearPointer(int32_t pointerId) override;
-    void addMovement(nsecs_t eventTime, int32_t pointerId, float position) override;
-    std::optional<VelocityTracker::Estimator> getEstimator(int32_t pointerId) const override;
+    std::optional<float> getVelocity(int32_t pointerId) const override;
 
 private:
     // Sample horizon.
@@ -207,22 +220,18 @@ private:
     // changes in direction.
     static const nsecs_t HORIZON = 100 * 1000000; // 100 ms
 
-    // Number of samples to keep.
-    static const uint32_t HISTORY_SIZE = 20;
-
-    struct Movement {
-        nsecs_t eventTime;
-        float position;
-    };
-
     float chooseWeight(int32_t pointerId, uint32_t index) const;
+    /**
+     * An optimized least-squares solver for degree 2 and no weight (i.e. `Weighting.NONE`).
+     * The provided container of movements shall NOT be empty, and shall have the movements in
+     * chronological order.
+     */
+    std::optional<float> solveUnweightedLeastSquaresDeg2(
+            const RingBuffer<Movement>& movements) const;
 
     const uint32_t mDegree;
     const Weighting mWeighting;
-    std::map<int32_t /*pointerId*/, size_t /*positionInArray*/> mIndex;
-    std::map<int32_t /*pointerId*/, std::array<Movement, HISTORY_SIZE>> mMovements;
 };
-
 
 /*
  * Velocity tracker algorithm that uses an IIR filter.
@@ -235,7 +244,7 @@ public:
 
     void clearPointer(int32_t pointerId) override;
     void addMovement(nsecs_t eventTime, int32_t pointerId, float positions) override;
-    std::optional<VelocityTracker::Estimator> getEstimator(int32_t pointerId) const override;
+    std::optional<float> getVelocity(int32_t pointerId) const override;
 
 private:
     // Current state estimate for a particular pointer.
@@ -252,49 +261,33 @@ private:
 
     void initState(State& state, nsecs_t eventTime, float pos) const;
     void updateState(State& state, nsecs_t eventTime, float pos) const;
-    void populateEstimator(const State& state, VelocityTracker::Estimator* outEstimator) const;
 };
 
 
 /*
  * Velocity tracker strategy used prior to ICS.
  */
-class LegacyVelocityTrackerStrategy : public VelocityTrackerStrategy {
+class LegacyVelocityTrackerStrategy : public AccumulatingVelocityTrackerStrategy {
 public:
     LegacyVelocityTrackerStrategy();
     ~LegacyVelocityTrackerStrategy() override;
 
-    void clearPointer(int32_t pointerId) override;
-    void addMovement(nsecs_t eventTime, int32_t pointerId, float position) override;
-    std::optional<VelocityTracker::Estimator> getEstimator(int32_t pointerId) const override;
+    std::optional<float> getVelocity(int32_t pointerId) const override;
 
 private:
     // Oldest sample to consider when calculating the velocity.
     static const nsecs_t HORIZON = 200 * 1000000; // 100 ms
 
-    // Number of samples to keep.
-    static const uint32_t HISTORY_SIZE = 20;
-
     // The minimum duration between samples when estimating velocity.
     static const nsecs_t MIN_DURATION = 10 * 1000000; // 10 ms
-
-    struct Movement {
-        nsecs_t eventTime;
-        float position;
-    };
-
-    std::map<int32_t /*pointerId*/, size_t /*positionInArray*/> mIndex;
-    std::map<int32_t /*pointerId*/, std::array<Movement, HISTORY_SIZE>> mMovements;
 };
 
-class ImpulseVelocityTrackerStrategy : public VelocityTrackerStrategy {
+class ImpulseVelocityTrackerStrategy : public AccumulatingVelocityTrackerStrategy {
 public:
     ImpulseVelocityTrackerStrategy(bool deltaValues);
     ~ImpulseVelocityTrackerStrategy() override;
 
-    void clearPointer(int32_t pointerId) override;
-    void addMovement(nsecs_t eventTime, int32_t pointerId, float position) override;
-    std::optional<VelocityTracker::Estimator> getEstimator(int32_t pointerId) const override;
+    std::optional<float> getVelocity(int32_t pointerId) const override;
 
 private:
     // Sample horizon.
@@ -302,21 +295,10 @@ private:
     // changes in direction.
     static constexpr nsecs_t HORIZON = 100 * 1000000; // 100 ms
 
-    // Number of samples to keep.
-    static constexpr size_t HISTORY_SIZE = 20;
-
-    struct Movement {
-        nsecs_t eventTime;
-        float position;
-    };
-
     // Whether or not the input movement values for the strategy come in the form of delta values.
     // If the input values are not deltas, the strategy needs to calculate deltas as part of its
     // velocity calculation.
     const bool mDeltaValues;
-
-    std::map<int32_t /*pointerId*/, size_t /*positionInArray*/> mIndex;
-    std::map<int32_t /*pointerId*/, std::array<Movement, HISTORY_SIZE>> mMovements;
 };
 
 } // namespace android

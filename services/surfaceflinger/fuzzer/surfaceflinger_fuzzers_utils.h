@@ -788,7 +788,7 @@ public:
     }
 
 private:
-    void setVsyncEnabled(PhysicalDisplayId, bool) override {}
+    void requestHardwareVsync(PhysicalDisplayId, bool) override {}
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override {}
     void kernelTimerChanged(bool) override {}
     void triggerOnFrameRateOverridesChanged() override {}

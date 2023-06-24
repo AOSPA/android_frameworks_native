@@ -19,6 +19,11 @@ rust_fuzz {
     srcs: [
         "service_fuzzer.rs",
     ],
+    shared_libs: [
+        "libbinder",
+        "libbinder_ndk",
+        "libutils",
+    ],
     rustlibs: [
         "libbinder_rs",
         "libbinder_random_parcel_rs",
@@ -29,6 +34,7 @@ rust_fuzz {
             "waghpawan@google.com",
             "smoreland@google.com",
         ],
+        triage_assignee: "waghpawan@google.com",
         // hotlist "AIDL fuzzers bugs" on buganizer
         hotlists: ["4637097"],
     },

@@ -16,7 +16,13 @@
       "name": "binderDriverInterfaceTest"
     },
     {
+      "name": "binderRecordReplayTest"
+    },
+    {
       "name": "binderHostDeviceTest"
+    },
+    {
+      "name": "binderParcelBenchmark"
     },
     {
       "name": "binderTextOutputTest"

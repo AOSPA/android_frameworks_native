@@ -81,6 +81,7 @@ status_t RpcServer::setupInetServer(const char* address, unsigned int port,
     auto aiStart = InetSocketAddress::getAddrInfo(address, port);
     if (aiStart == nullptr) return UNKNOWN_ERROR;
     for (auto ai = aiStart.get(); ai != nullptr; ai = ai->ai_next) {
+        if (ai->ai_addr == nullptr) continue;
         InetSocketAddress socketAddress(ai->ai_addr, ai->ai_addrlen, address, port);
         if (status_t status = setupSocketServer(socketAddress); status != OK) {
             continue;
@@ -123,8 +124,13 @@ size_t RpcServer::getMaxThreads() {
     return mMaxThreads;
 }
 
-void RpcServer::setProtocolVersion(uint32_t version) {
+bool RpcServer::setProtocolVersion(uint32_t version) {
+    if (!RpcState::validateProtocolVersion(version)) {
+        return false;
+    }
+
     mProtocolVersion = version;
+    return true;
 }
 
 void RpcServer::setSupportedFileDescriptorTransportModes(
@@ -148,7 +154,7 @@ void RpcServer::setRootObjectWeak(const wp<IBinder>& binder) {
     mRootObjectWeak = binder;
 }
 void RpcServer::setPerSessionRootObject(
-        std::function<sp<IBinder>(const void*, size_t)>&& makeObject) {
+        std::function<sp<IBinder>(wp<RpcSession> session, const void*, size_t)>&& makeObject) {
     RpcMutexLockGuard _l(mLock);
     mRootObject.clear();
     mRootObjectWeak.clear();
@@ -159,6 +165,12 @@ void RpcServer::setConnectionFilter(std::function<bool(const void*, size_t)>&& f
     RpcMutexLockGuard _l(mLock);
     LOG_ALWAYS_FATAL_IF(mShutdownTrigger != nullptr, "Already joined");
     mConnectionFilter = std::move(filter);
+}
+
+void RpcServer::setServerSocketModifier(std::function<void(base::borrowed_fd)>&& modifier) {
+    RpcMutexLockGuard _l(mLock);
+    LOG_ALWAYS_FATAL_IF(mServer.fd != -1, "Already started");
+    mServerSocketModifier = std::move(modifier);
 }
 
 sp<IBinder> RpcServer::getRootObject() {
@@ -335,6 +347,8 @@ bool RpcServer::shutdown() {
         mJoinThread.reset();
     }
 
+    mServer = RpcTransportFd();
+
     LOG_RPC_DETAIL("Finished waiting on shutdown.");
 
     mShutdownTrigger = nullptr;
@@ -501,7 +515,8 @@ void RpcServer::establishConnection(
             // if null, falls back to server root
             sp<IBinder> sessionSpecificRoot;
             if (server->mRootObjectFactory != nullptr) {
-                sessionSpecificRoot = server->mRootObjectFactory(addr.data(), addrLen);
+                sessionSpecificRoot =
+                        server->mRootObjectFactory(wp<RpcSession>(session), addr.data(), addrLen);
                 if (sessionSpecificRoot == nullptr) {
                     ALOGE("Warning: server returned null from root object factory");
                 }
@@ -556,6 +571,14 @@ status_t RpcServer::setupSocketServer(const RpcSocketAddress& addr) {
         ALOGE("Could not create socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));
         return -savedErrno;
     }
+
+    {
+        RpcMutexLockGuard _l(mLock);
+        if (mServerSocketModifier != nullptr) {
+            mServerSocketModifier(socket_fd);
+        }
+    }
+
     if (0 != TEMP_FAILURE_RETRY(bind(socket_fd.get(), addr.addr(), addr.addrSize()))) {
         int savedErrno = errno;
         ALOGE("Could not bind socket at %s: %s", addr.toString().c_str(), strerror(savedErrno));

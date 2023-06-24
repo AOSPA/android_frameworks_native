@@ -4387,7 +4387,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
     Result<void> motionCheck = validateMotionEvent(args.action, args.actionButton,
                                                    args.pointerCount, args.pointerProperties);
     if (!motionCheck.ok()) {
-        LOG(ERROR) << "Invalid event: " << args.dump() << "; reason: " << motionCheck.error();
+        LOG(FATAL) << "Invalid event: " << args.dump() << "; reason: " << motionCheck.error();
         return;
     }
 

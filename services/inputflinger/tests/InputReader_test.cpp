@@ -3727,6 +3727,19 @@ TEST_F(KeyboardInputMapperTest, LayoutInfoCorrectlyMapped) {
     ASSERT_EQ("extended", mDevice->getDeviceInfo().getKeyboardLayoutInfo()->layoutType);
 }
 
+TEST_F(KeyboardInputMapperTest, Process_GesureEventToSetFlagKeepTouchMode) {
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_LEFT, 0, AKEYCODE_DPAD_LEFT, POLICY_FLAG_GESTURE);
+    KeyboardInputMapper& mapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD,
+                                                       AINPUT_KEYBOARD_TYPE_ALPHABETIC);
+    NotifyKeyArgs args;
+
+    // Key down
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_LEFT, 1);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_KEEP_TOUCH_MODE, args.flags);
+}
+
 // --- KeyboardInputMapperTest_ExternalDevice ---
 
 class KeyboardInputMapperTest_ExternalDevice : public InputMapperTest {
@@ -11068,6 +11081,101 @@ TEST_F(LightControllerTest, MonoKeyboardBacklight) {
 
     ASSERT_TRUE(controller.setLightColor(lights[0].id, LIGHT_BRIGHTNESS));
     ASSERT_EQ(controller.getLightColor(lights[0].id).value_or(-1), LIGHT_BRIGHTNESS);
+}
+
+TEST_F(LightControllerTest, Ignore_MonoLight_WithPreferredBacklightLevels) {
+    RawLightInfo infoMono = {.id = 1,
+                             .name = "mono_light",
+                             .maxBrightness = 255,
+                             .flags = InputLightClass::BRIGHTNESS,
+                             .path = ""};
+    mFakeEventHub->addRawLightInfo(infoMono.id, std::move(infoMono));
+    mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, "keyboard.backlight.brightnessLevels",
+                                            "0,100,200");
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    std::list<NotifyArgs> unused =
+            mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                               /*changes=*/{});
+
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    std::vector<InputDeviceLightInfo> lights = info.getLights();
+    ASSERT_EQ(1U, lights.size());
+    ASSERT_EQ(0U, lights[0].preferredBrightnessLevels.size());
+}
+
+TEST_F(LightControllerTest, KeyboardBacklight_WithNoPreferredBacklightLevels) {
+    RawLightInfo infoMono = {.id = 1,
+                             .name = "mono_keyboard_backlight",
+                             .maxBrightness = 255,
+                             .flags = InputLightClass::BRIGHTNESS |
+                                     InputLightClass::KEYBOARD_BACKLIGHT,
+                             .path = ""};
+    mFakeEventHub->addRawLightInfo(infoMono.id, std::move(infoMono));
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    std::list<NotifyArgs> unused =
+            mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                               /*changes=*/{});
+
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    std::vector<InputDeviceLightInfo> lights = info.getLights();
+    ASSERT_EQ(1U, lights.size());
+    ASSERT_EQ(0U, lights[0].preferredBrightnessLevels.size());
+}
+
+TEST_F(LightControllerTest, KeyboardBacklight_WithPreferredBacklightLevels) {
+    RawLightInfo infoMono = {.id = 1,
+                             .name = "mono_keyboard_backlight",
+                             .maxBrightness = 255,
+                             .flags = InputLightClass::BRIGHTNESS |
+                                     InputLightClass::KEYBOARD_BACKLIGHT,
+                             .path = ""};
+    mFakeEventHub->addRawLightInfo(infoMono.id, std::move(infoMono));
+    mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, "keyboard.backlight.brightnessLevels",
+                                            "0,100,200");
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    std::list<NotifyArgs> unused =
+            mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                               /*changes=*/{});
+
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    std::vector<InputDeviceLightInfo> lights = info.getLights();
+    ASSERT_EQ(1U, lights.size());
+    ASSERT_EQ(3U, lights[0].preferredBrightnessLevels.size());
+    std::set<BrightnessLevel>::iterator it = lights[0].preferredBrightnessLevels.begin();
+    ASSERT_EQ(BrightnessLevel(0), *it);
+    std::advance(it, 1);
+    ASSERT_EQ(BrightnessLevel(100), *it);
+    std::advance(it, 1);
+    ASSERT_EQ(BrightnessLevel(200), *it);
+}
+
+TEST_F(LightControllerTest, KeyboardBacklight_WithWrongPreferredBacklightLevels) {
+    RawLightInfo infoMono = {.id = 1,
+                             .name = "mono_keyboard_backlight",
+                             .maxBrightness = 255,
+                             .flags = InputLightClass::BRIGHTNESS |
+                                     InputLightClass::KEYBOARD_BACKLIGHT,
+                             .path = ""};
+    mFakeEventHub->addRawLightInfo(infoMono.id, std::move(infoMono));
+    mFakeEventHub->addConfigurationProperty(EVENTHUB_ID, "keyboard.backlight.brightnessLevels",
+                                            "0,100,200,300,400,500");
+
+    PeripheralController& controller = addControllerAndConfigure<PeripheralController>();
+    std::list<NotifyArgs> unused =
+            mDevice->configure(ARBITRARY_TIME, mFakePolicy->getReaderConfiguration(),
+                               /*changes=*/{});
+
+    InputDeviceInfo info;
+    controller.populateDeviceInfo(&info);
+    std::vector<InputDeviceLightInfo> lights = info.getLights();
+    ASSERT_EQ(1U, lights.size());
+    ASSERT_EQ(0U, lights[0].preferredBrightnessLevels.size());
 }
 
 TEST_F(LightControllerTest, RGBLight) {

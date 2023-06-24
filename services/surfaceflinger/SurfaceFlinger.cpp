@@ -122,7 +122,6 @@
 #include "Client.h"
 #include "ClientCache.h"
 #include "Colorizer.h"
-#include "Display/DisplayMap.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/ComposerHal.h"
 #include "DisplayHardware/FramebufferSurface.h"
@@ -387,6 +386,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory, SkipInitializationTag)
 }
 
 SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipInitialization) {
+    ATRACE_CALL();
     ALOGI("SurfaceFlinger is starting");
 
     hasSyncFramework = running_without_sync_framework(true);
@@ -706,7 +706,7 @@ void SurfaceFlinger::bootFinished() {
 
     // wait patiently for the window manager death
     const String16 name("window");
-    mWindowManager = defaultServiceManager()->getService(name);
+    mWindowManager = defaultServiceManager()->waitForService(name);
     if (mWindowManager != 0) {
         mWindowManager->linkToDeath(sp<IBinder::DeathRecipient>::fromExisting(this));
     }
@@ -720,7 +720,7 @@ void SurfaceFlinger::bootFinished() {
     LOG_EVENT_LONG(LOGTAG_SF_STOP_BOOTANIM,
                    ns2ms(systemTime(SYSTEM_TIME_MONOTONIC)));
 
-    sp<IBinder> input(defaultServiceManager()->getService(String16("inputflinger")));
+    sp<IBinder> input(defaultServiceManager()->waitForService(String16("inputflinger")));
 
     static_cast<void>(mScheduler->schedule([=]() FTL_FAKE_GUARD(kMainThreadContext) {
         if (input == nullptr) {
@@ -819,6 +819,7 @@ chooseRenderEngineTypeViaSysProp() {
 // Do not call property_set on main thread which will be blocked by init
 // Use StartPropertySetThread instead.
 void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
+    ATRACE_CALL();
     ALOGI(  "SurfaceFlinger's main thread ready to run. "
             "Initializing graphics H/W...");
     addTransactionReadyFilters();
@@ -2180,26 +2181,6 @@ void SurfaceFlinger::onRefreshRateChangedDebug(const RefreshRateChangedDebugData
     }
 }
 
-void SurfaceFlinger::setVsyncEnabled(PhysicalDisplayId id, bool enabled) {
-    const char* const whence = __func__;
-    ATRACE_FORMAT("%s (%d) for %" PRIu64, whence, enabled, id.value);
-
-    // On main thread to avoid race conditions with display power state.
-    static_cast<void>(mScheduler->schedule([=]() FTL_FAKE_GUARD(mStateLock) {
-        {
-            ftl::FakeGuard guard(kMainThreadContext);
-            if (auto schedule = mScheduler->getVsyncSchedule(id)) {
-                schedule->setPendingHardwareVsyncState(enabled);
-            }
-        }
-
-        ATRACE_FORMAT("%s (%d) for %" PRIu64 " (main thread)", whence, enabled, id.value);
-        if (const auto display = getDisplayDeviceLocked(id); display && display->isPoweredOn()) {
-            setHWCVsyncEnabled(id, enabled);
-        }
-    }));
-}
-
 bool SurfaceFlinger::wouldPresentEarly(TimePoint frameTime, Period vsyncPeriod) const {
     const bool isThreeVsyncsAhead = mExpectedPresentTime - frameTime > 2 * vsyncPeriod;
     return isThreeVsyncsAhead ||
@@ -2433,7 +2414,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     mExpectedPresentTime = expectedVsyncTime >= frameTime ? expectedVsyncTime
                                                           : calculateExpectedPresentTime(frameTime);
 
-    ATRACE_FORMAT("%s %" PRId64 " vsyncIn %.2fms%s", __func__, vsyncId.value,
+    ATRACE_FORMAT("%s %" PRId64 " vsyncIn %.2fms%s", __func__, ftl::to_underlying(vsyncId),
                   ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
                   mExpectedPresentTime == expectedVsyncTime ? "" : " (adjusted)");
 
@@ -2557,7 +2538,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     // Composite if transactions were committed, or if requested by HWC.
     bool mustComposite = mMustComposite.exchange(false);
     {
-        mFrameTimeline->setSfWakeUp(vsyncId.value, frameTime.ns(),
+        mFrameTimeline->setSfWakeUp(ftl::to_underlying(vsyncId), frameTime.ns(),
                                     Fps::fromPeriodNsecs(vsyncPeriod.ns()));
 
         const bool flushTransactions = clearTransactionFlags(eTransactionFlushNeeded);
@@ -2565,8 +2546,9 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
         if (flushTransactions) {
             updates = flushLifecycleUpdates();
             if (mTransactionTracing) {
-                mTransactionTracing->addCommittedTransactions(vsyncId.value, frameTime.ns(),
-                                                              updates, mFrontEndDisplayInfos,
+                mTransactionTracing->addCommittedTransactions(ftl::to_underlying(vsyncId),
+                                                              frameTime.ns(), updates,
+                                                              mFrontEndDisplayInfos,
                                                               mFrontEndDisplayInfosChanged);
             }
         }
@@ -2610,7 +2592,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
 
     if (mLayerTracingEnabled && !mLayerTracing.flagIsSet(LayerTracing::TRACE_COMPOSITION)) {
         // This will block and tracing should only be enabled for debugging.
-        addToLayerTracing(mVisibleRegionsDirty, frameTime.ns(), vsyncId.value);
+        addToLayerTracing(mVisibleRegionsDirty, frameTime, vsyncId);
     }
     mLastCommittedVsyncId = vsyncId;
 
@@ -2625,7 +2607,7 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
 
 void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
         FTL_FAKE_GUARD(kMainThreadContext) {
-    ATRACE_FORMAT("%s %" PRId64, __func__, vsyncId.value);
+    ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     compositionengine::CompositionRefreshArgs refreshArgs;
     const auto& displays = FTL_FAKE_GUARD(mStateLock, mDisplays);
@@ -2721,8 +2703,8 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
     mQtiSFExtnIntf->qtiSetDisplayElapseTime(refreshArgs.earliestPresentTime);
     /* QTI_END */
 
-    std::vector<std::pair<Layer*, LayerFE*>> layers =
-            moveSnapshotsToCompositionArgs(refreshArgs, /*cursorOnly=*/false, vsyncId.value);
+    constexpr bool kCursorOnly = false;
+    const auto layers = moveSnapshotsToCompositionArgs(refreshArgs, kCursorOnly);
     mCompositionEngine->present(refreshArgs);
     moveSnapshotsFromCompositionArgs(refreshArgs, layers);
 
@@ -2800,7 +2782,7 @@ void SurfaceFlinger::composite(TimePoint frameTime, VsyncId vsyncId)
     mLayersWithQueuedFrames.clear();
     if (mLayerTracingEnabled && mLayerTracing.flagIsSet(LayerTracing::TRACE_COMPOSITION)) {
         // This will block and should only be used for debugging.
-        addToLayerTracing(mVisibleRegionsDirty, frameTime.ns(), vsyncId.value);
+        addToLayerTracing(mVisibleRegionsDirty, frameTime, vsyncId);
     }
 
     if (mVisibleRegionsDirty) mHdrLayerInfoChanged = true;
@@ -2947,7 +2929,7 @@ void SurfaceFlinger::postComposition(nsecs_t callTime) {
     const CompositorTiming compositorTiming(vsyncDeadline.ns(), vsyncPeriod.ns(), vsyncPhase,
                                             presentLatency.ns());
 
-    display::DisplayMap<ui::LayerStack, const DisplayDevice*> layerStackToDisplay;
+    ui::DisplayMap<ui::LayerStack, const DisplayDevice*> layerStackToDisplay;
     {
         if (!mLayersWithBuffersRemoved.empty() || mNumTrustedPresentationListeners > 0) {
             Mutex::Autolock lock(mStateLock);
@@ -3930,7 +3912,8 @@ void SurfaceFlinger::updateInputFlinger(VsyncId vsyncId, TimePoint frameTime) {
             mWindowInfosListenerInvoker
                     ->windowInfosChanged(gui::WindowInfosUpdate{std::move(windowInfos),
                                                                 std::move(displayInfos),
-                                                                vsyncId.value, frameTime.ns()},
+                                                                ftl::to_underlying(vsyncId),
+                                                                frameTime.ns()},
                                          std::move(
                                                  inputWindowCommands.windowInfosReportedListeners),
                                          /* forceImmediateCall= */ visibleWindowsChanged ||
@@ -4020,9 +4003,15 @@ void SurfaceFlinger::updateCursorAsync() {
             refreshArgs.outputs.push_back(display->getCompositionDisplay());
         }
     }
-    auto layers = moveSnapshotsToCompositionArgs(refreshArgs, /*cursorOnly=*/true, 0);
+
+    constexpr bool kCursorOnly = true;
+    const auto layers = moveSnapshotsToCompositionArgs(refreshArgs, kCursorOnly);
     mCompositionEngine->updateCursorAsync(refreshArgs);
     moveSnapshotsFromCompositionArgs(refreshArgs, layers);
+}
+
+void SurfaceFlinger::requestHardwareVsync(PhysicalDisplayId displayId, bool enable) {
+    getHwComposer().setVsyncEnabled(displayId, enable ? hal::Vsync::ENABLE : hal::Vsync::DISABLE);
 }
 
 void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest> modeRequests) {
@@ -4115,8 +4104,6 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
                                              static_cast<ISchedulerCallback&>(*this), features,
                                              std::move(modulatorPtr));
     mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector());
-
-    setVsyncEnabled(display->getPhysicalId(), false);
     mScheduler->startTimers();
 
     const auto configs = mVsyncConfiguration->getCurrentConfigs();
@@ -4637,7 +4624,7 @@ bool SurfaceFlinger::transactionFlushNeeded() {
 
 bool SurfaceFlinger::frameIsEarly(TimePoint expectedPresentTime, VsyncId vsyncId) const {
     const auto prediction =
-            mFrameTimeline->getTokenManager()->getPredictionsForToken(vsyncId.value);
+            mFrameTimeline->getTokenManager()->getPredictionsForToken(ftl::to_underlying(vsyncId));
     if (!prediction) {
         return false;
     }
@@ -5744,11 +5731,14 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
 
         getHwComposer().setPowerMode(displayId, mode);
         if (displayId == mActiveDisplayId && mode != hal::PowerMode::DOZE_SUSPEND) {
-            setHWCVsyncEnabled(displayId,
-                               mScheduler->getVsyncSchedule(displayId)
-                                       ->getPendingHardwareVsyncState());
+            const bool enable =
+                    mScheduler->getVsyncSchedule(displayId)->getPendingHardwareVsyncState();
+            requestHardwareVsync(displayId, enable);
+
             mScheduler->enableSyntheticVsync(false);
-            mScheduler->resyncToHardwareVsync(displayId, true /* allowToEnable */, refreshRate);
+
+            constexpr bool kAllowToEnable = true;
+            mScheduler->resyncToHardwareVsync(displayId, kAllowToEnable, refreshRate);
         }
 
         mVisibleRegionsDirty = true;
@@ -5772,10 +5762,10 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
             }
         }
 
-        // Make sure HWVsync is disabled before turning off the display
-        setHWCVsyncEnabled(displayId, false);
-
+        // Disable VSYNC before turning off the display.
+        requestHardwareVsync(displayId, false);
         getHwComposer().setPowerMode(displayId, mode);
+
         mVisibleRegionsDirty = true;
         // from this point on, SF will stop drawing on this display
     } else if (mode == hal::PowerMode::DOZE || mode == hal::PowerMode::ON) {
@@ -5803,12 +5793,13 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     if (displayId == mActiveDisplayId) {
         mTimeStats->setPowerMode(mode);
         mRefreshRateStats->setPowerMode(mode);
-        mScheduler->setDisplayPowerMode(displayId, mode);
     }
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode);
     /* QTI_END */
+
+    mScheduler->setDisplayPowerMode(displayId, mode);
 
     ALOGD("Finished setting power mode %d on display %s", mode, to_string(displayId).c_str());
 }
@@ -6385,7 +6376,7 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
     result.append("Window Infos:\n");
     auto windowInfosDebug = mWindowInfosListenerInvoker->getDebugInfo();
     StringAppendF(&result, "  max send vsync id: %" PRId64 "\n",
-                  windowInfosDebug.maxSendDelayVsyncId.value);
+                  ftl::to_underlying(windowInfosDebug.maxSendDelayVsyncId));
     StringAppendF(&result, "  max send delay (ns): %" PRId64 " ns\n",
                   windowInfosDebug.maxSendDelayDuration);
     StringAppendF(&result, "  unsent messages: %" PRIu32 "\n",
@@ -6706,13 +6697,16 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     ALOGD("LayerTracing enabled");
                     tracingEnabledChanged = mLayerTracing.enable();
                     if (tracingEnabledChanged) {
-                        int64_t startingTime =
-                                (fixedStartingTime) ? fixedStartingTime : systemTime();
+                        const TimePoint startingTime = fixedStartingTime
+                                ? TimePoint::fromNs(fixedStartingTime)
+                                : TimePoint::now();
+
                         mScheduler
-                                ->schedule([&]() FTL_FAKE_GUARD(mStateLock) FTL_FAKE_GUARD(
-                                                   kMainThreadContext) {
-                                    addToLayerTracing(true /* visibleRegionDirty */, startingTime,
-                                                      mLastCommittedVsyncId.value);
+                                ->schedule([this, startingTime]() FTL_FAKE_GUARD(
+                                                   mStateLock) FTL_FAKE_GUARD(kMainThreadContext) {
+                                    constexpr bool kVisibleRegionDirty = true;
+                                    addToLayerTracing(kVisibleRegionDirty, startingTime,
+                                                      mLastCommittedVsyncId);
                                 })
                                 .wait();
                     }
@@ -8467,7 +8461,7 @@ void SurfaceFlinger::updateLayerMetadataSnapshot() {
 
 void SurfaceFlinger::moveSnapshotsFromCompositionArgs(
         compositionengine::CompositionRefreshArgs& refreshArgs,
-        std::vector<std::pair<Layer*, LayerFE*>>& layers) {
+        const std::vector<std::pair<Layer*, LayerFE*>>& layers) {
     if (mLayerLifecycleManagerEnabled) {
         std::vector<std::unique_ptr<frontend::LayerSnapshot>>& snapshots =
                 mLayerSnapshotBuilder.getSnapshots();
@@ -8484,7 +8478,7 @@ void SurfaceFlinger::moveSnapshotsFromCompositionArgs(
 }
 
 std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToCompositionArgs(
-        compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly, int64_t vsyncId) {
+        compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly) {
     std::vector<std::pair<Layer*, LayerFE*>> layers;
     if (mLayerLifecycleManagerEnabled) {
         nsecs_t currentTime = systemTime();
@@ -8684,7 +8678,7 @@ frontend::Update SurfaceFlinger::flushLifecycleUpdates() {
     return update;
 }
 
-void SurfaceFlinger::addToLayerTracing(bool visibleRegionDirty, int64_t time, int64_t vsyncId) {
+void SurfaceFlinger::addToLayerTracing(bool visibleRegionDirty, TimePoint time, VsyncId vsyncId) {
     const uint32_t tracingFlags = mLayerTracing.getFlags();
     LayersProto layers(dumpDrawingStateProto(tracingFlags));
     if (tracingFlags & LayerTracing::TRACE_EXTRA) {
@@ -8695,7 +8689,8 @@ void SurfaceFlinger::addToLayerTracing(bool visibleRegionDirty, int64_t time, in
         dumpHwc(hwcDump);
     }
     auto displays = dumpDisplayProto();
-    mLayerTracing.notify(visibleRegionDirty, time, vsyncId, &layers, std::move(hwcDump), &displays);
+    mLayerTracing.notify(visibleRegionDirty, time.ns(), ftl::to_underlying(vsyncId), &layers,
+                         std::move(hwcDump), &displays);
 }
 
 // gui::ISurfaceComposer

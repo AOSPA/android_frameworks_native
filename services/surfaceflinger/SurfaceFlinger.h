@@ -49,6 +49,7 @@
 #include <renderengine/LayerSettings.h>
 #include <serviceutils/PriorityDumper.h>
 #include <system/graphics.h>
+#include <ui/DisplayMap.h>
 #include <ui/FenceTime.h>
 #include <ui/PixelFormat.h>
 #include <ui/Size.h>
@@ -68,7 +69,6 @@
 #include <scheduler/interface/ICompositor.h>
 #include <ui/FenceResult.h>
 
-#include "Display/DisplayMap.h"
 #include "Display/PhysicalDisplay.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
@@ -656,10 +656,7 @@ private:
     void sample() override;
 
     // ISchedulerCallback overrides:
-
-    // Toggles hardware VSYNC by calling into HWC.
-    // TODO(b/241286146): Rename for self-explanatory API.
-    void setVsyncEnabled(PhysicalDisplayId, bool) override;
+    void requestHardwareVsync(PhysicalDisplayId, bool) override;
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
@@ -729,10 +726,9 @@ private:
     void updateLayerGeometry();
     void updateLayerMetadataSnapshot();
     std::vector<std::pair<Layer*, LayerFE*>> moveSnapshotsToCompositionArgs(
-            compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly,
-            int64_t vsyncId);
+            compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly);
     void moveSnapshotsFromCompositionArgs(compositionengine::CompositionRefreshArgs& refreshArgs,
-                                          std::vector<std::pair<Layer*, LayerFE*>>& layers);
+                                          const std::vector<std::pair<Layer*, LayerFE*>>& layers);
     bool updateLayerSnapshotsLegacy(VsyncId vsyncId, frontend::Update& update,
                                     bool transactionsFlushed, bool& out)
             REQUIRES(kMainThreadContext);
@@ -1018,11 +1014,6 @@ private:
      */
     nsecs_t getVsyncPeriodFromHWC() const REQUIRES(mStateLock);
 
-    void setHWCVsyncEnabled(PhysicalDisplayId id, bool enabled) {
-        hal::Vsync halState = enabled ? hal::Vsync::ENABLE : hal::Vsync::DISABLE;
-        getHwComposer().setVsyncEnabled(id, halState);
-    }
-
     using FenceTimePtr = std::shared_ptr<FenceTime>;
 
     bool wouldPresentEarly(TimePoint frameTime, Period) const REQUIRES(kMainThreadContext);
@@ -1107,7 +1098,7 @@ private:
     void dumpOffscreenLayersProto(LayersProto& layersProto,
                                   uint32_t traceFlags = LayerTracing::TRACE_ALL) const;
     google::protobuf::RepeatedPtrField<DisplayProto> dumpDisplayProto() const;
-    void addToLayerTracing(bool visibleRegionDirty, int64_t time, int64_t vsyncId)
+    void addToLayerTracing(bool visibleRegionDirty, TimePoint, VsyncId)
             REQUIRES(kMainThreadContext);
 
     // Dumps state from HW Composer
@@ -1245,7 +1236,7 @@ private:
     // never removed, so take precedence over external and virtual displays.
     //
     // May be read from any thread, but must only be written from the main thread.
-    display::DisplayMap<wp<IBinder>, const sp<DisplayDevice>> mDisplays GUARDED_BY(mStateLock);
+    ui::DisplayMap<wp<IBinder>, const sp<DisplayDevice>> mDisplays GUARDED_BY(mStateLock);
 
     display::PhysicalDisplays mPhysicalDisplays GUARDED_BY(mStateLock);
 
@@ -1467,7 +1458,7 @@ private:
     /* QTI_END */
 
     TransactionHandler mTransactionHandler;
-    display::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
+    ui::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
     bool mFrontEndDisplayInfosChanged = false;
 
     // WindowInfo ids visible during the last commit.

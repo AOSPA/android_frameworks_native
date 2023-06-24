@@ -48,6 +48,7 @@ cc_test {
         "FocusResolver_test.cpp",
         "GestureConverter_test.cpp",
         "HardwareStateConverter_test.cpp",
+        "InputDeviceMetricsCollector_test.cpp",
         "InputMapperTest.cpp",
         "InputProcessor_test.cpp",
         "InputProcessorConverter_test.cpp",
@@ -58,6 +59,7 @@ cc_test {
         "NotifyArgs_test.cpp",
         "PreferStylusOverTouch_test.cpp",
         "PropertyProvider_test.cpp",
+        "SyncQueue_test.cpp",
         "TestInputListener.cpp",
         "TouchpadInputMapper_test.cpp",
         "UinputDevice.cpp",
@@ -77,12 +79,16 @@ cc_test {
             ],
         },
         host: {
+            sanitize: {
+                address: true,
+            },
             include_dirs: [
                 "bionic/libc/kernel/android/uapi/",
                 "bionic/libc/kernel/uapi",
             ],
             cflags: [
                 "-D__ANDROID_HOST__",
+                "-Wno-error=ambiguous-reversed-operator",
             ],
             static_libs: [
                 "libinput",
@@ -90,6 +96,7 @@ cc_test {
         },
     },
     sanitize: {
+        hwaddress: true,
         undefined: true,
         all_undefined: true,
         diag: {
@@ -105,4 +112,7 @@ cc_test {
         unit_test: true,
     },
     test_suites: ["device-tests"],
+    cflags: [
+        "-Wno-error=ambiguous-reversed-operator",
+    ],
 }
