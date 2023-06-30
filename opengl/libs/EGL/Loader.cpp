@@ -147,16 +147,26 @@ static const char* HAL_SUBNAME_KEY_PROPERTIES[3] = {
         RO_BOARD_PLATFORM_PROPERTY,
 };
 
+// Check whether the loaded system drivers should be unloaded in order to
+// load ANGLE or the updatable graphics drivers.
+// If ANGLE namespace is set, it means the application is identified to run on top of ANGLE.
+// If updatable graphics driver namespace is set, it means the application is identified to
+// run on top of updatable graphics drivers.
 static bool should_unload_system_driver(egl_connection_t* cnx) {
     // Return false if the system driver has been unloaded once.
     if (cnx->systemDriverUnloaded) {
         return false;
     }
 
-    // Return true if Angle namespace is set.
+    // Return true if ANGLE namespace is set.
     android_namespace_t* ns = android::GraphicsEnv::getInstance().getAngleNamespace();
     if (ns) {
-        return true;
+        // Unless the default GLES driver is ANGLE and the process should use system ANGLE, since
+        // the intended GLES driver is already loaded.
+        // This should be updated in a later patch that cleans up namespaces
+        if (!(cnx->angleLoaded && android::GraphicsEnv::getInstance().shouldUseSystemAngle())) {
+            return true;
+        }
     }
 
     // Return true if updated driver namespace is set.
@@ -201,17 +211,17 @@ void Loader::unload_system_driver(egl_connection_t* cnx) {
             do_android_unload_sphal_library(hnd->dso[0]);
         }
         cnx->dso = nullptr;
+        cnx->angleLoaded = false;
     }
 
     cnx->systemDriverUnloaded = true;
 }
 
-void* Loader::open(egl_connection_t* cnx)
-{
+void* Loader::open(egl_connection_t* cnx) {
     ATRACE_CALL();
     const nsecs_t openTime = systemTime();
 
-    if (should_unload_system_driver(cnx)) {
+    if (cnx->dso && should_unload_system_driver(cnx)) {
         unload_system_driver(cnx);
     }
 
@@ -220,8 +230,12 @@ void* Loader::open(egl_connection_t* cnx)
         return cnx->dso;
     }
 
-    // Firstly, try to load ANGLE driver.
-    driver_t* hnd = attempt_to_load_angle(cnx);
+    driver_t* hnd = nullptr;
+    // Firstly, try to load ANGLE driver, if ANGLE should be loaded and fail, abort.
+    if (android::GraphicsEnv::getInstance().shouldUseAngle()) {
+        hnd = attempt_to_load_angle(cnx);
+        LOG_ALWAYS_FATAL_IF(!hnd, "Failed to load ANGLE.");
+    }
 
     if (!hnd) {
         // Secondly, try to load from driver apk.
@@ -279,10 +293,10 @@ void* Loader::open(egl_connection_t* cnx)
                                                             false, systemTime() - openTime);
     } else {
         // init_angle_backend will check if loaded driver is ANGLE or not,
-        // will set cnx->useAngle appropriately.
+        // will set cnx->angleLoaded appropriately.
         // Do this here so that we use ANGLE path when driver is ANGLE (e.g. loaded as native),
         // not just loading ANGLE as option.
-        init_angle_backend(hnd->dso[2], cnx);
+        attempt_to_init_angle_backend(hnd->dso[2], cnx);
     }
 
     LOG_ALWAYS_FATAL_IF(!hnd,
@@ -324,7 +338,7 @@ void Loader::close(egl_connection_t* cnx)
     delete hnd;
     cnx->dso = nullptr;
 
-    cnx->useAngle = false;
+    cnx->angleLoaded = false;
 }
 
 void Loader::init_api(void* dso,
@@ -536,10 +550,6 @@ static void* load_updated_driver(const char* kind, android_namespace_t* ns) {
 Loader::driver_t* Loader::attempt_to_load_angle(egl_connection_t* cnx) {
     ATRACE_CALL();
 
-    if (!android::GraphicsEnv::getInstance().shouldUseAngle()) {
-        return nullptr;
-    }
-
     android_namespace_t* ns = android::GraphicsEnv::getInstance().getAngleNamespace();
     if (!ns) {
         return nullptr;
@@ -565,14 +575,14 @@ Loader::driver_t* Loader::attempt_to_load_angle(egl_connection_t* cnx) {
     return hnd;
 }
 
-void Loader::init_angle_backend(void* dso, egl_connection_t* cnx) {
+void Loader::attempt_to_init_angle_backend(void* dso, egl_connection_t* cnx) {
     void* pANGLEGetDisplayPlatform = dlsym(dso, "ANGLEGetDisplayPlatform");
     if (pANGLEGetDisplayPlatform) {
-        ALOGV("ANGLE GLES library in use");
-        cnx->useAngle = true;
+        ALOGV("ANGLE GLES library loaded");
+        cnx->angleLoaded = true;
     } else {
-        ALOGV("Native GLES library in use");
-        cnx->useAngle = false;
+        ALOGV("Native GLES library loaded");
+        cnx->angleLoaded = false;
     }
 }
 

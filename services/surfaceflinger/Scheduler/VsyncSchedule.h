@@ -20,14 +20,17 @@
 #include <memory>
 #include <string>
 
-#include <ThreadContext.h>
 #include <android-base/thread_annotations.h>
 #include <ThreadContext.h>
 #include <ftl/enum.h>
 #include <ftl/optional.h>
-#include <scheduler/Features.h>
-#include <scheduler/Time.h>
 #include <ui/DisplayId.h>
+
+#include <scheduler/Features.h>
+#include <scheduler/IVsyncSource.h>
+#include <scheduler/Time.h>
+
+#include "ThreadContext.h"
 
 namespace android {
 class EventThreadTest;
@@ -49,15 +52,16 @@ using VsyncDispatch = VSyncDispatch;
 using VsyncTracker = VSyncTracker;
 
 // Schedule that synchronizes to hardware VSYNC of a physical display.
-class VsyncSchedule {
+class VsyncSchedule final : public IVsyncSource {
 public:
     using RequestHardwareVsync = std::function<void(PhysicalDisplayId, bool enabled)>;
 
     VsyncSchedule(PhysicalDisplayId, FeatureFlags, RequestHardwareVsync);
     ~VsyncSchedule();
 
-    Period period() const;
-    TimePoint vsyncDeadlineAfter(TimePoint) const;
+    // IVsyncSource overrides:
+    Period period() const override;
+    TimePoint vsyncDeadlineAfter(TimePoint) const override;
 
     // Inform the schedule that the period is changing and the schedule needs to recalibrate
     // itself. The schedule will end the period transition internally. This will
@@ -146,11 +150,6 @@ private:
     // Pending state, in case an attempt is made to set the state while the
     // device is off.
     HwVsyncState mPendingHwVsyncState GUARDED_BY(kMainThreadContext) = HwVsyncState::Disabled;
-
-    // Whether to reset the timestamps stored in the vsync model on the next hw vsync sample. This
-    // is to avoid clearing the model when hw vsync is enabled, in order to be consistent with the
-    // stale timestamps. Instead, clear the model on the first hw vsync callback.
-    bool mClearTimestampsOnNextSample = false;
 
     class PredictedVsyncTracer;
     using TracerPtr = std::unique_ptr<PredictedVsyncTracer>;

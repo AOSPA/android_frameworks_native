@@ -194,7 +194,8 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
                        private ICompositor,
-                       private scheduler::ISchedulerCallback {
+                       private scheduler::ISchedulerCallback,
+                       private compositionengine::ICEPowerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -636,8 +637,8 @@ private:
 
     // ICompositor overrides:
     void configure() override;
-    bool commit(TimePoint frameTime, VsyncId, TimePoint expectedVsyncTime) override;
-    void composite(TimePoint frameTime, VsyncId) override;
+    bool commit(const scheduler::FrameTarget&) override;
+    CompositeResult composite(scheduler::FrameTargeter&) override;
     void sample() override;
 
     // ISchedulerCallback overrides:
@@ -645,6 +646,9 @@ private:
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
+
+    // ICEPowerCallback overrides:
+    void notifyCpuLoadUp() override;
 
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
@@ -714,10 +718,9 @@ private:
             compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly);
     void moveSnapshotsFromCompositionArgs(compositionengine::CompositionRefreshArgs& refreshArgs,
                                           const std::vector<std::pair<Layer*, LayerFE*>>& layers);
-    bool updateLayerSnapshotsLegacy(VsyncId vsyncId, frontend::Update& update,
-                                    bool transactionsFlushed, bool& out)
-            REQUIRES(kMainThreadContext);
-    bool updateLayerSnapshots(VsyncId vsyncId, frontend::Update& update, bool transactionsFlushed,
+    bool updateLayerSnapshotsLegacy(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
+                                    bool& out) REQUIRES(kMainThreadContext);
+    bool updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
                               bool& out) REQUIRES(kMainThreadContext);
     void updateLayerHistory(const frontend::LayerSnapshot& snapshot);
     frontend::Update flushLifecycleUpdates() REQUIRES(kMainThreadContext);
@@ -761,6 +764,9 @@ private:
     TransactionHandler::TransactionReadiness transactionReadyTimelineCheck(
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
+    TransactionHandler::TransactionReadiness transactionReadyBufferCheckLegacy(
+            const TransactionHandler::TransactionFlushState& flushState)
+            REQUIRES(kMainThreadContext);
     TransactionHandler::TransactionReadiness transactionReadyBufferCheck(
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
@@ -785,8 +791,7 @@ private:
     void commitOffscreenLayers();
 
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
-    bool shouldLatchUnsignaled(const sp<Layer>& layer, const layer_state_t&, size_t numStates,
-                               bool firstTransaction) const;
+    bool shouldLatchUnsignaled(const layer_state_t&, size_t numStates, bool firstTransaction) const;
     bool applyTransactionsLocked(std::vector<TransactionState>& transactions, VsyncId)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
@@ -956,7 +961,8 @@ private:
     /*
      * Compositing
      */
-    void postComposition(nsecs_t callTime) REQUIRES(kMainThreadContext);
+    void postComposition(scheduler::FrameTargeter&, nsecs_t presentStartTime)
+            REQUIRES(kMainThreadContext);
 
     /*
      * Display management
@@ -996,20 +1002,6 @@ private:
      * VSYNC
      */
     nsecs_t getVsyncPeriodFromHWC() const REQUIRES(mStateLock);
-
-    using FenceTimePtr = std::shared_ptr<FenceTime>;
-
-    bool wouldPresentEarly(TimePoint frameTime, Period) const REQUIRES(kMainThreadContext);
-
-    const FenceTimePtr& getPreviousPresentFence(TimePoint frameTime, Period) const
-            REQUIRES(kMainThreadContext);
-
-    // Blocks the thread waiting for up to graceTimeMs in case the fence is about to signal.
-    static bool isFencePending(const FenceTimePtr&, int graceTimeMs);
-
-    // Calculates the expected present time for this frame. For negative offsets, performs a
-    // correction using the predicted vsync for the next frame instead.
-    TimePoint calculateExpectedPresentTime(TimePoint frameTime) const;
 
     /*
      * Display identification
@@ -1256,9 +1248,6 @@ private:
 
     // If blurs should be enabled on this device.
     bool mSupportsBlur = false;
-    std::atomic<uint32_t> mFrameMissedCount = 0;
-    std::atomic<uint32_t> mHwcFrameMissedCount = 0;
-    std::atomic<uint32_t> mGpuFrameMissedCount = 0;
 
     TransactionCallbackInvoker mTransactionCallbackInvoker;
 
@@ -1325,15 +1314,6 @@ private:
 
     std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
-
-    struct FenceWithFenceTime {
-        sp<Fence> fence = Fence::NO_FENCE;
-        FenceTimePtr fenceTime = FenceTime::NO_FENCE;
-    };
-    std::array<FenceWithFenceTime, 2> mPreviousPresentFences;
-
-    TimePoint mScheduledPresentTime GUARDED_BY(kMainThreadContext);
-    TimePoint mExpectedPresentTime GUARDED_BY(kMainThreadContext);
 
     // below flags are set by main thread only
     bool mSetActiveModePending = false;

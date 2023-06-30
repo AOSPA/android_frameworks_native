@@ -79,6 +79,7 @@ cc_defaults {
         "libcrypto",
         "libcutils",
         "libhidlbase",
+        "libinput",
         "libkll",
         "liblog",
         "libprotobuf-cpp-lite",
@@ -95,16 +96,21 @@ cc_defaults {
         android: {
             shared_libs: [
                 "libgui",
-                "libinput",
                 "libstatspull",
                 "libstatssocket",
             ],
         },
         host: {
             static_libs: [
-                "libinput",
                 "libstatspull",
                 "libstatssocket",
+            ],
+            include_dirs: [
+                "bionic/libc/kernel/android/uapi/",
+                "bionic/libc/kernel/uapi",
+            ],
+            cflags: [
+                "-D__ANDROID_HOST__",
             ],
         },
     },
@@ -112,6 +118,7 @@ cc_defaults {
 
 cc_library_shared {
     name: "libinputflinger",
+    host_supported: true,
     defaults: [
         "inputflinger_defaults",
         "libinputflinger_defaults",
@@ -172,25 +179,13 @@ cc_defaults {
         "libbase",
         "libbinder",
         "libcutils",
+        "libinput",
         "liblog",
         "libutils",
     ],
     header_libs: [
         "libinputflinger_headers",
     ],
-    target: {
-        android: {
-            shared_libs: [
-                "libinput",
-            ],
-        },
-        host: {
-            static_libs: [
-                "libinput",
-                "libui-types",
-            ],
-        },
-    },
 }
 
 cc_library_shared {
