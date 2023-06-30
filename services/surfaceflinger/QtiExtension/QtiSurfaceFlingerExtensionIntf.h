@@ -30,6 +30,7 @@ enum QtiFeature {
     kLayerExtension,
     kPluggableVsyncPrioritized,
     kQsyncIdle,
+    kSpecFence,
     kSmomo,
     kSplitLayerExtension,
     kVsyncSourceReliableOnDoze,

@@ -1,4 +1,4 @@
-// Copyright 2022 The Android Open Source Project
+// Copyright 2023 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,59 +21,49 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
-cc_test {
-    name: "libultrahdr_test",
-    test_suites: ["device-tests"],
-    srcs: [
-        "gainmapmath_test.cpp",
-        "icchelper_test.cpp",
-        "jpegr_test.cpp",
-    ],
+cc_defaults {
+    name: "ultrahdr_fuzzer_defaults",
+    host_supported: true,
     shared_libs: [
         "libimage_io",
         "libjpeg",
-        "liblog",
     ],
     static_libs: [
-        "libgmock",
-        "libgtest",
         "libjpegdecoder",
         "libjpegencoder",
         "libultrahdr",
         "libutils",
+        "liblog",
+    ],
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    fuzz_config: {
+        cc: [
+            "android-media-fuzzing-reports@google.com",
+        ],
+        description: "The fuzzers target the APIs of jpeg hdr",
+        service_privilege: "constrained",
+        users: "multi_user",
+        fuzzed_code_usage: "future_version",
+        vector: "local_no_privileges_required",
+    },
+}
+
+cc_fuzz {
+    name: "ultrahdr_enc_fuzzer",
+    defaults: ["ultrahdr_fuzzer_defaults"],
+    srcs: [
+        "ultrahdr_enc_fuzzer.cpp",
     ],
 }
 
-cc_test {
-    name: "libjpegencoderhelper_test",
-    test_suites: ["device-tests"],
+cc_fuzz {
+    name: "ultrahdr_dec_fuzzer",
+    defaults: ["ultrahdr_fuzzer_defaults"],
     srcs: [
-        "jpegencoderhelper_test.cpp",
-    ],
-    shared_libs: [
-        "libjpeg",
-        "liblog",
-    ],
-    static_libs: [
-        "libgtest",
-        "libjpegencoder",
-    ],
-}
-
-cc_test {
-    name: "libjpegdecoderhelper_test",
-    test_suites: ["device-tests"],
-    srcs: [
-        "jpegdecoderhelper_test.cpp",
-    ],
-    shared_libs: [
-        "libjpeg",
-        "liblog",
-    ],
-    static_libs: [
-        "libgtest",
-        "libjpegdecoder",
-        "libultrahdr",
-        "libutils",
+        "ultrahdr_dec_fuzzer.cpp",
     ],
 }

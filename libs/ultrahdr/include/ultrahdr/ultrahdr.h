@@ -20,7 +20,7 @@
 namespace android::ultrahdr {
 // Color gamuts for image data
 typedef enum {
-  ULTRAHDR_COLORGAMUT_UNSPECIFIED,
+  ULTRAHDR_COLORGAMUT_UNSPECIFIED = -1,
   ULTRAHDR_COLORGAMUT_BT709,
   ULTRAHDR_COLORGAMUT_P3,
   ULTRAHDR_COLORGAMUT_BT2100,
@@ -39,22 +39,38 @@ typedef enum {
 
 // Target output formats for decoder
 typedef enum {
+  ULTRAHDR_OUTPUT_UNSPECIFIED = -1,
   ULTRAHDR_OUTPUT_SDR,          // SDR in RGBA_8888 color format
   ULTRAHDR_OUTPUT_HDR_LINEAR,   // HDR in F16 color format (linear)
   ULTRAHDR_OUTPUT_HDR_PQ,       // HDR in RGBA_1010102 color format (PQ transfer function)
   ULTRAHDR_OUTPUT_HDR_HLG,      // HDR in RGBA_1010102 color format (HLG transfer function)
+  ULTRAHDR_OUTPUT_MAX = ULTRAHDR_OUTPUT_HDR_HLG,
 } ultrahdr_output_format;
 
 /*
  * Holds information for gain map related metadata.
+ *
+ * Not: all values stored in linear. This differs from the metadata encoding in XMP, where
+ * maxContentBoost (aka gainMapMax), minContentBoost (aka gainMapMin), hdrCapacityMin, and
+ * hdrCapacityMax are stored in log2 space.
  */
 struct ultrahdr_metadata_struct {
-  // Ultra HDR library version
-  const char* version;
+  // Ultra HDR format version
+  std::string version;
   // Max Content Boost for the map
   float maxContentBoost;
   // Min Content Boost for the map
   float minContentBoost;
+  // Gamma of the map data
+  float gamma;
+  // Offset for SDR data in map calculations
+  float offsetSdr;
+  // Offset for HDR data in map calculations
+  float offsetHdr;
+  // HDR capacity to apply the map at all
+  float hdrCapacityMin;
+  // HDR capacity to apply the map completely
+  float hdrCapacityMax;
 };
 typedef struct ultrahdr_metadata_struct* ultrahdr_metadata_ptr;
 

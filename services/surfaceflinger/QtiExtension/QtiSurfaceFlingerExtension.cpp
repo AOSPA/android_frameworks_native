@@ -1849,7 +1849,7 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
         supportedModes = snapshot.displayModes();
     }
 
-    int32_t newModeId;
+    int32_t newModeId = -1;
     for (const auto& [id, mode] : supportedModes) {
         auto modeWidth = mode->getWidth();
         auto modeHeight = mode->getHeight();
@@ -1861,7 +1861,13 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
         }
     }
 
+    if (newModeId == -1) {
+        ALOGW("Unable to find new mode");
+        return;
+    }
+
     if (qtiIsSupportedConfigSwitch(displayToken, newModeId) != NO_ERROR) {
+        ALOGW("Unable to switch to new mode %d", newModeId);
         return;
     }
 

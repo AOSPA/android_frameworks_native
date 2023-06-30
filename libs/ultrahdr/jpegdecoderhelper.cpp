@@ -26,6 +26,8 @@ using namespace std;
 
 namespace android::ultrahdr {
 
+#define ALIGNM(x, m)  ((((x) + ((m) - 1)) / (m)) * (m))
+
 const uint32_t kAPP0Marker = JPEG_APP0;      // JFIF
 const uint32_t kAPP1Marker = JPEG_APP0 + 1;  // EXIF, XMP
 const uint32_t kAPP2Marker = JPEG_APP0 + 2;  // ICC
@@ -91,7 +93,6 @@ static void jpegrerror_exit(j_common_ptr cinfo) {
 }
 
 JpegDecoderHelper::JpegDecoderHelper() {
-  mExifPos = 0;
 }
 
 JpegDecoderHelper::~JpegDecoderHelper() {
@@ -136,6 +137,14 @@ size_t JpegDecoderHelper::getEXIFSize() {
     return mEXIFBuffer.size();
 }
 
+void* JpegDecoderHelper::getICCPtr() {
+    return mICCBuffer.data();
+}
+
+size_t JpegDecoderHelper::getICCSize() {
+    return mICCBuffer.size();
+}
+
 size_t JpegDecoderHelper::getDecompressedImageWidth() {
     return mWidth;
 }
@@ -148,6 +157,7 @@ bool JpegDecoderHelper::decode(const void* image, int length, bool decodeToRGBA)
     jpeg_decompress_struct cinfo;
     jpegr_source_mgr mgr(static_cast<const uint8_t*>(image), length);
     jpegrerror_mgr myerr;
+    bool status = true;
 
     cinfo.err = jpeg_std_error(&myerr.pub);
     myerr.pub.error_exit = jpegrerror_exit;
@@ -165,31 +175,21 @@ bool JpegDecoderHelper::decode(const void* image, int length, bool decodeToRGBA)
     cinfo.src = &mgr;
     jpeg_read_header(&cinfo, TRUE);
 
-    // Save XMP data and EXIF data.
-    // Here we only handle the first XMP / EXIF package.
-    // The parameter pos is used for capturing start offset of EXIF, which is hacky, but working...
+    // Save XMP data, EXIF data, and ICC data.
+    // Here we only handle the first XMP / EXIF / ICC package.
     // We assume that all packages are starting with two bytes marker (eg FF E1 for EXIF package),
     // two bytes of package length which is stored in marker->original_length, and the real data
-    // which is stored in marker->data. The pos is adding up all previous package lengths (
-    // 4 bytes marker and length, marker->original_length) before EXIF appears. Note that here we
-    // we are using marker->original_length instead of marker->data_length because in case the real
-    // package length is larger than the limitation, jpeg-turbo will only copy the data within the
-    // limitation (represented by data_length) and this may vary from original_length / real offset.
-    // A better solution is making jpeg_marker_struct holding the offset, but currently it doesn't.
+    // which is stored in marker->data.
     bool exifAppears = false;
     bool xmpAppears = false;
-    size_t pos = 2;  // position after SOI
+    bool iccAppears = false;
     for (jpeg_marker_struct* marker = cinfo.marker_list;
-         marker && !(exifAppears && xmpAppears);
+         marker && !(exifAppears && xmpAppears && iccAppears);
          marker = marker->next) {
 
-        pos += 4;
-        pos += marker->original_length;
-
-        if (marker->marker != kAPP1Marker) {
+        if (marker->marker != kAPP1Marker && marker->marker != kAPP2Marker) {
             continue;
         }
-
         const unsigned int len = marker->data_length;
         if (!xmpAppears &&
             len > kXmpNameSpace.size() &&
@@ -207,8 +207,20 @@ bool JpegDecoderHelper::decode(const void* image, int length, bool decodeToRGBA)
             mEXIFBuffer.resize(len, 0);
             memcpy(static_cast<void*>(mEXIFBuffer.data()), marker->data, len);
             exifAppears = true;
-            mExifPos = pos - marker->original_length;
+        } else if (!iccAppears &&
+                   len > sizeof(kICCSig) &&
+                   !memcmp(marker->data, kICCSig, sizeof(kICCSig))) {
+            mICCBuffer.resize(len, 0);
+            memcpy(static_cast<void*>(mICCBuffer.data()), marker->data, len);
+            iccAppears = true;
         }
+    }
+
+    if (cinfo.image_width > kMaxWidth || cinfo.image_height > kMaxHeight) {
+        // constraint on max width and max height is only due to alloc constraints
+        // tune these values basing on the target device
+        status = false;
+        goto CleanUp;
     }
 
     mWidth = cinfo.image_width;
@@ -217,14 +229,25 @@ bool JpegDecoderHelper::decode(const void* image, int length, bool decodeToRGBA)
     if (decodeToRGBA) {
         if (cinfo.jpeg_color_space == JCS_GRAYSCALE) {
             // We don't intend to support decoding grayscale to RGBA
-            return false;
+            status = false;
+            ALOGE("%s: decoding grayscale to RGBA is unsupported", __func__);
+            goto CleanUp;
         }
         // 4 bytes per pixel
         mResultBuffer.resize(cinfo.image_width * cinfo.image_height * 4);
         cinfo.out_color_space = JCS_EXT_RGBA;
     } else {
         if (cinfo.jpeg_color_space == JCS_YCbCr) {
-            // 1 byte per pixel for Y, 0.5 byte per pixel for U+V
+            if (cinfo.comp_info[0].h_samp_factor != 2 ||
+                cinfo.comp_info[1].h_samp_factor != 1 ||
+                cinfo.comp_info[2].h_samp_factor != 1 ||
+                cinfo.comp_info[0].v_samp_factor != 2 ||
+                cinfo.comp_info[1].v_samp_factor != 1 ||
+                cinfo.comp_info[2].v_samp_factor != 1) {
+                status = false;
+                ALOGE("%s: decoding to YUV only supports 4:2:0 subsampling", __func__);
+                goto CleanUp;
+            }
             mResultBuffer.resize(cinfo.image_width * cinfo.image_height * 3 / 2, 0);
         } else if (cinfo.jpeg_color_space == JCS_GRAYSCALE) {
             mResultBuffer.resize(cinfo.image_width * cinfo.image_height, 0);
@@ -239,13 +262,15 @@ bool JpegDecoderHelper::decode(const void* image, int length, bool decodeToRGBA)
 
     if (!decompress(&cinfo, static_cast<const uint8_t*>(mResultBuffer.data()),
             cinfo.jpeg_color_space == JCS_GRAYSCALE)) {
-        return false;
+        status = false;
+        goto CleanUp;
     }
 
+CleanUp:
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
 
-    return true;
+    return status;
 }
 
 bool JpegDecoderHelper::decompress(jpeg_decompress_struct* cinfo, const uint8_t* dest,
@@ -283,8 +308,12 @@ bool JpegDecoderHelper::getCompressedImageParameters(const void* image, int leng
         return false;
     }
 
-    *pWidth = cinfo.image_width;
-    *pHeight = cinfo.image_height;
+    if (pWidth != nullptr) {
+        *pWidth = cinfo.image_width;
+    }
+    if (pHeight != nullptr) {
+        *pHeight = cinfo.image_height;
+    }
 
     if (iccData != nullptr) {
         for (jpeg_marker_struct* marker = cinfo.marker_list; marker;
@@ -297,9 +326,7 @@ bool JpegDecoderHelper::getCompressedImageParameters(const void* image, int leng
                 continue;
             }
 
-            const unsigned int len = marker->data_length - kICCMarkerHeaderSize;
-            const uint8_t *src = marker->data + kICCMarkerHeaderSize;
-            iccData->insert(iccData->end(), src, src+len);
+            iccData->insert(iccData->end(), marker->data, marker->data + marker->data_length);
         }
     }
 
@@ -342,7 +369,6 @@ bool JpegDecoderHelper::decompressRGBA(jpeg_decompress_struct* cinfo, const uint
 }
 
 bool JpegDecoderHelper::decompressYUV(jpeg_decompress_struct* cinfo, const uint8_t* dest) {
-
     JSAMPROW y[kCompressBatchSize];
     JSAMPROW cb[kCompressBatchSize / 2];
     JSAMPROW cr[kCompressBatchSize / 2];
@@ -353,8 +379,34 @@ bool JpegDecoderHelper::decompressYUV(jpeg_decompress_struct* cinfo, const uint8
     uint8_t* y_plane = const_cast<uint8_t*>(dest);
     uint8_t* u_plane = const_cast<uint8_t*>(dest + y_plane_size);
     uint8_t* v_plane = const_cast<uint8_t*>(dest + y_plane_size + uv_plane_size);
-    std::unique_ptr<uint8_t[]> empty(new uint8_t[cinfo->image_width]);
+    std::unique_ptr<uint8_t[]> empty = std::make_unique<uint8_t[]>(cinfo->image_width);
     memset(empty.get(), 0, cinfo->image_width);
+
+    const int aligned_width = ALIGNM(cinfo->image_width, kCompressBatchSize);
+    bool is_width_aligned = (aligned_width == cinfo->image_width);
+    std::unique_ptr<uint8_t[]> buffer_intrm = nullptr;
+    uint8_t* y_plane_intrm = nullptr;
+    uint8_t* u_plane_intrm = nullptr;
+    uint8_t* v_plane_intrm = nullptr;
+    JSAMPROW y_intrm[kCompressBatchSize];
+    JSAMPROW cb_intrm[kCompressBatchSize / 2];
+    JSAMPROW cr_intrm[kCompressBatchSize / 2];
+    JSAMPARRAY planes_intrm[3] {y_intrm, cb_intrm, cr_intrm};
+    if (!is_width_aligned) {
+        size_t mcu_row_size = aligned_width * kCompressBatchSize * 3 / 2;
+        buffer_intrm = std::make_unique<uint8_t[]>(mcu_row_size);
+        y_plane_intrm = buffer_intrm.get();
+        u_plane_intrm = y_plane_intrm + (aligned_width * kCompressBatchSize);
+        v_plane_intrm = u_plane_intrm + (aligned_width * kCompressBatchSize) / 4;
+        for (int i = 0; i < kCompressBatchSize; ++i) {
+            y_intrm[i] = y_plane_intrm + i * aligned_width;
+        }
+        for (int i = 0; i < kCompressBatchSize / 2; ++i) {
+            int offset_intrm = i * (aligned_width / 2);
+            cb_intrm[i] = u_plane_intrm + offset_intrm;
+            cr_intrm[i] = v_plane_intrm + offset_intrm;
+        }
+    }
 
     while (cinfo->output_scanline < cinfo->image_height) {
         for (int i = 0; i < kCompressBatchSize; ++i) {
@@ -377,10 +429,20 @@ bool JpegDecoderHelper::decompressYUV(jpeg_decompress_struct* cinfo, const uint8
             }
         }
 
-        int processed = jpeg_read_raw_data(cinfo, planes, kCompressBatchSize);
+        int processed = jpeg_read_raw_data(cinfo, is_width_aligned ? planes : planes_intrm,
+                                           kCompressBatchSize);
         if (processed != kCompressBatchSize) {
             ALOGE("Number of processed lines does not equal input lines.");
             return false;
+        }
+        if (!is_width_aligned) {
+            for (int i = 0; i < kCompressBatchSize; ++i) {
+                memcpy(y[i], y_intrm[i], cinfo->image_width);
+            }
+            for (int i = 0; i < kCompressBatchSize / 2; ++i) {
+                memcpy(cb[i], cb_intrm[i], cinfo->image_width / 2);
+                memcpy(cr[i], cr_intrm[i], cinfo->image_width / 2);
+            }
         }
     }
     return true;
@@ -391,8 +453,23 @@ bool JpegDecoderHelper::decompressSingleChannel(jpeg_decompress_struct* cinfo, c
     JSAMPARRAY planes[1] {y};
 
     uint8_t* y_plane = const_cast<uint8_t*>(dest);
-    std::unique_ptr<uint8_t[]> empty(new uint8_t[cinfo->image_width]);
+    std::unique_ptr<uint8_t[]> empty = std::make_unique<uint8_t[]>(cinfo->image_width);
     memset(empty.get(), 0, cinfo->image_width);
+
+    int aligned_width = ALIGNM(cinfo->image_width, kCompressBatchSize);
+    bool is_width_aligned = (aligned_width == cinfo->image_width);
+    std::unique_ptr<uint8_t[]> buffer_intrm = nullptr;
+    uint8_t* y_plane_intrm = nullptr;
+    JSAMPROW y_intrm[kCompressBatchSize];
+    JSAMPARRAY planes_intrm[1] {y_intrm};
+    if (!is_width_aligned) {
+        size_t mcu_row_size = aligned_width * kCompressBatchSize;
+        buffer_intrm = std::make_unique<uint8_t[]>(mcu_row_size);
+        y_plane_intrm = buffer_intrm.get();
+        for (int i = 0; i < kCompressBatchSize; ++i) {
+            y_intrm[i] = y_plane_intrm + i * aligned_width;
+        }
+    }
 
     while (cinfo->output_scanline < cinfo->image_height) {
         for (int i = 0; i < kCompressBatchSize; ++i) {
@@ -404,10 +481,16 @@ bool JpegDecoderHelper::decompressSingleChannel(jpeg_decompress_struct* cinfo, c
             }
         }
 
-        int processed = jpeg_read_raw_data(cinfo, planes, kCompressBatchSize);
+        int processed = jpeg_read_raw_data(cinfo, is_width_aligned ? planes : planes_intrm,
+                                           kCompressBatchSize);
         if (processed != kCompressBatchSize / 2) {
             ALOGE("Number of processed lines does not equal input lines.");
             return false;
+        }
+        if (!is_width_aligned) {
+            for (int i = 0; i < kCompressBatchSize; ++i) {
+                memcpy(y[i], y_intrm[i], cinfo->image_width);
+            }
         }
     }
     return true;

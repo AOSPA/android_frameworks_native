@@ -205,9 +205,6 @@ private:
     const IdGenerator mIdGenerator;
 
     int64_t mWindowInfosVsyncId GUARDED_BY(mLock);
-    int64_t mWindowInfosTimestamp GUARDED_BY(mLock);
-    int64_t mMaxWindowInfosDelay GUARDED_BY(mLock) = -1;
-    int64_t mMaxWindowInfosDelayVsyncId GUARDED_BY(mLock) = -1;
 
     // With each iteration, InputDispatcher nominally processes one queued event,
     // a timeout, or a response from an input consumer.
