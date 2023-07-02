@@ -138,6 +138,12 @@ status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
     return NO_ERROR;
 }
 
+// MIUI ADD: START
+status_t BufferQueueProducer::adjustMaxDequeuedBufferCount(int count) {
+    return setMaxDequeuedBufferCount(mCore->mMaxDequeuedBufferCount + count);
+}
+// END
+
 status_t BufferQueueProducer::setMaxDequeuedBufferCount(
         int maxDequeuedBuffers) {
     int maxBufferCount;

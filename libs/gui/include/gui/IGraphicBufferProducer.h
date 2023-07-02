@@ -676,6 +676,11 @@ public:
     // the width and height used for dequeueBuffer will be additionally swapped.
     virtual status_t setAutoPrerotation(bool autoPrerotation);
 
+    // MIUI ADD:
+    // Adjust the maximum number of buffers that can be dequeued by the producer
+    // at one time by setMaxDequeuedBufferCount.
+    virtual status_t adjustMaxDequeuedBufferCount(int) { return INVALID_OPERATION; }
+
     struct RequestBufferOutput : public Flattenable<RequestBufferOutput> {
         RequestBufferOutput() = default;
 
