@@ -22,14 +22,14 @@
 #include <gui/InputApplication.h>
 #include <input/Input.h>
 #include <utils/RefBase.h>
+#include <set>
 
 namespace android {
-
 
 /*
  * Input dispatcher policy interface.
  *
- * The input reader policy is used by the input reader to interact with the Window Manager
+ * The input dispatcher policy is used by the input dispatcher to interact with the Window Manager
  * and other system components.
  *
  * The actual implementation is partially supported by callbacks into the DVM
@@ -72,9 +72,6 @@ public:
     virtual void notifySensorAccuracy(int32_t deviceId, InputDeviceSensorType sensorType,
                                       InputDeviceSensorAccuracy accuracy) = 0;
     virtual void notifyVibratorState(int32_t deviceId, bool isOn) = 0;
-
-    /* Gets the input dispatcher configuration. */
-    virtual InputDispatcherConfiguration getDispatcherConfiguration() = 0;
 
     /* Filters an input event.
      * Return true to dispatch the event unmodified, false to consume the event.
@@ -136,6 +133,10 @@ public:
 
     /* Notifies the policy that the drag window has moved over to another window */
     virtual void notifyDropWindow(const sp<IBinder>& token, float x, float y) = 0;
+
+    /* Notifies the policy that there was an input device interaction with apps. */
+    virtual void notifyDeviceInteraction(int32_t deviceId, nsecs_t timestamp,
+                                         const std::set<gui::Uid>& uids) = 0;
 };
 
 } // namespace android

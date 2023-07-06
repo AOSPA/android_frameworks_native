@@ -34,7 +34,7 @@
 namespace android {
 
 static const bool ENABLE_INPUT_DEVICE_USAGE_METRICS =
-        sysprop::InputProperties::enable_input_device_usage_metrics().value_or(false);
+        sysprop::InputProperties::enable_input_device_usage_metrics().value_or(true);
 
 using gui::FocusRequest;
 
@@ -125,6 +125,10 @@ InputReaderInterface& InputManager::getReader() {
 
 InputProcessorInterface& InputManager::getProcessor() {
     return *mProcessor;
+}
+
+InputDeviceMetricsCollectorInterface& InputManager::getMetricsCollector() {
+    return *mCollector;
 }
 
 InputDispatcherInterface& InputManager::getDispatcher() {

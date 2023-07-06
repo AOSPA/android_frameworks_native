@@ -271,7 +271,7 @@ void TouchInputMapper::dump(std::string& dump) {
                          toString(mFusedStylusPointerId).c_str());
     dump += StringPrintf(INDENT4 "External Stylus Data Timeout: %" PRId64 "\n",
                          mExternalStylusFusionTimeout);
-    dump += StringPrintf(INDENT4 " External Stylus Buttons Applied: 0x%08x",
+    dump += StringPrintf(INDENT4 "External Stylus Buttons Applied: 0x%08x\n",
                          mExternalStylusButtonsApplied);
     dump += INDENT3 "External Stylus State:\n";
     dumpStylusState(dump, mExternalStylusState);
@@ -972,7 +972,18 @@ void TouchInputMapper::configureInputDevice(nsecs_t when, bool* outResetNeeded) 
             (rawXResolution > 0 && rawYResolution > 0) ? (rawXResolution + rawYResolution) / 2 : 0;
 
     const DisplayViewport& newViewport = newViewportOpt.value_or(kUninitializedViewport);
-    const bool viewportChanged = mViewport != newViewport;
+    bool viewportChanged;
+    if (mParameters.enableForInactiveViewport) {
+        // When touch is enabled for an inactive viewport, ignore the
+        // viewport active status when checking whether the viewport has
+        // changed.
+        DisplayViewport tempViewport = mViewport;
+        tempViewport.isActive = newViewport.isActive;
+        viewportChanged = tempViewport != newViewport;
+    } else {
+        viewportChanged = mViewport != newViewport;
+    }
+
     bool skipViewportUpdate = false;
     if (viewportChanged) {
         const bool viewportOrientationChanged = mViewport.orientation != newViewport.orientation;
@@ -1889,9 +1900,9 @@ std::list<NotifyArgs> TouchInputMapper::consumeRawTouches(nsecs_t when, nsecs_t 
         uint32_t id = mCurrentRawState.rawPointerData.touchingIdBits.firstMarkedBit();
         const RawPointerData::Pointer& pointer = mCurrentRawState.rawPointerData.pointerForId(id);
         // Skip checking whether the pointer is inside the physical frame if the device is in
-        // unscaled mode.
+        // unscaled or pointer mode.
         if (!isPointInsidePhysicalFrame(pointer.x, pointer.y) &&
-            mDeviceMode != DeviceMode::UNSCALED) {
+            mDeviceMode != DeviceMode::UNSCALED && mDeviceMode != DeviceMode::POINTER) {
             // If exactly one pointer went down, check for virtual key hit.
             // Otherwise, we will drop the entire stroke.
             if (mCurrentRawState.rawPointerData.touchingIdBits.count() == 1) {

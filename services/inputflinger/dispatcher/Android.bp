@@ -55,7 +55,10 @@ filegroup {
 cc_defaults {
     name: "libinputdispatcher_defaults",
     srcs: [":libinputdispatcher_sources"],
-    cflags: ["-DDISABLE_DEVICE_INTEGRATION"],
+    cflags: [
+        "-DDISABLE_DEVICE_INTEGRATION",
+        "-Wno-ambiguous-reversed-operator",
+    ],
     shared_libs: [
         "libbase",
         "libcrypto",

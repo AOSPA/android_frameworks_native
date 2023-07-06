@@ -791,8 +791,8 @@ public:
     void setFrameTimelineVsyncForBufferlessTransaction(const FrameTimelineInfo& info,
                                                        nsecs_t postTime);
 
-    void addSurfaceFrameDroppedForBuffer(
-            std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame);
+    void addSurfaceFrameDroppedForBuffer(std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame,
+                                         nsecs_t dropTime);
     void addSurfaceFramePresentedForBuffer(
             std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame, nsecs_t acquireFenceTime,
             nsecs_t currentLatchTime);
@@ -801,6 +801,8 @@ public:
             const FrameTimelineInfo& info, nsecs_t postTime);
     std::shared_ptr<frametimeline::SurfaceFrame> createSurfaceFrameForBuffer(
             const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName);
+    void setFrameTimelineVsyncForSkippedFrames(const FrameTimelineInfo& info, nsecs_t postTime,
+                                               std::string debugName);
 
     bool setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                     TrustedPresentationListener const& listener);
@@ -872,7 +874,7 @@ public:
     std::string getPendingBufferCounterName() { return mBlastTransactionName; }
     bool updateGeometry();
 
-    bool simpleBufferUpdate(const layer_state_t&) const;
+    bool isSimpleBufferUpdate(const layer_state_t& s) const;
 
     static bool isOpaqueFormat(PixelFormat format);
 

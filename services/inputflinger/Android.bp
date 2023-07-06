@@ -106,6 +106,13 @@ cc_defaults {
                 "libstatspull",
                 "libstatssocket",
             ],
+            include_dirs: [
+                "bionic/libc/kernel/android/uapi/",
+                "bionic/libc/kernel/uapi",
+            ],
+            cflags: [
+                "-D__ANDROID_HOST__",
+            ],
         },
     },
 }
@@ -229,6 +236,9 @@ phony {
         // currently unused, but still must build correctly
         "inputflinger",
         "libinputflingerhost",
+
+        // rust targets
+        "libinput_rust_test",
 
         // native fuzzers
         "inputflinger_latencytracker_fuzzer",

@@ -18,8 +18,10 @@
 
 #include "InputListener.h"
 #include "NotifyArgs.h"
+#include "SyncQueue.h"
 
 #include <ftl/mixins.h>
+#include <gui/WindowInfo.h>
 #include <input/InputDevice.h>
 #include <statslog.h>
 #include <chrono>
@@ -33,10 +35,16 @@ namespace android {
 /**
  * Logs metrics about registered input devices and their usages.
  *
- * Not thread safe. Must be called from a single thread.
+ * All methods in the InputListenerInterface must be called from a single thread.
  */
 class InputDeviceMetricsCollectorInterface : public InputListenerInterface {
 public:
+    /**
+     * Notify the metrics collector that there was an input device interaction with apps.
+     * Called from the InputDispatcher thread.
+     */
+    virtual void notifyDeviceInteraction(int32_t deviceId, nsecs_t timestamp,
+                                         const std::set<gui::Uid>& uids) = 0;
     /**
      * Dump the state of the interaction blocker.
      * This method may be called on any thread (usually by the input manager on a binder thread).
@@ -92,9 +100,14 @@ public:
     using SourceUsageBreakdown =
             std::vector<std::pair<InputDeviceUsageSource, std::chrono::nanoseconds /*duration*/>>;
 
+    // Describes the breakdown of an input device usage session by the UIDs that it interacted with.
+    using UidUsageBreakdown =
+            std::vector<std::pair<gui::Uid, std::chrono::nanoseconds /*duration*/>>;
+
     struct DeviceUsageReport {
         std::chrono::nanoseconds usageDuration;
         SourceUsageBreakdown sourceBreakdown;
+        UidUsageBreakdown uidBreakdown;
     };
 
     virtual void logInputDeviceUsageReported(const InputDeviceIdentifier&,
@@ -121,6 +134,8 @@ public:
     void notifyDeviceReset(const NotifyDeviceResetArgs& args) override;
     void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs& args) override;
 
+    void notifyDeviceInteraction(int32_t deviceId, nsecs_t timestamp,
+                                 const std::set<gui::Uid>& uids) override;
     void dump(std::string& dump) override;
 
 private:
@@ -138,18 +153,27 @@ private:
         return std::to_string(ftl::to_underlying(id));
     }
 
+    using Uid = gui::Uid;
+
     std::map<DeviceId, InputDeviceInfo> mLoggedDeviceInfos;
+
+    using Interaction = std::tuple<DeviceId, std::chrono::nanoseconds, std::set<Uid>>;
+    SyncQueue<Interaction> mInteractionsQueue;
 
     class ActiveSession {
     public:
         explicit ActiveSession(std::chrono::nanoseconds usageSessionTimeout,
                                std::chrono::nanoseconds startTime);
         void recordUsage(std::chrono::nanoseconds eventTime, InputDeviceUsageSource source);
+        void recordInteraction(const Interaction&);
         bool checkIfCompletedAt(std::chrono::nanoseconds timestamp);
         InputDeviceMetricsLogger::DeviceUsageReport finishSession();
 
     private:
         struct UsageSession {
+            UsageSession() {};
+            UsageSession(std::chrono::nanoseconds s, std::chrono::nanoseconds e) :
+                start(s), end(s) {}
             std::chrono::nanoseconds start{};
             std::chrono::nanoseconds end{};
         };
@@ -159,6 +183,9 @@ private:
 
         std::map<InputDeviceUsageSource, UsageSession> mActiveSessionsBySource{};
         InputDeviceMetricsLogger::SourceUsageBreakdown mSourceUsageBreakdown{};
+
+        std::map<Uid, UsageSession> mActiveSessionsByUid{};
+        InputDeviceMetricsLogger::UidUsageBreakdown mUidUsageBreakdown{};
     };
 
     // The input devices that currently have active usage sessions.
@@ -169,6 +196,7 @@ private:
     using SourceProvider = std::function<std::set<InputDeviceUsageSource>(const InputDeviceInfo&)>;
     void onInputDeviceUsage(DeviceId deviceId, std::chrono::nanoseconds eventTime,
                             const SourceProvider& getSources);
+    void onInputDeviceInteraction(const Interaction&);
     void reportCompletedSessions();
 };
 

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <android/hardware/power/Boost.h>
+#include <aidl/android/hardware/power/Boost.h>
 #include <fuzzbinder/libbinder_driver.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
@@ -39,10 +39,13 @@ constexpr ui::ColorMode kColormodes[] = {ui::ColorMode::NATIVE,
                                          ui::ColorMode::BT2100_HLG,
                                          ui::ColorMode::DISPLAY_BT2020};
 
-constexpr hardware::power::Boost kBoost[] = {
-        hardware::power::Boost::INTERACTION,   hardware::power::Boost::DISPLAY_UPDATE_IMMINENT,
-        hardware::power::Boost::ML_ACC,        hardware::power::Boost::AUDIO_LAUNCH,
-        hardware::power::Boost::CAMERA_LAUNCH, hardware::power::Boost::CAMERA_SHOT,
+constexpr aidl::android::hardware::power::Boost kBoost[] = {
+        aidl::android::hardware::power::Boost::INTERACTION,
+        aidl::android::hardware::power::Boost::DISPLAY_UPDATE_IMMINENT,
+        aidl::android::hardware::power::Boost::ML_ACC,
+        aidl::android::hardware::power::Boost::AUDIO_LAUNCH,
+        aidl::android::hardware::power::Boost::CAMERA_LAUNCH,
+        aidl::android::hardware::power::Boost::CAMERA_SHOT,
 };
 
 constexpr gui::TouchOcclusionMode kMode[] = {
@@ -187,7 +190,7 @@ void SurfaceComposerClientFuzzer::getWindowInfo(gui::WindowInfo* windowInfo) {
     windowInfo->replaceTouchableRegionWithCrop = mFdp.ConsumeBool();
     windowInfo->touchOcclusionMode = mFdp.PickValueInArray(kMode);
     windowInfo->ownerPid = mFdp.ConsumeIntegral<int32_t>();
-    windowInfo->ownerUid = mFdp.ConsumeIntegral<int32_t>();
+    windowInfo->ownerUid = gui::Uid{mFdp.ConsumeIntegral<uid_t>()};
     windowInfo->packageName = mFdp.ConsumeRandomLengthString(kRandomStringMaxBytes);
     windowInfo->inputConfig = mFdp.PickValueInArray(kFeatures);
 }
@@ -284,7 +287,7 @@ void SurfaceComposerClientFuzzer::invokeSurfaceComposerClient() {
     SurfaceComposerClient::doUncacheBufferTransaction(mFdp.ConsumeIntegral<uint64_t>());
 
     SurfaceComposerClient::setDisplayBrightness(displayToken, getBrightness(&mFdp));
-    hardware::power::Boost boostId = mFdp.PickValueInArray(kBoost);
+    aidl::android::hardware::power::Boost boostId = mFdp.PickValueInArray(kBoost);
     SurfaceComposerClient::notifyPowerBoost((int32_t)boostId);
 
     String8 surfaceName((mFdp.ConsumeRandomLengthString(kRandomStringMaxBytes)).c_str());

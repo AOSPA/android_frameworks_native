@@ -1,6 +1,10 @@
 props {
   module: "android.sysprop.SurfaceFlingerProperties"
   prop {
+    api_name: "clear_slots_with_set_layer_buffer"
+    prop_name: "ro.surface_flinger.clear_slots_with_set_layer_buffer"
+  }
+  prop {
     api_name: "color_space_agnostic_dataspace"
     type: Long
     prop_name: "ro.surface_flinger.color_space_agnostic_dataspace"
@@ -91,6 +95,11 @@ props {
     api_name: "max_virtual_display_dimension"
     type: Long
     prop_name: "ro.surface_flinger.max_virtual_display_dimension"
+  }
+  prop {
+    api_name: "min_acquired_buffers"
+    type: Long
+    prop_name: "ro.surface_flinger.min_acquired_buffers"
   }
   prop {
     api_name: "present_time_offset_from_vsync_ns"

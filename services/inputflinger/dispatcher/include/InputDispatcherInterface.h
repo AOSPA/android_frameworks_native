@@ -76,7 +76,7 @@ public:
      * perform all necessary permission checks prior to injecting events.
      */
     virtual android::os::InputEventInjectionResult injectInputEvent(
-            const InputEvent* event, std::optional<int32_t> targetUid,
+            const InputEvent* event, std::optional<gui::Uid> targetUid,
             android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
             uint32_t policyFlags) = 0;
 
@@ -134,7 +134,7 @@ public:
      *
      * Returns true when changing touch mode state.
      */
-    virtual bool setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission,
+    virtual bool setInTouchMode(bool inTouchMode, int32_t pid, gui::Uid uid, bool hasPermission,
                                 int32_t displayId) = 0;
 
     /**
@@ -226,11 +226,10 @@ public:
      */
     virtual void cancelCurrentTouch() = 0;
 
-    /**
-     * Request that the InputDispatcher's configuration, which can be obtained through the policy,
-     * be updated.
+    /*
+     * Updates key repeat configuration timeout and delay.
      */
-    virtual void requestRefreshConfiguration() = 0;
+    virtual void setKeyRepeatConfiguration(nsecs_t timeout, nsecs_t delay) = 0;
 };
 
 } // namespace android

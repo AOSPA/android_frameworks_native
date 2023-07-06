@@ -5916,6 +5916,40 @@ TEST_F(SingleTouchInputMapperTest, Process_IgnoresTouchesOutsidePhysicalFrame) {
             mFakeListener->assertNotifyMotionWasCalled(WithMotionAction(AMOTION_EVENT_ACTION_UP)));
 }
 
+TEST_F(SingleTouchInputMapperTest, Process_DoesntCheckPhysicalFrameForTouchpads) {
+    std::shared_ptr<FakePointerController> fakePointerController =
+            std::make_shared<FakePointerController>();
+    mFakePolicy->setPointerController(fakePointerController);
+
+    addConfigurationProperty("touch.deviceType", "pointer");
+    prepareAxes(POSITION);
+    prepareDisplay(ui::ROTATION_0);
+    auto& mapper = constructAndAddMapper<SingleTouchInputMapper>();
+
+    // Set a physical frame in the display viewport.
+    auto viewport = mFakePolicy->getDisplayViewportByType(ViewportType::INTERNAL);
+    viewport->physicalLeft = 20;
+    viewport->physicalTop = 600;
+    viewport->physicalRight = 30;
+    viewport->physicalBottom = 610;
+    mFakePolicy->updateViewport(*viewport);
+    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
+
+    // Start the touch.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, BTN_TOUCH, 1);
+    processSync(mapper);
+
+    // Expect all input starting outside the physical frame to result in NotifyMotionArgs being
+    // produced.
+    const std::array<Point, 6> outsidePoints = {
+            {{0, 0}, {19, 605}, {31, 605}, {25, 599}, {25, 611}, {DISPLAY_WIDTH, DISPLAY_HEIGHT}}};
+    for (const auto& p : outsidePoints) {
+        processMove(mapper, toRawX(p.x), toRawY(p.y));
+        processSync(mapper);
+        EXPECT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled());
+    }
+}
+
 TEST_F(SingleTouchInputMapperTest, Process_AllAxes_DefaultCalibration) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     prepareDisplay(ui::ROTATION_0);
@@ -9352,6 +9386,11 @@ TEST_F(MultiTouchInputMapperTest, WhenViewportIsNotActive_TouchesAreProcessed) {
     EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
 }
 
+/**
+ * When the viewport is deactivated (isActive transitions from true to false),
+ * and touch.enableForInactiveViewport is false, touches prior to the transition
+ * should be cancelled.
+ */
 TEST_F(MultiTouchInputMapperTest, Process_DeactivateViewport_AbortTouches) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     addConfigurationProperty("touch.enableForInactiveViewport", "0");
@@ -9401,6 +9440,60 @@ TEST_F(MultiTouchInputMapperTest, Process_DeactivateViewport_AbortTouches) {
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
+}
+
+/**
+ * When the viewport is deactivated (isActive transitions from true to false),
+ * and touch.enableForInactiveViewport is true, touches prior to the transition
+ * should not be cancelled.
+ */
+TEST_F(MultiTouchInputMapperTest, Process_DeactivateViewport_TouchesNotAborted) {
+    addConfigurationProperty("touch.deviceType", "touchScreen");
+    addConfigurationProperty("touch.enableForInactiveViewport", "1");
+    mFakePolicy->addDisplayViewport(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT, ui::ROTATION_0,
+                                    /*isActive=*/true, UNIQUE_ID, NO_PORT, ViewportType::INTERNAL);
+    std::optional<DisplayViewport> optionalDisplayViewport =
+            mFakePolicy->getDisplayViewportByUniqueId(UNIQUE_ID);
+    ASSERT_TRUE(optionalDisplayViewport.has_value());
+    DisplayViewport displayViewport = *optionalDisplayViewport;
+
+    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
+    prepareAxes(POSITION);
+    MultiTouchInputMapper& mapper = constructAndAddMapper<MultiTouchInputMapper>();
+
+    // Finger down
+    int32_t x = 100, y = 100;
+    processPosition(mapper, x, y);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_DOWN)));
+
+    // Deactivate display viewport
+    displayViewport.isActive = false;
+    ASSERT_TRUE(mFakePolicy->updateViewport(displayViewport));
+    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
+
+    // The ongoing touch should not be canceled
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
+
+    // Finger move is not ignored
+    x += 10, y += 10;
+    processPosition(mapper, x, y);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_MOVE)));
+
+    // Reactivate display viewport
+    displayViewport.isActive = true;
+    ASSERT_TRUE(mFakePolicy->updateViewport(displayViewport));
+    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
+
+    // Finger move continues and does not start new gesture
+    x += 10, y += 10;
+    processPosition(mapper, x, y);
+    processSync(mapper);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_MOVE)));
 }
 
 TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShowTouches) {

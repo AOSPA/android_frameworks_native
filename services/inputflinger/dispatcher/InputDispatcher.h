@@ -104,7 +104,7 @@ public:
     void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs& args) override;
 
     android::os::InputEventInjectionResult injectInputEvent(
-            const InputEvent* event, std::optional<int32_t> targetUid,
+            const InputEvent* event, std::optional<gui::Uid> targetUid,
             android::os::InputEventInjectionSync syncMode, std::chrono::milliseconds timeout,
             uint32_t policyFlags) override;
 
@@ -119,7 +119,7 @@ public:
     void setFocusedDisplay(int32_t displayId) override;
     void setInputDispatchMode(bool enabled, bool frozen) override;
     void setInputFilterEnabled(bool enabled) override;
-    bool setInTouchMode(bool inTouchMode, int32_t pid, int32_t uid, bool hasPermission,
+    bool setInTouchMode(bool inTouchMode, int32_t pid, gui::Uid uid, bool hasPermission,
                         int32_t displayId) override;
     void setMaximumObscuringOpacityForTouch(float opacity) override;
 
@@ -148,10 +148,10 @@ public:
 
     void cancelCurrentTouch() override;
 
-    void requestRefreshConfiguration() override;
-
     // Public to allow tests to verify that a Monitor can get ANR.
     void setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout);
+
+    void setKeyRepeatConfiguration(nsecs_t timeout, nsecs_t delay) override;
 
 private:
     enum class DropReason {
@@ -202,7 +202,7 @@ private:
 
     DropReason mLastDropReason GUARDED_BY(mLock);
 
-    const IdGenerator mIdGenerator;
+    const IdGenerator mIdGenerator GUARDED_BY(mLock);
 
     int64_t mWindowInfosVsyncId GUARDED_BY(mLock);
 
@@ -454,8 +454,8 @@ private:
     // when switching touch mode state).
     std::unordered_set<sp<IBinder>, StrongPointerHash<IBinder>> mInteractionConnectionTokens
             GUARDED_BY(mLock);
-    void updateInteractionTokensLocked(const EventEntry& entry,
-                                       const std::vector<InputTarget>& targets) REQUIRES(mLock);
+    void processInteractionsLocked(const EventEntry& entry, const std::vector<InputTarget>& targets)
+            REQUIRES(mLock);
 
     // Dispatch inbound events.
     bool dispatchConfigurationChangedLocked(nsecs_t currentTime,
@@ -587,7 +587,7 @@ private:
         bool hasBlockingOcclusion;
         float obscuringOpacity;
         std::string obscuringPackage;
-        int32_t obscuringUid;
+        gui::Uid obscuringUid = gui::Uid::INVALID;
         std::vector<std::string> debugInfo;
     };
 
@@ -662,7 +662,7 @@ private:
     // splitDownTime refers to the time of first 'down' event on that particular target
     std::unique_ptr<MotionEntry> splitMotionEvent(const MotionEntry& originalMotionEntry,
                                                   std::bitset<MAX_POINTER_ID + 1> pointerIds,
-                                                  nsecs_t splitDownTime);
+                                                  nsecs_t splitDownTime) REQUIRES(mLock);
 
     // Reset and drop everything the dispatcher is doing.
     void resetAndDropEverythingLocked(const char* reason) REQUIRES(mLock);
@@ -696,6 +696,7 @@ private:
                                   const std::string& reason) REQUIRES(mLock);
     void updateLastAnrStateLocked(const std::string& windowLabel, const std::string& reason)
             REQUIRES(mLock);
+    std::map<int32_t /*displayId*/, InputVerifier> mVerifiersByDisplay;
     bool afterKeyEventLockedInterruptable(const std::shared_ptr<Connection>& connection,
                                           DispatchEntry* dispatchEntry, KeyEntry& keyEntry,
                                           bool handled) REQUIRES(mLock);
@@ -715,8 +716,8 @@ private:
     void traceWaitQueueLength(const Connection& connection);
 
     // Check window ownership
-    bool focusedWindowIsOwnedByLocked(int32_t pid, int32_t uid) REQUIRES(mLock);
-    bool recentWindowsAreOwnedByLocked(int32_t pid, int32_t uid) REQUIRES(mLock);
+    bool focusedWindowIsOwnedByLocked(int32_t pid, gui::Uid uid) REQUIRES(mLock);
+    bool recentWindowsAreOwnedByLocked(int32_t pid, gui::Uid uid) REQUIRES(mLock);
 
     sp<InputReporterInterface> mReporter;
 

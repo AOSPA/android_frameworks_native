@@ -53,7 +53,7 @@ constexpr char kForcePersistNdkUnitTestService[] = "ForcePersistNdkUnitTestServi
 constexpr char kActiveServicesNdkUnitTestService[] = "ActiveServicesNdkUnitTestService";
 constexpr char kBinderNdkUnitTestServiceFlagged[] = "BinderNdkUnitTestFlagged";
 
-constexpr unsigned int kShutdownWaitTime = 20;
+constexpr unsigned int kShutdownWaitTime = 11;
 constexpr uint64_t kContextTestValue = 0xb4e42fb4d9a1d715;
 
 class MyTestFoo : public IFoo {
@@ -107,11 +107,13 @@ class MyBinderNdkUnitTest : public aidl::BnBinderNdkUnitTest {
     }
     static bool activeServicesCallback(bool hasClients, void* context) {
         if (hasClients) {
+            LOG(INFO) << "hasClients, so not unregistering.";
             return false;
         }
 
         // Unregister all services
         if (!AServiceManager_tryUnregister()) {
+            LOG(INFO) << "Could not unregister service the first time.";
             // Prevent shutdown (test will fail)
             return false;
         }
@@ -121,6 +123,7 @@ class MyBinderNdkUnitTest : public aidl::BnBinderNdkUnitTest {
 
         // Unregister again before shutdown
         if (!AServiceManager_tryUnregister()) {
+            LOG(INFO) << "Could not unregister service the second time.";
             // Prevent shutdown (test will fail)
             return false;
         }
@@ -128,6 +131,7 @@ class MyBinderNdkUnitTest : public aidl::BnBinderNdkUnitTest {
         // Check if the context was passed correctly
         MyBinderNdkUnitTest* service = static_cast<MyBinderNdkUnitTest*>(context);
         if (service->contextTestValue != kContextTestValue) {
+            LOG(INFO) << "Incorrect context value.";
             // Prevent shutdown (test will fail)
             return false;
         }
@@ -279,8 +283,8 @@ TEST(NdkBinder, CheckServiceThatDoesntExist) {
 
 TEST(NdkBinder, CheckServiceThatDoesExist) {
     AIBinder* binder = AServiceManager_checkService(kExistingNonNdkService);
-    EXPECT_NE(nullptr, binder);
-    EXPECT_EQ(STATUS_OK, AIBinder_ping(binder));
+    ASSERT_NE(nullptr, binder) << "Could not get " << kExistingNonNdkService;
+    EXPECT_EQ(STATUS_OK, AIBinder_ping(binder)) << "Could not ping " << kExistingNonNdkService;
 
     AIBinder_decStrong(binder);
 }
@@ -479,6 +483,8 @@ TEST(NdkBinder, ForcedPersistenceTest) {
 }
 
 TEST(NdkBinder, ActiveServicesCallbackTest) {
+    LOG(INFO) << "ActiveServicesCallbackTest starting";
+
     ndk::SpAIBinder binder(AServiceManager_waitForService(kActiveServicesNdkUnitTestService));
     std::shared_ptr<aidl::IBinderNdkUnitTest> service =
             aidl::IBinderNdkUnitTest::fromBinder(binder);
@@ -489,6 +495,7 @@ TEST(NdkBinder, ActiveServicesCallbackTest) {
     service = nullptr;
     IPCThreadState::self()->flushCommands();
 
+    LOG(INFO) << "ActiveServicesCallbackTest about to sleep";
     sleep(kShutdownWaitTime);
 
     ASSERT_FALSE(isServiceRunning(kActiveServicesNdkUnitTestService))

@@ -667,6 +667,9 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
  * Methods that call FrameScheduler APIs.
  */
 void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
+    return;
+    // TODO(b/292132254) re-introduce as necessary. mPreviousPresentFences no
+    /*
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
@@ -696,6 +699,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
             scheduler->modulateVsync(displayId, &VsyncModulator::onRefreshRateChangeCompleted);
         }
     }
+    */
 }
 
 /*
@@ -1335,6 +1339,10 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
 }
 
 void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
+    return;
+    // TODO(b/292132254) re-introduce as necessary. mPreviousPresentFences no
+    // longer exists.
+    /*
     ATRACE_CALL();
 
     ConditionalLock lock(mQtiFlinger->mStateLock,
@@ -1350,6 +1358,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
         bool needResync = smoMo->SyncToDisplay(prevFrameFence.fence, &timestamp);
         ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
     }
+    */
 }
 
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
