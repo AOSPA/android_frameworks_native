@@ -1635,15 +1635,17 @@ void QtiSurfaceFlingerExtension::qtiDolphinTrackVsyncSignal() {
  * Methods internal to QtiSurfaceFlingerExtension
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
-    if (display) {
+    if (display && mQtiFlinger) {
         ConditionalLock lock(mQtiFlinger->mStateLock,
                              std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
-        const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
-        const auto& physicalDisplay = displayOpt->get();
-        const auto& snapshot = physicalDisplay.snapshot();
+        if (!mQtiFlinger->mPhysicalDisplays.empty()) {
+            const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
+            const auto& physicalDisplay = displayOpt->get();
+            const auto& snapshot = physicalDisplay.snapshot();
 
-        const auto connectionType = snapshot.connectionType();
-        return (connectionType == ui::DisplayConnectionType::Internal);
+            const auto connectionType = snapshot.connectionType();
+            return (connectionType == ui::DisplayConnectionType::Internal);
+        }
     }
     return false;
 }
