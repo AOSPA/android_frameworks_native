@@ -2690,9 +2690,6 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
                      "Conflicting pointer actions: Hover received while pointer was down.");
             *outConflictingPointerActions = true;
         }
-        if (maskedAction == AMOTION_EVENT_ACTION_HOVER_ENTER ||
-            maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE) {
-        }
     } else if (maskedAction == AMOTION_EVENT_ACTION_UP) {
         // Pointer went up.
         tempTouchState.removeTouchingPointer(entry.deviceId, entry.pointerProperties[0].id);
@@ -3302,10 +3299,6 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
     switch (newEntry.type) {
         case EventEntry::Type::KEY: {
             const KeyEntry& keyEntry = static_cast<const KeyEntry&>(newEntry);
-            dispatchEntry->resolvedEventId = keyEntry.id;
-            dispatchEntry->resolvedAction = keyEntry.action;
-            dispatchEntry->resolvedFlags = keyEntry.flags;
-
             if (!connection->inputState.trackKey(keyEntry, dispatchEntry->resolvedAction,
                                                  dispatchEntry->resolvedFlags)) {
                 LOG(WARNING) << "channel " << connection->getInputChannelName()
@@ -3333,7 +3326,6 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
             } else if (dispatchMode.test(InputTarget::Flags::DISPATCH_AS_SLIPPERY_ENTER)) {
                 dispatchEntry->resolvedAction = AMOTION_EVENT_ACTION_DOWN;
             } else {
-                dispatchEntry->resolvedAction = motionEntry.action;
                 dispatchEntry->resolvedEventId = motionEntry.id;
             }
             if (dispatchEntry->resolvedAction == AMOTION_EVENT_ACTION_HOVER_MOVE &&
@@ -3349,7 +3341,6 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
                 dispatchEntry->resolvedAction = AMOTION_EVENT_ACTION_HOVER_ENTER;
             }
 
-            dispatchEntry->resolvedFlags = motionEntry.flags;
             if (dispatchEntry->resolvedAction == AMOTION_EVENT_ACTION_CANCEL) {
                 dispatchEntry->resolvedFlags |= AMOTION_EVENT_FLAG_CANCELED;
             }
