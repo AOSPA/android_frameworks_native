@@ -66,19 +66,21 @@ Error QtiAidlComposerHalExtension::qtiSetClientTarget_3_1(Display display, int32
 
 Error QtiAidlComposerHalExtension::qtiTryDrawMethod(Display display,
                                                     uint32_t drawMethod) {
+    Error ret = Error::NONE;
 #ifdef QTI_COMPOSER3_EXTENSIONS
+    mQtiAidlComposer->mMutex.lock_shared();
     if (mQtiAidlComposer->qtiComposer3Client) {
         auto status = mQtiAidlComposer->qtiComposer3Client
                               ->qtiTryDrawMethod(static_cast<int64_t>(display),
                                                  static_cast<QtiDrawMethod>(drawMethod));
         if (!status.isOk()) {
             ALOGE("tryDrawMethod failed %s", status.getDescription().c_str());
-            return static_cast<Error>(status.getServiceSpecificError());
+            ret = static_cast<Error>(status.getServiceSpecificError());
         }
     }
-
+    mQtiAidlComposer->mMutex.unlock_shared();
 #endif
-    return Error::NONE;
+    return ret;
 }
 
 } // namespace android::surfaceflingerextension
