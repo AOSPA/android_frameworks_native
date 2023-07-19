@@ -605,6 +605,9 @@ status_t HWComposer::presentAndGetReleaseFences(
     auto& hwcDisplay = displayData.hwcDisplay;
 
     if (displayData.validateWasSkipped) {
+        /* QTI_BEGIN */
+        displayData.validateWasSkipped = false;
+        /* QTI_END */
         // explicitly flush all pending commands
         auto error = static_cast<hal::Error>(mComposer->executeCommands(hwcDisplay->getId()));
         RETURN_IF_HWC_ERROR_FOR("executeCommands", error, displayId, UNKNOWN_ERROR);

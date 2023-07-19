@@ -211,7 +211,12 @@ std::shared_ptr<renderengine::ExternalTexture> RenderSurface::dequeueBuffer(
 void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
     auto& state = mDisplay.getState();
 
-    if (state.usesClientComposition || state.flipClientTarget) {
+    /* QTI_BEGIN */
+    bool qtiFlipClientTarget = mQtiRSExtnIntf->qtiFlipClientTarget();
+    /* QTI_END */
+
+    if (state.usesClientComposition || state.flipClientTarget /* QTI_BEGIN */ ||
+        qtiFlipClientTarget /* QTI_END */) {
         // hasFlipClientTargetRequest could return true even if we haven't
         // dequeued a buffer before. Try dequeueing one if we don't have a
         // buffer ready.
@@ -230,9 +235,12 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
         if (mTexture == nullptr) {
             ALOGE("No buffer is ready for display [%s]", mDisplay.getName().c_str());
         } else {
-            status_t result = mNativeWindow->queueBuffer(mNativeWindow.get(),
-                                                         mTexture->getBuffer()->getNativeBuffer(),
-                                                         dup(readyFence));
+            status_t result =
+                    mNativeWindow->queueBuffer(mNativeWindow.get(),
+                                               mTexture->getBuffer()->getNativeBuffer(),
+                                               /* QTI_BEGIN */
+                                               qtiFlipClientTarget ? -1
+                                                                   : /* QTI_END */ dup(readyFence));
             if (result != NO_ERROR) {
                 ALOGE("Error when queueing buffer for display [%s]: %d", mDisplay.getName().c_str(),
                       result);
@@ -243,7 +251,10 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
                 } else {
                     mNativeWindow->cancelBuffer(mNativeWindow.get(),
                                                 mTexture->getBuffer()->getNativeBuffer(),
-                                                dup(readyFence));
+                                                /* QTI_BEGIN */
+                                                qtiFlipClientTarget
+                                                        ? -1
+                                                        : /* QTI_END */ dup(readyFence));
                 }
             }
 
