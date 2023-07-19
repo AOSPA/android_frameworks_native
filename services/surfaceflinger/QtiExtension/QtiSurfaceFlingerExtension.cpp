@@ -1947,9 +1947,11 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
         }
         qtiRSExtnIntf->qtiSetViewportAndProjection();
         if (displayDevice->isPoweredOn()) {
+            qtiRSExtnIntf->qtiSetFlipClientTarget(true);
             // queue a scratch buffer to flip Client Target with updated size
             display->getRenderSurface()->queueBuffer(std::move(fd));
             // releases the FrameBuffer that was acquired as part of queueBuffer()
+            qtiRSExtnIntf->qtiSetFlipClientTarget(false);
             display->getRenderSurface()->onPresentDisplayCompleted();
         } else {
             mQtiDisplaySizeChanged = true;
@@ -2006,8 +2008,10 @@ void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> dis
         ALOGV("%s: QtiRenderSurfaceExtension is invalid", __func__);
         return;
     }
+    qtiRSExtnIntf->qtiSetFlipClientTarget(true);
     // qtueue a scratch buffer to flip client target with updated size
     compositionDisplay->getRenderSurface()->queueBuffer(std::move(fd));
+    qtiRSExtnIntf->qtiSetFlipClientTarget(false);
     // releases the FrameBuffer that was acquired as part of queueBuffer()
     compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
     mQtiDisplaySizeChanged = false;
