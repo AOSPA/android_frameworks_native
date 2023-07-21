@@ -307,6 +307,7 @@ public:
 
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps);
+    void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes);
     /* QTI_END */
 
 private:
