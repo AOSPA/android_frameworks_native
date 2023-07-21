@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-package android.gui;
-
-import android.gui.WindowInfosUpdate;
-
-/** @hide */
-oneway interface IWindowInfosListener {
-    void onWindowInfosChanged(in WindowInfosUpdate update);
-}
+#include <android/data_space.h>
+#include <android/hardware_buffer.h>
+#include <android/hdr_metadata.h>
+#include <android/native_window.h>
