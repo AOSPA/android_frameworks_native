@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -359,6 +359,7 @@ public:
 
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps);
+    void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes);
     /* QTI_END */
 
     bool updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) EXCLUDES(mPolicyLock);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -117,6 +117,7 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
     void qtiSetVisibleLayerInfo(DisplayId displayId,
                                     const char* name, int32_t sequence) override;
+    bool qtiIsSmomoOptimalRefreshActive() override;
 
     /*
      * Methods for speculative fence

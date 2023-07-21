@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -1370,6 +1370,10 @@ bool Scheduler::isSmallDirtyArea(int32_t appId, uint32_t dirtyArea) {
 void Scheduler::qtiUpdateThermalFps(float fps) {
     mQtiThermalFps = fps;
     mLayerHistory.qtiUpdateThermalFps(fps);
+}
+
+void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
+  mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
 }
 /* QTI_END */
 

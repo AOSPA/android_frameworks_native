@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #include "QtiNullExtension.h"
@@ -169,6 +169,9 @@ uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
 }
 void QtiNullExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
                                                   const char* name, int32_t sequence) {}
+bool QtiNullExtension::qtiIsSmomoOptimalRefreshActive() {
+    return false;
+}
 
 /*
  * Methods for speculative fence
