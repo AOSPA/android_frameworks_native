@@ -437,7 +437,8 @@ public:
 
     /* Gets the keyboard layout for a particular input device. */
     virtual std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
-            const InputDeviceIdentifier& identifier) = 0;
+            const InputDeviceIdentifier& identifier,
+            const std::optional<KeyboardLayoutInfo> keyboardLayoutInfo) = 0;
 
     /* Gets a user-supplied alias for a particular input device, or an empty string if none. */
     virtual std::string getDeviceAlias(const InputDeviceIdentifier& identifier) = 0;
@@ -447,6 +448,9 @@ public:
             const std::string& inputDeviceDescriptor, ui::Rotation surfaceRotation) = 0;
     /* Notifies the input reader policy that a stylus gesture has started. */
     virtual void notifyStylusGestureStarted(int32_t deviceId, nsecs_t eventTime) = 0;
+
+    /* Returns true if any InputConnection is currently active. */
+    virtual bool isInputMethodConnectionActive() = 0;
 };
 
 } // namespace android

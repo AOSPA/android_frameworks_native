@@ -99,12 +99,15 @@ private:
     bool updateMetaStateIfNeeded(int32_t keyCode, bool down);
 
     std::optional<size_t> findKeyDownIndex(int32_t scanCode);
+    std::optional<KeyboardLayoutInfo> getKeyboardLayoutInfo() const;
+    bool updateKeyboardLayoutOverlay();
 
     void resetLedState();
     void initializeLedState(LedState& ledState, int32_t led);
     void updateLedStateForModifier(LedState& ledState, int32_t led, int32_t modifier, bool reset);
     std::optional<DisplayViewport> findViewport(const InputReaderConfiguration& readerConfig);
     [[nodiscard]] std::list<NotifyArgs> cancelAllDownKeys(nsecs_t when);
+    void onKeyDownProcessed();
 };
 
 } // namespace android

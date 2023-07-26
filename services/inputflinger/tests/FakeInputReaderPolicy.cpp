@@ -209,6 +209,14 @@ void FakeInputReaderPolicy::setStylusPointerIconEnabled(bool enabled) {
     mConfig.stylusPointerIconEnabled = enabled;
 }
 
+void FakeInputReaderPolicy::setIsInputMethodConnectionActive(bool active) {
+    mIsInputMethodConnectionActive = active;
+}
+
+bool FakeInputReaderPolicy::isInputMethodConnectionActive() {
+    return mIsInputMethodConnectionActive;
+}
+
 void FakeInputReaderPolicy::getReaderConfiguration(InputReaderConfiguration* outConfig) {
     *outConfig = mConfig;
 }
@@ -227,7 +235,7 @@ void FakeInputReaderPolicy::notifyInputDevicesChanged(
 }
 
 std::shared_ptr<KeyCharacterMap> FakeInputReaderPolicy::getKeyboardLayoutOverlay(
-        const InputDeviceIdentifier&) {
+        const InputDeviceIdentifier&, const std::optional<KeyboardLayoutInfo>) {
     return nullptr;
 }
 

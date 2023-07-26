@@ -295,7 +295,8 @@ public:
     }
     void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) override {}
     std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
-            const InputDeviceIdentifier& identifier) override {
+            const InputDeviceIdentifier& identifier,
+            const std::optional<KeyboardLayoutInfo> layoutInfo) override {
         return nullptr;
     }
     std::string getDeviceAlias(const InputDeviceIdentifier& identifier) {
@@ -307,6 +308,7 @@ public:
     }
     void setTouchAffineTransformation(const TouchAffineTransformation t) { mTransform = t; }
     void notifyStylusGestureStarted(int32_t, nsecs_t) {}
+    bool isInputMethodConnectionActive() override { return mFdp->ConsumeBool(); }
 };
 
 class FuzzInputListener : public virtual InputListenerInterface {
@@ -355,6 +357,9 @@ public:
     void updateLedMetaState(int32_t metaState) override{};
     int32_t getLedMetaState() override { return mFdp->ConsumeIntegral<int32_t>(); };
     void notifyStylusGestureStarted(int32_t, nsecs_t) {}
+
+    void setPreventingTouchpadTaps(bool prevent) {}
+    bool isPreventingTouchpadTaps() { return mFdp->ConsumeBool(); };
 };
 
 template <class Fdp>

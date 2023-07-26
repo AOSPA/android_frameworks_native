@@ -77,6 +77,8 @@ public:
     void setVelocityControlParams(const VelocityControlParameters& params);
     void setStylusButtonMotionEventsEnabled(bool enabled);
     void setStylusPointerIconEnabled(bool enabled);
+    void setIsInputMethodConnectionActive(bool active);
+    bool isInputMethodConnectionActive() override;
 
 private:
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override;
@@ -84,7 +86,7 @@ private:
             int32_t /*deviceId*/) override;
     void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) override;
     std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
-            const InputDeviceIdentifier&) override;
+            const InputDeviceIdentifier&, const std::optional<KeyboardLayoutInfo>) override;
     std::string getDeviceAlias(const InputDeviceIdentifier&) override;
     void waitForInputDevices(std::function<void(bool)> processDevicesChanged);
     void notifyStylusGestureStarted(int32_t deviceId, nsecs_t eventTime) override;
@@ -99,6 +101,7 @@ private:
     std::vector<DisplayViewport> mViewports;
     TouchAffineTransformation transform;
     std::optional<int32_t /*deviceId*/> mStylusGestureNotified GUARDED_BY(mLock){};
+    bool mIsInputMethodConnectionActive{false};
 
     uint32_t mNextPointerCaptureSequenceNumber{0};
 };
