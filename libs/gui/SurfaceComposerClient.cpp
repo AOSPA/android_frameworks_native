@@ -377,7 +377,6 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
             }
             auto& [callbackFunction, callbackSurfaceControls] = callbacksMap[callbackId];
             if (!callbackFunction) {
-                ALOGE("cannot call null callback function, skipping");
                 continue;
             }
             std::vector<SurfaceControlStats> surfaceControlStats;
@@ -394,6 +393,11 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
 
             callbackFunction(transactionStats.latchTime, transactionStats.presentFence,
                              surfaceControlStats);
+
+            // More than one transaction may contain the same callback id. Erase the callback from
+            // the map to ensure that it is only called once. This can happen if transactions are
+            // parcelled out of process and applied in both processes.
+            callbacksMap.erase(callbackId);
         }
 
         // handle on complete callbacks
@@ -1901,29 +1905,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::addTrans
         CallbackId::Type callbackType) {
     auto listener = TransactionCompletedListener::getInstance();
 
-    TransactionCompletedCallback callbackWithContext =
-            [called = false, callback,
-             callbackContext](nsecs_t latchTime, const sp<Fence>& presentFence,
-                              const std::vector<SurfaceControlStats>& stats) mutable {
-                if (called) {
-                    std::stringstream stream;
-                    auto it = stats.begin();
-                    if (it != stats.end()) {
-                        stream << it->surfaceControl->getName();
-                        it++;
-                    }
-                    while (it != stats.end()) {
-                        stream << ", " << it->surfaceControl->getName();
-                        it++;
-                    }
-                    LOG_ALWAYS_FATAL("Transaction callback called more than once. SurfaceControls: "
-                                     "%s",
-                                     stream.str().c_str());
-                }
-                callback(callbackContext, latchTime, presentFence, stats);
-                called = true;
-            };
-
+    auto callbackWithContext = std::bind(callback, callbackContext, std::placeholders::_1,
+                                         std::placeholders::_2, std::placeholders::_3);
     const auto& surfaceControls =
             mListenerCallbacks[TransactionCompletedListener::getIInstance()].surfaceControls;
 
