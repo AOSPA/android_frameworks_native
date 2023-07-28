@@ -59,6 +59,7 @@ private:
     bool mQtiUseSplitLayerExt = false;
     bool mQtiUseWorkDurations = false;
     bool mQtiVsyncSourceReliableOnDoze = false;
+    bool mQtiAllowIdleFallback = false;
 };
 
 } // namespace surfaceflingerextension

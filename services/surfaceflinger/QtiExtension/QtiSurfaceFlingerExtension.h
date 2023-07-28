@@ -250,6 +250,7 @@ public:
     bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
                                      const DisplayDeviceState& drawingState) override;
     void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
+    void qtiAllowIdleFallback();
 
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
