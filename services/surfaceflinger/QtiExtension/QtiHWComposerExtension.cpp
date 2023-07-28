@@ -110,7 +110,6 @@ status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
                                                          implLayer->getId(), flags);
     Error error = static_cast<Error>(intError);
     if (error != hal::Error::NONE) {
-        ALOGW("Failed to send SET_LAYER_FLAG command to HWC");
         return BAD_VALUE;
     }
 
