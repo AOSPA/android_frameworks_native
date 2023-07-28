@@ -244,7 +244,7 @@ public:
     void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                    int32_t vsyncPeriod) override;
-
+    void qtiAllowIdleFallback();
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
     bool qtiIsInternalDisplay(const sp<DisplayDevice>& display);

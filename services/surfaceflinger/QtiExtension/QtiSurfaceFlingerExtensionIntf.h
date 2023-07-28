@@ -36,6 +36,7 @@ enum QtiFeature {
     kVsyncSourceReliableOnDoze,
     kWorkDurations,
     kSmomoOptimalRefreshRate,
+    kIdleFallback,
 };
 
 class QtiSurfaceFlingerExtensionIntf {

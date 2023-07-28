@@ -44,7 +44,7 @@ qtidisplayextension_cc_defaults {
                 "libbinder_ndk",
                 "vendor.qti.hardware.display.composer@3.0",
                 "vendor.qti.hardware.display.composer@3.1",
-                "vendor.qti.hardware.display.config-V7-ndk",
+                "vendor.qti.hardware.display.config-V11-ndk",
             ],
         },
         composer3ext: {

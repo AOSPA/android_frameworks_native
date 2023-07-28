@@ -60,6 +60,7 @@ private:
     bool mQtiUseWorkDurations = false;
     bool mQtiVsyncSourceReliableOnDoze = false;
     bool mQtiEnableSmomoOptimalRefreshRate = false;
+    bool mQtiAllowIdleFallback = false;
 };
 
 } // namespace surfaceflingerextension

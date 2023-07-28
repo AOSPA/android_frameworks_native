@@ -150,8 +150,8 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         }
     }
 
-    // Initialize IDC HIDL only if AIDL is not present
-    if (mQtiDisplayConfigAidl == nullptr) {
+    // Initialize IDC HIDL only if AIDL is not present or on older target
+    if (mQtiDisplayConfigAidl == nullptr || (mQtiFirstApiLevel < __ANDROID_API_U__)) {
         int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
                                                            nullptr, &mQtiDisplayConfigHidl);
         if (ret || !mQtiDisplayConfigHidl) {
@@ -176,6 +176,10 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
 
     mQtiHWComposerExtnIntf = qtiCreateHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
+
+    if (composerHal) {
+        qtiAllowIdleFallback();
+    }
 
     qtiSetVsyncConfiguration(vsyncConfig);
     qtiSetupDisplayExtnFeatures();
@@ -761,7 +765,8 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
         return NAME_NOT_FOUND;
     }
 
-    if (mQtiDisplayConfigAidl != nullptr) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl != nullptr && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         const auto displayId = PhysicalDisplayId::tryCast(display->getId());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
         bool supported = false;
@@ -997,7 +1002,8 @@ void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice>
         const auto hwcDisplayId =
                 mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
 
-        if (mQtiDisplayConfigAidl) {
+        // Prioritize IDisplayConfig AIDL on Android U ++
+        if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
             mQtiDisplayConfigAidl->isPowerModeOverrideSupported(static_cast<int32_t>(*hwcDisplayId),
                                                                 &supported);
             goto end;
@@ -1019,7 +1025,8 @@ end:
 
 
 void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) {
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         ALOGV("IDisplayConfig AIDL: Set layer %lu as mask for display %d", layerId, hwcDisplayId);
         mQtiDisplayConfigAidl->setLayerAsMask(static_cast<int32_t>(hwcDisplayId),
                                               static_cast<int32_t>(layerId));
@@ -1189,8 +1196,8 @@ void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, 
         return;
     }
 
-    // Use either IDisplayConfig AIDL or HIDL
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         mQtiDisplayConfigAidl->createVirtualDisplay(width, height, format);
         return;
     }
@@ -1970,6 +1977,18 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
             mQtiFlinger->setActiveModeFromBackdoor(displayToken, DisplayModeId{newModeId}, Fps(), Fps());
     if (result != NO_ERROR) {
         return;
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiAllowIdleFallback() {
+    bool allowIdleFallback =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kIdleFallback);
+    if (allowIdleFallback) {
+        if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
+            mQtiDisplayConfigAidl->allowIdleFallback();
+        } else if (mQtiDisplayConfigHidl) {
+            mQtiDisplayConfigHidl->AllowIdleFallback();
+        }
     }
 }
 
