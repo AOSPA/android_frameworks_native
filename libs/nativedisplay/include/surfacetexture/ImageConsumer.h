@@ -26,6 +26,12 @@
 
 namespace android {
 
+/* QTI_BEGIN */
+namespace libnativedisplay {
+class QtiImageConsumerExtension;
+} // namespace libnativedisplay
+/* QTI_END */
+
 class SurfaceTexture;
 class DequeueBufferCallbacks;
 
@@ -35,6 +41,9 @@ class DequeueBufferCallbacks;
  */
 class ImageConsumer {
 public:
+    /* QTI_BEGIN */
+    ImageConsumer();
+    /* QTI_END */
     typedef status_t (*SurfaceTexture_createReleaseFence)(bool useFenceSync, EGLSyncKHR* eglFence,
                                                           EGLDisplay* display, int* releaseFence,
                                                           void* fencePassThroughHandle);
@@ -83,6 +92,10 @@ private:
      * of the buffer allocated to a slot.
      */
     ImageSlot mImageSlots[BufferQueueDefs::NUM_BUFFER_SLOTS];
+
+    /* QTI_BEGIN */
+    std::shared_ptr<android::libnativedisplay::QtiImageConsumerExtension> mQtiImageConsumerExtn = nullptr;
+    /* QTI_END */
 };
 
 } /* namespace android */
