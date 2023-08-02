@@ -31,6 +31,9 @@
 #include <ui/Rect.h>
 #include <utils/Flattenable.h>
 #include <utils/RefBase.h>
+/* QTI_BEGIN */
+#include <ui/GraphicTypes.h>
+/* QTI_END */
 
 #include <nativebase/nativebase.h>
 
@@ -154,6 +157,12 @@ public:
     uint32_t getLayerCount() const      { return static_cast<uint32_t>(layerCount); }
     Rect getBounds() const              { return Rect(width, height); }
     uint64_t getId() const              { return mId; }
+
+    /* QTI_BEGIN */
+    status_t qtiGetDataspace(ui::Dataspace* outDataspace){
+        return mBufferMapper.getDataspace(handle, outDataspace);
+    }
+    /* QTI_END */
 
     uint32_t getGenerationNumber() const { return mGenerationNumber; }
     void setGenerationNumber(uint32_t generation) {
