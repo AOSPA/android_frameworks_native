@@ -43,6 +43,10 @@ cc_library_shared {
         "include-private",
     ],
 
+    defaults: [
+        "libqtinativedisplayextension_defaults",
+    ],
+
     cflags: [
         "-Wall",
         "-Werror",
@@ -73,7 +77,9 @@ cc_library_shared {
         "libGLESv2",
     ],
 
-    static_libs: ["libguiflags"],
+    static_libs: ["libguiflags",
+                  "libqtinativedisplayextension",
+    ],
 
     export_header_lib_headers: ["jni_headers"],
 
@@ -83,3 +89,64 @@ cc_library_shared {
         "libnativehelper_header_only",
     ],
 }
+
+// QTI_BEGIN
+soong_config_module_type_import {
+from: "frameworks/native/services/surfaceflinger/QtiExtension/Android.bp",
+    module_types: [
+        "qtidisplayextension_cc_library_static",
+        "qtidisplayextension_cc_defaults",],
+}
+
+qtidisplayextension_cc_library_static {
+    name: "libqtinativedisplayextension",
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-enum-compare",
+        "-Wno-unused-function",
+    ],
+    header_libs: [
+        "libnativedisplay_headers",
+        "libnativehelper_header_only",
+    ],
+    shared_libs: [
+        "libui",
+        "libgui",
+    ],
+    srcs: [
+        "QtiExtension/QtiEglConsumerExtension.cpp",
+        "QtiExtension/QtiImageConsumerExtension.cpp",
+    ],
+    soong_config_variables: {
+        displayextension: {
+            cflags: [
+                "-DQTI_DISPLAY_EXTENSION",
+            ],
+        },
+    },
+    include_dirs: ["frameworks/native/libs/nativedisplay/include"],
+}
+
+qtidisplayextension_cc_defaults {
+    name: "qtinativedisplayextension_defaults",
+    soong_config_variables: {
+        displayextension: {
+            cflags: [
+                "-DQTI_DISPLAY_EXTENSION",
+            ],
+            shared_libs: [
+                "libbase",
+                "liblog",
+            ],
+        }
+    }
+}
+
+cc_defaults {
+name: "libqtinativedisplayextension_defaults",
+    defaults: [
+        "qtinativedisplayextension_defaults",
+    ],
+}
+// QTI_END
