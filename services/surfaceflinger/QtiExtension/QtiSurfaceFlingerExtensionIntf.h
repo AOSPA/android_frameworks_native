@@ -87,7 +87,8 @@ public:
     virtual void qtiSendInitialFps(uint32_t fps) = 0;
     virtual void qtiNotifyDisplayUpdateImminent() = 0;
     virtual void qtiSetContentFps(uint32_t contentFps) = 0;
-    virtual void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode) = 0;
+    virtual void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
+                                         bool isInternal) = 0;
     virtual void qtiUpdateVsyncConfiguration() = 0;
 
     /*

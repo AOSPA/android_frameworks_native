@@ -5835,7 +5835,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     }
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode);
+    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode, isInternalDisplay);
     /* QTI_END */
 
     ALOGD("Finished setting power mode %d on display %s", mode, to_string(displayId).c_str());

@@ -78,7 +78,7 @@ void QtiNullExtension::qtiSendInitialFps(uint32_t fps) {}
 void QtiNullExtension::qtiNotifyDisplayUpdateImminent() {}
 void QtiNullExtension::qtiSetContentFps(uint32_t contentFps) {}
 void QtiNullExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display,
-                                               hal::PowerMode mode) {}
+                                               hal::PowerMode mode, bool isInternal) {}
 void QtiNullExtension::qtiUpdateVsyncConfiguration() {}
 
 /*
