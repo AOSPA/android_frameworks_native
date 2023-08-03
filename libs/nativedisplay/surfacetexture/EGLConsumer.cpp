@@ -32,6 +32,10 @@
 #include <utils/String8.h>
 #include <utils/Trace.h>
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiEglConsumerExtension.h"
+/* QTI_END */
+
 #define PROT_CONTENT_EXT_STR "EGL_EXT_protected_content"
 #define EGL_PROTECTED_CONTENT_EXT 0x32C0
 
@@ -605,7 +609,11 @@ void EGLConsumer::onAbandonLocked() {
 }
 
 EGLConsumer::EglImage::EglImage(sp<GraphicBuffer> graphicBuffer)
-      : mGraphicBuffer(graphicBuffer), mEglImage(EGL_NO_IMAGE_KHR), mEglDisplay(EGL_NO_DISPLAY) {}
+      : mGraphicBuffer(graphicBuffer), mEglImage(EGL_NO_IMAGE_KHR), mEglDisplay(EGL_NO_DISPLAY) {
+    /* QTI_BEGIN */
+    mQtiEglImageExtn = std::make_shared<android::libnativedisplay::QtiEglImageExtension>(this);
+    /* QTI_END */
+}
 
 EGLConsumer::EglImage::~EglImage() {
     if (mEglImage != EGL_NO_IMAGE_KHR) {
@@ -620,7 +628,13 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
     // If there's an image and it's no longer valid, destroy it.
     bool haveImage = mEglImage != EGL_NO_IMAGE_KHR;
     bool displayInvalid = mEglDisplay != eglDisplay;
-    if (haveImage && (displayInvalid || forceCreation)) {
+
+    /* QTI_BEGIN */
+    bool qtiDataSpaceChanged = mQtiEglImageExtn->dataSpaceChanged();
+    /* QTI_END */
+
+    if (haveImage && (displayInvalid || forceCreation /* QTI_BEGIN */ ||
+            qtiDataSpaceChanged /* QTI_END */)) {
         if (!eglDestroyImageKHR(mEglDisplay, mEglImage)) {
             ALOGE("createIfNeeded: eglDestroyImageKHR failed");
         }
@@ -644,6 +658,12 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
               buffer->getPixelFormat());
         return UNKNOWN_ERROR;
     }
+
+    /* QTI_BEGIN */
+    if (qtiDataSpaceChanged) {
+        mQtiEglImageExtn->setDataSpace();
+    }
+    /* QTI_END */
 
     return OK;
 }
