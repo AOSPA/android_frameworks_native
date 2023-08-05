@@ -535,9 +535,9 @@ private:
             EventRegistrationFlags eventRegistration = {},
             const sp<IBinder>& layerHandle = nullptr);
 
-    status_t captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
-    status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
-    status_t captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
+    void captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
+    void captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
+    void captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats);
     status_t getDisplayState(const sp<IBinder>& displayToken, ui::DisplayState*)
@@ -836,10 +836,9 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
-    ftl::SharedFuture<FenceResult> captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction,
-                                                       ui::Size bufferSize, ui::PixelFormat,
-                                                       bool allowProtected, bool grayscale,
-                                                       const sp<IScreenCaptureListener>&);
+    void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
+                             ui::PixelFormat, bool allowProtected, bool grayscale,
+                             const sp<IScreenCaptureListener>&);
     ftl::SharedFuture<FenceResult> captureScreenCommon(
             RenderAreaFuture, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
@@ -1208,6 +1207,8 @@ private:
     // latched.
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithQueuedFrames;
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithBuffersRemoved;
+    std::unordered_set<uint32_t> mLayersIdsWithQueuedFrames;
+
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
     // Sorted list of layers that were composed during previous frame. This is used to
