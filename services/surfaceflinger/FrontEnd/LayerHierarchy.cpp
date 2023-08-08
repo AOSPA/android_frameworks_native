@@ -16,7 +16,7 @@
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 #undef LOG_TAG
-#define LOG_TAG "LayerHierarchy"
+#define LOG_TAG "SurfaceFlinger"
 
 #include "LayerHierarchy.h"
 #include "LayerLog.h"
@@ -149,13 +149,33 @@ std::string LayerHierarchy::getDebugStringShort() const {
     return debug + "}";
 }
 
-std::string LayerHierarchy::getDebugString(const char* prefix) const {
-    std::string debug = prefix + getDebugStringShort();
-    for (auto& [child, childVariant] : mChildren) {
-        std::string childPrefix = "  " + std::string(prefix) + " " + std::to_string(childVariant);
-        debug += "\n" + child->getDebugString(childPrefix.c_str());
+void LayerHierarchy::dump(std::ostream& out, const std::string& prefix,
+                          LayerHierarchy::Variant variant, bool isLastChild) const {
+    if (!mLayer) {
+        out << " ROOT";
+    } else {
+        out << prefix + (isLastChild ? "└─ " : "├─ ");
+        if (variant == LayerHierarchy::Variant::Relative) {
+            out << "(Relative) ";
+        } else if (variant == LayerHierarchy::Variant::Mirror) {
+            out << "(Mirroring) " << *mLayer << "\n" + prefix + "   └─ ...";
+            return;
+        }
+        out << *mLayer;
     }
-    return debug;
+
+    for (size_t i = 0; i < mChildren.size(); i++) {
+        auto& [child, childVariant] = mChildren[i];
+        if (childVariant == LayerHierarchy::Variant::Detached) continue;
+        const bool lastChild = i == (mChildren.size() - 1);
+        std::string childPrefix = prefix;
+        if (mLayer) {
+            childPrefix += (isLastChild ? "   " : "│  ");
+        }
+        out << "\n";
+        child->dump(out, childPrefix, childVariant, lastChild);
+    }
+    return;
 }
 
 bool LayerHierarchy::hasRelZLoop(uint32_t& outInvalidRelativeRoot) const {

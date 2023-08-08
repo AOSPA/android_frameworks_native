@@ -426,7 +426,7 @@ void Layer::updateTrustedPresentationState(const DisplayDevice* display,
     mLastComputedTrustedPresentationState = false;
 
     if (!leaveState) {
-        const auto outputLayer = findOutputLayerForDisplay(display);
+        const auto outputLayer = findOutputLayerForDisplay(display, snapshot->path);
         if (outputLayer != nullptr) {
             if (outputLayer->getState().coveredRegionExcludingDisplayOverlays) {
                 Region coveredRegion =
@@ -773,6 +773,11 @@ const char* Layer::getDebugName() const {
 aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionType(
         const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
+    return getCompositionType(outputLayer);
+}
+
+aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionType(
+        const compositionengine::OutputLayer* outputLayer) const {
     if (outputLayer == nullptr) {
         return aidl::android::hardware::graphics::composer3::Composition::INVALID;
     }
@@ -1646,7 +1651,7 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append("\n");
 }
 
-void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
+void Layer::miniDumpLegacy(std::string& result, const DisplayDevice& display) const {
     const auto outputLayer = findOutputLayerForDisplay(&display);
     if (!outputLayer) {
         return;
@@ -1694,6 +1699,41 @@ void Layer::miniDump(std::string& result, const DisplayDevice& display) const {
     }
 
     const auto focused = isLayerFocusedBasedOnPriority(getFrameRateSelectionPriority());
+    StringAppendF(&result, "    [%s]\n", focused ? "*" : " ");
+
+    result.append(kDumpTableRowLength, '-');
+    result.append("\n");
+}
+
+void Layer::miniDump(std::string& result, const frontend::LayerSnapshot& snapshot,
+                     const DisplayDevice& display) const {
+    const auto outputLayer = findOutputLayerForDisplay(&display, snapshot.path);
+    if (!outputLayer) {
+        return;
+    }
+
+    StringAppendF(&result, " %s\n", snapshot.debugName.c_str());
+    StringAppendF(&result, "  %10zu | ", snapshot.globalZ);
+    StringAppendF(&result, "  %10d | ",
+                  snapshot.layerMetadata.getInt32(gui::METADATA_WINDOW_TYPE, 0));
+    StringAppendF(&result, "%10s | ", toString(getCompositionType(outputLayer)).c_str());
+    const auto& outputLayerState = outputLayer->getState();
+    StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
+    const Rect& frame = outputLayerState.displayFrame;
+    StringAppendF(&result, "%4d %4d %4d %4d | ", frame.left, frame.top, frame.right, frame.bottom);
+    const FloatRect& crop = outputLayerState.sourceCrop;
+    StringAppendF(&result, "%6.1f %6.1f %6.1f %6.1f | ", crop.left, crop.top, crop.right,
+                  crop.bottom);
+    const auto frameRate = snapshot.frameRate;
+    if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
+        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
+                      ftl::enum_string(frameRate.type).c_str(),
+                      ftl::enum_string(frameRate.seamlessness).c_str());
+    } else {
+        result.append(41, ' ');
+    }
+
+    const auto focused = isLayerFocusedBasedOnPriority(snapshot.frameRateSelectionPriority);
     StringAppendF(&result, "    [%s]\n", focused ? "*" : " ");
 
     result.append(kDumpTableRowLength, '-');
@@ -2491,7 +2531,7 @@ WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
     if (!hasInputInfo()) {
         mDrawingState.inputInfo.name = getName();
         mDrawingState.inputInfo.ownerUid = gui::Uid{mOwnerUid};
-        mDrawingState.inputInfo.ownerPid = mOwnerPid;
+        mDrawingState.inputInfo.ownerPid = gui::Pid{mOwnerPid};
         mDrawingState.inputInfo.inputConfig |= WindowInfo::InputConfig::NO_INPUT_CHANNEL;
         mDrawingState.inputInfo.displayId = getLayerStack().id;
     }
@@ -2606,6 +2646,24 @@ compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
     }
     sp<LayerFE> layerFE;
     frontend::LayerHierarchy::TraversalPath path{.id = static_cast<uint32_t>(sequence)};
+    for (auto& [p, layer] : mLayerFEs) {
+        if (p == path) {
+            layerFE = layer;
+        }
+    }
+
+    if (!layerFE) return nullptr;
+    return display->getCompositionDisplay()->getOutputLayerForLayer(layerFE);
+}
+
+compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
+        const DisplayDevice* display, const frontend::LayerHierarchy::TraversalPath& path) const {
+    if (!display) return nullptr;
+    if (!mFlinger->mLayerLifecycleManagerEnabled) {
+        return display->getCompositionDisplay()->getOutputLayerForLayer(
+                getCompositionEngineLayerFE());
+    }
+    sp<LayerFE> layerFE;
     for (auto& [p, layer] : mLayerFEs) {
         if (p == path) {
             layerFE = layer;

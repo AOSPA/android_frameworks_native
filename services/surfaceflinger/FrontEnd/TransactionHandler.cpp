@@ -16,7 +16,7 @@
 
 // #define LOG_NDEBUG 0
 #undef LOG_TAG
-#define LOG_TAG "TransactionHandler"
+#define LOG_TAG "SurfaceFlinger"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <cutils/trace.h>
@@ -33,7 +33,7 @@ void TransactionHandler::queueTransaction(TransactionState&& state) {
     ATRACE_INT("TransactionQueue", static_cast<int>(mPendingTransactionCount.load()));
 }
 
-std::vector<TransactionState> TransactionHandler::flushTransactions() {
+void TransactionHandler::collectTransactions() {
     while (!mLocklessTransactionQueue.isEmpty()) {
         auto maybeTransaction = mLocklessTransactionQueue.pop();
         if (!maybeTransaction.has_value()) {
@@ -42,7 +42,9 @@ std::vector<TransactionState> TransactionHandler::flushTransactions() {
         auto transaction = maybeTransaction.value();
         mPendingTransactionQueues[transaction.applyToken].emplace(std::move(transaction));
     }
+}
 
+std::vector<TransactionState> TransactionHandler::flushTransactions() {
     // Collect transaction that are ready to be applied.
     std::vector<TransactionState> transactions;
     TransactionFlushState flushState;

@@ -208,7 +208,8 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private IBinder::DeathRecipient,
                        private HWC2::ComposerCallback,
                        private ICompositor,
-                       private scheduler::ISchedulerCallback {
+                       private scheduler::ISchedulerCallback,
+                       private compositionengine::ICEPowerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -665,6 +666,9 @@ private:
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
 
+    // ICEPowerCallback overrides:
+    void notifyCpuLoadUp() override;
+
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
 
@@ -733,10 +737,9 @@ private:
             compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly);
     void moveSnapshotsFromCompositionArgs(compositionengine::CompositionRefreshArgs& refreshArgs,
                                           const std::vector<std::pair<Layer*, LayerFE*>>& layers);
-    bool updateLayerSnapshotsLegacy(VsyncId vsyncId, frontend::Update& update,
-                                    bool transactionsFlushed, bool& out)
-            REQUIRES(kMainThreadContext);
-    bool updateLayerSnapshots(VsyncId vsyncId, frontend::Update& update, bool transactionsFlushed,
+    bool updateLayerSnapshotsLegacy(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
+                                    bool& out) REQUIRES(kMainThreadContext);
+    bool updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
                               bool& out) REQUIRES(kMainThreadContext);
     void updateLayerHistory(const frontend::LayerSnapshot& snapshot);
     frontend::Update flushLifecycleUpdates() REQUIRES(kMainThreadContext);
@@ -780,6 +783,9 @@ private:
     TransactionHandler::TransactionReadiness transactionReadyTimelineCheck(
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
+    TransactionHandler::TransactionReadiness transactionReadyBufferCheckLegacy(
+            const TransactionHandler::TransactionFlushState& flushState)
+            REQUIRES(kMainThreadContext);
     TransactionHandler::TransactionReadiness transactionReadyBufferCheck(
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
@@ -804,8 +810,7 @@ private:
     void commitOffscreenLayers();
 
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
-    bool shouldLatchUnsignaled(const sp<Layer>& layer, const layer_state_t&, size_t numStates,
-                               bool firstTransaction) const;
+    bool shouldLatchUnsignaled(const layer_state_t&, size_t numStates, bool firstTransaction) const;
     bool applyTransactionsLocked(std::vector<TransactionState>& transactions, VsyncId)
             REQUIRES(mStateLock);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
@@ -1065,7 +1070,8 @@ private:
      */
     void dumpAllLocked(const DumpArgs& args, const std::string& compositionLayers,
                        std::string& result) const REQUIRES(mStateLock);
-    void dumpHwcLayersMinidumpLocked(std::string& result) const REQUIRES(mStateLock);
+    void dumpHwcLayersMinidump(std::string& result) const REQUIRES(mStateLock, kMainThreadContext);
+    void dumpHwcLayersMinidumpLockedLegacy(std::string& result) const REQUIRES(mStateLock);
 
     void appendSfConfigString(std::string& result) const;
     void listLayersLocked(std::string& result) const;

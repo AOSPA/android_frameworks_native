@@ -75,24 +75,7 @@ cc_test {
     target: {
         android: {
             shared_libs: [
-                "libinput",
                 "libvintf",
-            ],
-        },
-        host: {
-            sanitize: {
-                address: true,
-            },
-            include_dirs: [
-                "bionic/libc/kernel/android/uapi/",
-                "bionic/libc/kernel/uapi",
-            ],
-            cflags: [
-                "-D__ANDROID_HOST__",
-                "-Wno-error=ambiguous-reversed-operator",
-            ],
-            static_libs: [
-                "libinput",
             ],
         },
     },

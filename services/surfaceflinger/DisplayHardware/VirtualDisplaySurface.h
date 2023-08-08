@@ -96,6 +96,7 @@ public:
                           const sp<IGraphicBufferProducer>& bqProducer,
                           const sp<IGraphicBufferConsumer>& bqConsumer, const std::string& name,
                           bool qtiSecure = false);
+
     //
     // DisplaySurface interface
     //

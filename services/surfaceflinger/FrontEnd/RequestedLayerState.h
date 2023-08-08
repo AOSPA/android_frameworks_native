@@ -54,6 +54,8 @@ struct RequestedLayerState : layer_state_t {
         Buffer = 1u << 15,
         SidebandStream = 1u << 16,
         Animation = 1u << 17,
+        BufferSize = 1u << 18,
+        GameMode = 1u << 19,
     };
     static Rect reduce(const Rect& win, const Region& exclude);
     RequestedLayerState(const LayerCreationArgs&);
@@ -72,6 +74,7 @@ struct RequestedLayerState : layer_state_t {
     Rect getBufferCrop() const;
     std::string getDebugString() const;
     std::string getDebugStringShort() const;
+    friend std::ostream& operator<<(std::ostream& os, const RequestedLayerState& obj);
     aidl::android::hardware::graphics::composer3::Composition getCompositionType() const;
     bool hasValidRelativeParent() const;
     bool hasInputInfo() const;
@@ -80,6 +83,8 @@ struct RequestedLayerState : layer_state_t {
     bool hasReadyFrame() const;
     bool hasSidebandStreamFrame() const;
     bool willReleaseBufferOnLatch() const;
+    bool backpressureEnabled() const;
+    bool isSimpleBufferUpdate(const layer_state_t&) const;
 
     // Layer serial number.  This gives layers an explicit ordering, so we
     // have a stable sort order when their layer stack and Z-order are
@@ -91,10 +96,10 @@ struct RequestedLayerState : layer_state_t {
     const uint32_t textureName;
     // The owner of the layer. If created from a non system process, it will be the calling uid.
     // If created from a system process, the value can be passed in.
-    const uid_t ownerUid;
+    const gui::Uid ownerUid;
     // The owner pid of the layer. If created from a non system process, it will be the calling pid.
     // If created from a system process, the value can be passed in.
-    const pid_t ownerPid;
+    const gui::Pid ownerPid;
     bool dataspaceRequested;
     bool hasColorTransform;
     bool premultipliedAlpha{true};
@@ -114,6 +119,7 @@ struct RequestedLayerState : layer_state_t {
     uint32_t bgColorLayerId = UNASSIGNED_LAYER_ID;
     uint64_t barrierFrameNumber = 0;
     uint32_t barrierProducerId = 0;
+    std::string debugName;
 
     // book keeping states
     bool handleAlive = true;

@@ -14,191 +14,51 @@
  * limitations under the License.
  */
 
-//! Validate the incoming motion stream.
-//! This class is not thread-safe.
-//! State is stored in the "InputVerifier" object
-//! that can be created via the 'create' method.
-//! Usage:
-//! Box<InputVerifier> verifier = create("inputChannel name");
-//! result = process_movement(verifier, ...);
-//! if (result) {
-//!    crash(result.error_message());
-//! }
+//! Contains the InputVerifier, used to validate a stream of input events.
 
+use crate::ffi::RustPointerProperties;
+use crate::input::{DeviceId, MotionAction, MotionFlags};
+use log::info;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use bitflags::bitflags;
-use log::info;
-
-#[cxx::bridge(namespace = "android::input")]
-mod ffi {
-    #[namespace = "android"]
-    unsafe extern "C++" {
-        include!("ffi/FromRustToCpp.h");
-        fn shouldLog(tag: &str) -> bool;
-    }
-    #[namespace = "android::input::verifier"]
-    extern "Rust" {
-        type InputVerifier;
-
-        fn create(name: String) -> Box<InputVerifier>;
-        fn process_movement(
-            verifier: &mut InputVerifier,
-            device_id: i32,
-            action: u32,
-            pointer_properties: &[RustPointerProperties],
-            flags: i32,
-        ) -> String;
-    }
-
-    pub struct RustPointerProperties {
-        id: i32,
-    }
-}
-
-use crate::ffi::shouldLog;
-use crate::ffi::RustPointerProperties;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-struct DeviceId(i32);
-
-fn process_movement(
-    verifier: &mut InputVerifier,
-    device_id: i32,
-    action: u32,
-    pointer_properties: &[RustPointerProperties],
-    flags: i32,
-) -> String {
-    let result = verifier.process_movement(
-        DeviceId(device_id),
-        action,
-        pointer_properties,
-        Flags::from_bits(flags).unwrap(),
-    );
-    match result {
-        Ok(()) => "".to_string(),
-        Err(e) => e,
-    }
-}
-
-fn create(name: String) -> Box<InputVerifier> {
-    Box::new(InputVerifier::new(&name))
-}
-
-#[repr(u32)]
-enum MotionAction {
-    Down = input_bindgen::AMOTION_EVENT_ACTION_DOWN,
-    Up = input_bindgen::AMOTION_EVENT_ACTION_UP,
-    Move = input_bindgen::AMOTION_EVENT_ACTION_MOVE,
-    Cancel = input_bindgen::AMOTION_EVENT_ACTION_CANCEL,
-    Outside = input_bindgen::AMOTION_EVENT_ACTION_OUTSIDE,
-    PointerDown { action_index: usize } = input_bindgen::AMOTION_EVENT_ACTION_POINTER_DOWN,
-    PointerUp { action_index: usize } = input_bindgen::AMOTION_EVENT_ACTION_POINTER_UP,
-    HoverEnter = input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
-    HoverMove = input_bindgen::AMOTION_EVENT_ACTION_HOVER_MOVE,
-    HoverExit = input_bindgen::AMOTION_EVENT_ACTION_HOVER_EXIT,
-    Scroll = input_bindgen::AMOTION_EVENT_ACTION_SCROLL,
-    ButtonPress = input_bindgen::AMOTION_EVENT_ACTION_BUTTON_PRESS,
-    ButtonRelease = input_bindgen::AMOTION_EVENT_ACTION_BUTTON_RELEASE,
-}
-
-fn get_action_index(action: u32) -> usize {
-    let index = (action & input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
-        >> input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
-    index.try_into().unwrap()
-}
-
-impl From<u32> for MotionAction {
-    fn from(action: u32) -> Self {
-        let action_masked = action & input_bindgen::AMOTION_EVENT_ACTION_MASK;
-        let action_index = get_action_index(action);
-        match action_masked {
-            input_bindgen::AMOTION_EVENT_ACTION_DOWN => MotionAction::Down,
-            input_bindgen::AMOTION_EVENT_ACTION_UP => MotionAction::Up,
-            input_bindgen::AMOTION_EVENT_ACTION_MOVE => MotionAction::Move,
-            input_bindgen::AMOTION_EVENT_ACTION_CANCEL => MotionAction::Cancel,
-            input_bindgen::AMOTION_EVENT_ACTION_OUTSIDE => MotionAction::Outside,
-            input_bindgen::AMOTION_EVENT_ACTION_POINTER_DOWN => {
-                MotionAction::PointerDown { action_index }
-            }
-            input_bindgen::AMOTION_EVENT_ACTION_POINTER_UP => {
-                MotionAction::PointerUp { action_index }
-            }
-            input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER => MotionAction::HoverEnter,
-            input_bindgen::AMOTION_EVENT_ACTION_HOVER_MOVE => MotionAction::HoverMove,
-            input_bindgen::AMOTION_EVENT_ACTION_HOVER_EXIT => MotionAction::HoverExit,
-            input_bindgen::AMOTION_EVENT_ACTION_SCROLL => MotionAction::Scroll,
-            input_bindgen::AMOTION_EVENT_ACTION_BUTTON_PRESS => MotionAction::ButtonPress,
-            input_bindgen::AMOTION_EVENT_ACTION_BUTTON_RELEASE => MotionAction::ButtonRelease,
-            _ => panic!("Unknown action: {}", action),
-        }
-    }
-}
-
-bitflags! {
-    struct Flags: i32 {
-        const CANCELED = input_bindgen::AMOTION_EVENT_FLAG_CANCELED;
-    }
-}
-
-fn motion_action_to_string(action: u32) -> String {
-    match action.into() {
-        MotionAction::Down => "DOWN".to_string(),
-        MotionAction::Up => "UP".to_string(),
-        MotionAction::Move => "MOVE".to_string(),
-        MotionAction::Cancel => "CANCEL".to_string(),
-        MotionAction::Outside => "OUTSIDE".to_string(),
-        MotionAction::PointerDown { action_index } => {
-            format!("POINTER_DOWN({})", action_index)
-        }
-        MotionAction::PointerUp { action_index } => {
-            format!("POINTER_UP({})", action_index)
-        }
-        MotionAction::HoverMove => "HOVER_MOVE".to_string(),
-        MotionAction::Scroll => "SCROLL".to_string(),
-        MotionAction::HoverEnter => "HOVER_ENTER".to_string(),
-        MotionAction::HoverExit => "HOVER_EXIT".to_string(),
-        MotionAction::ButtonPress => "BUTTON_PRESS".to_string(),
-        MotionAction::ButtonRelease => "BUTTON_RELEASE".to_string(),
-    }
-}
-
-/**
- * Log all of the movements that are sent to this verifier. Helps to identify the streams that lead
- * to inconsistent events.
- * Enable this via "adb shell setprop log.tag.InputVerifierLogEvents DEBUG"
- */
-fn log_events() -> bool {
-    shouldLog("InputVerifierLogEvents")
-}
-
-struct InputVerifier {
+/// The InputVerifier is used to validate a stream of input events.
+pub struct InputVerifier {
     name: String,
+    should_log: bool,
     touching_pointer_ids_by_device: HashMap<DeviceId, HashSet<i32>>,
+    hovering_pointer_ids_by_device: HashMap<DeviceId, HashSet<i32>>,
 }
 
 impl InputVerifier {
-    fn new(name: &str) -> Self {
+    /// Create a new InputVerifier.
+    pub fn new(name: &str, should_log: bool) -> Self {
         logger::init(
             logger::Config::default()
                 .with_tag_on_device("InputVerifier")
                 .with_min_level(log::Level::Trace),
         );
-        Self { name: name.to_owned(), touching_pointer_ids_by_device: HashMap::new() }
+        Self {
+            name: name.to_owned(),
+            should_log,
+            touching_pointer_ids_by_device: HashMap::new(),
+            hovering_pointer_ids_by_device: HashMap::new(),
+        }
     }
 
-    fn process_movement(
+    /// Process a pointer movement event from an InputDevice.
+    /// If the event is not valid, we return an error string that describes the issue.
+    pub fn process_movement(
         &mut self,
         device_id: DeviceId,
         action: u32,
         pointer_properties: &[RustPointerProperties],
-        flags: Flags,
+        flags: MotionFlags,
     ) -> Result<(), String> {
-        if log_events() {
+        if self.should_log {
             info!(
                 "Processing {} for device {:?} ({} pointer{}) on {}",
-                motion_action_to_string(action),
+                MotionAction::from(action).to_string(),
                 device_id,
                 pointer_properties.len(),
                 if pointer_properties.len() == 1 { "" } else { "s" },
@@ -281,10 +141,10 @@ impl InputVerifier {
                         self.name, pointer_id, it, device_id
                     ));
                 }
-                it.clear();
+                self.touching_pointer_ids_by_device.remove(&device_id);
             }
             MotionAction::Cancel => {
-                if flags.contains(Flags::CANCELED) {
+                if flags.contains(MotionFlags::CANCELED) {
                     return Err(format!(
                         "{}: For ACTION_CANCEL, must set FLAG_CANCELED",
                         self.name
@@ -299,9 +159,66 @@ impl InputVerifier {
                 }
                 self.touching_pointer_ids_by_device.remove(&device_id);
             }
+            /*
+             * The hovering protocol currently supports a single pointer only, because we do not
+             * have ACTION_HOVER_POINTER_ENTER or ACTION_HOVER_POINTER_EXIT.
+             * Still, we are keeping the infrastructure here pretty general in case that is
+             * eventually supported.
+             */
+            MotionAction::HoverEnter => {
+                if self.hovering_pointer_ids_by_device.contains_key(&device_id) {
+                    return Err(format!(
+                        "{}: Invalid HOVER_ENTER event - pointers already hovering for device {:?}:\
+                        {:?}",
+                        self.name, device_id, self.hovering_pointer_ids_by_device
+                    ));
+                }
+                let it = self
+                    .hovering_pointer_ids_by_device
+                    .entry(device_id)
+                    .or_insert_with(HashSet::new);
+                it.insert(pointer_properties[0].id);
+            }
+            MotionAction::HoverMove => {
+                // For compatibility reasons, we allow HOVER_MOVE without a prior HOVER_ENTER.
+                // If there was no prior HOVER_ENTER, just start a new hovering pointer.
+                let it = self
+                    .hovering_pointer_ids_by_device
+                    .entry(device_id)
+                    .or_insert_with(HashSet::new);
+                it.insert(pointer_properties[0].id);
+            }
+            MotionAction::HoverExit => {
+                if !self.hovering_pointer_ids_by_device.contains_key(&device_id) {
+                    return Err(format!(
+                        "{}: Invalid HOVER_EXIT event - no pointers are hovering for device {:?}",
+                        self.name, device_id
+                    ));
+                }
+                let pointer_id = pointer_properties[0].id;
+                let it = self.hovering_pointer_ids_by_device.get_mut(&device_id).unwrap();
+                it.remove(&pointer_id);
+
+                if !it.is_empty() {
+                    return Err(format!(
+                        "{}: Removed hovering pointer {}, but pointers are still\
+                               hovering for device {:?}: {:?}",
+                        self.name, pointer_id, device_id, it
+                    ));
+                }
+                self.hovering_pointer_ids_by_device.remove(&device_id);
+            }
             _ => return Ok(()),
         }
         Ok(())
+    }
+
+    /// Notify the verifier that the device has been reset, which will cause the verifier to erase
+    /// the current internal state for this device. Subsequent events from this device are expected
+    //// to start a new gesture.
+    pub fn reset_device(&mut self, device_id: DeviceId) {
+        self.touching_pointer_ids_by_device.remove(&device_id);
+        self.hovering_pointer_ids_by_device.remove(&device_id);
     }
 
     fn ensure_touching_pointers_match(
@@ -325,20 +242,20 @@ impl InputVerifier {
 
 #[cfg(test)]
 mod tests {
+    use crate::input_verifier::InputVerifier;
     use crate::DeviceId;
-    use crate::Flags;
-    use crate::InputVerifier;
+    use crate::MotionFlags;
     use crate::RustPointerProperties;
     #[test]
     fn single_pointer_stream() {
-        let mut verifier = InputVerifier::new("Test");
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
         let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
         assert!(verifier
             .process_movement(
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_DOWN,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -346,7 +263,7 @@ mod tests {
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_MOVE,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -354,21 +271,21 @@ mod tests {
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_UP,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
     }
 
     #[test]
     fn multi_device_stream() {
-        let mut verifier = InputVerifier::new("Test");
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
         let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
         assert!(verifier
             .process_movement(
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_DOWN,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -376,7 +293,7 @@ mod tests {
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_MOVE,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -384,7 +301,7 @@ mod tests {
                 DeviceId(2),
                 input_bindgen::AMOTION_EVENT_ACTION_DOWN,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -392,7 +309,7 @@ mod tests {
                 DeviceId(2),
                 input_bindgen::AMOTION_EVENT_ACTION_MOVE,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
         assert!(verifier
@@ -400,21 +317,85 @@ mod tests {
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_UP,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
             )
             .is_ok());
     }
 
     #[test]
     fn test_invalid_up() {
-        let mut verifier = InputVerifier::new("Test");
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
         let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
         assert!(verifier
             .process_movement(
                 DeviceId(1),
                 input_bindgen::AMOTION_EVENT_ACTION_UP,
                 &pointer_properties,
-                Flags::empty(),
+                MotionFlags::empty(),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn correct_hover_sequence() {
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
+        let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_MOVE,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_EXIT,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn double_hover_enter() {
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
+        let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+                &pointer_properties,
+                MotionFlags::empty(),
             )
             .is_err());
     }

@@ -31,7 +31,7 @@ using std::chrono_literals::operator""ns;
 
 namespace {
 
-constexpr nanoseconds DEFAULT_USAGE_SESSION_TIMEOUT = std::chrono::minutes(2);
+constexpr nanoseconds DEFAULT_USAGE_SESSION_TIMEOUT = std::chrono::seconds(5);
 
 /**
  * Log debug messages about metrics events logged to statsd.
@@ -129,10 +129,10 @@ InputDeviceUsageSource getUsageSourceForKeyArgs(const InputDeviceInfo& info,
 }
 
 std::set<InputDeviceUsageSource> getUsageSourcesForMotionArgs(const NotifyMotionArgs& motionArgs) {
-    LOG_ALWAYS_FATAL_IF(motionArgs.pointerCount < 1, "Received motion args without pointers");
+    LOG_ALWAYS_FATAL_IF(motionArgs.getPointerCount() < 1, "Received motion args without pointers");
     std::set<InputDeviceUsageSource> sources;
 
-    for (uint32_t i = 0; i < motionArgs.pointerCount; i++) {
+    for (uint32_t i = 0; i < motionArgs.getPointerCount(); i++) {
         const auto toolType = motionArgs.pointerProperties[i].toolType;
         if (isFromSource(motionArgs.source, AINPUT_SOURCE_MOUSE)) {
             if (toolType == ToolType::MOUSE) {

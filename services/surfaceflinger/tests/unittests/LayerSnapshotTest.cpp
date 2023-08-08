@@ -20,6 +20,7 @@
 #include "FrontEnd/LayerHierarchy.h"
 #include "FrontEnd/LayerLifecycleManager.h"
 #include "FrontEnd/LayerSnapshotBuilder.h"
+#include "Layer.h"
 #include "LayerHierarchyTest.h"
 
 #define UPDATE_AND_VERIFY(BUILDER, ...)                                    \
@@ -228,6 +229,7 @@ TEST_F(LayerSnapshotTest, AlphaInheritedByChildren) {
     setAlpha(1, 0.5);
     setAlpha(122, 0.5);
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->alpha, 0.5f);
     EXPECT_EQ(getSnapshot(12)->alpha, 0.5f);
     EXPECT_EQ(getSnapshot(1221)->alpha, 0.25f);
 }
@@ -236,28 +238,30 @@ TEST_F(LayerSnapshotTest, AlphaInheritedByChildren) {
 TEST_F(LayerSnapshotTest, UpdateClearsPreviousChangeStates) {
     setCrop(1, Rect(1, 2, 3, 4));
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_TRUE(getSnapshot(1)->changes.get() != 0);
-    EXPECT_TRUE(getSnapshot(11)->changes.get() != 0);
+    EXPECT_TRUE(getSnapshot(1)->changes.test(RequestedLayerState::Changes::Geometry));
+    EXPECT_TRUE(getSnapshot(11)->changes.test(RequestedLayerState::Changes::Geometry));
     setCrop(2, Rect(1, 2, 3, 4));
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_TRUE(getSnapshot(2)->changes.get() != 0);
-    EXPECT_TRUE(getSnapshot(1)->changes.get() == 0);
-    EXPECT_TRUE(getSnapshot(11)->changes.get() == 0);
+    EXPECT_TRUE(getSnapshot(2)->changes.test(RequestedLayerState::Changes::Geometry));
+    EXPECT_FALSE(getSnapshot(1)->changes.test(RequestedLayerState::Changes::Geometry));
+    EXPECT_FALSE(getSnapshot(11)->changes.test(RequestedLayerState::Changes::Geometry));
 }
 
 TEST_F(LayerSnapshotTest, FastPathClearsPreviousChangeStates) {
     setColor(11, {1._hf, 0._hf, 0._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_TRUE(getSnapshot(11)->changes.get() != 0);
-    EXPECT_TRUE(getSnapshot(1)->changes.get() == 0);
+    EXPECT_EQ(getSnapshot(11)->changes, RequestedLayerState::Changes::Content);
+    EXPECT_EQ(getSnapshot(11)->clientChanges, layer_state_t::eColorChanged);
+    EXPECT_EQ(getSnapshot(1)->changes.get(), 0u);
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_TRUE(getSnapshot(11)->changes.get() == 0);
+    EXPECT_EQ(getSnapshot(11)->changes.get(), 0u);
 }
 
 TEST_F(LayerSnapshotTest, FastPathSetsChangeFlagToContent) {
     setColor(1, {1._hf, 0._hf, 0._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
     EXPECT_EQ(getSnapshot(1)->changes, RequestedLayerState::Changes::Content);
+    EXPECT_EQ(getSnapshot(1)->clientChanges, layer_state_t::eColorChanged);
 }
 
 TEST_F(LayerSnapshotTest, GameMode) {
@@ -270,7 +274,9 @@ TEST_F(LayerSnapshotTest, GameMode) {
     transactions.back().states.front().layerId = 1;
     transactions.back().states.front().state.layerId = static_cast<int32_t>(1);
     mLifecycleManager.applyTransactions(transactions);
+    EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::GameMode);
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->clientChanges, layer_state_t::eMetadataChanged);
     EXPECT_EQ(static_cast<int32_t>(getSnapshot(1)->gameMode), 42);
     EXPECT_EQ(static_cast<int32_t>(getSnapshot(11)->gameMode), 42);
 }
@@ -309,7 +315,7 @@ TEST_F(LayerSnapshotTest, NoLayerVoteForParentWithChildVotes) {
     EXPECT_EQ(getSnapshot(1)->frameRate.type, scheduler::LayerInfo::FrameRateCompatibility::NoVote);
 }
 
-TEST_F(LayerSnapshotTest, canCropTouchableRegion) {
+TEST_F(LayerSnapshotTest, CanCropTouchableRegion) {
     // ROOT
     // ├── 1
     // │   ├── 11
@@ -460,6 +466,50 @@ TEST_F(LayerSnapshotTest, cleanUpUnreachableSnapshotsAfterLayerDestruction) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
 
     EXPECT_LE(startingNumSnapshots - 2, mSnapshotBuilder.getSnapshots().size());
+}
+
+TEST_F(LayerSnapshotTest, snashotContainsMetadataFromLayerCreationArgs) {
+    LayerCreationArgs args(std::make_optional<uint32_t>(200));
+    args.name = "testlayer";
+    args.addToRoot = true;
+    args.metadata.setInt32(42, 24);
+
+    std::vector<std::unique_ptr<RequestedLayerState>> layers;
+    layers.emplace_back(std::make_unique<RequestedLayerState>(args));
+    EXPECT_TRUE(layers.back()->metadata.has(42));
+    EXPECT_EQ(layers.back()->metadata.getInt32(42, 0), 24);
+    mLifecycleManager.addLayers(std::move(layers));
+
+    std::vector<uint32_t> expected = STARTING_ZORDER;
+    expected.push_back(200);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
+
+    EXPECT_TRUE(mSnapshotBuilder.getSnapshot(200)->layerMetadata.has(42));
+    EXPECT_EQ(mSnapshotBuilder.getSnapshot(200)->layerMetadata.getInt32(42, 0), 24);
+}
+
+TEST_F(LayerSnapshotTest, frameRateSelectionPriorityPassedToChildLayers) {
+    setFrameRateSelectionPriority(11, 1);
+
+    setFrameRateSelectionPriority(12, 2);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRateSelectionPriority, Layer::PRIORITY_UNSET);
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRateSelectionPriority, 1);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionPriority, 2);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionPriority, 2);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionPriority, 2);
+
+    // reparent and verify the child gets the new parent's framerate selection priority
+    reparentLayer(122, 11);
+
+    std::vector<uint32_t> expected = {1, 11, 111, 122, 1221, 12, 121, 13, 2};
+    UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRateSelectionPriority, Layer::PRIORITY_UNSET);
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRateSelectionPriority, 1);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionPriority, 2);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionPriority, 1);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionPriority, 1);
 }
 
 } // namespace android::surfaceflinger::frontend

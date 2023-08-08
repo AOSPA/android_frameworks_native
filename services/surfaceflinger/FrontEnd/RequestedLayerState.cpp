@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// #define LOG_NDEBUG 0
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 #undef LOG_TAG
-#define LOG_TAG "RequestedLayerState"
+#define LOG_TAG "SurfaceFlinger"
 
+#include <gui/TraceUtils.h>
 #include <log/log.h>
 #include <private/android_filesystem_config.h>
 #include <sys/types.h>
@@ -125,6 +127,16 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     gameMode = gui::GameMode::Unsupported;
     requestedFrameRate = {};
     cachingHint = gui::CachingHint::Enabled;
+
+    if (name.length() > 77) {
+        std::string shortened;
+        shortened.append(name, 0, 36);
+        shortened.append("[...]");
+        shortened.append(name, name.length() - 36);
+        debugName = std::move(shortened);
+    } else {
+        debugName = name;
+    }
 }
 
 void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerState) {
@@ -132,12 +144,16 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     const half oldAlpha = color.a;
     const bool hadBuffer = externalTexture != nullptr;
     uint64_t oldFramenumber = hadBuffer ? bufferData->frameNumber : 0;
+    const ui::Size oldBufferSize = hadBuffer
+            ? ui::Size(externalTexture->getWidth(), externalTexture->getHeight())
+            : ui::Size();
     const bool hadSideStream = sidebandStream != nullptr;
     const layer_state_t& clientState = resolvedComposerState.state;
     const bool hadBlur = hasBlur();
     uint64_t clientChanges = what | layer_state_t::diff(clientState);
     layer_state_t::merge(clientState);
     what = clientChanges;
+    LLOGV(layerId, "requested=%" PRIu64 "flags=%" PRIu64, clientState.what, clientChanges);
 
     if (clientState.what & layer_state_t::eFlagsChanged) {
         if ((oldFlags ^ flags) & layer_state_t::eLayerHidden) {
@@ -154,6 +170,13 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         const bool hasBuffer = externalTexture != nullptr;
         if (hasBuffer || hasBuffer != hadBuffer) {
             changes |= RequestedLayerState::Changes::Buffer;
+            const ui::Size newBufferSize = hasBuffer
+                    ? ui::Size(externalTexture->getWidth(), externalTexture->getHeight())
+                    : ui::Size();
+            if (oldBufferSize != newBufferSize) {
+                changes |= RequestedLayerState::Changes::BufferSize;
+                changes |= RequestedLayerState::Changes::Geometry;
+            }
         }
 
         if (hasBuffer != hadBuffer) {
@@ -281,7 +304,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
             // child layers.
             if (static_cast<int32_t>(gameMode) != requestedGameMode) {
                 gameMode = static_cast<gui::GameMode>(requestedGameMode);
-                changes |= RequestedLayerState::Changes::AffectsChildren;
+                changes |= RequestedLayerState::Changes::GameMode;
             }
         }
     }
@@ -358,6 +381,13 @@ std::string RequestedLayerState::getDebugString() const {
     return debug.str();
 }
 
+std::ostream& operator<<(std::ostream& out, const RequestedLayerState& obj) {
+    out << obj.debugName;
+    if (obj.relativeParentId != UNASSIGNED_LAYER_ID) out << " parent=" << obj.parentId;
+    if (!obj.handleAlive) out << " handleNotAlive";
+    return out;
+}
+
 std::string RequestedLayerState::getDebugStringShort() const {
     return "[" + std::to_string(id) + "]" + name;
 }
@@ -372,7 +402,7 @@ bool RequestedLayerState::isHiddenByPolicy() const {
     return (flags & layer_state_t::eLayerHidden) == layer_state_t::eLayerHidden;
 };
 half4 RequestedLayerState::getColor() const {
-    if ((sidebandStream != nullptr) || (externalTexture != nullptr)) {
+    if (sidebandStream || externalTexture) {
         return {0._hf, 0._hf, 0._hf, color.a};
     }
     return color;
@@ -493,6 +523,51 @@ bool RequestedLayerState::hasSidebandStreamFrame() const {
 
 bool RequestedLayerState::willReleaseBufferOnLatch() const {
     return changes.test(Changes::Buffer) && !externalTexture;
+}
+
+bool RequestedLayerState::backpressureEnabled() const {
+    return flags & layer_state_t::eEnableBackpressure;
+}
+
+bool RequestedLayerState::isSimpleBufferUpdate(const layer_state_t& s) const {
+    static constexpr uint64_t requiredFlags = layer_state_t::eBufferChanged;
+    if ((s.what & requiredFlags) != requiredFlags) {
+        ATRACE_FORMAT_INSTANT("%s: false [missing required flags 0x%" PRIx64 "]", __func__,
+                              (s.what | requiredFlags) & ~s.what);
+        return false;
+    }
+
+    static constexpr uint64_t deniedFlags = layer_state_t::eProducerDisconnect |
+            layer_state_t::eLayerChanged | layer_state_t::eRelativeLayerChanged |
+            layer_state_t::eTransparentRegionChanged | layer_state_t::eFlagsChanged |
+            layer_state_t::eBlurRegionsChanged | layer_state_t::eLayerStackChanged |
+            layer_state_t::eAutoRefreshChanged | layer_state_t::eReparent;
+    if (s.what & deniedFlags) {
+        ATRACE_FORMAT_INSTANT("%s: false [has denied flags 0x%" PRIx64 "]", __func__,
+                              s.what & deniedFlags);
+        return false;
+    }
+
+    bool changedFlags = diff(s);
+    static constexpr auto deniedChanges = layer_state_t::ePositionChanged |
+            layer_state_t::eAlphaChanged | layer_state_t::eColorTransformChanged |
+            layer_state_t::eBackgroundColorChanged | layer_state_t::eMatrixChanged |
+            layer_state_t::eCornerRadiusChanged | layer_state_t::eBackgroundBlurRadiusChanged |
+            layer_state_t::eBufferTransformChanged |
+            layer_state_t::eTransformToDisplayInverseChanged | layer_state_t::eCropChanged |
+            layer_state_t::eDataspaceChanged | layer_state_t::eHdrMetadataChanged |
+            layer_state_t::eSidebandStreamChanged | layer_state_t::eColorSpaceAgnosticChanged |
+            layer_state_t::eShadowRadiusChanged | layer_state_t::eFixedTransformHintChanged |
+            layer_state_t::eTrustedOverlayChanged | layer_state_t::eStretchChanged |
+            layer_state_t::eBufferCropChanged | layer_state_t::eDestinationFrameChanged |
+            layer_state_t::eDimmingEnabledChanged | layer_state_t::eExtendedRangeBrightnessChanged;
+    if (changedFlags & deniedChanges) {
+        ATRACE_FORMAT_INSTANT("%s: false [has denied changes flags 0x%" PRIx64 "]", __func__,
+                              s.what & deniedChanges);
+        return false;
+    }
+
+    return true;
 }
 
 void RequestedLayerState::clearChanges() {
