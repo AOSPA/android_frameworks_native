@@ -58,7 +58,8 @@ public:
     void qtiSendInitialFps(uint32_t fps) override;
     void qtiNotifyDisplayUpdateImminent() override;
     void qtiSetContentFps(uint32_t contentFps) override;
-    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode) override;
+    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
+                                 bool isInternal) override;
     void qtiUpdateVsyncConfiguration() override;
 
     /*
