@@ -854,8 +854,9 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     }
 
     if (forceUpdate || snapshot.clientChanges & layer_state_t::eCornerRadiusChanged ||
-        snapshot.changes.any(RequestedLayerState::Changes::Geometry)) {
-        updateRoundedCorner(snapshot, requested, parentSnapshot);
+        snapshot.changes.any(RequestedLayerState::Changes::Geometry |
+                             RequestedLayerState::Changes::BufferUsageFlags)) {
+        updateRoundedCorner(snapshot, requested, parentSnapshot, args);
     }
 
     if (forceUpdate || snapshot.clientChanges & layer_state_t::eShadowRadiusChanged ||
@@ -870,8 +871,8 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     }
 
     // computed snapshot properties
-    snapshot.forceClientComposition = snapshot.isHdrY410 || snapshot.shadowSettings.length > 0 ||
-            snapshot.stretchEffect.hasEffect();
+    snapshot.forceClientComposition =
+            snapshot.shadowSettings.length > 0 || snapshot.stretchEffect.hasEffect();
     snapshot.contentOpaque = snapshot.isContentOpaque();
     snapshot.isOpaque = snapshot.contentOpaque && !snapshot.roundedCorner.hasRoundedCorners() &&
             snapshot.color.a == 1.f;
@@ -886,7 +887,12 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
 
 void LayerSnapshotBuilder::updateRoundedCorner(LayerSnapshot& snapshot,
                                                const RequestedLayerState& requested,
-                                               const LayerSnapshot& parentSnapshot) {
+                                               const LayerSnapshot& parentSnapshot,
+                                               const Args& args) {
+    if (args.skipRoundCornersWhenProtected && requested.isProtected()) {
+        snapshot.roundedCorner = RoundedCornerState();
+        return;
+    }
     snapshot.roundedCorner = RoundedCornerState();
     RoundedCornerState parentRoundedCorner;
     if (parentSnapshot.roundedCorner.hasRoundedCorners()) {

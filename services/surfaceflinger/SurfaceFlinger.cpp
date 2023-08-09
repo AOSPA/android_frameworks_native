@@ -484,7 +484,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mIgnoreHdrCameraLayers = ignore_hdr_camera_layers(false);
 
     mLayerLifecycleManagerEnabled =
-            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, true);
+            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, false);
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
             base::GetBoolProperty("persist.debug.sf.enable_legacy_frontend"s, false);
 }
@@ -2311,7 +2311,9 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
                      .forceFullDamage = mForceFullDamage,
                      .supportedLayerGenericMetadata =
                              getHwComposer().getSupportedLayerGenericMetadata(),
-                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap()};
+                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap(),
+                     .skipRoundCornersWhenProtected =
+                             !getRenderEngine().supportsProtectedContent()};
         mLayerSnapshotBuilder.update(args);
     }
 
@@ -8660,7 +8662,9 @@ SurfaceFlinger::getLayerSnapshotsForScreenshots(std::optional<ui::LayerStack> la
                      .excludeLayerIds = std::move(excludeLayerIds),
                      .supportedLayerGenericMetadata =
                              getHwComposer().getSupportedLayerGenericMetadata(),
-                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap()};
+                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap(),
+                     .skipRoundCornersWhenProtected =
+                             !getRenderEngine().supportsProtectedContent()};
         mLayerSnapshotBuilder.update(args);
 
         auto getLayerSnapshotsFn =
@@ -8695,7 +8699,9 @@ SurfaceFlinger::getLayerSnapshotsForScreenshots(uint32_t rootLayerId, uint32_t u
                      .excludeLayerIds = std::move(excludeLayerIds),
                      .supportedLayerGenericMetadata =
                              getHwComposer().getSupportedLayerGenericMetadata(),
-                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap()};
+                     .genericLayerMetadataKeyMap = getGenericLayerMetadataKeyMap(),
+                     .skipRoundCornersWhenProtected =
+                             !getRenderEngine().supportsProtectedContent()};
         mLayerSnapshotBuilder.update(args);
 
         auto getLayerSnapshotsFn =
