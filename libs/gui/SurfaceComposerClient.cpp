@@ -59,7 +59,7 @@
 #include <private/gui/ComposerServiceAIDL.h>
 
 // This server size should always be smaller than the server cache size
-#define BUFFER_CACHE_MAX_SIZE 64
+#define BUFFER_CACHE_MAX_SIZE 4096
 
 namespace android {
 
@@ -450,7 +450,9 @@ void TransactionCompletedListener::onTransactionCompleted(ListenerStats listener
             callbackFunction(transactionStats.latchTime, transactionStats.presentFence,
                              surfaceControlStats);
         }
+    }
 
+    for (const auto& transactionStats : listenerStats.transactionStats) {
         for (const auto& surfaceStats : transactionStats.surfaceStats) {
             // The callbackMap contains the SurfaceControl object, which we need to look up the
             // layerId. Since we don't know which callback contains the SurfaceControl, iterate
