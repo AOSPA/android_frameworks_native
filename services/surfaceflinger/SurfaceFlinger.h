@@ -236,9 +236,6 @@ public:
     static uint32_t maxGraphicsWidth;
     static uint32_t maxGraphicsHeight;
 
-    // Indicate if device wants color management on its display.
-    static const constexpr bool useColorManagement = true;
-
     static bool useContextPriority;
 
     // The data space and pixel format that SurfaceFlinger expects hardware composer
@@ -567,7 +564,6 @@ private:
                               const std::vector<ui::Hdr>& hdrTypes);
     status_t onPullAtom(const int32_t atomId, std::vector<uint8_t>* pulledData, bool* success);
     status_t getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers);
-    status_t getColorManagement(bool* outGetColorManagement) const;
     status_t getCompositionPreference(ui::Dataspace* outDataspace, ui::PixelFormat* outPixelFormat,
                                       ui::Dataspace* outWideColorGamutDataspace,
                                       ui::PixelFormat* outWideColorGamutPixelFormat) const;
@@ -621,6 +617,9 @@ private:
                                     gui::WindowInfosListenerInfo* outResult);
     status_t removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) const;
+
+    status_t getStalledTransactionInfo(
+            int pid, std::optional<TransactionHandler::StalledTransactionInfo>& result);
 
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
@@ -1512,7 +1511,6 @@ public:
                                     const std::vector<int32_t>& hdrTypes) override;
     binder::Status onPullAtom(int32_t atomId, gui::PullAtomData* outPullData) override;
     binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) override;
-    binder::Status getColorManagement(bool* outGetColorManagement) override;
     binder::Status getCompositionPreference(gui::CompositionPreference* outPref) override;
     binder::Status getDisplayedContentSamplingAttributes(
             const sp<IBinder>& display, gui::ContentSamplingAttributes* outAttrs) override;
@@ -1564,6 +1562,8 @@ public:
                                           gui::WindowInfosListenerInfo* outInfo) override;
     binder::Status removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) override;
+    binder::Status getStalledTransactionInfo(int pid,
+                                             std::optional<gui::StalledTransactionInfo>* outInfo);
 
 private:
     static const constexpr bool kUsePermissionCache = true;

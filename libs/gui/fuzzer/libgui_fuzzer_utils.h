@@ -110,7 +110,6 @@ public:
                 (override));
     MOCK_METHOD(binder::Status, onPullAtom, (int32_t, gui::PullAtomData*), (override));
     MOCK_METHOD(binder::Status, getLayerDebugInfo, (std::vector<gui::LayerDebugInfo>*), (override));
-    MOCK_METHOD(binder::Status, getColorManagement, (bool*), (override));
     MOCK_METHOD(binder::Status, getCompositionPreference, (gui::CompositionPreference*),
                 (override));
     MOCK_METHOD(binder::Status, getDisplayedContentSamplingAttributes,
@@ -158,6 +157,8 @@ public:
     MOCK_METHOD(binder::Status, removeWindowInfosListener, (const sp<gui::IWindowInfosListener>&),
                 (override));
     MOCK_METHOD(binder::Status, getOverlaySupport, (gui::OverlayProperties*), (override));
+    MOCK_METHOD(binder::Status, getStalledTransactionInfo,
+                (int32_t, std::optional<gui::StalledTransactionInfo>*), (override));
 };
 
 class FakeBnSurfaceComposerClient : public gui::BnSurfaceComposerClient {

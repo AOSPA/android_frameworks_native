@@ -879,10 +879,6 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status getColorManagement(bool* /*outGetColorManagement*/) override {
-        return binder::Status::ok();
-    }
-
     binder::Status getCompositionPreference(gui::CompositionPreference* /*outPref*/) override {
         return binder::Status::ok();
     }
@@ -1013,6 +1009,11 @@ public:
     }
 
     binder::Status getOverlaySupport(gui::OverlayProperties* /*properties*/) override {
+        return binder::Status::ok();
+    }
+
+    binder::Status getStalledTransactionInfo(
+            int32_t /*pid*/, std::optional<gui::StalledTransactionInfo>* /*result*/) override {
         return binder::Status::ok();
     }
 

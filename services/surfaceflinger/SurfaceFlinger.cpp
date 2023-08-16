@@ -644,14 +644,6 @@ sp<IBinder> SurfaceFlinger::getPhysicalDisplayToken(PhysicalDisplayId displayId)
     return getPhysicalDisplayTokenLocked(displayId);
 }
 
-status_t SurfaceFlinger::getColorManagement(bool* outGetColorManagement) const {
-    if (!outGetColorManagement) {
-        return BAD_VALUE;
-    }
-    *outGetColorManagement = useColorManagement;
-    return NO_ERROR;
-}
-
 HWComposer& SurfaceFlinger::getHwComposer() const {
     return mCompositionEngine->getHwComposer();
 }
@@ -812,7 +804,6 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
     auto builder = renderengine::RenderEngineCreationArgs::Builder()
                            .setPixelFormat(static_cast<int32_t>(defaultCompositionPixelFormat))
                            .setImageCacheSize(maxFrameBufferAcquiredBuffers)
-                           .setUseColorManagerment(useColorManagement)
                            .setEnableProtectedContext(enable_protected_contents(false))
                            .setPrecacheToneMapperShaderOnly(false)
                            .setSupportsBackgroundBlur(mSupportsBlur)
@@ -2322,7 +2313,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         mUpdateInputInfo = true;
     }
     if (mLayerLifecycleManager.getGlobalChanges().any(Changes::VisibleRegion | Changes::Hierarchy |
-                                                      Changes::Visibility)) {
+                                                      Changes::Visibility | Changes::Geometry)) {
         mVisibleRegionsDirty = true;
     }
     if (mLayerLifecycleManager.getGlobalChanges().any(Changes::Hierarchy | Changes::FrameRate)) {
@@ -2363,6 +2354,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             }
             it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
             newDataLatched = true;
+
             mLayersWithQueuedFrames.emplace(it->second);
             mLayersIdsWithQueuedFrames.emplace(it->second->sequence);
         }
@@ -2621,9 +2613,7 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
             refreshArgs.layersWithQueuedFrames.push_back(layerFE);
     }
 
-    refreshArgs.outputColorSetting = useColorManagement
-            ? mDisplayColorSetting
-            : compositionengine::OutputColorSetting::kUnmanaged;
+    refreshArgs.outputColorSetting = mDisplayColorSetting;
     refreshArgs.forceOutputColorMode = mForceColorMode;
 
     refreshArgs.updatingOutputGeometryThisFrame = mVisibleRegionsDirty;
@@ -3394,18 +3384,16 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
 
         creationArgs.isPrimary = physical->id == getPrimaryDisplayIdLocked();
 
-        if (useColorManagement) {
-            mPhysicalDisplays.get(physical->id)
-                    .transform(&PhysicalDisplay::snapshotRef)
-                    .transform(ftl::unit_fn([&](const display::DisplaySnapshot& snapshot) {
-                        for (const auto mode : snapshot.colorModes()) {
-                            creationArgs.hasWideColorGamut |= ui::isWideColorMode(mode);
-                            creationArgs.hwcColorModes
-                                    .emplace(mode,
-                                             getHwComposer().getRenderIntents(physical->id, mode));
-                        }
-                    }));
-        }
+        mPhysicalDisplays.get(physical->id)
+                .transform(&PhysicalDisplay::snapshotRef)
+                .transform(ftl::unit_fn([&](const display::DisplaySnapshot& snapshot) {
+                    for (const auto mode : snapshot.colorModes()) {
+                        creationArgs.hasWideColorGamut |= ui::isWideColorMode(mode);
+                        creationArgs.hwcColorModes
+                                .emplace(mode,
+                                         getHwComposer().getRenderIntents(physical->id, mode));
+                    }
+                }));
     }
 
     if (const auto id = HalDisplayId::tryCast(compositionDisplay->getId())) {
@@ -4462,9 +4450,13 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                     (flushState.queueProcessTime - transaction.postTime) >
                             std::chrono::nanoseconds(4s).count()) {
                     mTransactionHandler
-                            .onTransactionQueueStalled(transaction.id, listener,
-                                                       "Buffer processing hung up due to stuck "
-                                                       "fence. Indicates GPU hang");
+                            .onTransactionQueueStalled(transaction.id,
+                                                       {.pid = layer->getOwnerPid(),
+                                                        .layerId = static_cast<uint32_t>(
+                                                                layer->getSequence()),
+                                                        .layerName = layer->getDebugName(),
+                                                        .bufferId = s.bufferData->getId(),
+                                                        .frameNumber = s.bufferData->frameNumber});
                 }
                 ATRACE_FORMAT("fence unsignaled %s", layer->getDebugName());
                 return TraverseBuffersReturnValues::STOP_TRAVERSAL;
@@ -4557,9 +4549,12 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                     (flushState.queueProcessTime - transaction.postTime) >
                             std::chrono::nanoseconds(4s).count()) {
                     mTransactionHandler
-                            .onTransactionQueueStalled(transaction.id, listener,
-                                                       "Buffer processing hung up due to stuck "
-                                                       "fence. Indicates GPU hang");
+                            .onTransactionQueueStalled(transaction.id,
+                                                       {.pid = layer->ownerPid.val(),
+                                                        .layerId = layer->id,
+                                                        .layerName = layer->name,
+                                                        .bufferId = s.bufferData->getId(),
+                                                        .frameNumber = s.bufferData->frameNumber});
                 }
                 ATRACE_FORMAT("fence unsignaled %s", layer->name.c_str());
                 return TraverseBuffersReturnValues::STOP_TRAVERSAL;
@@ -5387,6 +5382,9 @@ uint32_t SurfaceFlinger::updateLayerCallbacksAndStats(const FrameTimelineInfo& f
     if (what & layer_state_t::eSidebandStreamChanged) {
         if (layer->setSidebandStream(s.sidebandStream)) flags |= eTraversalNeeded;
     }
+    if (what & layer_state_t::eDataspaceChanged) {
+        if (layer->setDataspace(s.dataspace)) flags |= eTraversalNeeded;
+    }
     if (what & layer_state_t::eBufferChanged) {
         std::optional<ui::Transform::RotationFlags> transformHint = std::nullopt;
         frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(layer->sequence);
@@ -5585,6 +5583,8 @@ void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32
         std::scoped_lock<std::mutex> lock(mCreatedLayersLock);
         mDestroyedHandles.emplace_back(layerId);
     }
+
+    mTransactionHandler.onLayerDestroyed(layerId);
 
     Mutex::Autolock lock(mStateLock);
     markLayerPendingRemovalLocked(layer);
@@ -6094,7 +6094,6 @@ void SurfaceFlinger::dumpRawDisplayIdentificationData(const DumpArgs& args,
 
 void SurfaceFlinger::dumpWideColorInfo(std::string& result) const {
     StringAppendF(&result, "Device supports wide color: %d\n", mSupportsWideColor);
-    StringAppendF(&result, "Device uses color management: %d\n", useColorManagement);
     StringAppendF(&result, "DisplayColorSetting: %s\n",
                   decodeDisplayColorSetting(mDisplayColorSetting).c_str());
 
@@ -6769,8 +6768,6 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 DisplayColorSetting setting = static_cast<DisplayColorSetting>(data.readInt32());
                 switch (setting) {
                     case DisplayColorSetting::kManaged:
-                        reply->writeBool(useColorManagement);
-                        break;
                     case DisplayColorSetting::kUnmanaged:
                         reply->writeBool(true);
                         break;
@@ -6803,7 +6800,8 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             }
             // Is device color managed?
             case 1030: {
-                reply->writeBool(useColorManagement);
+                // ColorDisplayManager stil calls this
+                reply->writeBool(true);
                 return NO_ERROR;
             }
             // Override default composition data space
@@ -8409,6 +8407,12 @@ status_t SurfaceFlinger::removeWindowInfosListener(
     return NO_ERROR;
 }
 
+status_t SurfaceFlinger::getStalledTransactionInfo(
+        int pid, std::optional<TransactionHandler::StalledTransactionInfo>& result) {
+    result = mTransactionHandler.getStalledTransactionInfo(pid);
+    return NO_ERROR;
+}
+
 std::shared_ptr<renderengine::ExternalTexture> SurfaceFlinger::getExternalTextureFromBufferData(
         BufferData& bufferData, const char* layerName, uint64_t transactionId) {
     if (bufferData.buffer &&
@@ -9199,11 +9203,6 @@ binder::Status SurfaceComposerAIDL::getLayerDebugInfo(std::vector<gui::LayerDebu
     return binderStatusFromStatusT(status);
 }
 
-binder::Status SurfaceComposerAIDL::getColorManagement(bool* outGetColorManagement) {
-    status_t status = mFlinger->getColorManagement(outGetColorManagement);
-    return binderStatusFromStatusT(status);
-}
-
 binder::Status SurfaceComposerAIDL::getCompositionPreference(gui::CompositionPreference* outPref) {
     ui::Dataspace dataspace;
     ui::PixelFormat pixelFormat;
@@ -9514,6 +9513,28 @@ binder::Status SurfaceComposerAIDL::removeWindowInfosListener(
         status = mFlinger->removeWindowInfosListener(windowInfosListener);
     } else {
         status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getStalledTransactionInfo(
+        int pid, std::optional<gui::StalledTransactionInfo>* outInfo) {
+    const int callingPid = IPCThreadState::self()->getCallingPid();
+    const int callingUid = IPCThreadState::self()->getCallingUid();
+    if (!checkPermission(sAccessSurfaceFlinger, callingPid, callingUid)) {
+        return binderStatusFromStatusT(PERMISSION_DENIED);
+    }
+
+    std::optional<TransactionHandler::StalledTransactionInfo> stalledTransactionInfo;
+    status_t status = mFlinger->getStalledTransactionInfo(pid, stalledTransactionInfo);
+    if (stalledTransactionInfo) {
+        gui::StalledTransactionInfo result;
+        result.layerName = String16{stalledTransactionInfo->layerName.c_str()},
+        result.bufferId = stalledTransactionInfo->bufferId,
+        result.frameNumber = stalledTransactionInfo->frameNumber,
+        outInfo->emplace(std::move(result));
+    } else {
+        outInfo->reset();
     }
     return binderStatusFromStatusT(status);
 }
