@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,29 +16,6 @@
 
 #pragma once
 
-#include <renderengine/Texture.h>
-#include <cstdint>
+#include <android/binder_parcel.h>
 
-namespace android {
-namespace renderengine {
-namespace gl {
-
-class GLShadowTexture {
-public:
-    GLShadowTexture();
-    ~GLShadowTexture();
-
-    const Texture& getTexture();
-
-private:
-    static constexpr int SHADOW_TEXTURE_WIDTH = 128;
-    static constexpr int SHADOW_TEXTURE_HEIGHT = 1;
-
-    GLuint mName;
-    Texture mTexture;
-    uint8_t mTextureData[SHADOW_TEXTURE_WIDTH];
-};
-
-} // namespace gl
-} // namespace renderengine
-} // namespace android
+using IInputFlingerRustBootstrapCallbackAIBinder = AIBinder;
