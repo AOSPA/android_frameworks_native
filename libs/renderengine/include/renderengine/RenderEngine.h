@@ -112,9 +112,6 @@ public:
     // dump the extension strings. always call the base class.
     virtual void dump(std::string& result) = 0;
 
-    virtual void genTextures(size_t count, uint32_t* names) = 0;
-    virtual void deleteTextures(size_t count, uint32_t const* names) = 0;
-
     // queries that are required to be thread safe
     virtual size_t getMaxTextureSize() const = 0;
     virtual size_t getMaxViewportDims() const = 0;
@@ -148,9 +145,6 @@ public:
     // @param layers The layers to draw onto the display, in Z-order.
     // @param buffer The buffer which will be drawn to. This buffer will be
     // ready once drawFence fires.
-    // @param useFramebufferCache True if the framebuffer cache should be used.
-    // If an implementation does not cache output framebuffers, then this
-    // parameter does nothing.
     // @param bufferFence Fence signalling that the buffer is ready to be drawn
     // to.
     // @return A future object of FenceResult indicating whether drawing was
@@ -158,7 +152,6 @@ public:
     virtual ftl::Future<FenceResult> drawLayers(const DisplaySettings& display,
                                                 const std::vector<LayerSettings>& layers,
                                                 const std::shared_ptr<ExternalTexture>& buffer,
-                                                const bool useFramebufferCache,
                                                 base::unique_fd&& bufferFence);
 
     // Clean-up method that should be called on the main thread after the
@@ -247,8 +240,7 @@ protected:
     virtual void drawLayersInternal(
             const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
             const DisplaySettings& display, const std::vector<LayerSettings>& layers,
-            const std::shared_ptr<ExternalTexture>& buffer, const bool useFramebufferCache,
-            base::unique_fd&& bufferFence) = 0;
+            const std::shared_ptr<ExternalTexture>& buffer, base::unique_fd&& bufferFence) = 0;
 };
 
 struct RenderEngineCreationArgs {

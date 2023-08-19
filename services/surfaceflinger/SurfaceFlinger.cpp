@@ -452,6 +452,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.treat_170m_as_sRGB", value, "0");
     mTreat170mAsSrgb = atoi(value);
 
+    property_get("debug.sf.dim_in_gamma_in_enhanced_screenshots", value, 0);
+    mDimInGammaSpaceForEnhancedScreenshots = atoi(value);
+
     mIgnoreHwcPhysicalDisplayOrientation =
             base::GetBoolProperty("debug.sf.ignore_hwc_physical_display_orientation"s, false);
 
@@ -730,42 +733,6 @@ void SurfaceFlinger::bootFinished() {
     }));
 }
 
-uint32_t SurfaceFlinger::getNewTexture() {
-    {
-        std::lock_guard lock(mTexturePoolMutex);
-        if (!mTexturePool.empty()) {
-            uint32_t name = mTexturePool.back();
-            mTexturePool.pop_back();
-            ATRACE_INT("TexturePoolSize", mTexturePool.size());
-            return name;
-        }
-
-        // The pool was too small, so increase it for the future
-        ++mTexturePoolSize;
-    }
-
-    // The pool was empty, so we need to get a new texture name directly using a
-    // blocking call to the main thread
-    auto genTextures = [this] {
-               uint32_t name = 0;
-               getRenderEngine().genTextures(1, &name);
-               return name;
-    };
-    if (std::this_thread::get_id() == mMainThreadId) {
-        return genTextures();
-    } else {
-        return mScheduler->schedule(genTextures).get();
-    }
-}
-
-void SurfaceFlinger::deleteTextureAsync(uint32_t texture) {
-    std::lock_guard lock(mTexturePoolMutex);
-    // We don't change the pool size, so the fix-up logic in postComposition will decide whether
-    // to actually delete this or not based on mTexturePoolSize
-    mTexturePool.push_back(texture);
-    ATRACE_INT("TexturePoolSize", mTexturePool.size());
-}
-
 static std::optional<renderengine::RenderEngine::RenderEngineType>
 chooseRenderEngineTypeViaSysProp() {
     char prop[PROPERTY_VALUE_MAX];
@@ -902,7 +869,7 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
             auto writeFn = [&]() {
                 const std::string filename =
                         TransactionTracing::DIR_NAME + prefix + TransactionTracing::FILE_NAME;
-                if (overwrite && access(filename.c_str(), F_OK) == 0) {
+                if (!overwrite && access(filename.c_str(), F_OK) == 0) {
                     ALOGD("TransactionTraceWriter: file=%s already exists", filename.c_str());
                     return;
                 }
@@ -3060,23 +3027,6 @@ void SurfaceFlinger::postComposition(PhysicalDisplayId pacesetterId,
 
     // Cleanup any outstanding resources due to rendering a prior frame.
     getRenderEngine().cleanupPostRender();
-
-    {
-        std::lock_guard lock(mTexturePoolMutex);
-        if (mTexturePool.size() < mTexturePoolSize) {
-            const size_t refillCount = mTexturePoolSize - mTexturePool.size();
-            const size_t offset = mTexturePool.size();
-            mTexturePool.resize(mTexturePoolSize);
-            getRenderEngine().genTextures(refillCount, mTexturePool.data() + offset);
-            ATRACE_INT("TexturePoolSize", mTexturePool.size());
-        } else if (mTexturePool.size() > mTexturePoolSize) {
-            const size_t deleteCount = mTexturePool.size() - mTexturePoolSize;
-            const size_t offset = mTexturePoolSize;
-            getRenderEngine().deleteTextures(deleteCount, mTexturePool.data() + offset);
-            mTexturePool.resize(mTexturePoolSize);
-            ATRACE_INT("TexturePoolSize", mTexturePool.size());
-        }
-    }
 
     if (mNumTrustedPresentationListeners > 0) {
         // We avoid any reverse traversal upwards so this shouldn't be too expensive
@@ -5554,7 +5504,6 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurface
 
 status_t SurfaceFlinger::createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* handle,
                                                 sp<Layer>* outLayer) {
-    args.textureName = getNewTexture();
     *outLayer = getFactory().createBufferStateLayer(args);
     *handle = (*outLayer)->getHandle();
     return NO_ERROR;
@@ -5801,6 +5750,7 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                 {"--edid"s, argsDumper(&SurfaceFlinger::dumpRawDisplayIdentificationData)},
                 {"--events"s, dumper(&SurfaceFlinger::dumpEvents)},
                 {"--frametimeline"s, argsDumper(&SurfaceFlinger::dumpFrameTimeline)},
+                {"--hdrinfo"s, dumper(&SurfaceFlinger::dumpHdrInfo)},
                 {"--hwclayers"s, dumper(&SurfaceFlinger::dumpHwcLayersMinidumpLockedLegacy)},
                 {"--latency"s, argsDumper(&SurfaceFlinger::dumpStatsLocked)},
                 {"--latency-clear"s, argsDumper(&SurfaceFlinger::clearStatsLocked)},
@@ -5926,7 +5876,7 @@ void SurfaceFlinger::dumpStatsLocked(const DumpArgs& args, std::string& result) 
 
     const auto name = String8(args[1]);
     mCurrentState.traverseInZOrder([&](Layer* layer) {
-        if (layer->getName() == name.string()) {
+        if (layer->getName() == name.c_str()) {
             layer->dumpFrameStats(result);
         }
     });
@@ -5937,7 +5887,7 @@ void SurfaceFlinger::clearStatsLocked(const DumpArgs& args, std::string&) {
     const auto name = clearAll ? String8() : String8(args[1]);
 
     mCurrentState.traverse([&](Layer* layer) {
-        if (clearAll || layer->getName() == name.string()) {
+        if (clearAll || layer->getName() == name.c_str()) {
             layer->clearFrameStats();
         }
     });
@@ -6109,6 +6059,14 @@ void SurfaceFlinger::dumpWideColorInfo(std::string& result) const {
     result.append("\n");
 }
 
+void SurfaceFlinger::dumpHdrInfo(std::string& result) const {
+    for (const auto& [displayId, listener] : mHdrLayerInfoListeners) {
+        StringAppendF(&result, "HDR events for display %" PRIu64 "\n", displayId.value);
+        listener->dump(result);
+        result.append("\n");
+    }
+}
+
 LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
     std::unordered_set<uint64_t> stackIdsToSkip;
 
@@ -6272,6 +6230,8 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
 
     result.append("\nWide-Color information:\n");
     dumpWideColorInfo(result);
+
+    dumpHdrInfo(result);
 
     colorizer.bold(result);
     result.append("Sync configuration: ");
@@ -7842,7 +7802,9 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
                                         .displayBrightnessNits = displayBrightnessNits,
                                         .targetBrightness = targetBrightness,
                                         .regionSampling = regionSampling,
-                                        .treat170mAsSrgb = mTreat170mAsSrgb});
+                                        .treat170mAsSrgb = mTreat170mAsSrgb,
+                                        .dimInGammaSpaceForEnhancedScreenshots =
+                                                mDimInGammaSpaceForEnhancedScreenshots});
 
         const float colorSaturation = grayscale ? 0 : 1;
         compositionengine::CompositionRefreshArgs refreshArgs{
