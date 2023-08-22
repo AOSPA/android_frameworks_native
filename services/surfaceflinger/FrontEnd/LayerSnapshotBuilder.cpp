@@ -178,12 +178,7 @@ void fillInputFrameInfo(gui::WindowInfo& info, const ui::Transform& screenToDisp
         info.touchableRegion.clear();
     }
 
-    const Rect roundedFrameInDisplay =
-            getInputBoundsInDisplaySpace(snapshot, inputBounds, screenToDisplay);
-    info.frameLeft = roundedFrameInDisplay.left;
-    info.frameTop = roundedFrameInDisplay.top;
-    info.frameRight = roundedFrameInDisplay.right;
-    info.frameBottom = roundedFrameInDisplay.bottom;
+    info.frame = getInputBoundsInDisplaySpace(snapshot, inputBounds, screenToDisplay);
 
     ui::Transform inputToLayer;
     inputToLayer.set(inputBounds.left, inputBounds.top);
@@ -523,12 +518,9 @@ const LayerSnapshot& LayerSnapshotBuilder::updateSnapshotsInHierarchy(
         const Args& args, const LayerHierarchy& hierarchy,
         LayerHierarchy::TraversalPath& traversalPath, const LayerSnapshot& parentSnapshot,
         int depth) {
-    if (depth > 50) {
-        TransactionTraceWriter::getInstance().invoke("layer_builder_stack_overflow_",
-                                                     /*overwrite=*/false);
-        LOG_ALWAYS_FATAL("Cycle detected in LayerSnapshotBuilder. See "
-                         "builder_stack_overflow_transactions.winscope");
-    }
+    LLOG_ALWAYS_FATAL_WITH_TRACE_IF(depth > 50,
+                                    "Cycle detected in LayerSnapshotBuilder. See "
+                                    "builder_stack_overflow_transactions.winscope");
 
     const RequestedLayerState* layer = hierarchy.getLayer();
     LayerSnapshot* snapshot = getSnapshot(traversalPath);
