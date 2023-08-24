@@ -488,7 +488,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mIgnoreHdrCameraLayers = ignore_hdr_camera_layers(false);
 
     mLayerLifecycleManagerEnabled =
-            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, true);
+            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, false);
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
             base::GetBoolProperty("persist.debug.sf.enable_legacy_frontend"s, false);
 }
@@ -2621,19 +2621,24 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     constexpr bool kCursorOnly = false;
     const auto layers = moveSnapshotsToCompositionArgs(refreshArgs, kCursorOnly);
 
-    if (mLayerLifecycleManagerEnabled && !refreshArgs.updatingGeometryThisFrame) {
+    if (mLayerLifecycleManagerEnabled && !mVisibleRegionsDirty) {
         for (const auto& [token, display] : FTL_FAKE_GUARD(mStateLock, mDisplays)) {
             auto compositionDisplay = display->getCompositionDisplay();
             if (!compositionDisplay->getState().isEnabled) continue;
             for (auto outputLayer : compositionDisplay->getOutputLayersOrderedByZ()) {
-                LLOG_ALWAYS_FATAL_WITH_TRACE_IF(outputLayer->getLayerFE().getCompositionState() ==
-                                                        nullptr,
-                                                "Output layer %s for display %s %" PRIu64
-                                                " has a null "
-                                                "snapshot.",
-                                                outputLayer->getLayerFE().getDebugName(),
-                                                compositionDisplay->getName().c_str(),
-                                                compositionDisplay->getId().value);
+                if (outputLayer->getLayerFE().getCompositionState() == nullptr) {
+                    // This is unexpected but instead of crashing, capture traces to disk
+                    // and recover gracefully by forcing CE to rebuild layer stack.
+                    ALOGE("Output layer %s for display %s %" PRIu64 " has a null "
+                          "snapshot. Forcing mVisibleRegionsDirty",
+                          outputLayer->getLayerFE().getDebugName(),
+                          compositionDisplay->getName().c_str(), compositionDisplay->getId().value);
+
+                    TransactionTraceWriter::getInstance().invoke(__func__, /* overwrite= */ false);
+                    mVisibleRegionsDirty = true;
+                    refreshArgs.updatingOutputGeometryThisFrame = mVisibleRegionsDirty;
+                    refreshArgs.updatingGeometryThisFrame = mVisibleRegionsDirty;
+                }
             }
         }
     }
@@ -5349,6 +5354,11 @@ uint32_t SurfaceFlinger::updateLayerCallbacksAndStats(const FrameTimelineInfo& f
     }
     if (what & layer_state_t::eDataspaceChanged) {
         if (layer->setDataspace(s.dataspace)) flags |= eTraversalNeeded;
+    }
+    if (what & layer_state_t::eExtendedRangeBrightnessChanged) {
+        if (layer->setExtendedRangeBrightness(s.currentHdrSdrRatio, s.desiredHdrSdrRatio)) {
+            flags |= eTraversalNeeded;
+        }
     }
     if (what & layer_state_t::eBufferChanged) {
         std::optional<ui::Transform::RotationFlags> transformHint = std::nullopt;
