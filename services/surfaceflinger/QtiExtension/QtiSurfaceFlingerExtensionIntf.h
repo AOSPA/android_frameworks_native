@@ -35,6 +35,7 @@ enum QtiFeature {
     kSplitLayerExtension,
     kVsyncSourceReliableOnDoze,
     kWorkDurations,
+    kIdleFallback,
 };
 
 class QtiSurfaceFlingerExtensionIntf {
