@@ -1468,8 +1468,8 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
     uint32_t hwcDisplayId;
     for (const auto& pair : FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
         const auto& displayDevice = pair.second;
-        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-            qtiIsInternalDisplay(displayDevice)) {
+        if (!(qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+              !qtiIsInternalDisplay(displayDevice))) {
             continue;
         }
 
@@ -1484,8 +1484,8 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
         for (const auto& [token, displayDevice] :
              FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
             auto display = displayDevice->getCompositionDisplay();
-            if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-                qtiIsInternalDisplay(displayDevice)) {
+            if (!(qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+                  !qtiIsInternalDisplay(displayDevice))) {
                 continue;
             }
             if (display->includesLayer(layer->getOutputFilter())) {
@@ -1496,8 +1496,8 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
 
     for (const auto& [token, displayDevice] :
          FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
-        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-            qtiIsInternalDisplay(displayDevice)) {
+        if (!(qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+              !qtiIsInternalDisplay(displayDevice))) {
             continue;
         }
 
