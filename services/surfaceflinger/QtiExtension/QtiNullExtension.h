@@ -39,6 +39,7 @@ public:
     composer::DisplayExtnIntf* qtiGetDisplayExtn() { return nullptr; }
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
+    void qtiOnComposerHalRefresh() override;
 
     /*
      * Methods that call the FeatureManager APIs.
