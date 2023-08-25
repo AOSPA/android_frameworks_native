@@ -32,6 +32,7 @@
 #endif
 #include <input/InputDevice.h>
 #include <input/PrintTools.h>
+#include <input/TraceTools.h>
 #include <openssl/mem.h>
 #include <powermanager/PowerManager.h>
 #include <unistd.h>
@@ -1105,7 +1106,8 @@ bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEnt
         const auto [x, y] = resolveTouchedPosition(motionEntry);
         const bool isStylus = isPointerFromStylus(motionEntry, /*pointerIndex=*/0);
 
-        auto [touchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus);
+        sp<WindowInfoHandle> touchedWindowHandle =
+                findTouchedWindowAtLocked(displayId, x, y, isStylus);
         if (touchedWindowHandle != nullptr &&
             touchedWindowHandle->getApplicationToken() !=
                     mAwaitedFocusedApplication->getApplicationToken()) {
@@ -1229,11 +1231,10 @@ void InputDispatcher::addRecentEventLocked(std::shared_ptr<EventEntry> entry) {
     }
 }
 
-std::pair<sp<WindowInfoHandle>, std::vector<InputTarget>>
-InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus,
-                                           bool ignoreDragWindow) const {
+sp<WindowInfoHandle> InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y,
+                                                                bool isStylus,
+                                                                bool ignoreDragWindow) const {
     // Traverse windows from front to back to find touched window.
-    std::vector<InputTarget> outsideTargets;
     const auto& windowHandles = getWindowHandlesLocked(displayId);
     for (const sp<WindowInfoHandle>& windowHandle : windowHandles) {
         if (ignoreDragWindow && haveSameToken(windowHandle, mDragState->dragWindow)) {
@@ -1243,16 +1244,35 @@ InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, 
         const WindowInfo& info = *windowHandle->getInfo();
         if (!info.isSpy() &&
             windowAcceptsTouchAt(info, displayId, x, y, isStylus, getTransformLocked(displayId))) {
-            return {windowHandle, outsideTargets};
+            return windowHandle;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<InputTarget> InputDispatcher::findOutsideTargetsLocked(
+        int32_t displayId, const sp<WindowInfoHandle>& touchedWindow) const {
+    if (touchedWindow == nullptr) {
+        return {};
+    }
+    // Traverse windows from front to back until we encounter the touched window.
+    std::vector<InputTarget> outsideTargets;
+    const auto& windowHandles = getWindowHandlesLocked(displayId);
+    for (const sp<WindowInfoHandle>& windowHandle : windowHandles) {
+        if (windowHandle == touchedWindow) {
+            // Stop iterating once we found a touched window. Any WATCH_OUTSIDE_TOUCH window
+            // below the touched window will not get ACTION_OUTSIDE event.
+            return outsideTargets;
         }
 
+        const WindowInfo& info = *windowHandle->getInfo();
         if (info.inputConfig.test(WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH)) {
             addWindowTargetLocked(windowHandle, InputTarget::Flags::DISPATCH_AS_OUTSIDE,
                                   /*pointerIds=*/{}, /*firstDownTimeInTarget=*/std::nullopt,
                                   outsideTargets);
         }
     }
-    return {nullptr, {}};
+    return outsideTargets;
 }
 
 std::vector<sp<WindowInfoHandle>> InputDispatcher::findTouchedSpyWindowsAtLocked(
@@ -2308,11 +2328,11 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         // Outside targets should be added upon first dispatched DOWN event. That means, this should
         // be a pointer that would generate ACTION_DOWN, *and* touch should not already be down.
         const bool isStylus = isPointerFromStylus(entry, pointerIndex);
-        auto [newTouchedWindowHandle, outsideTargets] =
+        sp<WindowInfoHandle> newTouchedWindowHandle =
                 findTouchedWindowAtLocked(displayId, x, y, isStylus);
 
         if (isDown) {
-            targets += outsideTargets;
+            targets += findOutsideTargetsLocked(displayId, newTouchedWindowHandle);
         }
         // Handle the case where we did not find a window.
         if (newTouchedWindowHandle == nullptr) {
@@ -2488,7 +2508,8 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             sp<WindowInfoHandle> oldTouchedWindowHandle =
                     tempTouchState.getFirstForegroundWindowHandle();
             LOG_ALWAYS_FATAL_IF(oldTouchedWindowHandle == nullptr);
-            auto [newTouchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus);
+            sp<WindowInfoHandle> newTouchedWindowHandle =
+                    findTouchedWindowAtLocked(displayId, x, y, isStylus);
 
             // Verify targeted injection.
             if (const auto err = verifyTargetedInjection(newTouchedWindowHandle, entry); err) {
@@ -2734,7 +2755,7 @@ void InputDispatcher::finishDragAndDrop(int32_t displayId, float x, float y) {
     // have an explicit reason to support it.
     constexpr bool isStylus = false;
 
-    auto [dropWindow, _] =
+    sp<WindowInfoHandle> dropWindow =
             findTouchedWindowAtLocked(displayId, x, y, isStylus, /*ignoreDragWindow=*/true);
     if (dropWindow) {
         vec2 local = dropWindow->getInfo()->transform.transform(x, y);
@@ -2788,8 +2809,9 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
             // until we have an explicit reason to support it.
             constexpr bool isStylus = false;
 
-            auto [hoverWindowHandle, _] = findTouchedWindowAtLocked(entry.displayId, x, y, isStylus,
-                                                                    /*ignoreDragWindow=*/true);
+            sp<WindowInfoHandle> hoverWindowHandle =
+                    findTouchedWindowAtLocked(entry.displayId, x, y, isStylus,
+                                              /*ignoreDragWindow=*/true);
             // enqueue drag exit if needed.
             if (hoverWindowHandle != mDragState->dragHoverWindowHandle &&
                 !haveSameToken(hoverWindowHandle, mDragState->dragHoverWindowHandle)) {
@@ -3161,12 +3183,10 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
                                                  const std::shared_ptr<Connection>& connection,
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget) {
-    if (ATRACE_ENABLED()) {
-        std::string message =
-                StringPrintf("prepareDispatchCycleLocked(inputChannel=%s, id=0x%" PRIx32 ")",
-                             connection->getInputChannelName().c_str(), eventEntry->id);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("prepareDispatchCycleLocked(inputChannel=%s, id=0x%" PRIx32 ")",
+                            connection->getInputChannelName().c_str(), eventEntry->id);
+    });
     if (DEBUG_DISPATCH_CYCLE) {
         ALOGD("channel '%s' ~ prepareDispatchCycle - flags=%s, "
               "globalScaleFactor=%f, pointerIds=%s %s",
@@ -3231,12 +3251,10 @@ void InputDispatcher::enqueueDispatchEntriesLocked(nsecs_t currentTime,
                                                    const std::shared_ptr<Connection>& connection,
                                                    std::shared_ptr<EventEntry> eventEntry,
                                                    const InputTarget& inputTarget) {
-    if (ATRACE_ENABLED()) {
-        std::string message =
-                StringPrintf("enqueueDispatchEntriesLocked(inputChannel=%s, id=0x%" PRIx32 ")",
-                             connection->getInputChannelName().c_str(), eventEntry->id);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("enqueueDispatchEntriesLocked(inputChannel=%s, id=0x%" PRIx32 ")",
+                            connection->getInputChannelName().c_str(), eventEntry->id);
+    });
     LOG_ALWAYS_FATAL_IF(!inputTarget.flags.any(InputTarget::DISPATCH_MASK),
                         "No dispatch flags are set for %s", eventEntry->getDescription().c_str());
 
@@ -3266,12 +3284,6 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget,
                                                  ftl::Flags<InputTarget::Flags> dispatchMode) {
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("enqueueDispatchEntry(inputChannel=%s, dispatchMode=%s)",
-                                           connection->getInputChannelName().c_str(),
-                                           dispatchMode.string().c_str());
-        ATRACE_NAME(message.c_str());
-    }
     ftl::Flags<InputTarget::Flags> inputTargetFlags = inputTarget.flags;
     if (!inputTargetFlags.any(dispatchMode)) {
         return;
@@ -3558,11 +3570,10 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
 
 void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                                                const std::shared_ptr<Connection>& connection) {
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("startDispatchCycleLocked(inputChannel=%s)",
-                                           connection->getInputChannelName().c_str());
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("startDispatchCycleLocked(inputChannel=%s)",
+                            connection->getInputChannelName().c_str());
+    });
     if (DEBUG_DISPATCH_CYCLE) {
         ALOGD("channel '%s' ~ startDispatchCycle", connection->getInputChannelName().c_str());
     }
@@ -4136,12 +4147,10 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
     }
 
     int32_t newId = mIdGenerator.nextId();
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("Split MotionEvent(id=0x%" PRIx32
-                                           ") to MotionEvent(id=0x%" PRIx32 ").",
-                                           originalMotionEntry.id, newId);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("Split MotionEvent(id=0x%" PRIx32 ") to MotionEvent(id=0x%" PRIx32 ").",
+                            originalMotionEntry.id, newId);
+    });
     std::unique_ptr<MotionEntry> splitMotionEntry =
             std::make_unique<MotionEntry>(newId, originalMotionEntry.eventTime,
                                           originalMotionEntry.deviceId, originalMotionEntry.source,
