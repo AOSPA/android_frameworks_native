@@ -182,7 +182,6 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     qtiUpdateVsyncConfiguration();
     mQtiSFExtnBootComplete = true;
 
-#ifdef FPS_MITIGATION_ENABLED
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
@@ -203,6 +202,11 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         }
     }
 
+    if (mQtiDisplayExtnIntf) {
+        mQtiDisplayExtnIntf->SetSupportedRefreshRates(fps_list);
+    }
+
+#ifdef FPS_MITIGATION_ENABLED
     if (mQtiDisplayExtnIntf) {
         mQtiDisplayExtnIntf->SetFpsMitigationCallback(
                 [this](float newLevelFps) { qtiSetDesiredModeByThermalLevel(newLevelFps); },
@@ -458,6 +462,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateBufferData(bool qtiLatchMediaContent,
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiOnComposerHalRefresh() {
+  mComposerRefreshNotified = true;
+}
+
 /*
  * Methods that call the FeatureManager APIs.
  */
@@ -540,6 +548,11 @@ void QtiSurfaceFlingerExtension::qtiSendInitialFps(uint32_t fps) {
 }
 
 void QtiSurfaceFlingerExtension::qtiNotifyDisplayUpdateImminent() {
+    if(mQtiDisplayExtnIntf && !mComposerRefreshNotified) {
+        mQtiDisplayExtnIntf->NotifyDisplayUpdateImminent();
+    }
+    mComposerRefreshNotified = false;
+
     if (!mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kEarlyWakeUp)) {
         mQtiFlinger->mPowerAdvisor->notifyDisplayUpdateImminentAndCpuReset();
         return;

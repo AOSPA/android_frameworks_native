@@ -139,6 +139,7 @@ public:
     composer::DisplayExtnIntf* qtiGetDisplayExtn() { return mQtiDisplayExtnIntf; }
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
+    void qtiOnComposerHalRefresh() override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -269,6 +270,7 @@ private:
     int mQtiRETid = 0;
     int mQtiSFTid = 0;
     int mQtiUiLayerFrameCount = 180;
+    bool mComposerRefreshNotified = false;
     uint32_t mQtiCurrentFps = 0;
     float mQtiThermalLevelFps = 0;
     float mQtiLastCachedFps = 0;
