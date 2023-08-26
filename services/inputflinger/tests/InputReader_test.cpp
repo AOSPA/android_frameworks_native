@@ -2728,7 +2728,7 @@ TEST_F(InputDeviceTest, NotWakeDevice_DoesNotRemoveExistingWakeFlagFromProcessNo
 
 // A single input device is associated with a specific display. Check that:
 // 1. Device is disabled if the viewport corresponding to the associated display is not found
-// 2. Device is disabled when setEnabled API is called
+// 2. Device is disabled when configure API is called
 TEST_F(InputDeviceTest, Configure_AssignsDisplayPort) {
     mDevice->addMapper<FakeInputMapper>(EVENTHUB_ID, mFakePolicy->getReaderConfiguration(),
                                         AINPUT_SOURCE_TOUCHSCREEN);
@@ -2835,7 +2835,8 @@ TEST_F(InputDeviceTest, DumpDoesNotCrash) {
     mFakeEventHub->addDevice(TEST_EVENTHUB_ID, "Test EventHub device", InputDeviceClass::BATTERY);
 
     InputDevice device(mReader->getContext(), /*id=*/1, /*generation=*/2, /*identifier=*/{});
-    device.addEventHubDevice(TEST_EVENTHUB_ID, mFakePolicy->getReaderConfiguration());
+    auto _ = device.addEventHubDevice(ARBITRARY_TIME, TEST_EVENTHUB_ID,
+                                      mFakePolicy->getReaderConfiguration());
     device.removeEventHubDevice(TEST_EVENTHUB_ID);
     std::string dumpStr, eventHubDevStr;
     device.dump(dumpStr, eventHubDevStr);

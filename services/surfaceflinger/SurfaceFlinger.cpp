@@ -2293,7 +2293,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
     bool newDataLatched = false;
     if (!mLegacyFrontEndEnabled) {
         ATRACE_NAME("DisplayCallbackAndStatsUpdates");
-        applyTransactions(update.transactions, vsyncId);
+        mustComposite |= applyTransactions(update.transactions, vsyncId);
         traverseLegacyLayers([&](Layer* layer) { layer->commitTransaction(); });
         const nsecs_t latchTime = systemTime();
         bool unused = false;
@@ -5173,9 +5173,15 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
         const auto strategy =
             Layer::FrameRate::convertChangeFrameRateStrategy(s.changeFrameRateStrategy);
 
-        if (layer->setFrameRate(
-                Layer::FrameRate(Fps::fromValue(s.frameRate), compatibility, strategy))) {
-          flags |= eTraversalNeeded;
+        if (layer->setFrameRate(Layer::FrameRate::FrameRateVote(Fps::fromValue(s.frameRate),
+                                                                compatibility, strategy))) {
+            flags |= eTraversalNeeded;
+        }
+    }
+    if (what & layer_state_t::eFrameRateCategoryChanged) {
+        const FrameRateCategory category = Layer::FrameRate::convertCategory(s.frameRateCategory);
+        if (layer->setFrameRateCategory(category)) {
+            flags |= eTraversalNeeded;
         }
     }
     if (what & layer_state_t::eFixedTransformHintChanged) {
