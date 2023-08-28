@@ -84,9 +84,6 @@ public:
     // return the frames per second of the layer with the given sequence id.
     float getLayerFramerate(nsecs_t now, int32_t id) const;
 
-    void attachChoreographer(int32_t layerId,
-                             const sp<EventThreadConnection>& choreographerConnection);
-
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }
     /* QTI_END */
@@ -127,10 +124,6 @@ private:
     // validity of each map.
     LayerInfos mActiveLayerInfos GUARDED_BY(mLock);
     LayerInfos mInactiveLayerInfos GUARDED_BY(mLock);
-
-    // Map keyed by layer ID (sequence) to choreographer connections.
-    std::unordered_multimap<int32_t, wp<EventThreadConnection>> mAttachedChoreographers
-            GUARDED_BY(mLock);
 
     uint32_t mDisplayArea = 0;
 

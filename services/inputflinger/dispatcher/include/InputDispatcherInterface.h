@@ -39,7 +39,7 @@ public:
     /* Dumps the state of the input dispatcher.
      *
      * This method may be called on any thread (usually by the input manager). */
-    virtual void dump(std::string& dump) = 0;
+    virtual void dump(std::string& dump) const = 0;
 
     /* Called by the heatbeat to ensures that the dispatcher has not deadlocked. */
     virtual void monitor() = 0;
@@ -86,14 +86,6 @@ public:
      * Return nullptr if the event cannot be verified.
      */
     virtual std::unique_ptr<VerifiedInputEvent> verifyInputEvent(const InputEvent& event) = 0;
-
-    /* Sets the list of input windows per display.
-     *
-     * This method may be called on any thread (usually by the input manager).
-     */
-    virtual void setInputWindows(
-            const std::unordered_map<int32_t, std::vector<sp<gui::WindowInfoHandle>>>&
-                    handlesPerDisplay) = 0;
 
     /* Sets the focused application on the given display.
      *

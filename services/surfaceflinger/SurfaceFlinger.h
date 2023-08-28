@@ -636,7 +636,8 @@ private:
 
     status_t getMaxAcquiredBufferCount(int* buffers) const;
 
-    status_t addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener);
+    status_t addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener,
+                                    gui::WindowInfosListenerInfo* outResult);
     status_t removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) const;
 
@@ -655,9 +656,12 @@ private:
     void onRefreshRateChangedDebug(const RefreshRateChangedDebugData&) override;
 
     // ICompositor overrides:
-    void configure() override;
-    bool commit(const scheduler::FrameTarget&) override;
-    CompositeResult composite(scheduler::FrameTargeter&) override;
+    void configure() override REQUIRES(kMainThreadContext);
+    bool commit(const scheduler::FrameTarget&) override REQUIRES(kMainThreadContext);
+    CompositeResultsPerDisplay composite(PhysicalDisplayId pacesetterId,
+                                         const scheduler::FrameTargeters&) override
+            REQUIRES(kMainThreadContext);
+
     void sample() override;
 
     // ISchedulerCallback overrides:
@@ -665,6 +669,7 @@ private:
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
+    void onChoreographerAttached() override;
 
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
@@ -691,6 +696,8 @@ private:
     bool mRefreshRateOverlayRenderRate = false;
     // Show render rate overlay offseted to the middle of the screen (e.g. for circular displays)
     bool mRefreshRateOverlayShowInMiddle = false;
+    // Show hdr sdr ratio overlay
+    bool mHdrSdrRatioOverlay = false;
 
     void setDesiredActiveMode(display::DisplayModeRequest&&, bool force = false)
             REQUIRES(mStateLock);
@@ -907,6 +914,14 @@ private:
         return findDisplay([id](const auto& display) { return display.getId() == id; });
     }
 
+    std::shared_ptr<compositionengine::Display> getCompositionDisplayLocked(DisplayId id) const
+            REQUIRES(mStateLock) {
+        if (const auto display = getDisplayDeviceLocked(id)) {
+            return display->getCompositionDisplay();
+        }
+        return nullptr;
+    }
+
     // Returns the primary display or (for foldables) the active display, assuming that the inner
     // and outer displays have mutually exclusive power states.
     sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const REQUIRES(mStateLock) {
@@ -980,8 +995,8 @@ private:
     /*
      * Compositing
      */
-    void postComposition(scheduler::FrameTargeter&, nsecs_t presentStartTime)
-            REQUIRES(kMainThreadContext);
+    void postComposition(PhysicalDisplayId pacesetterId, const scheduler::FrameTargeters&,
+                         nsecs_t presentStartTime) REQUIRES(kMainThreadContext);
 
     /*
      * Display management
@@ -1202,6 +1217,7 @@ private:
     bool mUpdateInputInfo = false;
     bool mSomeChildrenChanged;
     bool mForceTransactionDisplayChange = false;
+    bool mUpdateAttachedChoreographer = false;
 
     // Set if LayerMetadata has changed since the last LayerMetadata snapshot.
     bool mLayerMetadataSnapshotNeeded = false;
@@ -1308,15 +1324,13 @@ private:
 
     ui::Dataspace mDefaultCompositionDataspace;
     ui::Dataspace mWideColorGamutCompositionDataspace;
-    ui::Dataspace mColorSpaceAgnosticDataspace;
-    float mDimmingRatio = -1.f;
 
     std::unique_ptr<renderengine::RenderEngine> mRenderEngine;
     std::atomic<int> mNumTrustedPresentationListeners = 0;
 
     std::unique_ptr<compositionengine::CompositionEngine> mCompositionEngine;
 
-    CompositionCoverageFlags mCompositionCoverage;
+    CompositionCoveragePerDisplay mCompositionCoverage;
 
     // mMaxRenderTargetSize is only set once in init() so it doesn't need to be protected by
     // any mutex.
@@ -1356,6 +1370,8 @@ private:
     std::unique_ptr<Hwc2::PowerAdvisor> mPowerAdvisor;
 
     void enableRefreshRateOverlay(bool enable) REQUIRES(mStateLock, kMainThreadContext);
+
+    void enableHdrSdrRatioOverlay(bool enable) REQUIRES(mStateLock, kMainThreadContext);
 
     // Flag used to set override desired display mode from backdoor
     bool mDebugDisplayModeSetByBackdoor = false;
@@ -1401,6 +1417,10 @@ private:
     bool isRefreshRateOverlayEnabled() const REQUIRES(mStateLock) {
         return hasDisplay(
                 [](const auto& display) { return display.isRefreshRateOverlayEnabled(); });
+    }
+    bool isHdrSdrRatioOverlayEnabled() const REQUIRES(mStateLock) {
+        return hasDisplay(
+                [](const auto& display) { return display.isHdrSdrRatioOverlayEnabled(); });
     }
     std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> getLayerSnapshotsForScreenshots(
             std::optional<ui::LayerStack> layerStack, uint32_t uid,
@@ -1448,6 +1468,10 @@ private:
 
     // WindowInfo ids visible during the last commit.
     std::unordered_set<int32_t> mVisibleWindowIds;
+
+    // Mirroring
+    // Map of displayid to mirrorRoot
+    ftl::SmallMap<int64_t, sp<SurfaceControl>, 3> mMirrorMapForDebug;
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
@@ -1557,8 +1581,8 @@ public:
     binder::Status setOverrideFrameRate(int32_t uid, float frameRate) override;
     binder::Status getGpuContextPriority(int32_t* outPriority) override;
     binder::Status getMaxAcquiredBufferCount(int32_t* buffers) override;
-    binder::Status addWindowInfosListener(
-            const sp<gui::IWindowInfosListener>& windowInfosListener) override;
+    binder::Status addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener,
+                                          gui::WindowInfosListenerInfo* outInfo) override;
     binder::Status removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) override;
 

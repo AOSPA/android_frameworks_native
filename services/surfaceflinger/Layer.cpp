@@ -618,8 +618,8 @@ void Layer::prepareBasicGeometryCompositionState() {
     snapshot->localTransformInverse = snapshot->localTransform.inverse();
     snapshot->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
     snapshot->alpha = alpha;
-    snapshot->backgroundBlurRadius = drawingState.backgroundBlurRadius;
-    snapshot->blurRegions = drawingState.blurRegions;
+    snapshot->backgroundBlurRadius = getBackgroundBlurRadius();
+    snapshot->blurRegions = getBlurRegions();
     snapshot->stretchEffect = getStretchEffect();
 }
 
@@ -696,8 +696,8 @@ void Layer::preparePerFrameCompositionState() {
         snapshot->forceClientComposition = true;
     }
     // If there are no visible region changes, we still need to update blur parameters.
-    snapshot->blurRegions = drawingState.blurRegions;
-    snapshot->backgroundBlurRadius = drawingState.backgroundBlurRadius;
+    snapshot->blurRegions = getBlurRegions();
+    snapshot->backgroundBlurRadius = getBackgroundBlurRadius();
 
     // Layer framerate is used in caching decisions.
     // Retrieve it from the scheduler which maintains an instance of LayerHistory, and store it in

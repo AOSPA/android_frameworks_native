@@ -135,14 +135,9 @@ void Display::setColorTransform(const compositionengine::CompositionRefreshArgs&
 }
 
 void Display::setColorProfile(const ColorProfile& colorProfile) {
-    const ui::Dataspace targetDataspace =
-            getDisplayColorProfile()->getTargetDataspace(colorProfile.mode, colorProfile.dataspace,
-                                                         colorProfile.colorSpaceAgnosticDataspace);
-
     if (colorProfile.mode == getState().colorMode &&
         colorProfile.dataspace == getState().dataspace &&
-        colorProfile.renderIntent == getState().renderIntent &&
-        targetDataspace == getState().targetDataspace) {
+        colorProfile.renderIntent == getState().renderIntent) {
         return;
     }
 
@@ -163,7 +158,6 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
     mQtiColorProfile.mode = colorProfile.mode;
     mQtiColorProfile.dataspace = colorProfile.dataspace;
     mQtiColorProfile.renderIntent = colorProfile.renderIntent;
-    mQtiColorProfile.colorSpaceAgnosticDataspace = colorProfile.colorSpaceAgnosticDataspace;
     /* QTI_END */
 
     const auto physicalId = PhysicalDisplayId::tryCast(mId);

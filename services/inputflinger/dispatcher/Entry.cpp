@@ -235,8 +235,8 @@ MotionEntry::MotionEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32
         downTime(downTime),
         pointerCount(pointerCount) {
     for (uint32_t i = 0; i < pointerCount; i++) {
-        this->pointerProperties[i].copyFrom(pointerProperties[i]);
-        this->pointerCoords[i].copyFrom(pointerCoords[i]);
+        this->pointerProperties[i] = pointerProperties[i];
+        this->pointerCoords[i] = pointerCoords[i];
     }
 }
 
@@ -321,7 +321,28 @@ DispatchEntry::DispatchEntry(std::shared_ptr<EventEntry> eventEntry,
         globalScaleFactor(globalScaleFactor),
         deliveryTime(0),
         resolvedAction(0),
-        resolvedFlags(0) {}
+        resolvedFlags(0) {
+    switch (this->eventEntry->type) {
+        case EventEntry::Type::KEY: {
+            const KeyEntry& keyEntry = static_cast<KeyEntry&>(*this->eventEntry);
+            resolvedEventId = keyEntry.id;
+            resolvedAction = keyEntry.action;
+            resolvedFlags = keyEntry.flags;
+
+            break;
+        }
+        case EventEntry::Type::MOTION: {
+            const MotionEntry& motionEntry = static_cast<MotionEntry&>(*this->eventEntry);
+            resolvedEventId = motionEntry.id;
+            resolvedAction = motionEntry.action;
+            resolvedFlags = motionEntry.flags;
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
 
 uint32_t DispatchEntry::nextSeq() {
     // Sequence number 0 is reserved and will never be returned.

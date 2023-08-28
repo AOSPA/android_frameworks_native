@@ -55,6 +55,12 @@
 #include "mock/MockSchedulerCallback.h"
 #include "mock/system/window/MockNativeWindow.h"
 
+#include "Scheduler/VSyncTracker.h"
+#include "Scheduler/VsyncController.h"
+#include "mock/MockVSyncDispatch.h"
+#include "mock/MockVSyncTracker.h"
+#include "mock/MockVsyncController.h"
+
 namespace android {
 
 struct DisplayStatInfo;
@@ -353,7 +359,10 @@ public:
      * Forwarding for functions being tested
      */
 
-    void configure() { mFlinger->configure(); }
+    void configure() {
+        ftl::FakeGuard guard(kMainThreadContext);
+        mFlinger->configure();
+    }
 
     void configureAndCommit() {
         configure();
@@ -362,8 +371,14 @@ public:
 
     void commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expectedVsyncTime,
                 bool composite = false) {
+        ftl::FakeGuard guard(kMainThreadContext);
+
+        const auto displayIdOpt = mScheduler->pacesetterDisplayId();
+        LOG_ALWAYS_FATAL_IF(!displayIdOpt);
+        const auto displayId = *displayIdOpt;
+
         constexpr bool kBackpressureGpuComposition = true;
-        scheduler::FrameTargeter frameTargeter(kBackpressureGpuComposition);
+        scheduler::FrameTargeter frameTargeter(displayId, kBackpressureGpuComposition);
 
         frameTargeter.beginFrame({.frameBeginTime = frameTime,
                                   .vsyncId = vsyncId,
@@ -374,7 +389,7 @@ public:
         mFlinger->commit(frameTargeter.target());
 
         if (composite) {
-            mFlinger->composite(frameTargeter);
+            mFlinger->composite(displayId, ftl::init::map(displayId, &frameTargeter));
         }
     }
 
@@ -624,6 +639,8 @@ public:
 
     auto& mutableMinAcquiredBuffers() { return SurfaceFlinger::minAcquiredBuffers; }
 
+    auto& mutableLayersPendingRemoval() { return mFlinger->mLayersPendingRemoval; }
+
     auto fromHandle(const sp<IBinder>& handle) { return LayerHandle::getLayer(handle); }
 
     ~TestableSurfaceFlinger() {
@@ -634,6 +651,7 @@ public:
         mutableDisplays().clear();
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
+        mFlinger->mLayersPendingRemoval.clear();
         mFlinger->mScheduler.reset();
         mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
         mFlinger->mRenderEngine = std::unique_ptr<renderengine::RenderEngine>();
@@ -908,6 +926,13 @@ public:
         }
 
         sp<DisplayDevice> inject() NO_THREAD_SAFETY_ANALYSIS {
+            return inject(std::make_unique<mock::VsyncController>(),
+                          std::make_shared<mock::VSyncTracker>());
+        }
+
+        sp<DisplayDevice> inject(std::unique_ptr<android::scheduler::VsyncController> controller,
+                                 std::shared_ptr<android::scheduler::VSyncTracker> tracker)
+                NO_THREAD_SAFETY_ANALYSIS {
             const auto displayId = mCreationArgs.compositionDisplay->getDisplayId();
 
             auto& modes = mDisplayModes;
@@ -972,7 +997,9 @@ public:
 
                 if (mFlinger.scheduler() && mRegisterDisplay) {
                     mFlinger.scheduler()->registerDisplay(physicalId,
-                                                          display->holdRefreshRateSelector());
+                                                          display->holdRefreshRateSelector(),
+                                                          std::move(controller),
+                                                          std::move(tracker));
                 }
 
                 display->setActiveMode(activeModeId, fps, fps);

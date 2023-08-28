@@ -29,9 +29,6 @@ class WindowInfoHandle;
 namespace inputdispatcher {
 
 struct TouchState {
-    // source of the device that is current down, others are rejected
-    uint32_t source = 0;
-
     std::vector<TouchedWindow> windows;
 
     TouchState() = default;
@@ -41,27 +38,27 @@ struct TouchState {
     void reset();
     void clearWindowsWithoutPointers();
 
-    std::set<int32_t> getActiveDeviceIds() const;
+    std::set<DeviceId> getActiveDeviceIds() const;
 
-    bool hasTouchingPointers(int32_t device) const;
-    void removeTouchingPointer(int32_t deviceId, int32_t pointerId);
-    void removeTouchingPointerFromWindow(int32_t deviceId, int32_t pointerId,
+    bool hasTouchingPointers(DeviceId deviceId) const;
+    void removeTouchingPointer(DeviceId deviceId, int32_t pointerId);
+    void removeTouchingPointerFromWindow(DeviceId deviceId, int32_t pointerId,
                                          const sp<android::gui::WindowInfoHandle>& windowHandle);
     void addOrUpdateWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                           ftl::Flags<InputTarget::Flags> targetFlags, int32_t deviceId,
+                           ftl::Flags<InputTarget::Flags> targetFlags, DeviceId deviceId,
                            std::bitset<MAX_POINTER_ID + 1> touchingPointerIds,
                            std::optional<nsecs_t> firstDownTimeInTarget = std::nullopt);
     void addHoveringPointerToWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                                    int32_t deviceId, int32_t hoveringPointerId);
-    void removeHoveringPointer(int32_t deviceId, int32_t hoveringPointerId);
+                                    DeviceId deviceId, int32_t hoveringPointerId);
+    void removeHoveringPointer(DeviceId deviceId, int32_t hoveringPointerId);
     void clearHoveringPointers();
 
-    void removeAllPointersForDevice(int32_t deviceId);
+    void removeAllPointersForDevice(DeviceId deviceId);
     void removeWindowByToken(const sp<IBinder>& token);
     void filterNonAsIsTouchWindows();
 
     // Cancel pointers for current set of windows except the window with particular binder token.
-    void cancelPointersForWindowsExcept(int32_t deviceId,
+    void cancelPointersForWindowsExcept(DeviceId deviceId,
                                         std::bitset<MAX_POINTER_ID + 1> pointerIds,
                                         const sp<IBinder>& token);
     // Cancel pointers for current set of non-pilfering windows i.e. windows with isPilferingWindow
@@ -78,7 +75,7 @@ struct TouchState {
     bool hasHoveringPointers() const;
 
     std::set<sp<android::gui::WindowInfoHandle>> getWindowsWithHoveringPointer(
-            int32_t deviceId, int32_t pointerId) const;
+            DeviceId deviceId, int32_t pointerId) const;
     std::string dump() const;
 };
 

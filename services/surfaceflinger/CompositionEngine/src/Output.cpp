@@ -277,22 +277,16 @@ void Output::setColorTransform(const compositionengine::CompositionRefreshArgs& 
 }
 
 void Output::setColorProfile(const ColorProfile& colorProfile) {
-    ui::Dataspace targetDataspace =
-            getDisplayColorProfile()->getTargetDataspace(colorProfile.mode, colorProfile.dataspace,
-                                                         colorProfile.colorSpaceAgnosticDataspace);
-
     auto& outputState = editState();
     if (outputState.colorMode == colorProfile.mode &&
         outputState.dataspace == colorProfile.dataspace &&
-        outputState.renderIntent == colorProfile.renderIntent &&
-        outputState.targetDataspace == targetDataspace) {
+        outputState.renderIntent == colorProfile.renderIntent) {
         return;
     }
 
     outputState.colorMode = colorProfile.mode;
     outputState.dataspace = colorProfile.dataspace;
     outputState.renderIntent = colorProfile.renderIntent;
-    outputState.targetDataspace = targetDataspace;
 
     mRenderSurface->setBufferDataspace(colorProfile.dataspace);
 
@@ -485,15 +479,14 @@ void Output::uncacheBuffers(std::vector<uint64_t> const& bufferIdsToUncache) {
 
 void Output::rebuildLayerStacks(const compositionengine::CompositionRefreshArgs& refreshArgs,
                                 LayerFESet& layerFESet) {
-    ATRACE_CALL();
-    ALOGV(__FUNCTION__);
-
     auto& outputState = editState();
 
     // Do nothing if this output is not enabled or there is no need to perform this update
     if (!outputState.isEnabled || CC_LIKELY(!refreshArgs.updatingOutputGeometryThisFrame)) {
         return;
     }
+    ATRACE_CALL();
+    ALOGV(__FUNCTION__);
 
     // Process the layers to determine visibility and coverage
     compositionengine::Output::CoverageState coverage{layerFESet};
@@ -1028,8 +1021,7 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
         const compositionengine::CompositionRefreshArgs& refreshArgs) const {
     if (refreshArgs.outputColorSetting == OutputColorSetting::kUnmanaged) {
         return ColorProfile{ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
-                            ui::RenderIntent::COLORIMETRIC,
-                            refreshArgs.colorSpaceAgnosticDataspace};
+                            ui::RenderIntent::COLORIMETRIC};
     }
 
     ui::Dataspace hdrDataSpace;
@@ -1082,8 +1074,7 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     mDisplayColorProfile->getBestColorMode(bestDataSpace, intent, &outDataSpace, &outMode,
                                            &outRenderIntent);
 
-    return ColorProfile{outMode, outDataSpace, outRenderIntent,
-                        refreshArgs.colorSpaceAgnosticDataspace};
+    return ColorProfile{outMode, outDataSpace, outRenderIntent};
 }
 
 void Output::beginFrame() {

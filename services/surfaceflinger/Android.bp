@@ -170,6 +170,7 @@ filegroup {
         "FrameTracer/FrameTracer.cpp",
         "FrameTracker.cpp",
         "HdrLayerInfoReporter.cpp",
+        "HdrSdrRatioOverlay.cpp",
         "WindowInfosListenerInvoker.cpp",
         "Layer.cpp",
         "LayerFE.cpp",

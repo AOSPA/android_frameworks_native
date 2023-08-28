@@ -39,7 +39,7 @@ public:
     TestableScheduler(RefreshRateSelectorPtr selectorPtr, ISchedulerCallback& callback)
           : TestableScheduler(std::make_unique<mock::VsyncController>(),
                               std::make_shared<mock::VSyncTracker>(), std::move(selectorPtr),
-                              /* modulatorPtr */ nullptr, callback) {}
+                              sp<VsyncModulator>::make(VsyncConfigSet{}), callback) {}
 
     TestableScheduler(std::unique_ptr<VsyncController> controller,
                       std::shared_ptr<VSyncTracker> tracker, RefreshRateSelectorPtr selectorPtr,
@@ -104,6 +104,7 @@ public:
 
     auto& mutableAppConnectionHandle() { return mAppConnectionHandle; }
     auto& mutableLayerHistory() { return mLayerHistory; }
+    auto& mutableAttachedChoreographers() { return mAttachedChoreographers; }
 
     size_t layerHistorySize() NO_THREAD_SAFETY_ANALYSIS {
         return mLayerHistory.mActiveLayerInfos.size() + mLayerHistory.mInactiveLayerInfos.size();
@@ -168,13 +169,22 @@ public:
                                           : VsyncSchedule::HwVsyncState::Disabled;
     }
 
+    void updateAttachedChoreographers(
+            const surfaceflinger::frontend::LayerHierarchy& layerHierarchy,
+            Fps displayRefreshRate) {
+        Scheduler::updateAttachedChoreographers(layerHierarchy, displayRefreshRate);
+    }
+
     using Scheduler::onHardwareVsyncRequest;
 
 private:
     // ICompositor overrides:
     void configure() override {}
     bool commit(const scheduler::FrameTarget&) override { return false; }
-    CompositeResult composite(scheduler::FrameTargeter&) override { return {}; }
+    CompositeResultsPerDisplay composite(PhysicalDisplayId,
+                                         const scheduler::FrameTargeters&) override {
+        return {};
+    }
     void sample() override {}
 };
 

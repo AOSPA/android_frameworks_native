@@ -104,7 +104,7 @@ private:
     /* QTI_BEGIN */
     bool mQtiIsColorModeChanged = false;
     ColorProfile mQtiColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
-                                     ui::RenderIntent::COLORIMETRIC, ui::Dataspace::UNKNOWN};
+                                     ui::RenderIntent::COLORIMETRIC};
     /* QTI_END */
 };
 

@@ -58,13 +58,14 @@ struct CurveSegment {
 };
 
 const std::vector<CurveSegment> segments = {
-        {10.922, 3.19, 0},
-        {31.750, 4.79, -17.526},
-        {98.044, 7.28, -96.52},
-        {std::numeric_limits<double>::infinity(), 15.04, -857.758},
+        {32.002, 3.19, 0},
+        {52.83, 4.79, -51.254},
+        {119.124, 7.28, -182.737},
+        {std::numeric_limits<double>::infinity(), 15.04, -1107.556},
 };
 
-const std::vector<double> sensitivityFactors = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18};
+const std::vector<double> sensitivityFactors = {1,  2,  4,  6,  7,  8,  9, 10,
+                                                11, 12, 13, 14, 16, 18, 20};
 
 std::vector<double> createAccelerationCurveForSensitivity(int32_t sensitivity,
                                                           size_t propertySize) {
@@ -349,6 +350,7 @@ void TouchpadInputMapper::dump(std::string& dump) {
     dump += addLinePrefix(mPropertyProvider.dump(), INDENT4);
     dump += INDENT3 "Captured event converter:\n";
     dump += addLinePrefix(mCapturedEventConverter.dump(), INDENT4);
+    dump += StringPrintf(INDENT3 "DisplayId: %s\n", toString(mDisplayId).c_str());
 }
 
 std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
@@ -360,13 +362,31 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
     }
 
     if (!changes.any() || changes.test(InputReaderConfiguration::Change::DISPLAY_INFO)) {
-        std::optional<int32_t> displayId = mPointerController->getDisplayId();
+        mDisplayId = ADISPLAY_ID_NONE;
+        if (auto viewport = mDeviceContext.getAssociatedViewport(); viewport) {
+            // This InputDevice is associated with a viewport.
+            // Only generate events for the associated display.
+            const bool mismatchedPointerDisplay =
+                    (viewport->displayId != mPointerController->getDisplayId());
+            if (mismatchedPointerDisplay) {
+                ALOGW("Touchpad \"%s\" associated viewport display does not match pointer "
+                      "controller",
+                      mDeviceContext.getName().c_str());
+            }
+            mDisplayId = mismatchedPointerDisplay ? std::nullopt
+                                                  : std::make_optional(viewport->displayId);
+        } else {
+            // The InputDevice is not associated with a viewport, but it controls the mouse pointer.
+            mDisplayId = mPointerController->getDisplayId();
+        }
+
         ui::Rotation orientation = ui::ROTATION_0;
-        if (displayId.has_value()) {
-            if (auto viewport = config.getDisplayViewportById(*displayId); viewport) {
+        if (mDisplayId.has_value()) {
+            if (auto viewport = config.getDisplayViewportById(*mDisplayId); viewport) {
                 orientation = getInverseRotation(viewport->orientation);
             }
         }
+        mGestureConverter.setDisplayId(mDisplayId);
         mGestureConverter.setOrientation(orientation);
     }
     if (!changes.any() || changes.test(InputReaderConfiguration::Change::TOUCHPAD_SETTINGS)) {
@@ -496,13 +516,19 @@ void TouchpadInputMapper::consumeGesture(const Gesture* gesture) {
 
 std::list<NotifyArgs> TouchpadInputMapper::processGestures(nsecs_t when, nsecs_t readTime) {
     std::list<NotifyArgs> out = {};
-    MetricsAccumulator& metricsAccumulator = MetricsAccumulator::getInstance();
-    for (Gesture& gesture : mGesturesToProcess) {
-        out += mGestureConverter.handleGesture(when, readTime, gesture);
-        metricsAccumulator.processGesture(mMetricsId, gesture);
+    if (mDisplayId) {
+        MetricsAccumulator& metricsAccumulator = MetricsAccumulator::getInstance();
+        for (Gesture& gesture : mGesturesToProcess) {
+            out += mGestureConverter.handleGesture(when, readTime, gesture);
+            metricsAccumulator.processGesture(mMetricsId, gesture);
+        }
     }
     mGesturesToProcess.clear();
     return out;
+}
+
+std::optional<int32_t> TouchpadInputMapper::getAssociatedDisplayId() {
+    return mDisplayId;
 }
 
 } // namespace android

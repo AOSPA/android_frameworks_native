@@ -302,6 +302,19 @@ float RefreshRateSelector::calculateNonExactMatchingLayerScoreLocked(const Layer
 
     if (layer.vote == LayerVoteType::ExplicitExactOrMultiple ||
         layer.vote == LayerVoteType::Heuristic) {
+        using fps_approx_ops::operator<;
+        if (refreshRate < 60_Hz) {
+            const bool favorsAtLeast60 =
+                    std::find_if(mFrameRatesThatFavorsAtLeast60.begin(),
+                                 mFrameRatesThatFavorsAtLeast60.end(), [&](Fps fps) {
+                                     using fps_approx_ops::operator==;
+                                     return fps == layer.desiredRefreshRate;
+                                 }) != mFrameRatesThatFavorsAtLeast60.end();
+            if (favorsAtLeast60) {
+                return 0;
+            }
+        }
+
         const float multiplier = refreshRate.getValue() / layer.desiredRefreshRate.getValue();
 
         // We only want to score this layer as a fractional pair if the content is not
@@ -853,6 +866,8 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
                                       return lhs < rhs && !ScoredFrameRate::scoresEqual(lhs, rhs);
                                   });
         ALOGV("%s: overriding to %s for uid=%d", __func__, to_string(overrideFps).c_str(), uid);
+        ATRACE_FORMAT_INSTANT("%s: overriding to %s for uid=%d", __func__,
+                              to_string(overrideFps).c_str(), uid);
         frameRateOverrides.emplace(uid, overrideFps);
     }
 
@@ -1221,10 +1236,19 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
                     (supportsFrameRateOverride() || ranges.render.includes(mode.getFps()));
         };
 
-        const auto frameRateModes = createFrameRateModes(filterModes, ranges.render);
+        auto frameRateModes = createFrameRateModes(filterModes, ranges.render);
+        if (frameRateModes.empty()) {
+            ALOGW("No matching frame rate modes for %s range. policy: %s", rangeName,
+                  policy->toString().c_str());
+            // TODO(b/292105422): Ideally DisplayManager should not send render ranges smaller than
+            // the min supported. See b/292047939.
+            //  For not we just ignore the render ranges.
+            frameRateModes = createFrameRateModes(filterModes, {});
+        }
         LOG_ALWAYS_FATAL_IF(frameRateModes.empty(),
-                            "No matching frame rate modes for %s range. policy: %s", rangeName,
-                            policy->toString().c_str());
+                            "No matching frame rate modes for %s range even after ignoring the "
+                            "render range. policy: %s",
+                            rangeName, policy->toString().c_str());
 
         const auto stringifyModes = [&] {
             std::string str;

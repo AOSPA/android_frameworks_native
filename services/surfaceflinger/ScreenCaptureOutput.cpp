@@ -24,6 +24,24 @@
 
 namespace android {
 
+namespace {
+
+ui::Size getDisplaySize(ui::Rotation orientation, const Rect& sourceCrop) {
+    if (orientation == ui::Rotation::Rotation90 || orientation == ui::Rotation::Rotation270) {
+        return {sourceCrop.getHeight(), sourceCrop.getWidth()};
+    }
+    return {sourceCrop.getWidth(), sourceCrop.getHeight()};
+}
+
+Rect getOrientedDisplaySpaceRect(ui::Rotation orientation, int reqWidth, int reqHeight) {
+    if (orientation == ui::Rotation::Rotation90 || orientation == ui::Rotation::Rotation270) {
+        return {reqHeight, reqWidth};
+    }
+    return {reqWidth, reqHeight};
+}
+
+} // namespace
+
 std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutputArgs args) {
     std::shared_ptr<ScreenCaptureOutput> output = compositionengine::impl::createOutputTemplated<
             ScreenCaptureOutput, compositionengine::CompositionEngine, const RenderArea&,
@@ -37,6 +55,7 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
     output->setRenderSurface(std::make_unique<ScreenCaptureRenderSurface>(std::move(args.buffer)));
     output->setDisplayBrightness(args.sdrWhitePointNits, args.displayBrightnessNits);
     output->editState().clientTargetBrightness = args.targetBrightness;
+    output->editState().treat170mAsSrgb = args.treat170mAsSrgb;
 
     output->setDisplayColorProfile(std::make_unique<compositionengine::impl::DisplayColorProfile>(
             compositionengine::DisplayColorProfileCreationArgsBuilder()
@@ -45,10 +64,10 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
 
     const Rect& sourceCrop = args.renderArea.getSourceCrop();
     const ui::Rotation orientation = ui::Transform::toRotation(args.renderArea.getRotationFlags());
-    const Rect orientedDisplaySpaceRect{args.renderArea.getReqWidth(),
-                                        args.renderArea.getReqHeight()};
-    output->setProjection(orientation, sourceCrop, orientedDisplaySpaceRect);
-    output->setDisplaySize({sourceCrop.getWidth(), sourceCrop.getHeight()});
+    output->setDisplaySize(getDisplaySize(orientation, sourceCrop));
+    output->setProjection(orientation, sourceCrop,
+                          getOrientedDisplaySpaceRect(orientation, args.renderArea.getReqWidth(),
+                                                      args.renderArea.getReqHeight()));
 
     {
         std::string name = args.regionSampling ? "RegionSampling" : "ScreenCaptureOutput";
