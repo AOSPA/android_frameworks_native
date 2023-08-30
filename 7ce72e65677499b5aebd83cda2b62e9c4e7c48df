@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "d923b62d_e7da2277",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000062
+      },
+      "writtenOn": "2023-08-30T20:33:05Z",
+      "side": 1,
+      "message": "IIRC, Google Maps was the outlier here, and your commit would indeed \"fix\" the unnecessary boost.\n\nHowever, it could be possible that if an app explicitly asks for an higher refresh rate, your commit would now cause it to stuck on lower refresh rate even when touched, although I\u0027m not aware of an app that would result in this.\n\nFrom all the unknowns, I\u0027ve decided to keep Google Maps \"broken\" as it\u0027s the only app that has been reported to unnecessarily use the higher refresh rate.\nThis isn\u0027t much of a practical issue anyways as people don\u0027t spend a lot of time in the Google Maps app scrolling/panning around.\n\nThe power concern in Google Maps would be something along the lines of having the phone mounted on the car\u0027s dash and using it as a turn-by-turn navigation, which would still be covered by previous commit series and correctly use the lower refresh rate to lower power consumption.\n\nThoughts?",
+      "revId": "7ce72e65677499b5aebd83cda2b62e9c4e7c48df",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
