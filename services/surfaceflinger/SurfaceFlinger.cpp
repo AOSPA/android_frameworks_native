@@ -641,9 +641,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("ro.sf.force_hwc_brightness", value, "0");
     mForceHwcBrightness = atoi(value);
 
-    property_get("ro.sf.use_latest_hwc_vsync_period", value, "1");
-    mUseLatestHwcVsyncPeriod = atoi(value);
-
     char property[PROPERTY_VALUE_MAX] = {0};
     if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
         (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
@@ -3694,10 +3691,7 @@ void SurfaceFlinger::updateVsyncSource()
         mScheduler->onScreenReleased(mAppConnectionHandle);
     } else if (mNextVsyncSource && (mActiveVsyncSource == NULL)) {
         mScheduler->onScreenAcquired(mAppConnectionHandle);
-        bool isPrimary = mNextVsyncSource->isPrimary();
-        nsecs_t vsync = (!mUseLatestHwcVsyncPeriod && isPrimary && (mVsyncPeriod > 0))
-                ? mVsyncPeriod : getVsyncPeriodFromHWC();
-        mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(vsync));
+        mScheduler->resyncToHardwareVsync(true, Fps::fromPeriodNsecs(getVsyncPeriodFromHWC()));
     } else if ((mNextVsyncSource != NULL) &&
         (mActiveVsyncSource != NULL)) {
         // Switch vsync to the new source
