@@ -488,7 +488,7 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mIgnoreHdrCameraLayers = ignore_hdr_camera_layers(false);
 
     mLayerLifecycleManagerEnabled =
-            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, false);
+            base::GetBoolProperty("persist.debug.sf.enable_layer_lifecycle_manager"s, true);
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
             base::GetBoolProperty("persist.debug.sf.enable_legacy_frontend"s, false);
 }
@@ -8471,7 +8471,13 @@ bool SurfaceFlinger::commitMirrorDisplays(VsyncId vsyncId) {
         // Set mirror layer's default layer stack to -1 so it doesn't end up rendered on a display
         // accidentally.
         sp<Layer> rootMirrorLayer = LayerHandle::getLayer(mirrorDisplay.rootHandle);
-        rootMirrorLayer->setLayerStack(ui::LayerStack::fromValue(-1));
+        ssize_t idx = mCurrentState.layersSortedByZ.indexOf(rootMirrorLayer);
+        bool ret = rootMirrorLayer->setLayerStack(ui::LayerStack::fromValue(-1));
+        if (idx >= 0 && ret) {
+            mCurrentState.layersSortedByZ.removeAt(idx);
+            mCurrentState.layersSortedByZ.add(rootMirrorLayer);
+        }
+
         for (const auto& layer : mDrawingState.layersSortedByZ) {
             if (layer->getLayerStack() != mirrorDisplay.layerStack ||
                 layer->isInternalDisplayOverlay()) {
