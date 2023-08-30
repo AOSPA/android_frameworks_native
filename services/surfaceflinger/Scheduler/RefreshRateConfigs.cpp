@@ -336,8 +336,9 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
     const auto anchorGroup =
             seamedFocusedLayers > 0 ? mActiveModeIt->second->getGroup() : defaultMode->getGroup();
 
-    // Touch boost whenever possible as we opportunistically enter idle aggressively
-    if (signals.touch) {
+    // Touch boost whenever possible as we opportunistically enter idle aggressively, unless the
+    // app requires a specific refresh rate to be used.
+    if (signals.touch && !explicitExact) {
         const DisplayModePtr& max = getMaxRefreshRateByPolicyLocked(anchorGroup);
         ALOGV("TouchBoost - choose %s", to_string(max->getFps()).c_str());
         localIsIdle = false;
