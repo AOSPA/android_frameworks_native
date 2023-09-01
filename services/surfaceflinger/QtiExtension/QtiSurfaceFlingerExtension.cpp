@@ -23,9 +23,9 @@
 #include <ftl/non_null.h>
 #include "../CompositionEngine/QtiExtension/QtiRenderSurfaceExtension.h"
 
-#include <compositionengine/impl/Display.h>
 #include <Scheduler/VSyncPredictor.h>
 #include <Scheduler/VsyncConfiguration.h>
+#include <compositionengine/impl/Display.h>
 #include <ui/DisplayStatInfo.h>
 #include <vector>
 
@@ -154,8 +154,8 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         }
     }
 
-    // Initialize IDC HIDL only if AIDL is not present
-    if (mQtiDisplayConfigAidl == nullptr) {
+    // Initialize IDC HIDL only if AIDL is not present or on older target
+    if (mQtiDisplayConfigAidl == nullptr || (mQtiFirstApiLevel < __ANDROID_API_U__)) {
         int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
                                                            nullptr, &mQtiDisplayConfigHidl);
         if (ret || !mQtiDisplayConfigHidl) {
@@ -180,6 +180,10 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
 
     mQtiHWComposerExtnIntf = qtiCreateHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
+
+    if (composerHal) {
+        qtiAllowIdleFallback();
+    }
 
     qtiSetVsyncConfiguration(vsyncConfig);
     qtiSetupDisplayExtnFeatures();
@@ -595,14 +599,14 @@ void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
 }
 
 void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display,
-                                                         hal::PowerMode mode) {
+                                                         hal::PowerMode mode, bool isInternal) {
     if (!display) {
         return;
     }
 
     bool earlyWakeUpEnabled =
             mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kEarlyWakeUp);
-    if (earlyWakeUpEnabled && qtiIsInternalDisplay(display)) {
+    if (earlyWakeUpEnabled && isInternal) {
         uint32_t hwcDisplayId;
         if (qtiGetHwcDisplayId(display, &hwcDisplayId)) {
             // Enable/disable Early Wake-up feature on a display based on its Power mode.
@@ -674,7 +678,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
-    auto &scheduler = mQtiFlinger->mScheduler;
+    auto& scheduler = mQtiFlinger->mScheduler;
     const sp<Fence>& fence = scheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
             ? mQtiFlinger->mPreviousPresentFences[0].fence
             : mQtiFlinger->mPreviousPresentFences[1].fence;
@@ -729,7 +733,8 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
         return NAME_NOT_FOUND;
     }
 
-    if (mQtiDisplayConfigAidl != nullptr) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl != nullptr && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         const auto displayId = PhysicalDisplayId::tryCast(display->getId());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
         bool supported = false;
@@ -965,7 +970,8 @@ void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice>
         const auto hwcDisplayId =
                 mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
 
-        if (mQtiDisplayConfigAidl) {
+        // Prioritize IDisplayConfig AIDL on Android U ++
+        if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
             mQtiDisplayConfigAidl->isPowerModeOverrideSupported(static_cast<int32_t>(*hwcDisplayId),
                                                                 &supported);
             goto end;
@@ -985,9 +991,9 @@ end:
     }
 }
 
-
 void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) {
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         ALOGV("IDisplayConfig AIDL: Set layer %lu as mask for display %d", layerId, hwcDisplayId);
         mQtiDisplayConfigAidl->setLayerAsMask(static_cast<int32_t>(hwcDisplayId),
                                               static_cast<int32_t>(layerId));
@@ -996,7 +1002,6 @@ void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64
         mQtiDisplayConfigHidl->SetLayerAsMask(hwcDisplayId, layerId);
     }
 }
-
 
 /*
  * Methods for Virtual, WiFi, and Secure Displays
@@ -1098,45 +1103,54 @@ void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<Display
         return;
     }
 
-    for (const DisplayState& s : displays) {
-        const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
-        if (index < 0) continue;
+    bool createVirtualDisplay = false;
+    int width = 0, height = 0, format = 0;
+    {
+        Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        for (const DisplayState& s : displays) {
+            const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
+            if (index < 0) continue;
 
-        DisplayDeviceState& state =
-                mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
-        const uint32_t what = s.what;
-        if (what & DisplayState::eSurfaceChanged) {
-            if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
-                if (state.isVirtual() && s.surface != nullptr) {
-                    int width = 0;
-                    int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
-                    int height = 0;
-                    status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
-                    int format = 0;
-                    status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
-                    size_t maxVirtualDisplaySize =
-                            mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
+            DisplayDeviceState& state =
+                    mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
+            const uint32_t what = s.what;
+            if (what & DisplayState::eSurfaceChanged) {
+                if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
+                    if (state.isVirtual() && s.surface != nullptr) {
+                        width = 0;
+                        int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
+                        height = 0;
+                        status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
+                        format = 0;
+                        status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
+                        size_t maxVirtualDisplaySize =
+                                mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
 
-                    // Create VDS if IDisplayConfig AIDL/HIDL is present and if
-                    // the resolution is within the maximum allowed dimension for VDS
-                    if (mQtiEnabledIDC && (maxVirtualDisplaySize == 0 ||
-                         ((uint64_t)width <= maxVirtualDisplaySize &&
-                          (uint64_t)height <= maxVirtualDisplaySize))) {
-                        uint64_t usage = 0;
-                        // Replace with native_window_get_consumer_usage ?
-                        status = s.surface->getConsumerUsage(&usage);
-                        ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
-                        if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
-                            qtiCreateVirtualDisplay(width, height, format);
-                            return;
+                        // Create VDS if IDisplayConfig AIDL/HIDL is present and if
+                        // the resolution is within the maximum allowed dimension for VDS
+                        if (mQtiEnabledIDC && (maxVirtualDisplaySize == 0 ||
+                            ((uint64_t)width <= maxVirtualDisplaySize &&
+                            (uint64_t)height <= maxVirtualDisplaySize))) {
+                            uint64_t usage = 0;
+                            // Replace with native_window_get_consumer_usage ?
+                            status = s.surface->getConsumerUsage(&usage);
+                            ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
+                            if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
+                                createVirtualDisplay = true;
+                                return;
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (createVirtualDisplay) {
+        qtiCreateVirtualDisplay(width, height, format);
     }
 }
 
@@ -1146,8 +1160,8 @@ void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, 
         return;
     }
 
-    // Use either IDisplayConfig AIDL or HIDL
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         mQtiDisplayConfigAidl->createVirtualDisplay(width, height, format);
         return;
     }
@@ -1176,6 +1190,12 @@ bool QtiSurfaceFlingerExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffe
     bool protected_buffer = buffer && (buffer->getUsage() & BufferUsage::PROTECTED);
     bool camera_output = buffer && (buffer->getUsage() & BufferUsage::CAMERA_OUTPUT);
     return protected_buffer && camera_output;
+}
+
+bool QtiSurfaceFlingerExtension::qtiIsScreenshot(const std::string& layer_name) {
+    return ((layer_name.find("ScreenshotSurface") != std::string::npos) ||
+            (layer_name.find("RotationLayer") != std::string::npos) ||
+            (layer_name.find("BackColorSurface") != std::string::npos));
 }
 
 /*
@@ -1347,7 +1367,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
         // Get the previous frame fence since AOSP deprecated the previousFrameFence() API
-        auto &scheduler = mQtiFlinger->mScheduler;
+        auto& scheduler = mQtiFlinger->mScheduler;
         auto prevFrameFence = scheduler->vsyncModulator().getVsyncConfig().sfOffset >= 0
                 ? mQtiFlinger->mPreviousPresentFences[0]
                 : mQtiFlinger->mPreviousPresentFences[1];
@@ -1443,6 +1463,58 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
+    bool hasScreenshot = false;
+    uint32_t hwcDisplayId;
+    for (const auto& pair : FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+        const auto& displayDevice = pair.second;
+        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+            qtiIsInternalDisplay(displayDevice)) {
+            continue;
+        }
+
+        mQtiFlinger->mDrawingState.traverse([&](Layer* layer) {
+            if (layer->getLayerStack() == displayDevice->getLayerStack()) {
+                hasScreenshot |= qtiIsScreenshot(layer->getName());
+            }
+        });
+    }
+
+    for (auto& layer : mQtiFlinger->mLayersPendingRefresh) {
+        for (const auto& [token, displayDevice] :
+             FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+            auto display = displayDevice->getCompositionDisplay();
+            if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+                qtiIsInternalDisplay(displayDevice)) {
+                continue;
+            }
+            if (display->includesLayer(layer->getOutputFilter())) {
+                hasScreenshot |= qtiIsScreenshot(layer->getName());
+            }
+        }
+    }
+
+    for (const auto& [token, displayDevice] :
+         FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+            qtiIsInternalDisplay(displayDevice)) {
+            continue;
+        }
+
+        qtiGetHwcDisplayId(displayDevice, &hwcDisplayId);
+        if (hasScreenshot != mQtiHasScreenshot) {
+            // Prioritize IDisplayConfig AIDL on Android U ++
+            if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
+                mQtiDisplayConfigAidl->setDisplayAnimating(hwcDisplayId, hasScreenshot);
+            } else if (mQtiDisplayConfigHidl) {
+                mQtiDisplayConfigHidl->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
+            }
+
+            mQtiHasScreenshot = hasScreenshot;
+        }
+    }
+}
+
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
         sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
         std::shared_ptr<renderengine::ExternalTexture> buffer, BufferData& bufferData) {
@@ -1468,9 +1540,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
 #endif
         smoMo->CollectLayerStats(bufferStats);
 
-        const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
-        auto vsyncTime =
-                schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+        const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+        auto vsyncTime = schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
 
         if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
             qtiScheduleCompositeImmed();
@@ -1514,8 +1585,8 @@ bool QtiSurfaceFlingerExtension::qtiIsFrameEarly(uint32_t layerStackId, int sequ
     return isEarly;
 }
 
-void QtiSurfaceFlingerExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
-        const char* name, int32_t sequence) {
+void QtiSurfaceFlingerExtension::qtiSetVisibleLayerInfo(DisplayId displayId, const char* name,
+                                                        int32_t sequence) {
     auto& visibleLayerInfo = mQtiVisibleLayerInfoMap[displayId];
     visibleLayerInfo.layerName.push_back(name);
     visibleLayerInfo.layerSequence.push_back(sequence);
@@ -1525,7 +1596,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateLayerState(int numLayers) {
     bool mSplitLayerExt = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kSplitLayerExtension);
 
     ConditionalLock lock(mQtiFlinger->mStateLock,
-                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     for (const auto& [token, displayDevice] : mQtiFlinger->mDisplays) {
         auto& VisibleLayerInfo = mQtiVisibleLayerInfoMap[displayDevice->getId()];
 
@@ -1608,13 +1679,13 @@ void QtiSurfaceFlingerExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char *name) {
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char* name) {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement) {
         mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement(name);
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char* name, int count) {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement) {
         mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement(name, count);
     }
@@ -2015,6 +2086,21 @@ void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> dis
     // releases the FrameBuffer that was acquired as part of queueBuffer()
     compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
     mQtiDisplaySizeChanged = false;
+}
+
+void QtiSurfaceFlingerExtension::qtiAllowIdleFallback() {
+    bool allowIdleFallback =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kIdleFallback);
+    if (allowIdleFallback) {
+        /*  TODO: Remove comment as soon as the IDC AIDL changes are in
+                if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
+                    mQtiDisplayConfigAidl->allowIdleFallback();
+                } else if (mQtiDisplayConfigHidl) {
+        */
+        if (mQtiDisplayConfigHidl) {
+            mQtiDisplayConfigHidl->AllowIdleFallback();
+        }
+    }
 }
 
 /*

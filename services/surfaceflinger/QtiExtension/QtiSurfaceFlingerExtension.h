@@ -158,7 +158,8 @@ public:
     void qtiSendInitialFps(uint32_t fps) override;
     void qtiNotifyDisplayUpdateImminent() override;
     void qtiSetContentFps(uint32_t contentFps) override;
-    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode) override;
+    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
+                                 bool isInternal) override;
     void qtiUpdateVsyncConfiguration() override;
 
     /*
@@ -193,6 +194,7 @@ public:
     void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
+    bool qtiIsScreenshot(const std::string& layer_name);
 
     /*
      * Methods for SmoMo Interface
@@ -203,6 +205,7 @@ public:
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
+    void qtiSetDisplayAnimating() override;
     void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
                                  std::shared_ptr<renderengine::ExternalTexture> buffer,
                                  BufferData& bufferData) override;
@@ -247,6 +250,7 @@ public:
     bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
                                      const DisplayDeviceState& drawingState) override;
     void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
+    void qtiAllowIdleFallback();
 
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
@@ -281,6 +285,7 @@ private:
     float mQtiThermalLevelFps = 0;
     float mQtiLastCachedFps = 0;
     bool mQtiAllowThermalFpsChange = false;
+    bool mQtiHasScreenshot = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;

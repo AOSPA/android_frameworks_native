@@ -35,6 +35,7 @@ enum QtiFeature {
     kSplitLayerExtension,
     kVsyncSourceReliableOnDoze,
     kWorkDurations,
+    kIdleFallback,
 };
 
 class QtiSurfaceFlingerExtensionIntf {
@@ -87,7 +88,8 @@ public:
     virtual void qtiSendInitialFps(uint32_t fps) = 0;
     virtual void qtiNotifyDisplayUpdateImminent() = 0;
     virtual void qtiSetContentFps(uint32_t contentFps) = 0;
-    virtual void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode) = 0;
+    virtual void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
+                                         bool isInternal) = 0;
     virtual void qtiUpdateVsyncConfiguration() = 0;
 
     /*
@@ -131,6 +133,7 @@ public:
     virtual void qtiSetRefreshRateTo(int32_t refreshRate) = 0;
     virtual void qtiSyncToDisplayHardware() = 0;
     virtual void qtiUpdateSmomoState() = 0;
+    virtual void qtiSetDisplayAnimating() = 0;
     virtual void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime,
                                          bool isAutoTimestamp,
                                          std::shared_ptr<renderengine::ExternalTexture> buffer,

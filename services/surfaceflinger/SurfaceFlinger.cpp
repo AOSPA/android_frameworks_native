@@ -2830,6 +2830,11 @@ void SurfaceFlinger::updateLayerGeometry() {
         visibleReg.set(layer->getScreenBounds());
         invalidateLayerStack(layer->getOutputFilter(), visibleReg);
     }
+
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayAnimating();
+    /* QTI_END */
+
     mLayersPendingRefresh.clear();
 }
 
@@ -4763,7 +4768,9 @@ status_t SurfaceFlinger::setTransactionState(
     const int64_t postTime = systemTime();
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    if (std::this_thread::get_id() != mMainThreadId) {
+       mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    }
     /* QTI_END */
 
     std::vector<uint64_t> uncacheBufferIds;
@@ -5835,7 +5842,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     }
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode);
+    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode, isInternalDisplay);
     /* QTI_END */
 
     ALOGD("Finished setting power mode %d on display %s", mode, to_string(displayId).c_str());

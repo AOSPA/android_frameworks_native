@@ -58,7 +58,8 @@ public:
     void qtiSendInitialFps(uint32_t fps) override;
     void qtiNotifyDisplayUpdateImminent() override;
     void qtiSetContentFps(uint32_t contentFps) override;
-    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode) override;
+    void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
+                                 bool isInternal) override;
     void qtiUpdateVsyncConfiguration() override;
 
     /*
@@ -102,6 +103,7 @@ public:
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
+    void qtiSetDisplayAnimating() override;
     void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
                                  std::shared_ptr<renderengine::ExternalTexture> buffer,
                                  BufferData& bufferData) override;
