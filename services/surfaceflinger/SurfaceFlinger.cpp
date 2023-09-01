@@ -3989,6 +3989,9 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
 
     if (sysprop::use_content_detection_for_refresh_rate(false)) {
         features |= Feature::kContentDetection;
+        if (base::GetBoolProperty("debug.sf.enable_small_dirty_detection"s, false)) {
+            features |= Feature::kSmallDirtyContentDetection;
+        }
     }
     if (base::GetBoolProperty("debug.sf.show_predicted_vsync"s, false)) {
         features |= Feature::kTracePredictedVsync;
@@ -8197,6 +8200,17 @@ status_t SurfaceFlinger::setOverrideFrameRate(uid_t uid, float frameRate) {
     return NO_ERROR;
 }
 
+status_t SurfaceFlinger::updateSmallAreaDetection(
+        std::vector<std::pair<uid_t, float>>& uidThresholdMappings) {
+    mScheduler->updateSmallAreaDetection(uidThresholdMappings);
+    return NO_ERROR;
+}
+
+status_t SurfaceFlinger::setSmallAreaDetectionThreshold(uid_t uid, float threshold) {
+    mScheduler->setSmallAreaDetectionThreshold(uid, threshold);
+    return NO_ERROR;
+}
+
 void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
     bool setByHwc = getHwComposer().hasCapability(Capability::REFRESH_RATE_CHANGED_CALLBACK_DEBUG);
     for (const auto& [id, display] : mPhysicalDisplays) {
@@ -8334,6 +8348,15 @@ void SurfaceFlinger::sample() {
 void SurfaceFlinger::onActiveDisplaySizeChanged(const DisplayDevice& activeDisplay) {
     mScheduler->onActiveDisplayAreaChanged(activeDisplay.getWidth() * activeDisplay.getHeight());
     getRenderEngine().onActiveDisplaySizeChanged(activeDisplay.getSize());
+
+    // Notify layers to update small dirty flag.
+    if (mScheduler->supportSmallDirtyDetection()) {
+        mCurrentState.traverse([&](Layer* layer) {
+            if (layer->getLayerStack() == activeDisplay.getLayerStack()) {
+                layer->setIsSmallDirty();
+            }
+        });
+    }
 }
 
 sp<DisplayDevice> SurfaceFlinger::getActivatableDisplay() const {
@@ -9518,6 +9541,40 @@ binder::Status SurfaceComposerAIDL::scheduleComposite() {
 binder::Status SurfaceComposerAIDL::scheduleCommit() {
     mFlinger->sfdo_scheduleCommit();
     return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::updateSmallAreaDetection(const std::vector<int32_t>& uids,
+                                                             const std::vector<float>& thresholds) {
+    status_t status;
+    const int c_uid = IPCThreadState::self()->getCallingUid();
+    if (c_uid == AID_ROOT || c_uid == AID_SYSTEM) {
+        if (uids.size() != thresholds.size()) return binderStatusFromStatusT(BAD_VALUE);
+
+        std::vector<std::pair<uid_t, float>> mappings;
+        const size_t size = uids.size();
+        mappings.reserve(size);
+        for (int i = 0; i < size; i++) {
+            auto row = std::make_pair(static_cast<uid_t>(uids[i]), thresholds[i]);
+            mappings.push_back(row);
+        }
+        status = mFlinger->updateSmallAreaDetection(mappings);
+    } else {
+        ALOGE("updateSmallAreaDetection() permission denied for uid: %d", c_uid);
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::setSmallAreaDetectionThreshold(int32_t uid, float threshold) {
+    status_t status;
+    const int c_uid = IPCThreadState::self()->getCallingUid();
+    if (c_uid == AID_ROOT || c_uid == AID_SYSTEM) {
+        status = mFlinger->setSmallAreaDetectionThreshold(uid, threshold);
+    } else {
+        ALOGE("setSmallAreaDetectionThreshold() permission denied for uid: %d", c_uid);
+        status = PERMISSION_DENIED;
+    }
+    return binderStatusFromStatusT(status);
 }
 
 binder::Status SurfaceComposerAIDL::getGpuContextPriority(int32_t* outPriority) {
