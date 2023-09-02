@@ -644,6 +644,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("ro.sf.force_handle_idle_timeout", value, "0");
     mForceHandleIdleTimeout = atoi(value);
 
+    property_get("ro.sf.defer_refresh_rate_when_off", value, "0");
+    mDeferRefreshRateWhenOff = atoi(value);
+
     char property[PROPERTY_VALUE_MAX] = {0};
     if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
         (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
@@ -1564,6 +1567,12 @@ void SurfaceFlinger::setDesiredActiveMode(const ActiveModeInfo& info, bool force
     }
 
     if (isFpsDeferNeeded(info)) {
+        return;
+    }
+
+    if (mDeferRefreshRateWhenOff && display->getPowerMode() == hal::PowerMode::OFF) {
+        ALOGI("%s: deferring because display is powered off", __func__);
+        mLastActiveModeInfo = info;
         return;
     }
 
@@ -6311,6 +6320,11 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
             ALOGW("Couldn't set SCHED_FIFO on display on: %s\n", strerror(errno));
         }
         getHwComposer().setPowerMode(displayId, mode);
+        if (mLastActiveModeInfo) {
+            ALOGI("Deferred active mode change pending, applying now");
+            setDesiredActiveMode(mLastActiveModeInfo.value());
+            mLastActiveModeInfo = std::nullopt;
+        }
         if (isDummyDisplay) {
             if (isDisplayActiveLocked(display) && mode != hal::PowerMode::DOZE_SUSPEND) {
                 setHWCVsyncEnabled(displayId, mHWCVsyncPendingState);
