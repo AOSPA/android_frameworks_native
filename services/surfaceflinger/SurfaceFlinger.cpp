@@ -641,6 +641,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("ro.sf.force_hwc_brightness", value, "0");
     mForceHwcBrightness = atoi(value);
 
+    property_get("ro.sf.force_handle_idle_timeout", value, "0");
+    mForceHandleIdleTimeout = atoi(value);
+
     char property[PROPERTY_VALUE_MAX] = {0};
     if((property_get("vendor.display.vsync_reliable_on_doze", property, "0") > 0) &&
         (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
@@ -9578,6 +9581,10 @@ void SurfaceFlinger::setEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal:
 }
 
 void SurfaceFlinger::setupIdleTimeoutHandling(uint32_t displayId) {
+    if (mForceHandleIdleTimeout) {
+        mScheduler->handleIdleTimeout(true);
+        return;
+    }
 #ifdef SMART_DISPLAY_CONFIG
     if (mDisplayExtnIntf) {
         bool isSmartConfig = mDisplayExtnIntf->IsSmartDisplayConfig(displayId);
