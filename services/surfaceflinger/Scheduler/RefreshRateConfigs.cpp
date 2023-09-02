@@ -940,7 +940,8 @@ void RefreshRateConfigs::constructAvailableRefreshRates() {
         for (const auto modeIt : modes) {
             if (isApproxEqual(modeIt->second->getFps(), 60_Hz)) {
                 mIdleRefreshRateModeIt = modeIt;
-                ALOGV("idleRefreshRate set!");
+                ALOGV("idleRefreshRate set to mode %d!", (int32_t) modeIt->second->getId());
+                break;
             }
         }
 
