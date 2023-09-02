@@ -1563,6 +1563,9 @@ private:
     bool mForceHwcBrightness = false;
     bool mForceHandleIdleTimeout = false;
 
+    bool mDeferRefreshRateWhenOff = false;
+    std::optional<ActiveModeInfo> mLastActiveModeInfo GUARDED_BY(mStateLock);
+
     sp<RegionSamplingThread> mRegionSamplingThread;
     sp<FpsReporter> mFpsReporter;
     sp<TunnelModeEnabledReporter> mTunnelModeEnabledReporter;
