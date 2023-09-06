@@ -34,6 +34,24 @@
       "parentUuid": "d923b62d_e7da2277",
       "revId": "7ce72e65677499b5aebd83cda2b62e9c4e7c48df",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "5fd188f7_d705a6b8",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000499
+      },
+      "writtenOn": "2023-09-06T04:10:49Z",
+      "side": 1,
+      "message": "Sorry for the late response.\n\u003e However, it could be possible that if an app explicitly asks for an higher refresh rate, your commit would now cause it to stuck on lower refresh rate even when touched\n\nThis patch just blocks touch boosting so that shouldn\u0027t be the case. Besides, wouldn\u0027t the refresh rate be reevaluated when an app requests a different refresh rate?",
+      "parentUuid": "c5580da9_768d13b7",
+      "revId": "7ce72e65677499b5aebd83cda2b62e9c4e7c48df",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
