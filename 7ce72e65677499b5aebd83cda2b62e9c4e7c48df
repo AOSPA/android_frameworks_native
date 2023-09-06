@@ -52,6 +52,24 @@
       "parentUuid": "c5580da9_768d13b7",
       "revId": "7ce72e65677499b5aebd83cda2b62e9c4e7c48df",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "a2f0c529_e556a472",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000499
+      },
+      "writtenOn": "2023-09-06T04:14:43Z",
+      "side": 1,
+      "message": "Also, one thing I found is that Google Maps becomes very stuttery on AOSP with your vrr patches when this patch is not applied. I know AOSPA isn\u0027t based on AOSP, but this is just more evidence that the current behavior isn\u0027t standard and is prone to breakage.",
+      "parentUuid": "5fd188f7_d705a6b8",
+      "revId": "7ce72e65677499b5aebd83cda2b62e9c4e7c48df",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
