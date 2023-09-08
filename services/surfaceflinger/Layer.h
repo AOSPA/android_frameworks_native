@@ -433,11 +433,9 @@ public:
     bool needsFilteringForScreenshots(const DisplayDevice*, const ui::Transform&) const;
 
     // from graphics API
-    ui::Dataspace translateDataspace(ui::Dataspace dataspace);
+    static ui::Dataspace translateDataspace(ui::Dataspace dataspace);
     void updateCloneBufferInfo();
     uint64_t mPreviousFrameNumber = 0;
-
-    bool isHdrY410() const;
 
     /*
      * called after composition.
@@ -918,6 +916,7 @@ public:
     void setTransformHint(std::optional<ui::Transform::RotationFlags> transformHint) {
         mTransformHint = transformHint;
     }
+    void commitTransaction();
     // Keeps track of the previously presented layer stacks. This is used to get
     // the release fences from the correct displays when we release the last buffer
     // from the layer.
@@ -943,7 +942,6 @@ protected:
     void preparePerFrameCompositionState();
     void preparePerFrameBufferCompositionState();
     void preparePerFrameEffectsCompositionState();
-    virtual void commitTransaction(State& stateToCommit);
     void gatherBufferInfo();
     void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&);
 

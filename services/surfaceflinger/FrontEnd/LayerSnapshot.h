@@ -72,14 +72,13 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     Rect transformedBoundsWithoutTransparentRegion;
     renderengine::ShadowSettings shadowSettings;
     bool premultipliedAlpha;
-    bool isHdrY410;
     ui::Transform parentTransform;
     Rect bufferSize;
     Rect croppedBufferSize;
     std::shared_ptr<renderengine::ExternalTexture> externalTexture;
     gui::LayerMetadata layerMetadata;
     gui::LayerMetadata relativeLayerMetadata;
-    bool hasReadyFrame;
+    bool hasReadyFrame; // used in post composition to check if there is another frame ready
     ui::Transform localTransformInverse;
     gui::WindowInfo inputInfo;
     ui::Transform localTransform;

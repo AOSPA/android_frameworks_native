@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include <ui/GraphicTypes.h>
+#include <gtest/gtest.h>
+#include <input/InputVerifier.h>
+#include <string>
 
 namespace android {
 
-inline bool isHdrDataspace(ui::Dataspace dataspace) {
-    const auto transfer = dataspace & HAL_DATASPACE_TRANSFER_MASK;
-
-    return transfer == HAL_DATASPACE_TRANSFER_ST2084 || transfer == HAL_DATASPACE_TRANSFER_HLG;
+TEST(InputVerifierTest, CreationWithInvalidUtfStringDoesNotCrash) {
+    constexpr char bytes[] = {static_cast<char>(0xC0), static_cast<char>(0x80)};
+    const std::string name(bytes, sizeof(bytes));
+    InputVerifier verifier(name);
 }
 
 } // namespace android

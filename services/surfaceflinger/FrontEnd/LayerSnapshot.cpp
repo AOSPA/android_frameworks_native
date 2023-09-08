@@ -19,6 +19,7 @@
 #define LOG_TAG "SurfaceFlinger"
 
 #include "LayerSnapshot.h"
+#include "Layer.h"
 
 namespace android::surfaceflinger::frontend {
 
@@ -345,10 +346,9 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     clientChanges = requested.what;
     changes = requested.changes;
     contentDirty = requested.what & layer_state_t::CONTENT_DIRTY;
-    // TODO(b/238781169) scope down the changes to only buffer updates.
-    hasReadyFrame = requested.hasReadyFrame();
+    hasReadyFrame = requested.autoRefresh;
     sidebandStreamHasFrame = requested.hasSidebandStreamFrame();
-    updateSurfaceDamage(requested, hasReadyFrame, forceFullDamage, surfaceDamage);
+    updateSurfaceDamage(requested, requested.hasReadyFrame(), forceFullDamage, surfaceDamage);
 
     if (forceUpdate || requested.what & layer_state_t::eTransparentRegionChanged) {
         transparentRegionHint = requested.transparentRegion;
@@ -364,7 +364,7 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
         geomBufferUsesDisplayInverseTransform = requested.transformToDisplayInverse;
     }
     if (forceUpdate || requested.what & layer_state_t::eDataspaceChanged) {
-        dataspace = requested.dataspace;
+        dataspace = Layer::translateDataspace(requested.dataspace);
     }
     if (forceUpdate || requested.what & layer_state_t::eExtendedRangeBrightnessChanged) {
         currentHdrSdrRatio = requested.currentHdrSdrRatio;
@@ -469,19 +469,9 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     if (forceUpdate ||
         requested.what &
                 (layer_state_t::eBufferChanged | layer_state_t::eDataspaceChanged |
-                 layer_state_t::eApiChanged)) {
-        isHdrY410 = requested.dataspace == ui::Dataspace::BT2020_ITU_PQ &&
-                requested.api == NATIVE_WINDOW_API_MEDIA &&
-                requested.bufferData->getPixelFormat() == HAL_PIXEL_FORMAT_RGBA_1010102;
-    }
-
-    if (forceUpdate ||
-        requested.what &
-                (layer_state_t::eBufferChanged | layer_state_t::eDataspaceChanged |
                  layer_state_t::eApiChanged | layer_state_t::eShadowRadiusChanged |
                  layer_state_t::eBlurRegionsChanged | layer_state_t::eStretchChanged)) {
-        forceClientComposition = isHdrY410 || shadowSettings.length > 0 ||
-                requested.blurRegions.size() > 0 || stretchEffect.hasEffect();
+        forceClientComposition = shadowSettings.length > 0 || stretchEffect.hasEffect();
     }
 
     if (forceUpdate ||

@@ -250,9 +250,6 @@ public:
     static uint32_t maxGraphicsWidth;
     static uint32_t maxGraphicsHeight;
 
-    // Indicate if device wants color management on its display.
-    static const constexpr bool useColorManagement = true;
-
     static bool useContextPriority;
 
     // The data space and pixel format that SurfaceFlinger expects hardware composer
@@ -554,9 +551,9 @@ private:
             EventRegistrationFlags eventRegistration = {},
             const sp<IBinder>& layerHandle = nullptr);
 
-    status_t captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
-    status_t captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
-    status_t captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
+    void captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
+    void captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
+    void captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats);
     status_t getDisplayState(const sp<IBinder>& displayToken, ui::DisplayState*)
@@ -586,7 +583,6 @@ private:
                               const std::vector<ui::Hdr>& hdrTypes);
     status_t onPullAtom(const int32_t atomId, std::vector<uint8_t>* pulledData, bool* success);
     status_t getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers);
-    status_t getColorManagement(bool* outGetColorManagement) const;
     status_t getCompositionPreference(ui::Dataspace* outDataspace, ui::PixelFormat* outPixelFormat,
                                       ui::Dataspace* outWideColorGamutDataspace,
                                       ui::PixelFormat* outWideColorGamutPixelFormat) const;
@@ -641,6 +637,9 @@ private:
     status_t removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) const;
 
+    status_t getStalledTransactionInfo(
+            int pid, std::optional<TransactionHandler::StalledTransactionInfo>& result);
+
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
 
@@ -657,7 +656,8 @@ private:
 
     // ICompositor overrides:
     void configure() override REQUIRES(kMainThreadContext);
-    bool commit(const scheduler::FrameTarget&) override REQUIRES(kMainThreadContext);
+    bool commit(PhysicalDisplayId pacesetterId, const scheduler::FrameTargets&) override
+            REQUIRES(kMainThreadContext);
     CompositeResultsPerDisplay composite(PhysicalDisplayId pacesetterId,
                                          const scheduler::FrameTargeters&) override
             REQUIRES(kMainThreadContext);
@@ -703,11 +703,10 @@ private:
             REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId);
-    // Sets the active mode and a new refresh rate in SF.
-    void updateInternalStateWithChangedMode() REQUIRES(mStateLock, kMainThreadContext);
-    // Calls to setActiveMode on the main thread if there is a pending mode change
-    // that needs to be applied.
-    void setActiveModeInHwcIfNeeded() REQUIRES(mStateLock, kMainThreadContext);
+
+    void initiateDisplayModeChanges() REQUIRES(mStateLock, kMainThreadContext);
+    void finalizeDisplayModeChange(DisplayDevice&) REQUIRES(mStateLock, kMainThreadContext);
+
     void clearDesiredActiveModeState(const sp<DisplayDevice>&) REQUIRES(mStateLock);
     // Called when active mode is no longer is progress
     void desiredActiveModeChangeDone(const sp<DisplayDevice>&) REQUIRES(mStateLock);
@@ -855,10 +854,9 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
-    ftl::SharedFuture<FenceResult> captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction,
-                                                       ui::Size bufferSize, ui::PixelFormat,
-                                                       bool allowProtected, bool grayscale,
-                                                       const sp<IScreenCaptureListener>&);
+    void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
+                             ui::PixelFormat, bool allowProtected, bool grayscale,
+                             const sp<IScreenCaptureListener>&);
     ftl::SharedFuture<FenceResult> captureScreenCommon(
             RenderAreaFuture, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
@@ -961,7 +959,8 @@ private:
     template <typename Predicate>
     sp<DisplayDevice> findDisplay(Predicate p) const REQUIRES(mStateLock) {
         const auto it = std::find_if(mDisplays.begin(), mDisplays.end(),
-                                     [&](const auto& pair) { return p(*pair.second); });
+                                     [&](const auto& pair)
+                                             REQUIRES(mStateLock) { return p(*pair.second); });
 
         return it == mDisplays.end() ? nullptr : it->second;
     }
@@ -1032,7 +1031,9 @@ private:
                                const DisplayDeviceState& drawingState)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void dispatchDisplayHotplugEvent(PhysicalDisplayId displayId, bool connected);
+    void dispatchDisplayHotplugEvent(PhysicalDisplayId, bool connected);
+    void dispatchDisplayModeChangeEvent(PhysicalDisplayId, const scheduler::FrameRateMode&)
+            REQUIRES(mStateLock);
 
     /*
      * VSYNC
@@ -1073,6 +1074,9 @@ private:
     // Virtual display lifecycle for ID generation and HAL allocation.
     VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat) REQUIRES(mStateLock);
     void releaseVirtualDisplay(VirtualDisplayId);
+
+    // Returns a display other than `mActiveDisplayId` that can be activated, if any.
+    sp<DisplayDevice> getActivatableDisplay() const REQUIRES(mStateLock, kMainThreadContext);
 
     void onActiveDisplayChangedLocked(const DisplayDevice* inactiveDisplayPtr,
                                       const DisplayDevice& activeDisplay)
@@ -1227,6 +1231,8 @@ private:
     // latched.
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithQueuedFrames;
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithBuffersRemoved;
+    std::unordered_set<uint32_t> mLayersIdsWithQueuedFrames;
+
     // Tracks layers that need to update a display's dirty region.
     std::vector<sp<Layer>> mLayersPendingRefresh;
     // Sorted list of layers that were composed during previous frame. This is used to
@@ -1350,9 +1356,6 @@ private:
 
     std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
-
-    // below flags are set by main thread only
-    bool mSetActiveModePending = false;
 
     bool mLumaSampling = true;
     sp<RegionSamplingThread> mRegionSamplingThread;
@@ -1533,7 +1536,6 @@ public:
                                     const std::vector<int32_t>& hdrTypes) override;
     binder::Status onPullAtom(int32_t atomId, gui::PullAtomData* outPullData) override;
     binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) override;
-    binder::Status getColorManagement(bool* outGetColorManagement) override;
     binder::Status getCompositionPreference(gui::CompositionPreference* outPref) override;
     binder::Status getDisplayedContentSamplingAttributes(
             const sp<IBinder>& display, gui::ContentSamplingAttributes* outAttrs) override;
@@ -1585,6 +1587,8 @@ public:
                                           gui::WindowInfosListenerInfo* outInfo) override;
     binder::Status removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) override;
+    binder::Status getStalledTransactionInfo(int pid,
+                                             std::optional<gui::StalledTransactionInfo>* outInfo);
 
 private:
     static const constexpr bool kUsePermissionCache = true;

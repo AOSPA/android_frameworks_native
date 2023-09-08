@@ -20,7 +20,6 @@
 
 #include "SkiaRenderEngine.h"
 
-#include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #include <GrBackendSemaphore.h>
 #include <GrContextOptions.h>
 #include <SkBlendMode.h>
@@ -55,13 +54,14 @@
 #include <android-base/stringprintf.h>
 #include <gui/FenceMonitor.h>
 #include <gui/TraceUtils.h>
+#include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #include <pthread.h>
 #include <src/core/SkTraceEventCommon.h>
 #include <sync/sync.h>
 #include <ui/BlurRegion.h>
-#include <ui/DataspaceUtils.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
+#include <ui/HdrRenderTypeUtils.h>
 #include <utils/Trace.h>
 
 #include <cmath>
@@ -269,10 +269,8 @@ void SkiaRenderEngine::setEnableTracing(bool tracingEnabled) {
 }
 
 SkiaRenderEngine::SkiaRenderEngine(RenderEngineType type, PixelFormat pixelFormat,
-                                   bool useColorManagement, bool supportsBackgroundBlur)
-      : RenderEngine(type),
-        mDefaultPixelFormat(pixelFormat),
-        mUseColorManagement(useColorManagement) {
+                                   bool supportsBackgroundBlur)
+      : RenderEngine(type), mDefaultPixelFormat(pixelFormat) {
     if (supportsBackgroundBlur) {
         ALOGD("Background Blurs Enabled");
         mBlurFilter = new KawaseBlurFilter();
@@ -511,7 +509,8 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         auto effect =
                 shaders::LinearEffect{.inputDataspace = parameters.layer.sourceDataspace,
                                       .outputDataspace = parameters.outputDataSpace,
-                                      .undoPremultipliedAlpha = parameters.undoPremultipliedAlpha};
+                                      .undoPremultipliedAlpha = parameters.undoPremultipliedAlpha,
+                                      .fakeOutputDataspace = parameters.fakeOutputDataspace};
 
         auto effectIter = mRuntimeEffects.find(effect);
         sk_sp<SkRuntimeEffect> runtimeEffect = nullptr;
@@ -907,12 +906,14 @@ void SkiaRenderEngine::drawLayersInternal(
                 (display.outputDataspace & ui::Dataspace::TRANSFER_MASK) ==
                         static_cast<int32_t>(ui::Dataspace::TRANSFER_SRGB);
 
-        const ui::Dataspace runtimeEffectDataspace = !dimInLinearSpace && isExtendedHdr
+        const bool useFakeOutputDataspaceForRuntimeEffect = !dimInLinearSpace && isExtendedHdr;
+
+        const ui::Dataspace fakeDataspace = useFakeOutputDataspaceForRuntimeEffect
                 ? static_cast<ui::Dataspace>(
                           (display.outputDataspace & ui::Dataspace::STANDARD_MASK) |
                           ui::Dataspace::TRANSFER_GAMMA2_2 |
                           (display.outputDataspace & ui::Dataspace::RANGE_MASK))
-                : display.outputDataspace;
+                : ui::Dataspace::UNKNOWN;
 
         // If the input dataspace is range extended, the output dataspace transfer is sRGB
         // and dimmingStage is GAMMA_OETF, dim in linear space instead, and
@@ -923,8 +924,7 @@ void SkiaRenderEngine::drawLayersInternal(
         // luminance in linear space, which color pipelines request GAMMA_OETF break
         // without a gamma 2.2 fixup.
         const bool requiresLinearEffect = layer.colorTransform != mat4() ||
-                (mUseColorManagement &&
-                 needsToneMapping(layer.sourceDataspace, display.outputDataspace)) ||
+                (needsToneMapping(layer.sourceDataspace, display.outputDataspace)) ||
                 (dimInLinearSpace && !equalsWithinMargin(1.f, layerDimmingRatio)) ||
                 (!dimInLinearSpace && isExtendedHdr);
 
@@ -935,10 +935,7 @@ void SkiaRenderEngine::drawLayersInternal(
             continue;
         }
 
-        // If color management is disabled, then mark the source image with the same colorspace as
-        // the destination surface so that Skia's color management is a no-op.
-        const ui::Dataspace layerDataspace =
-                !mUseColorManagement ? display.outputDataspace : layer.sourceDataspace;
+        const ui::Dataspace layerDataspace = layer.sourceDataspace;
 
         SkPaint paint;
         if (layer.source.buffer.buffer) {
@@ -1019,7 +1016,8 @@ void SkiaRenderEngine::drawLayersInternal(
                                                   .layerDimmingRatio = dimInLinearSpace
                                                           ? layerDimmingRatio
                                                           : 1.f,
-                                                  .outputDataSpace = runtimeEffectDataspace}));
+                                                  .outputDataSpace = display.outputDataspace,
+                                                  .fakeOutputDataspace = fakeDataspace}));
 
             // Turn on dithering when dimming beyond this (arbitrary) threshold...
             static constexpr float kDimmingThreshold = 0.2f;
@@ -1027,7 +1025,10 @@ void SkiaRenderEngine::drawLayersInternal(
             // Most HDR standards require at least 10-bits of color depth for source content, so we
             // can just extract the transfer function rather than dig into precise gralloc layout.
             // Furthermore, we can assume that the only 8-bit target we support is RGBA8888.
-            const bool requiresDownsample = isHdrDataspace(layer.sourceDataspace) &&
+            const bool requiresDownsample =
+                    getHdrRenderType(layer.sourceDataspace,
+                                     std::optional<ui::PixelFormat>(static_cast<ui::PixelFormat>(
+                                             buffer->getPixelFormat()))) != HdrRenderType::SDR &&
                     buffer->getPixelFormat() == PIXEL_FORMAT_RGBA_8888;
             if (layerDimmingRatio <= kDimmingThreshold || requiresDownsample) {
                 paint.setDither(true);
@@ -1083,7 +1084,8 @@ void SkiaRenderEngine::drawLayersInternal(
                                                   .undoPremultipliedAlpha = false,
                                                   .requiresLinearEffect = requiresLinearEffect,
                                                   .layerDimmingRatio = layerDimmingRatio,
-                                                  .outputDataSpace = runtimeEffectDataspace}));
+                                                  .outputDataSpace = display.outputDataspace,
+                                                  .fakeOutputDataspace = fakeDataspace}));
         }
 
         if (layer.disableBlending) {

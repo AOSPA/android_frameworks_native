@@ -183,7 +183,6 @@ private:
     void setupCornerRadiusCropSize(float width, float height);
 
     // HDR and color management related functions and state
-    void setSourceY410BT2020(bool enable);
     void setSourceDataSpace(ui::Dataspace source);
     void setOutputDataSpace(ui::Dataspace dataspace);
     void setDisplayMaxLuminance(const float maxLuminance);
@@ -236,10 +235,6 @@ private:
 
     // Current output dataspace of the render engine
     ui::Dataspace mOutputDataSpace = ui::Dataspace::UNKNOWN;
-
-    // Whether device supports color management, currently color management
-    // supports sRGB, DisplayP3 color spaces.
-    const bool mUseColorManagement = false;
 
     // Whether only shaders performing tone mapping from HDR to SDR will be generated on
     // primeCache().
