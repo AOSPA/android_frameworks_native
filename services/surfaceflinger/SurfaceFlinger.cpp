@@ -494,7 +494,10 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mLegacyFrontEndEnabled = !mLayerLifecycleManagerEnabled ||
             base::GetBoolProperty("persist.debug.sf.enable_legacy_frontend"s, false);
 
+    // Trunk-Stable flags
     mMiscFlagValue = flags::misc1();
+    mConnectedDisplayFlagValue = flags::connected_display();
+    mMisc2FlagEarlyBootValue = flags::late_boot_misc2();
 }
 
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
@@ -738,6 +741,8 @@ void SurfaceFlinger::bootFinished() {
     }));
 
     LOG_ALWAYS_FATAL_IF(flags::misc1() != mMiscFlagValue, "misc1 flag is not boot stable!");
+
+    mMisc2FlagLateBootValue = flags::late_boot_misc2();
 }
 
 static std::optional<renderengine::RenderEngine::RenderEngineType>
@@ -5821,6 +5826,7 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                 {"--timestats"s, protoDumper(&SurfaceFlinger::dumpTimeStats)},
                 {"--vsync"s, dumper(&SurfaceFlinger::dumpVsync)},
                 {"--wide-color"s, dumper(&SurfaceFlinger::dumpWideColorInfo)},
+                {"--frontend"s, dumper(&SurfaceFlinger::dumpFrontEnd)},
         };
 
         const auto flag = args.empty() ? ""s : std::string(String8(args[0]));
@@ -6130,6 +6136,38 @@ void SurfaceFlinger::dumpHdrInfo(std::string& result) const {
     }
 }
 
+void SurfaceFlinger::dumpFrontEnd(std::string& result) {
+    mScheduler
+            ->schedule([&]() FTL_FAKE_GUARD(mStateLock) FTL_FAKE_GUARD(kMainThreadContext) {
+                std::ostringstream out;
+                out << "\nComposition list\n";
+                ui::LayerStack lastPrintedLayerStackHeader = ui::INVALID_LAYER_STACK;
+                for (const auto& snapshot : mLayerSnapshotBuilder.getSnapshots()) {
+                    if (lastPrintedLayerStackHeader != snapshot->outputFilter.layerStack) {
+                        lastPrintedLayerStackHeader = snapshot->outputFilter.layerStack;
+                        out << "LayerStack=" << lastPrintedLayerStackHeader.id << "\n";
+                    }
+                    out << "  " << *snapshot << "\n";
+                }
+
+                out << "\nInput list\n";
+                lastPrintedLayerStackHeader = ui::INVALID_LAYER_STACK;
+                mLayerSnapshotBuilder.forEachInputSnapshot(
+                        [&](const frontend::LayerSnapshot& snapshot) {
+                            if (lastPrintedLayerStackHeader != snapshot.outputFilter.layerStack) {
+                                lastPrintedLayerStackHeader = snapshot.outputFilter.layerStack;
+                                out << "LayerStack=" << lastPrintedLayerStackHeader.id << "\n";
+                            }
+                            out << "  " << snapshot << "\n";
+                        });
+
+                out << "\nLayer Hierarchy\n"
+                    << mLayerHierarchyBuilder.getHierarchy().dump() << "\n\n";
+                result.append(out.str());
+            })
+            .get();
+}
+
 perfetto::protos::LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
     std::unordered_set<uint64_t> stackIdsToSkip;
 
@@ -6342,6 +6380,11 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
     colorizer.reset(result);
 
     StringAppendF(&result, "MiscFlagValue: %s\n", mMiscFlagValue ? "true" : "false");
+    StringAppendF(&result, "ConnectedDisplayFlagValue: %s\n",
+                  mConnectedDisplayFlagValue ? "true" : "false");
+    StringAppendF(&result, "Misc2FlagValue: %s (%s after boot)\n",
+                  mMisc2FlagLateBootValue ? "true" : "false",
+                  mMisc2FlagEarlyBootValue == mMisc2FlagLateBootValue ? "stable" : "modified");
 
     getRenderEngine().dump(result);
 
