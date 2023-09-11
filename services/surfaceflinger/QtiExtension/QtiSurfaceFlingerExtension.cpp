@@ -2165,7 +2165,7 @@ bool QtiSurfaceFlingerExtension::qtiFbScalingOnDisplayChange(
         const wp<IBinder>& displayToken, sp<DisplayDevice> display,
         const DisplayDeviceState& drawingState) {
     bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
-    if (useFbScaling && display->isPrimary()) {
+    if (mQtiFlinger->mBootFinished && useFbScaling && display->isPrimary()) {
         const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(displayToken);
         DisplayDeviceState& curState =
                 mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
