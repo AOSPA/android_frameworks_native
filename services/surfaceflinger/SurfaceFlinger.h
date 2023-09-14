@@ -291,13 +291,6 @@ public:
     // The CompositionEngine encapsulates all composition related interfaces and actions.
     compositionengine::CompositionEngine& getCompositionEngine() const;
 
-    // Obtains a name from the texture pool, or, if the pool is empty, posts a
-    // synchronous message to the main thread to obtain one on the fly
-    uint32_t getNewTexture();
-
-    // utility function to delete a texture on the main thread
-    void deleteTextureAsync(uint32_t texture);
-
     renderengine::RenderEngine& getRenderEngine() const;
 
     void onLayerFirstRef(Layer*);
@@ -337,6 +330,11 @@ public:
     // SMPTE 170M as sRGB prior to color management being implemented, and now implementations rely
     // on this behavior to increase contrast for some media sources.
     bool mTreat170mAsSrgb = false;
+
+    // If true, then screenshots with an enhanced render intent will dim in gamma space.
+    // The purpose is to ensure that screenshots appear correct during system animations for devices
+    // that require that dimming must occur in gamma space.
+    bool mDimInGammaSpaceForEnhancedScreenshots = false;
 
     // Allows to ignore physical orientation provided through hwc API in favour of
     // 'ro.surface_flinger.primary_display_orientation'.
@@ -1109,6 +1107,7 @@ private:
     void dumpDisplayIdentificationData(std::string& result) const REQUIRES(mStateLock);
     void dumpRawDisplayIdentificationData(const DumpArgs&, std::string& result) const;
     void dumpWideColorInfo(std::string& result) const REQUIRES(mStateLock);
+    void dumpHdrInfo(std::string& result) const REQUIRES(mStateLock);
 
     LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(LayersProto& layersProto,
@@ -1156,7 +1155,7 @@ private:
     ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
     void traverseLegacyLayers(const LayerVector::Visitor& visitor) const;
-
+    void initTransactionTraceWriter();
     sp<StartPropertySetThread> mStartPropertySetThread;
     surfaceflinger::Factory& mFactory;
     pid_t mPid;
@@ -1294,13 +1293,6 @@ private:
     bool mSupportsBlur = false;
 
     TransactionCallbackInvoker mTransactionCallbackInvoker;
-
-    // We maintain a pool of pre-generated texture names to hand out to avoid
-    // layer creation needing to run on the main thread (which it would
-    // otherwise need to do to access RenderEngine).
-    std::mutex mTexturePoolMutex;
-    uint32_t mTexturePoolSize = 0;
-    std::vector<uint32_t> mTexturePool;
 
     std::atomic<size_t> mNumLayers = 0;
 
@@ -1454,7 +1446,7 @@ private:
     frontend::LayerHierarchyBuilder mLayerHierarchyBuilder{{}};
     frontend::LayerSnapshotBuilder mLayerSnapshotBuilder;
 
-    std::vector<uint32_t> mDestroyedHandles;
+    std::vector<std::pair<uint32_t, std::string>> mDestroyedHandles;
     std::vector<std::unique_ptr<frontend::RequestedLayerState>> mNewLayers;
     std::vector<LayerCreationArgs> mNewLayerArgs;
     // These classes do not store any client state but help with managing transaction callbacks
@@ -1475,6 +1467,11 @@ private:
     // Mirroring
     // Map of displayid to mirrorRoot
     ftl::SmallMap<int64_t, sp<SurfaceControl>, 3> mMirrorMapForDebug;
+
+    void sfdo_enableRefreshRateOverlay(bool active);
+    void sfdo_setDebugFlash(int delay);
+    void sfdo_scheduleComposite();
+    void sfdo_scheduleCommit();
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
@@ -1581,6 +1578,10 @@ public:
             const sp<IBinder>& displayToken,
             std::optional<gui::DisplayDecorationSupport>* outSupport) override;
     binder::Status setOverrideFrameRate(int32_t uid, float frameRate) override;
+    binder::Status enableRefreshRateOverlay(bool active) override;
+    binder::Status setDebugFlash(int delay) override;
+    binder::Status scheduleComposite() override;
+    binder::Status scheduleCommit() override;
     binder::Status getGpuContextPriority(int32_t* outPriority) override;
     binder::Status getMaxAcquiredBufferCount(int32_t* buffers) override;
     binder::Status addWindowInfosListener(const sp<gui::IWindowInfosListener>& windowInfosListener,

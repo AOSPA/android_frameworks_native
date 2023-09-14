@@ -32,6 +32,7 @@
 #endif
 #include <input/InputDevice.h>
 #include <input/PrintTools.h>
+#include <input/TraceTools.h>
 #include <openssl/mem.h>
 #include <powermanager/PowerManager.h>
 #include <unistd.h>
@@ -1105,12 +1106,16 @@ bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEnt
         const auto [x, y] = resolveTouchedPosition(motionEntry);
         const bool isStylus = isPointerFromStylus(motionEntry, /*pointerIndex=*/0);
 #ifdef DISABLE_DEVICE_INTEGRATION
-        auto [touchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus);
+        sp<WindowInfoHandle> touchedWindowHandle =
+                findTouchedWindowAtLocked(displayId, x, y, isStylus);
 #else
         const bool isFromCrossDevice = motionEntry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-        auto [touchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus, false /*ignoreDragWindow*/, isFromCrossDevice);
+        auto [touchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus, 
+        sp<WindowInfoHandle> touchedWindowHandle =
+                findTouchedWindowAtLocked(displayId, x, y, isStylus,
+		false /*ignoreDragWindow*/, isFromCrossDevice);
 #endif
-    if (touchedWindowHandle != nullptr &&
+        if (touchedWindowHandle != nullptr &&
             touchedWindowHandle->getApplicationToken() !=
                     mAwaitedFocusedApplication->getApplicationToken()) {
             // User touched a different application than the one we are waiting on.
@@ -1233,8 +1238,8 @@ void InputDispatcher::addRecentEventLocked(std::shared_ptr<EventEntry> entry) {
     }
 }
 
-std::pair<sp<WindowInfoHandle>, std::vector<InputTarget>>
-InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus,
+sp<WindowInfoHandle> InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y,
+                                                                bool isStylus,
 #ifdef DISABLE_DEVICE_INTEGRATION
                                            bool ignoreDragWindow) const {
 #else
@@ -1242,7 +1247,6 @@ InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, 
                                            bool isFromCrossDevice) const {
 #endif
     // Traverse windows from front to back to find touched window.
-    std::vector<InputTarget> outsideTargets;
     const auto& windowHandles = getWindowHandlesLocked(displayId);
     for (const sp<WindowInfoHandle>& windowHandle : windowHandles) {
         if (ignoreDragWindow && haveSameToken(windowHandle, mDragState->dragWindow)) {
@@ -1261,16 +1265,35 @@ InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, 
         const WindowInfo& info = *windowHandle->getInfo();
         if (!info.isSpy() &&
             windowAcceptsTouchAt(info, displayId, x, y, isStylus, getTransformLocked(displayId))) {
-            return {windowHandle, outsideTargets};
+            return windowHandle;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<InputTarget> InputDispatcher::findOutsideTargetsLocked(
+        int32_t displayId, const sp<WindowInfoHandle>& touchedWindow) const {
+    if (touchedWindow == nullptr) {
+        return {};
+    }
+    // Traverse windows from front to back until we encounter the touched window.
+    std::vector<InputTarget> outsideTargets;
+    const auto& windowHandles = getWindowHandlesLocked(displayId);
+    for (const sp<WindowInfoHandle>& windowHandle : windowHandles) {
+        if (windowHandle == touchedWindow) {
+            // Stop iterating once we found a touched window. Any WATCH_OUTSIDE_TOUCH window
+            // below the touched window will not get ACTION_OUTSIDE event.
+            return outsideTargets;
         }
 
+        const WindowInfo& info = *windowHandle->getInfo();
         if (info.inputConfig.test(WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH)) {
             addWindowTargetLocked(windowHandle, InputTarget::Flags::DISPATCH_AS_OUTSIDE,
                                   /*pointerIds=*/{}, /*firstDownTimeInTarget=*/std::nullopt,
                                   outsideTargets);
         }
     }
-    return {nullptr, {}};
+    return outsideTargets;
 }
 
 std::vector<sp<WindowInfoHandle>> InputDispatcher::findTouchedSpyWindowsAtLocked(
@@ -2327,7 +2350,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         // be a pointer that would generate ACTION_DOWN, *and* touch should not already be down.
         const bool isStylus = isPointerFromStylus(entry, pointerIndex);
 #ifdef DISABLE_DEVICE_INTEGRATION
-        auto [newTouchedWindowHandle, outsideTargets] =
+        sp<WindowInfoHandle> newTouchedWindowHandle =
                 findTouchedWindowAtLocked(displayId, x, y, isStylus);
 #else
         const bool isFromCrossDevice = entry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
@@ -2335,7 +2358,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
                 findTouchedWindowAtLocked(displayId, x, y, isStylus, false /*ignoreDragWindow*/, isFromCrossDevice);
 #endif
         if (isDown) {
-            targets += outsideTargets;
+            targets += findOutsideTargetsLocked(displayId, newTouchedWindowHandle);
         }
         // Handle the case where we did not find a window.
         if (newTouchedWindowHandle == nullptr) {
@@ -2512,11 +2535,15 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
                     tempTouchState.getFirstForegroundWindowHandle();
             LOG_ALWAYS_FATAL_IF(oldTouchedWindowHandle == nullptr);
 #ifdef DISABLE_DEVICE_INTEGRATION
-            auto [newTouchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus);
+            sp<WindowInfoHandle> newTouchedWindowHandle =
+                    findTouchedWindowAtLocked(displayId, x, y, isStylus);
+
 #else
             const bool isFromCrossDevice = entry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-            auto [newTouchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus,
-                                                                         false /*ignoreDragWindow*/, isFromCrossDevice);
+            sp<WindowInfoHandle> newTouchedWindowHandle =
+                    findTouchedWindowAtLocked(displayId, x, y, isStylus,
+                                                  false /*ignoreDragWindow*/, isFromCrossDevice);
+
 #endif
             // Verify targeted injection.
             if (const auto err = verifyTargetedInjection(newTouchedWindowHandle, entry); err) {
@@ -2766,8 +2793,8 @@ void InputDispatcher::finishDragAndDrop(int32_t displayId, float x, float y, boo
     // have an explicit reason to support it.
     constexpr bool isStylus = false;
 
-    auto [dropWindow, _] =
-            findTouchedWindowAtLocked(displayId, x, y, isStylus, 
+    sp<WindowInfoHandle> dropWindow =
+            findTouchedWindowAtLocked(displayId, x, y, isStylus,
 #ifdef DISABLE_DEVICE_INTEGRATION
             /*ignoreDragWindow=*/true);
 #else
@@ -2831,7 +2858,8 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
             // until we have an explicit reason to support it.
             constexpr bool isStylus = false;
 
-            auto [hoverWindowHandle, _] = findTouchedWindowAtLocked(entry.displayId, x, y, isStylus,
+            sp<WindowInfoHandle> hoverWindowHandle =
+                    findTouchedWindowAtLocked(entry.displayId, x, y, isStylus,
 #ifdef DISABLE_DEVICE_INTEGRATION
                                                                      /*ignoreDragWindow=*/true);
 #else
@@ -3062,8 +3090,8 @@ std::string InputDispatcher::dumpWindowForTouchOcclusion(const WindowInfo* info,
                                 "hasToken=%s, applicationInfo.name=%s, applicationInfo.token=%s\n",
                         isTouchedWindow ? "[TOUCHED] " : "", info->packageName.c_str(),
                         info->ownerUid.toString().c_str(), info->id,
-                        toString(info->touchOcclusionMode).c_str(), info->alpha, info->frameLeft,
-                        info->frameTop, info->frameRight, info->frameBottom,
+                        toString(info->touchOcclusionMode).c_str(), info->alpha, info->frame.left,
+                        info->frame.top, info->frame.right, info->frame.bottom,
                         dumpRegion(info->touchableRegion).c_str(), info->name.c_str(),
                         info->inputConfig.string().c_str(), toString(info->token != nullptr),
                         info->applicationInfo.name.c_str(),
@@ -3228,12 +3256,10 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
                                                  const std::shared_ptr<Connection>& connection,
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget) {
-    if (ATRACE_ENABLED()) {
-        std::string message =
-                StringPrintf("prepareDispatchCycleLocked(inputChannel=%s, id=0x%" PRIx32 ")",
-                             connection->getInputChannelName().c_str(), eventEntry->id);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("prepareDispatchCycleLocked(inputChannel=%s, id=0x%" PRIx32 ")",
+                            connection->getInputChannelName().c_str(), eventEntry->id);
+    });
     if (DEBUG_DISPATCH_CYCLE) {
         ALOGD("channel '%s' ~ prepareDispatchCycle - flags=%s, "
               "globalScaleFactor=%f, pointerIds=%s %s",
@@ -3298,12 +3324,10 @@ void InputDispatcher::enqueueDispatchEntriesLocked(nsecs_t currentTime,
                                                    const std::shared_ptr<Connection>& connection,
                                                    std::shared_ptr<EventEntry> eventEntry,
                                                    const InputTarget& inputTarget) {
-    if (ATRACE_ENABLED()) {
-        std::string message =
-                StringPrintf("enqueueDispatchEntriesLocked(inputChannel=%s, id=0x%" PRIx32 ")",
-                             connection->getInputChannelName().c_str(), eventEntry->id);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("enqueueDispatchEntriesLocked(inputChannel=%s, id=0x%" PRIx32 ")",
+                            connection->getInputChannelName().c_str(), eventEntry->id);
+    });
     LOG_ALWAYS_FATAL_IF(!inputTarget.flags.any(InputTarget::DISPATCH_MASK),
                         "No dispatch flags are set for %s", eventEntry->getDescription().c_str());
 
@@ -3333,12 +3357,6 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
                                                  std::shared_ptr<EventEntry> eventEntry,
                                                  const InputTarget& inputTarget,
                                                  ftl::Flags<InputTarget::Flags> dispatchMode) {
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("enqueueDispatchEntry(inputChannel=%s, dispatchMode=%s)",
-                                           connection->getInputChannelName().c_str(),
-                                           dispatchMode.string().c_str());
-        ATRACE_NAME(message.c_str());
-    }
     ftl::Flags<InputTarget::Flags> inputTargetFlags = inputTarget.flags;
     if (!inputTargetFlags.any(dispatchMode)) {
         return;
@@ -3625,11 +3643,10 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
 
 void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                                                const std::shared_ptr<Connection>& connection) {
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("startDispatchCycleLocked(inputChannel=%s)",
-                                           connection->getInputChannelName().c_str());
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("startDispatchCycleLocked(inputChannel=%s)",
+                            connection->getInputChannelName().c_str());
+    });
     if (DEBUG_DISPATCH_CYCLE) {
         ALOGD("channel '%s' ~ startDispatchCycle", connection->getInputChannelName().c_str());
     }
@@ -4203,12 +4220,10 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
     }
 
     int32_t newId = mIdGenerator.nextId();
-    if (ATRACE_ENABLED()) {
-        std::string message = StringPrintf("Split MotionEvent(id=0x%" PRIx32
-                                           ") to MotionEvent(id=0x%" PRIx32 ").",
-                                           originalMotionEntry.id, newId);
-        ATRACE_NAME(message.c_str());
-    }
+    ATRACE_NAME_IF(ATRACE_ENABLED(), [&]() {
+        return StringPrintf("Split MotionEvent(id=0x%" PRIx32 ") to MotionEvent(id=0x%" PRIx32 ").",
+                            originalMotionEntry.id, newId);
+    });
     std::unique_ptr<MotionEntry> splitMotionEntry =
             std::make_unique<MotionEntry>(newId, originalMotionEntry.eventTime,
                                           originalMotionEntry.deviceId, originalMotionEntry.source,
@@ -5720,9 +5735,9 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
                                          i, windowInfo->name.c_str(), windowInfo->id,
                                          windowInfo->displayId,
                                          windowInfo->inputConfig.string().c_str(),
-                                         windowInfo->alpha, windowInfo->frameLeft,
-                                         windowInfo->frameTop, windowInfo->frameRight,
-                                         windowInfo->frameBottom, windowInfo->globalScaleFactor,
+                                         windowInfo->alpha, windowInfo->frame.left,
+                                         windowInfo->frame.top, windowInfo->frame.right,
+                                         windowInfo->frame.bottom, windowInfo->globalScaleFactor,
                                          windowInfo->applicationInfo.name.c_str(),
                                          binderToString(windowInfo->applicationInfo.token).c_str());
                     dump += dumpRegion(windowInfo->touchableRegion);

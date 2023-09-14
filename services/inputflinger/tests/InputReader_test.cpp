@@ -1490,6 +1490,46 @@ TEST_F(InputReaderIntegrationTest, ExternalStylusesButtons) {
             AllOf(UP, WithKeyCode(AKEYCODE_STYLUS_BUTTON_TERTIARY))));
 }
 
+TEST_F(InputReaderIntegrationTest, KeyboardWithStylusButtons) {
+    std::unique_ptr<UinputKeyboard> keyboard =
+            createUinputDevice<UinputKeyboard>("KeyboardWithStylusButtons", /*productId=*/99,
+                                               std::initializer_list<int>{KEY_Q, KEY_W, KEY_E,
+                                                                          KEY_R, KEY_T, KEY_Y,
+                                                                          BTN_STYLUS, BTN_STYLUS2,
+                                                                          BTN_STYLUS3});
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+
+    const auto device = findDeviceByName(keyboard->getName());
+    ASSERT_TRUE(device.has_value());
+
+    // An alphabetical keyboard that reports stylus buttons should not be recognized as a stylus.
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, device->getSources())
+            << "Unexpected source " << inputEventSourceToString(device->getSources()).c_str();
+    ASSERT_EQ(AINPUT_KEYBOARD_TYPE_ALPHABETIC, device->getKeyboardType());
+}
+
+TEST_F(InputReaderIntegrationTest, HidUsageKeyboardIsNotAStylus) {
+    // Create a Uinput keyboard that simulates a keyboard that can report HID usage codes. The
+    // hid-input driver reports HID usage codes using the value for EV_MSC MSC_SCAN event.
+    std::unique_ptr<UinputKeyboardWithHidUsage> keyboard =
+            createUinputDevice<UinputKeyboardWithHidUsage>(
+                    std::initializer_list<int>{KEY_VOLUMEUP, KEY_VOLUMEDOWN});
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+
+    const auto device = findDeviceByName(keyboard->getName());
+    ASSERT_TRUE(device.has_value());
+
+    ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, device->getSources())
+            << "Unexpected source " << inputEventSourceToString(device->getSources()).c_str();
+
+    // If a device supports reporting HID usage codes, it shouldn't automatically support
+    // stylus keys.
+    const std::vector<int> keycodes{AKEYCODE_STYLUS_BUTTON_PRIMARY};
+    uint8_t outFlags[] = {0};
+    ASSERT_TRUE(mReader->hasKeys(device->getId(), AINPUT_SOURCE_KEYBOARD, keycodes, outFlags));
+    ASSERT_EQ(0, outFlags[0]) << "Keyboard should not have stylus button";
+}
+
 /**
  * The Steam controller sends BTN_GEAR_DOWN and BTN_GEAR_UP for the two "paddle" buttons
  * on the back. In this test, we make sure that BTN_GEAR_DOWN / BTN_WHEEL and BTN_GEAR_UP
@@ -1827,6 +1867,38 @@ TEST_P(TouchIntegrationTest, InputEvent_ProcessPalm) {
 
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(&args));
     ASSERT_EQ(AMOTION_EVENT_ACTION_UP, args.action);
+}
+
+/**
+ * Some drivers historically have reported axis values outside of the range specified in the
+ * evdev axis info. Ensure we don't crash when this happens. For example, a driver may report a
+ * pressure value greater than the reported maximum, since it unclear what specific meaning the
+ * maximum value for pressure has (beyond the maximum value that can be produced by a sensor),
+ * and no units for pressure (resolution) is specified by the evdev documentation.
+ */
+TEST_P(TouchIntegrationTest, AcceptsAxisValuesOutsideReportedRange) {
+    const Point centerPoint = mDevice->getCenterPoint();
+
+    // Down with pressure outside the reported range
+    mDevice->sendSlot(FIRST_SLOT);
+    mDevice->sendTrackingId(FIRST_TRACKING_ID);
+    mDevice->sendDown(centerPoint);
+    mDevice->sendPressure(UinputTouchScreen::RAW_PRESSURE_MAX + 2);
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_DOWN)));
+
+    // Move to a point outside the reported range
+    mDevice->sendMove(Point(DISPLAY_WIDTH, DISPLAY_HEIGHT) + Point(1, 1));
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_MOVE)));
+
+    // Up
+    mDevice->sendUp();
+    mDevice->sendSync();
+    ASSERT_NO_FATAL_FAILURE(
+            mTestListener->assertNotifyMotionWasCalled(WithMotionAction(AMOTION_EVENT_ACTION_UP)));
 }
 
 TEST_P(TouchIntegrationTest, NotifiesPolicyWhenStylusGestureStarted) {

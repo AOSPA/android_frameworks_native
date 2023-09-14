@@ -30,8 +30,8 @@
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/Update.h"
 #include "LocklessStack.h"
-#include "RingBuffer.h"
 #include "TransactionProtoParser.h"
+#include "TransactionRingBuffer.h"
 
 using namespace android::surfaceflinger;
 
@@ -73,15 +73,19 @@ public:
     static constexpr auto TRACING_VERSION = 1;
 
 private:
+    friend class TransactionTraceWriter;
     friend class TransactionTracingTest;
     friend class SurfaceFlinger;
 
     static constexpr auto DIR_NAME = "/data/misc/wmtrace/";
     static constexpr auto FILE_NAME = "transactions_trace.winscope";
     static constexpr auto FILE_PATH = "/data/misc/wmtrace/transactions_trace.winscope";
+    static std::string getFilePath(const std::string& prefix) {
+        return DIR_NAME + prefix + FILE_NAME;
+    }
 
     mutable std::mutex mTraceLock;
-    RingBuffer<proto::TransactionTraceFile, proto::TransactionTraceEntry> mBuffer
+    TransactionRingBuffer<proto::TransactionTraceFile, proto::TransactionTraceEntry> mBuffer
             GUARDED_BY(mTraceLock);
     size_t mBufferSizeInBytes GUARDED_BY(mTraceLock) = CONTINUOUS_TRACING_BUFFER_SIZE;
     std::unordered_map<uint64_t, proto::TransactionState> mQueuedTransactions
@@ -138,10 +142,16 @@ class TransactionTraceWriter : public Singleton<TransactionTraceWriter> {
 
 public:
     void setWriterFunction(
-            std::function<void(const std::string& prefix, bool overwrite)> function) {
+            std::function<void(const std::string& filename, bool overwrite)> function) {
         mWriterFunction = std::move(function);
     }
-    void invoke(const std::string& prefix, bool overwrite) { mWriterFunction(prefix, overwrite); }
+    void invoke(const std::string& prefix, bool overwrite) {
+        mWriterFunction(TransactionTracing::getFilePath(prefix), overwrite);
+    }
+    /* pass in a complete file path for testing */
+    void invokeForTest(const std::string& filename, bool overwrite) {
+        mWriterFunction(filename, overwrite);
+    }
 };
 
 } // namespace android

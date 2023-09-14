@@ -29,8 +29,6 @@
 #include <gui/WindowInfo.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/vec4.h>
-#include <renderengine/Mesh.h>
-#include <renderengine/Texture.h>
 #include <sys/types.h>
 #include <ui/BlurRegion.h>
 #include <ui/FloatRect.h>
@@ -1207,8 +1205,6 @@ private:
 
     void setTransformHintLegacy(ui::Transform::RotationFlags);
     void resetDrawingStateBufferInfo();
-
-    const uint32_t mTextureName;
 
     // Transform hint provided to the producer. This must be accessed holding
     // the mStateLock.
