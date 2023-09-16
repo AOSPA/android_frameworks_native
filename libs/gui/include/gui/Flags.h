@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-interface IBinderRpcBenchmark {
-    @utf8InCpp String repeatString(@utf8InCpp String str);
-    IBinder repeatBinder(IBinder binder);
-    byte[] repeatBytes(in byte[] bytes);
+#pragma once
 
-    IBinder gimmeBinder();
-    void waitGimmesDestroyed();
-}
+// TODO(281695725): replace this with build time flags, whenever they are available
+#ifndef FLAG_BQ_SET_FRAME_RATE
+#define FLAG_BQ_SET_FRAME_RATE false
+#endif

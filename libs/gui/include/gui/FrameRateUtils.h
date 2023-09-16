@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-interface IBinderRpcBenchmark {
-    @utf8InCpp String repeatString(@utf8InCpp String str);
-    IBinder repeatBinder(IBinder binder);
-    byte[] repeatBytes(in byte[] bytes);
+#pragma once
 
-    IBinder gimmeBinder();
-    void waitGimmesDestroyed();
-}
+#include <stdint.h>
+
+namespace android {
+
+bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrameRateStrategy,
+                       const char* inFunctionName, bool privileged = false);
+
+} // namespace android
