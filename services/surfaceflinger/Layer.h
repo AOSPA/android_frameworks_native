@@ -241,7 +241,7 @@ public:
         bool useVsyncIdForRefreshRateSelection = false;
     };
 
-    explicit Layer(const LayerCreationArgs& args);
+    explicit Layer(const surfaceflinger::LayerCreationArgs& args);
     virtual ~Layer();
 
     static bool isLayerFocusedBasedOnPriority(int32_t priority);
@@ -640,17 +640,19 @@ public:
 
     bool isRemovedFromCurrentState() const;
 
-    LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags);
-    void writeCompositionStateToProto(LayerProto* layerProto, ui::LayerStack layerStack);
+    perfetto::protos::LayerProto* writeToProto(perfetto::protos::LayersProto& layersProto,
+                                               uint32_t traceFlags);
+    void writeCompositionStateToProto(perfetto::protos::LayerProto* layerProto,
+                                      ui::LayerStack layerStack);
 
     // Write states that are modified by the main thread. This includes drawing
     // state as well as buffer data. This should be called in the main or tracing
     // thread.
-    void writeToProtoDrawingState(LayerProto* layerInfo);
+    void writeToProtoDrawingState(perfetto::protos::LayerProto* layerInfo);
     // Write drawing or current state. If writing current state, the caller should hold the
     // external mStateLock. If writing drawing state, this function should be called on the
     // main or tracing thread.
-    void writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet,
+    void writeToProtoCommonState(perfetto::protos::LayerProto* layerInfo, LayerVector::StateSet,
                                  uint32_t traceFlags = LayerTracing::TRACE_ALL);
 
     gui::WindowInfo::Type getWindowType() const { return mWindowType; }
@@ -782,7 +784,8 @@ public:
      */
     Rect getCroppedBufferSize(const Layer::State& s) const;
 
-    bool setFrameRate(FrameRate);
+    bool setFrameRate(FrameRate::FrameRateVote);
+    bool setFrameRateCategory(FrameRateCategory);
 
     virtual void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& /*info*/) {}
     void setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info, nsecs_t postTime);
@@ -846,6 +849,14 @@ public:
     mutable bool contentDirty{false};
     Region surfaceDamageRegion;
 
+    // True when the surfaceDamageRegion is recognized as a small area update.
+    bool mSmallDirty{false};
+    // Used to check if mUsedVsyncIdForRefreshRateSelection should be expired when it stop updating.
+    nsecs_t mMaxTimeForUseVsyncId = 0;
+    // True when DrawState.useVsyncIdForRefreshRateSelection previously set to true during updating
+    // buffer.
+    bool mUsedVsyncIdForRefreshRateSelection{false};
+
     // Layer serial number.  This gives layers an explicit ordering, so we
     // have a stable sort order when their layer stack and Z-order are
     // the same.
@@ -908,6 +919,7 @@ public:
                 .transform = getTransform(),
                 .setFrameRateVote = getFrameRateForLayerTree(),
                 .frameRateSelectionPriority = getFrameRateSelectionPriority(),
+                .isSmallDirty = mSmallDirty,
         };
     };
     bool hasBuffer() const { return mBufferInfo.mBuffer != nullptr; }
@@ -921,6 +933,9 @@ public:
     std::vector<ui::LayerStack> mPreviouslyPresentedLayerStacks;
     // Exposed so SurfaceFlinger can assert that it's held
     const sp<SurfaceFlinger> mFlinger;
+
+    // Check if the damage region is a small dirty.
+    void setIsSmallDirty();
 
     /* QTI_BEGIN */
     void qtiSetSmomoLayerStackId();
