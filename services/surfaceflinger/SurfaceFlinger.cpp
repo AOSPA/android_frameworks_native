@@ -3681,6 +3681,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
             }
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
+            /* QTI_END */
         }
 
         mDisplays.erase(displayToken);
