@@ -24,6 +24,8 @@
 #include <private/android_filesystem_config.h>
 #include <sys/types.h>
 
+#include <scheduler/Fps.h>
+
 #include "Layer.h"
 #include "LayerCreationArgs.h"
 #include "LayerLog.h"
@@ -122,6 +124,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     dimmingEnabled = true;
     defaultFrameRateCompatibility =
             static_cast<int8_t>(scheduler::LayerInfo::FrameRateCompatibility::Default);
+    frameRateCategory = static_cast<int8_t>(FrameRateCategory::Default);
     dataspace = ui::Dataspace::V0_SRGB;
     gameMode = gui::GameMode::Unsupported;
     requestedFrameRate = {};
@@ -147,6 +150,8 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
             ? ui::Size(externalTexture->getWidth(), externalTexture->getHeight())
             : ui::Size();
     const uint64_t oldUsageFlags = hadBuffer ? externalTexture->getUsage() : 0;
+    const bool oldBufferFormatOpaque = LayerSnapshot::isOpaqueFormat(
+            externalTexture ? externalTexture->getPixelFormat() : PIXEL_FORMAT_NONE);
 
     const bool hadSideStream = sidebandStream != nullptr;
     const layer_state_t& clientState = resolvedComposerState.state;
@@ -157,7 +162,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     LLOGV(layerId, "requested=%" PRIu64 "flags=%" PRIu64, clientState.what, clientChanges);
 
     if (clientState.what & layer_state_t::eFlagsChanged) {
-        if ((oldFlags ^ flags) & layer_state_t::eLayerHidden) {
+        if ((oldFlags ^ flags) & (layer_state_t::eLayerHidden | layer_state_t::eLayerOpaque)) {
             changes |= RequestedLayerState::Changes::Visibility |
                     RequestedLayerState::Changes::VisibleRegion;
         }
@@ -210,6 +215,13 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
 
             barrierProducerId = std::max(bufferData->producerId, barrierProducerId);
             barrierFrameNumber = std::max(bufferData->frameNumber, barrierFrameNumber);
+        }
+
+        const bool newBufferFormatOpaque = LayerSnapshot::isOpaqueFormat(
+                externalTexture ? externalTexture->getPixelFormat() : PIXEL_FORMAT_NONE);
+        if (newBufferFormatOpaque != oldBufferFormatOpaque) {
+            changes |= RequestedLayerState::Changes::Visibility |
+                    RequestedLayerState::Changes::VisibleRegion;
         }
     }
 
@@ -317,8 +329,14 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
                 Layer::FrameRate::convertCompatibility(clientState.frameRateCompatibility);
         const auto strategy = Layer::FrameRate::convertChangeFrameRateStrategy(
                 clientState.changeFrameRateStrategy);
-        requestedFrameRate =
-                Layer::FrameRate(Fps::fromValue(clientState.frameRate), compatibility, strategy);
+        requestedFrameRate.vote =
+                Layer::FrameRate::FrameRateVote(Fps::fromValue(clientState.frameRate),
+                                                compatibility, strategy);
+        changes |= RequestedLayerState::Changes::FrameRate;
+    }
+    if (clientState.what & layer_state_t::eFrameRateCategoryChanged) {
+        const auto category = Layer::FrameRate::convertCategory(clientState.frameRateCategory);
+        requestedFrameRate.category = category;
         changes |= RequestedLayerState::Changes::FrameRate;
     }
 }
@@ -472,6 +490,9 @@ aidl::android::hardware::graphics::composer3::Composition RequestedLayerState::g
     }
     if (flags & layer_state_t::eLayerIsDisplayDecoration) {
         return Composition::DISPLAY_DECORATION;
+    }
+    if (flags & layer_state_t::eLayerIsRefreshRateIndicator) {
+        return Composition::REFRESH_RATE_INDICATOR;
     }
     if (potentialCursor) {
         return Composition::CURSOR;
