@@ -13,10 +13,7 @@ bool QtiEglImageExtension::mQtiEnableExtn = QtiEglImageExtension::extensionEnabl
 
 bool QtiEglImageExtension::extensionEnabled() {
 #ifdef QTI_DISPLAY_EXTENSION
-    int qtiFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
-    bool enable = (qtiFirstApiLevel < __ANDROID_API_U__) ||
-            base::GetBoolProperty("vendor.display.enable_display_extensions", false);
-    return enable;
+    return true;
 #else
     return false;
 #endif
