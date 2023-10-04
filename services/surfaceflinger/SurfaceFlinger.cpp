@@ -4903,15 +4903,18 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         }
         /* QTI_END */
 
+        /* QTI_BEGIN */
+        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
+        /* QTI_END */
+
+        // ignore the acquire fence if LatchUnsignaledConfig::Always is set.
+        const bool checkAcquireFence = enableLatchUnsignaledConfig != LatchUnsignaledConfig::Always
+            /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */;
         const bool acquireFenceAvailable = s.bufferData &&
                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
                 s.bufferData->acquireFence;
         const bool fenceSignaled = !acquireFenceAvailable ||
                 s.bufferData->acquireFence->getStatus() != Fence::Status::Unsignaled;
-
-        /* QTI_BEGIN */
-        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
-        /* QTI_END */
 
         if (!fenceSignaled) {
             // check fence status
@@ -4919,7 +4922,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                                                                     flushState.firstTransaction) &&
                     layer->isSimpleBufferUpdate(s);
 
-            if (allowLatchUnsignaled /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */) {
+            if (allowLatchUnsignaled /* QTI_BEGIN */ || !qtiLatchMediaContent /* QTI_END */) {
                 ATRACE_FORMAT("fence unsignaled try allowLatchUnsignaled %s",
                               layer->getDebugName());
                 ready = TransactionReadiness::NotReadyUnsignaled;
