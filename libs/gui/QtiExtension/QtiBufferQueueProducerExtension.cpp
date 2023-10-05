@@ -62,7 +62,7 @@ QtiBufferQueueProducerExtension::~QtiBufferQueueProducerExtension() {
 void QtiBufferQueueProducerExtension::qtiQueueBuffer(bool isAutoTimestamp,
         int64_t requestedPresentTimestamp, int window_api) {
    if (mQtiBufferQueueProducer && AFP.mAllPenguinSymbolsFound) {
-       AFP.mPenguinQueueBuffer((uint64_t)this, mQtiBufferQueueProducer->mConsumerName.string(),
+       AFP.mPenguinQueueBuffer((uint64_t)this, mQtiBufferQueueProducer->mConsumerName.c_str(),
                                isAutoTimestamp, requestedPresentTimestamp, window_api);
    }
 }

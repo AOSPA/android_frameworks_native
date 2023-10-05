@@ -410,8 +410,8 @@ TEST_F(LayerSnapshotTest, mirrorLayerGetsCorrectLayerStack) {
     std::vector<uint32_t> expected = {1,  11, 111, 13, 2,  3,   1,  11, 111,
                                       13, 2,  4,   1,  11, 111, 13, 2};
     UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
-    EXPECT_EQ(getSnapshot({.id = 111, .mirrorRootId = 3})->outputFilter.layerStack.id, 3u);
-    EXPECT_EQ(getSnapshot({.id = 111, .mirrorRootId = 4})->outputFilter.layerStack.id, 4u);
+    EXPECT_EQ(getSnapshot({.id = 111, .mirrorRootIds = 3u})->outputFilter.layerStack.id, 3u);
+    EXPECT_EQ(getSnapshot({.id = 111, .mirrorRootIds = 4u})->outputFilter.layerStack.id, 4u);
 }
 
 // ROOT (DISPLAY 0)
@@ -435,7 +435,7 @@ TEST_F(LayerSnapshotTest, mirrorLayerTouchIsCroppedByMirrorRoot) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
     EXPECT_TRUE(getSnapshot({.id = 111})->inputInfo.touchableRegion.hasSameRects(touch));
     Region touchCroppedByMirrorRoot{Rect{0, 0, 50, 50}};
-    EXPECT_TRUE(getSnapshot({.id = 111, .mirrorRootId = 3})
+    EXPECT_TRUE(getSnapshot({.id = 111, .mirrorRootIds = 3u})
                         ->inputInfo.touchableRegion.hasSameRects(touchCroppedByMirrorRoot));
 }
 
@@ -460,6 +460,21 @@ TEST_F(LayerSnapshotTest, cleanUpUnreachableSnapshotsAfterMirroring) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
 
     EXPECT_EQ(startingNumSnapshots, mSnapshotBuilder.getSnapshots().size());
+}
+
+TEST_F(LayerSnapshotTest, canMirrorDisplayWithMirrors) {
+    reparentLayer(12, UNASSIGNED_LAYER_ID);
+    mirrorLayer(/*layer*/ 14, /*parent*/ 1, /*layerToMirror*/ 11);
+    std::vector<uint32_t> expected = {1, 11, 111, 13, 14, 11, 111, 2};
+    UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
+
+    createDisplayMirrorLayer(3, ui::LayerStack::fromValue(0));
+    setLayerStack(3, 3);
+    expected = {1, 11, 111, 13, 14, 11, 111, 2, 3, 1, 11, 111, 13, 14, 11, 111, 2};
+    UPDATE_AND_VERIFY(mSnapshotBuilder, expected);
+    EXPECT_EQ(getSnapshot({.id = 11, .mirrorRootIds = 14u})->outputFilter.layerStack.id, 0u);
+    EXPECT_EQ(getSnapshot({.id = 11, .mirrorRootIds = 3u})->outputFilter.layerStack.id, 3u);
+    EXPECT_EQ(getSnapshot({.id = 11, .mirrorRootIds = 3u, 14u})->outputFilter.layerStack.id, 3u);
 }
 
 // Rel z doesn't create duplicate snapshots but this is for completeness
@@ -667,6 +682,8 @@ TEST_F(LayerSnapshotTest, frameRateWithCategory) {
               scheduler::LayerInfo::FrameRateCompatibility::Default);
     EXPECT_EQ(getSnapshot({.id = 122})->frameRate.category, FrameRateCategory::Normal);
     EXPECT_TRUE(getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::FrameRate));
+    EXPECT_TRUE(
+            getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::AffectsChildren));
 
     EXPECT_FALSE(getSnapshot({.id = 1221})->frameRate.vote.rate.isValid());
     EXPECT_TRUE(getSnapshot({.id = 1221})->frameRate.isValid());
@@ -674,6 +691,8 @@ TEST_F(LayerSnapshotTest, frameRateWithCategory) {
               scheduler::LayerInfo::FrameRateCompatibility::Default);
     EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.category, FrameRateCategory::Normal);
     EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+    EXPECT_TRUE(
+            getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::AffectsChildren));
 
     // reparent and verify the child does NOT get the new parent's framerate because it already has
     // the frame rate category specified.
@@ -783,4 +802,33 @@ TEST_F(LayerSnapshotTest, setRefreshRateIndicatorCompositionType) {
               aidl::android::hardware::graphics::composer3::Composition::REFRESH_RATE_INDICATOR);
 }
 
+TEST_F(LayerSnapshotTest, setBufferCrop) {
+    // validate no buffer but has crop
+    Rect crop = Rect(0, 0, 50, 50);
+    setBufferCrop(1, crop);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->geomContentCrop, crop);
+
+    setBuffer(1,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(100U /*width*/,
+                                                                        100U /*height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    // validate a buffer crop within the buffer bounds
+    setBufferCrop(1, crop);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->geomContentCrop, crop);
+
+    // validate a buffer crop outside the buffer bounds
+    crop = Rect(0, 0, 150, 150);
+    setBufferCrop(1, crop);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->geomContentCrop, Rect(0, 0, 100, 100));
+
+    // validate no buffer crop
+    setBufferCrop(1, Rect());
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->geomContentCrop, Rect(0, 0, 100, 100));
+}
 } // namespace android::surfaceflinger::frontend

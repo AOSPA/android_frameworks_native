@@ -22,6 +22,7 @@
 
 #include <GrBackendSemaphore.h>
 #include <GrContextOptions.h>
+#include <GrTypes.h>
 #include <SkBlendMode.h>
 #include <SkCanvas.h>
 #include <SkColor.h>
@@ -289,12 +290,12 @@ void SkiaRenderEngine::finishRenderingAndAbandonContext() {
     }
 
     if (mGrContext) {
-        mGrContext->flushAndSubmit(true);
+        mGrContext->flushAndSubmit(GrSyncCpu::kYes);
         mGrContext->abandonContext();
     }
 
     if (mProtectedGrContext) {
-        mProtectedGrContext->flushAndSubmit(true);
+        mProtectedGrContext->flushAndSubmit(GrSyncCpu::kYes);
         mProtectedGrContext->abandonContext();
     }
 }
@@ -307,7 +308,7 @@ void SkiaRenderEngine::useProtectedContext(bool useProtectedContext) {
 
     // release any scratch resources before switching into a new mode
     if (getActiveGrContext()) {
-        getActiveGrContext()->purgeUnlockedResources(true);
+        getActiveGrContext()->purgeUnlockedResources(GrPurgeResourceOptions::kScratchResourcesOnly);
     }
 
     // Backend-specific way to switch to protected context
@@ -399,7 +400,10 @@ void SkiaRenderEngine::mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer,
     // simply match the existing behavior for protected buffers.)  We also never cache any
     // buffers while in a protected context.
     const bool isProtectedBuffer = buffer->getUsage() & GRALLOC_USAGE_PROTECTED;
-    if (isProtectedBuffer || isProtected()) {
+    // Don't attempt to map buffers if we're not gpu sampleable. Callers shouldn't send a buffer
+    // over to RenderEngine.
+    const bool isGpuSampleable = buffer->getUsage() & GRALLOC_USAGE_HW_TEXTURE;
+    if (isProtectedBuffer || isProtected() || !isGpuSampleable) {
         return;
     }
     ATRACE_CALL();

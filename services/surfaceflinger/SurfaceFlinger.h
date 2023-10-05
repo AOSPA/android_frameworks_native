@@ -1111,6 +1111,7 @@ private:
     void dumpRawDisplayIdentificationData(const DumpArgs&, std::string& result) const;
     void dumpWideColorInfo(std::string& result) const REQUIRES(mStateLock);
     void dumpHdrInfo(std::string& result) const REQUIRES(mStateLock);
+    void dumpFrontEnd(std::string& result);
 
     perfetto::protos::LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(perfetto::protos::LayersProto& layersProto,
@@ -1475,6 +1476,13 @@ private:
     void sfdo_setDebugFlash(int delay);
     void sfdo_scheduleComposite();
     void sfdo_scheduleCommit();
+
+    // Trunk-Stable flags
+    bool mMiscFlagValue;
+    bool mConnectedDisplayFlagValue;
+    bool mMisc2FlagEarlyBootValue;
+    bool mMisc2FlagLateBootValue;
+    bool mVrrConfigFlagValue;
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {

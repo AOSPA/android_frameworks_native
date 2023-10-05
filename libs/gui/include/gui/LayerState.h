@@ -271,8 +271,8 @@ struct layer_state_t {
             layer_state_t::eBackgroundBlurRadiusChanged | layer_state_t::eBlurRegionsChanged |
             layer_state_t::eColorTransformChanged | layer_state_t::eCornerRadiusChanged |
             layer_state_t::eFlagsChanged | layer_state_t::eTrustedOverlayChanged |
-            layer_state_t::eFrameRateChanged | layer_state_t::eFrameRateSelectionPriority |
-            layer_state_t::eFixedTransformHintChanged;
+            layer_state_t::eFrameRateChanged | layer_state_t::eFrameRateCategoryChanged |
+            layer_state_t::eFrameRateSelectionPriority | layer_state_t::eFixedTransformHintChanged;
 
     // Changes affecting data sent to input.
     static constexpr uint64_t INPUT_CHANGES = layer_state_t::eInputInfoChanged |
@@ -479,16 +479,6 @@ static inline int compare_type(const ComposerState& lhs, const ComposerState& rh
 static inline int compare_type(const DisplayState& lhs, const DisplayState& rhs) {
     return compare_type(lhs.token, rhs.token);
 }
-
-// Returns true if the frameRate is valid.
-//
-// @param frameRate the frame rate in Hz
-// @param compatibility a ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_*
-// @param changeFrameRateStrategy a ANATIVEWINDOW_CHANGE_FRAME_RATE_*
-// @param functionName calling function or nullptr. Used for logging
-// @param privileged whether caller has unscoped surfaceflinger access
-bool ValidateFrameRate(float frameRate, int8_t compatibility, int8_t changeFrameRateStrategy,
-                       const char* functionName, bool privileged = false);
 
 }; // namespace android
 
