@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "bacd707e_692cf374",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000760
+      },
+      "writtenOn": "2023-10-08T04:21:57Z",
+      "side": 1,
+      "message": "error: hardware/lineage/compat/Android.bp:55:1: \"libgui_shim_vendor\" depends on undefined module \"libgui_vendor\".\nOr did you mean [\"libgui_headers\" \"libutils_vendor\" \"libvendor\"]?\n09:39:45 soong bootstrap failed with: exit status 1",
+      "revId": "6292555c90c63913434020cb45f62b8cb9dd7110",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
