@@ -16,6 +16,23 @@
       "message": "remove conflicts from commit message",
       "revId": "bc90a68f65393d3007cba5c517e7377da2f85b32",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "9815355a_be25b9d6",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2023-10-08T04:13:36Z",
+      "side": 1,
+      "message": "also, remind me what this is still used for?",
+      "revId": "bc90a68f65393d3007cba5c517e7377da2f85b32",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
