@@ -55,6 +55,8 @@ bool QtiNullExtension::qtiLatchMediaContent(sp<Layer> layer) {
 }
 void QtiNullExtension::qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) {}
 
+void QtiNullExtension::qtiOnComposerHalRefresh() {}
+
 /*
  * Methods that call the FeatureManager APIs.
  */
