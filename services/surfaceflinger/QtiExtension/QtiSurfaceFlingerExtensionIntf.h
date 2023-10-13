@@ -151,6 +151,7 @@ public:
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
     virtual void qtiSetVisibleLayerInfo(DisplayId displayId,
                                  const char* name, int32_t sequence) = 0;
+    virtual bool qtiIsSmomoOptimalRefreshActive() = 0;
 
     /*
      * Methods for Dolphin APIs

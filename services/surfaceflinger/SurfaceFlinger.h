@@ -1465,6 +1465,7 @@ private:
 
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
+    std::mutex mSmomoMutex;
     /* QTI_END */
 
     TransactionHandler mTransactionHandler;

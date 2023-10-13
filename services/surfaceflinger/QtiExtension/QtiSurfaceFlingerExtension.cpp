@@ -1389,10 +1389,15 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     }
 }
 
+bool QtiSurfaceFlingerExtension::qtiIsSmomoOptimalRefreshActive() {
+  return mQtiSmomoOptimalRefreshActive;
+}
+
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
     Mutex::Autolock lock(mQtiFlinger->mStateLock);
 
+    mQtiSmomoOptimalRefreshActive = false;
     // Check if smomo instances exist.
     if (!mQtiSmomoInstances.size()) {
         return;
@@ -1468,6 +1473,23 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
         }
         qtiSetContentFps(is_valid_content_fps ? static_cast<uint32_t>(content_fps)
                                               : static_cast<uint32_t>(fps));
+    }
+
+    if (numActiveDisplays == 1) {
+        std::map<int, int> refresh_rate_votes;
+        for (auto& instance : mQtiSmomoInstances) {
+            if (!instance.active) {
+                continue;
+            }
+            instance.smoMo->GetRefreshRateVote(refresh_rate_votes);
+            mQtiFlinger->mScheduler->qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
+            for (auto it = refresh_rate_votes.begin(); it != refresh_rate_votes.end(); it++) {
+              if (it->second != -1) {
+                mQtiSmomoOptimalRefreshActive = true;
+                break;
+              }
+            }
+        }
     }
 
     // Disable DRC if active displays is more than 1.
@@ -1553,10 +1575,19 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
 #endif
         smoMo->CollectLayerStats(bufferStats);
 
-        const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
-        auto vsyncTime = schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+        const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+        nsecs_t sfOffset = mQtiFlinger->mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
+        const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+        auto vsyncTime = schedule->getTracker().nextAnticipatedVSyncTimeFrom(now);
+        nsecs_t sfVsyncTime = vsyncTime + sfOffset;
+        auto vsyncPeriod = schedule->getTracker().currentPeriod();
+        if (now >= sfVsyncTime) {
+          sfVsyncTime += vsyncPeriod;
+        } else if (now <= sfVsyncTime - vsyncPeriod) {
+          sfVsyncTime -= vsyncPeriod;
+        }
 
-        if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
+        if (smoMo->FrameIsLate(bufferStats.id, sfVsyncTime)) {
             qtiScheduleCompositeImmed();
         }
     }

@@ -13,6 +13,7 @@
 #include <binder/IBinder.h>
 #include <composer_extn_intf.h>
 #include <list>
+#include <map>
 
 #include "../DisplayHardware/HWComposer.h"
 #include "../DisplayHardware/PowerAdvisor.h"
@@ -221,6 +222,7 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
     void qtiSetVisibleLayerInfo(DisplayId displayId,
                                     const char* name, int32_t sequence) override;
+    bool qtiIsSmomoOptimalRefreshActive() override;
 
     /*
      * Methods for Dolphin APIs
@@ -269,6 +271,7 @@ private:
     QtiWorkDurationsExtension* mQtiWorkDurationsExtn = nullptr;
     QtiDolphinWrapper* mQtiDolphinWrapper = nullptr;
 
+    bool mQtiSmomoOptimalRefreshActive = false;
     bool mQtiEnabledIDC = false;
     bool mQtiInitVsyncConfigurationExtn = false;
     bool mQtiInternalPresentationDisplays = false;

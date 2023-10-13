@@ -170,6 +170,9 @@ uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
 }
 void QtiNullExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
                                                   const char* name, int32_t sequence) {}
+bool QtiNullExtension::qtiIsSmomoOptimalRefreshActive() {
+    return false;
+}
 
 /*
  * Methods for speculative fence
