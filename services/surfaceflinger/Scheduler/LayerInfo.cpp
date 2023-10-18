@@ -116,12 +116,24 @@ LayerInfo::Frequent LayerInfo::isFrequent(nsecs_t now) const {
         }
     }
 
+    // Vote the small dirty when a layer contains at least HISTORY_SIZE of small dirty updates.
+    bool isSmallDirty = false;
+    if (smallDirtyCount >= kNumSmallDirtyThreshold) {
+        if (mLastSmallDirtyCount >= HISTORY_SIZE) {
+            isSmallDirty = true;
+        } else {
+            mLastSmallDirtyCount++;
+        }
+    } else {
+        mLastSmallDirtyCount = 0;
+    }
+
     if (isFrequent || isInfrequent) {
         // If the layer was previously inconclusive, we clear
         // the history as indeterminate layers changed to frequent,
         // and we should not look at the stale data.
         return {isFrequent, isFrequent && !mIsFrequencyConclusive, /* isConclusive */ true,
-                /* isSmallDirty */ smallDirtyCount >= kNumSmallDirtyThreshold};
+                isSmallDirty};
     }
 
     // If we can't determine whether the layer is frequent or not, we return
@@ -324,6 +336,7 @@ LayerInfo::RefreshRateVotes LayerInfo::getRefreshRateVote(const RefreshRateSelec
         ATRACE_FORMAT_INSTANT("infrequent");
         ALOGV("%s is infrequent", mName.c_str());
         mLastRefreshRate.infrequent = true;
+        mLastSmallDirtyCount = 0;
         // Infrequent layers vote for minimal refresh rate for
         // battery saving purposes and also to prevent b/135718869.
         votes.push_back({LayerHistory::LayerVoteType::Min, Fps()});
@@ -334,7 +347,7 @@ LayerInfo::RefreshRateVotes LayerInfo::getRefreshRateVote(const RefreshRateSelec
         clearHistory(now);
     }
 
-    // Return no vote if the latest frames are small dirty.
+    // Return no vote if the recent frames are small dirty.
     if (frequent.isSmallDirty && !mLastRefreshRate.reported.isValid()) {
         ATRACE_FORMAT_INSTANT("NoVote (small dirty)");
         ALOGV("%s is small dirty", mName.c_str());
@@ -487,6 +500,19 @@ FrameRateCategory LayerInfo::FrameRate::convertCategory(int8_t category) {
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate category value %d", category);
             return FrameRateCategory::Default;
+    }
+}
+
+LayerInfo::FrameRateSelectionStrategy LayerInfo::convertFrameRateSelectionStrategy(
+        int8_t strategy) {
+    switch (strategy) {
+        case ANATIVEWINDOW_FRAME_RATE_SELECTION_STRATEGY_SELF:
+            return FrameRateSelectionStrategy::Self;
+        case ANATIVEWINDOW_FRAME_RATE_SELECTION_STRATEGY_OVERRIDE_CHILDREN:
+            return FrameRateSelectionStrategy::OverrideChildren;
+        default:
+            LOG_ALWAYS_FATAL("Invalid frame rate selection strategy value %d", strategy);
+            return FrameRateSelectionStrategy::Self;
     }
 }
 

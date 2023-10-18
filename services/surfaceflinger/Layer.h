@@ -118,6 +118,7 @@ public:
 
     using FrameRate = scheduler::LayerInfo::FrameRate;
     using FrameRateCompatibility = scheduler::LayerInfo::FrameRateCompatibility;
+    using FrameRateSelectionStrategy = scheduler::LayerInfo::FrameRateSelectionStrategy;
 
     struct State {
         int32_t z;
@@ -193,6 +194,8 @@ public:
 
         // The combined frame rate of parents / children of this layer
         FrameRate frameRateForLayerTree;
+
+        FrameRateSelectionStrategy frameRateSelectionStrategy;
 
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that
@@ -788,6 +791,8 @@ public:
     bool setFrameRate(FrameRate::FrameRateVote);
     bool setFrameRateCategory(FrameRateCategory);
 
+    bool setFrameRateSelectionStrategy(FrameRateSelectionStrategy);
+
     virtual void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& /*info*/) {}
     void setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info, nsecs_t postTime);
     void setFrameTimelineVsyncForBufferlessTransaction(const FrameTimelineInfo& info,
@@ -1112,7 +1117,8 @@ private:
                                           const std::vector<Layer*>& layersInTree);
 
     void updateTreeHasFrameRateVote();
-    bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded);
+    bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
+                                        bool* transactionNeeded);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
     bool isTrustedOverlay() const;
     gui::DropInputMode getDropInputMode() const;
@@ -1173,6 +1179,11 @@ private:
     // JankData from the pending list.
     void transferAvailableJankData(const std::deque<sp<CallbackHandle>>& handles,
                                    std::vector<JankData>& jankData);
+
+    bool shouldOverrideChildrenFrameRate() const {
+        return getDrawingState().frameRateSelectionStrategy ==
+                FrameRateSelectionStrategy::OverrideChildren;
+    }
 
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is

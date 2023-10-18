@@ -166,6 +166,7 @@
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
 #include "Utils/Dumper.h"
+#include "Utils/FlagUtils.h"
 #include "WindowInfosListenerInvoker.h"
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
@@ -516,7 +517,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mMiscFlagValue = flags::misc1();
     mConnectedDisplayFlagValue = flags::connected_display();
     mMisc2FlagEarlyBootValue = flags::late_boot_misc2();
-    mVrrConfigFlagValue = flags::vrr_config();
 }
 
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
@@ -1395,8 +1395,7 @@ void SurfaceFlinger::initiateDisplayModeChanges() {
             continue;
         }
 
-        if (!display->isPoweredOn()) {
-            // Display is no longer powered on, so abort the mode change.
+        if (!shouldApplyRefreshRateSelectorPolicy(*display)) {
             clearDesiredActiveModeState(display);
             continue;
         }
@@ -4154,8 +4153,9 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
 
         if (!display) continue;
 
-        if (!display->isPoweredOn()) {
-            ALOGV("%s(%s): Display is powered off", __func__, to_string(displayId).c_str());
+        if (ftl::FakeGuard guard(kMainThreadContext);
+            !shouldApplyRefreshRateSelectorPolicy(*display)) {
+            ALOGV("%s(%s): Skipped applying policy", __func__, to_string(displayId).c_str());
             continue;
         }
 
@@ -5473,6 +5473,14 @@ uint32_t SurfaceFlinger::setClientStateLocked(const FrameTimelineInfo& frameTime
             flags |= eTraversalNeeded;
         }
     }
+    if (what & layer_state_t::eFrameRateSelectionStrategyChanged) {
+        const scheduler::LayerInfo::FrameRateSelectionStrategy strategy =
+                scheduler::LayerInfo::convertFrameRateSelectionStrategy(
+                        s.frameRateSelectionStrategy);
+        if (layer->setFrameRateSelectionStrategy(strategy)) {
+            flags |= eTraversalNeeded;
+        }
+    }
     if (what & layer_state_t::eFixedTransformHintChanged) {
         if (layer->setFixedTransformHint(s.fixedTransformHint)) {
             flags |= eTraversalNeeded | eTransformHintUpdateNeeded;
@@ -6693,7 +6701,8 @@ void SurfaceFlinger::dumpAllLocked(const DumpArgs& args, const std::string& comp
     StringAppendF(&result, "Misc2FlagValue: %s (%s after boot)\n",
                   mMisc2FlagLateBootValue ? "true" : "false",
                   mMisc2FlagEarlyBootValue == mMisc2FlagLateBootValue ? "stable" : "modified");
-    StringAppendF(&result, "VrrConfigFlagValue: %s\n", mVrrConfigFlagValue ? "true" : "false");
+    StringAppendF(&result, "VrrConfigFlagValue: %s\n",
+                  flagutils::vrrConfigEnabled() ? "true" : "false");
 
     getRenderEngine().dump(result);
 
@@ -7316,7 +7325,10 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             }
             case 1041: { // Transaction tracing
                 if (mTransactionTracing) {
-                    if (data.readInt32()) {
+                    int arg = data.readInt32();
+                    if (arg == -1) {
+                        mTransactionTracing.reset();
+                    } else if (arg > 0) {
                         // Transaction tracing is always running but allow the user to temporarily
                         // increase the buffer when actively debugging.
                         mTransactionTracing->setBufferSize(
@@ -8198,7 +8210,10 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
                                                      displayBrightnessNits);
                 }
             }
-            if (requestedDataspace == ui::Dataspace::UNKNOWN) {
+
+            // Screenshots leaving the device should be colorimetric
+            if (requestedDataspace == ui::Dataspace::UNKNOWN &&
+                renderArea->getHintForSeamlessTransition()) {
                 renderIntent = state.renderIntent;
             }
         }
@@ -8242,6 +8257,10 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
             }
         }
 
+        // Screenshots leaving the device must not dim in gamma space.
+        const bool dimInGammaSpaceForEnhancedScreenshots = mDimInGammaSpaceForEnhancedScreenshots &&
+                renderArea->getHintForSeamlessTransition();
+
         std::shared_ptr<ScreenCaptureOutput> output = createScreenCaptureOutput(
                 ScreenCaptureOutputArgs{.compositionEngine = *compositionEngine,
                                         .colorProfile = colorProfile,
@@ -8254,7 +8273,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
                                         .regionSampling = regionSampling,
                                         .treat170mAsSrgb = mTreat170mAsSrgb,
                                         .dimInGammaSpaceForEnhancedScreenshots =
-                                                mDimInGammaSpaceForEnhancedScreenshots});
+                                                dimInGammaSpaceForEnhancedScreenshots});
 
         const float colorSaturation = grayscale ? 0 : 1;
         compositionengine::CompositionRefreshArgs refreshArgs{
@@ -8400,15 +8419,31 @@ status_t SurfaceFlinger::setDesiredDisplayModeSpecsInternal(
             break;
     }
 
-    // TODO(b/255635711): Apply the policy once the display is powered on, which is currently only
-    // done for the internal display that becomes active on fold/unfold. For now, assume that DM
-    // always powers on the secondary (internal or external) display before setting its policy.
-    if (!display->isPoweredOn()) {
-        ALOGV("%s(%s): Display is powered off", __func__, to_string(displayId).c_str());
+    if (!shouldApplyRefreshRateSelectorPolicy(*display)) {
+        ALOGV("%s(%s): Skipped applying policy", __func__, to_string(displayId).c_str());
         return NO_ERROR;
     }
 
     return applyRefreshRateSelectorPolicy(displayId, selector);
+}
+
+bool SurfaceFlinger::shouldApplyRefreshRateSelectorPolicy(const DisplayDevice& display) const {
+    if (display.isPoweredOn() || mPhysicalDisplays.size() == 1) return true;
+
+    LOG_ALWAYS_FATAL_IF(display.isVirtual());
+    const auto displayId = display.getPhysicalId();
+
+    // The display is powered off, and this is a multi-display device. If the display is the
+    // inactive internal display of a dual-display foldable, then the policy will be applied
+    // when it becomes active upon powering on.
+    //
+    // TODO(b/255635711): Remove this function (i.e. returning `false` as a special case) once
+    // concurrent mode setting across multiple (potentially powered off) displays is supported.
+    //
+    return displayId == mActiveDisplayId ||
+            !mPhysicalDisplays.get(displayId)
+                     .transform(&PhysicalDisplay::isInternal)
+                     .value_or(false);
 }
 
 status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(

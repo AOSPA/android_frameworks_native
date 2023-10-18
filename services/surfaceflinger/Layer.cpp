@@ -212,6 +212,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mDrawingState.dropInputMode = gui::DropInputMode::NONE;
     mDrawingState.dimmingEnabled = true;
     mDrawingState.defaultFrameRateCompatibility = FrameRateCompatibility::Default;
+    mDrawingState.frameRateSelectionStrategy = FrameRateSelectionStrategy::Self;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
         // Set an invalid color so there is no color fill.
@@ -1283,9 +1284,14 @@ const half4& Layer::getBorderColor() {
     return mBorderColor;
 }
 
-bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded) {
-    // The frame rate for layer tree is this layer's frame rate if present, or the parent frame rate
+bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
+                                           bool* transactionNeeded) {
+    // Gets the frame rate to propagate to children.
     const auto frameRate = [&] {
+        if (overrideChildren && parentFrameRate.isValid()) {
+            return parentFrameRate;
+        }
+
         if (mDrawingState.frameRate.isValid()) {
             return mDrawingState.frameRate;
         }
@@ -1299,7 +1305,10 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
     bool childrenHaveFrameRate = false;
     for (const sp<Layer>& child : mCurrentChildren) {
         childrenHaveFrameRate |=
-                child->propagateFrameRateForLayerTree(frameRate, transactionNeeded);
+                child->propagateFrameRateForLayerTree(frameRate,
+                                                      overrideChildren ||
+                                                              shouldOverrideChildrenFrameRate(),
+                                                      transactionNeeded);
     }
 
     // If we don't have a valid frame rate specification, but the children do, we set this
@@ -1332,7 +1341,7 @@ void Layer::updateTreeHasFrameRateVote() {
     }();
 
     bool transactionNeeded = false;
-    root->propagateFrameRateForLayerTree({}, &transactionNeeded);
+    root->propagateFrameRateForLayerTree({}, false, &transactionNeeded);
 
     // TODO(b/195668952): we probably don't need eTraversalNeeded here
     if (transactionNeeded) {
@@ -1366,6 +1375,15 @@ bool Layer::setFrameRateCategory(FrameRateCategory category) {
 
     updateTreeHasFrameRateVote();
 
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+bool Layer::setFrameRateSelectionStrategy(FrameRateSelectionStrategy strategy) {
+    if (mDrawingState.frameRateSelectionStrategy == strategy) return false;
+    mDrawingState.frameRateSelectionStrategy = strategy;
+    mDrawingState.sequence++;
+    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
