@@ -1101,7 +1101,10 @@ void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<Display
     bool createVirtualDisplay = false;
     int width = 0, height = 0, format = 0;
     {
-        Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        if (!mQtiFlinger->mRequestDisplayModeFlag ||
+            (mQtiFlinger->mFlagThread != std::this_thread::get_id())) {
+            Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        }
         for (const DisplayState& s : displays) {
             const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
             if (index < 0) continue;
