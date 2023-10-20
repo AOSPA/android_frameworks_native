@@ -12,16 +12,12 @@ namespace android::libnativedisplay {
 QtiImageConsumerExtension::QtiImageConsumerExtension(ImageConsumer* consumer)
       : mQtiImageConsumer(consumer) {
 #ifdef QTI_DISPLAY_EXTENSION
-      int qtiFirstApiLevel = android::base::GetIntProperty("ro.product.first_api_level", 0);
-      mQtiEnableExtn = (qtiFirstApiLevel < __ANDROID_API_U__) ||
-              base::GetBoolProperty("vendor.display.enable_display_extensions", false);
-      if (mQtiEnableExtn) {
-          if (!mQtiImageConsumer) {
-              ALOGW("%s: Invalid pointer to ImageConsumer passed", __func__);
-          } else {
-              ALOGV("%s: ImageConsumer %p", __func__, mQtiImageConsumer);
-          }
-      }
+    mQtiEnableExtn = true;
+    if (!mQtiImageConsumer) {
+        ALOGW("%s: Invalid pointer to ImageConsumer passed", __func__);
+    } else {
+        ALOGV("%s: ImageConsumer %p", __func__, mQtiImageConsumer);
+    }
 #endif
 
 }
