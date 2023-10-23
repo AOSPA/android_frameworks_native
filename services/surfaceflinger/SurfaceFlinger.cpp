@@ -6860,6 +6860,9 @@ void SurfaceFlinger::dumpAll(const DumpArgs& args, const std::string& compositio
     if (!lock.locked()) {
         StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
                       strerror(-lock.status), lock.status);
+        /* QTI_BEGIN */
+        return;
+        /* QTI_END */
     }
 
     const bool colorize = !args.empty() && args[0] == String16("--color");
