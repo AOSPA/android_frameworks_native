@@ -119,6 +119,7 @@
 #include <vector>
 
 #include <gui/LayerStatePermissions.h>
+#include <gui/SchedulingPolicy.h>
 #include <ui/DisplayIdentification.h>
 #include "BackgroundExecutor.h"
 #include "Client.h"
@@ -2125,6 +2126,17 @@ nsecs_t SurfaceFlinger::getVsyncPeriodFromHWC() const {
 
 void SurfaceFlinger::onComposerHalVsync(hal::HWDisplayId hwcDisplayId, int64_t timestamp,
                                         std::optional<hal::VsyncPeriodNanos> vsyncPeriod) {
+    if (mConnectedDisplayFlagValue) {
+        // use ~0 instead of -1 as AidlComposerHal.cpp passes the param as unsigned int32
+        if (mIsHotplugErrViaNegVsync && timestamp < 0 && vsyncPeriod.has_value() &&
+            vsyncPeriod.value() == ~0) {
+            int hotplugErrorCode = static_cast<int32_t>(-timestamp);
+            ALOGD("SurfaceFlinger got hotplugErrorCode=%d", hotplugErrorCode);
+            mScheduler->onHotplugConnectionError(mAppConnectionHandle, hotplugErrorCode);
+            return;
+        }
+    }
+
     ATRACE_NAME(vsyncPeriod
                         ? ftl::Concat(__func__, ' ', hwcDisplayId, ' ', *vsyncPeriod, "ns").c_str()
                         : ftl::Concat(__func__, ' ', hwcDisplayId).c_str());
@@ -2235,8 +2247,12 @@ bool SurfaceFlinger::updateLayerSnapshotsLegacy(VsyncId vsyncId, nsecs_t frameTi
 
 void SurfaceFlinger::updateLayerHistory(const frontend::LayerSnapshot& snapshot) {
     using Changes = frontend::RequestedLayerState::Changes;
-    if (snapshot.path.isClone() ||
-        !snapshot.changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation)) {
+    if (snapshot.path.isClone()) {
+        return;
+    }
+
+    if (!snapshot.changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation) &&
+        (snapshot.clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) == 0) {
         return;
     }
 
@@ -2254,6 +2270,11 @@ void SurfaceFlinger::updateLayerHistory(const frontend::LayerSnapshot& snapshot)
 
     if (snapshot.changes.test(Changes::Animation)) {
         it->second->recordLayerHistoryAnimationTx(layerProps);
+    }
+
+    if (snapshot.clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) {
+        mScheduler->setDefaultFrameRateCompatibility(snapshot.sequence,
+                                                     snapshot.defaultFrameRateCompatibility);
     }
 
     if (snapshot.changes.test(Changes::FrameRate)) {
@@ -4258,6 +4279,9 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
             sp<RegionSamplingThread>::make(*this,
                                            RegionSamplingThread::EnvironmentTimingTunables());
     mFpsReporter = sp<FpsReporter>::make(*mFrameTimeline, *this);
+
+    mIsHotplugErrViaNegVsync =
+            base::GetBoolProperty("debug.sf.hwc_hotplug_error_via_neg_vsync"s, false);
 }
 
 void SurfaceFlinger::updatePhaseConfiguration(Fps refreshRate) {
@@ -6848,6 +6872,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         case GET_ACTIVE_DISPLAY_MODE:
         case GET_DISPLAY_COLOR_MODES:
         case GET_DISPLAY_MODES:
+        case GET_SCHEDULING_POLICY:
         // Calling setTransactionState is safe, because you need to have been
         // granted a reference to Client* and Handle* to do anything with it.
         case SET_TRANSACTION_STATE: {
@@ -6929,9 +6954,9 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
         code == IBinder::SYSPROPS_TRANSACTION) {
         return OK;
     }
-    // Numbers from 1000 to 1044 and 20000 to 20002 are currently used for backdoors. The code
+    // Numbers from 1000 to 1045 and 20000 to 20002 are currently used for backdoors. The code
     // in onTransact verifies that the user is root, and has access to use SF.
-    if ((code >= 1000 && code <= 1044) /* QTI_BEGIN */ ||
+    if ((code >= 1000 && code <= 1045) /* QTI_BEGIN */ ||
         (code >= 20000 && code <= 20002) /* QTI_END */) {
         ALOGV("Accessing SurfaceFlinger through backdoor code: %u", code);
         return OK;
@@ -7498,6 +7523,39 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                         return BAD_VALUE;
                 }
                 return NO_ERROR;
+            }
+            // Inject jank
+            // First argument is a float that describes the fraction of frame duration to jank by.
+            // Second argument is a delay in ms for triggering the jank. This is useful for working
+            // with tools that steal the adb connection. This argument is optional.
+            case 1045: {
+                if (flagutils::vrrConfigEnabled()) {
+                    float jankAmount = data.readFloat();
+                    int32_t jankDelayMs = 0;
+                    if (data.readInt32(&jankDelayMs) != NO_ERROR) {
+                        jankDelayMs = 0;
+                    }
+
+                    const auto jankDelayDuration = Duration(std::chrono::milliseconds(jankDelayMs));
+
+                    const bool jankAmountValid = jankAmount > 0.0 && jankAmount < 100.0;
+
+                    if (!jankAmountValid) {
+                        ALOGD("Ignoring invalid jank amount: %f", jankAmount);
+                        reply->writeInt32(BAD_VALUE);
+                        return BAD_VALUE;
+                    }
+
+                    (void)mScheduler->scheduleDelayed(
+                            [&, jankAmount]() FTL_FAKE_GUARD(kMainThreadContext) {
+                                mScheduler->injectPacesetterDelay(jankAmount);
+                                scheduleComposite(FrameHint::kActive);
+                            },
+                            jankDelayDuration.ns());
+                    reply->writeInt32(NO_ERROR);
+                    return NO_ERROR;
+                }
+                return err;
             }
         }
     }
@@ -9350,6 +9408,10 @@ binder::Status SurfaceComposerAIDL::createConnection(sp<gui::ISurfaceComposerCli
     const sp<Client> client = sp<Client>::make(mFlinger);
     if (client->initCheck() == NO_ERROR) {
         *outClient = client;
+        if (flags::misc1()) {
+            const int policy = SCHED_FIFO;
+            client->setMinSchedulerPolicy(policy, sched_get_priority_min(policy));
+        }
         return binder::Status::ok();
     } else {
         *outClient = nullptr;
@@ -10131,6 +10193,10 @@ binder::Status SurfaceComposerAIDL::getStalledTransactionInfo(
         outInfo->reset();
     }
     return binderStatusFromStatusT(status);
+}
+
+binder::Status SurfaceComposerAIDL::getSchedulingPolicy(gui::SchedulingPolicy* outPolicy) {
+    return gui::getSchedulingPolicy(outPolicy);
 }
 
 status_t SurfaceComposerAIDL::checkAccessPermission(bool usePermissionCache) {

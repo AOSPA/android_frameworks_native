@@ -183,6 +183,7 @@ cc_library_headers {
 filegroup {
     name: "libinputflinger_base_sources",
     srcs: [
+        "InputDeviceMetricsSource.cpp",
         "InputListener.cpp",
         "InputReaderBase.cpp",
         "InputThread.cpp",
@@ -200,6 +201,7 @@ cc_defaults {
         "libcutils",
         "libinput",
         "liblog",
+        "libstatslog",
         "libutils",
     ],
     header_libs: [

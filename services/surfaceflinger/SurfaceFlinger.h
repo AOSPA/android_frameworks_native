@@ -1257,6 +1257,8 @@ private:
         hal::Connection connection = hal::Connection::INVALID;
     };
 
+    bool mIsHotplugErrViaNegVsync = false;
+
     std::mutex mHotplugMutex;
     std::vector<HotplugEvent> mPendingHotplugEvents GUARDED_BY(mHotplugMutex);
 
@@ -1604,8 +1606,9 @@ public:
                                           gui::WindowInfosListenerInfo* outInfo) override;
     binder::Status removeWindowInfosListener(
             const sp<gui::IWindowInfosListener>& windowInfosListener) override;
-    binder::Status getStalledTransactionInfo(int pid,
-                                             std::optional<gui::StalledTransactionInfo>* outInfo);
+    binder::Status getStalledTransactionInfo(
+            int pid, std::optional<gui::StalledTransactionInfo>* outInfo) override;
+    binder::Status getSchedulingPolicy(gui::SchedulingPolicy* outPolicy) override;
 
 private:
     static const constexpr bool kUsePermissionCache = true;

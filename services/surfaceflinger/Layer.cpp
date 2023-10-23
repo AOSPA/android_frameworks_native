@@ -1187,12 +1187,12 @@ bool Layer::setDefaultFrameRateCompatibility(FrameRateCompatibility compatibilit
     if (mDrawingState.defaultFrameRateCompatibility == compatibility) return false;
     mDrawingState.defaultFrameRateCompatibility = compatibility;
     mDrawingState.modified = true;
-    mFlinger->mScheduler->setDefaultFrameRateCompatibility(this);
+    mFlinger->mScheduler->setDefaultFrameRateCompatibility(sequence, compatibility);
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
-scheduler::LayerInfo::FrameRateCompatibility Layer::getDefaultFrameRateCompatibility() const {
+scheduler::FrameRateCompatibility Layer::getDefaultFrameRateCompatibility() const {
     return mDrawingState.defaultFrameRateCompatibility;
 }
 
@@ -1384,6 +1384,8 @@ bool Layer::setFrameRateSelectionStrategy(FrameRateSelectionStrategy strategy) {
     mDrawingState.frameRateSelectionStrategy = strategy;
     mDrawingState.sequence++;
     mDrawingState.modified = true;
+
+    updateTreeHasFrameRateVote();
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -3227,8 +3229,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     } else {
         // release sideband stream if it exists and a non null buffer is being set
         if (mDrawingState.sidebandStream != nullptr) {
-            mFlinger->mTunnelModeEnabledReporter->decrementTunnelModeCount();
-            mDrawingState.sidebandStream = nullptr;
+            setSidebandStream(nullptr, info, postTime);
         }
     }
 

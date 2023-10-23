@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "InputDeviceMetricsSource.h"
 #include "InputListener.h"
 #include "NotifyArgs.h"
 #include "SyncQueue.h"
@@ -23,7 +24,6 @@
 #include <ftl/mixins.h>
 #include <gui/WindowInfo.h>
 #include <input/InputDevice.h>
-#include <statslog.h>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -52,38 +52,6 @@ public:
     virtual void dump(std::string& dump) = 0;
 };
 
-/**
- * Enum representation of the InputDeviceUsageSource.
- */
-enum class InputDeviceUsageSource : int32_t {
-    UNKNOWN = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__UNKNOWN,
-    BUTTONS = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__BUTTONS,
-    KEYBOARD = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__KEYBOARD,
-    DPAD = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__DPAD,
-    GAMEPAD = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__GAMEPAD,
-    JOYSTICK = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__JOYSTICK,
-    MOUSE = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__MOUSE,
-    MOUSE_CAPTURED = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__MOUSE_CAPTURED,
-    TOUCHPAD = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__TOUCHPAD,
-    TOUCHPAD_CAPTURED = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__TOUCHPAD_CAPTURED,
-    ROTARY_ENCODER = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__ROTARY_ENCODER,
-    STYLUS_DIRECT = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__STYLUS_DIRECT,
-    STYLUS_INDIRECT = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__STYLUS_INDIRECT,
-    STYLUS_FUSED = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__STYLUS_FUSED,
-    TOUCH_NAVIGATION = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__TOUCH_NAVIGATION,
-    TOUCHSCREEN = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__TOUCHSCREEN,
-    TRACKBALL = util::INPUT_DEVICE_USAGE_REPORTED__USAGE_SOURCES__TRACKBALL,
-
-    ftl_first = UNKNOWN,
-    ftl_last = TRACKBALL,
-};
-
-/** Returns the InputDeviceUsageSource that corresponds to the key event. */
-InputDeviceUsageSource getUsageSourceForKeyArgs(const InputDeviceInfo&, const NotifyKeyArgs&);
-
-/** Returns the InputDeviceUsageSources that correspond to the motion event. */
-std::set<InputDeviceUsageSource> getUsageSourcesForMotionArgs(const NotifyMotionArgs&);
-
 /** The logging interface for the metrics collector, injected for testing. */
 class InputDeviceMetricsLogger {
 public:
@@ -110,7 +78,19 @@ public:
         UidUsageBreakdown uidBreakdown;
     };
 
-    virtual void logInputDeviceUsageReported(const InputDeviceInfo&, const DeviceUsageReport&) = 0;
+    // A subset of information from the InputDeviceInfo class that is used for metrics collection,
+    // used to avoid copying and storing all of the fields and strings in InputDeviceInfo.
+    struct MetricsDeviceInfo {
+        int32_t deviceId;
+        int32_t vendor;
+        int32_t product;
+        int32_t version;
+        int32_t bus;
+        bool isUsiStylus;
+        int32_t keyboardType;
+    };
+    virtual void logInputDeviceUsageReported(const MetricsDeviceInfo&,
+                                             const DeviceUsageReport&) = 0;
     virtual ~InputDeviceMetricsLogger() = default;
 };
 
@@ -153,8 +133,9 @@ private:
     }
 
     using Uid = gui::Uid;
+    using MetricsDeviceInfo = InputDeviceMetricsLogger::MetricsDeviceInfo;
 
-    std::map<DeviceId, InputDeviceInfo> mLoggedDeviceInfos;
+    std::map<DeviceId, MetricsDeviceInfo> mLoggedDeviceInfos;
 
     using Interaction = std::tuple<DeviceId, std::chrono::nanoseconds, std::set<Uid>>;
     SyncQueue<Interaction> mInteractionsQueue;
@@ -191,8 +172,9 @@ private:
     std::map<DeviceId, ActiveSession> mActiveUsageSessions;
 
     void onInputDevicesChanged(const std::vector<InputDeviceInfo>& infos);
-    void onInputDeviceRemoved(DeviceId deviceId, const InputDeviceInfo& info);
-    using SourceProvider = std::function<std::set<InputDeviceUsageSource>(const InputDeviceInfo&)>;
+    void onInputDeviceRemoved(DeviceId deviceId, const MetricsDeviceInfo& info);
+    using SourceProvider =
+            std::function<std::set<InputDeviceUsageSource>(const MetricsDeviceInfo&)>;
     void onInputDeviceUsage(DeviceId deviceId, std::chrono::nanoseconds eventTime,
                             const SourceProvider& getSources);
     void onInputDeviceInteraction(const Interaction&);
