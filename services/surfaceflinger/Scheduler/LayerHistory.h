@@ -29,6 +29,7 @@
 
 #include "EventThread.h"
 
+#include "FrameRateCompatibility.h"
 #include "RefreshRateSelector.h"
 
 namespace android {
@@ -43,6 +44,7 @@ struct LayerProps;
 class LayerHistory {
 public:
     using LayerVoteType = RefreshRateSelector::LayerVoteType;
+    static constexpr std::chrono::nanoseconds kMaxPeriodForHistory = 1s;
 
     LayerHistory();
     ~LayerHistory();
@@ -69,7 +71,8 @@ public:
 
     // Updates the default frame rate compatibility which takes effect when the app
     // does not set a preference for refresh rate.
-    void setDefaultFrameRateCompatibility(Layer*, bool contentDetectionEnabled);
+    void setDefaultFrameRateCompatibility(int32_t id, FrameRateCompatibility frameRateCompatibility,
+                                          bool contentDetectionEnabled);
 
     using Summary = std::vector<RefreshRateSelector::LayerRequirement>;
 
@@ -83,6 +86,8 @@ public:
 
     // return the frames per second of the layer with the given sequence id.
     float getLayerFramerate(nsecs_t now, int32_t id) const;
+
+    bool isSmallDirtyArea(uint32_t dirtyArea, float threshold) const;
 
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }

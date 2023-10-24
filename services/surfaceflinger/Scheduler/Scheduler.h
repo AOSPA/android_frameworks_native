@@ -55,6 +55,7 @@
 #include "MessageQueue.h"
 #include "OneShotTimer.h"
 #include "RefreshRateSelector.h"
+#include "SmallAreaDetectionAllowMappings.h"
 #include "Utils/Dumper.h"
 #include "VsyncModulator.h"
 
@@ -103,7 +104,7 @@ using GlobalSignals = RefreshRateSelector::GlobalSignals;
 
 class VsyncSchedule;
 
-class Scheduler : android::impl::MessageQueue {
+class Scheduler : public IEventThreadCallback, android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
 public:
@@ -170,6 +171,8 @@ public:
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
     void onHotplugReceived(ConnectionHandle, PhysicalDisplayId, bool connected);
+    void onHotplugConnectionError(ConnectionHandle, int32_t errorCode);
+
     void onPrimaryDisplayModeChanged(ConnectionHandle, const FrameRateMode&) EXCLUDES(mPolicyLock);
     void onNonPrimaryDisplayModeChanged(ConnectionHandle, const FrameRateMode&);
 
@@ -224,7 +227,6 @@ public:
         ftl::FakeGuard guard(kMainThreadContext);
         resyncToHardwareVsyncLocked(id, allowToEnable, refreshRate);
     }
-    void resync() EXCLUDES(mDisplayLock);
     void forceNextResync() { mLastResyncTime = 0; }
 
     // Passes a vsync sample to VsyncController. Returns true if
@@ -240,7 +242,7 @@ public:
     void recordLayerHistory(int32_t id, const LayerProps& layerProps, nsecs_t presentTime,
                             LayerHistory::LayerUpdateType) EXCLUDES(mDisplayLock);
     void setModeChangePending(bool pending);
-    void setDefaultFrameRateCompatibility(Layer*);
+    void setDefaultFrameRateCompatibility(int32_t id, scheduler::FrameRateCompatibility);
     void deregisterLayer(Layer*);
     void onLayerDestroyed(Layer*) EXCLUDES(mChoreographerLock);
 
@@ -301,6 +303,13 @@ public:
 
     void setGameModeRefreshRateForUid(FrameRateOverride);
 
+    void updateSmallAreaDetection(std::vector<std::pair<uid_t, float>>& uidThresholdMappings);
+
+    void setSmallAreaDetectionThreshold(uid_t uid, float threshold);
+
+    // Returns true if the dirty area is less than threshold.
+    bool isSmallDirtyArea(uid_t uid, uint32_t dirtyArea);
+
     // Retrieves the overridden refresh rate for a given uid.
     std::optional<Fps> getFrameRateOverride(uid_t) const EXCLUDES(mDisplayLock);
 
@@ -322,6 +331,16 @@ public:
     /* QTI_END */
 
     bool updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) EXCLUDES(mPolicyLock);
+
+    // Returns true if the small dirty detection is enabled.
+    bool supportSmallDirtyDetection() const {
+        return mFeatures.test(Feature::kSmallDirtyContentDetection);
+    }
+
+    // Injects a delay that is a fraction of the predicted frame duration for the next frame.
+    void injectPacesetterDelay(float frameDurationFraction) REQUIRES(kMainThreadContext) {
+        mPacesetterFrameDurationFractionToSkip = frameDurationFraction;
+    }
 
 private:
     friend class TestableScheduler;
@@ -419,8 +438,10 @@ private:
 
     void dispatchCachedReportedMode() REQUIRES(mPolicyLock) EXCLUDES(mDisplayLock);
 
-    android::impl::EventThread::ThrottleVsyncCallback makeThrottleVsyncCallback() const;
-    android::impl::EventThread::GetVsyncPeriodFunction makeGetVsyncPeriodFunction() const;
+    // IEventThreadCallback overrides
+    bool throttleVsync(TimePoint, uid_t) override;
+    Period getVsyncPeriod(uid_t) override EXCLUDES(mDisplayLock);
+    void resync() override EXCLUDES(mDisplayLock);
 
     // Stores EventThread associated with a given VSyncSource, and an initial EventThreadConnection.
     struct Connection {
@@ -449,6 +470,9 @@ private:
     ftl::Optional<OneShotTimer> mTouchTimer;
     // Timer used to monitor display power mode.
     ftl::Optional<OneShotTimer> mDisplayPowerTimer;
+
+    // Injected delay prior to compositing, for simulating jank.
+    float mPacesetterFrameDurationFractionToSkip GUARDED_BY(kMainThreadContext) = 0.f;
 
     ISchedulerCallback& mSchedulerCallback;
 
@@ -561,6 +585,7 @@ private:
     static constexpr std::chrono::nanoseconds MAX_VSYNC_APPLIED_TIME = 200ms;
 
     FrameRateOverrideMappings mFrameRateOverrideMappings;
+    SmallAreaDetectionAllowMappings mSmallAreaDetectionAllowMappings;
 
     /* QTI_BEGIN */
     // Cache thermal Fps, and limit to the given level

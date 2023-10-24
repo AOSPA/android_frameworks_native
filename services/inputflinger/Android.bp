@@ -77,6 +77,7 @@ filegroup {
         "InputCommonConverter.cpp",
         "InputDeviceMetricsCollector.cpp",
         "InputProcessor.cpp",
+        "PointerChoreographer.cpp",
         "PreferStylusOverTouchBlocker.cpp",
         "UnwantedInteractionBlocker.cpp",
     ],
@@ -182,6 +183,7 @@ cc_library_headers {
 filegroup {
     name: "libinputflinger_base_sources",
     srcs: [
+        "InputDeviceMetricsSource.cpp",
         "InputListener.cpp",
         "InputReaderBase.cpp",
         "InputThread.cpp",
@@ -199,6 +201,7 @@ cc_defaults {
         "libcutils",
         "libinput",
         "liblog",
+        "libstatslog",
         "libutils",
     ],
     header_libs: [
@@ -240,9 +243,6 @@ phony {
         "libinputservice_test",
         "Bug-115739809",
         "StructLayout_test",
-        // currently unused, but still must build correctly
-        "inputflinger",
-        "libinputflingerhost",
 
         // rust targets
         "libinput_rust_test",

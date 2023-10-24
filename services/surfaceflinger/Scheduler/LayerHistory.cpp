@@ -40,8 +40,9 @@ namespace android::scheduler {
 namespace {
 
 bool isLayerActive(const LayerInfo& info, nsecs_t threshold) {
-    // Layers with an explicit vote are always kept active
-    if (info.getSetFrameRateVote().rate.isValid()) {
+    // Layers with an explicit frame rate or frame rate category are always kept active,
+    // but ignore NoVote.
+    if (info.getSetFrameRateVote().isValid() && !info.getSetFrameRateVote().isNoVote()) {
         return true;
     }
 
@@ -70,16 +71,17 @@ void trace(const LayerInfo& info, LayerHistory::LayerVoteType type, int fps) {
     traceType(LayerHistory::LayerVoteType::ExplicitExact, fps);
     traceType(LayerHistory::LayerVoteType::Min, 1);
     traceType(LayerHistory::LayerVoteType::Max, 1);
+    traceType(LayerHistory::LayerVoteType::ExplicitCategory, 1);
 
     ALOGD("%s: %s @ %d Hz", __FUNCTION__, info.getName().c_str(), fps);
 }
 
-LayerHistory::LayerVoteType getVoteType(LayerInfo::FrameRateCompatibility compatibility,
+LayerHistory::LayerVoteType getVoteType(FrameRateCompatibility compatibility,
                                         bool contentDetectionEnabled) {
     LayerHistory::LayerVoteType voteType;
-    if (!contentDetectionEnabled || compatibility == LayerInfo::FrameRateCompatibility::NoVote) {
+    if (!contentDetectionEnabled || compatibility == FrameRateCompatibility::NoVote) {
         voteType = LayerHistory::LayerVoteType::NoVote;
-    } else if (compatibility == LayerInfo::FrameRateCompatibility::Min) {
+    } else if (compatibility == FrameRateCompatibility::Min) {
         voteType = LayerHistory::LayerVoteType::Min;
     } else {
         voteType = LayerHistory::LayerVoteType::Heuristic;
@@ -139,20 +141,20 @@ void LayerHistory::record(int32_t id, const LayerProps& layerProps, nsecs_t pres
     }
 }
 
-void LayerHistory::setDefaultFrameRateCompatibility(Layer* layer, bool contentDetectionEnabled) {
+void LayerHistory::setDefaultFrameRateCompatibility(int32_t id,
+                                                    FrameRateCompatibility frameRateCompatibility,
+                                                    bool contentDetectionEnabled) {
     std::lock_guard lock(mLock);
-    auto id = layer->getSequence();
 
     auto [found, layerPair] = findLayer(id);
     if (found == LayerStatus::NotFound) {
         // Offscreen layer
-        ALOGV("%s: %s not registered", __func__, layer->getName().c_str());
+        ALOGV("%s: %d not registered", __func__, id);
         return;
     }
 
     const auto& info = layerPair->second;
-    info->setDefaultLayerVote(
-            getVoteType(layer->getDefaultFrameRateCompatibility(), contentDetectionEnabled));
+    info->setDefaultLayerVote(getVoteType(frameRateCompatibility, contentDetectionEnabled));
 }
 
 auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -> Summary {
@@ -171,34 +173,38 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
               layerFocused ? "" : "not");
 
         ATRACE_FORMAT("%s", info->getName().c_str());
-        auto vote = info->getRefreshRateVote(selector, now);
-        // Skip NoVote layer as those don't have any requirements
-        if (vote.type == LayerVoteType::NoVote) {
-            continue;
-        }
+        auto votes = info->getRefreshRateVote(selector, now);
+        for (LayerInfo::LayerVote vote : votes) {
+            if (vote.isNoVote()) {
+                continue;
+            }
 
-        // Compute the layer's position on the screen
-        const Rect bounds = Rect(info->getBounds());
-        const ui::Transform transform = info->getTransform();
-        constexpr bool roundOutwards = true;
-        Rect transformed = transform.transform(bounds, roundOutwards);
+            // Compute the layer's position on the screen
+            const Rect bounds = Rect(info->getBounds());
+            const ui::Transform transform = info->getTransform();
+            constexpr bool roundOutwards = true;
+            Rect transformed = transform.transform(bounds, roundOutwards);
 
-        const float layerArea = transformed.getWidth() * transformed.getHeight();
-        float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
-        ATRACE_FORMAT_INSTANT("%s %s (%d%)", ftl::enum_string(vote.type).c_str(),
-                              to_string(vote.fps).c_str(), weight * 100);
+            const float layerArea = transformed.getWidth() * transformed.getHeight();
+            float weight = mDisplayArea ? layerArea / mDisplayArea : 0.0f;
+            const std::string categoryString = vote.category == FrameRateCategory::Default
+                    ? ""
+                    : base::StringPrintf("category=%s", ftl::enum_string(vote.category).c_str());
+            ATRACE_FORMAT_INSTANT("%s %s %s (%d%)", ftl::enum_string(vote.type).c_str(),
+                                  to_string(vote.fps).c_str(), categoryString.c_str(),
+                                  weight * 100);
+            /* QTI_BEGIN */
+            if (mQtiThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mQtiThermalFps) {
+                vote.fps = Fps::fromValue(mQtiThermalFps);
+            }
+            /* QTI_END */
 
-        /* QTI_BEGIN */
-        if (mQtiThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mQtiThermalFps) {
-            vote.fps = Fps::fromValue(mQtiThermalFps);
-        }
-        /* QTI_END */
+            summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
+                               vote.seamlessness, vote.category, weight, layerFocused});
 
-        summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
-                           vote.seamlessness, weight, layerFocused});
-
-        if (CC_UNLIKELY(mTraceEnabled)) {
-            trace(*info, vote.type, vote.fps.getIntValue());
+            if (CC_UNLIKELY(mTraceEnabled)) {
+                trace(*info, vote.type, vote.fps.getIntValue());
+            }
         }
     }
 
@@ -235,7 +241,7 @@ void LayerHistory::partitionLayers(nsecs_t now) {
             // Set layer vote if set
             const auto frameRate = info->getSetFrameRateVote();
             const auto voteType = [&]() {
-                switch (frameRate.type) {
+                switch (frameRate.vote.type) {
                     case Layer::FrameRateCompatibility::Default:
                         return LayerVoteType::ExplicitDefault;
                     case Layer::FrameRateCompatibility::Min:
@@ -249,9 +255,10 @@ void LayerHistory::partitionLayers(nsecs_t now) {
                 }
             }();
 
-            if (frameRate.rate.isValid() || voteType == LayerVoteType::NoVote) {
+            if (frameRate.isValid()) {
                 const auto type = info->isVisible() ? voteType : LayerVoteType::NoVote;
-                info->setLayerVote({type, frameRate.rate, frameRate.seamlessness});
+                info->setLayerVote({type, frameRate.vote.rate, frameRate.vote.seamlessness,
+                                    frameRate.category});
             } else {
                 info->resetLayerVote();
             }
@@ -303,6 +310,13 @@ auto LayerHistory::findLayer(int32_t id) -> std::pair<LayerStatus, LayerPair*> {
         return {LayerStatus::LayerInInactiveMap, &(it->second)};
     }
     return {LayerStatus::NotFound, nullptr};
+}
+
+bool LayerHistory::isSmallDirtyArea(uint32_t dirtyArea, float threshold) const {
+    const float ratio = (float)dirtyArea / mDisplayArea;
+    const bool isSmallDirty = ratio <= threshold;
+    ATRACE_FORMAT_INSTANT("small dirty=%s, ratio=%.3f", isSmallDirty ? "true" : "false", ratio);
+    return isSmallDirty;
 }
 
 } // namespace android::scheduler

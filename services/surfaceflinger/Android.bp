@@ -7,6 +7,17 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
+aconfig_declarations {
+    name: "surfaceflinger_flags",
+    package: "com.android.graphics.surfaceflinger.flags",
+    srcs: ["surfaceflinger_flags.aconfig"],
+}
+
+cc_aconfig_library {
+    name: "libsurfaceflingerflags",
+    aconfig_declarations: "surfaceflinger_flags",
+}
+
 cc_defaults {
     name: "surfaceflinger_defaults",
     cflags: [
@@ -21,6 +32,9 @@ cc_defaults {
         "-Wconversion",
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
         "-DDISABLE_DEVICE_INTEGRATION",
+    ],
+    static_libs: [
+        "libsurfaceflingerflags",
     ],
 }
 
@@ -86,6 +100,7 @@ cc_defaults {
         "libshaders",
         "libtimestats",
         "libtonemap",
+        "libsurfaceflingerflags",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -189,6 +204,7 @@ filegroup {
         "Scheduler/MessageQueue.cpp",
         "Scheduler/RefreshRateSelector.cpp",
         "Scheduler/Scheduler.cpp",
+        "Scheduler/SmallAreaDetectionAllowMappings.cpp",
         "Scheduler/VSyncDispatchTimerQueue.cpp",
         "Scheduler/VSyncPredictor.cpp",
         "Scheduler/VSyncReactor.cpp",
@@ -199,9 +215,12 @@ filegroup {
         "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
+        "Tracing/LayerDataSource.cpp",
         "Tracing/LayerTracing.cpp",
+        "Tracing/TransactionDataSource.cpp",
         "Tracing/TransactionTracing.cpp",
         "Tracing/TransactionProtoParser.cpp",
+        "Tracing/tools/LayerTraceGenerator.cpp",
         "TransactionCallbackInvoker.cpp",
         "TunnelModeEnabledReporter.cpp",
     ],

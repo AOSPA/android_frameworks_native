@@ -243,8 +243,8 @@ private:
             int32_t displayId, float x, float y, bool isStylus = false,
             bool ignoreDragWindow = false) const REQUIRES(mLock);
     std::vector<InputTarget> findOutsideTargetsLocked(
-            int32_t displayId, const sp<android::gui::WindowInfoHandle>& touchedWindow) const
-            REQUIRES(mLock);
+            int32_t displayId, const sp<android::gui::WindowInfoHandle>& touchedWindow,
+            int32_t pointerId) const REQUIRES(mLock);
 #else
     // Device Integration: add a new param into this method
     std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
@@ -308,25 +308,6 @@ private:
 
     void resetKeyRepeatLocked() REQUIRES(mLock);
     std::shared_ptr<KeyEntry> synthesizeKeyRepeatLocked(nsecs_t currentTime) REQUIRES(mLock);
-
-    // Key replacement tracking
-    struct KeyReplacement {
-        int32_t keyCode;
-        int32_t deviceId;
-        bool operator==(const KeyReplacement& rhs) const {
-            return keyCode == rhs.keyCode && deviceId == rhs.deviceId;
-        }
-    };
-    struct KeyReplacementHash {
-        size_t operator()(const KeyReplacement& key) const {
-            return std::hash<int32_t>()(key.keyCode) ^ (std::hash<int32_t>()(key.deviceId) << 1);
-        }
-    };
-    // Maps the key code replaced, device id tuple to the key code it was replaced with
-    std::unordered_map<KeyReplacement, int32_t, KeyReplacementHash> mReplacedKeys GUARDED_BY(mLock);
-    // Process certain Meta + Key combinations
-    void accelerateMetaShortcuts(const int32_t deviceId, const int32_t action, int32_t& keyCode,
-                                 int32_t& metaState);
 
     // Deferred command processing.
     bool haveCommandsLocked() const REQUIRES(mLock);
@@ -548,7 +529,6 @@ private:
     // shade is pulled down while we are counting down the timeout).
     void resetNoFocusedWindowTimeoutLocked() REQUIRES(mLock);
 
-    bool shouldSplitTouch(const TouchState& touchState, const MotionEntry& entry) const;
     int32_t getTargetDisplayId(const EventEntry& entry);
     sp<android::gui::WindowInfoHandle> findFocusedWindowTargetLocked(
             nsecs_t currentTime, const EventEntry& entry, nsecs_t* nextWakeupTime,
@@ -631,8 +611,8 @@ private:
     void abortBrokenDispatchCycleLocked(nsecs_t currentTime,
                                         const std::shared_ptr<Connection>& connection, bool notify)
             REQUIRES(mLock);
-    void drainDispatchQueue(std::deque<DispatchEntry*>& queue);
-    void releaseDispatchEntry(DispatchEntry* dispatchEntry);
+    void drainDispatchQueue(std::deque<std::unique_ptr<DispatchEntry>>& queue);
+    void releaseDispatchEntry(std::unique_ptr<DispatchEntry> dispatchEntry);
     int handleReceiveCallback(int events, sp<IBinder> connectionToken);
     // The action sent should only be of type AMOTION_EVENT_*
     void dispatchPointerDownOutsideFocus(uint32_t source, int32_t action,
@@ -697,10 +677,10 @@ private:
             REQUIRES(mLock);
     std::map<int32_t /*displayId*/, InputVerifier> mVerifiersByDisplay;
     bool afterKeyEventLockedInterruptable(const std::shared_ptr<Connection>& connection,
-                                          DispatchEntry* dispatchEntry, KeyEntry& keyEntry,
+                                          DispatchEntry& dispatchEntry, KeyEntry& keyEntry,
                                           bool handled) REQUIRES(mLock);
     bool afterMotionEventLockedInterruptable(const std::shared_ptr<Connection>& connection,
-                                             DispatchEntry* dispatchEntry, MotionEntry& motionEntry,
+                                             DispatchEntry& dispatchEntry, MotionEntry& motionEntry,
                                              bool handled) REQUIRES(mLock);
 
     // Find touched state and touched window by token.

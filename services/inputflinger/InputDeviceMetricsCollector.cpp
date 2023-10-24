@@ -17,11 +17,10 @@
 #define LOG_TAG "InputDeviceMetricsCollector"
 #include "InputDeviceMetricsCollector.h"
 
-#include "KeyCodeClassifications.h"
+#include "InputDeviceMetricsSource.h"
 
 #include <android-base/stringprintf.h>
 #include <input/PrintTools.h>
-#include <linux/input.h>
 
 namespace android {
 
@@ -41,7 +40,13 @@ const bool DEBUG = __android_log_is_loggable(ANDROID_LOG_DEBUG, LOG_TAG, ANDROID
 
 constexpr size_t INTERACTIONS_QUEUE_CAPACITY = 500;
 
-int32_t linuxBusToInputDeviceBusEnum(int32_t linuxBus) {
+int32_t linuxBusToInputDeviceBusEnum(int32_t linuxBus, bool isUsiStylus) {
+    if (isUsiStylus) {
+        // This is a stylus connected over the Universal Stylus Initiative (USI) protocol.
+        // For metrics purposes, we treat this protocol as a separate bus.
+        return util::INPUT_DEVICE_USAGE_REPORTED__DEVICE_BUS__USI;
+    }
+
     // When adding cases to this switch, also add them to the copy of this method in
     // TouchpadInputMapper.cpp.
     // TODO(b/286394420): deduplicate this method with the one in TouchpadInputMapper.cpp.
@@ -58,13 +63,13 @@ int32_t linuxBusToInputDeviceBusEnum(int32_t linuxBus) {
 class : public InputDeviceMetricsLogger {
     nanoseconds getCurrentTime() override { return nanoseconds(systemTime(SYSTEM_TIME_MONOTONIC)); }
 
-    void logInputDeviceUsageReported(const InputDeviceIdentifier& identifier,
+    void logInputDeviceUsageReported(const MetricsDeviceInfo& info,
                                      const DeviceUsageReport& report) override {
         const int32_t durationMillis =
                 std::chrono::duration_cast<std::chrono::milliseconds>(report.usageDuration).count();
         const static std::vector<int32_t> empty;
 
-        ALOGD_IF(DEBUG, "Usage session reported for device: %s", identifier.name.c_str());
+        ALOGD_IF(DEBUG, "Usage session reported for device id: %d", info.deviceId);
         ALOGD_IF(DEBUG, "    Total duration: %dms", durationMillis);
         ALOGD_IF(DEBUG, "    Source breakdown:");
 
@@ -89,9 +94,9 @@ class : public InputDeviceMetricsLogger {
             ALOGD_IF(DEBUG, "        - uid: %s\t duration: %dms", uid.toString().c_str(),
                      durMillis);
         }
-        util::stats_write(util::INPUTDEVICE_USAGE_REPORTED, identifier.vendor, identifier.product,
-                          identifier.version, linuxBusToInputDeviceBusEnum(identifier.bus),
-                          durationMillis, sources, durationsPerSource, uids, durationsPerUid);
+        util::stats_write(util::INPUTDEVICE_USAGE_REPORTED, info.vendor, info.product, info.version,
+                          linuxBusToInputDeviceBusEnum(info.bus, info.isUsiStylus), durationMillis,
+                          sources, durationsPerSource, uids, durationsPerUid);
     }
 } sStatsdLogger;
 
@@ -106,96 +111,6 @@ bool isIgnoredInputDeviceId(int32_t deviceId) {
 }
 
 } // namespace
-
-InputDeviceUsageSource getUsageSourceForKeyArgs(const InputDeviceInfo& info,
-                                                const NotifyKeyArgs& keyArgs) {
-    if (!isFromSource(keyArgs.source, AINPUT_SOURCE_KEYBOARD)) {
-        return InputDeviceUsageSource::UNKNOWN;
-    }
-
-    if (isFromSource(keyArgs.source, AINPUT_SOURCE_DPAD) &&
-        DPAD_ALL_KEYCODES.count(keyArgs.keyCode) != 0) {
-        return InputDeviceUsageSource::DPAD;
-    }
-
-    if (isFromSource(keyArgs.source, AINPUT_SOURCE_GAMEPAD) &&
-        GAMEPAD_KEYCODES.count(keyArgs.keyCode) != 0) {
-        return InputDeviceUsageSource::GAMEPAD;
-    }
-
-    if (info.getKeyboardType() == AINPUT_KEYBOARD_TYPE_ALPHABETIC) {
-        return InputDeviceUsageSource::KEYBOARD;
-    }
-
-    return InputDeviceUsageSource::BUTTONS;
-}
-
-std::set<InputDeviceUsageSource> getUsageSourcesForMotionArgs(const NotifyMotionArgs& motionArgs) {
-    LOG_ALWAYS_FATAL_IF(motionArgs.getPointerCount() < 1, "Received motion args without pointers");
-    std::set<InputDeviceUsageSource> sources;
-
-    for (uint32_t i = 0; i < motionArgs.getPointerCount(); i++) {
-        const auto toolType = motionArgs.pointerProperties[i].toolType;
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_MOUSE)) {
-            if (toolType == ToolType::MOUSE) {
-                sources.emplace(InputDeviceUsageSource::MOUSE);
-                continue;
-            }
-            if (toolType == ToolType::FINGER) {
-                sources.emplace(InputDeviceUsageSource::TOUCHPAD);
-                continue;
-            }
-            if (isStylusToolType(toolType)) {
-                sources.emplace(InputDeviceUsageSource::STYLUS_INDIRECT);
-                continue;
-            }
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_MOUSE_RELATIVE) &&
-            toolType == ToolType::MOUSE) {
-            sources.emplace(InputDeviceUsageSource::MOUSE_CAPTURED);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_TOUCHPAD) &&
-            toolType == ToolType::FINGER) {
-            sources.emplace(InputDeviceUsageSource::TOUCHPAD_CAPTURED);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_BLUETOOTH_STYLUS) &&
-            isStylusToolType(toolType)) {
-            sources.emplace(InputDeviceUsageSource::STYLUS_FUSED);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_STYLUS) && isStylusToolType(toolType)) {
-            sources.emplace(InputDeviceUsageSource::STYLUS_DIRECT);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_TOUCH_NAVIGATION)) {
-            sources.emplace(InputDeviceUsageSource::TOUCH_NAVIGATION);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_JOYSTICK)) {
-            sources.emplace(InputDeviceUsageSource::JOYSTICK);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_ROTARY_ENCODER)) {
-            sources.emplace(InputDeviceUsageSource::ROTARY_ENCODER);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_TRACKBALL)) {
-            sources.emplace(InputDeviceUsageSource::TRACKBALL);
-            continue;
-        }
-        if (isFromSource(motionArgs.source, AINPUT_SOURCE_TOUCHSCREEN)) {
-            sources.emplace(InputDeviceUsageSource::TOUCHSCREEN);
-            continue;
-        }
-        sources.emplace(InputDeviceUsageSource::UNKNOWN);
-    }
-
-    return sources;
-}
-
-// --- InputDeviceMetricsCollector ---
 
 InputDeviceMetricsCollector::InputDeviceMetricsCollector(InputListenerInterface& listener)
       : InputDeviceMetricsCollector(listener, sStatsdLogger, DEFAULT_USAGE_SESSION_TIMEOUT) {}
@@ -223,8 +138,8 @@ void InputDeviceMetricsCollector::notifyConfigurationChanged(
 
 void InputDeviceMetricsCollector::notifyKey(const NotifyKeyArgs& args) {
     reportCompletedSessions();
-    const SourceProvider getSources = [&args](const InputDeviceInfo& info) {
-        return std::set{getUsageSourceForKeyArgs(info, args)};
+    const SourceProvider getSources = [&args](const MetricsDeviceInfo& info) {
+        return std::set{getUsageSourceForKeyArgs(info.keyboardType, args)};
     };
     onInputDeviceUsage(DeviceId{args.deviceId}, nanoseconds(args.eventTime), getSources);
 
@@ -282,34 +197,44 @@ void InputDeviceMetricsCollector::dump(std::string& dump) {
 }
 
 void InputDeviceMetricsCollector::onInputDevicesChanged(const std::vector<InputDeviceInfo>& infos) {
-    std::map<DeviceId, InputDeviceInfo> newDeviceInfos;
+    std::map<DeviceId, MetricsDeviceInfo> newDeviceInfos;
 
     for (const InputDeviceInfo& info : infos) {
         if (isIgnoredInputDeviceId(info.getId())) {
             continue;
         }
-        newDeviceInfos.emplace(info.getId(), info);
+        const auto& i = info.getIdentifier();
+        newDeviceInfos.emplace(info.getId(),
+                               MetricsDeviceInfo{
+                                       .deviceId = info.getId(),
+                                       .vendor = i.vendor,
+                                       .product = i.product,
+                                       .version = i.version,
+                                       .bus = i.bus,
+                                       .isUsiStylus = info.getUsiVersion().has_value(),
+                                       .keyboardType = info.getKeyboardType(),
+                               });
     }
 
     for (auto [deviceId, info] : mLoggedDeviceInfos) {
         if (newDeviceInfos.count(deviceId) != 0) {
             continue;
         }
-        onInputDeviceRemoved(deviceId, info.getIdentifier());
+        onInputDeviceRemoved(deviceId, info);
     }
 
     std::swap(newDeviceInfos, mLoggedDeviceInfos);
 }
 
 void InputDeviceMetricsCollector::onInputDeviceRemoved(DeviceId deviceId,
-                                                       const InputDeviceIdentifier& identifier) {
+                                                       const MetricsDeviceInfo& info) {
     auto it = mActiveUsageSessions.find(deviceId);
     if (it == mActiveUsageSessions.end()) {
         return;
     }
     // Report usage for that device if there is an active session.
     auto& [_, activeSession] = *it;
-    mLogger.logInputDeviceUsageReported(identifier, activeSession.finishSession());
+    mLogger.logInputDeviceUsageReported(info, activeSession.finishSession());
     mActiveUsageSessions.erase(it);
 
     // We don't remove this from mLoggedDeviceInfos because it will be updated in
@@ -365,8 +290,7 @@ void InputDeviceMetricsCollector::reportCompletedSessions() {
         auto activeSessionIt = mActiveUsageSessions.find(deviceId);
         LOG_ALWAYS_FATAL_IF(activeSessionIt == mActiveUsageSessions.end());
         auto& [_, activeSession] = *activeSessionIt;
-        mLogger.logInputDeviceUsageReported(infoIt->second.getIdentifier(),
-                                            activeSession.finishSession());
+        mLogger.logInputDeviceUsageReported(infoIt->second, activeSession.finishSession());
         mActiveUsageSessions.erase(activeSessionIt);
     }
 }

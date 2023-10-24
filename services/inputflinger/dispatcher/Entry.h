@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <utils/Timers.h>
 #include <functional>
+#include <ostream>
 #include <string>
 
 namespace android::inputdispatcher {
@@ -189,6 +190,8 @@ struct MotionEntry : EventEntry {
     ~MotionEntry() override;
 };
 
+std::ostream& operator<<(std::ostream& out, const MotionEntry& motionEntry);
+
 struct SensorEntry : EventEntry {
     int32_t deviceId;
     uint32_t source;
@@ -223,7 +226,7 @@ struct DispatchEntry {
     const uint32_t seq; // unique sequence number, never 0
 
     std::shared_ptr<EventEntry> eventEntry; // the event to dispatch
-    ftl::Flags<InputTarget::Flags> targetFlags;
+    const ftl::Flags<InputTarget::Flags> targetFlags;
     ui::Transform transform;
     ui::Transform rawTransform;
     float globalScaleFactor;
@@ -241,6 +244,8 @@ struct DispatchEntry {
     DispatchEntry(std::shared_ptr<EventEntry> eventEntry,
                   ftl::Flags<InputTarget::Flags> targetFlags, const ui::Transform& transform,
                   const ui::Transform& rawTransform, float globalScaleFactor);
+    DispatchEntry(const DispatchEntry&) = delete;
+    DispatchEntry& operator=(const DispatchEntry&) = delete;
 
     inline bool hasForegroundTarget() const {
         return targetFlags.test(InputTarget::Flags::FOREGROUND);

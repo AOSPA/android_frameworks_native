@@ -33,7 +33,6 @@
 
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
-#include <android/native_window.h>
 #include <binder/IPCThreadState.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/Display.h>
@@ -110,7 +109,7 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
     using FrameRateCompatibility = TimeStats::SetFrameRateVote::FrameRateCompatibility;
     using Seamlessness = TimeStats::SetFrameRateVote::Seamlessness;
     const auto frameRateCompatibility = [frameRate] {
-        switch (frameRate.type) {
+        switch (frameRate.vote.type) {
             case Layer::FrameRateCompatibility::Default:
                 return FrameRateCompatibility::Default;
             case Layer::FrameRateCompatibility::ExactOrMultiple:
@@ -121,7 +120,7 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
     }();
 
     const auto seamlessness = [frameRate] {
-        switch (frameRate.seamlessness) {
+        switch (frameRate.vote.seamlessness) {
             case scheduler::Seamlessness::OnlySeamless:
                 return Seamlessness::ShouldBeSeamless;
             case scheduler::Seamlessness::SeamedAndSeamless:
@@ -131,7 +130,7 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
         }
     }();
 
-    return TimeStats::SetFrameRateVote{.frameRate = frameRate.rate.getValue(),
+    return TimeStats::SetFrameRateVote{.frameRate = frameRate.vote.rate.getValue(),
                                        .frameRateCompatibility = frameRateCompatibility,
                                        .seamlessness = seamlessness};
 }
@@ -155,7 +154,7 @@ using gui::WindowInfo;
 
 using PresentState = frametimeline::SurfaceFrame::PresentState;
 
-Layer::Layer(const LayerCreationArgs& args)
+Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
       : sequence(args.sequence),
         mFlinger(sp<SurfaceFlinger>::fromExisting(args.flinger)),
         mName(base::StringPrintf("%s#%d", args.name.c_str(), sequence)),
@@ -213,6 +212,7 @@ Layer::Layer(const LayerCreationArgs& args)
     mDrawingState.dropInputMode = gui::DropInputMode::NONE;
     mDrawingState.dimmingEnabled = true;
     mDrawingState.defaultFrameRateCompatibility = FrameRateCompatibility::Default;
+    mDrawingState.frameRateSelectionStrategy = FrameRateSelectionStrategy::Self;
 
     if (args.flags & ISurfaceComposerClient::eNoColorFill) {
         // Set an invalid color so there is no color fill.
@@ -1033,8 +1033,8 @@ bool Layer::setBackgroundColor(const half3& color, float alpha, ui::Dataspace da
         uint32_t flags = ISurfaceComposerClient::eFXSurfaceEffect;
         std::string name = mName + "BackgroundColorLayer";
         mDrawingState.bgColorLayer = mFlinger->getFactory().createEffectLayer(
-                LayerCreationArgs(mFlinger.get(), nullptr, std::move(name), flags,
-                                  LayerMetadata()));
+                surfaceflinger::LayerCreationArgs(mFlinger.get(), nullptr, std::move(name), flags,
+                                                  LayerMetadata()));
 
         // add to child list
         addChild(mDrawingState.bgColorLayer);
@@ -1187,12 +1187,12 @@ bool Layer::setDefaultFrameRateCompatibility(FrameRateCompatibility compatibilit
     if (mDrawingState.defaultFrameRateCompatibility == compatibility) return false;
     mDrawingState.defaultFrameRateCompatibility = compatibility;
     mDrawingState.modified = true;
-    mFlinger->mScheduler->setDefaultFrameRateCompatibility(this);
+    mFlinger->mScheduler->setDefaultFrameRateCompatibility(sequence, compatibility);
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
 
-scheduler::LayerInfo::FrameRateCompatibility Layer::getDefaultFrameRateCompatibility() const {
+scheduler::FrameRateCompatibility Layer::getDefaultFrameRateCompatibility() const {
     return mDrawingState.defaultFrameRateCompatibility;
 }
 
@@ -1284,11 +1284,15 @@ const half4& Layer::getBorderColor() {
     return mBorderColor;
 }
 
-bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded) {
-    // The frame rate for layer tree is this layer's frame rate if present, or the parent frame rate
+bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
+                                           bool* transactionNeeded) {
+    // Gets the frame rate to propagate to children.
     const auto frameRate = [&] {
-        if (mDrawingState.frameRate.rate.isValid() ||
-            mDrawingState.frameRate.type == FrameRateCompatibility::NoVote) {
+        if (overrideChildren && parentFrameRate.isValid()) {
+            return parentFrameRate;
+        }
+
+        if (mDrawingState.frameRate.isValid()) {
             return mDrawingState.frameRate;
         }
 
@@ -1301,26 +1305,29 @@ bool Layer::propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* tran
     bool childrenHaveFrameRate = false;
     for (const sp<Layer>& child : mCurrentChildren) {
         childrenHaveFrameRate |=
-                child->propagateFrameRateForLayerTree(frameRate, transactionNeeded);
+                child->propagateFrameRateForLayerTree(frameRate,
+                                                      overrideChildren ||
+                                                              shouldOverrideChildrenFrameRate(),
+                                                      transactionNeeded);
     }
 
-    // If we don't have a valid frame rate, but the children do, we set this
+    // If we don't have a valid frame rate specification, but the children do, we set this
     // layer as NoVote to allow the children to control the refresh rate
-    if (!frameRate.rate.isValid() && frameRate.type != FrameRateCompatibility::NoVote &&
-        childrenHaveFrameRate) {
+    if (!frameRate.isValid() && childrenHaveFrameRate) {
         *transactionNeeded |=
                 setFrameRateForLayerTreeLegacy(FrameRate(Fps(), FrameRateCompatibility::NoVote));
     }
 
-    // We return whether this layer ot its children has a vote. We ignore ExactOrMultiple votes for
+    // We return whether this layer or its children has a vote. We ignore ExactOrMultiple votes for
     // the same reason we are allowing touch boost for those layers. See
     // RefreshRateSelector::rankFrameRates for details.
     const auto layerVotedWithDefaultCompatibility =
-            frameRate.rate.isValid() && frameRate.type == FrameRateCompatibility::Default;
-    const auto layerVotedWithNoVote = frameRate.type == FrameRateCompatibility::NoVote;
+            frameRate.vote.rate.isValid() && frameRate.vote.type == FrameRateCompatibility::Default;
+    const auto layerVotedWithNoVote = frameRate.vote.type == FrameRateCompatibility::NoVote;
+    const auto layerVotedWithCategory = frameRate.category != FrameRateCategory::Default;
     const auto layerVotedWithExactCompatibility =
-            frameRate.rate.isValid() && frameRate.type == FrameRateCompatibility::Exact;
-    return layerVotedWithDefaultCompatibility || layerVotedWithNoVote ||
+            frameRate.vote.rate.isValid() && frameRate.vote.type == FrameRateCompatibility::Exact;
+    return layerVotedWithDefaultCompatibility || layerVotedWithNoVote || layerVotedWithCategory ||
             layerVotedWithExactCompatibility || childrenHaveFrameRate;
 }
 
@@ -1334,7 +1341,7 @@ void Layer::updateTreeHasFrameRateVote() {
     }();
 
     bool transactionNeeded = false;
-    root->propagateFrameRateForLayerTree({}, &transactionNeeded);
+    root->propagateFrameRateForLayerTree({}, false, &transactionNeeded);
 
     // TODO(b/195668952): we probably don't need eTraversalNeeded here
     if (transactionNeeded) {
@@ -1342,17 +1349,43 @@ void Layer::updateTreeHasFrameRateVote() {
     }
 }
 
-bool Layer::setFrameRate(FrameRate frameRate) {
-    if (mDrawingState.frameRate == frameRate) {
+bool Layer::setFrameRate(FrameRate::FrameRateVote frameRateVote) {
+    if (mDrawingState.frameRate.vote == frameRateVote) {
         return false;
     }
 
     mDrawingState.sequence++;
-    mDrawingState.frameRate = frameRate;
+    mDrawingState.frameRate.vote = frameRateVote;
     mDrawingState.modified = true;
 
     updateTreeHasFrameRateVote();
 
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+bool Layer::setFrameRateCategory(FrameRateCategory category) {
+    if (mDrawingState.frameRate.category == category) {
+        return false;
+    }
+
+    mDrawingState.sequence++;
+    mDrawingState.frameRate.category = category;
+    mDrawingState.modified = true;
+
+    updateTreeHasFrameRateVote();
+
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
+bool Layer::setFrameRateSelectionStrategy(FrameRateSelectionStrategy strategy) {
+    if (mDrawingState.frameRateSelectionStrategy == strategy) return false;
+    mDrawingState.frameRateSelectionStrategy = strategy;
+    mDrawingState.sequence++;
+    mDrawingState.modified = true;
+
+    updateTreeHasFrameRateVote();
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1680,10 +1713,10 @@ void Layer::miniDumpLegacy(std::string& result, const DisplayDevice& display) co
     StringAppendF(&result, "%6.1f %6.1f %6.1f %6.1f | ", crop.left, crop.top, crop.right,
                   crop.bottom);
     const auto frameRate = getFrameRateForLayerTree();
-    if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
-                      ftl::enum_string(frameRate.type).c_str(),
-                      ftl::enum_string(frameRate.seamlessness).c_str());
+    if (frameRate.vote.rate.isValid() || frameRate.vote.type != FrameRateCompatibility::Default) {
+        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.vote.rate).c_str(),
+                      ftl::enum_string(frameRate.vote.type).c_str(),
+                      ftl::enum_string(frameRate.vote.seamlessness).c_str());
     } else {
         result.append(41, ' ');
     }
@@ -1715,10 +1748,10 @@ void Layer::miniDump(std::string& result, const frontend::LayerSnapshot& snapsho
     StringAppendF(&result, "%6.1f %6.1f %6.1f %6.1f | ", crop.left, crop.top, crop.right,
                   crop.bottom);
     const auto frameRate = snapshot.frameRate;
-    if (frameRate.rate.isValid() || frameRate.type != FrameRateCompatibility::Default) {
-        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.rate).c_str(),
-                      ftl::enum_string(frameRate.type).c_str(),
-                      ftl::enum_string(frameRate.seamlessness).c_str());
+    if (frameRate.vote.rate.isValid() || frameRate.vote.type != FrameRateCompatibility::Default) {
+        StringAppendF(&result, "%s %15s %17s", to_string(frameRate.vote.rate).c_str(),
+                      ftl::enum_string(frameRate.vote.type).c_str(),
+                      ftl::enum_string(frameRate.vote.seamlessness).c_str());
     } else {
         result.append(41, ' ');
     }
@@ -2228,8 +2261,9 @@ void Layer::setInputInfo(const WindowInfo& info) {
     setTransactionFlags(eTransactionNeeded);
 }
 
-LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
-    LayerProto* layerProto = layersProto.add_layers();
+perfetto::protos::LayerProto* Layer::writeToProto(perfetto::protos::LayersProto& layersProto,
+                                                  uint32_t traceFlags) {
+    perfetto::protos::LayerProto* layerProto = layersProto.add_layers();
     writeToProtoDrawingState(layerProto);
     writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
 
@@ -2246,20 +2280,22 @@ LayerProto* Layer::writeToProto(LayersProto& layersProto, uint32_t traceFlags) {
     return layerProto;
 }
 
-void Layer::writeCompositionStateToProto(LayerProto* layerProto, ui::LayerStack layerStack) {
+void Layer::writeCompositionStateToProto(perfetto::protos::LayerProto* layerProto,
+                                         ui::LayerStack layerStack) {
     ftl::FakeGuard guard(mFlinger->mStateLock); // Called from the main thread.
     ftl::FakeGuard mainThreadGuard(kMainThreadContext);
 
     // Only populate for the primary display.
     if (const auto display = mFlinger->getDisplayFromLayerStack(layerStack)) {
         const auto compositionType = getCompositionType(*display);
-        layerProto->set_hwc_composition_type(static_cast<HwcCompositionType>(compositionType));
+        layerProto->set_hwc_composition_type(
+                static_cast<perfetto::protos::HwcCompositionType>(compositionType));
         LayerProtoHelper::writeToProto(getVisibleRegion(display),
                                        [&]() { return layerProto->mutable_visible_region(); });
     }
 }
 
-void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
+void Layer::writeToProtoDrawingState(perfetto::protos::LayerProto* layerInfo) {
     const ui::Transform transform = getTransform();
     auto buffer = getExternalTexture();
     if (buffer != nullptr) {
@@ -2298,8 +2334,8 @@ void Layer::writeToProtoDrawingState(LayerProto* layerInfo) {
     layerInfo->set_shadow_radius(mEffectiveShadowRadius);
 }
 
-void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet stateSet,
-                                    uint32_t traceFlags) {
+void Layer::writeToProtoCommonState(perfetto::protos::LayerProto* layerInfo,
+                                    LayerVector::StateSet stateSet, uint32_t traceFlags) {
     const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
     const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
     const State& state = useDrawing ? mDrawingState : mDrawingState;
@@ -2347,15 +2383,11 @@ void Layer::writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet
     auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
     if (parent != nullptr) {
         layerInfo->set_parent(parent->sequence);
-    } else {
-        layerInfo->set_parent(-1);
     }
 
     auto zOrderRelativeOf = state.zOrderRelativeOf.promote();
     if (zOrderRelativeOf != nullptr) {
         layerInfo->set_z_order_relative_of(zOrderRelativeOf->sequence);
-    } else {
-        layerInfo->set_z_order_relative_of(-1);
     }
 
     layerInfo->set_is_relative_of(state.isRelativeOf);
@@ -2674,7 +2706,7 @@ Region Layer::getVisibleRegion(const DisplayDevice* display) const {
 
 void Layer::setInitialValuesForClone(const sp<Layer>& clonedFrom, uint32_t mirrorRootId) {
     mSnapshot->path.id = clonedFrom->getSequence();
-    mSnapshot->path.mirrorRootId = mirrorRootId;
+    mSnapshot->path.mirrorRootIds.emplace_back(mirrorRootId);
 
     cloneDrawingState(clonedFrom.get());
     mClonedFrom = clonedFrom;
@@ -2846,36 +2878,6 @@ void Layer::updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLa
 void Layer::addChildToDrawing(const sp<Layer>& layer) {
     mDrawingChildren.add(layer);
     layer->mDrawingParent = sp<Layer>::fromExisting(this);
-}
-
-Layer::FrameRateCompatibility Layer::FrameRate::convertCompatibility(int8_t compatibility) {
-    switch (compatibility) {
-        case ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT:
-            return FrameRateCompatibility::Default;
-        case ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE:
-            return FrameRateCompatibility::ExactOrMultiple;
-        case ANATIVEWINDOW_FRAME_RATE_EXACT:
-            return FrameRateCompatibility::Exact;
-        case ANATIVEWINDOW_FRAME_RATE_MIN:
-            return FrameRateCompatibility::Min;
-        case ANATIVEWINDOW_FRAME_RATE_NO_VOTE:
-            return FrameRateCompatibility::NoVote;
-        default:
-            LOG_ALWAYS_FATAL("Invalid frame rate compatibility value %d", compatibility);
-            return FrameRateCompatibility::Default;
-    }
-}
-
-scheduler::Seamlessness Layer::FrameRate::convertChangeFrameRateStrategy(int8_t strategy) {
-    switch (strategy) {
-        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS:
-            return Seamlessness::OnlySeamless;
-        case ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS:
-            return Seamlessness::SeamedAndSeamless;
-        default:
-            LOG_ALWAYS_FATAL("Invalid change frame sate strategy value %d", strategy);
-            return Seamlessness::Default;
-    }
 }
 
 bool Layer::isInternalDisplayOverlay() const {
@@ -3148,6 +3150,32 @@ bool Layer::setPosition(float x, float y) {
     return true;
 }
 
+void Layer::releasePreviousBuffer() {
+    mReleasePreviousBuffer = true;
+    if (!mBufferInfo.mBuffer ||
+        (!mDrawingState.buffer->hasSameBuffer(*mBufferInfo.mBuffer) ||
+         mDrawingState.frameNumber != mBufferInfo.mFrameNumber)) {
+        // If mDrawingState has a buffer, and we are about to update again
+        // before swapping to drawing state, then the first buffer will be
+        // dropped and we should decrement the pending buffer count and
+        // call any release buffer callbacks if set.
+        callReleaseBufferCallback(mDrawingState.releaseBufferListener,
+                                  mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
+                                  mDrawingState.acquireFence);
+        decrementPendingBufferCount();
+        if (mDrawingState.bufferSurfaceFrameTX != nullptr &&
+            mDrawingState.bufferSurfaceFrameTX->getPresentState() != PresentState::Presented) {
+            addSurfaceFrameDroppedForBuffer(mDrawingState.bufferSurfaceFrameTX, systemTime());
+            mDrawingState.bufferSurfaceFrameTX.reset();
+        }
+    } else if (EARLY_RELEASE_ENABLED && mLastClientCompositionFence != nullptr) {
+        callReleaseBufferCallback(mDrawingState.releaseBufferListener,
+                                  mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
+                                  mLastClientCompositionFence);
+        mLastClientCompositionFence = nullptr;
+    }
+}
+
 void Layer::resetDrawingStateBufferInfo() {
     mDrawingState.producerId = 0;
     mDrawingState.frameNumber = 0;
@@ -3180,29 +3208,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     /* QTI_END */
 
     if (mDrawingState.buffer) {
-        mReleasePreviousBuffer = true;
-        if (!mBufferInfo.mBuffer ||
-            (!mDrawingState.buffer->hasSameBuffer(*mBufferInfo.mBuffer) ||
-             mDrawingState.frameNumber != mBufferInfo.mFrameNumber)) {
-            // If mDrawingState has a buffer, and we are about to update again
-            // before swapping to drawing state, then the first buffer will be
-            // dropped and we should decrement the pending buffer count and
-            // call any release buffer callbacks if set.
-            callReleaseBufferCallback(mDrawingState.releaseBufferListener,
-                                      mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
-                                      mDrawingState.acquireFence);
-            decrementPendingBufferCount();
-            if (mDrawingState.bufferSurfaceFrameTX != nullptr &&
-                mDrawingState.bufferSurfaceFrameTX->getPresentState() != PresentState::Presented) {
-                addSurfaceFrameDroppedForBuffer(mDrawingState.bufferSurfaceFrameTX, systemTime());
-                mDrawingState.bufferSurfaceFrameTX.reset();
-            }
-        } else if (EARLY_RELEASE_ENABLED && mLastClientCompositionFence != nullptr) {
-            callReleaseBufferCallback(mDrawingState.releaseBufferListener,
-                                      mDrawingState.buffer->getBuffer(), mDrawingState.frameNumber,
-                                      mLastClientCompositionFence);
-            mLastClientCompositionFence = nullptr;
-        }
+        releasePreviousBuffer();
     } else if (buffer) {
         // if we are latching a buffer for the first time then clear the mLastLatchTime since
         // we don't want to incorrectly classify a frame if we miss the desired present time.
@@ -3220,6 +3226,11 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
         mDrawingState.bufferSurfaceFrameTX = nullptr;
         setFrameTimelineVsyncForBufferlessTransaction(info, postTime);
         return true;
+    } else {
+        // release sideband stream if it exists and a non null buffer is being set
+        if (mDrawingState.sidebandStream != nullptr) {
+            setSidebandStream(nullptr, info, postTime);
+        }
     }
 
     if ((mDrawingState.producerId > bufferData.producerId) ||
@@ -3275,6 +3286,14 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     }
 
     mDrawingState.releaseBufferEndpoint = bufferData.releaseBufferEndpoint;
+
+    // If the layer had been updated a TextureView, this would make sure the present time could be
+    // same to TextureView update when it's a small dirty, and get the correct heuristic rate.
+    if (mFlinger->mScheduler->supportSmallDirtyDetection()) {
+        if (mDrawingState.useVsyncIdForRefreshRateSelection) {
+            mUsedVsyncIdForRefreshRateSelection = true;
+        }
+    }
     return true;
 }
 
@@ -3297,7 +3316,35 @@ void Layer::recordLayerHistoryBufferUpdate(const scheduler::LayerProps& layerPro
                             mDrawingState.latchedVsyncId);
             if (prediction.has_value()) {
                 ATRACE_FORMAT_INSTANT("predictedPresentTime");
+                mMaxTimeForUseVsyncId = prediction->presentTime +
+                        scheduler::LayerHistory::kMaxPeriodForHistory.count();
                 return prediction->presentTime;
+            }
+        }
+
+        if (!mFlinger->mScheduler->supportSmallDirtyDetection()) {
+            return static_cast<nsecs_t>(0);
+        }
+
+        // If the layer is not an application and didn't set an explicit rate or desiredPresentTime,
+        // return "0" to tell the layer history that it will use the max refresh rate without
+        // calculating the adaptive rate.
+        if (mWindowType != WindowInfo::Type::APPLICATION &&
+            mWindowType != WindowInfo::Type::BASE_APPLICATION) {
+            return static_cast<nsecs_t>(0);
+        }
+
+        // Return the valid present time only when the layer potentially updated a TextureView so
+        // LayerHistory could heuristically calculate the rate if the UI is continually updating.
+        if (mUsedVsyncIdForRefreshRateSelection) {
+            const auto prediction =
+                    mFlinger->mFrameTimeline->getTokenManager()->getPredictionsForToken(
+                            mDrawingState.latchedVsyncId);
+            if (prediction.has_value()) {
+                if (mMaxTimeForUseVsyncId >= prediction->presentTime) {
+                    return prediction->presentTime;
+                }
+                mUsedVsyncIdForRefreshRateSelection = false;
             }
         }
 
@@ -3360,6 +3407,7 @@ bool Layer::setSurfaceDamageRegion(const Region& surfaceDamage) {
     mDrawingState.surfaceDamageRegion = surfaceDamage;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
+    setIsSmallDirty();
     return true;
 }
 
@@ -3371,7 +3419,8 @@ bool Layer::setApi(int32_t api) {
     return true;
 }
 
-bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream) {
+bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream, const FrameTimelineInfo& info,
+                              nsecs_t postTime) {
     if (mDrawingState.sidebandStream == sidebandStream) return false;
 
     if (mDrawingState.sidebandStream != nullptr && sidebandStream == nullptr) {
@@ -3382,6 +3431,12 @@ bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream) {
 
     mDrawingState.sidebandStream = sidebandStream;
     mDrawingState.modified = true;
+    if (sidebandStream != nullptr && mDrawingState.buffer != nullptr) {
+        releasePreviousBuffer();
+        resetDrawingStateBufferInfo();
+        mDrawingState.bufferSurfaceFrameTX = nullptr;
+        setFrameTimelineVsyncForBufferlessTransaction(info, postTime);
+    }
     setTransactionFlags(eTransactionNeeded);
     if (!mSidebandStreamChanged.exchange(true)) {
         // mSidebandStreamChanged was false
@@ -3656,7 +3711,8 @@ Rect Layer::computeBufferCrop(const State& s) {
 }
 
 sp<Layer> Layer::createClone(uint32_t mirrorRootId) {
-    LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0, LayerMetadata());
+    surfaceflinger::LayerCreationArgs args(mFlinger.get(), nullptr, mName + " (Mirror)", 0,
+                                           LayerMetadata());
     sp<Layer> layer = mFlinger->getFactory().createBufferStateLayer(args);
     layer->setInitialValuesForClone(sp<Layer>::fromExisting(this), mirrorRootId);
     return layer;
@@ -4060,7 +4116,7 @@ void Layer::onPostComposition(const DisplayDevice* display,
         const std::optional<Fps> renderRate =
                 mFlinger->mScheduler->getFrameRateOverride(getOwnerUid());
 
-        const auto vote = frameRateToSetFrameRateVotePayload(mDrawingState.frameRate);
+        const auto vote = frameRateToSetFrameRateVotePayload(getFrameRateForLayerTree());
         const auto gameMode = getGameMode();
 
         if (presentFence->isValid()) {
@@ -4403,6 +4459,26 @@ void Layer::updateLastLatchTime(nsecs_t latchTime) {
     mLastLatchTime = latchTime;
 }
 
+void Layer::setIsSmallDirty() {
+    if (!mFlinger->mScheduler->supportSmallDirtyDetection()) {
+        return;
+    }
+
+    if (mWindowType != WindowInfo::Type::APPLICATION &&
+        mWindowType != WindowInfo::Type::BASE_APPLICATION) {
+        return;
+    }
+    Rect bounds = mDrawingState.surfaceDamageRegion.getBounds();
+    if (!bounds.isValid()) {
+        return;
+    }
+
+    // If the damage region is a small dirty, this could give the hint for the layer history that
+    // it could suppress the heuristic rate when calculating.
+    mSmallDirty = mFlinger->mScheduler->isSmallDirtyArea(mOwnerUid,
+                                                         bounds.getWidth() * bounds.getHeight());
+}
+
 /* QTI_BEGIN */
 void Layer::qtiSetSmomoLayerStackId() {
     qtiSmomoLayerStackId = getLayerStack().id;
@@ -4412,13 +4488,6 @@ uint32_t Layer::qtiGetSmomoLayerStackId() {
     return qtiSmomoLayerStackId;
 }
 /* QTI_END */
-
-// ---------------------------------------------------------------------------
-
-std::ostream& operator<<(std::ostream& stream, const Layer::FrameRate& rate) {
-    return stream << "{rate=" << rate.rate << " type=" << ftl::enum_string(rate.type)
-                  << " seamlessness=" << ftl::enum_string(rate.seamlessness) << '}';
-}
 
 } // namespace android
 

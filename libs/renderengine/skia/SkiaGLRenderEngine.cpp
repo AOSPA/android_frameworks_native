@@ -24,8 +24,10 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GrContextOptions.h>
+#include <GrTypes.h>
 #include <android-base/stringprintf.h>
 #include <gl/GrGLInterface.h>
+#include <include/gpu/ganesh/gl/GrGLDirectContext.h>
 #include <gui/TraceUtils.h>
 #include <sync/sync.h>
 #include <ui/DebugUtils.h>
@@ -298,10 +300,10 @@ SkiaRenderEngine::Contexts SkiaGLRenderEngine::createDirectContexts(
     LOG_ALWAYS_FATAL_IF(!glInterface.get(), "GrGLMakeNativeInterface() failed");
 
     SkiaRenderEngine::Contexts contexts;
-    contexts.first = GrDirectContext::MakeGL(glInterface, options);
+    contexts.first = GrDirectContexts::MakeGL(glInterface, options);
     if (supportsProtectedContentImpl()) {
         useProtectedContextImpl(GrProtected::kYes);
-        contexts.second = GrDirectContext::MakeGL(glInterface, options);
+        contexts.second = GrDirectContexts::MakeGL(glInterface, options);
         useProtectedContextImpl(GrProtected::kNo);
     }
 
@@ -338,7 +340,8 @@ base::unique_fd SkiaGLRenderEngine::flushAndSubmit(GrDirectContext* grContext) {
     } else {
         ATRACE_BEGIN("Submit(sync=false)");
     }
-    bool success = grContext->submit(requireSync);
+    bool success = grContext->submit(requireSync ? GrSyncCpu::kYes :
+                                                   GrSyncCpu::kNo);
     ATRACE_END();
     if (!success) {
         ALOGE("Failed to flush RenderEngine commands");

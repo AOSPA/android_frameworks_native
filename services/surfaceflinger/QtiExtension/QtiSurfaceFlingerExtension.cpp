@@ -197,9 +197,9 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     for (const auto& [id, mode] : supportedModes) {
         if (mode->getWidth() == currMode.modePtr->getWidth() &&
             mode->getHeight() == currMode.modePtr->getHeight()) {
-            fps_list.push_back(int32_t(mode->getFps().getValue()));
+            fps_list.push_back(int32_t(mode->getVsyncRate().getValue()));
             ALOGV("%s: Display %dx%d supports %fFPS", __func__, currMode.modePtr->getWidth(),
-                  currMode.modePtr->getHeight(), mode->getFps().getValue());
+                  currMode.modePtr->getHeight(), mode->getVsyncRate().getValue());
         }
     }
 
@@ -640,7 +640,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
         const auto& supportedModes = snapshot.displayModes();
 
         for (const auto& [id, mode] : supportedModes) {
-            mQtiFlinger->mVsyncConfiguration->getConfigsForRefreshRate(mode->getFps());
+            mQtiFlinger->mVsyncConfiguration->getConfigsForRefreshRate(mode->getVsyncRate());
         }
 
         if (useWorkDurations && mQtiWorkDurationsExtn) {
@@ -1279,7 +1279,7 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRates(PhysicalDisplayId displayId)
                 .and_then([&](const display::DisplaySnapshot& snapshot) {
                     const auto& displayModes = snapshot.displayModes();
                     for (const auto& [id, mode] : displayModes) {
-                        refreshRates.push_back(mode->getFps().getValue());
+                        refreshRates.push_back(mode->getVsyncRate().getValue());
                     }
                     return std::optional<bool>(true);
                 });
@@ -1317,7 +1317,7 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
                                   -> std::optional<DisplayModeId> {
                     const auto& displayModes = snapshot.displayModes();
                     for (const auto& [id, mode] : displayModes) {
-                        if (isApproxEqual(mode->getFps(), setRefreshRate)) {
+                        if (isApproxEqual(mode->getVsyncRate(), setRefreshRate)) {
                             return id;
                         }
                     }
@@ -1808,7 +1808,7 @@ DisplayModePtr QtiSurfaceFlingerExtension::qtiGetModeFromFps(float fps) {
     for (const auto& [id, mode] : supportedModes) {
         if (mode->getWidth() == currMode.modePtr->getWidth() &&
             mode->getHeight() == currMode.modePtr->getHeight() &&
-            mode->getFps().getIntValue() == (int32_t)(fps)) {
+            mode->getVsyncRate().getIntValue() == (int32_t)(fps)) {
             return mode;
         }
     }
@@ -1862,7 +1862,8 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
     for (const auto& [id, mode] : supportedModes) {
         auto modeWidth = mode->getWidth();
         auto modeHeight = mode->getHeight();
-        const int32_t modePeriod = static_cast<int32_t>(mode->getVsyncPeriod());
+        auto modeFPS = mode->getPeakFps();
+        const int32_t modePeriod = static_cast<int32_t>(modeFPS.getPeriodNsecs());
 
         if (modeWidth == width && modeHeight == height && vsyncPeriod == modePeriod) {
             newModeId = static_cast<int32_t>(mode->getId().value());

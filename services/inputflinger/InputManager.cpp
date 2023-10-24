@@ -27,9 +27,12 @@
 #include <android/binder_interface_utils.h>
 #include <android/sysprop/InputProperties.sysprop.h>
 #include <binder/IPCThreadState.h>
+#include <com_android_input_flags.h>
 #include <inputflinger_bootstrap.rs.h>
 #include <log/log.h>
 #include <private/android_filesystem_config.h>
+
+namespace input_flags = com::android::input::flags;
 
 namespace android {
 
@@ -37,6 +40,8 @@ namespace {
 
 const bool ENABLE_INPUT_DEVICE_USAGE_METRICS =
         sysprop::InputProperties::enable_input_device_usage_metrics().value_or(true);
+
+const bool ENABLE_POINTER_CHOREOGRAPHER = input_flags::enable_pointer_choreographer();
 
 int32_t exceptionCodeFromStatusT(status_t status) {
     switch (status) {
@@ -113,12 +118,14 @@ std::shared_ptr<IInputFlingerRust> createInputFlingerRust() {
  * The event flow is via the "InputListener" interface, as follows:
  *   InputReader
  *     -> UnwantedInteractionBlocker
+ *     -> PointerChoreographer
  *     -> InputProcessor
  *     -> InputDeviceMetricsCollector
  *     -> InputDispatcher
  */
 InputManager::InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
-                           InputDispatcherPolicyInterface& dispatcherPolicy) {
+                           InputDispatcherPolicyInterface& dispatcherPolicy,
+                           PointerChoreographerPolicyInterface& choreographerPolicy) {
     mInputFlingerRust = createInputFlingerRust();
 
     mDispatcher = createInputDispatcher(dispatcherPolicy);
@@ -134,6 +141,13 @@ InputManager::InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
     mProcessor = std::make_unique<InputProcessor>(*mTracingStages.back());
     mTracingStages.emplace_back(
             std::make_unique<TracedInputListener>("InputProcessor", *mProcessor));
+
+    if (ENABLE_POINTER_CHOREOGRAPHER) {
+        mChoreographer =
+                std::make_unique<PointerChoreographer>(*mTracingStages.back(), choreographerPolicy);
+        mTracingStages.emplace_back(
+                std::make_unique<TracedInputListener>("PointerChoreographer", *mChoreographer));
+    }
 
     mBlocker = std::make_unique<UnwantedInteractionBlocker>(*mTracingStages.back());
     mTracingStages.emplace_back(
@@ -186,6 +200,10 @@ InputReaderInterface& InputManager::getReader() {
     return *mReader;
 }
 
+PointerChoreographerInterface& InputManager::getChoreographer() {
+    return *mChoreographer;
+}
+
 InputProcessorInterface& InputManager::getProcessor() {
     return *mProcessor;
 }
@@ -210,6 +228,10 @@ void InputManager::dump(std::string& dump) {
     dump += '\n';
     mBlocker->dump(dump);
     dump += '\n';
+    if (ENABLE_POINTER_CHOREOGRAPHER) {
+        mChoreographer->dump(dump);
+        dump += '\n';
+    }
     mProcessor->dump(dump);
     dump += '\n';
     if (ENABLE_INPUT_DEVICE_USAGE_METRICS) {

@@ -117,7 +117,8 @@ public:
     };
 
     using FrameRate = scheduler::LayerInfo::FrameRate;
-    using FrameRateCompatibility = scheduler::LayerInfo::FrameRateCompatibility;
+    using FrameRateCompatibility = scheduler::FrameRateCompatibility;
+    using FrameRateSelectionStrategy = scheduler::LayerInfo::FrameRateSelectionStrategy;
 
     struct State {
         int32_t z;
@@ -194,6 +195,8 @@ public:
         // The combined frame rate of parents / children of this layer
         FrameRate frameRateForLayerTree;
 
+        FrameRateSelectionStrategy frameRateSelectionStrategy;
+
         // Set by window manager indicating the layer and all its children are
         // in a different orientation than the display. The hint suggests that
         // the graphic producers should receive a transform hint as if the
@@ -241,7 +244,7 @@ public:
         bool useVsyncIdForRefreshRateSelection = false;
     };
 
-    explicit Layer(const LayerCreationArgs& args);
+    explicit Layer(const surfaceflinger::LayerCreationArgs& args);
     virtual ~Layer();
 
     static bool isLayerFocusedBasedOnPriority(int32_t priority);
@@ -323,7 +326,8 @@ public:
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
     bool setApi(int32_t /*api*/);
-    bool setSidebandStream(const sp<NativeHandle>& /*sidebandStream*/);
+    bool setSidebandStream(const sp<NativeHandle>& /*sidebandStream*/,
+                           const FrameTimelineInfo& /* info*/, nsecs_t /* postTime */);
     bool setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& /*handles*/,
                                           bool willPresent);
     virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace)
@@ -640,17 +644,19 @@ public:
 
     bool isRemovedFromCurrentState() const;
 
-    LayerProto* writeToProto(LayersProto& layersProto, uint32_t traceFlags);
-    void writeCompositionStateToProto(LayerProto* layerProto, ui::LayerStack layerStack);
+    perfetto::protos::LayerProto* writeToProto(perfetto::protos::LayersProto& layersProto,
+                                               uint32_t traceFlags);
+    void writeCompositionStateToProto(perfetto::protos::LayerProto* layerProto,
+                                      ui::LayerStack layerStack);
 
     // Write states that are modified by the main thread. This includes drawing
     // state as well as buffer data. This should be called in the main or tracing
     // thread.
-    void writeToProtoDrawingState(LayerProto* layerInfo);
+    void writeToProtoDrawingState(perfetto::protos::LayerProto* layerInfo);
     // Write drawing or current state. If writing current state, the caller should hold the
     // external mStateLock. If writing drawing state, this function should be called on the
     // main or tracing thread.
-    void writeToProtoCommonState(LayerProto* layerInfo, LayerVector::StateSet,
+    void writeToProtoCommonState(perfetto::protos::LayerProto* layerInfo, LayerVector::StateSet,
                                  uint32_t traceFlags = LayerTracing::TRACE_ALL);
 
     gui::WindowInfo::Type getWindowType() const { return mWindowType; }
@@ -782,7 +788,10 @@ public:
      */
     Rect getCroppedBufferSize(const Layer::State& s) const;
 
-    bool setFrameRate(FrameRate);
+    bool setFrameRate(FrameRate::FrameRateVote);
+    bool setFrameRateCategory(FrameRateCategory);
+
+    bool setFrameRateSelectionStrategy(FrameRateSelectionStrategy);
 
     virtual void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& /*info*/) {}
     void setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info, nsecs_t postTime);
@@ -846,6 +855,14 @@ public:
     mutable bool contentDirty{false};
     Region surfaceDamageRegion;
 
+    // True when the surfaceDamageRegion is recognized as a small area update.
+    bool mSmallDirty{false};
+    // Used to check if mUsedVsyncIdForRefreshRateSelection should be expired when it stop updating.
+    nsecs_t mMaxTimeForUseVsyncId = 0;
+    // True when DrawState.useVsyncIdForRefreshRateSelection previously set to true during updating
+    // buffer.
+    bool mUsedVsyncIdForRefreshRateSelection{false};
+
     // Layer serial number.  This gives layers an explicit ordering, so we
     // have a stable sort order when their layer stack and Z-order are
     // the same.
@@ -908,6 +925,7 @@ public:
                 .transform = getTransform(),
                 .setFrameRateVote = getFrameRateForLayerTree(),
                 .frameRateSelectionPriority = getFrameRateSelectionPriority(),
+                .isSmallDirty = mSmallDirty,
         };
     };
     bool hasBuffer() const { return mBufferInfo.mBuffer != nullptr; }
@@ -921,6 +939,9 @@ public:
     std::vector<ui::LayerStack> mPreviouslyPresentedLayerStacks;
     // Exposed so SurfaceFlinger can assert that it's held
     const sp<SurfaceFlinger> mFlinger;
+
+    // Check if the damage region is a small dirty.
+    void setIsSmallDirty();
 
     /* QTI_BEGIN */
     void qtiSetSmomoLayerStackId();
@@ -1096,7 +1117,8 @@ private:
                                           const std::vector<Layer*>& layersInTree);
 
     void updateTreeHasFrameRateVote();
-    bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool* transactionNeeded);
+    bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
+                                        bool* transactionNeeded);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);
     bool isTrustedOverlay() const;
     gui::DropInputMode getDropInputMode() const;
@@ -1158,6 +1180,11 @@ private:
     void transferAvailableJankData(const std::deque<sp<CallbackHandle>>& handles,
                                    std::vector<JankData>& jankData);
 
+    bool shouldOverrideChildrenFrameRate() const {
+        return getDrawingState().frameRateSelectionStrategy ==
+                FrameRateSelectionStrategy::OverrideChildren;
+    }
+
     // Cached properties computed from drawing state
     // Effective transform taking into account parent transforms and any parent scaling, which is
     // a transform from the current layer coordinate space to display(screen) coordinate space.
@@ -1204,6 +1231,7 @@ private:
     half4 mBorderColor;
 
     void setTransformHintLegacy(ui::Transform::RotationFlags);
+    void releasePreviousBuffer();
     void resetDrawingStateBufferInfo();
 
     // Transform hint provided to the producer. This must be accessed holding

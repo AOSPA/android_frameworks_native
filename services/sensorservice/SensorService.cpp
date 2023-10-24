@@ -584,7 +584,7 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
         }
         if (args.size() > 0) {
             Mode targetOperatingMode = NORMAL;
-            std::string inputStringMode = String8(args[0]).string();
+            std::string inputStringMode = String8(args[0]).c_str();
             if (getTargetOperatingMode(inputStringMode, &targetOperatingMode)) {
               status_t error = changeOperatingMode(args, targetOperatingMode);
               // Dump the latest state only if no error was encountered.
@@ -623,7 +623,7 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
             for (auto&& i : mRecentEvent) {
                 std::shared_ptr<SensorInterface> s = getSensorInterfaceFromHandle(i.first);
                 if (!i.second->isEmpty() && s != nullptr) {
-                    if (privileged || s->getSensor().getRequiredPermission().isEmpty()) {
+                    if (privileged || s->getSensor().getRequiredPermission().empty()) {
                         i.second->setFormat("normal");
                     } else {
                         i.second->setFormat("mask_data");
@@ -749,7 +749,7 @@ status_t SensorService::dumpProtoLocked(int fd, ConnectionSafeAutolock* connLock
     for (auto&& i : mRecentEvent) {
         std::shared_ptr<SensorInterface> s = getSensorInterfaceFromHandle(i.first);
         if (!i.second->isEmpty() && s != nullptr) {
-            i.second->setFormat(privileged || s->getSensor().getRequiredPermission().isEmpty() ?
+            i.second->setFormat(privileged || s->getSensor().getRequiredPermission().empty() ?
                     "normal" : "mask_data");
             const uint64_t mToken = proto.start(service::SensorEventsProto::RECENT_EVENTS_LOGS);
             proto.write(service::SensorEventsProto::RecentEventsLog::NAME,
@@ -1495,7 +1495,7 @@ void SensorService::addSensorIfAccessible(const String16& opPackageName, const S
         accessibleSensorList.add(sensor);
     } else if (sensor.getType() != SENSOR_TYPE_HEAD_TRACKER) {
         ALOGI("Skipped sensor %s because it requires permission %s and app op %" PRId32,
-        sensor.getName().string(), sensor.getRequiredPermission().string(),
+        sensor.getName().c_str(), sensor.getRequiredPermission().c_str(),
         sensor.getRequiredAppOp());
     }
 }
@@ -2371,7 +2371,7 @@ status_t SensorService::changeOperatingMode(const Vector<String16>& args,
         mCurrentOperatingMode = RESTRICTED;
         // temporarily stop all sensor direct report and disable sensors
         disableAllSensorsLocked(&connLock);
-        mAllowListedPackage.setTo(String8(args[1]));
+        mAllowListedPackage = String8(args[1]);
         return status_t(NO_ERROR);
       case REPLAY_DATA_INJECTION:
         if (SensorServiceUtil::isUserBuild()) {
@@ -2391,7 +2391,7 @@ status_t SensorService::changeOperatingMode(const Vector<String16>& args,
                 // Re-enable sensors.
                 dev.enableAllSensors();
             }
-            mAllowListedPackage.setTo(String8(args[1]));
+            mAllowListedPackage = String8(args[1]);
             return NO_ERROR;
         } else {
             // Transition to data injection mode supported only from NORMAL mode.

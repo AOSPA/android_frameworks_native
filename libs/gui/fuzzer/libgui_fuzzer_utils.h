@@ -154,6 +154,9 @@ public:
     MOCK_METHOD(binder::Status, setDebugFlash, (int), (override));
     MOCK_METHOD(binder::Status, scheduleComposite, (), (override));
     MOCK_METHOD(binder::Status, scheduleCommit, (), (override));
+    MOCK_METHOD(binder::Status, updateSmallAreaDetection,
+                (const std::vector<int32_t>&, const std::vector<float>&), (override));
+    MOCK_METHOD(binder::Status, setSmallAreaDetectionThreshold, (int32_t, float), (override));
     MOCK_METHOD(binder::Status, getGpuContextPriority, (int32_t*), (override));
     MOCK_METHOD(binder::Status, getMaxAcquiredBufferCount, (int32_t*), (override));
     MOCK_METHOD(binder::Status, addWindowInfosListener,
@@ -163,6 +166,7 @@ public:
     MOCK_METHOD(binder::Status, getOverlaySupport, (gui::OverlayProperties*), (override));
     MOCK_METHOD(binder::Status, getStalledTransactionInfo,
                 (int32_t, std::optional<gui::StalledTransactionInfo>*), (override));
+    MOCK_METHOD(binder::Status, getSchedulingPolicy, (gui::SchedulingPolicy*), (override));
 };
 
 class FakeBnSurfaceComposerClient : public gui::BnSurfaceComposerClient {
@@ -183,6 +187,8 @@ public:
 
     MOCK_METHOD(binder::Status, mirrorDisplay,
                 (int64_t displayId, gui::CreateSurfaceResult* outResult), (override));
+
+    MOCK_METHOD(binder::Status, getSchedulingPolicy, (gui::SchedulingPolicy*), (override));
 };
 
 class FakeDisplayEventDispatcher : public DisplayEventDispatcher {
@@ -194,6 +200,7 @@ public:
 
     MOCK_METHOD4(dispatchVsync, void(nsecs_t, PhysicalDisplayId, uint32_t, VsyncEventData));
     MOCK_METHOD3(dispatchHotplug, void(nsecs_t, PhysicalDisplayId, bool));
+    MOCK_METHOD2(dispatchHotplugConnectionError, void(nsecs_t, int32_t));
     MOCK_METHOD4(dispatchModeChanged, void(nsecs_t, PhysicalDisplayId, int32_t, nsecs_t));
     MOCK_METHOD2(dispatchNullEvent, void(nsecs_t, PhysicalDisplayId));
     MOCK_METHOD3(dispatchFrameRateOverrides,

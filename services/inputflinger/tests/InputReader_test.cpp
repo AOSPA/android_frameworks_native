@@ -91,6 +91,9 @@ static constexpr int32_t ACTION_POINTER_1_DOWN =
 static constexpr int32_t ACTION_POINTER_1_UP =
         AMOTION_EVENT_ACTION_POINTER_UP | (1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
 
+static constexpr uint32_t STYLUS_FUSION_SOURCE =
+        AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_BLUETOOTH_STYLUS;
+
 // Minimum timestamp separation between subsequent input events from a Bluetooth device.
 static constexpr nsecs_t MIN_BLUETOOTH_TIMESTAMP_DELTA = ms2ns(4);
 // Maximum smoothing time delta so that we don't generate events too far into the future.
@@ -2308,6 +2311,22 @@ TYPED_TEST(StylusButtonIntegrationTest, StylusButtonMotionEventsDisabled) {
 // ongoing stylus gesture that is being emitted by the touchscreen.
 using ExternalStylusIntegrationTest = BaseTouchIntegrationTest;
 
+TEST_F(ExternalStylusIntegrationTest, ExternalStylusConnectionChangesTouchscreenSource) {
+    // Create an external stylus capable of reporting pressure data that
+    // should be fused with a touch pointer.
+    std::unique_ptr<UinputExternalStylusWithPressure> stylus =
+            createUinputDevice<UinputExternalStylusWithPressure>();
+    ASSERT_NO_FATAL_FAILURE(mFakePolicy->assertInputDevicesChanged());
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyConfigurationChangedWasCalled());
+    const auto stylusInfo = findDeviceByName(stylus->getName());
+    ASSERT_TRUE(stylusInfo);
+
+    // Connecting an external stylus changes the source of the touchscreen.
+    const auto deviceInfo = findDeviceByName(mDevice->getName());
+    ASSERT_TRUE(deviceInfo);
+    ASSERT_TRUE(isFromSource(deviceInfo->getSources(), STYLUS_FUSION_SOURCE));
+}
+
 TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureReported) {
     const Point centerPoint = mDevice->getCenterPoint();
 
@@ -2337,17 +2356,17 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureReported) {
     mDevice->sendDown(centerPoint);
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                  WithToolType(ToolType::STYLUS), WithButtonState(0),
-                  WithDeviceId(touchscreenId), WithPressure(100.f / RAW_PRESSURE_MAX))));
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN), WithToolType(ToolType::STYLUS),
+                  WithButtonState(0), WithSource(STYLUS_FUSION_SOURCE), WithDeviceId(touchscreenId),
+                  WithPressure(100.f / RAW_PRESSURE_MAX))));
 
     // Change the pressure on the external stylus, and ensure the touchscreen generates a MOVE
     // event with the updated pressure.
     stylus->setPressure(200);
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
-                  WithToolType(ToolType::STYLUS), WithButtonState(0),
-                  WithDeviceId(touchscreenId), WithPressure(200.f / RAW_PRESSURE_MAX))));
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE), WithToolType(ToolType::STYLUS),
+                  WithButtonState(0), WithSource(STYLUS_FUSION_SOURCE), WithDeviceId(touchscreenId),
+                  WithPressure(200.f / RAW_PRESSURE_MAX))));
 
     // The external stylus did not generate any events.
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
@@ -2392,8 +2411,8 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     // it shows up as a finger pointer.
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                  WithToolType(ToolType::FINGER), WithDeviceId(touchscreenId),
-                  WithPressure(1.f))));
+                  WithSource(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS),
+                  WithToolType(ToolType::FINGER), WithDeviceId(touchscreenId), WithPressure(1.f))));
 
     // Change the pressure on the external stylus. Since the pressure was not present at the start
     // of the gesture, it is ignored for now.
@@ -2405,6 +2424,7 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
             AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                  WithSource(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS),
                   WithToolType(ToolType::FINGER))));
 
     // Start a new gesture. Since we have a valid pressure value, it shows up as a stylus.
@@ -2413,9 +2433,9 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     mDevice->sendDown(centerPoint);
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                  WithToolType(ToolType::STYLUS), WithButtonState(0),
-                  WithDeviceId(touchscreenId), WithPressure(200.f / RAW_PRESSURE_MAX))));
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN), WithSource(STYLUS_FUSION_SOURCE),
+                  WithToolType(ToolType::STYLUS), WithButtonState(0), WithDeviceId(touchscreenId),
+                  WithPressure(200.f / RAW_PRESSURE_MAX))));
 
     // The external stylus did not generate any events.
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
@@ -2447,14 +2467,15 @@ TEST_F(ExternalStylusIntegrationTest, UnfusedExternalStylus) {
             std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT));
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(
-            mTestListener
-                    ->assertNotifyMotionWasCalled(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                                                        WithToolType(
-                                                                ToolType::FINGER),
-                                                        WithButtonState(0),
-                                                        WithDeviceId(touchscreenId),
-                                                        WithPressure(1.f)),
-                                                  waitUntil));
+            mTestListener->assertNotifyMotionWasCalled(AllOf(WithMotionAction(
+                                                                     AMOTION_EVENT_ACTION_DOWN),
+                                                             WithToolType(ToolType::FINGER),
+                                                             WithSource(AINPUT_SOURCE_TOUCHSCREEN |
+                                                                        AINPUT_SOURCE_STYLUS),
+                                                             WithButtonState(0),
+                                                             WithDeviceId(touchscreenId),
+                                                             WithPressure(1.f)),
+                                                       waitUntil));
 
     // The external stylus did not generate any events.
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled());
@@ -2728,7 +2749,7 @@ TEST_F(InputDeviceTest, NotWakeDevice_DoesNotRemoveExistingWakeFlagFromProcessNo
 
 // A single input device is associated with a specific display. Check that:
 // 1. Device is disabled if the viewport corresponding to the associated display is not found
-// 2. Device is disabled when setEnabled API is called
+// 2. Device is disabled when configure API is called
 TEST_F(InputDeviceTest, Configure_AssignsDisplayPort) {
     mDevice->addMapper<FakeInputMapper>(EVENTHUB_ID, mFakePolicy->getReaderConfiguration(),
                                         AINPUT_SOURCE_TOUCHSCREEN);
@@ -2835,7 +2856,8 @@ TEST_F(InputDeviceTest, DumpDoesNotCrash) {
     mFakeEventHub->addDevice(TEST_EVENTHUB_ID, "Test EventHub device", InputDeviceClass::BATTERY);
 
     InputDevice device(mReader->getContext(), /*id=*/1, /*generation=*/2, /*identifier=*/{});
-    device.addEventHubDevice(TEST_EVENTHUB_ID, mFakePolicy->getReaderConfiguration());
+    auto _ = device.addEventHubDevice(ARBITRARY_TIME, TEST_EVENTHUB_ID,
+                                      mFakePolicy->getReaderConfiguration());
     device.removeEventHubDevice(TEST_EVENTHUB_ID);
     std::string dumpStr, eventHubDevStr;
     device.dump(dumpStr, eventHubDevStr);
@@ -4710,92 +4732,6 @@ TEST_F(CursorInputMapperTest, Process_WhenModeIsPointer_ShouldMoveThePointerArou
     mFakePointerController->setPosition(100, 200);
 
     NotifyMotionArgs args;
-
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            110.0f, 220.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
-}
-
-TEST_F(CursorInputMapperTest, Process_PointerCapture) {
-    addConfigurationProperty("cursor.mode", "pointer");
-    mFakePolicy->setPointerCapture(true);
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    NotifyDeviceResetArgs resetArgs;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
-    ASSERT_EQ(ARBITRARY_TIME, resetArgs.eventTime);
-    ASSERT_EQ(DEVICE_ID, resetArgs.deviceId);
-
-    mFakePointerController->setBounds(0, 0, 800 - 1, 480 - 1);
-    mFakePointerController->setPosition(100, 200);
-
-    NotifyMotionArgs args;
-
-    // Move.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            10.0f, 20.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(100.0f, 200.0f));
-
-    // Button press.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, BTN_MOUSE, 1);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_BUTTON_PRESS, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-
-    // Button release.
-    process(mapper, ARBITRARY_TIME + 2, READ_TIME, EV_KEY, BTN_MOUSE, 0);
-    process(mapper, ARBITRARY_TIME + 2, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_BUTTON_RELEASE, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_UP, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-
-    // Another move.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 30);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 40);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
-    ASSERT_NO_FATAL_FAILURE(assertPointerCoords(args.pointerCoords[0],
-            30.0f, 40.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f));
-    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(100.0f, 200.0f));
-
-    // Disable pointer capture and check that the device generation got bumped
-    // and events are generated the usual way.
-    const uint32_t generation = mReader->getContext()->getGeneration();
-    mFakePolicy->setPointerCapture(false);
-    configureDevice(InputReaderConfiguration::Change::POINTER_CAPTURE);
-    ASSERT_TRUE(mReader->getContext()->getGeneration() != generation);
-
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
-    ASSERT_EQ(DEVICE_ID, resetArgs.deviceId);
 
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
@@ -7566,12 +7502,10 @@ public:
 
 protected:
     StylusState mStylusState{};
-    static constexpr uint32_t EXPECTED_SOURCE =
-            AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_BLUETOOTH_STYLUS;
 
     void testStartFusedStylusGesture(SingleTouchInputMapper& mapper) {
         auto toolTypeSource =
-                AllOf(WithSource(EXPECTED_SOURCE), WithToolType(ToolType::STYLUS));
+                AllOf(WithSource(STYLUS_FUSION_SOURCE), WithToolType(ToolType::STYLUS));
 
         // The first pointer is withheld.
         processDown(mapper, 100, 200);
@@ -7605,7 +7539,7 @@ protected:
         processUp(mapper);
         processSync(mapper);
         ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-                AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(EXPECTED_SOURCE),
+                AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(STYLUS_FUSION_SOURCE),
                       WithToolType(ToolType::STYLUS))));
 
         mStylusState.pressure = 0.f;
@@ -7615,8 +7549,10 @@ protected:
     }
 
     void testUnsuccessfulFusionGesture(SingleTouchInputMapper& mapper) {
+        // When stylus fusion is not successful, events should be reported with the original source.
+        // In this case, it is from a touchscreen.
         auto toolTypeSource =
-                AllOf(WithSource(EXPECTED_SOURCE), WithToolType(ToolType::FINGER));
+                AllOf(WithSource(AINPUT_SOURCE_TOUCHSCREEN), WithToolType(ToolType::FINGER));
 
         // The first pointer is withheld when an external stylus is connected,
         // and a timeout is requested.
@@ -7656,7 +7592,7 @@ private:
 
 TEST_F(ExternalStylusFusionTest, UsesBluetoothStylusSource) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
-    ASSERT_EQ(EXPECTED_SOURCE, mapper.getSources());
+    ASSERT_EQ(STYLUS_FUSION_SOURCE, mapper.getSources());
 }
 
 TEST_F(ExternalStylusFusionTest, UnsuccessfulFusion) {
@@ -7673,8 +7609,7 @@ TEST_F(ExternalStylusFusionTest, SuccessfulFusion_TouchFirst) {
 // before the touch is reported by the touchscreen.
 TEST_F(ExternalStylusFusionTest, SuccessfulFusion_PressureFirst) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
-    auto toolTypeSource =
-            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(ToolType::STYLUS));
+    auto toolTypeSource = AllOf(WithSource(STYLUS_FUSION_SOURCE), WithToolType(ToolType::STYLUS));
 
     // The external stylus reports pressure first. It is ignored for now.
     mStylusState.pressure = 1.f;
@@ -7716,8 +7651,7 @@ TEST_F(ExternalStylusFusionTest, FusionIsRepeatedForEachNewGesture) {
 
 TEST_F(ExternalStylusFusionTest, FusedPointerReportsPressureChanges) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
-    auto toolTypeSource =
-            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(ToolType::STYLUS));
+    auto toolTypeSource = AllOf(WithSource(STYLUS_FUSION_SOURCE), WithToolType(ToolType::STYLUS));
 
     mStylusState.pressure = 0.8f;
     processExternalStylusState(mapper);
@@ -7778,7 +7712,7 @@ TEST_F(ExternalStylusFusionTest, FusedPointerReportsPressureChanges) {
     processUp(mapper);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(EXPECTED_SOURCE),
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP), WithSource(STYLUS_FUSION_SOURCE),
                   WithToolType(ToolType::STYLUS))));
 
     ASSERT_NO_FATAL_FAILURE(mReader->getContext()->assertTimeoutWasNotRequested());
@@ -7787,7 +7721,7 @@ TEST_F(ExternalStylusFusionTest, FusedPointerReportsPressureChanges) {
 
 TEST_F(ExternalStylusFusionTest, FusedPointerReportsToolTypeChanges) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
-    auto source = WithSource(EXPECTED_SOURCE);
+    auto source = WithSource(STYLUS_FUSION_SOURCE);
 
     mStylusState.pressure = 1.f;
     mStylusState.toolType = ToolType::ERASER;
@@ -7840,8 +7774,7 @@ TEST_F(ExternalStylusFusionTest, FusedPointerReportsToolTypeChanges) {
 
 TEST_F(ExternalStylusFusionTest, FusedPointerReportsButtons) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
-    auto toolTypeSource =
-            AllOf(WithSource(EXPECTED_SOURCE), WithToolType(ToolType::STYLUS));
+    auto toolTypeSource = AllOf(WithSource(STYLUS_FUSION_SOURCE), WithToolType(ToolType::STYLUS));
 
     ASSERT_NO_FATAL_FAILURE(testStartFusedStylusGesture(mapper));
 
