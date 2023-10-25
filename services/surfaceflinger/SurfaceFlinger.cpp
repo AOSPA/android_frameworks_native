@@ -5940,6 +5940,9 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                               strerror(-lock.status), lock.status);
                 ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
+                /* QTI_BEGIN */
+                return NO_ERROR;
+                /* QTI_END */
             }
 
             if (const auto it = dumpers.find(flag); it != dumpers.end()) {
