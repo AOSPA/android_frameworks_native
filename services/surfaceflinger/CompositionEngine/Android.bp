@@ -66,6 +66,10 @@ cc_library {
         "libcompositionengine_defaults",
         "libqtisurfaceflingerextension_defaults",
     ],
+    static_libs: [
+        "libsurfaceflingerflags",
+        "libqticompositionengineextension",
+    ],
     srcs: [
         "src/planner/CachedSet.cpp",
         "src/planner/Flattener.cpp",
@@ -87,9 +91,6 @@ cc_library {
         "src/OutputLayer.cpp",
         "src/OutputLayerCompositionState.cpp",
         "src/RenderSurface.cpp",
-    ],
-    static_libs: [
-        "libqticompositionengineextension",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -114,6 +115,7 @@ cc_library {
         "libgmock",
         "libcompositionengine",
         "libqticompositionengineextension",
+        "libsurfaceflingerflags_test",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -149,6 +151,7 @@ cc_test {
         "libgmock",
         "libgtest",
         "libqticompositionengineextension",
+        "libsurfaceflingerflags_test",
     ],
     // For some reason, libvulkan isn't picked up from librenderengine
     // Probably ASAN related?

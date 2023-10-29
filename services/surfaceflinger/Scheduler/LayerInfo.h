@@ -62,6 +62,7 @@ class LayerInfo {
     static constexpr size_t kNumSmallDirtyThreshold = 2;
 
     friend class LayerHistoryTest;
+    friend class LayerHistoryIntegrationTest;
     friend class LayerInfoTest;
 
 public:
@@ -70,8 +71,8 @@ public:
         LayerHistory::LayerVoteType type = LayerHistory::LayerVoteType::Heuristic;
         Fps fps;
         Seamlessness seamlessness = Seamlessness::Default;
-        // Category is in effect if fps is not specified.
         FrameRateCategory category = FrameRateCategory::Default;
+        bool categorySmoothSwitchOnly = false;
 
         // Returns true if the layer explicitly should contribute to frame rate scoring.
         bool isNoVote() const { return RefreshRateSelector::isNoVote(type); }
@@ -110,6 +111,7 @@ public:
         } vote;
 
         FrameRateCategory category = FrameRateCategory::Default;
+        bool categorySmoothSwitchOnly = false;
 
         FrameRate() = default;
 
@@ -264,6 +266,7 @@ private:
 
     private:
         friend class LayerHistoryTest;
+        friend class LayerHistoryIntegrationTest;
 
         // Holds the refresh rate when it was calculated
         struct RefreshRateData {

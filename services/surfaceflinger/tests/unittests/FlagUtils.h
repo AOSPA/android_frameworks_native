@@ -14,24 +14,23 @@
  * limitations under the License.
  */
 
-#include "TestInputListenerMatchers.h"
+#pragma once
+
+#define SET_FLAG_FOR_TEST(name, value) TestFlagSetter _testflag_((name), (name), (value))
 
 namespace android {
+class TestFlagSetter {
+public:
+    TestFlagSetter(bool (*getter)(), void((*setter)(bool)), bool flagValue) {
+        const bool initialValue = getter();
+        setter(flagValue);
+        mResetFlagValue = [=] { setter(initialValue); };
+    }
 
-WithKeyActionMatcher WithKeyAction(int32_t action) {
-    return WithKeyActionMatcher(action);
-}
+    ~TestFlagSetter() { mResetFlagValue(); }
 
-WithMotionActionMatcher WithMotionAction(int32_t action) {
-    return WithMotionActionMatcher(action);
-}
-
-WithDisplayIdMatcher WithDisplayId(int32_t displayId) {
-    return WithDisplayIdMatcher(displayId);
-}
-
-WithDeviceIdMatcher WithDeviceId(int32_t deviceId) {
-    return WithDeviceIdMatcher(deviceId);
-}
+private:
+    std::function<void()> mResetFlagValue;
+};
 
 } // namespace android

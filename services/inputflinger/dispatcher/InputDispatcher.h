@@ -92,7 +92,7 @@ public:
     status_t start() override;
     status_t stop() override;
 
-    void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override{};
+    void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override;
     void notifyConfigurationChanged(const NotifyConfigurationChangedArgs& args) override;
     void notifyKey(const NotifyKeyArgs& args) override;
     void notifyMotion(const NotifyMotionArgs& args) override;
@@ -361,14 +361,11 @@ private:
     // Get a reference to window handles by display, return an empty vector if not found.
     const std::vector<sp<android::gui::WindowInfoHandle>>& getWindowHandlesLocked(
             int32_t displayId) const REQUIRES(mLock);
-    sp<android::gui::WindowInfoHandle> getWindowHandleLocked(
-            const sp<IBinder>& windowHandleToken) const REQUIRES(mLock);
     ui::Transform getTransformLocked(int32_t displayId) const REQUIRES(mLock);
 
-    // Same function as above, but faster. Since displayId is provided, this avoids the need
-    // to loop through all displays.
-    sp<android::gui::WindowInfoHandle> getWindowHandleLocked(const sp<IBinder>& windowHandleToken,
-                                                             int displayId) const REQUIRES(mLock);
+    sp<android::gui::WindowInfoHandle> getWindowHandleLocked(
+            const sp<IBinder>& windowHandleToken, std::optional<int32_t> displayId = {}) const
+            REQUIRES(mLock);
     sp<android::gui::WindowInfoHandle> getWindowHandleLocked(
             const sp<android::gui::WindowInfoHandle>& windowHandle) const REQUIRES(mLock);
     std::shared_ptr<InputChannel> getInputChannelLocked(const sp<IBinder>& windowToken) const

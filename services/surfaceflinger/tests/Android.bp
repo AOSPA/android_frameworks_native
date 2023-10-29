@@ -32,7 +32,6 @@ cc_test {
         "BootDisplayMode_test.cpp",
         "Binder_test.cpp",
         "BufferGenerator.cpp",
-        "CommonTypes_test.cpp",
         "Credentials_test.cpp",
         "DereferenceSurfaceControl_test.cpp",
         "DisplayConfigs_test.cpp",
@@ -67,6 +66,7 @@ cc_test {
     static_libs: [
         "liblayers_proto",
         "android.hardware.graphics.composer@2.1",
+        "libsurfaceflingerflags",
     ],
     shared_libs: [
         "android.hardware.graphics.common@1.2",
