@@ -200,7 +200,8 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
             /* QTI_END */
 
             summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
-                               vote.seamlessness, vote.category, weight, layerFocused});
+                               vote.seamlessness, vote.category, vote.categorySmoothSwitchOnly,
+                               weight, layerFocused});
 
             if (CC_UNLIKELY(mTraceEnabled)) {
                 trace(*info, vote.type, vote.fps.getIntValue());

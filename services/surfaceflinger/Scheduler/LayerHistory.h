@@ -95,6 +95,7 @@ public:
 
 private:
     friend class LayerHistoryTest;
+    friend class LayerHistoryIntegrationTest;
     friend class TestableScheduler;
 
     using LayerPair = std::pair<Layer*, std::unique_ptr<LayerInfo>>;
