@@ -3731,24 +3731,11 @@ void Layer::gatherBufferInfo() {
                 err = mapper.setDataspace(mBufferInfo.mBuffer->getBuffer()->handle,
                                           static_cast<ui::Dataspace>(mBufferInfo.mDataspace));
             }
-
-            // Some GPU drivers may cache gralloc metadata which means before we composite we need
-            // to upsert RenderEngine's caches. Put in a special workaround to be backwards
-            // compatible with old vendors, with a ticking clock.
-            static const int32_t kVendorVersion =
-                    base::GetIntProperty("ro.board.api_level", __ANDROID_API_FUTURE__);
-            if (const auto format =
-                        static_cast<aidl::android::hardware::graphics::common::PixelFormat>(
-                                mBufferInfo.mBuffer->getPixelFormat());
-                err == OK && kVendorVersion < __ANDROID_API_U__ &&
-                (format ==
-                         aidl::android::hardware::graphics::common::PixelFormat::
-                                 IMPLEMENTATION_DEFINED ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_420_888 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YV12 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_P010)) {
-                mBufferInfo.mBuffer->remapBuffer();
-            }
+            /* QTI_BEGIN */
+            // GPU drivers cache gralloc metadata which means before we composite we need
+            // to upsert RenderEngine's cache.
+            mBufferInfo.mBuffer->remapBuffer();
+            /* QTI_END */
         }
     }
     if (lastDataspace != mBufferInfo.mDataspace) {
