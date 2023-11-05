@@ -190,7 +190,6 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mDrawingState.barrierProducerId = 0;
     mDrawingState.bufferTransform = 0;
     mDrawingState.transformToDisplayInverse = false;
-    mDrawingState.crop.makeInvalid();
     mDrawingState.acquireFence = sp<Fence>::make(-1);
     mDrawingState.acquireFenceTime = std::make_shared<FenceTime>(mDrawingState.acquireFence);
     mDrawingState.dataspace = ui::Dataspace::V0_SRGB;
@@ -226,6 +225,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
 
     mOwnerUid = args.ownerUid;
     mOwnerPid = args.ownerPid;
+    mOwnerAppId = mOwnerUid % PER_USER_RANGE;
 
     mPremultipliedAlpha = !(args.flags & ISurfaceComposerClient::eNonPremultiplied);
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
@@ -819,8 +819,9 @@ void Layer::transferAvailableJankData(const std::deque<sp<CallbackHandle>>& hand
         if (includeJankData) {
             std::shared_ptr<frametimeline::SurfaceFrame> surfaceFrame =
                     mPendingJankClassifications.front();
-            jankData.emplace_back(
-                    JankData(surfaceFrame->getToken(), surfaceFrame->getJankType().value()));
+            jankData.emplace_back(JankData(surfaceFrame->getToken(),
+                                           surfaceFrame->getJankType().value(),
+                                           surfaceFrame->getRenderRate().getPeriodNsecs()));
         }
         mPendingJankClassifications.pop_front();
     }
@@ -2969,17 +2970,14 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
         }
     }
 
-    // Prevent tracing the same release multiple times.
-    if (mPreviousFrameNumber != mPreviousReleasedFrameNumber) {
-        mPreviousReleasedFrameNumber = mPreviousFrameNumber;
-    }
-
     if (ch != nullptr) {
         ch->previousReleaseCallbackId = mPreviousReleaseCallbackId;
         ch->previousReleaseFences.emplace_back(std::move(futureFenceResult));
         ch->name = mName;
     }
-    mPreviouslyPresentedLayerStacks.push_back(layerStack);
+    if (mBufferInfo.mBuffer) {
+        mPreviouslyPresentedLayerStacks.push_back(layerStack);
+    }
 }
 
 void Layer::onSurfaceFrameCreated(
@@ -3412,7 +3410,7 @@ bool Layer::setSurfaceDamageRegion(const Region& surfaceDamage) {
     mDrawingState.surfaceDamageRegion = surfaceDamage;
     mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
-    setIsSmallDirty();
+    setIsSmallDirty(surfaceDamage, getTransform());
     return true;
 }
 
@@ -4464,7 +4462,9 @@ void Layer::updateLastLatchTime(nsecs_t latchTime) {
     mLastLatchTime = latchTime;
 }
 
-void Layer::setIsSmallDirty() {
+void Layer::setIsSmallDirty(const Region& damageRegion,
+                            const ui::Transform& layerToDisplayTransform) {
+    mSmallDirty = false;
     if (!mFlinger->mScheduler->supportSmallDirtyDetection()) {
         return;
     }
@@ -4473,14 +4473,18 @@ void Layer::setIsSmallDirty() {
         mWindowType != WindowInfo::Type::BASE_APPLICATION) {
         return;
     }
-    Rect bounds = mDrawingState.surfaceDamageRegion.getBounds();
+
+    Rect bounds = damageRegion.getBounds();
     if (!bounds.isValid()) {
         return;
     }
 
+    // Transform to screen space.
+    bounds = layerToDisplayTransform.transform(bounds);
+
     // If the damage region is a small dirty, this could give the hint for the layer history that
     // it could suppress the heuristic rate when calculating.
-    mSmallDirty = mFlinger->mScheduler->isSmallDirtyArea(mOwnerUid,
+    mSmallDirty = mFlinger->mScheduler->isSmallDirtyArea(mOwnerAppId,
                                                          bounds.getWidth() * bounds.getHeight());
 }
 
@@ -4493,6 +4497,11 @@ uint32_t Layer::qtiGetSmomoLayerStackId() {
     return qtiSmomoLayerStackId;
 }
 /* QTI_END */
+
+void Layer::setIsSmallDirty(frontend::LayerSnapshot* snapshot) {
+    setIsSmallDirty(snapshot->surfaceDamage, snapshot->localTransform);
+    snapshot->isSmallDirty = mSmallDirty;
+}
 
 } // namespace android
 

@@ -843,6 +843,8 @@ public:
 
     pid_t getOwnerPid() { return mOwnerPid; }
 
+    int32_t getOwnerAppId() { return mOwnerAppId; }
+
     // This layer is not a clone, but it's the parent to the cloned hierarchy. The
     // variable mClonedChild represents the top layer that will be cloned so this
     // layer will be the parent of mClonedChild.
@@ -941,7 +943,8 @@ public:
     const sp<SurfaceFlinger> mFlinger;
 
     // Check if the damage region is a small dirty.
-    void setIsSmallDirty();
+    void setIsSmallDirty(const Region& damageRegion, const ui::Transform& layerToDisplayTransform);
+    void setIsSmallDirty(frontend::LayerSnapshot* snapshot);
 
     /* QTI_BEGIN */
     void qtiSetSmomoLayerStackId();
@@ -1077,6 +1080,8 @@ protected:
     // If created from a system process, the value can be passed in.
     pid_t mOwnerPid;
 
+    int32_t mOwnerAppId;
+
     // Keeps track of the time SF latched the last buffer from this layer.
     // Used in buffer stuffing analysis in FrameTimeline.
     nsecs_t mLastLatchTime = 0;
@@ -1086,6 +1091,10 @@ protected:
     sp<Fence> mLastClientCompositionFence;
     bool mClearClientCompositionFenceOnLayerDisplayed = false;
 private:
+    // Range of uids allocated for a user.
+    // This value is taken from android.os.UserHandle#PER_USER_RANGE.
+    static constexpr int32_t PER_USER_RANGE = 100000;
+
     friend class SlotGenerationTest;
     friend class TransactionFrameTracerTest;
     friend class TransactionSurfaceFrameTest;
@@ -1242,9 +1251,6 @@ private:
 
     ReleaseCallbackId mPreviousReleaseCallbackId = ReleaseCallbackId::INVALID_ID;
     sp<IBinder> mPreviousReleaseBufferEndpoint;
-    uint64_t mPreviousReleasedFrameNumber = 0;
-
-    uint64_t mPreviousBarrierFrameNumber = 0;
 
     bool mReleasePreviousBuffer = false;
 

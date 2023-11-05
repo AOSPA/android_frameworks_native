@@ -209,7 +209,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
                  (barrierFrameNumber > bufferData->frameNumber))) {
                 ALOGE("Out of order buffers detected for %s producedId=%d frameNumber=%" PRIu64
                       " -> producedId=%d frameNumber=%" PRIu64,
-                      getDebugString().c_str(), bufferData->producerId, bufferData->frameNumber,
+                      getDebugString().c_str(), barrierProducerId, barrierFrameNumber,
                       bufferData->producerId, frameNumber);
                 TransactionTraceWriter::getInstance().invoke("out_of_order_buffers_",
                                                              /*overwrite=*/false);
@@ -238,8 +238,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     }
     if (what & (layer_state_t::eAlphaChanged)) {
         if (oldAlpha == 0 || color.a == 0) {
-            changes |= RequestedLayerState::Changes::Visibility |
-                    RequestedLayerState::Changes::VisibleRegion;
+            changes |= RequestedLayerState::Changes::Visibility;
         }
     }
 
@@ -402,6 +401,7 @@ std::string RequestedLayerState::getDebugString() const {
     if (!handleAlive) debug << " !handle";
     if (z != 0) debug << " z=" << z;
     if (layerStack.id != 0) debug << " layerStack=" << layerStack.id;
+    debug << "}";
     return debug.str();
 }
 

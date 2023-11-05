@@ -2604,7 +2604,7 @@ void SurfaceComposerClient::getDynamicDisplayInfoInternal(gui::DynamicDisplayInf
         outMode.resolution.height = mode.resolution.height;
         outMode.xDpi = mode.xDpi;
         outMode.yDpi = mode.yDpi;
-        outMode.refreshRate = mode.refreshRate;
+        outMode.peakRefreshRate = mode.peakRefreshRate;
         outMode.vsyncRate = mode.vsyncRate;
         outMode.appVsyncOffset = mode.appVsyncOffset;
         outMode.sfVsyncOffset = mode.sfVsyncOffset;
@@ -2788,16 +2788,16 @@ status_t SurfaceComposerClient::setOverrideFrameRate(uid_t uid, float frameRate)
     return statusTFromBinderStatus(status);
 }
 
-status_t SurfaceComposerClient::updateSmallAreaDetection(std::vector<int32_t>& uids,
+status_t SurfaceComposerClient::updateSmallAreaDetection(std::vector<int32_t>& appIds,
                                                          std::vector<float>& thresholds) {
     binder::Status status =
-            ComposerServiceAIDL::getComposerService()->updateSmallAreaDetection(uids, thresholds);
+            ComposerServiceAIDL::getComposerService()->updateSmallAreaDetection(appIds, thresholds);
     return statusTFromBinderStatus(status);
 }
 
-status_t SurfaceComposerClient::setSmallAreaDetectionThreshold(uid_t uid, float threshold) {
+status_t SurfaceComposerClient::setSmallAreaDetectionThreshold(int32_t appId, float threshold) {
     binder::Status status =
-            ComposerServiceAIDL::getComposerService()->setSmallAreaDetectionThreshold(uid,
+            ComposerServiceAIDL::getComposerService()->setSmallAreaDetectionThreshold(appId,
                                                                                       threshold);
     return statusTFromBinderStatus(status);
 }

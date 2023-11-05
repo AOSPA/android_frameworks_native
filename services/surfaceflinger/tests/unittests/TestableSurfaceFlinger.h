@@ -611,6 +611,15 @@ public:
     void releaseLegacyLayer(uint32_t sequence) { mFlinger->mLegacyLayers.erase(sequence); };
 
     auto updateLayerHistory(nsecs_t now) { return mFlinger->updateLayerHistory(now); };
+    auto setDaltonizerType(ColorBlindnessType type) {
+        mFlinger->mDaltonizer.setType(type);
+        return mFlinger->updateColorMatrixLocked();
+    }
+    auto updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
+                              bool& out) {
+        ftl::FakeGuard guard(kMainThreadContext);
+        return mFlinger->updateLayerSnapshots(vsyncId, frameTimeNs, transactionsFlushed, out);
+    }
     /* ------------------------------------------------------------------------
      * Read-write access to private data to set up preconditions and assert
      * post-conditions.
@@ -659,6 +668,11 @@ public:
     auto initTransactionTraceWriter() {
         mFlinger->mTransactionTracing.emplace();
         return mFlinger->initTransactionTraceWriter();
+    }
+
+    void enableNewFrontEnd() {
+        mFlinger->mLayerLifecycleManagerEnabled = true;
+        mFlinger->mLegacyFrontEndEnabled = false;
     }
 
     ~TestableSurfaceFlinger() {

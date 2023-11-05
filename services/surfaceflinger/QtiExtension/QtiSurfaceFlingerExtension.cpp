@@ -1330,7 +1330,7 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
         return;
     }
 
-    const status_t result = mQtiFlinger->setActiveModeFromBackdoor(displayToken, *modeIdOpt);
+    const status_t result = mQtiFlinger->setActiveModeFromBackdoor(displayToken, *modeIdOpt, Fps(), Fps());
     if (result != NO_ERROR) {
         ALOGW("qtiSetRefreshRateTo: Failed to setActiveMode");
     }
@@ -1882,7 +1882,7 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
     }
 
     status_t result =
-            mQtiFlinger->setActiveModeFromBackdoor(displayToken, DisplayModeId{newModeId});
+            mQtiFlinger->setActiveModeFromBackdoor(displayToken, DisplayModeId{newModeId}, Fps(), Fps());
     if (result != NO_ERROR) {
         return;
     }
