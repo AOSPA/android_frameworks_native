@@ -759,6 +759,10 @@ TEST_F(VSyncDispatchTimerQueueTest, canMoveCallbackBackwardsInTime) {
 
 // b/1450138150
 TEST_F(VSyncDispatchTimerQueueTest, doesNotMoveCallbackBackwardsAndSkipAScheduledTargetVSync) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, false);
+    if (flags::dont_skip_on_early()) GTEST_SKIP();
+
     EXPECT_CALL(mMockClock, alarmAt(_, 500));
     CountingCallback cb(mDispatch);
     auto result =
@@ -772,6 +776,31 @@ TEST_F(VSyncDispatchTimerQueueTest, doesNotMoveCallbackBackwardsAndSkipASchedule
                                  {.workDuration = 800, .readyDuration = 0, .earliestVsync = 1000});
     EXPECT_TRUE(result.has_value());
     EXPECT_EQ(1200, *result);
+
+    advanceToNextCallback();
+    ASSERT_THAT(cb.mCalls.size(), Eq(1));
+}
+
+// b/1450138150
+TEST_F(VSyncDispatchTimerQueueTest, movesCallbackBackwardsAndSkipAScheduledTargetVSync) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, true);
+    if (flags::dont_skip_on_early()) GTEST_SKIP();
+
+    EXPECT_CALL(mMockClock, alarmAt(_, 500));
+    CountingCallback cb(mDispatch);
+    auto result =
+            mDispatch->schedule(cb,
+                                {.workDuration = 500, .readyDuration = 0, .earliestVsync = 1000});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(500, *result);
+    mMockClock.advanceBy(400);
+
+    result = mDispatch->schedule(cb,
+                                 {.workDuration = 800, .readyDuration = 0, .earliestVsync = 1000});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(400, *result);
+
     advanceToNextCallback();
     ASSERT_THAT(cb.mCalls.size(), Eq(1));
 }
@@ -826,6 +855,10 @@ TEST_F(VSyncDispatchTimerQueueTest, canScheduleLargeNegativeOffset) {
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, scheduleUpdatesDoesNotAffectSchedulingState) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, false);
+    if (flags::dont_skip_on_early()) GTEST_SKIP();
+
     EXPECT_CALL(mMockClock, alarmAt(_, 600));
 
     CountingCallback cb(mDispatch);
@@ -839,6 +872,28 @@ TEST_F(VSyncDispatchTimerQueueTest, scheduleUpdatesDoesNotAffectSchedulingState)
                                  {.workDuration = 1400, .readyDuration = 0, .earliestVsync = 1000});
     EXPECT_TRUE(result.has_value());
     EXPECT_EQ(600, *result);
+
+    advanceToNextCallback();
+}
+
+TEST_F(VSyncDispatchTimerQueueTest, scheduleUpdatesDoesAffectSchedulingState) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, true);
+    if (!flags::dont_skip_on_early()) GTEST_SKIP();
+
+    EXPECT_CALL(mMockClock, alarmAt(_, 600));
+
+    CountingCallback cb(mDispatch);
+    auto result =
+            mDispatch->schedule(cb,
+                                {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(600, *result);
+
+    result = mDispatch->schedule(cb,
+                                 {.workDuration = 1400, .readyDuration = 0, .earliestVsync = 1000});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_EQ(0, *result);
 
     advanceToNextCallback();
 }
@@ -1045,6 +1100,10 @@ TEST_F(VSyncDispatchTimerQueueTest, basicAlarmSettingFutureWithReadyDuration) {
 }
 
 TEST_F(VSyncDispatchTimerQueueTest, updatesVsyncTimeForCloseWakeupTime) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, false);
+    if (!flags::dont_skip_on_early()) GTEST_SKIP();
+
     Sequence seq;
     EXPECT_CALL(mMockClock, alarmAt(_, 600)).InSequence(seq);
 
@@ -1066,6 +1125,31 @@ TEST_F(VSyncDispatchTimerQueueTest, updatesVsyncTimeForCloseWakeupTime) {
 }
 
 // TODO(b/304338314): Set the flag value instead of skipping the test
+TEST_F(VSyncDispatchTimerQueueTest, doesNotUpdatesVsyncTimeForCloseWakeupTime) {
+    // TODO(b/304338314): Set the flag value instead of skipping the test
+    // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, true);
+    if (!flags::dont_skip_on_early()) GTEST_SKIP();
+
+    Sequence seq;
+    EXPECT_CALL(mMockClock, alarmAt(_, 600)).InSequence(seq);
+
+    CountingCallback cb(mDispatch);
+
+    mDispatch->schedule(cb, {.workDuration = 400, .readyDuration = 0, .earliestVsync = 1000});
+    mDispatch->schedule(cb, {.workDuration = 1400, .readyDuration = 0, .earliestVsync = 1000});
+
+    advanceToNextCallback();
+
+    advanceToNextCallback();
+
+    ASSERT_THAT(cb.mCalls.size(), Eq(1));
+    EXPECT_THAT(cb.mCalls[0], Eq(1000));
+    ASSERT_THAT(cb.mWakeupTime.size(), Eq(1));
+    EXPECT_THAT(cb.mWakeupTime[0], Eq(600));
+    ASSERT_THAT(cb.mReadyTime.size(), Eq(1));
+    EXPECT_THAT(cb.mReadyTime[0], Eq(1000));
+}
+
 TEST_F(VSyncDispatchTimerQueueTest, skipAVsyc) {
     // SET_FLAG_FOR_TEST(flags::dont_skip_on_early, false);
     if (flags::dont_skip_on_early()) GTEST_SKIP();
@@ -1105,7 +1189,7 @@ TEST_F(VSyncDispatchTimerQueueTest, dontskipAVsyc) {
     result = mDispatch->schedule(cb,
                                  {.workDuration = 800, .readyDuration = 0, .earliestVsync = 1000});
     EXPECT_TRUE(result.has_value());
-    EXPECT_EQ(200, *result);
+    EXPECT_EQ(300, *result);
 
     advanceToNextCallback();
     ASSERT_THAT(cb.mCalls.size(), Eq(1));

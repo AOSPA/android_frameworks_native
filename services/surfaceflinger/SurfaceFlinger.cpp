@@ -277,7 +277,7 @@ bool getKernelIdleTimerSyspropConfig(DisplayId displayId) {
 
 bool isAbove4k30(const ui::DisplayMode& outMode) {
     using fps_approx_ops::operator>;
-    Fps refreshRate = Fps::fromValue(outMode.refreshRate);
+    Fps refreshRate = Fps::fromValue(outMode.peakRefreshRate);
     return outMode.resolution.getWidth() >= FOUR_K_WIDTH &&
             outMode.resolution.getHeight() >= FOUR_K_HEIGHT && refreshRate > 30_Hz;
 }
@@ -882,14 +882,14 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
 
     mPowerAdvisor->init();
 
-    char primeShaderCache[PROPERTY_VALUE_MAX];
-    property_get("service.sf.prime_shader_cache", primeShaderCache, "1");
-    if (atoi(primeShaderCache)) {
+    if (base::GetBoolProperty("service.sf.prime_shader_cache"s, true)) {
         if (setSchedFifo(false) != NO_ERROR) {
             ALOGW("Can't set SCHED_OTHER for primeCache");
         }
 
-        mRenderEnginePrimeCacheFuture = getRenderEngine().primeCache();
+        bool shouldPrimeUltraHDR =
+                base::GetBoolProperty("ro.surface_flinger.prime_shader_cache.ultrahdr"s, false);
+        mRenderEnginePrimeCacheFuture = getRenderEngine().primeCache(shouldPrimeUltraHDR);
 
         if (setSchedFifo(true) != NO_ERROR) {
             ALOGW("Can't set SCHED_OTHER for primeCache");
@@ -1075,11 +1075,11 @@ void SurfaceFlinger::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo*& info
         outMode.yDpi = yDpi;
 
         const auto peakFps = mode->getPeakFps();
-        outMode.refreshRate = peakFps.getValue();
+        outMode.peakRefreshRate = peakFps.getValue();
         outMode.vsyncRate = mode->getVsyncRate().getValue();
 
-        const auto vsyncConfigSet =
-                mVsyncConfiguration->getConfigsForRefreshRate(Fps::fromValue(outMode.refreshRate));
+        const auto vsyncConfigSet = mVsyncConfiguration->getConfigsForRefreshRate(
+                Fps::fromValue(outMode.peakRefreshRate));
         outMode.appVsyncOffset = vsyncConfigSet.late.appOffset;
         outMode.sfVsyncOffset = vsyncConfigSet.late.sfOffset;
         outMode.group = mode->getGroup();
@@ -1272,7 +1272,7 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request,
 }
 
 status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToken>& displayToken,
-                                                   DisplayModeId modeId) {
+                                                   DisplayModeId modeId, Fps minFps, Fps maxFps) {
     ATRACE_CALL();
 
     if (!displayToken) {
@@ -1305,13 +1305,15 @@ status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToke
         }
 
         const Fps fps = *fpsOpt;
+        const FpsRange physical = {fps, fps};
+        const FpsRange render = {minFps.isValid() ? minFps : fps, maxFps.isValid() ? maxFps : fps};
+        const FpsRanges ranges = {physical, render};
 
         // Keep the old switching type.
         const bool allowGroupSwitching =
                 display->refreshRateSelector().getCurrentPolicy().allowGroupSwitching;
 
-        const scheduler::RefreshRateSelector::DisplayManagerPolicy policy{modeId,
-                                                                          {fps, fps},
+        const scheduler::RefreshRateSelector::DisplayManagerPolicy policy{modeId, ranges, ranges,
                                                                           allowGroupSwitching};
 
         return setDesiredDisplayModeSpecsInternal(display, policy);
@@ -2253,8 +2255,29 @@ void SurfaceFlinger::updateLayerHistory(nsecs_t now) {
             continue;
         }
 
-        if (!snapshot->changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation) &&
-            (snapshot->clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) == 0) {
+        const bool updateSmallDirty = mScheduler->supportSmallDirtyDetection() &&
+                ((snapshot->clientChanges & layer_state_t::eSurfaceDamageRegionChanged) ||
+                 snapshot->changes.any(Changes::Geometry));
+
+        const bool hasChanges =
+                snapshot->changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation) ||
+                (snapshot->clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) !=
+                        0;
+
+        if (!updateSmallDirty && !hasChanges) {
+            continue;
+        }
+
+        auto it = mLegacyLayers.find(snapshot->sequence);
+        LOG_ALWAYS_FATAL_IF(it == mLegacyLayers.end(), "Couldn't find layer object for %s",
+                            snapshot->getDebugString().c_str());
+
+        if (updateSmallDirty) {
+            // Update small dirty flag while surface damage region or geometry changed
+            it->second->setIsSmallDirty(snapshot.get());
+        }
+
+        if (!hasChanges) {
             continue;
         }
 
@@ -2264,11 +2287,8 @@ void SurfaceFlinger::updateLayerHistory(nsecs_t now) {
                 .transform = snapshot->geomLayerTransform,
                 .setFrameRateVote = snapshot->frameRate,
                 .frameRateSelectionPriority = snapshot->frameRateSelectionPriority,
+                .isSmallDirty = snapshot->isSmallDirty,
         };
-
-        auto it = mLegacyLayers.find(snapshot->sequence);
-        LOG_ALWAYS_FATAL_IF(it == mLegacyLayers.end(), "Couldnt find layer object for %s",
-                            snapshot->getDebugString().c_str());
 
         if (snapshot->clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) {
             mScheduler->setDefaultFrameRateCompatibility(snapshot->sequence,
@@ -2443,8 +2463,6 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             mLayerLifecycleManager.commitChanges();
         }
 
-        commitTransactions();
-
         // enter boot animation on first buffer latch
         if (CC_UNLIKELY(mBootStage == BootStage::BOOTLOADER && newDataLatched)) {
             ALOGI("Enter boot animation");
@@ -2452,6 +2470,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         }
     }
     mustComposite |= (getTransactionFlags() & ~eTransactionFlushNeeded) || newDataLatched;
+    if (mustComposite && !mLegacyFrontEndEnabled) {
+        commitTransactions();
+    }
+
     return mustComposite;
 }
 
@@ -2611,7 +2633,8 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     {
         mFrameTimeline->setSfWakeUp(ftl::to_underlying(vsyncId),
                                     pacesetterFrameTarget.frameBeginTime().ns(),
-                                    Fps::fromPeriodNsecs(vsyncPeriod.ns()));
+                                    Fps::fromPeriodNsecs(vsyncPeriod.ns()),
+                                    mScheduler->getPacesetterRefreshRate());
 
         const bool flushTransactions = clearTransactionFlags(eTransactionFlushNeeded);
         bool transactionsAreEmpty;
@@ -4236,7 +4259,7 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
 
     if (sysprop::use_content_detection_for_refresh_rate(false)) {
         features |= Feature::kContentDetection;
-        if (flags::vrr_small_dirty_detection()) {
+        if (flags::enable_small_area_detection()) {
             features |= Feature::kSmallDirtyContentDetection;
         }
     }
@@ -7213,6 +7236,12 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 return NO_ERROR;
             }
             case 1035: {
+                // Parameters:
+                // - (required) i32 mode id.
+                // - (optional) i64 display id. Using default display if not provided.
+                // - (optional) f min render rate. Using mode's fps is not provided.
+                // - (optional) f max render rate. Using mode's fps is not provided.
+
                 const int modeId = data.readInt32();
 
                 const auto display = [&]() -> sp<IBinder> {
@@ -7235,8 +7264,21 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 }
                 /* QTI_END */
 
+                const auto getFps = [&] {
+                    float value;
+                    if (data.readFloat(&value) == NO_ERROR) {
+                        return Fps::fromValue(value);
+                    }
+
+                    return Fps();
+                };
+
+                const auto minFps = getFps();
+                const auto maxFps = getFps();
+
                 mDebugDisplayModeSetByBackdoor = false;
-                const status_t result = setActiveModeFromBackdoor(display, DisplayModeId{modeId});
+                const status_t result =
+                        setActiveModeFromBackdoor(display, DisplayModeId{modeId}, minFps, maxFps);
                 if (result == NO_ERROR) {
                     mDebugDisplayModeSetByBackdoor = true;
                     /* QTI_BEGIN */
@@ -7356,7 +7398,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 if (mTransactionTracing) {
                     int arg = data.readInt32();
                     if (arg == -1) {
-                        mTransactionTracing.reset();
+                        mScheduler->schedule([&]() { mTransactionTracing.reset(); }).get();
                     } else if (arg > 0) {
                         // Transaction tracing is always running but allow the user to temporarily
                         // increase the buffer when actively debugging.
@@ -8723,13 +8765,13 @@ status_t SurfaceFlinger::setOverrideFrameRate(uid_t uid, float frameRate) {
 }
 
 status_t SurfaceFlinger::updateSmallAreaDetection(
-        std::vector<std::pair<uid_t, float>>& uidThresholdMappings) {
-    mScheduler->updateSmallAreaDetection(uidThresholdMappings);
+        std::vector<std::pair<int32_t, float>>& appIdThresholdMappings) {
+    mScheduler->updateSmallAreaDetection(appIdThresholdMappings);
     return NO_ERROR;
 }
 
-status_t SurfaceFlinger::setSmallAreaDetectionThreshold(uid_t uid, float threshold) {
-    mScheduler->setSmallAreaDetectionThreshold(uid, threshold);
+status_t SurfaceFlinger::setSmallAreaDetectionThreshold(int32_t appId, float threshold) {
+    mScheduler->setSmallAreaDetectionThreshold(appId, threshold);
     return NO_ERROR;
 }
 
@@ -8870,15 +8912,6 @@ void SurfaceFlinger::sample() {
 void SurfaceFlinger::onActiveDisplaySizeChanged(const DisplayDevice& activeDisplay) {
     mScheduler->onActiveDisplayAreaChanged(activeDisplay.getWidth() * activeDisplay.getHeight());
     getRenderEngine().onActiveDisplaySizeChanged(activeDisplay.getSize());
-
-    // Notify layers to update small dirty flag.
-    if (mScheduler->supportSmallDirtyDetection()) {
-        mCurrentState.traverse([&](Layer* layer) {
-            if (layer->getLayerStack() == activeDisplay.getLayerStack()) {
-                layer->setIsSmallDirty();
-            }
-        });
-    }
 }
 
 sp<DisplayDevice> SurfaceFlinger::getActivatableDisplay() const {
@@ -9571,7 +9604,7 @@ void SurfaceComposerAIDL::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo& 
         outMode.resolution.height = mode.resolution.height;
         outMode.xDpi = mode.xDpi;
         outMode.yDpi = mode.yDpi;
-        outMode.refreshRate = mode.refreshRate;
+        outMode.peakRefreshRate = mode.peakRefreshRate;
         outMode.vsyncRate = mode.vsyncRate;
         outMode.appVsyncOffset = mode.appVsyncOffset;
         outMode.sfVsyncOffset = mode.sfVsyncOffset;
@@ -10103,18 +10136,18 @@ binder::Status SurfaceComposerAIDL::scheduleCommit() {
     return binder::Status::ok();
 }
 
-binder::Status SurfaceComposerAIDL::updateSmallAreaDetection(const std::vector<int32_t>& uids,
+binder::Status SurfaceComposerAIDL::updateSmallAreaDetection(const std::vector<int32_t>& appIds,
                                                              const std::vector<float>& thresholds) {
     status_t status;
     const int c_uid = IPCThreadState::self()->getCallingUid();
     if (c_uid == AID_ROOT || c_uid == AID_SYSTEM) {
-        if (uids.size() != thresholds.size()) return binderStatusFromStatusT(BAD_VALUE);
+        if (appIds.size() != thresholds.size()) return binderStatusFromStatusT(BAD_VALUE);
 
-        std::vector<std::pair<uid_t, float>> mappings;
-        const size_t size = uids.size();
+        std::vector<std::pair<int32_t, float>> mappings;
+        const size_t size = appIds.size();
         mappings.reserve(size);
         for (int i = 0; i < size; i++) {
-            auto row = std::make_pair(static_cast<uid_t>(uids[i]), thresholds[i]);
+            auto row = std::make_pair(appIds[i], thresholds[i]);
             mappings.push_back(row);
         }
         status = mFlinger->updateSmallAreaDetection(mappings);
@@ -10125,11 +10158,11 @@ binder::Status SurfaceComposerAIDL::updateSmallAreaDetection(const std::vector<i
     return binderStatusFromStatusT(status);
 }
 
-binder::Status SurfaceComposerAIDL::setSmallAreaDetectionThreshold(int32_t uid, float threshold) {
+binder::Status SurfaceComposerAIDL::setSmallAreaDetectionThreshold(int32_t appId, float threshold) {
     status_t status;
     const int c_uid = IPCThreadState::self()->getCallingUid();
     if (c_uid == AID_ROOT || c_uid == AID_SYSTEM) {
-        status = mFlinger->setSmallAreaDetectionThreshold(uid, threshold);
+        status = mFlinger->setSmallAreaDetectionThreshold(appId, threshold);
     } else {
         ALOGE("setSmallAreaDetectionThreshold() permission denied for uid: %d", c_uid);
         status = PERMISSION_DENIED;

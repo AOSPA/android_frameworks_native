@@ -40,7 +40,9 @@
 #include <binder/TextOutput.h>
 
 #include <android-base/scopeguard.h>
+#ifndef BINDER_DISABLE_BLOB
 #include <cutils/ashmem.h>
+#endif
 #include <utils/Flattenable.h>
 #include <utils/Log.h>
 #include <utils/String16.h>
@@ -662,7 +664,7 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
                 // To match kernel binder behavior, we always dup, even if the
                 // FD was unowned in the source parcel.
                 int newFd = -1;
-                if (status_t status = dupFileDescriptor(oldFd, &newFd); status != OK) {
+                if (status_t status = binder::os::dupFileDescriptor(oldFd, &newFd); status != OK) {
                     ALOGW("Failed to duplicate file descriptor %d: %s", oldFd, strerror(-status));
                 }
                 rpcFields->mFds->emplace_back(base::unique_fd(newFd));
@@ -1475,6 +1477,7 @@ status_t Parcel::writeRawNullableParcelable(const Parcelable* parcelable) {
     return writeParcelable(*parcelable);
 }
 
+#ifndef BINDER_DISABLE_NATIVE_HANDLE
 status_t Parcel::writeNativeHandle(const native_handle* handle)
 {
     if (!handle || handle->version != sizeof(native_handle))
@@ -1497,6 +1500,7 @@ status_t Parcel::writeNativeHandle(const native_handle* handle)
     err = write(handle->data + handle->numFds, sizeof(int)*handle->numInts);
     return err;
 }
+#endif
 
 status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership) {
     if (auto* rpcFields = maybeRpcFields()) {
@@ -1554,7 +1558,7 @@ status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership) {
 status_t Parcel::writeDupFileDescriptor(int fd)
 {
     int dupFd;
-    if (status_t err = dupFileDescriptor(fd, &dupFd); err != OK) {
+    if (status_t err = binder::os::dupFileDescriptor(fd, &dupFd); err != OK) {
         return err;
     }
     status_t err = writeFileDescriptor(dupFd, true /*takeOwnership*/);
@@ -1573,7 +1577,7 @@ status_t Parcel::writeParcelFileDescriptor(int fd, bool takeOwnership)
 status_t Parcel::writeDupParcelFileDescriptor(int fd)
 {
     int dupFd;
-    if (status_t err = dupFileDescriptor(fd, &dupFd); err != OK) {
+    if (status_t err = binder::os::dupFileDescriptor(fd, &dupFd); err != OK) {
         return err;
     }
     status_t err = writeParcelFileDescriptor(dupFd, true /*takeOwnership*/);
@@ -1589,6 +1593,12 @@ status_t Parcel::writeUniqueFileDescriptor(const base::unique_fd& fd) {
 
 status_t Parcel::writeBlob(size_t len, bool mutableCopy, WritableBlob* outBlob)
 {
+#ifdef BINDER_DISABLE_BLOB
+    (void)len;
+    (void)mutableCopy;
+    (void)outBlob;
+    return INVALID_OPERATION;
+#else
     if (len > INT32_MAX) {
         // don't accept size_t values which may have come from an
         // inadvertent conversion from a negative int.
@@ -1640,6 +1650,7 @@ status_t Parcel::writeBlob(size_t len, bool mutableCopy, WritableBlob* outBlob)
     }
     ::close(fd);
     return status;
+#endif
 }
 
 status_t Parcel::writeDupImmutableBlobFileDescriptor(int fd)
@@ -2271,6 +2282,7 @@ int32_t Parcel::readExceptionCode() const
     return status.exceptionCode();
 }
 
+#ifndef BINDER_DISABLE_NATIVE_HANDLE
 native_handle* Parcel::readNativeHandle() const
 {
     int numFds, numInts;
@@ -2303,6 +2315,7 @@ native_handle* Parcel::readNativeHandle() const
     }
     return h;
 }
+#endif
 
 int Parcel::readFileDescriptor() const {
     if (const auto* rpcFields = maybeRpcFields()) {
@@ -2386,7 +2399,7 @@ status_t Parcel::readUniqueFileDescriptor(base::unique_fd* val) const
     }
 
     int dupFd;
-    if (status_t err = dupFileDescriptor(got, &dupFd); err != OK) {
+    if (status_t err = binder::os::dupFileDescriptor(got, &dupFd); err != OK) {
         return BAD_VALUE;
     }
 
@@ -2408,7 +2421,7 @@ status_t Parcel::readUniqueParcelFileDescriptor(base::unique_fd* val) const
     }
 
     int dupFd;
-    if (status_t err = dupFileDescriptor(got, &dupFd); err != OK) {
+    if (status_t err = binder::os::dupFileDescriptor(got, &dupFd); err != OK) {
         return BAD_VALUE;
     }
 
@@ -2423,6 +2436,11 @@ status_t Parcel::readUniqueParcelFileDescriptor(base::unique_fd* val) const
 
 status_t Parcel::readBlob(size_t len, ReadableBlob* outBlob) const
 {
+#ifdef BINDER_DISABLE_BLOB
+    (void)len;
+    (void)outBlob;
+    return INVALID_OPERATION;
+#else
     int32_t blobType;
     status_t status = readInt32(&blobType);
     if (status) return status;
@@ -2456,6 +2474,7 @@ status_t Parcel::readBlob(size_t len, ReadableBlob* outBlob) const
 
     outBlob->init(fd, ptr, len, isMutable);
     return NO_ERROR;
+#endif
 }
 
 status_t Parcel::read(FlattenableHelperInterface& val) const
@@ -3204,6 +3223,7 @@ size_t Parcel::getOpenAshmemSize() const
     }
 
     size_t openAshmemSize = 0;
+#ifndef BINDER_DISABLE_BLOB
     for (size_t i = 0; i < kernelFields->mObjectsSize; i++) {
         const flat_binder_object* flat =
                 reinterpret_cast<const flat_binder_object*>(mData + kernelFields->mObjects[i]);
@@ -3218,6 +3238,7 @@ size_t Parcel::getOpenAshmemSize() const
             }
         }
     }
+#endif
     return openAshmemSize;
 }
 #endif // BINDER_WITH_KERNEL_IPC

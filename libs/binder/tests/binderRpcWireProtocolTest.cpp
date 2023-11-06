@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <android-base/hex.h>
 #include <android-base/logging.h>
 #include <android-base/macros.h>
 #include <android-base/properties.h>
@@ -25,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include "../Debug.h"
+#include "../Utils.h"
 
 namespace android {
 
@@ -176,7 +176,7 @@ static std::string buildRepr(uint32_t version) {
         setParcelForRpc(&p, version);
         kFillFuns[i](&p);
 
-        result += base::HexString(p.data(), p.dataSize());
+        result += HexString(p.data(), p.dataSize());
     }
     return result;
 }
@@ -261,18 +261,6 @@ TEST(RpcWire, ReleaseBranchHasFrozenRpcWireProtocol) {
         EXPECT_FALSE(base::GetProperty("ro.build.version.codename", "") == "REL")
                 << "Binder RPC wire protocol must be frozen on a release branch!";
     }
-}
-
-TEST(RpcWire, IfNotExperimentalCodeHasNoExperimentalFeatures) {
-    if (RPC_WIRE_PROTOCOL_VERSION == RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL) {
-        GTEST_SKIP() << "Version is experimental, so experimental features are okay.";
-    }
-
-    // if we set the wire protocol version to experimental, none of the code
-    // should introduce a difference (if this fails, it means we have features
-    // which are enabled under experimental mode, but we aren't actually using
-    // or testing them!)
-    checkRepr(kCurrentRepr, RPC_WIRE_PROTOCOL_VERSION_EXPERIMENTAL);
 }
 
 } // namespace android

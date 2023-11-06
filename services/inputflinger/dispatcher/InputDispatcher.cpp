@@ -365,7 +365,7 @@ std::unique_ptr<DispatchEntry> createDispatchEntry(
     const MotionEntry& motionEntry = static_cast<const MotionEntry&>(*eventEntry);
 
     std::vector<PointerCoords> pointerCoords;
-    pointerCoords.resize(motionEntry.pointerCount);
+    pointerCoords.resize(motionEntry.getPointerCount());
 
     // Use the first pointer information to normalize all other pointers. This could be any pointer
     // as long as all other pointers are normalized to the same value and the final DispatchEntry
@@ -375,7 +375,7 @@ std::unique_ptr<DispatchEntry> createDispatchEntry(
     ui::Transform inverseFirstTransform = firstPointerTransform.inverse();
 
     // Iterate through all pointers in the event to normalize against the first.
-    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.pointerCount; pointerIndex++) {
+    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.getPointerCount(); pointerIndex++) {
         const PointerProperties& pointerProperties = motionEntry.pointerProperties[pointerIndex];
         uint32_t pointerId = uint32_t(pointerProperties.id);
         const ui::Transform& currTransform = inputTarget.pointerTransforms[pointerId];
@@ -399,8 +399,7 @@ std::unique_ptr<DispatchEntry> createDispatchEntry(
                                           motionEntry.edgeFlags, motionEntry.xPrecision,
                                           motionEntry.yPrecision, motionEntry.xCursorPosition,
                                           motionEntry.yCursorPosition, motionEntry.downTime,
-                                          motionEntry.pointerCount, motionEntry.pointerProperties,
-                                          pointerCoords.data());
+                                          motionEntry.pointerProperties, pointerCoords);
 
     if (motionEntry.injectionState) {
         combinedMotionEntry->injectionState = motionEntry.injectionState;
@@ -635,11 +634,10 @@ std::vector<TouchedWindow> getHoveringWindowsLocked(const TouchState* oldState,
                                                     const MotionEntry& entry) {
     std::vector<TouchedWindow> out;
     const int32_t maskedAction = MotionEvent::getActionMasked(entry.action);
-    if (maskedAction != AMOTION_EVENT_ACTION_HOVER_ENTER &&
-        maskedAction != AMOTION_EVENT_ACTION_HOVER_MOVE &&
-        maskedAction != AMOTION_EVENT_ACTION_HOVER_EXIT) {
-        // Not a hover event - don't need to do anything
-        return out;
+
+    if (maskedAction == AMOTION_EVENT_ACTION_SCROLL) {
+        // ACTION_SCROLL events should not affect the hovering pointer dispatch
+        return {};
     }
 
     // We should consider all hovering pointers here. But for now, just use the first one
@@ -1337,8 +1335,9 @@ std::vector<InputTarget> InputDispatcher::findOutsideTargetsLocked(
         if (info.inputConfig.test(WindowInfo::InputConfig::WATCH_OUTSIDE_TOUCH)) {
             std::bitset<MAX_POINTER_ID + 1> pointerIds;
             pointerIds.set(pointerId);
-            addWindowTargetLocked(windowHandle, InputTarget::Flags::DISPATCH_AS_OUTSIDE, pointerIds,
-                                  /*firstDownTimeInTarget=*/std::nullopt, outsideTargets);
+            addPointerWindowTargetLocked(windowHandle, InputTarget::Flags::DISPATCH_AS_OUTSIDE,
+                                         pointerIds,
+                                         /*firstDownTimeInTarget=*/std::nullopt, outsideTargets);
         }
     }
     return outsideTargets;
@@ -1843,7 +1842,7 @@ bool InputDispatcher::dispatchKeyLocked(nsecs_t currentTime, std::shared_ptr<Key
     std::vector<InputTarget> inputTargets;
     addWindowTargetLocked(focusedWindow,
                           InputTarget::Flags::FOREGROUND | InputTarget::Flags::DISPATCH_AS_IS,
-                          /*pointerIds=*/{}, getDownTime(*entry), inputTargets);
+                          getDownTime(*entry), inputTargets);
 
     // Add monitor channels from event's or focused display.
     addGlobalMonitoringTargetsLocked(inputTargets, getTargetDisplayId(*entry));
@@ -1927,7 +1926,6 @@ bool InputDispatcher::dispatchMotionLocked(nsecs_t currentTime, std::shared_ptr<
     // Identify targets.
     std::vector<InputTarget> inputTargets;
 
-    bool conflictingPointerActions = false;
     InputEventInjectionResult injectionResult;
     if (isPointerEvent) {
         // Pointer event.  (eg. touchscreen)
@@ -1939,8 +1937,7 @@ bool InputDispatcher::dispatchMotionLocked(nsecs_t currentTime, std::shared_ptr<
         }
 
         inputTargets =
-                findTouchedWindowTargetsLocked(currentTime, *entry, &conflictingPointerActions,
-                                               /*byref*/ injectionResult);
+                findTouchedWindowTargetsLocked(currentTime, *entry, /*byref*/ injectionResult);
         LOG_ALWAYS_FATAL_IF(injectionResult != InputEventInjectionResult::SUCCEEDED &&
                             !inputTargets.empty());
     } else {
@@ -1952,7 +1949,7 @@ bool InputDispatcher::dispatchMotionLocked(nsecs_t currentTime, std::shared_ptr<
             addWindowTargetLocked(focusedWindow,
                                   InputTarget::Flags::FOREGROUND |
                                           InputTarget::Flags::DISPATCH_AS_IS,
-                                  /*pointerIds=*/{}, getDownTime(*entry), inputTargets);
+                                  getDownTime(*entry), inputTargets);
         }
     }
     if (injectionResult == InputEventInjectionResult::PENDING) {
@@ -1976,11 +1973,6 @@ bool InputDispatcher::dispatchMotionLocked(nsecs_t currentTime, std::shared_ptr<
     addGlobalMonitoringTargetsLocked(inputTargets, getTargetDisplayId(*entry));
 
     // Dispatch the motion.
-    if (conflictingPointerActions) {
-        CancelationOptions options(CancelationOptions::Mode::CANCEL_POINTER_EVENTS,
-                                   "conflicting pointer actions");
-        synthesizeCancelationEventsForAllConnectionsLocked(options);
-    }
     dispatchEventLocked(currentTime, entry, inputTargets);
     return true;
 }
@@ -2021,7 +2013,7 @@ void InputDispatcher::logOutboundMotionDetails(const char* prefix, const MotionE
               entry.metaState, entry.buttonState, entry.edgeFlags, entry.xPrecision,
               entry.yPrecision, entry.downTime);
 
-        for (uint32_t i = 0; i < entry.pointerCount; i++) {
+        for (uint32_t i = 0; i < entry.getPointerCount(); i++) {
             ALOGD("  Pointer %d: id=%d, toolType=%s, "
                   "x=%f, y=%f, pressure=%f, size=%f, "
                   "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, "
@@ -2280,7 +2272,7 @@ std::vector<Monitor> InputDispatcher::selectResponsiveMonitorsLocked(
 }
 
 std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
-        nsecs_t currentTime, const MotionEntry& entry, bool* outConflictingPointerActions,
+        nsecs_t currentTime, const MotionEntry& entry,
         InputEventInjectionResult& outInjectionResult) {
     ATRACE_CALL();
 
@@ -2305,20 +2297,13 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     }
 
     bool isSplit = shouldSplitTouch(tempTouchState, entry);
-    bool switchedDevice = false;
-    if (oldState != nullptr) {
-        std::set<int32_t> oldActiveDevices = oldState->getActiveDeviceIds();
-        const bool anotherDeviceIsActive =
-                oldActiveDevices.count(entry.deviceId) == 0 && !oldActiveDevices.empty();
-        switchedDevice |= anotherDeviceIsActive;
-    }
 
     const bool isHoverAction = (maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE ||
                                 maskedAction == AMOTION_EVENT_ACTION_HOVER_ENTER ||
                                 maskedAction == AMOTION_EVENT_ACTION_HOVER_EXIT);
     // A DOWN could be generated from POINTER_DOWN if the initial pointers did not land into any
     // touchable windows.
-    const bool wasDown = oldState != nullptr && oldState->isDown();
+    const bool wasDown = oldState != nullptr && oldState->isDown(entry.deviceId);
     const bool isDown = (maskedAction == AMOTION_EVENT_ACTION_DOWN) ||
             (maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN && !wasDown);
     const bool newGesture = isDown || maskedAction == AMOTION_EVENT_ACTION_SCROLL ||
@@ -2326,34 +2311,19 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE;
     const bool isFromMouse = isFromSource(entry.source, AINPUT_SOURCE_MOUSE);
 
-    // If pointers are already down, let's finish the current gesture and ignore the new events
-    // from another device. However, if the new event is a down event, let's cancel the current
-    // touch and let the new one take over.
-    if (switchedDevice && wasDown && !isDown) {
-        LOG(INFO) << "Dropping event because a pointer for another device "
-                  << " is already down in display " << displayId << ": " << entry.getDescription();
-        // TODO(b/211379801): test multiple simultaneous input streams.
-        outInjectionResult = InputEventInjectionResult::FAILED;
-        return {}; // wrong device
+    if (newGesture) {
+        isSplit = false;
     }
 
-    if (newGesture) {
-        // If a new gesture is starting, clear the touch state completely.
-        tempTouchState.reset();
-        isSplit = false;
-    } else if (switchedDevice && maskedAction == AMOTION_EVENT_ACTION_MOVE) {
-        ALOGI("Dropping move event because a pointer for a different device is already active "
-              "in display %" PRId32,
-              displayId);
-        // TODO(b/211379801): test multiple simultaneous input streams.
-        outInjectionResult = InputEventInjectionResult::FAILED;
-        return {}; // wrong device
+    if (isDown && tempTouchState.hasHoveringPointers(entry.deviceId)) {
+        // Compatibility behaviour: ACTION_DOWN causes HOVER_EXIT to get generated.
+        tempTouchState.clearHoveringPointers(entry.deviceId);
     }
 
     if (isHoverAction) {
         // For hover actions, we will treat 'tempTouchState' as a new state, so let's erase
         // all of the existing hovering pointers and recompute.
-        tempTouchState.clearHoveringPointers();
+        tempTouchState.clearHoveringPointers(entry.deviceId);
     }
 
     if (newGesture || (isSplit && maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN)) {
@@ -2429,8 +2399,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
                 continue;
             }
 
-            if (maskedAction == AMOTION_EVENT_ACTION_HOVER_ENTER ||
-                maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE) {
+            if (isHoverAction) {
                 // The "windowHandle" is the target of this hovering pointer.
                 tempTouchState.addHoveringPointerToWindow(windowHandle, entry.deviceId, pointerId);
             }
@@ -2453,31 +2422,24 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             }
 
             // Update the temporary touch state.
-            std::bitset<MAX_POINTER_ID + 1> pointerIds;
+
             if (!isHoverAction) {
+                std::bitset<MAX_POINTER_ID + 1> pointerIds;
                 pointerIds.set(pointerId);
-            }
-
-            const bool isDownOrPointerDown = maskedAction == AMOTION_EVENT_ACTION_DOWN ||
-                    maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN;
-
-            // TODO(b/211379801): Currently, even if pointerIds are empty (hover case), we would
-            // still add a window to the touch state. We should avoid doing that, but some of the
-            // later checks ("at least one foreground window") rely on this in order to dispatch
-            // the event properly, so that needs to be updated, possibly by looking at InputTargets.
-            tempTouchState.addOrUpdateWindow(windowHandle, targetFlags, entry.deviceId, pointerIds,
-                                             isDownOrPointerDown
-                                                     ? std::make_optional(entry.eventTime)
-                                                     : std::nullopt);
-
-            // If this is the pointer going down and the touched window has a wallpaper
-            // then also add the touched wallpaper windows so they are locked in for the duration
-            // of the touch gesture.
-            // We do not collect wallpapers during HOVER_MOVE or SCROLL because the wallpaper
-            // engine only supports touch events.  We would need to add a mechanism similar
-            // to View.onGenericMotionEvent to enable wallpapers to handle these events.
-            if (isDownOrPointerDown) {
-                if (targetFlags.test(InputTarget::Flags::FOREGROUND) &&
+                const bool isDownOrPointerDown = maskedAction == AMOTION_EVENT_ACTION_DOWN ||
+                        maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN;
+                tempTouchState.addOrUpdateWindow(windowHandle, targetFlags, entry.deviceId,
+                                                 pointerIds,
+                                                 isDownOrPointerDown
+                                                         ? std::make_optional(entry.eventTime)
+                                                         : std::nullopt);
+                // If this is the pointer going down and the touched window has a wallpaper
+                // then also add the touched wallpaper windows so they are locked in for the
+                // duration of the touch gesture. We do not collect wallpapers during HOVER_MOVE or
+                // SCROLL because the wallpaper engine only supports touch events.  We would need to
+                // add a mechanism similar to View.onGenericMotionEvent to enable wallpapers to
+                // handle these events.
+                if (isDownOrPointerDown && targetFlags.test(InputTarget::Flags::FOREGROUND) &&
                     windowHandle->getInfo()->inputConfig.test(
                             gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER)) {
                     sp<WindowInfoHandle> wallpaper = findWallpaperWindowBelow(windowHandle);
@@ -2515,8 +2477,10 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         /* Case 2: Pointer move, up, cancel or non-splittable pointer down. */
 
         // If the pointer is not currently down, then ignore the event.
-        if (!tempTouchState.isDown() && maskedAction != AMOTION_EVENT_ACTION_HOVER_EXIT) {
-            LOG(INFO) << "Dropping event because the pointer is not down or we previously "
+        if (!tempTouchState.isDown(entry.deviceId) &&
+            maskedAction != AMOTION_EVENT_ACTION_HOVER_EXIT) {
+            LOG(INFO) << "Dropping event because the pointer for device " << entry.deviceId
+                      << " is not down or we previously "
                          "dropped the pointer down event in display "
                       << displayId << ": " << entry.getDescription();
             outInjectionResult = InputEventInjectionResult::FAILED;
@@ -2540,7 +2504,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         addDragEventLocked(entry);
 
         // Check whether touches should slip outside of the current foreground window.
-        if (maskedAction == AMOTION_EVENT_ACTION_MOVE && entry.pointerCount == 1 &&
+        if (maskedAction == AMOTION_EVENT_ACTION_MOVE && entry.getPointerCount() == 1 &&
             tempTouchState.isSlippery()) {
             const auto [x, y] = resolveTouchedPosition(entry);
             const bool isStylus = isPointerFromStylus(entry, /*pointerIndex=*/0);
@@ -2573,7 +2537,7 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
 
             if (newTouchedWindowHandle != nullptr &&
                 !haveSameToken(oldTouchedWindowHandle, newTouchedWindowHandle)) {
-                ALOGD("Touch is slipping out of window %s into window %s in display %" PRId32,
+                ALOGI("Touch is slipping out of window %s into window %s in display %" PRId32,
                       oldTouchedWindowHandle->getName().c_str(),
                       newTouchedWindowHandle->getName().c_str(), displayId);
 
@@ -2584,9 +2548,11 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
 
                 const TouchedWindow& touchedWindow =
                         tempTouchState.getTouchedWindow(oldTouchedWindowHandle);
-                addWindowTargetLocked(oldTouchedWindowHandle,
-                                      InputTarget::Flags::DISPATCH_AS_SLIPPERY_EXIT, pointerIds,
-                                      touchedWindow.getDownTimeInTarget(entry.deviceId), targets);
+                addPointerWindowTargetLocked(oldTouchedWindowHandle,
+                                             InputTarget::Flags::DISPATCH_AS_SLIPPERY_EXIT,
+                                             pointerIds,
+                                             touchedWindow.getDownTimeInTarget(entry.deviceId),
+                                             targets);
 
                 // Make a slippery entrance into the new window.
                 if (newTouchedWindowHandle->getInfo()->supportsSplitTouch()) {
@@ -2699,16 +2665,14 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
 
     // Output targets from the touch state.
     for (const TouchedWindow& touchedWindow : tempTouchState.windows) {
-        if (!touchedWindow.hasTouchingPointers(entry.deviceId) &&
-            !touchedWindow.hasHoveringPointers(entry.deviceId)) {
-            // Windows with hovering pointers are getting persisted inside TouchState.
-            // Do not send this event to those windows.
+        std::bitset<MAX_POINTER_ID + 1> touchingPointers =
+                touchedWindow.getTouchingPointers(entry.deviceId);
+        if (touchingPointers.none()) {
             continue;
         }
-
-        addWindowTargetLocked(touchedWindow.windowHandle, touchedWindow.targetFlags,
-                              touchedWindow.getTouchingPointers(entry.deviceId),
-                              touchedWindow.getDownTimeInTarget(entry.deviceId), targets);
+        addPointerWindowTargetLocked(touchedWindow.windowHandle, touchedWindow.targetFlags,
+                                     touchingPointers,
+                                     touchedWindow.getDownTimeInTarget(entry.deviceId), targets);
     }
 
     // During targeted injection, only allow owned targets to receive events
@@ -2741,37 +2705,30 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     }
 
     outInjectionResult = InputEventInjectionResult::SUCCEEDED;
-    // Drop the outside or hover touch windows since we will not care about them
-    // in the next iteration.
-    tempTouchState.filterNonAsIsTouchWindows();
 
-    // Update final pieces of touch state if the injector had permission.
-    if (switchedDevice) {
-        if (DEBUG_FOCUS) {
-            ALOGD("Conflicting pointer actions: Switched to a different device.");
+    for (TouchedWindow& touchedWindow : tempTouchState.windows) {
+        // Targets that we entered in a slippery way will now become AS-IS targets
+        if (touchedWindow.targetFlags.test(InputTarget::Flags::DISPATCH_AS_SLIPPERY_ENTER)) {
+            touchedWindow.targetFlags.clear(InputTarget::Flags::DISPATCH_AS_SLIPPERY_ENTER);
+            touchedWindow.targetFlags |= InputTarget::Flags::DISPATCH_AS_IS;
         }
-        *outConflictingPointerActions = true;
     }
 
+    // Update final pieces of touch state if the injector had permission.
     if (isHoverAction) {
-        // Started hovering, therefore no longer down.
-        if (oldState && oldState->isDown()) {
-            ALOGD_IF(DEBUG_FOCUS,
-                     "Conflicting pointer actions: Hover received while pointer was down.");
-            *outConflictingPointerActions = true;
+        if (oldState && oldState->isDown(entry.deviceId)) {
+            // Started hovering, but the device is already down: reject the hover event
+            LOG(ERROR) << "Got hover event " << entry.getDescription()
+                       << " but the device is already down " << oldState->dump();
+            outInjectionResult = InputEventInjectionResult::FAILED;
+            return {};
         }
     } else if (maskedAction == AMOTION_EVENT_ACTION_UP) {
         // Pointer went up.
         tempTouchState.removeTouchingPointer(entry.deviceId, entry.pointerProperties[0].id);
     } else if (maskedAction == AMOTION_EVENT_ACTION_CANCEL) {
         // All pointers up or canceled.
-        tempTouchState.reset();
-    } else if (maskedAction == AMOTION_EVENT_ACTION_DOWN) {
-        // First pointer went down.
-        if (oldState && (oldState->isDown() || oldState->hasHoveringPointers())) {
-            ALOGD("Conflicting pointer actions: Down received while already down or hovering.");
-            *outConflictingPointerActions = true;
-        }
+        tempTouchState.removeAllPointersForDevice(entry.deviceId);
     } else if (maskedAction == AMOTION_EVENT_ACTION_POINTER_UP) {
         // One pointer went up.
         const int32_t pointerIndex = MotionEvent::getActionIndex(action);
@@ -2836,14 +2793,14 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
 
     // Find the pointer index by id.
     int32_t pointerIndex = 0;
-    for (; static_cast<uint32_t>(pointerIndex) < entry.pointerCount; pointerIndex++) {
+    for (; static_cast<uint32_t>(pointerIndex) < entry.getPointerCount(); pointerIndex++) {
         const PointerProperties& pointerProperties = entry.pointerProperties[pointerIndex];
         if (pointerProperties.id == mDragState->pointerId) {
             break;
         }
     }
 
-    if (uint32_t(pointerIndex) == entry.pointerCount) {
+    if (uint32_t(pointerIndex) == entry.getPointerCount()) {
         LOG_ALWAYS_FATAL("Should find a valid pointer index by id %d", mDragState->pointerId);
     }
 
@@ -2943,7 +2900,6 @@ std::optional<InputTarget> InputDispatcher::createInputTargetLocked(
 
 void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHandle,
                                             ftl::Flags<InputTarget::Flags> targetFlags,
-                                            std::bitset<MAX_POINTER_ID + 1> pointerIds,
                                             std::optional<nsecs_t> firstDownTimeInTarget,
                                             std::vector<InputTarget>& inputTargets) const {
     std::vector<InputTarget>::iterator it =
@@ -2965,8 +2921,54 @@ void InputDispatcher::addWindowTargetLocked(const sp<WindowInfoHandle>& windowHa
         it = inputTargets.end() - 1;
     }
 
-    ALOG_ASSERT(it->flags == targetFlags);
-    ALOG_ASSERT(it->globalScaleFactor == windowInfo->globalScaleFactor);
+    LOG_ALWAYS_FATAL_IF(it->flags != targetFlags);
+    LOG_ALWAYS_FATAL_IF(it->globalScaleFactor != windowInfo->globalScaleFactor);
+}
+
+void InputDispatcher::addPointerWindowTargetLocked(
+        const sp<android::gui::WindowInfoHandle>& windowHandle,
+        ftl::Flags<InputTarget::Flags> targetFlags, std::bitset<MAX_POINTER_ID + 1> pointerIds,
+        std::optional<nsecs_t> firstDownTimeInTarget, std::vector<InputTarget>& inputTargets) const
+        REQUIRES(mLock) {
+    if (pointerIds.none()) {
+        for (const auto& target : inputTargets) {
+            LOG(INFO) << "Target: " << target;
+        }
+        LOG(FATAL) << "No pointers specified for " << windowHandle->getName();
+        return;
+    }
+    std::vector<InputTarget>::iterator it =
+            std::find_if(inputTargets.begin(), inputTargets.end(),
+                         [&windowHandle](const InputTarget& inputTarget) {
+                             return inputTarget.inputChannel->getConnectionToken() ==
+                                     windowHandle->getToken();
+                         });
+
+    // This is a hack, because the actual entry could potentially be an ACTION_DOWN event that
+    // causes a HOVER_EXIT to be generated. That means that the same entry of ACTION_DOWN would
+    // have DISPATCH_AS_HOVER_EXIT and DISPATCH_AS_IS. And therefore, we have to create separate
+    // input targets for hovering pointers and for touching pointers.
+    // If we picked an existing input target above, but it's for HOVER_EXIT - let's use a new
+    // target instead.
+    if (it != inputTargets.end() && it->flags.test(InputTarget::Flags::DISPATCH_AS_HOVER_EXIT)) {
+        // Force the code below to create a new input target
+        it = inputTargets.end();
+    }
+
+    const WindowInfo* windowInfo = windowHandle->getInfo();
+
+    if (it == inputTargets.end()) {
+        std::optional<InputTarget> target =
+                createInputTargetLocked(windowHandle, targetFlags, firstDownTimeInTarget);
+        if (!target) {
+            return;
+        }
+        inputTargets.push_back(*target);
+        it = inputTargets.end() - 1;
+    }
+
+    LOG_ALWAYS_FATAL_IF(it->flags != targetFlags);
+    LOG_ALWAYS_FATAL_IF(it->globalScaleFactor != windowInfo->globalScaleFactor);
 
     it->addPointers(pointerIds, windowInfo->transform);
 }
@@ -3298,7 +3300,7 @@ void InputDispatcher::prepareDispatchCycleLocked(nsecs_t currentTime,
                             ftl::enum_string(eventEntry->type).c_str());
 
         const MotionEntry& originalMotionEntry = static_cast<const MotionEntry&>(*eventEntry);
-        if (inputTarget.pointerIds.count() != originalMotionEntry.pointerCount) {
+        if (inputTarget.pointerIds.count() != originalMotionEntry.getPointerCount()) {
             if (!inputTarget.firstDownTimeInTarget.has_value()) {
                 logDispatchStateLocked();
                 LOG(FATAL) << "Splitting motion events requires a down time to be set for the "
@@ -3438,6 +3440,27 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
             }
             if (dispatchEntry->targetFlags.test(InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED)) {
                 dispatchEntry->resolvedFlags |= AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
+            }
+
+            // Check if we need to cancel any of the ongoing gestures. We don't support multiple
+            // devices being active at the same time in the same window, so if a new device is
+            // active, cancel the gesture from the old device.
+
+            std::unique_ptr<EventEntry> cancelEvent =
+                    connection->inputState
+                            .cancelConflictingInputStream(motionEntry,
+                                                          dispatchEntry->resolvedAction);
+            if (cancelEvent != nullptr) {
+                LOG(INFO) << "Canceling pointers for device " << motionEntry.deviceId << " in "
+                          << connection->getInputChannelName() << " with event "
+                          << cancelEvent->getDescription();
+                std::unique_ptr<DispatchEntry> cancelDispatchEntry =
+                        createDispatchEntry(inputTarget, std::move(cancelEvent),
+                                            InputTarget::Flags::DISPATCH_AS_IS);
+
+                // Send these cancel events to the queue before sending the event from the new
+                // device.
+                connection->outboundQueue.emplace_back(std::move(cancelDispatchEntry));
             }
 
             if (!connection->inputState.trackMotion(motionEntry, dispatchEntry->resolvedAction,
@@ -3610,14 +3633,14 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
     const MotionEntry& motionEntry = static_cast<const MotionEntry&>(eventEntry);
 
     PointerCoords scaledCoords[MAX_POINTERS];
-    const PointerCoords* usingCoords = motionEntry.pointerCoords;
+    const PointerCoords* usingCoords = motionEntry.pointerCoords.data();
 
     // Set the X and Y offset and X and Y scale depending on the input source.
     if ((motionEntry.source & AINPUT_SOURCE_CLASS_POINTER) &&
         !(dispatchEntry.targetFlags.test(InputTarget::Flags::ZERO_COORDS))) {
         float globalScaleFactor = dispatchEntry.globalScaleFactor;
         if (globalScaleFactor != 1.0f) {
-            for (uint32_t i = 0; i < motionEntry.pointerCount; i++) {
+            for (uint32_t i = 0; i < motionEntry.getPointerCount(); i++) {
                 scaledCoords[i] = motionEntry.pointerCoords[i];
                 // Don't apply window scale here since we don't want scale to affect raw
                 // coordinates. The scale will be sent back to the client and applied
@@ -3628,7 +3651,7 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
         }
     } else if (dispatchEntry.targetFlags.test(InputTarget::Flags::ZERO_COORDS)) {
         // We don't want the dispatch target to know the coordinates
-        for (uint32_t i = 0; i < motionEntry.pointerCount; i++) {
+        for (uint32_t i = 0; i < motionEntry.getPointerCount(); i++) {
             scaledCoords[i].clear();
         }
         usingCoords = scaledCoords;
@@ -3648,7 +3671,7 @@ status_t InputDispatcher::publishMotionEvent(Connection& connection,
                                 motionEntry.yPrecision, motionEntry.xCursorPosition,
                                 motionEntry.yCursorPosition, dispatchEntry.rawTransform,
                                 motionEntry.downTime, motionEntry.eventTime,
-                                motionEntry.pointerCount, motionEntry.pointerProperties,
+                                motionEntry.getPointerCount(), motionEntry.pointerProperties.data(),
                                 usingCoords);
 }
 
@@ -4049,7 +4072,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
                         : std::nullopt;
                 if (const auto& window = getWindowHandleLocked(token, targetDisplay); window) {
                     addWindowTargetLocked(window, InputTarget::Flags::DISPATCH_AS_IS,
-                                          /*pointerIds=*/{}, keyEntry.downTime, targets);
+                                          keyEntry.downTime, targets);
                 } else {
                     targets.emplace_back(fallbackTarget);
                 }
@@ -4064,12 +4087,12 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
                         : std::nullopt;
                 if (const auto& window = getWindowHandleLocked(token, targetDisplay); window) {
                     std::bitset<MAX_POINTER_ID + 1> pointerIds;
-                    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.pointerCount;
+                    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.getPointerCount();
                          pointerIndex++) {
                         pointerIds.set(motionEntry.pointerProperties[pointerIndex].id);
                     }
-                    addWindowTargetLocked(window, InputTarget::Flags::DISPATCH_AS_IS, pointerIds,
-                                          motionEntry.downTime, targets);
+                    addPointerWindowTargetLocked(window, InputTarget::Flags::DISPATCH_AS_IS,
+                                                 pointerIds, motionEntry.downTime, targets);
                 } else {
                     targets.emplace_back(fallbackTarget);
                     const auto it = mDisplayInfos.find(motionEntry.displayId);
@@ -4139,12 +4162,12 @@ void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
                 const auto& motionEntry = static_cast<const MotionEntry&>(*downEventEntry);
                 if (windowHandle != nullptr) {
                     std::bitset<MAX_POINTER_ID + 1> pointerIds;
-                    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.pointerCount;
+                    for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.getPointerCount();
                          pointerIndex++) {
                         pointerIds.set(motionEntry.pointerProperties[pointerIndex].id);
                     }
-                    addWindowTargetLocked(windowHandle, targetFlags, pointerIds,
-                                          motionEntry.downTime, targets);
+                    addPointerWindowTargetLocked(windowHandle, targetFlags, pointerIds,
+                                                 motionEntry.downTime, targets);
                 } else {
                     targets.emplace_back(InputTarget{.inputChannel = connection->inputChannel,
                                                      .flags = targetFlags});
@@ -4200,10 +4223,10 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
     ALOG_ASSERT(pointerIds.any());
 
     uint32_t splitPointerIndexMap[MAX_POINTERS];
-    PointerProperties splitPointerProperties[MAX_POINTERS];
-    PointerCoords splitPointerCoords[MAX_POINTERS];
+    std::vector<PointerProperties> splitPointerProperties;
+    std::vector<PointerCoords> splitPointerCoords;
 
-    uint32_t originalPointerCount = originalMotionEntry.pointerCount;
+    uint32_t originalPointerCount = originalMotionEntry.getPointerCount();
     uint32_t splitPointerCount = 0;
 
     for (uint32_t originalPointerIndex = 0; originalPointerIndex < originalPointerCount;
@@ -4213,9 +4236,8 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
         uint32_t pointerId = uint32_t(pointerProperties.id);
         if (pointerIds.test(pointerId)) {
             splitPointerIndexMap[splitPointerCount] = originalPointerIndex;
-            splitPointerProperties[splitPointerCount] = pointerProperties;
-            splitPointerCoords[splitPointerCount] =
-                    originalMotionEntry.pointerCoords[originalPointerIndex];
+            splitPointerProperties.push_back(pointerProperties);
+            splitPointerCoords.push_back(originalMotionEntry.pointerCoords[originalPointerIndex]);
             splitPointerCount += 1;
         }
     }
@@ -4290,8 +4312,7 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
                                           originalMotionEntry.yPrecision,
                                           originalMotionEntry.xCursorPosition,
                                           originalMotionEntry.yCursorPosition, splitDownTime,
-                                          splitPointerCount, splitPointerProperties,
-                                          splitPointerCoords);
+                                          splitPointerProperties, splitPointerCoords);
 
     if (originalMotionEntry.injectionState) {
         splitMotionEntry->injectionState = originalMotionEntry.injectionState;
@@ -4510,9 +4531,8 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
                                               args.buttonState, args.classification, args.edgeFlags,
                                               args.xPrecision, args.yPrecision,
                                               args.xCursorPosition, args.yCursorPosition,
-                                              args.downTime, args.getPointerCount(),
-                                              args.pointerProperties.data(),
-                                              args.pointerCoords.data());
+                                              args.downTime, args.pointerProperties,
+                                              args.pointerCoords);
 
         if (args.id != android::os::IInputConstants::INVALID_INPUT_EVENT_ID &&
             IdGenerator::getSource(args.id) == IdGenerator::Source::INPUT_READER &&
@@ -4726,6 +4746,11 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
             mLock.lock();
             const nsecs_t* sampleEventTimes = motionEvent.getSampleEventTimes();
+            const size_t pointerCount = motionEvent.getPointerCount();
+            const std::vector<PointerProperties>
+                    pointerProperties(motionEvent.getPointerProperties(),
+                                      motionEvent.getPointerProperties() + pointerCount);
+
             const PointerCoords* samplePointerCoords = motionEvent.getSamplePointerCoords();
             std::unique_ptr<MotionEntry> injectedEntry =
                     std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
@@ -4740,33 +4765,28 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                                                   motionEvent.getYPrecision(),
                                                   motionEvent.getRawXCursorPosition(),
                                                   motionEvent.getRawYCursorPosition(),
-                                                  motionEvent.getDownTime(),
-                                                  motionEvent.getPointerCount(),
-                                                  motionEvent.getPointerProperties(),
-                                                  samplePointerCoords);
+                                                  motionEvent.getDownTime(), pointerProperties,
+                                                  std::vector<PointerCoords>(samplePointerCoords,
+                                                                             samplePointerCoords +
+                                                                                     pointerCount));
             transformMotionEntryForInjectionLocked(*injectedEntry, motionEvent.getTransform());
             injectedEntries.push(std::move(injectedEntry));
             for (size_t i = motionEvent.getHistorySize(); i > 0; i--) {
                 sampleEventTimes += 1;
                 samplePointerCoords += motionEvent.getPointerCount();
-                std::unique_ptr<MotionEntry> nextInjectedEntry =
-                        std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
-                                                      resolvedDeviceId, motionEvent.getSource(),
-                                                      displayId, policyFlags,
-                                                      motionEvent.getAction(),
-                                                      motionEvent.getActionButton(), flags,
-                                                      motionEvent.getMetaState(),
-                                                      motionEvent.getButtonState(),
-                                                      motionEvent.getClassification(),
-                                                      motionEvent.getEdgeFlags(),
-                                                      motionEvent.getXPrecision(),
-                                                      motionEvent.getYPrecision(),
-                                                      motionEvent.getRawXCursorPosition(),
-                                                      motionEvent.getRawYCursorPosition(),
-                                                      motionEvent.getDownTime(),
-                                                      motionEvent.getPointerCount(),
-                                                      motionEvent.getPointerProperties(),
-                                                      samplePointerCoords);
+                std::unique_ptr<MotionEntry> nextInjectedEntry = std::make_unique<
+                        MotionEntry>(motionEvent.getId(), *sampleEventTimes, resolvedDeviceId,
+                                     motionEvent.getSource(), displayId, policyFlags,
+                                     motionEvent.getAction(), motionEvent.getActionButton(), flags,
+                                     motionEvent.getMetaState(), motionEvent.getButtonState(),
+                                     motionEvent.getClassification(), motionEvent.getEdgeFlags(),
+                                     motionEvent.getXPrecision(), motionEvent.getYPrecision(),
+                                     motionEvent.getRawXCursorPosition(),
+                                     motionEvent.getRawYCursorPosition(), motionEvent.getDownTime(),
+                                     pointerProperties,
+                                     std::vector<PointerCoords>(samplePointerCoords,
+                                                                samplePointerCoords +
+                                                                        pointerCount));
                 transformMotionEntryForInjectionLocked(*nextInjectedEntry,
                                                        motionEvent.getTransform());
                 injectedEntries.push(std::move(nextInjectedEntry));
@@ -4945,7 +4965,7 @@ void InputDispatcher::transformMotionEntryForInjectionLocked(
         entry.xCursorPosition = cursor.x;
         entry.yCursorPosition = cursor.y;
     }
-    for (uint32_t i = 0; i < entry.pointerCount; i++) {
+    for (uint32_t i = 0; i < entry.getPointerCount(); i++) {
         entry.pointerCoords[i] =
                 MotionEvent::calculateTransformedCoords(entry.source, transformToDisplay,
                                                         entry.pointerCoords[i]);
@@ -5225,10 +5245,8 @@ void InputDispatcher::setInputWindowsLocked(
         for (size_t i = 0; i < state.windows.size();) {
             TouchedWindow& touchedWindow = state.windows[i];
             if (getWindowHandleLocked(touchedWindow.windowHandle) == nullptr) {
-                if (DEBUG_FOCUS) {
-                    ALOGD("Touched window was removed: %s in display %" PRId32,
-                          touchedWindow.windowHandle->getName().c_str(), displayId);
-                }
+                LOG(INFO) << "Touched window was removed: " << touchedWindow.windowHandle->getName()
+                          << " in display %" << displayId;
                 std::shared_ptr<InputChannel> touchedInputChannel =
                         getInputChannelLocked(touchedWindow.windowHandle->getToken());
                 if (touchedInputChannel != nullptr) {
@@ -6059,9 +6077,8 @@ status_t InputDispatcher::pilferPointersLocked(const sp<IBinder>& token) {
         return BAD_VALUE;
     }
     std::set<int32_t> deviceIds = windowPtr->getTouchingDeviceIds();
-    if (deviceIds.size() != 1) {
-        LOG(WARNING) << "Can't pilfer. Currently touching devices: " << dumpSet(deviceIds)
-                     << " in window: " << windowPtr->dump();
+    if (deviceIds.empty()) {
+        LOG(WARNING) << "Can't pilfer: no touching devices in window: " << windowPtr->dump();
         return BAD_VALUE;
     }
 
@@ -6904,10 +6921,11 @@ void InputDispatcher::slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFl
 
     if (oldWallpaper != nullptr) {
         const TouchedWindow& oldTouchedWindow = state.getTouchedWindow(oldWallpaper);
-        addWindowTargetLocked(oldWallpaper,
-                              oldTouchedWindow.targetFlags |
-                                      InputTarget::Flags::DISPATCH_AS_SLIPPERY_EXIT,
-                              pointerIds, oldTouchedWindow.getDownTimeInTarget(deviceId), targets);
+        addPointerWindowTargetLocked(oldWallpaper,
+                                     oldTouchedWindow.targetFlags |
+                                             InputTarget::Flags::DISPATCH_AS_SLIPPERY_EXIT,
+                                     pointerIds, oldTouchedWindow.getDownTimeInTarget(deviceId),
+                                     targets);
         state.removeTouchingPointerFromWindow(deviceId, pointerId, oldWallpaper);
     }
 

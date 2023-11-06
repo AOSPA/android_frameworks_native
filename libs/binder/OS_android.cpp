@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 The Android Open Source Project
+ * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,24 @@
  * limitations under the License.
  */
 
-#include <android/data_space.h>
-#include <android/hardware_buffer.h>
-#include <android/hardware_buffer_aidl.h>
-#include <android/hdr_metadata.h>
-#include <android/native_window.h>
+#include "OS.h"
+
+#include <android-base/threads.h>
+#include <utils/misc.h>
+
+namespace android::binder::os {
+
+uint64_t GetThreadId() {
+#ifdef BINDER_RPC_SINGLE_THREADED
+    return 0;
+#else
+    return base::GetThreadId();
+#endif
+}
+
+bool report_sysprop_change() {
+    android::report_sysprop_change();
+    return true;
+}
+
+} // namespace android::binder::os
