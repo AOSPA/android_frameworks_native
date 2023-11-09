@@ -2009,34 +2009,21 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     auto display = displayDevice->getCompositionDisplay();
     int newWidth = currentState.layerStackSpaceRect.width();
     int newHeight = currentState.layerStackSpaceRect.height();
-    int currentWidth = drawingState.layerStackSpaceRect.width();
-    int currentHeight = drawingState.layerStackSpaceRect.height();
     int displayWidth = displayDevice->getWidth();
     int displayHeight = displayDevice->getHeight();
-    bool update_needed = false;
 
-    ALOGV("%s: newWidth %d newHeight %d currentWidth %d currentHeight %d displayWidth %d "
-          "displayHeight %d",
-          __func__, newWidth, newHeight, currentWidth, currentHeight, displayWidth, displayHeight);
+    ALOGV("%s: newWidth %d newHeight %d displayWidth %d displayHeight %d",
+          __func__, newWidth, newHeight, displayWidth, displayHeight);
 
-    if (newWidth != currentWidth || newHeight != currentHeight) {
-        update_needed = true;
+    if (newWidth != displayWidth || newHeight != displayHeight) {
         if (!((newWidth > newHeight && displayWidth > displayHeight) ||
               (newWidth < newHeight && displayWidth < displayHeight))) {
             std::swap(newWidth, newHeight);
             ALOGV("%s: Width %d or height %d was updated. Swap the values of newWidth %d and "
                   "newHeight %d",
-                  __func__, (newWidth != currentWidth), (newHeight != currentHeight), newWidth,
+                  __func__, (newWidth != displayWidth), (newHeight != displayHeight), newWidth,
                   newHeight);
         }
-    }
-
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
-        !update_needed) {
-        ALOGV("%s: No changes on the configuration", __func__);
-        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                     currentState.orientedDisplaySpaceRect);
-        return;
     }
 
     if (newWidth > 0 && newHeight > 0) {
@@ -2047,6 +2034,14 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     }
 
     currentState.orientedDisplaySpaceRect = currentState.layerStackSpaceRect;
+
+    if (displayWidth == newWidth && displayHeight == newHeight) {
+        ALOGV("%s: No changes on the configuration", __func__);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
+
     ALOGV("%s: Update currentState's orientedDisplaySpaceRect left %f top %f right %f bottom %f",
           __func__, currentState.orientedDisplaySpaceRect.left,
           currentState.orientedDisplaySpaceRect.top, currentState.orientedDisplaySpaceRect.right,
