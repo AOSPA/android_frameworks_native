@@ -2155,6 +2155,9 @@ void SurfaceFlinger::onComposerHalSeamlessPossible(hal::HWDisplayId) {
 
 void SurfaceFlinger::onComposerHalRefresh(hal::HWDisplayId) {
     Mutex::Autolock lock(mStateLock);
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiOnComposerHalRefresh();
+    /* QTI_END */
     scheduleComposite(FrameHint::kNone);
 }
 
@@ -2426,6 +2429,10 @@ bool SurfaceFlinger::commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expe
     const TimePoint lastScheduledPresentTime = mScheduledPresentTime;
 
     /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
     mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
     /* QTI_END */
 
@@ -4736,6 +4743,12 @@ status_t SurfaceFlinger::setTransactionState(
         const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId,
         const std::vector<uint64_t>& mergedTransactionIds) {
     ATRACE_CALL();
+    /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
+    /* QTI_END */
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
@@ -5927,6 +5940,9 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                               strerror(-lock.status), lock.status);
                 ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
+                /* QTI_BEGIN */
+                return NO_ERROR;
+                /* QTI_END */
             }
 
             if (const auto it = dumpers.find(flag); it != dumpers.end()) {
