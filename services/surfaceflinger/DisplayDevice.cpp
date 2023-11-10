@@ -172,13 +172,13 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
     const auto& displayTransform = undoPhysicalOrientation * getTransform();
 
     /* QTI_BEGIN */
-    auto currMode = refreshRateSelector().getActiveMode();
     ui::Transform scale;
     ui::Transform rotationTransform = getTransform();
-    rotationTransform.set(getTransform().getOrientation(), currMode.modePtr->getWidth(),
-                          currMode.modePtr->getHeight());
     scale.set(1, 0, 0, 1);
     if(mUseFbScaling && isPrimary()){ //use fb_scaling
+        auto currMode = refreshRateSelector().getActiveMode();
+        rotationTransform.set(getTransform().getOrientation(), currMode.modePtr->getWidth(),
+                              currMode.modePtr->getHeight());
         const float scaleX = static_cast<float>(currMode.modePtr->getWidth()) / getWidth();
         const float scaleY = static_cast<float>(currMode.modePtr->getHeight()) / getHeight();
         scale.set(scaleX, 0, 0, scaleY);
