@@ -2967,7 +2967,10 @@ void InputDispatcher::addPointerWindowTargetLocked(
         it = inputTargets.end() - 1;
     }
 
-    LOG_ALWAYS_FATAL_IF(it->flags != targetFlags);
+    if (it->flags != targetFlags) {
+        logDispatchStateLocked();
+        LOG(FATAL) << "Flags don't match! targetFlags=" << targetFlags.string() << ", it=" << *it;
+    }
     LOG_ALWAYS_FATAL_IF(it->globalScaleFactor != windowInfo->globalScaleFactor);
 
     it->addPointers(pointerIds, windowInfo->transform);

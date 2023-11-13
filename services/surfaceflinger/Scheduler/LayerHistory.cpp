@@ -33,6 +33,7 @@
 
 #include "../Layer.h"
 #include "EventThread.h"
+#include "FlagManager.h"
 #include "LayerInfo.h"
 
 namespace android::scheduler {
@@ -40,7 +41,11 @@ namespace android::scheduler {
 namespace {
 
 bool isLayerActive(const LayerInfo& info, nsecs_t threshold) {
-    // Layers with an explicit frame rate or frame rate category are always kept active,
+    if (FlagManager::getInstance().misc1() && !info.isVisible()) {
+        return false;
+    }
+
+    // Layers with an explicit frame rate or frame rate category are kept active,
     // but ignore NoVote.
     if (info.getSetFrameRateVote().isValid() && !info.getSetFrameRateVote().isNoVote()) {
         return true;
