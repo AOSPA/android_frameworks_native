@@ -72,6 +72,7 @@ namespace hal = hardware::graphics::composer::hal;
 struct DisplayedFrameStats;
 class GraphicBuffer;
 class TestableSurfaceFlinger;
+struct HWComposerTest;
 struct CompositionInfo;
 
 namespace Hwc2 {
@@ -312,6 +313,9 @@ public:
             aidl::android::hardware::graphics::common::HdrConversionStrategy,
             aidl::android::hardware::graphics::common::Hdr*) = 0;
     virtual status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) = 0;
+    virtual status_t notifyExpectedPresentIfRequired(PhysicalDisplayId, nsecs_t expectedPresentTime,
+                                                     int32_t frameIntervalNs,
+                                                     int32_t timeoutNs) = 0;
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
@@ -470,6 +474,8 @@ public:
             aidl::android::hardware::graphics::common::HdrConversionStrategy,
             aidl::android::hardware::graphics::common::Hdr*) override;
     status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) override;
+    status_t notifyExpectedPresentIfRequired(PhysicalDisplayId, nsecs_t expectedPresentTime,
+                                             int32_t frameIntervalNs, int32_t timeoutNs) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;
@@ -495,6 +501,7 @@ public:
 private:
     // For unit tests
     friend TestableSurfaceFlinger;
+    friend HWComposerTest;
 
     /* QTI_BEGIN */
     friend class android::surfaceflingerextension::QtiHWComposerExtension;
@@ -505,6 +512,8 @@ private:
 
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
         nsecs_t lastPresentTimestamp = 0;
+
+        nsecs_t lastExpectedPresentTimestamp = 0;
 
         std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
 

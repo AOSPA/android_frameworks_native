@@ -38,7 +38,6 @@
 
 #include "../SurfaceFlingerProperties.h"
 #include "RefreshRateSelector.h"
-#include "Utils/FlagUtils.h"
 
 #include <com_android_graphics_surfaceflinger_flags.h>
 
@@ -115,7 +114,7 @@ std::pair<unsigned, unsigned> divisorRange(Fps vsyncRate, Fps peakFps, FpsRange 
     using fps_approx_ops::operator/;
     // use signed type as `fps / range.max` might be 0
     auto start = std::max(1, static_cast<int>(peakFps / range.max) - 1);
-    if (flagutils::vrrConfigEnabled()) {
+    if (FlagManager::getInstance().vrr_config()) {
         start = std::max(1,
                          static_cast<int>(vsyncRate /
                                           std::min(range.max, peakFps, fps_approx_ops::operator<)) -
@@ -401,7 +400,6 @@ float RefreshRateSelector::calculateDistanceScoreFromMax(Fps refreshRate) const 
 
 float RefreshRateSelector::calculateLayerScoreLocked(const LayerRequirement& layer, Fps refreshRate,
                                                      bool isSeamlessSwitch) const {
-    ATRACE_CALL();
     // Slightly prefer seamless switches.
     constexpr float kSeamedSwitchPenalty = 0.95f;
     const float seamlessness = isSeamlessSwitch ? 1.0f : kSeamedSwitchPenalty;
