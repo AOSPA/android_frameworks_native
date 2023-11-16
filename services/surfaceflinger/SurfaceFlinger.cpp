@@ -2481,7 +2481,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
 bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
                             const scheduler::FrameTargets& frameTargets) {
     /* QTI_BEGIN */
-    // mQtiSFExtnIntf->qtiDolphinTrackVsyncSignal();
+    mQtiSFExtnIntf->qtiDolphinTrackVsyncSignal();
     /* QTI_END */
 
     // The expectedVsyncTime, which was predicted when this frame was scheduled, is normally in the
@@ -2494,7 +2494,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
-    // mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
+    //mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
     /* QTI_END */
 
     // mScheduledPresentTime = expectedVsyncTime;
@@ -2509,10 +2509,10 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     //               mExpectedPresentTime == expectedVsyncTime ? "" : " (adjusted)");
 
     /* QTI_BEGIN */
-    // mQtiSFExtnIntf->qtiUpdateFrameScheduler();
-    // mQtiSFExtnIntf->qtiSyncToDisplayHardware();
+    mQtiSFExtnIntf->qtiUpdateFrameScheduler();
+    mQtiSFExtnIntf->qtiSyncToDisplayHardware();
     // TODO(rmedel): Handle locking for early wake up
-    // mQtiSFExtnIntf->qtiResetEarlyWakeUp();
+    mQtiSFExtnIntf->qtiResetEarlyWakeUp();
     /* QTI_END */
 
     // const Period vsyncPeriod = mScheduler->getVsyncSchedule()->period();
@@ -2693,7 +2693,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     persistDisplayBrightness(mustComposite);
 
     /* QTI_BEGIN */
-    // mQtiSFExtnIntf->qtiSendCompositorTid();
+    mQtiSFExtnIntf->qtiSendCompositorTid();
     /* QTI_END */
 
     return mustComposite && CC_LIKELY(mBootStage != BootStage::BOOTLOADER);
