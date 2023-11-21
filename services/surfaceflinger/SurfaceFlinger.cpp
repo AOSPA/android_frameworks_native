@@ -3688,6 +3688,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
             }
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
+            /* QTI_END */
         }
 
         mDisplays.erase(displayToken);
@@ -4072,6 +4075,12 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
     // Scheduler::chooseRefreshRateForContent
 
     ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
+    /* QTI_BEGIN */
+    // Setting mRequestDisplayModeFlag as true and storing thread Id to avoid acquiring the same
+    // mutex again in a single thread
+    mRequestDisplayModeFlag = true;
+    mFlagThread = std::this_thread::get_id();
+    /* QTI_END */
 
     for (auto& request : modeRequests) {
         const auto& modePtr = request.mode.modePtr;
@@ -4104,6 +4113,10 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
                   to_string(display->getId()).c_str());
         }
     }
+    /* QTI_BEGIN */
+    mRequestDisplayModeFlag = false;
+    mFlagThread = mMainThreadId;
+    /* QTI_END */
 }
 
 void SurfaceFlinger::triggerOnFrameRateOverridesChanged() {
