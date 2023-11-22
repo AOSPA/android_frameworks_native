@@ -20,7 +20,6 @@ cc_defaults {
         "-Wunreachable-code",
         "-Wconversion",
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
-        "-DDISABLE_DEVICE_INTEGRATION",
     ],
 }
 
