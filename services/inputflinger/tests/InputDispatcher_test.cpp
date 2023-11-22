@@ -112,8 +112,6 @@ static constexpr gui::Uid SECONDARY_WINDOW_UID{1012};
 // An arbitrary pid of the gesture monitor window
 static constexpr gui::Pid MONITOR_PID{2001};
 
-static constexpr std::chrono::duration STALE_EVENT_TIMEOUT = 1000ms;
-
 /**
  * If we expect to receive the event, the timeout can be made very long. When the test are running
  * correctly, we will actually never wait until the end of the timeout because the wait will end
@@ -348,6 +346,8 @@ public:
         mInterceptKeyTimeout = timeout;
     }
 
+    void setStaleEventTimeout(std::chrono::nanoseconds timeout) { mStaleEventTimeout = timeout; }
+
     void assertUserActivityPoked() {
         std::scoped_lock lock(mLock);
         ASSERT_TRUE(mPokedUserActivity) << "Expected user activity to have been poked";
@@ -390,6 +390,8 @@ private:
     bool mPokedUserActivity GUARDED_BY(mLock) = false;
 
     std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
+
+    std::chrono::nanoseconds mStaleEventTimeout = 1000ms;
 
     BlockingQueue<std::pair<int32_t /*deviceId*/, std::set<gui::Uid>>> mNotifiedInteractions;
 
@@ -545,6 +547,10 @@ private:
         mPokedUserActivity = true;
     }
 
+    bool isStaleEvent(nsecs_t currentTime, nsecs_t eventTime) override {
+        return std::chrono::nanoseconds(currentTime - eventTime) >= mStaleEventTimeout;
+    }
+
     void onPointerDownOutsideFocus(const sp<IBinder>& newToken) override {
         std::scoped_lock lock(mLock);
         mOnPointerDownToken = newToken;
@@ -586,7 +592,8 @@ protected:
 
     void SetUp() override {
         mFakePolicy = std::make_unique<FakeInputDispatcherPolicy>();
-        mDispatcher = std::make_unique<InputDispatcher>(*mFakePolicy, STALE_EVENT_TIMEOUT);
+        mDispatcher = std::make_unique<InputDispatcher>(*mFakePolicy);
+
         mDispatcher->setInputDispatchMode(/*enabled=*/true, /*frozen=*/false);
         // Start InputDispatcher thread
         ASSERT_EQ(OK, mDispatcher->start());
@@ -2157,6 +2164,69 @@ TEST_F(InputDispatcherTest, TwoPointerCancelInconsistentPolicy) {
     // No more events
     spyWindow->assertNoEvents();
     window->assertNoEvents();
+}
+
+/**
+ * Same as the above 'TwoPointerCancelInconsistentPolicy' test, but for hovers.
+ * The policy typically sets POLICY_FLAG_PASS_TO_USER to the events. But when the display is not
+ * interactive, it might stop sending this flag.
+ * We've already ensured the consistency of the touch event in this case, and we should also ensure
+ * the consistency of the hover event in this case.
+ *
+ * Test procedure:
+ * HOVER_ENTER -> HOVER_MOVE -> (stop sending POLICY_FLAG_PASS_TO_USER) -> HOVER_EXIT
+ * HOVER_ENTER -> HOVER_MOVE -> HOVER_EXIT
+ *
+ * We expect to receive two full streams of hover events.
+ */
+TEST_F(InputDispatcherTest, HoverEventInconsistentPolicy) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    sp<FakeWindowHandle> window =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window", ADISPLAY_ID_DEFAULT);
+    window->setFrame(Rect(0, 0, 300, 300));
+
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {}, 0, 0});
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(DEFAULT_POLICY_FLAGS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(100).y(101))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(DEFAULT_POLICY_FLAGS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(101).y(102))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_MOVE));
+
+    // Send hover exit without the default policy flags.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_EXIT, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(0)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(101).y(102))
+                                      .build());
+
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+
+    // Send a simple hover event stream, ensure dispatcher not crashed and window can receive
+    // right event.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(DEFAULT_POLICY_FLAGS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(200).y(201))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(DEFAULT_POLICY_FLAGS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(201).y(202))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_MOVE));
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_EXIT, AINPUT_SOURCE_STYLUS)
+                                      .policyFlags(DEFAULT_POLICY_FLAGS)
+                                      .pointer(PointerBuilder(0, ToolType::STYLUS).x(201).y(202))
+                                      .build());
+    window->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
 }
 
 /**
@@ -7529,6 +7599,8 @@ TEST_F(InputDispatcherSingleWindowAnr, StaleKeyEventDoesNotAnr) {
     mWindow->consumeFocusEvent(false);
 
     KeyEvent event;
+    static constexpr std::chrono::duration STALE_EVENT_TIMEOUT = 1000ms;
+    mFakePolicy->setStaleEventTimeout(STALE_EVENT_TIMEOUT);
     const nsecs_t eventTime = systemTime(SYSTEM_TIME_MONOTONIC) -
             std::chrono::nanoseconds(STALE_EVENT_TIMEOUT).count();
 
