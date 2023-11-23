@@ -17,6 +17,7 @@
 #define LOG_TAG "Parcel"
 //#define LOG_NDEBUG 0
 
+#include <endian.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -32,7 +33,6 @@
 
 #include <binder/Binder.h>
 #include <binder/BpBinder.h>
-#include <binder/Functional.h>
 #include <binder/IPCThreadState.h>
 #include <binder/Parcel.h>
 #include <binder/ProcessState.h>
@@ -40,14 +40,12 @@
 #include <binder/Status.h>
 #include <binder/TextOutput.h>
 
+#include <android-base/scopeguard.h>
 #ifndef BINDER_DISABLE_BLOB
 #include <cutils/ashmem.h>
 #endif
-#include <utils/Flattenable.h>
-#include <utils/Log.h>
 #include <utils/String16.h>
 #include <utils/String8.h>
-#include <utils/misc.h>
 
 #include "OS.h"
 #include "RpcState.h"
@@ -97,8 +95,6 @@ static size_t pad_size(size_t s) {
 #define STRICT_MODE_PENALTY_GATHER (1 << 31)
 
 namespace android {
-
-using namespace android::binder::impl;
 
 // many things compile this into prebuilts on the stack
 #ifdef __LP64__
@@ -629,7 +625,7 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
         }
 
         const size_t savedDataPos = mDataPos;
-        auto scopeGuard = make_scope_guard([&]() { mDataPos = savedDataPos; });
+        base::ScopeGuard scopeGuard = [&]() { mDataPos = savedDataPos; };
 
         rpcFields->mObjectPositions.reserve(otherRpcFields->mObjectPositions.size());
         if (otherRpcFields->mFds != nullptr) {

@@ -25,12 +25,11 @@
 #include <thread>
 #include <vector>
 
-#include <binder/Functional.h>
+#include <android-base/scopeguard.h>
 #include <binder/Parcel.h>
 #include <binder/RpcServer.h>
 #include <binder/RpcTransportRaw.h>
 #include <log/log.h>
-#include <utils/Compat.h>
 
 #include "BuildFlags.h"
 #include "FdTrigger.h"
@@ -45,7 +44,7 @@ namespace android {
 
 constexpr size_t kSessionIdBytes = 32;
 
-using namespace android::binder::impl;
+using base::ScopeGuard;
 using base::unique_fd;
 
 RpcServer::RpcServer(std::unique_ptr<RpcTransportCtx> ctx) : mCtx(std::move(ctx)) {}
@@ -458,12 +457,11 @@ void RpcServer::establishConnection(
         LOG_ALWAYS_FATAL_IF(threadId == server->mConnectingThreads.end(),
                             "Must establish connection on owned thread");
         thisThread = std::move(threadId->second);
-        auto detachGuardLambda = [&]() {
+        ScopeGuard detachGuard = [&]() {
             thisThread.detach();
             _l.unlock();
             server->mShutdownCv.notify_all();
         };
-        auto detachGuard = make_scope_guard(std::ref(detachGuardLambda));
         server->mConnectingThreads.erase(threadId);
 
         if (status != OK || server->mShutdownTrigger->isTriggered()) {
@@ -549,7 +547,7 @@ void RpcServer::establishConnection(
             return;
         }
 
-        detachGuard.release();
+        detachGuard.Disable();
         session->preJoinThreadOwnership(std::move(thisThread));
     }
 

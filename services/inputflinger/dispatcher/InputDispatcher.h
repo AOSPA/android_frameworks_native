@@ -82,8 +82,6 @@ public:
     static constexpr bool kDefaultInTouchMode = true;
 
     explicit InputDispatcher(InputDispatcherPolicyInterface& policy);
-    explicit InputDispatcher(InputDispatcherPolicyInterface& policy,
-                             std::chrono::nanoseconds staleEventTimeout);
     ~InputDispatcher() override;
 
     void dump(std::string& dump) const override;
@@ -295,7 +293,8 @@ private:
     void transformMotionEntryForInjectionLocked(MotionEntry&,
                                                 const ui::Transform& injectedTransform) const
             REQUIRES(mLock);
-
+    // Per-display correction of injected events
+    std::map</*displayId*/ int32_t, InputVerifier> mInputFilterVerifiersByDisplay GUARDED_BY(mLock);
     std::condition_variable mInjectionSyncFinished;
     void incrementPendingForegroundDispatches(EventEntry& entry);
     void decrementPendingForegroundDispatches(EventEntry& entry);
@@ -468,9 +467,6 @@ private:
      */
     std::optional<nsecs_t> mNoFocusedWindowTimeoutTime GUARDED_BY(mLock);
 
-    // Amount of time to allow for an event to be dispatched (measured since its eventTime)
-    // before considering it stale and dropping it.
-    const std::chrono::nanoseconds mStaleEventTimeout;
     bool isStaleEvent(nsecs_t currentTime, const EventEntry& entry);
 
     bool shouldPruneInboundQueueLocked(const MotionEntry& motionEntry) REQUIRES(mLock);

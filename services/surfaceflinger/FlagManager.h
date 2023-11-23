@@ -51,6 +51,8 @@ public:
     bool enable_small_area_detection() const;
     bool misc1() const;
     bool vrr_config() const;
+    bool hotplug2() const;
+    bool hdcp_level_hal() const;
 
     /// Trunk stable server flags ///
     bool late_boot_misc2() const;

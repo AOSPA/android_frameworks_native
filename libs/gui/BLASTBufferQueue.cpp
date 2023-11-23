@@ -32,7 +32,7 @@
 #include <gui/BufferQueueConsumer.h>
 #include <gui/BufferQueueCore.h>
 #include <gui/BufferQueueProducer.h>
-#include <gui/Flags.h>
+
 #include <gui/FrameRateUtils.h>
 #include <gui/GLConsumer.h>
 #include <gui/IProducerListener.h>
@@ -46,8 +46,6 @@
 
 #include <android-base/thread_annotations.h>
 #include <chrono>
-
-#include <com_android_graphics_libgui_flags.h>
 
 using namespace com::android::graphics::libgui;
 using namespace std::chrono_literals;
@@ -150,7 +148,7 @@ void BLASTBufferItemConsumer::onSidebandStreamChanged() {
     }
 }
 
-#if FLAG_BQ_SET_FRAME_RATE
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
 void BLASTBufferItemConsumer::onSetFrameRate(float frameRate, int8_t compatibility,
                                              int8_t changeFrameRateStrategy) {
     sp<BLASTBufferQueue> bbq = mBLASTBufferQueue.promote();

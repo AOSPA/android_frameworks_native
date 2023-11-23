@@ -48,3 +48,17 @@ flag {
   description: "Enable additional palm rejection on touchpad while typing"
   bug: "301055381"
 }
+
+flag {
+  name: "remove_app_switch_drops"
+  namespace: "input"
+  description: "Remove the logic of dropping events due to pending app switch"
+  bug: "284808102"
+}
+
+flag {
+  name: "disable_reject_touch_on_stylus_hover"
+  namespace: "input"
+  description: "Disable touch rejection when the stylus hovers the screen"
+  bug: "301216095"
+}
