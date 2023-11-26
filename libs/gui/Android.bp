@@ -448,6 +448,7 @@ qtidisplayextension_cc_library_static {
     vendor_available: true,
     defaults: [
         "libgui_bufferqueue-defaults",
+        "libguiextension_defaults",
     ],
     header_libs: [
         "libgui_aidl_headers",
@@ -467,6 +468,7 @@ qtidisplayextension_cc_library_static {
     },
     srcs: [
         "QtiExtension/QtiBLASTBufferQueueExtension.cpp",
+        "QtiExtension/QtiSurfaceExtension.cpp",
     ],
     local_include_dirs: ["QtiExtension"],
     export_include_dirs: ["QtiExtension"],
@@ -480,7 +482,15 @@ qtidisplayextension_cc_defaults {
                 "-DQTI_DISPLAY_EXTENSION",
             ],
         }
-    }
+    },
+    header_libs: [
+        "display_intf_headers",
+    ],
+    shared_libs: [
+        "libgralloctypes",
+        "libhidlbase",
+        "android.hardware.graphics.mapper@4.0",
+    ],
 }
 
 cc_defaults {
