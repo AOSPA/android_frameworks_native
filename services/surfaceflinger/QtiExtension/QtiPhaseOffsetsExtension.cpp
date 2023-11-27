@@ -54,7 +54,7 @@ void QtiPhaseOffsetsExtension::qtiUpdateSfOffsets(
     std::lock_guard lock(mQtiVsyncConfiguration->mLock);
     for (auto& item : *advancedSfOffsets) {
         float fps = item.first;
-        auto& mOffsetsCache = mQtiVsyncConfiguration->mOffsetsCache;
+        auto mOffsetsCache = mQtiVsyncConfiguration->mOffsetsCache;
         auto iter = mOffsetsCache.begin();
         for (iter = mOffsetsCache.begin(); iter != mOffsetsCache.end(); iter++) {
             float candidateFps = iter->first.getValue();

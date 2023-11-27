@@ -39,7 +39,6 @@ public:
     composer::DisplayExtnIntf* qtiGetDisplayExtn() { return nullptr; }
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
-    void qtiOnComposerHalRefresh() override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -119,7 +118,6 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
     void qtiSetVisibleLayerInfo(DisplayId displayId,
                                     const char* name, int32_t sequence) override;
-    bool qtiIsSmomoOptimalRefreshActive() override;
 
     /*
      * Methods for speculative fence
