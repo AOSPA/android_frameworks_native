@@ -45,10 +45,6 @@
 #include <system/window.h>
 #include <ui/GraphicTypes.h>
 
-/* QTI_BEGIN */
-#include <cutils/properties.h>
-/* QTI_END */
-
 #include "Display/DisplaySnapshot.h"
 #include "DisplayDevice.h"
 #include "FrontEnd/DisplayInfo.h"
@@ -121,12 +117,6 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
 
     // initialize the display orientation transform.
     setProjection(ui::ROTATION_0, Rect::INVALID_RECT, Rect::INVALID_RECT);
-
-    /* QTI_BEGIN */
-    char value[PROPERTY_VALUE_MAX];
-    property_get("vendor.display.enable_fb_scaling", value, "0");
-    mUseFbScaling = atoi(value);
-    /* QTI_END */
 }
 
 DisplayDevice::~DisplayDevice() = default;
@@ -170,44 +160,14 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
                                                         inversePhysicalOrientation),
                                                 width, height);
     const auto& displayTransform = undoPhysicalOrientation * getTransform();
-
-    /* QTI_BEGIN */
-    ui::Transform scale;
-    ui::Transform rotationTransform = getTransform();
-    scale.set(1, 0, 0, 1);
-    if(mUseFbScaling && isPrimary()){ //use fb_scaling
-        auto currMode = refreshRateSelector().getActiveMode();
-        rotationTransform.set(getTransform().getOrientation(), currMode.modePtr->getWidth(),
-                              currMode.modePtr->getHeight());
-        const float scaleX = static_cast<float>(currMode.modePtr->getWidth()) / getWidth();
-        const float scaleY = static_cast<float>(currMode.modePtr->getHeight()) / getHeight();
-        scale.set(scaleX, 0, 0, scaleY);
-    }
-    const auto& displayTransform_s = undoPhysicalOrientation * rotationTransform * scale;
-    /* QTI_END */
-
     // Send the inverse display transform to input so it can convert display coordinates to
     // logical display.
+    info.transform = displayTransform.inverse();
 
     info.logicalWidth = getLayerStackSpaceRect().width();
     info.logicalHeight = getLayerStackSpaceRect().height();
 
-    /* QTI_BEGIN */
-    if (mUseFbScaling && isPrimary()) {
-        info.transform = displayTransform_s.inverse();
-        return {.info = info,
-                .transform = displayTransform_s,
-                .receivesInput = receivesInput(),
-                .isSecure = isSecure(),
-                .isPrimary = isPrimary(),
-                .isVirtual = isVirtual(),
-                .rotationFlags = ui::Transform::toRotationFlags(mOrientation),
-                .transformHint = getTransformHint()};
-    }
-    /* QTI_END */
-    else {
-        info.transform = displayTransform.inverse();
-        return {.info = info,
+    return {.info = info,
             .transform = displayTransform,
             .receivesInput = receivesInput(),
             .isSecure = isSecure(),
@@ -215,7 +175,6 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
             .isVirtual = isVirtual(),
             .rotationFlags = ui::Transform::toRotationFlags(mOrientation),
             .transformHint = getTransformHint()};
-    }
 }
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {

@@ -55,8 +55,6 @@ bool QtiNullExtension::qtiLatchMediaContent(sp<Layer> layer) {
 }
 void QtiNullExtension::qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) {}
 
-void QtiNullExtension::qtiOnComposerHalRefresh() {}
-
 /*
  * Methods that call the FeatureManager APIs.
  */
@@ -170,9 +168,6 @@ uint32_t QtiNullExtension::qtiGetLayerClass(std::string mName) {
 }
 void QtiNullExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
                                                   const char* name, int32_t sequence) {}
-bool QtiNullExtension::qtiIsSmomoOptimalRefreshActive() {
-    return false;
-}
 
 /*
  * Methods for speculative fence

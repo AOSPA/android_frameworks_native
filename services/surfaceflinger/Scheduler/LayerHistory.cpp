@@ -188,15 +188,6 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
 
         ATRACE_FORMAT("%s", info->getName().c_str());
         auto vote = info->getRefreshRateVote(selector, now);
-
-        /* QTI_BEGIN */
-        if (refresh_rate_votes_.find(key) != refresh_rate_votes_.end() &&
-            refresh_rate_votes_[key] != -1) {
-          vote.fps = Fps::fromValue(refresh_rate_votes_[key]);
-          vote.type = LayerHistory::LayerVoteType::ExplicitExact;
-        }
-        /* QTI_END */
-
         // Skip NoVote layer as those don't have any requirements
         if (vote.type == LayerVoteType::NoVote) {
             continue;
