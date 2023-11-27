@@ -69,7 +69,6 @@ public:
     virtual composer::DisplayExtnIntf* qtiGetDisplayExtn() = 0;
     virtual bool qtiLatchMediaContent(sp<Layer> layer) = 0;
     virtual void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) = 0;
-    virtual void qtiOnComposerHalRefresh() = 0;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -151,7 +150,6 @@ public:
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
     virtual void qtiSetVisibleLayerInfo(DisplayId displayId,
                                  const char* name, int32_t sequence) = 0;
-    virtual bool qtiIsSmomoOptimalRefreshActive() = 0;
 
     /*
      * Methods for Dolphin APIs
