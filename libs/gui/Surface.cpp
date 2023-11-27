@@ -124,12 +124,6 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mSwapIntervalZero = false;
     mMaxBufferCount = NUM_BUFFER_SLOTS;
     mSurfaceControlHandle = surfaceControlHandle;
-
-    /* QTI_BEGIN */
-    if (!mQtiSurfaceExtn) {
-        mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
-    }
-    /* QTI_END */
 }
 
 Surface::~Surface() {
@@ -1041,13 +1035,6 @@ void Surface::applyGrallocMetadataLocked(
         android_native_buffer_t* buffer,
         const IGraphicBufferProducer::QueueBufferInput& queueBufferInput) {
     ATRACE_CALL();
-
-    /* QTI_BEGIN */
-    if (mQtiSurfaceExtn) {
-        mQtiSurfaceExtn->qtiSetBufferDequeueDuration(getDebugName(), buffer, mLastDequeueDuration);
-    }
-    /* QTI_END */
-
     auto& mapper = GraphicBufferMapper::get();
     mapper.setDataspace(buffer->handle, static_cast<ui::Dataspace>(queueBufferInput.dataSpace));
     if (mHdrMetadataIsSet & HdrMetadata::SMPTE2086)
